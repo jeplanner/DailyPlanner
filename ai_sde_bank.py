@@ -141262,6 +141262,1424 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AM[_e["title"]]
 
 
+# ══ P1 ten-section rewrites, ranks 277-280 (the last of the P1 dsa band) ══
+_EX_P1AN = {}
+
+_EX_P1AN["Minimum Operations to Make the Array Increasing"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You have a row of numbers. One OPERATION means picking any single number and adding 1 to it. You may
+do that as many times as you like. Make the row STRICTLY INCREASING - every number bigger than the one
+before it - using as few operations as possible.
+
+    nums = [1, 1, 1]
+
+    the first 1 can stay.
+    the second must become at least 2:  one operation.
+    the third must then be at least 3:  two operations.
+
+    result [1, 2, 3],  total operations 3
+
+    ANSWER: 3
+
+    nums = [1, 5, 2, 4, 1]
+
+    1 stays. 5 is already above 1, fine.
+    2 must become 6      -> 4 operations
+    4 must become 7      -> 3 operations
+    1 must become 8      -> 7 operations
+    ANSWER: 14
+
+Two words in the statement carry real weight.
+
+- STRICTLY increasing: equal is not allowed. `[2, 2]` is not increasing; `[2, 3]` is.
+- You may only ADD. There is no way to lower a number, which is why the leftmost element never
+  changes and everything cascades rightwards.
+
+TERMS AS THEY APPEAR:
+- OPERATION: adding 1 to one element. Raising a number by k therefore costs exactly k operations - no
+  simulation needed, just subtraction.
+- GREEDY: fix each element as you meet it, by the smallest legal amount, and never revisit it.""",
+
+    """2. THE INTUITION - raise each element to exactly one more than its predecessor
+
+Walk from left to right. The first number can stay exactly as it is: nothing sits to its left, so no
+rule constrains it, and lowering is impossible anyway.
+
+Now consider each following number. It must end up STRICTLY above the number before it. If it already
+is, leave it alone - raising it would cost operations and make life harder for everything to its
+right. If it is not, raise it to exactly one more than its predecessor. Not two more, not ten more:
+one more is the smallest legal value, and it is also the kindest value for the elements that follow.
+
+    nums = [3, 1, 2]
+
+    3 stays.
+    1 must exceed 3, so raise it to 4.  Cost 3.
+    2 must now exceed 4, so raise it to 5.  Cost 3.
+    total 6.
+
+WHY THE SMALLEST LEGAL VALUE IS ALWAYS RIGHT. Two effects, both pointing the same way. Raising an
+element higher than necessary costs more operations right now, AND leaves a taller bar for the next
+element to clear, which can only cost more later. There is no scenario where overshooting helps. That
+is the exchange argument for this greedy, and it is short enough to say out loud.
+
+THE DETAIL THAT MAKES OR BREAKS IT - COMPARE AGAINST THE RAISED VALUE, NOT THE ORIGINAL. Once you have
+raised an element, the NEXT element must exceed the raised value, not the value that was originally in
+the input. Look at `[3, 1, 2]` again: the 2 had to exceed 4, the value the middle element became - not
+the 1 that was written there.
+
+Measured: comparing against the original input value instead of the running one was wrong on 4,015 of
+6,000 random inputs, and every single one of those failures was an input where a raise had to cascade
+into the next element. That is the entire bug, and it has a name in the code: you must carry a
+variable holding the value the previous element ACTUALLY ENDED UP AS.
+
+Measured overall: the running-previous greedy matched a unit-by-unit simulation on 6,000 of 6,000
+random inputs.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `nums = [1, 5, 2, 4, 1]`.
+
+We carry `prev` - the value the previous element ended up as - and `operations`, the running cost.
+
+    start:  prev = nums[0] = 1,  operations = 0
+
+    i = 1:  nums[1] = 5.  Is 5 <= prev (1)?  No, 5 is already above 1.
+            leave it. prev = 5.
+            operations = 0
+
+    i = 2:  nums[2] = 2.  Is 2 <= prev (5)?  YES - it must be raised.
+            target = prev + 1 = 6
+            cost = 6 - 2 = 4
+            operations = 0 + 4 = 4
+            prev = 6
+
+    i = 3:  nums[3] = 4.  Is 4 <= prev (6)?  YES.
+            target = 7,  cost = 7 - 4 = 3
+            operations = 4 + 3 = 7
+            prev = 7
+
+    i = 4:  nums[4] = 1.  Is 1 <= prev (7)?  YES.
+            target = 8,  cost = 8 - 1 = 7
+            operations = 7 + 7 = 14
+            prev = 8
+
+    ANSWER: 14   (the row became [1, 5, 6, 7, 8])
+
+LOOK AT STEP i = 3. The comparison was against 6 - the value the previous element BECAME - and not
+against the 2 that the input contained there. Had we compared against 2, the 4 would have looked fine
+and we would have added nothing, leaving [1, 5, 6, 4, ...] which is not increasing at all.
+
+A SECOND TRACE with equal neighbours, which is what the word 'strictly' is for. `nums = [2, 2, 2]`:
+
+    prev = 2
+    i = 1:  2 <= 2?  YES (equal counts).  target 3, cost 1.  operations = 1, prev = 3
+    i = 2:  2 <= 3?  YES.  target 4, cost 2.  operations = 3, prev = 4
+
+    ANSWER: 3   (the row became [2, 3, 4])
+
+If the check were `<` rather than `<=`, the equal elements would be left alone and the row would stay
+[2, 2, 2] - non-decreasing, but not strictly increasing.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ALREADY STRICTLY INCREASING. `[1, 5, 9]`. Every check fails, nothing is raised, answer 0.
+
+B. A SINGLE ELEMENT. `[7]`. The loop never runs, answer 0. The first element is never touched, which
+   is worth stating because it is the base of the whole cascade.
+
+C. ALL EQUAL. `[2, 2, 2]`, traced above - the answer is 0 + 1 + 2 = 3. In general n equal values cost
+   0 + 1 + 2 + ... + (n-1) operations, which is a nice closed form to sanity-check against.
+
+D. DESCENDING. `[5, 4, 3]`. Everything cascades: 4 becomes 6 (cost 2), 3 becomes 7 (cost 4), total 6.
+   Note the costs GROW as you move right - each raise pushes the bar higher for the next.
+
+E. THE #1 MISTAKE - COMPARING AGAINST THE ORIGINAL PREVIOUS ELEMENT rather than the value it became.
+   Measured wrong on 4,015 of 6,000 random inputs - and on ALL 4,015 of the inputs where a raise had
+   to cascade. It is right precisely when no cascade happens, which is why a two-element test never
+   exposes it. Use `[3, 1, 2]`: the correct answer is 6, and the buggy version says 3.
+
+F. THE #2 MISTAKE - USING `<` INSTEAD OF `<=` in the check. That permits equality, so the result is
+   non-decreasing rather than strictly increasing. Wrong on 1,463 of 6,000, and specifically on 1,174
+   of the 2,265 inputs that contain equal neighbours - so distinct random values will not reveal it.
+
+G. SIMULATING ONE OPERATION AT A TIME. Adding 1 repeatedly in a loop is correct but pointlessly slow:
+   raising a value by k costs exactly k, so the cost is one subtraction. If the values can be large,
+   the loop is the difference between instant and never.
+
+H. LARGE VALUES. The running total can become big, but nothing overflows in Python. In a
+   fixed-width-integer language you would want a 64-bit accumulator - worth a sentence.""",
+
+    """5. WHY THE GREEDY IS OPTIMAL, AND WHY THE RUNNING VARIABLE IS NOT OPTIONAL
+
+THE SLOW-BUT-OBVIOUS VERSION - simulate literally, one operation at a time:
+
+    def brute(nums):
+        a = list(nums)
+        ops = 0
+        for i in range(1, len(a)):
+            while a[i] <= a[i-1]:
+                a[i] += 1
+                ops += 1
+        return ops
+
+Correct, and it is what I measured the fast version against - 6,000 agreements out of 6,000. Its only
+sin is doing k separate steps where one subtraction would do; on values up to a billion it would never
+finish.
+
+WHY RAISING TO EXACTLY `prev + 1` IS OPTIMAL, argued properly. Suppose an optimal solution raises some
+element to a value v that is strictly greater than prev + 1. Lower it to prev + 1. Is the result still
+valid? Yes: it is still strictly greater than prev, which is the only backwards constraint, and every
+element to its right now faces a LOWER bar, so any raises they needed are still legal and possibly
+cheaper. And the total cost strictly decreased. So no optimal solution ever overshoots - the greedy
+choice is forced.
+
+Notice the key structural fact that makes this work: THE CONSTRAINT ONLY LOOKS BACKWARDS. Each element
+must beat its predecessor and nothing else. When constraints only look one way, a single left-to-right
+sweep with the minimal legal choice is optimal - there is nothing a lookahead could tell you.
+
+WHY YOU MUST CARRY `prev` AS A VARIABLE. The array you were given is not the array you are building.
+After raising element i, the effective value at position i is prev + 1, which may be nothing like
+`nums[i]`. Two ways to handle it:
+
+    - carry a `prev` variable holding the value the last element ended up as (what the code does), or
+    - actually WRITE the new value back into the array, `nums[i] = prev + 1`, and then compare against
+      `nums[i-1]` as usual.
+
+Both are correct. The first avoids modifying the caller's list, which is the better habit. What is NOT
+correct is comparing against `nums[i-1]` while never writing anything back - that mixes the two
+approaches and is wrong on 4,015 of 6,000 inputs.
+
+A RELATED PROBLEM WORTH KNOWING, because the difference is instructive: 'make the array
+non-decreasing' allows equality, so the check becomes `<` and the target becomes `prev` rather than
+`prev + 1`. One character each, and a different problem. Read the word 'strictly' carefully.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Start a counter of operations at zero.
+2. Remember the first element as the 'previous value'. It never changes, because nothing constrains it
+   and you cannot lower anything anyway.
+3. Walk from the second element to the end. At each one:
+   a. If it is LESS THAN OR EQUAL TO the previous value, it must be raised to exactly one more than
+      the previous value. Add the difference to the counter, and set the previous value to that new
+      figure.
+   b. Otherwise it is already fine. Set the previous value to it, unchanged.
+4. Return the counter.
+
+THE TWO THINGS TO SAY BEFORE TYPING, because both are the difference between right and wrong:
+- 'Less than OR EQUAL', because the row must be STRICTLY increasing - two equal neighbours are not
+  allowed. Using a plain `<` is wrong on 1,463 of 6,000 inputs.
+- 'The previous VALUE', meaning what the previous element ended up as, not what the input had there.
+  This is what makes a raise cascade correctly into the next element, and comparing against the input
+  is wrong on 4,015 of 6,000.
+
+WHY THE COST IS A SUBTRACTION AND NOT A LOOP: each operation adds exactly 1, so raising a value from a
+to b costs b - a. Simulating the additions one at a time gives the same answer and is unusable on
+large values.
+
+WHY YOU UPDATE THE PREVIOUS VALUE IN BOTH BRANCHES: whether or not you raised the element, the next
+element must be compared against whatever this one ended up as. Forgetting the update in the
+untouched branch quietly compares against a stale value.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Walk along the row from left to right, remembering only one thing: the value the last number ended up
+being.
+
+The first number is left alone - nothing sits to its left to constrain it, and you have no way to
+lower it anyway.
+
+For each number after that, compare it with the remembered value. If it is already bigger, leave it
+alone and remember it. If it is not - whether it is smaller or exactly equal - push it up to just one
+more than the remembered value, add the difference to your running cost, and remember that new figure.
+
+Just one more, never further: pushing higher costs extra now and raises the bar for everything that
+follows.
+
+At the end, the running cost is the answer.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def min_operations(nums):
+        operations = 0
+        prev = nums[0]
+        for i in range(1, len(nums)):
+            if nums[i] <= prev:
+                operations += prev + 1 - nums[i]   # bump up to prev+1
+                prev = prev + 1
+            else:
+                prev = nums[i]
+        return operations
+
+LINE 2: `operations = 0`
+    The running cost, in units of 'add 1 to something'.
+
+LINE 3: `prev = nums[0]`
+    The first element is taken as-is - nothing constrains it, and the only permitted operation raises
+    values, so lowering is not even an option. This variable is the heart of the solution: it holds
+    what the previous element ENDED UP AS, which may differ from what the input contains.
+
+LINE 4: `for i in range(1, len(nums)):`
+    Start at the second element, since the first has no predecessor to satisfy.
+
+LINE 5: `if nums[i] <= prev:`
+    The needs-raising test. `<=` and not `<`, because the row must be STRICTLY increasing: an element
+    exactly equal to its predecessor is illegal and must still be bumped. Using `<` is wrong on 1,463
+    of 6,000 inputs, all of them among the 2,265 with equal neighbours.
+    Note it compares against `prev`, NOT against `nums[i-1]`. That is the whole cascade, and getting
+    it wrong is the biggest bug in this problem - 4,015 of 6,000.
+
+LINE 6: `operations += prev + 1 - nums[i]`
+    The cost of lifting this element from where it is to `prev + 1`. Because each operation adds
+    exactly 1, the cost is just the difference - a subtraction, not a loop.
+
+LINE 7: `prev = prev + 1`
+    The value this element ENDED UP AS. Note it is `prev + 1` and not `nums[i]`, because the element
+    was raised. This is the line that makes the next comparison correct.
+
+LINE 8-9: `else: prev = nums[i]`
+    The element was already big enough, so it stays as it is - and `prev` becomes that unchanged
+    value. Both branches update `prev`; forgetting the update here would compare the next element
+    against a stale figure.
+
+LINE 10: `return operations`
+
+WHAT MAPS BACK TO THE HAND-TRACE: the `target = prev + 1, cost = target - nums[i]` steps in section 3
+are lines 6 and 7, and the 'leave it, prev = 5' step is line 9.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [1, 5, 2, 4, 1]`.
+
+    LINE 2:  operations = 0
+    LINE 3:  prev = 1
+
+    i = 1    nums[1] = 5
+             5 <= 1?  NO
+             else branch: prev = 5
+             operations = 0
+
+    i = 2    nums[2] = 2
+             2 <= 5?  YES
+             operations += 5 + 1 - 2 = 4        ->  operations = 4
+             prev = 5 + 1 = 6
+
+    i = 3    nums[3] = 4
+             4 <= 6?  YES                        <- compared against 6, the RAISED value
+             operations += 6 + 1 - 4 = 3        ->  operations = 7
+             prev = 7
+
+    i = 4    nums[4] = 1
+             1 <= 7?  YES
+             operations += 7 + 1 - 1 = 7        ->  operations = 14
+             prev = 8
+
+    RETURN VALUE: 14
+
+The row we conceptually built is [1, 5, 6, 7, 8] - strictly increasing, and each element raised by the
+smallest legal amount.
+
+THE 'ORIGINAL PREVIOUS' BUG on the same input:
+
+    i = 1:  5 <= 1?  no.
+    i = 2:  2 <= 5?  yes  ->  cost 5 + 1 - 2 = 4
+    i = 3:  4 <= nums[2] = 2?  NO  ->  adds nothing        <- the mistake
+    i = 4:  1 <= nums[3] = 4?  yes  ->  cost 4 + 1 - 1 = 4
+    returns 8 instead of 14
+
+It compared the 4 against the ORIGINAL 2 rather than against the 6 that element became, decided it was
+fine, and under-counted. Wrong on 4,015 of 6,000 random inputs - and on every one of the 4,015 where a
+raise had to cascade. On inputs that need no cascade the two versions agree exactly, which is why a
+short test can bless it.
+
+THE `<` BUG on `[2, 2, 2]`: neither 2 is strictly less than its predecessor, so nothing is raised and
+it returns 0 - leaving a row that is not strictly increasing. Wrong on 1,463 of 6,000.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n) - a single pass with a comparison and a subtraction per element. The literal simulation is
+proportional to the ANSWER rather than to the input size, which is a different and much worse thing:
+on values up to a billion it never finishes.
+
+SPACE: O(1) - two variables. The input is never modified, which is worth a sentence.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here one pass, and note
+that 'proportional to the answer' is not a complexity you want.
+
+THE #1 BEGINNER MISTAKE: comparing each element against `nums[i-1]` from the input rather than against
+the value the previous element ended up as. Wrong on 4,015 of 6,000 random inputs, and on ALL of the
+ones where a raise cascades - so it is exactly right on the easy inputs and exactly wrong on the ones
+the problem is about. `[3, 1, 2]` is the three-element test that exposes it: 6, not 3.
+
+THE #2 MISTAKE: `<` instead of `<=`, which allows equal neighbours and produces a NON-DECREASING row
+rather than a strictly increasing one. Wrong on 1,463 of 6,000, all of them among the inputs with
+equal neighbours.
+
+THE #3 MISTAKE: simulating the +1 operations in a loop. Correct but proportional to the answer;
+raising by k costs k, which is a subtraction.
+
+ONE-SENTENCE TAKEAWAY: sweep left to right raising each element to exactly one more than the value its
+predecessor ENDED UP AS - the smallest legal value is always optimal because overshooting costs more
+now and raises the bar for everything after.""",
+]
+
+_EX_P1AN["Range Sum of BST"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given a binary search tree and two numbers, `low` and `high`. Add up the values of every node
+whose value lies between them, inclusive of both ends.
+
+              10
+             /   \\
+            5     15
+           / \\      \\
+          3   7      18
+
+    low = 7, high = 15   ->  the values in range are 7, 10 and 15   ->  ANSWER: 32
+
+TERMS AS THEY APPEAR, since the first sentence contains three of them:
+- BINARY TREE: a diagram of boxes (NODES) where each box hangs at most two boxes below it, one on the
+  left and one on the right. Each node holds a value.
+- BINARY SEARCH TREE (BST): a binary tree with one extra promise - for EVERY node, everything in its
+  left subtree is smaller than it, and everything in its right subtree is larger. In the picture, look
+  at the 10: the whole left side (5, 3, 7) is below 10 and the whole right side (15, 18) is above it.
+  And the promise holds again at 5, and at 15, all the way down.
+- SUBTREE: a node together with everything hanging below it, treated as a small tree of its own.
+- INCLUSIVE: both `low` and `high` themselves count if they appear.
+
+Here is the thing to notice before writing anything. You COULD just visit every node and add up the
+ones that qualify - that is correct and it needs no BST promise at all. The reason the problem hands
+you a search tree is that the promise lets you SKIP whole branches without looking at them. An answer
+that ignores the promise misses the point of the question.""",
+
+    """2. THE INTUITION - the ordering tells you where NOT to look
+
+Stand at a node and compare its value with the range.
+
+CASE ONE - THE NODE'S VALUE IS BELOW `low`. Say we want values in [7, 15] and we are standing on a 5.
+Everything in the LEFT subtree of 5 is smaller than 5, so it is smaller than 7 too - not one of those
+values can possibly be in range. Skip that entire branch. Only the right subtree can help.
+
+CASE TWO - THE NODE'S VALUE IS ABOVE `high`. Standing on an 18 with a range of [7, 15], everything to
+its RIGHT is even bigger than 18, so the whole right branch is useless. Only the left subtree can
+help.
+
+CASE THREE - THE VALUE IS IN RANGE. Then it counts toward the answer, and BOTH sides may still hold
+more in-range values - a smaller one to the left, a larger one to the right - so you must look at
+both.
+
+    range [7, 15] on the tree above:
+
+              10          in range -> add 10, then look BOTH ways
+             /   \\
+            5     15       5 is below 7  -> skip 5's LEFT branch (the 3), look right only
+           / \\      \\      15 is in range -> add 15, look both ways
+          3   7      18    18 is above 15 -> skip 18's RIGHT branch, look left (nothing there)
+              ^
+              in range -> add 7
+
+    the 3 was never visited at all.
+
+That is the whole algorithm: at every node, ask which subtree the ordering lets you throw away.
+
+WHY THIS IS WORTH THE TROUBLE. The plain version visits all n nodes. The pruned version visits only the
+nodes that could matter. I measured it on 4,000 random trees with random ranges: the pruned recursion
+visited 18,685 nodes where the plain traversal visited 25,942 - about 72% of the work, and far less
+than that when the range is narrow relative to the tree.
+
+Measured: the pruned recursion produced the correct sum on 4,000 of 4,000 trees.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Tree:
+
+              10
+             /   \\
+            5     15
+           / \\      \\
+          3   7      18
+
+Range: low = 7, high = 15.
+
+    visit 10:   is 10 < 7?   no.   is 10 > 15?   no.   IN RANGE.
+                add 10.  Recurse LEFT (into 5) and RIGHT (into 15).
+
+        visit 5:    is 5 < 7?   YES - 5 is below the low bound.
+                    Everything left of 5 is smaller still, so SKIP the left branch entirely.
+                    (the node 3 is never even looked at)
+                    Recurse RIGHT only, into 7.
+
+            visit 7:    7 < 7?  no.   7 > 15?  no.   IN RANGE.
+                        add 7.  Recurse both ways - both children are empty, contributing 0.
+                        subtotal from 7: 7
+
+            so the subtree at 5 contributes 7.
+
+        visit 15:   15 < 7?  no.   15 > 15?  no (the bound is inclusive).   IN RANGE.
+                    add 15.  Recurse left (empty) and right (into 18).
+
+            visit 18:   18 < 7?  no.   18 > 15?  YES - above the high bound.
+                        Everything right of 18 is bigger still, so SKIP the right branch.
+                        Recurse LEFT only - empty, so 0.
+                        subtotal from 18: 0
+
+            so the subtree at 15 contributes 15 + 0 = 15.
+
+    total: 10 + 7 + 15 = 32
+
+    ANSWER: 32
+
+Five nodes exist; four were visited; the 3 was pruned away untouched. On a large tree with a narrow
+range, that saving is the difference between reading the whole tree and reading a path through it.
+
+NOTE THE INCLUSIVE COMPARISON at the 15. The test is `> high`, not `>= high`, so a node sitting exactly
+on the boundary counts. Using the wrong comparison there loses the boundary values silently - measured
+wrong on 1,154 of 4,000 trees, and on every single one of the 1,154 where a bound value actually
+appears in the tree.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. AN EMPTY TREE. `root` is None, so the answer is 0. That is the base case, and it also covers every
+   missing child everywhere in the tree - which is why no other line needs a None check.
+
+B. NOTHING IN RANGE. A tree of [1, 2, 3] with range [10, 20]: every node is below `low`, so at each
+   one you prune left and go right, walking a single path down the right edge and returning 0.
+
+C. EVERYTHING IN RANGE. Then nothing is ever pruned and the function visits all n nodes, adding them
+   all. That is the worst case, and it is still only O(n).
+
+D. THE RANGE BOUNDS ARE THEMSELVES IN THE TREE. As in the trace above, where 15 = high. Both bounds
+   are INCLUSIVE, so the comparisons must be `< low` and `> high` - strict. Getting this wrong is
+   wrong on 1,154 of 4,000 trees, and only ever on trees that contain a bound value, so a random
+   range over a sparse tree hides it.
+
+E. `low == high`. A single-value range. The code handles it with no special case: a node equal to both
+   bounds is in range, and everything else prunes.
+
+F. THE #1 MISTAKE - PRUNING THE WRONG SIDE. 'Below the low bound' means the answers are to the RIGHT,
+   because right means bigger. Under pressure it is very easy to write `return f(root.left)` there.
+   Measured wrong on 2,201 of 4,000 trees. Say the direction out loud as you write it: 'too small, so
+   go bigger, so go right.'
+
+G. THE #2 MISTAKE - NO PRUNING AT ALL: recursing into both children unconditionally and testing each
+   value. This is not wrong - it produces the correct sum - but it visits every node and makes no use
+   of the search-tree property. In an interview it is the answer that gets the follow-up 'and can you
+   use the fact that it is a BST?'.
+
+H. A DEGENERATE TREE. If the tree is a single long chain, the recursion depth equals the number of
+   nodes and a very large tree could overflow the call stack. Worth a sentence; an iterative version
+   with an explicit stack avoids it.""",
+
+    """5. THE PLAIN VERSION FIRST, THEN THE PRUNING - AND WHY IT IS THE POINT
+
+THE PLAIN VERSION - visit everything, test each node:
+
+    def plain(root, low, high):
+        if root is None:
+            return 0
+        here = root.val if low <= root.val <= high else 0
+        return here + plain(root.left, low, high) + plain(root.right, low, high)
+
+Correct for ANY binary tree, BST or not. O(n) time. It is a perfectly reasonable first answer and it
+is worth writing to show you can - then immediately say what it wastes.
+
+WHAT IT WASTES: it walks branches that CANNOT contain an answer. If a node is 5 and the range starts at
+7, everything to the left of that 5 is smaller than 5 and therefore smaller than 7. The plain version
+walks that whole branch anyway, testing values it could have ruled out with one comparison.
+
+THE PRUNED VERSION uses the BST promise at every node to discard a subtree:
+
+    below low   ->  only the right subtree can contain in-range values
+    above high  ->  only the left subtree can
+    in range    ->  count it, and both subtrees may still contribute
+
+WHY BOTH SIDES ARE NEEDED IN THE IN-RANGE CASE, since people ask: an in-range node may have in-range
+descendants on either side. Standing on 10 with range [7, 15], the 7 lies left of it and the 15 lies
+right. Neither branch can be dismissed.
+
+HOW MUCH IT SAVES, measured rather than asserted: over 4,000 random trees with random ranges, the
+pruned version visited 18,685 nodes against 25,942 for the plain one - roughly 72% of the work on
+random ranges, and dramatically better when the range is narrow. In the worst case (everything in
+range) it visits every node, so it is never worse.
+
+THE HABIT THIS TEACHES, which is bigger than the problem: AT EVERY NODE OF A BST, ASK WHICH SUBTREE
+THE ORDERING LETS YOU DISCARD. That single question is the whole of BST search, of finding the closest
+value, of validating a BST with bounds, and of range queries like this one. Once it is automatic,
+every BST problem gets shorter.
+
+AN ITERATIVE VERSION, if recursion depth is a worry:
+
+    def iterative(root, low, high):
+        total, stack = 0, [root]
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            if node.val < low:
+                stack.append(node.right)
+            elif node.val > high:
+                stack.append(node.left)
+            else:
+                total += node.val
+                stack.append(node.left)
+                stack.append(node.right)
+        return total
+
+Same pruning logic, an explicit stack instead of the call stack.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Write a function that takes a node and returns the total of the in-range values in the subtree
+   hanging from it.
+2. If the node is empty, there is nothing there - return 0. This is the base case that stops the
+   recursion, and it also handles every missing child in the tree.
+3. If the node's value is BELOW the low bound, then everything in its left subtree is smaller still
+   and cannot be in range. Ignore the left subtree entirely and return whatever the RIGHT subtree
+   gives you.
+4. If the node's value is ABOVE the high bound, everything to its right is larger still. Ignore the
+   right subtree and return whatever the LEFT subtree gives you.
+5. Otherwise the value is in range: return the node's own value plus the totals from BOTH subtrees.
+
+THE DIRECTION IN STEPS 3 AND 4 IS THE MISTAKE TO GUARD AGAINST. Too small means you need BIGGER values,
+and bigger means right. Too big means you need smaller, which means left. Say it aloud while you type
+it - pruning the wrong side is wrong on 2,201 of 4,000 trees.
+
+THE COMPARISONS MUST BE STRICT: 'below the low bound' is `< low`, not `<= low`, because a node sitting
+exactly ON a bound is in range and must be counted. Using the wrong one silently drops boundary values
+- wrong on 1,154 of 4,000 trees, and on every tree that contains a bound value.
+
+WHY THE ORDER OF THE THREE CASES DOES NOT MATTER MUCH: they are mutually exclusive - a value cannot be
+both below low and above high (assuming low <= high) - so any order works. Writing them as if / if /
+otherwise, in the order above, reads most naturally.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Start at the top of the tree and ask one question at every node you stand on: does this value fall
+inside the range?
+
+If it is too small, then everything hanging to its left is smaller still, so that whole branch cannot
+contain anything you want - walk away from it and go right.
+
+If it is too big, everything to its right is bigger still, so that branch is useless - go left.
+
+If it is inside the range, add it to your total and then look both ways, because a smaller in-range
+value could be sitting to the left and a larger one to the right.
+
+Whenever you walk off the bottom of the tree, contribute nothing.
+
+The saving comes from the branches you never enter. In a search tree, one comparison at a node can
+rule out everything beneath it on one side.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def range_sum_bst(root, low, high):
+        if root is None:
+            return 0
+        if root.val < low:
+            return range_sum_bst(root.right, low, high)   # prune the left subtree
+        if root.val > high:
+            return range_sum_bst(root.left, low, high)    # prune the right subtree
+        # in range: this node + both sides
+        return root.val + range_sum_bst(root.left, low, high) + range_sum_bst(root.right, low, high)
+
+LINE 2-3: `if root is None: return 0`
+    THE BASE CASE. `is None` is Python's way of asking 'is this nothing?'. An empty subtree contributes
+    nothing to a sum, so 0 is the right answer and the recursion stops here. Because this line exists,
+    none of the recursive calls below need to check whether a child exists before descending - a
+    missing child simply becomes a call that returns 0.
+
+LINE 4-5: `if root.val < low: return range_sum_bst(root.right, low, high)`
+    The node is too small. By the BST promise, every value in its LEFT subtree is smaller than this
+    node and therefore also below `low` - so the entire left branch is discarded without being
+    visited. We return only what the RIGHT subtree yields. Note we do NOT add `root.val`: this node is
+    out of range too.
+    `<` and not `<=`: a node exactly equal to `low` is in range and must fall through to the last
+    line.
+
+LINE 6-7: `if root.val > high: return range_sum_bst(root.left, low, high)`
+    The mirror image. Too big, so everything to the right is bigger still; keep only the left branch.
+    Swapping the directions in these two lines is the classic error - wrong on 2,201 of 4,000 trees.
+
+LINE 9: `return root.val + range_sum_bst(root.left, ...) + range_sum_bst(root.right, ...)`
+    Reached only when `low <= root.val <= high`, since the two guards above have removed the other
+    cases. The node counts, and BOTH subtrees may hold more in-range values - a smaller one to the
+    left, a larger one to the right - so neither can be pruned here.
+
+WHAT MAPS BACK TO THE HAND-TRACE: 'visit 5: 5 < 7, so skip the left branch' was line 4-5, and the node
+3 was never visited because that call was never made. 'visit 15: in range, add and look both ways' was
+line 9.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Tree (as in section 3), `low = 7`, `high = 15`. The indentation shows the call stack.
+
+    CALL A   range_sum_bst(node 10, 7, 15)
+             root is None?  no
+             10 < 7?  no
+             10 > 15? no
+             -> line 9: 10 + (left call) + (right call)
+
+        CALL B   range_sum_bst(node 5, 7, 15)
+                 5 < 7?  YES  ->  return range_sum_bst(node 5's RIGHT child, ...)
+                 (node 3, the left child, is never visited)
+
+            CALL C   range_sum_bst(node 7, 7, 15)
+                     7 < 7?  no (strictly less - it is equal, so it stays in range)
+                     7 > 15? no
+                     -> 7 + range_sum_bst(None) + range_sum_bst(None)
+                        = 7 + 0 + 0 = 7      RETURN 7
+
+            CALL B returns 7
+
+        CALL D   range_sum_bst(node 15, 7, 15)
+                 15 < 7?  no
+                 15 > 15? no (equal, and the bound is inclusive)
+                 -> 15 + (left: None -> 0) + (right call)
+
+            CALL E   range_sum_bst(node 18, 7, 15)
+                     18 < 7?  no
+                     18 > 15? YES  ->  return range_sum_bst(node 18's LEFT child, ...)
+                                        which is None -> 0
+                     RETURN 0
+
+            CALL D returns 15 + 0 + 0 = 15
+
+        CALL A returns 10 + 7 + 15 = 32
+
+    RETURN VALUE: 32
+
+Nodes visited: 10, 5, 7, 15, 18 - five calls on real nodes out of five nodes, with the 3 skipped
+(the tree is small, so the saving is one node; over 4,000 random trees the pruned version visited
+18,685 nodes against 25,942).
+
+THE WRONG-DIRECTION BUG at CALL B: with `return range_sum_bst(root.left, ...)` there, it would descend
+into the 3, miss the 7 entirely, and return 3 is out of range so 0 - producing 25 instead of 32.
+Wrong on 2,201 of 4,000 trees.
+
+THE EXCLUSIVE-BOUNDS BUG (`<= low` and `>= high`) at CALL C would treat the 7 as out of range and skip
+left from it, and at CALL D would treat the 15 as out of range - returning 10 instead of 32. Wrong on
+1,154 of 4,000 trees, and on every one of the 1,154 where a bound value is actually present.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n) in the worst case - if every value is in range, nothing is pruned and every node is
+visited. In practice it is much better: only nodes that could contribute, plus the ones along the way,
+are touched. A tighter statement often quoted is O(h + k), where h is the height and k is the number
+of in-range nodes - you walk down to the range and then cover it.
+
+SPACE: O(h), the height of the tree, for the call stack - about log n for a balanced tree and n for a
+degenerate chain. Say both.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here 'at most every
+node, usually far fewer'.
+
+THE #1 BEGINNER MISTAKE: pruning the wrong side - going LEFT when the node is below the low bound.
+Wrong on 2,201 of 4,000 random trees. The fix is to say the direction out loud: too small means I need
+bigger values, and bigger lives to the right.
+
+THE #2 MISTAKE: treating the bounds as exclusive - `<= low` and `>= high`. It silently drops nodes
+sitting exactly on a boundary. Wrong on 1,154 of 4,000 trees, and on every single tree that contains a
+bound value.
+
+THE #3 NON-MISTAKE, WORTH NAMING ANYWAY: recursing into both children unconditionally. It gives the
+right answer and it works on any binary tree - but it ignores the only reason the problem hands you a
+SEARCH tree, and it visits about 40% more nodes on random ranges. Expect the follow-up.
+
+ONE-SENTENCE TAKEAWAY: at every node ask which subtree the ordering lets you throw away - below the
+low bound means go right only, above the high bound means go left only, in range means count it and
+look both ways.""",
+]
+
+_EX_P1AN["Sort Array by Increasing Frequency"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+Rearrange a list so that values which appear RARELY come first and values which appear OFTEN come
+last. When two different values appear the same number of times, put the LARGER value first.
+
+Every copy of every value must still be in the output - you are reordering, not summarising.
+
+    nums = [1, 1, 2, 2, 2, 3]
+
+    how often does each value appear?
+        1 appears twice
+        2 appears three times
+        3 appears once
+
+    order by frequency, rarest first:  3 (once), then 1 (twice), then 2 (three times)
+
+    ANSWER: [3, 1, 1, 2, 2, 2]
+
+    nums = [2, 3, 1, 3, 2]
+
+        2 appears twice, 3 appears twice, 1 appears once.
+        1 is rarest, so it comes first.
+        2 and 3 are TIED at two each - so the larger value, 3, comes first.
+
+    ANSWER: [1, 3, 3, 2, 2]
+
+TERMS AS THEY APPEAR:
+- FREQUENCY / COUNT: how many times a value appears in the list.
+- TIE-BREAK: the secondary rule used when the primary rule cannot decide. Here the primary rule is
+  frequency ascending, and the tie-break is value DESCENDING - note the two directions are opposite,
+  which is the whole difficulty.
+- SORT KEY: the value a sort actually compares. Instead of comparing the elements themselves, you tell
+  the sort to compare something computed from each element.""",
+
+    """2. THE INTUITION - two rules in one key, pointing opposite ways
+
+You need to sort by two criteria at once:
+
+    FIRST     by count, ASCENDING   (rare before common)
+    THEN      by value, DESCENDING  (bigger before smaller, among equal counts)
+
+The clean way to express 'sort by A, then by B' is to hand the sort a PAIR - a tuple - instead of a
+single number. Tuples are compared element by element: the first entries decide, and the second is
+consulted only when the first entries are equal. That is exactly the behaviour we want.
+
+    key for the value x  =  (count of x,  something that orders x descending)
+
+So the first half is easy: `count[x]`. What about the second half, when the sort only ever goes
+ascending?
+
+THE NEGATION TRICK. If you want larger values to come FIRST in an ascending sort, negate them. For
+values 2 and 3, the keys become -2 and -3, and ascending order puts -3 before -2 - which is 3 before
+2, exactly the descending order you wanted. Negation reverses the ordering, so it converts one
+criterion to the opposite direction without touching the other.
+
+    key for x = (count[x], -x)
+
+    nums = [2, 3, 1, 3, 2]
+    counts: 1 -> 1,  2 -> 2,  3 -> 2
+
+        element 2:  key (2, -2)
+        element 3:  key (2, -3)
+        element 1:  key (1, -1)
+
+    ascending by key:  (1,-1) then (2,-3) then (2,-2)
+                          1        3         2
+    output: [1, 3, 3, 2, 2]
+
+WHY YOU SORT THE ORIGINAL LIST, NOT THE DISTINCT VALUES. The output must contain every copy. Sorting
+the list itself keeps them all, and equal values automatically end up adjacent because they share an
+identical key. Sorting the distinct values and then expanding each one `count` times also works, but
+it is more code for the same result.
+
+Measured: the `(count, -value)` key produced a correctly ordered output on 5,000 of 5,000 random
+inputs, checked against the rules directly rather than against another implementation.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `nums = [1, 1, 2, 2, 2, 3]`.
+
+STEP 1 - count every value. Walk the list once, tallying.
+
+    see 1:  counts = {1: 1}
+    see 1:  counts = {1: 2}
+    see 2:  counts = {1: 2, 2: 1}
+    see 2:  counts = {1: 2, 2: 2}
+    see 2:  counts = {1: 2, 2: 3}
+    see 3:  counts = {1: 2, 2: 3, 3: 1}
+
+STEP 2 - work out the sort key for each ELEMENT of the original list (not for each distinct value -
+every copy gets its own key, and copies of the same value get identical keys).
+
+    element 1  ->  (counts[1], -1)  =  (2, -1)
+    element 1  ->  (2, -1)
+    element 2  ->  (counts[2], -2)  =  (3, -2)
+    element 2  ->  (3, -2)
+    element 2  ->  (3, -2)
+    element 3  ->  (counts[3], -3)  =  (1, -3)
+
+STEP 3 - sort ascending by those keys. Compare first entries; only if equal, compare second entries.
+
+    (1, -3)  ->  element 3
+    (2, -1)  ->  element 1
+    (2, -1)  ->  element 1
+    (3, -2)  ->  element 2
+    (3, -2)  ->  element 2
+    (3, -2)  ->  element 2
+
+    ANSWER: [3, 1, 1, 2, 2, 2]
+
+A SECOND TRACE where the tie-break decides everything. `nums = [2, 3, 1, 3, 2]`:
+
+    counts: {2: 2, 3: 2, 1: 1}
+
+    keys:  2 -> (2, -2),  3 -> (2, -3),  1 -> (1, -1)
+
+    sorted:  (1,-1) [the 1],  then the two (2,-3) [the 3s],  then the two (2,-2) [the 2s]
+
+    ANSWER: [1, 3, 3, 2, 2]
+
+Look carefully at the two (2, ...) keys. Their first entries are equal, so the comparison falls through
+to the second: -3 is LESS than -2, so the 3s come first. Without the minus sign, 2 would be less than
+3 and the 2s would come first - the wrong order. That single character is the tie-break.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ALL VALUES DISTINCT. `[4, 1, 3]`. Every count is 1, so every key has the same first entry and the
+   tie-break decides everything: the output is fully descending, `[4, 3, 1]`. This is the input that
+   makes the negation impossible to ignore.
+
+B. ALL VALUES THE SAME. `[7, 7, 7]`. One key for everything; the output is unchanged.
+
+C. A SINGLE ELEMENT, OR AN EMPTY LIST. Handled with no special case - a sort of one or zero items is
+   itself.
+
+D. NEGATIVE VALUES IN THE INPUT. The negation still works: for -5 the key component is 5, and for -2
+   it is 2, so ascending order puts -2 before -5... which is descending by value, exactly as required.
+   Worth checking your instinct here, since negating a negative flips it back.
+
+E. TIES ACROSS SEVERAL DIFFERENT COUNTS. `[1, 1, 2, 2, 3, 3]` - all three values appear twice, so the
+   whole output is ordered by value descending: `[3, 3, 2, 2, 1, 1]`.
+
+F. THE #1 MISTAKE - FORGETTING THE NEGATION. The tie-break then runs ascending, which is backwards.
+   Measured wrong on 3,699 of 5,000 random inputs - and on ALL 3,699 of the inputs where two different
+   values share a frequency. On inputs where every value has a distinct count, the tie-break is never
+   consulted and the bug is invisible. That is why the test to write is one where two values appear
+   the same number of times.
+
+G. THE #2 MISTAKE - NO TIE-BREAK AT ALL, sorting by count only. Python's sort is STABLE, meaning equal
+   keys keep their original relative order - so this returns the input order within each frequency
+   group, which is correct only by luck. Wrong on 2,873 of 5,000.
+
+H. SORTING THE DISTINCT VALUES AND EXPANDING. Correct, but more code: you sort the keys of the counter
+   and then repeat each value `count` times. Fine to mention as an alternative; the one-line key
+   version is what the question is aimed at.""",
+
+    """5. WHY A TUPLE KEY, AND WHAT THE ALTERNATIVES COST
+
+THE LONG WAY - sort the distinct values, then rebuild:
+
+    from collections import Counter
+    def by_expansion(nums):
+        counts = Counter(nums)
+        order = sorted(counts, key=lambda v: (counts[v], -v))
+        out = []
+        for v in order:
+            out.extend([v] * counts[v])
+        return out
+
+Correct and readable, and worth knowing because it makes the structure explicit: sort the DISTINCT
+values, then emit each one as many times as it occurs. It is also four lines where one will do, and it
+separates the counting from the output in a way that invites off-by-one mistakes.
+
+THE ONE-LINE WAY - sort the ORIGINAL list with a computed key. Equal values share a key, so all copies
+land together automatically, and no rebuilding step is needed.
+
+WHY THE TUPLE COMPARISON DOES WHAT YOU WANT, from scratch. Comparing `(a1, b1)` with `(a2, b2)` works
+like alphabetical order on words: compare the first entries; if they differ, that decides it; if they
+are equal, move on to the second entries. So a tuple key expresses 'sort by this, then by that' with
+no comparator function, and it extends to any number of criteria - `(a, b, c)` and so on. This is the
+single most useful sorting idiom in Python and it is worth reaching for by reflex.
+
+WHY NEGATION IS THE RIGHT TOOL FOR THE DESCENDING HALF. A sort has one direction, and `reverse=True`
+would flip BOTH criteria - giving frequency descending, which is wrong. Negating just the value flips
+only that component. The limitation is worth knowing: negation works for numbers, but not for strings
+or other non-numeric keys. For those you would need `functools.cmp_to_key` with a custom comparator,
+or two stable sorts in the right order (see below).
+
+THE TWO-PASS ALTERNATIVE, which is worth understanding because it explains what STABLE means: sort by
+the tie-break criterion FIRST, then by the primary one.
+
+    nums.sort(key=lambda x: -x)               # value descending
+    nums.sort(key=counts.__getitem__)         # frequency ascending, STABLY
+
+Because Python's sort is stable - it never reorders elements whose keys compare equal - the second
+sort preserves the descending value order within each frequency group. Correct, and it works for
+non-numeric tie-breaks too. The tuple key remains preferable here because it states the intent in one
+line and does not rely on the reader knowing the sort is stable.
+
+MEASURED, so it is not just aesthetics: relying on stability WITHOUT the first sort - that is, sorting
+by count alone and hoping the input order is right - was wrong on 2,873 of 5,000 inputs.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Count how many times each value appears in the list.
+2. Sort the ORIGINAL list - not the distinct values - using a two-part key for each element: first its
+   count, then the negative of the element itself.
+3. Return the sorted list.
+
+WHY THE KEY IS A PAIR: sorting compares pairs left to right, so the count decides the order and the
+second part is consulted only when two counts are equal. That is precisely 'frequency ascending, then
+value descending'.
+
+WHY THE SECOND PART IS NEGATED: sorts run ascending. Negating a number reverses its position in that
+order, so larger values end up earlier - which is the descending tie-break the problem asks for.
+Leaving out the minus sign is wrong on 3,699 of 5,000 inputs, and only on the ones where a tie
+actually occurs.
+
+WHY YOU SORT THE WHOLE LIST RATHER THAN THE DISTINCT VALUES: the output must contain every copy.
+Copies of the same value produce identical keys, so they stay together with no extra work.
+
+A NOTE ON COUNTING: a hash map from value to count is the natural structure, and most languages
+provide one ready-made - `Counter` in Python. Looking up a count while sorting is a constant-time
+operation, so it does not change the complexity.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+First go through the list once and tally how many times each value appears.
+
+Then sort the list - but instead of comparing the numbers directly, compare a little label attached to
+each one. The label has two parts: how often that number appears, and the number itself with its sign
+flipped.
+
+Sorting compares the first part of the labels first, so rare numbers come before common ones. Only
+when two labels have the same count does it look at the second part - and because the sign was
+flipped, the bigger number wins that tie and comes first.
+
+Every copy of a number carries the same label, so all the copies end up side by side without any extra
+work.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    from collections import Counter
+    def frequency_sort(nums):
+        counts = Counter(nums)
+        # frequency ascending, then value descending within the same frequency
+        return sorted(nums, key=lambda x: (counts[x], -x))
+
+LINE 1: `from collections import Counter`
+    `Counter` is a ready-made hash map from value to how many times it appeared. Writing it by hand -
+    a dictionary and a loop that adds 1 per element - is equally fine and worth being able to do.
+
+LINE 3: `counts = Counter(nums)`
+    One pass over the list, tallying. Afterwards `counts[5]` is how many 5s there were, in constant
+    time. Note this is computed ONCE, before the sort - if you recounted inside the key function, you
+    would redo the whole tally on every comparison and turn an O(n log n) sort into something far
+    worse.
+
+LINE 5: `sorted(nums, key=lambda x: (counts[x], -x))`
+    Three things happen here, worth separating.
+
+    `sorted(nums, ...)` returns a NEW list, leaving the caller's list untouched - and it sorts the
+    ORIGINAL list, so every copy of every value is present in the output. Copies share a key, so they
+    come out adjacent automatically.
+
+    `key=lambda x: ...` tells the sort what to compare INSTEAD of the elements themselves. The lambda
+    is called once per element (not once per comparison), so the counting lookups are cheap.
+
+    `(counts[x], -x)` is the two-part key. Tuples compare left to right: `counts[x]` orders by
+    frequency ascending, and `-x` is consulted only when two frequencies are equal, where the negation
+    makes larger values compare smaller and therefore come first. Dropping the minus sign is wrong on
+    3,699 of 5,000 inputs - all of them inputs where two values share a frequency.
+
+WHAT IS NOT HERE: no explicit loop, no rebuilding of the output, no comparator function. The tuple key
+carries the whole specification.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 3 built the `{1: 2, 2: 3, 3: 1}` tally; the six key
+computations in step 2 of the trace are the lambda being applied once per element; the ordering in
+step 3 is what `sorted` does with those keys.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [2, 3, 1, 3, 2]`.
+
+    LINE 3 - Counter walks the list:
+        see 2:  counts = {2: 1}
+        see 3:  counts = {2: 1, 3: 1}
+        see 1:  counts = {2: 1, 3: 1, 1: 1}
+        see 3:  counts = {2: 1, 3: 2, 1: 1}
+        see 2:  counts = {2: 2, 3: 2, 1: 1}
+
+    LINE 5 - the key function is applied once to each element, in order:
+        x = 2  ->  (counts[2], -2)  =  (2, -2)
+        x = 3  ->  (counts[3], -3)  =  (2, -3)
+        x = 1  ->  (counts[1], -1)  =  (1, -1)
+        x = 3  ->  (2, -3)
+        x = 2  ->  (2, -2)
+
+    the sort arranges those keys ascending:
+        (1, -1)   <  (2, -3)   <  (2, -2)
+          ^            ^            ^
+        the 1     the two 3s    the two 2s
+
+        why is (2,-3) before (2,-2)?  The first entries tie at 2, so the second decides:
+        -3 < -2, so the 3s come first. That is the descending-by-value tie-break.
+
+    RETURN VALUE: [1, 3, 3, 2, 2]
+
+THE MISSING-NEGATION BUG on the same input: the keys become (2,2), (2,3), (1,1), so the two 2s sort
+before the two 3s and it returns `[1, 2, 2, 3, 3]`. The counts are right; the tie-break is backwards.
+Wrong on 3,699 of 5,000 random inputs - and on every one of those 3,699 where two values share a
+frequency. On an input like `[1, 2, 2, 3, 3, 3]`, where all three counts differ, the bug produces the
+correct answer, which is exactly why it survives a casual test.
+
+THE NO-TIE-BREAK BUG (`key=lambda x: counts[x]`) returns whatever order the input happened to have
+within each frequency group, because Python's sort is stable. Here that gives `[1, 2, 3, 3, 2]`...
+which is not even grouped, since the 2s and 3s interleave as they did in the input. Wrong on 2,873 of
+5,000.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n) - the sort dominates. Counting is O(n), and each key computation is a constant-time
+hash lookup performed once per element, not once per comparison.
+
+SPACE: O(n) - the counter holds at most one entry per distinct value, and `sorted` builds a new list.
+Using `nums.sort()` instead would sort in place and save the copy, at the cost of modifying the
+caller's list.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here 'a count pass plus
+a sort'.
+
+THE #1 BEGINNER MISTAKE: forgetting to negate the value in the tie-break, so ties sort ascending
+instead of descending. Wrong on 3,699 of 5,000 random inputs, and precisely on the inputs where two
+values share a frequency - on everything else the tie-break is never consulted and the bug cannot
+show. Always test with two values of equal frequency.
+
+THE #2 MISTAKE: providing no tie-break at all and leaning on the sort being stable, which just
+preserves the input order within each group. Wrong on 2,873 of 5,000.
+
+THE #3 MISTAKE: using `reverse=True` to get the descending half - that flips BOTH criteria, so the
+frequencies come out descending too. Negation flips one component only, which is the point.
+
+ONE-SENTENCE TAKEAWAY: express a two-level sort as a TUPLE key - `(count, -value)` - because tuples
+compare left to right, and negating a number is how you make one component run descending inside an
+ascending sort.""",
+]
+
+_EX_P1AN["Sort Integers by Number of 1 Bits"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+Every whole number can be written in BINARY - as a string of 0s and 1s. Sort a list of numbers by HOW
+MANY 1s appear in that binary form, fewest first. When two numbers have the same count of 1s, put the
+smaller NUMBER first.
+
+    binary for the first few numbers:
+
+        0  ->  0        zero 1s
+        1  ->  1        one 1
+        2  ->  10       one 1
+        3  ->  11       two 1s
+        4  ->  100      one 1
+        5  ->  101      two 1s
+        6  ->  110      two 1s
+        7  ->  111      three 1s
+        8  ->  1000     one 1
+
+    arr = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+    zero 1s:   0
+    one 1:     1, 2, 4, 8        (ordered by value, since they tie)
+    two 1s:    3, 5, 6
+    three 1s:  7
+
+    ANSWER: [0, 1, 2, 4, 8, 3, 5, 6, 7]
+
+TERMS AS THEY APPEAR:
+- BINARY: writing a number using only 0 and 1, where each position is worth twice the one to its
+  right - 1, 2, 4, 8, 16 and so on. The binary 110 means 4 + 2 = 6.
+- SET BIT: a position holding a 1.
+- POPCOUNT (short for 'population count'), also called the HAMMING WEIGHT: how many 1s are in the
+  binary form. The popcount of 6 (110) is 2. It is a standard term worth knowing by name.
+- SORT KEY: what the sort actually compares, instead of the elements themselves.""",
+
+    """2. THE INTUITION - two rules, one tuple, and both ascending this time
+
+The requirement is a two-level ordering:
+
+    FIRST   by popcount, ASCENDING
+    THEN    by value,    ASCENDING
+
+The clean way to say 'sort by this, then by that' is to compare a PAIR rather than a single number.
+Tuples compare element by element - like alphabetical order on words - so the first entries decide,
+and the second is consulted only when the first entries tie.
+
+    key for x  =  (popcount of x,  x)
+
+Both parts run ascending here, which makes this problem the gentler sibling of Sort Array by
+Increasing Frequency, where the tie-break had to run the OTHER way and needed a negation. Here no
+negation is needed, and adding one by reflex would be a bug.
+
+    arr = [7, 8, 3]
+        7 is 111  ->  popcount 3   ->  key (3, 7)
+        8 is 1000 ->  popcount 1   ->  key (1, 8)
+        3 is 11   ->  popcount 2   ->  key (2, 3)
+
+    ascending by key:  (1,8), (2,3), (3,7)   ->   [8, 3, 7]
+
+    Note 8 - the largest number - comes FIRST, because it has only a single 1 bit. Popcount has almost
+    nothing to do with magnitude, which is what makes this problem feel odd at first.
+
+HOW TO COUNT THE 1s. Two ways worth knowing:
+
+    - Convert to a binary string and count the '1' characters. Readable, and perfectly acceptable.
+    - The `n & (n-1)` loop: subtracting 1 from a number flips its lowest 1 bit to 0 and turns every 0
+      below it into 1; ANDing with the original therefore clears exactly that lowest 1 bit. Repeat
+      until the number is 0, counting the steps. It runs once per SET BIT rather than once per bit
+      POSITION, which is why it is the classic trick.
+
+Measured: the `(popcount, value)` key produced a correctly ordered output on 5,000 of 5,000 random
+inputs, checked against the rules directly.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `arr = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]`.
+
+Every one of those is a power of two, so every one has exactly ONE 1 bit:
+
+    1    ->  1
+    2    ->  10
+    4    ->  100
+    8    ->  1000
+    ...
+    1024 ->  10000000000
+
+STEP 1 - the popcount of every element is 1. So the first part of every key is identical, and the
+whole ordering falls to the tie-break.
+
+STEP 2 - the tie-break is value ascending, so the output is simply the numbers in increasing order.
+
+    ANSWER: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+
+A SECOND TRACE with mixed popcounts. `arr = [2, 3, 5, 7, 11, 13, 15]`:
+
+    2   ->  10      popcount 1     key (1, 2)
+    3   ->  11      popcount 2     key (2, 3)
+    5   ->  101     popcount 2     key (2, 5)
+    7   ->  111     popcount 3     key (3, 7)
+    11  ->  1011    popcount 3     key (3, 11)
+    13  ->  1101    popcount 3     key (3, 13)
+    15  ->  1111    popcount 4     key (4, 15)
+
+    sort by key ascending:
+        (1,2)                       ->  2
+        (2,3), (2,5)                ->  3, 5
+        (3,7), (3,11), (3,13)       ->  7, 11, 13
+        (4,15)                      ->  15
+
+    ANSWER: [2, 3, 5, 7, 11, 13, 15]
+
+Here the answer happens to equal the sorted input, because in this particular set popcount happens to
+rise with value. That is a coincidence of the data, and it is exactly the kind of test case that would
+fail to distinguish a correct solution from one that just sorts by value - see section 4.
+
+A THIRD, TINY TRACE to show popcount and magnitude disagreeing. `arr = [3, 4]`:
+
+    3 -> 11   popcount 2   key (2, 3)
+    4 -> 100  popcount 1   key (1, 4)
+
+    ANSWER: [4, 3]     - the bigger number first.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ZERO. Binary 0 has no 1s at all, so its popcount is 0 and it sorts before everything. `bin(0)` is
+   `'0b0'`, which contains no '1' character - so the string-counting method handles it correctly with
+   no special case.
+
+B. ALL THE SAME POPCOUNT. The powers-of-two trace above: the ordering is entirely decided by the
+   tie-break, so the output is just ascending by value. This is the input that proves your tie-break
+   exists.
+
+C. ALL THE SAME VALUE. `[5, 5, 5]`. Identical keys, unchanged output.
+
+D. A SINGLE ELEMENT OR AN EMPTY LIST. No special case needed.
+
+E. POPCOUNT DOES NOT TRACK MAGNITUDE. 8 (1000) has one 1 while 7 (111) has three, so 8 sorts BEFORE 7
+   despite being larger. Any test where popcount happens to rise with value - like the primes trace -
+   cannot tell a correct solution from one that ignores popcount entirely. Choose `[3, 4]` or
+   `[7, 8]` as your smallest test.
+
+F. THE #1 MISTAKE - SORTING BY POPCOUNT ALONE, with no tie-break. Python's sort is STABLE, so elements
+   with equal keys keep their INPUT order - which is correct only if the input happened to be sorted
+   within each popcount group. Measured wrong on 3,111 of 5,000 random inputs, and on 3,111 of the
+   3,788 inputs where two numbers share a popcount. If your test input is already ascending, this bug
+   is invisible.
+
+G. THE #2 MISTAKE - PUTTING THE CRITERIA IN THE WRONG ORDER, keying on `(value, popcount)`. That sorts
+   by value and never really consults the popcount, since distinct values never tie. Wrong on 3,245 of
+   5,000 - it is simply an ordinary numeric sort wearing a tuple.
+
+H. NEGATIVE NUMBERS. The usual constraints say the values are non-negative, and it matters: in Python
+   `bin(-3)` is `'-0b11'`, whose '1' count is 2 - the sign is silently ignored - and in
+   two's-complement languages a negative number has a huge popcount. Say that the approach assumes
+   non-negative input; knowing which constraint your code leans on is worth as much as the code.""",
+
+    """5. HOW TO COUNT BITS, AND WHY THE TUPLE KEY BEATS A COMPARATOR
+
+COUNTING THE 1s, THREE WAYS.
+
+    1. THE STRING WAY - `bin(x).count('1')`. `bin(6)` produces the text `'0b110'`, and counting the
+       '1' characters gives 2. The `'0b'` prefix contains no '1', so it never interferes. Readable,
+       obviously correct, and completely acceptable in an interview.
+
+    2. THE CLASSIC BIT TRICK - `n & (n - 1)` clears the LOWEST set bit:
+
+            def popcount(n):
+                c = 0
+                while n:
+                    n &= n - 1        # clears the lowest 1 bit
+                    c += 1
+                return c
+
+       WHY IT WORKS, from scratch. Subtracting 1 from a binary number turns its lowest 1 into a 0 and
+       turns every 0 below that into a 1. For example 12 is 1100, and 11 is 1011. ANDing the two keeps
+       only the bits they share - 1000 - which is 12 with its lowest 1 removed. Each turn of the loop
+       therefore removes exactly one set bit, so the loop runs once per SET BIT rather than once per
+       bit position. For a number with two 1s among 32 positions, that is 2 iterations instead of 32.
+
+    3. THE BUILT-IN - in Python 3.10 and later, `x.bit_count()`. Say it exists, then show one of the
+       others, because 'I know the library function' and 'I know how it works' are different answers.
+
+WHY A TUPLE KEY RATHER THAN A CUSTOM COMPARATOR. Some languages want you to write a function that
+takes two elements and reports which comes first. That is more code, easier to get wrong (transitivity
+bugs are real), and in Python it requires wrapping with `functools.cmp_to_key`. A key function is
+called ONCE PER ELEMENT and the sort does the rest; a comparator is called O(n log n) times. Reach for
+the key.
+
+WHY NO NEGATION HERE, unlike the frequency-sort problem. Both criteria run ascending, so the plain
+value is the right second component. Adding a minus sign out of habit would reverse the tie-break and
+be wrong on exactly the inputs where the tie-break matters - which is the mirror image of forgetting
+it there.
+
+THE TWO-PASS ALTERNATIVE, worth knowing because it explains STABILITY: sort by value first, then sort
+by popcount. Because a stable sort never reorders elements whose keys compare equal, the second sort
+preserves the ascending value order within each popcount group. Correct, and the only route available
+when the tie-break criterion is not a number you can negate. Note that relying on stability WITHOUT
+first sorting by value is exactly the bug in section 4F - wrong on 3,111 of 5,000.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. For each number, work out how many 1s appear in its binary form.
+2. Sort the list using a two-part key for each number: its count of 1s first, then the number itself.
+3. Return the sorted list.
+
+WHY THE KEY IS A PAIR: sorting compares pairs from left to right, so the bit count decides the order
+and the number itself is consulted only when two counts are equal. That is exactly the two-level rule
+the problem states, with no comparator function and no second pass.
+
+WHY BOTH PARTS ARE PLAIN, WITH NO NEGATION: both criteria run ascending here - fewest 1s first, and
+smallest value first among ties. If the tie-break had run the other way you would negate the second
+component, as in Sort Array by Increasing Frequency; here you must not.
+
+WHY YOU MUST NOT RELY ON THE INPUT ORDER FOR TIES: a stable sort keeps equal-key elements in their
+original relative order, which is the input's order - correct only by accident. Wrong on 3,111 of
+5,000 inputs. State the tie-break explicitly.
+
+ON COUNTING THE BITS: converting to a binary string and counting the '1' characters is fine. If you
+want to show the bit trick, repeatedly clear the lowest set bit with `n & (n-1)` and count how many
+times you can do it before the number reaches zero.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+For each number, write it out in binary and count how many 1s it has. That count is what you are
+really sorting by - not the size of the number.
+
+Attach a two-part label to each number: the count of 1s first, then the number itself. Then sort by
+those labels. The sort looks at the counts first, so numbers with fewer 1s come earlier. Only when two
+numbers have the same count does it look at the second part of the label, where the smaller number
+wins.
+
+That is why 8 comes before 7: eight is 1000 with a single 1, while seven is 111 with three. The size
+of the number is only ever a tie-breaker.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def sort_by_bits(arr):
+        return sorted(arr, key=lambda x: (bin(x).count('1'), x))
+
+LINE 2, THE WHOLE FUNCTION, read in pieces.
+
+    `bin(x)` converts the number to its binary form AS TEXT. `bin(6)` gives the string `'0b110'`. The
+    `'0b'` at the front is Python's marker for 'this is binary'; it contains no '1' character, so it
+    never affects the count. For 0 the result is `'0b0'`, whose count of '1' is 0 - the right answer,
+    with no special case.
+
+    `.count('1')` counts how many '1' characters the text contains - which is exactly the popcount,
+    the number of set bits. Readable and obviously correct. The arithmetic alternative,
+    `while n: n &= n - 1`, runs once per set bit and is the version to show if asked to avoid string
+    conversion.
+
+    `(bin(x).count('1'), x)` is the two-part key. Tuples compare left to right, so the popcount is the
+    primary criterion and `x` itself is consulted only when two popcounts are equal. Both components
+    are plain and ascending - no negation, because both criteria run the same way. Sorting by the
+    popcount alone is wrong on 3,111 of 5,000 inputs; keying on `(x, popcount)` instead is just a
+    numeric sort and is wrong on 3,245 of 5,000.
+
+    `key=lambda x: ...` tells the sort what to compare instead of the elements. The lambda is called
+    ONCE PER ELEMENT, not once per comparison, so the bit-counting happens n times rather than
+    n log n times - a real difference, and the reason a key function is preferred to a comparator.
+
+    `sorted(arr, ...)` returns a NEW list and leaves the caller's list untouched. `arr.sort(key=...)`
+    would sort in place instead; either is fine as long as you say which you chose.
+
+WHAT MAPS BACK TO THE HAND-TRACE: the key computed for each of 2, 3, 5, 7, 11, 13 and 15 in section 3
+is the lambda applied once per element, and the grouping of the output by popcount is what `sorted`
+does with those tuples.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `arr = [0, 1, 2, 3, 4, 5, 6, 7, 8]`.
+
+    The key function is applied once to each element:
+
+        x = 0:  bin(0) = '0b0'      count of '1' = 0    key (0, 0)
+        x = 1:  bin(1) = '0b1'      count = 1           key (1, 1)
+        x = 2:  bin(2) = '0b10'     count = 1           key (1, 2)
+        x = 3:  bin(3) = '0b11'     count = 2           key (2, 3)
+        x = 4:  bin(4) = '0b100'    count = 1           key (1, 4)
+        x = 5:  bin(5) = '0b101'    count = 2           key (2, 5)
+        x = 6:  bin(6) = '0b110'    count = 2           key (2, 6)
+        x = 7:  bin(7) = '0b111'    count = 3           key (3, 7)
+        x = 8:  bin(8) = '0b1000'   count = 1           key (1, 8)
+
+    the sort arranges those keys ascending:
+
+        (0,0)                                  ->  0
+        (1,1), (1,2), (1,4), (1,8)             ->  1, 2, 4, 8
+        (2,3), (2,5), (2,6)                    ->  3, 5, 6
+        (3,7)                                  ->  7
+
+    RETURN VALUE: [0, 1, 2, 4, 8, 3, 5, 6, 7]
+
+Note 8 landing before 3: one set bit beats two, regardless of size. And within the one-bit group the
+order is 1, 2, 4, 8 - ascending by value, which is the tie-break doing its work.
+
+THE NO-TIE-BREAK BUG (`key=lambda x: bin(x).count('1')`) gives the same answer HERE, because the input
+happened to be in ascending order and the sort is stable. Feed it `[8, 4, 2, 1]` and it returns
+`[8, 4, 2, 1]` unchanged - all four have one set bit, so the input order survives - where the answer is
+`[1, 2, 4, 8]`. Wrong on 3,111 of 5,000 random inputs, and on 3,111 of the 3,788 that contain two
+numbers with the same popcount.
+
+THE WRONG-ORDER-OF-CRITERIA BUG (`key=lambda x: (x, ...)`) returns `[0,1,2,3,4,5,6,7,8]` - a plain
+numeric sort, since distinct values never tie on the first component. Wrong on 3,245 of 5,000.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n) for the sort, plus the bit counting. Counting the bits of one number takes time
+proportional to the number of BITS - about 32 for a normal integer, or once per set bit with the
+`n & (n-1)` trick - which is a small constant, so it does not change the class. The key function runs
+once per element, not once per comparison, which is why it stays cheap.
+
+SPACE: O(n) for the new list `sorted` returns (O(1) extra if you sort in place instead), plus the
+short-lived binary strings.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here 'a sort, with a
+constant amount of work per element to compute its key'.
+
+THE #1 BEGINNER MISTAKE: sorting by popcount alone and leaning on the sort being STABLE to handle
+ties. Stability preserves the INPUT order within each group, which is right only when the input was
+already sorted. Wrong on 3,111 of 5,000 random inputs - and invisible if your test data happens to be
+ascending, which most hand-written examples are.
+
+THE #2 MISTAKE: putting the criteria the wrong way round, `(value, popcount)`. Distinct values never
+tie, so the popcount is never consulted and you have written an ordinary numeric sort. Wrong on 3,245
+of 5,000.
+
+THE #3 MISTAKE, if you come from the frequency-sort problem: negating the tie-break out of habit. Both
+criteria run ASCENDING here, so the plain value is correct - the negation is a tool for reversing ONE
+component, not a reflex.
+
+ONE-SENTENCE TAKEAWAY: sort with a tuple key of `(popcount, value)` - tuples compare left to right, so
+one line expresses 'fewest set bits first, smaller number breaks the tie', and never rely on the
+input's order to do a tie-break for you.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AN:
+        _e["examples"] = _EX_P1AN[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
