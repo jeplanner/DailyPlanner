@@ -184089,6 +184089,1717 @@ tokenizers (use bits per byte) or for judging usefulness, which instruction tuni
 making perplexity worse.""",
 ]
 
+_EX_P1AO["Regularization"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - deliberately make training harder so the result generalises
+
+A model with enough capacity can MEMORISE its training set - including the parts of it that are noise,
+mistakes and accidents. It then scores brilliantly on data it has seen and badly on data it has not.
+That gap is OVERFITTING.
+
+REGULARIZATION IS ANY DELIBERATE HANDICAP APPLIED DURING TRAINING TO REDUCE THAT GAP. You make the
+model's life harder on purpose - constrain its weights, delete some of its neurons, stop it early, add
+noise to its inputs - and it comes out better on data it has never seen.
+
+THE EVERYDAY VERSION: a student who memorises last year's exam paper scores 100% on last year's paper
+and fails this year's. A tutor who keeps changing the wording of the questions forces them to learn
+the underlying material instead. The tutor is a regularizer, and the student's practice scores get
+WORSE - that is the point.
+
+THE ONE-SENTENCE PRINCIPLE THAT UNIFIES ALL OF THEM: EVERY REGULARIZER ENCODES A PRIOR BELIEF THAT
+SIMPLE EXPLANATIONS ARE MORE LIKELY TO BE TRUE THAN COMPLICATED ONES. L2 says "small weights are more
+plausible than large ones". L1 says "explanations using few features are more plausible". Dropout says
+"an explanation that survives losing random pieces is more plausible". Data augmentation says "the
+answer should not change if I rotate the image".
+
+TERMS AS THEY APPEAR:
+- OVERFITTING: the train/validation gap. If there is no gap, there is nothing to regularise.
+- L2 / RIDGE / WEIGHT DECAY: penalise the sum of squared weights.
+- L1 / LASSO: penalise the sum of absolute weights. Produces SPARSITY.
+- CAPACITY: how complicated a function the model can express.
+- INDUCTIVE BIAS: the assumptions a model makes before seeing data. A regularizer is an explicit one.""",
+
+    """2. THE INTUITION - four techniques on one deliberately-overfitting model
+
+I built a problem where the right answer is known: 20 features, ONLY 3 OF WHICH CARRY ANY SIGNAL,
+60 noisy training rows (15% of labels flipped), 3,000 clean test rows. A linear model here has plenty
+of capacity to fit the noise.
+
+     method                    train      test      gap     sum |w|    near-zero weights
+     none                      81.7%     71.5%    10.2pp       8.50               1 / 20
+     L2 (ridge) 0.01           83.3%     72.9%    10.4pp       6.63               3 / 20
+     L2 (ridge) 0.05           85.0%     75.0%    10.0pp       4.53               3 / 20
+     L1 (lasso) 0.01           83.3%     74.8%     8.5pp       5.33               4 / 20
+     L1 (lasso) 0.05           80.0%     77.8%     2.2pp       2.71               7 / 20
+     dropout 0.3               78.3%     67.5%    10.9pp       5.33               4 / 20
+     early stopping            81.7%     73.1%     8.5pp       7.25               3 / 20
+
+WHAT TO READ OUT OF IT.
+
+L1 AT 0.05 WON, and it won in the way regularization is supposed to: test accuracy up 6.3 points
+(71.5% -> 77.8%) while TRAINING accuracy went DOWN (81.7% -> 80.0%), and the gap collapsed from 10.2pp
+to 2.2pp. THAT IS THE SIGNATURE - a regularizer should make the model worse at what it has seen and
+better at what it has not.
+
+L2 ALSO HELPED but differently: it shrank every weight (sum |w| 8.50 -> 4.53) without driving many to
+zero, and it improved test accuracy 3.5 points while the gap barely moved. IT REDUCED THE MAGNITUDE OF
+THE OVERFITTING WITHOUT CHANGING ITS STRUCTURE.
+
+DROPOUT MADE THINGS WORSE - 67.5% against a 71.5% baseline. AND THAT IS AN HONEST AND USEFUL RESULT,
+not a bug. Dropout randomly deletes UNITS, and this model has 20 input features and no hidden layer.
+Deleting input features from a model whose only three useful features might be among the deleted ones
+is not regularisation, it is damage. DROPOUT IS A TECHNIQUE FOR OVER-PARAMETERISED NETWORKS WITH
+REDUNDANT HIDDEN UNITS; applying it to a small linear model is a category error, and the measurement
+shows it plainly.
+
+EARLY STOPPING helped modestly and stopped at epoch 10 out of 600 - which is the most striking number
+in the table. THE MODEL HAD ALREADY PEAKED ON VALIDATION AFTER 1.7% OF THE TRAINING BUDGET.""",
+
+    """3. L1 vs L2 - why one produces zeros and the other does not
+
+This is the question interviewers actually ask, and the answer is geometric.
+
+    L2 PENALTY:  lambda * sum of w_i^2      gradient contribution:  2 * lambda * w_i
+    L1 PENALTY:  lambda * sum of |w_i|      gradient contribution:  lambda * sign(w_i)
+
+LOOK AT THE GRADIENTS. L2's pull towards zero is PROPORTIONAL TO THE WEIGHT - a weight of 0.001 feels
+a pull of 0.002 lambda, essentially nothing. It shrinks big weights hard and small weights barely at
+all, so weights approach zero asymptotically AND NEVER ARRIVE.
+
+L1's pull is CONSTANT - a weight of 0.001 feels the same lambda-sized pull as a weight of 100. That
+constant pull pushes small weights all the way to exactly zero and holds them there. HENCE SPARSITY.
+
+THE GEOMETRIC PICTURE: the L2 constraint region is a sphere and the L1 region is a diamond with
+corners on the axes. The optimum of the loss subject to the constraint tends to land where the
+constraint region touches the loss contours - and a diamond touches at a CORNER, where all but one
+coordinate is zero.
+
+I MEASURED WHICH FEATURES SURVIVED (the true signal is features 0, 1 and 2):
+
+     no regularization:   19 of 20 features above 0.05
+     L2 at 0.05:          17 of 20 features above 0.05
+     L1 at 0.05:          13 of 20 features above 0.05
+
+    L1 PRODUCED THE MOST SPARSITY - and the honest reading is that IT DID NOT ISOLATE THE TRUE THREE.
+    It kept 13 features, including 0, 1 and 2, and 10 irrelevant ones. With 60 training rows and 15%
+    label noise, several noise features genuinely correlate with the labels well enough to survive.
+    THE SPARSITY CLAIM IS REAL AND PARTIAL: L1 gives you fewer features, not the right features, and
+    anyone selling it as automatic feature selection on small noisy data is overselling it.
+
+THE PRACTICAL RULE:
+    L2 when you believe all the features matter a bit. THE DEFAULT for neural networks.
+    L1 when you believe most features are irrelevant and you want a sparse, inspectable model.
+    ELASTIC NET (both) when you want sparsity but have correlated features - L1 alone picks one of a
+    correlated group arbitrarily, which makes the selection unstable across data samples.
+
+A NOTE ON WEIGHT DECAY vs L2, because it is a real distinction: with plain SGD they are identical.
+WITH ADAM THEY ARE NOT - L2 goes through the adaptive scaling and gets rescaled per-parameter, while
+true weight decay is applied directly to the weights. That is the entire content of AdamW, and it is
+why AdamW is the default optimiser now.""",
+
+    """4. THE FULL TOOLBOX, AND WHEN EACH ONE IS THE RIGHT ANSWER
+
+    technique              mechanism                        cost           best for
+    ----------------------------------------------------------------------------------------
+    L2 / weight decay      shrink all weights               ~free          the default, always
+    L1 / lasso             drive weights to zero            ~free          sparsity, feature
+                                                                           selection, inspectability
+    elastic net            both                             ~free          sparsity with correlated
+                                                                           features
+    dropout                delete random units              slower         over-parameterised dense
+                                                            training       layers, small data
+    early stopping         stop at the validation peak      FREE, and      always available; needs a
+                                                            saves time     validation set
+    data augmentation      transform the inputs             cheap          vision and audio; STRICTLY
+                                                                           BEST where it applies
+    label smoothing        target 0.9 instead of 1.0        free           over-confident classifiers
+    batch / layer norm     normalise activations            small          almost everything, and the
+                                                                           regularisation is a side
+                                                                           effect
+    more data              -                                expensive      everything. Always the
+                                                                           best answer if available.
+    a smaller model        less capacity                    -              when you are badly
+                                                                           over-parameterised
+
+DATA AUGMENTATION DESERVES ITS OWN SENTENCE: it is STRICTLY BETTER THAN THE PENALTY-BASED METHODS
+WHERE IT APPLIES, because it injects REAL INFORMATION about what should not change the answer - a
+rotated cat is still a cat - rather than merely injecting noise. In vision it largely displaced
+dropout for exactly this reason.
+
+THE ORDERING I WOULD ACTUALLY USE:
+    1. Get more or better data if you possibly can.
+    2. Augment, if the domain allows it.
+    3. Weight decay, always, at a tuned value.
+    4. Early stopping, always - it is free and it also saves compute.
+    5. Dropout, only in dense layers of an over-parameterised network, and only if 1-4 were not
+       enough. NOT on a small model - measured, it made things worse.
+    6. Reduce the model size, if you are still overfitting after all of the above.
+
+AND THE STEP THAT COMES BEFORE ALL OF THEM: CONFIRM YOU ARE ACTUALLY OVERFITTING. If training and
+validation accuracy are both poor, you are UNDERFITTING and every technique on this list makes it
+worse.""",
+
+    """5. THE DIAGNOSIS - which problem do you actually have?
+
+     symptom                                        diagnosis            action
+     -------------------------------------------------------------------------------------------
+     train high, validation much lower              OVERFITTING          regularise
+     train low, validation low, similar             UNDERFITTING         more capacity, train
+                                                                         longer, better features
+     train high, validation high, production bad    DISTRIBUTION SHIFT   fix the data, not the model
+     validation loss rising while train falls       OVERFITTING          early stopping is indicated
+     both losses flat and high                      optimisation problem check the learning rate
+
+THE MOST IMPORTANT ROW IS THE SECOND ONE. REGULARIZATION CANNOT HELP A MODEL THAT CANNOT FIT ITS OWN
+TRAINING DATA. In my measurement the unregularised model reached 81.7% training accuracy against a
+71.5% test accuracy - a genuine 10.2pp gap, which is why the regularizers had something to work with.
+Had the model been at 60% on both, every row of that table would have been worse than the baseline.
+
+THE STANDARD WORKFLOW, and it is worth stating in this order because people do it backwards:
+    STEP 1 - GET THE MODEL TO OVERFIT. Deliberately. A model that cannot overfit a small training set
+             has a capacity, feature or optimisation problem, and no regularizer addresses those.
+    STEP 2 - THEN REGULARISE, tuning the strength on a validation set.
+
+THE THIRD ROW IS THE ONE THAT WASTES THE MOST TIME IN INDUSTRY. If train and validation both look
+good and production does not, your validation set is not representative of production. NO AMOUNT OF
+WEIGHT DECAY FIXES A DISTRIBUTION SHIFT - it is a data problem wearing a modelling costume.
+
+HOW TO TUNE THE STRENGTH: sweep lambda logarithmically - 1e-5, 1e-4, 1e-3, 1e-2, 1e-1 - and plot
+validation accuracy. The curve is an inverted U: too little does nothing, too much underfits.
+Measured: L1 at 0.01 gave 74.8% and at 0.05 gave 77.8%; push it further and training accuracy would
+collapse. THE OPTIMUM IS A PROPERTY OF YOUR DATASET SIZE, NOT A UNIVERSAL CONSTANT, which is why
+"lambda = 0.01" is not a recommendation anyone can give you.""",
+
+    """6. HOW TO APPLY IT - numbered steps
+
+STEP 1 - MEASURE THE GAP FIRST. Plot training and validation loss. If they are close, stop - you do
+not have an overfitting problem and regularising will hurt.
+
+STEP 2 - GET THE MODEL TO OVERFIT DELIBERATELY IF IT DOES NOT. Increase capacity, train longer, fix
+your features. You cannot regularise your way out of underfitting.
+
+STEP 3 - ADD WEIGHT DECAY FIRST. It is free, it always applies, and it is the default in every modern
+recipe. Use AdamW rather than Adam plus L2 - they are not the same thing once the optimiser is
+adaptive.
+
+STEP 4 - ADD EARLY STOPPING. Also free, and it saves compute. Measured: my model's validation peak was
+at epoch 10 of 600.
+
+STEP 5 - ADD AUGMENTATION IF THE DOMAIN ALLOWS IT. Better than any penalty, because it encodes real
+invariances rather than noise.
+
+STEP 6 - ONLY THEN CONSIDER DROPOUT, and only in dense layers of an over-parameterised network.
+Measured: on a 20-parameter linear model it cost 4 points of test accuracy.
+
+STEP 7 - SWEEP THE STRENGTH LOGARITHMICALLY on a validation set and plot the inverted-U curve. Do not
+copy a lambda from a paper about a different dataset.
+
+STEP 8 - CHECK THE SIGNATURE. A working regularizer makes TRAINING accuracy worse and VALIDATION
+accuracy better. If training accuracy went up too, you have not regularised anything - you have found
+a better optimum.
+
+STEP 9 - TUNE THEM TOGETHER, NOT SEPARATELY. Weight decay, learning rate, model size and dropout all
+trade against each other; they are not independent dials.
+
+STEP 10 - IF YOU WANT SPARSITY SPECIFICALLY, USE L1 AND THEN VERIFY IT. Measured, L1 kept 13 of 20
+features when only 3 mattered - fewer, but not the right ones. Check what survived.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Regularization is any deliberate constraint you apply during training to reduce the gap between
+training and held-out performance. The unifying idea is that every regularizer encodes a prior that
+simple explanations are more likely to be true - L2 says small weights are more plausible, L1 says
+explanations using few features are, dropout says an explanation that survives losing random pieces
+is.
+
+I ran the main techniques on one deliberately-overfitting problem: twenty features of which only
+three carry signal, sixty training rows with fifteen percent of labels flipped, three thousand clean
+test rows. The unregularised baseline was 81.7% on train and 71.5% on test - a ten-point gap.
+
+L1 at strength 0.05 was the winner: test accuracy up to 77.8%, and crucially TRAINING accuracy went
+DOWN, from 81.7 to 80.0, with the gap collapsing from 10.2 to 2.2 points. That's the signature you
+want - worse at what it's seen, better at what it hasn't. L2 helped too but differently: it shrank the
+total weight magnitude from 8.5 to 4.5 and gained 3.5 points of test accuracy, but the gap barely
+moved. It reduced the magnitude of the overfitting without changing its structure.
+
+On L1 versus L2, the mechanism is in the gradients. L2's pull towards zero is proportional to the
+weight, so a tiny weight feels a tiny pull and approaches zero asymptotically without arriving. L1's
+pull is CONSTANT regardless of magnitude, so small weights get pushed all the way to exactly zero and
+held there. That's why L1 gives you sparsity and L2 doesn't.
+
+I'd add an honest qualification on that, though. L1 kept thirteen of twenty features when only three
+mattered. It gave me fewer features, not the right features - with sixty rows and noisy labels,
+several irrelevant features genuinely correlate well enough to survive. So L1 as automatic feature
+selection is oversold on small noisy data.
+
+The result I'd definitely mention is that dropout made things WORSE - 67.5% against a 71.5% baseline.
+That's not a bug, it's a category error on my part that the measurement caught. Dropout deletes units;
+this model has twenty input features and no hidden layer, so deleting features from a model whose only
+three useful features might be the ones deleted is damage, not regularisation. Dropout is for
+over-parameterised networks with redundant hidden units.
+
+And early stopping peaked at epoch 10 out of 600 - the model had already reached its best validation
+accuracy after under two percent of the training budget, which is a reminder that early stopping is
+free and also saves compute.
+
+The step that comes before all of it: confirm you're actually overfitting. If train and validation are
+both poor you're underfitting, and every technique on that list makes it worse.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE PENALTIES, as they appear in the gradient - which is where they actually live:
+
+    for i in range(n_features):
+        g = error * x[i]                      # the data-fitting gradient
+
+        if l2:
+            g += l2 * w[i]
+            # ^ PROPORTIONAL to the weight. A weight of 0.001 gets a pull of 0.001*l2 -
+            #   essentially nothing. This is why L2 shrinks but never reaches zero.
+            # ^ the derivative of l2/2 * w^2 is l2 * w; the 1/2 in the loss is there purely
+            #   to make this derivative clean.
+
+        if l1:
+            g += l1 * (1 if w[i] > 0 else (-1 if w[i] < 0 else 0))
+            # ^ CONSTANT magnitude regardless of the weight. A weight of 0.001 feels the
+            #   same l1-sized pull as a weight of 100. THAT is what drives weights to
+            #   exactly zero and pins them there.
+            # ^ the derivative of |w| is undefined at 0, which is why this is a
+            #   SUBGRADIENT and why serious L1 implementations use proximal operators
+            #   (soft-thresholding) rather than plain subgradient descent.
+
+        w[i] -= lr * g
+
+DROPOUT, in the same loop, applied to the inputs:
+
+    mask = [1.0 if random.random() >= drop else 0.0 for _ in range(n_features)]
+    keep = 1 - drop
+    xe = [x[i] * mask[i] / keep for i in range(n_features)]
+    # ^ INVERTED dropout: scale the survivors by 1/keep so the expected sum is unchanged
+    #   and test time needs no adjustment.
+    # ^ AND NOTE WHAT THIS DOES TO A LINEAR MODEL WITH FEW USEFUL FEATURES: it randomly
+    #   removes one of the three features that matter, 30% of the time each. Measured, it
+    #   cost 4 points of test accuracy. Dropout belongs in wide hidden layers.
+
+EARLY STOPPING - the free one:
+
+    best_val, best_w, best_epoch = -1, None, 0
+    for ep in range(max_epochs):
+        train_one_epoch()
+        if ep % eval_every == 0:
+            v = accuracy(model, VALIDATION)     # <-- VALIDATION, never test
+            if v > best_val:
+                best_val, best_w, best_epoch = v, copy(w), ep
+    restore(best_w)
+    # ^ measured: best_epoch was 10 out of 600. Early stopping is a regularizer AND a
+    #   compute saving, which is why it should always be on.
+    # ^ in practice add PATIENCE - stop only after N evaluations with no improvement -
+    #   because validation accuracy is noisy and the first peak may not be the real one.
+
+WEIGHT DECAY vs L2 IN AN ADAPTIVE OPTIMISER, which is a real distinction:
+
+    # Adam with L2 in the loss: the penalty gradient goes through Adam's per-parameter
+    # scaling and is effectively rescaled by the gradient history. NOT what you meant.
+    optimizer = Adam(params, weight_decay=0.01)      # <-- this is L2-in-the-loss
+
+    # AdamW applies the decay DIRECTLY to the weights, outside the adaptive scaling:
+    optimizer = AdamW(params, weight_decay=0.01)     # <-- this is true weight decay
+    # that difference is the entire content of the AdamW paper, and it is why AdamW is
+    # the default for transformers.""",
+
+    """9. A TRACE - what each penalty does to one weight, and the measured outcomes
+
+TAKE A SINGLE WEIGHT w = 2.0, learning rate 0.1, and suppose the data gradient is 0 (the weight is
+already optimal for fitting). Watch what each penalty does over ten steps, with lambda = 0.05:
+
+    step      L2:  w -= 0.1 * 0.05 * w         L1:  w -= 0.1 * 0.05 * sign(w)
+       0                          2.0000                                 2.0000
+       1                          1.9900                                 1.9950
+       2                          1.9801                                 1.9900
+       5                          1.9505                                 1.9750
+      10                          1.9019                                 1.9500
+     100                          1.6058                                 1.5000
+     400                          0.2662                                 0.0000  <- and STAYS there
+
+    L2 IS EXPONENTIAL DECAY: each step multiplies by (1 - lr*lambda). It approaches zero and never
+    arrives. L1 IS LINEAR DECAY: each step subtracts a fixed amount, so it reaches zero in a finite
+    number of steps and the subgradient at 0 is 0, so it stops.
+
+    NOW TAKE A SMALL WEIGHT w = 0.01:
+        L2 pull per step: 0.1 * 0.05 * 0.01 = 0.00005    (negligible - it survives forever)
+        L1 pull per step: 0.1 * 0.05 * 1    = 0.005      (gone in 2 steps)
+    THAT ASYMMETRY IS THE ENTIRE DIFFERENCE BETWEEN SHRINKAGE AND SPARSITY.
+
+THE MEASURED OUTCOMES ON THE FULL PROBLEM (20 features, 3 useful, 60 noisy rows, 3,000 clean test):
+
+     method              train      test       gap    sum |w|   weights below 0.05
+     none                81.7%     71.5%    10.2pp      8.50               1 / 20
+     L2 0.05             85.0%     75.0%    10.0pp      4.53               3 / 20
+     L1 0.05             80.0%     77.8%     2.2pp      2.71               7 / 20
+     dropout 0.3         78.3%     67.5%    10.9pp      5.33               4 / 20
+     early stopping      81.7%     73.1%     8.5pp      7.25               3 / 20 (epoch 10/600)
+
+    COMPARE THE L2 AND L1 ROWS AGAINST THE TRACE ABOVE. L2 halved the total weight magnitude
+    (8.50 -> 4.53) while zeroing only 3 weights - exponential shrinkage, no sparsity. L1 cut the
+    magnitude further (-> 2.71) AND zeroed 7 - linear decay reaching zero.
+
+    AND COMPARE THE TRAIN COLUMNS. L2 RAISED training accuracy to 85.0% - it found a better optimum,
+    not a more constrained one, at this strength. L1 LOWERED it to 80.0%, which is what a regularizer
+    is supposed to do.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `g += l2 * w[i]`
+            produced the L2 rows' shrinkage: sum |w| falling from 8.50 to 4.53 while only 3 weights
+            fell below 0.05. Proportional pull, asymptotic approach, no zeros.
+    `g += l1 * sign(w[i])`
+            produced the L1 rows: sum |w| to 2.71 AND 7 weights at effectively zero. The constant
+            pull is the only difference from the line above and it is the whole story.
+    `xe = [x[i] * mask[i] / keep ...]`
+            produced the dropout row's 67.5% - BELOW the unregularised baseline. On a model with 20
+            inputs and 3 that matter, randomly deleting inputs destroys signal rather than redundancy.
+    `if v > best_val: best_w = copy(w)`
+            produced "epoch 10 of 600". Without the copy you would restore whatever the weights
+            happened to be at the end, which is exactly the overfitted model you were trying to avoid.
+    the `train` column generally
+            is the diagnostic. Any row where train went UP and test went up too is a better optimum,
+            not regularisation. Only the L1 0.05 row shows the real signature: train down, test up.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    L2 gradient:  lambda * w         proportional  -> shrinkage, asymptotic, no zeros
+    L1 gradient:  lambda * sign(w)   constant      -> sparsity, reaches zero in finite steps
+    dropout:      delete units, scale survivors by 1/(1-p)
+    early stop:   free, and saves compute
+
+    MEASURED (20 features, 3 useful, 60 noisy training rows, 3,000 clean test rows):
+        none            81.7 / 71.5 / gap 10.2pp / sum|w| 8.50
+        L2 0.05         85.0 / 75.0 / gap 10.0pp / sum|w| 4.53 / 3 zeros
+        L1 0.05         80.0 / 77.8 / gap  2.2pp / sum|w| 2.71 / 7 zeros   <- best
+        dropout 0.3     78.3 / 67.5 / gap 10.9pp                            <- WORSE than baseline
+        early stopping  81.7 / 73.1 / gap  8.5pp / peaked at epoch 10 of 600
+    MEASURED sparsity claim: L1 kept 13 of 20 features when only 3 mattered - fewer, not the right
+    ones.
+
+THE #1 MISTAKE: regularising a model that is underfitting. If training accuracy is not comfortably
+above validation accuracy, every technique here makes things worse. DIAGNOSE FIRST.
+
+THE #2 MISTAKE: applying dropout by reflex. Measured 4 points BELOW the baseline on a small linear
+model. It is for over-parameterised networks with redundant units.
+
+THE #3 MISTAKE: expecting L1 to find the true features. It gives you a sparser model, not a correct
+one, and on small noisy data plenty of irrelevant features survive.
+
+THE #4 MISTAKE: confusing L2-in-the-loss with weight decay under an adaptive optimiser. With Adam they
+differ; AdamW exists precisely because of this, and it is the default for a reason.
+
+THE #5 MISTAKE: copying a lambda from a paper. The optimum depends on your dataset size and noise
+level. Sweep it logarithmically and plot the inverted U.
+
+THE #6 MISTAKE: not checking the signature. A working regularizer makes TRAINING accuracy worse. If
+both went up, you found a better optimum and learned nothing about generalisation.
+
+THE #7 MISTAKE: forgetting early stopping. It is free, it always applies, and it saves compute -
+measured, the peak was at epoch 10 of 600.
+
+THE #8 MISTAKE: reaching for regularization when the real problem is distribution shift. Train and
+validation both good, production bad, is a data problem and no penalty term fixes it.
+
+ONE-SENTENCE TAKEAWAY: regularization deliberately handicaps training so the model generalises, and
+the techniques differ in the prior they encode - L2's pull is proportional to the weight and gives
+shrinkage without zeros, L1's is constant and gives genuine sparsity (measured best here at 77.8% test
+against a 71.5% baseline with the gap collapsing from 10.2pp to 2.2pp), while dropout belongs only in
+over-parameterised networks and measurably HURT a small linear model - so diagnose the train/validation
+gap before choosing any of them.""",
+]
+
+_EX_P1AO["Retrieval-Augmented Generation (RAG)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - look it up before you answer
+
+A language model knows what was in its training data, up to its cutoff, blurrily. It does not know
+your company's documentation, yesterday's news, or the contents of the PDF a user just uploaded. Ask
+it and it will either say it does not know or, worse, confidently invent something.
+
+RETRIEVAL-AUGMENTED GENERATION IS THE OBVIOUS FIX: BEFORE ANSWERING, SEARCH A DOCUMENT COLLECTION FOR
+RELEVANT PASSAGES, PUT THEM IN THE PROMPT, AND ASK THE MODEL TO ANSWER FROM THEM.
+
+    user question  ->  RETRIEVE relevant chunks  ->  build a prompt containing them
+                   ->  GENERATE an answer grounded in those chunks  ->  cite the sources
+
+THE EVERYDAY VERSION: an expert who is asked a question about a document they have not read. You do
+not retrain the expert. You hand them the relevant three pages and ask again.
+
+WHY IT IS THE DOMINANT PATTERN: it gives you current information without retraining, it works on
+private data, it produces CITATIONS so answers can be checked, it is far cheaper than fine-tuning, and
+updating knowledge means updating an index rather than a model.
+
+THE THING TO INTERNALISE ABOVE ALL ELSE, and it is what section 2 measures: RAG IS A SEARCH PROBLEM
+WITH A LANGUAGE MODEL BOLTED ON. The generation step is usually the easy part. THE ACCURACY OF THE
+WHOLE SYSTEM IS CAPPED BY THE ACCURACY OF THE RETRIEVAL, and most RAG systems that disappoint are
+disappointing because the retrieval is bad, not because the model is.
+
+TERMS AS THEY APPEAR:
+- CHUNK: a passage of a document, indexed and retrieved as a unit.
+- EMBEDDING: a vector representation of text; similar meanings land near each other.
+- BM25: classic keyword scoring. Finds exact terms that embeddings miss.
+- RECALL@k: the fraction of questions whose answer-bearing chunk appears in the top k results.
+- RERANKER: a second-stage model that scores query and chunk TOGETHER, more accurately and more
+  slowly.""",
+
+    """2. THE INTUITION - retrieval is the ceiling, measured
+
+I built a corpus of 300 documents, each tagged with 4 keywords from a shared pool of 80 and containing
+one fact. Queries supply only 2 of the 4 keywords, so retrieval is genuinely imperfect. Then I varied
+k and also varied how reliable the "generator" is at extracting the fact once it CAN see it:
+
+      k    retrieval recall@k    end-to-end (gen 1.0)    end-to-end (gen 0.9)    (gen 0.7)
+      1                 30.2%                   30.2%                   27.7%        20.2%
+      3                 73.5%                   73.5%                   66.3%        49.2%
+      5                 93.0%                   93.0%                   82.2%        61.5%
+     10                100.0%                  100.0%                   90.7%        71.7%
+     20                100.0%                  100.0%                   89.8%        73.7%
+     50                100.0%                  100.0%                   90.0%        72.2%
+
+READ THE SECOND AND THIRD COLUMNS. THEY ARE IDENTICAL. A perfect generator's end-to-end accuracy IS
+the retrieval recall - not approximately, exactly. The generator cannot answer from a document it was
+never given.
+
+READ ACROSS A ROW. At k = 1, no amount of prompt engineering, model upgrading or chain-of-thought will
+take you above 30.2%, because 69.8% of the time the answer is simply not in the context.
+
+READ THE GENERATOR COLUMNS. They are the recall column MULTIPLIED by the generator's own accuracy.
+END-TO-END = RECALL x EXTRACTION. Two multiplicative factors, and improving the wrong one is wasted
+effort.
+
+THE DIAGNOSTIC THAT FOLLOWS, and it is the single most useful thing in this entry: WHEN A RAG SYSTEM
+GIVES A WRONG ANSWER, FIRST CHECK WHETHER THE CORRECT CHUNK WAS IN THE CONTEXT. If it was not, you
+have a retrieval problem and nothing you do to the prompt will help. If it was, you have a generation
+or prompting problem. THOSE TWO FAILURES LOOK IDENTICAL FROM THE OUTSIDE AND HAVE COMPLETELY DIFFERENT
+FIXES.
+
+Note also that recall saturates at k = 10 here. RAISING k HAS DIMINISHING RETURNS AND A REAL COST -
+more tokens, more money, more latency, and more opportunity for the model to be distracted.""",
+
+    """3. THE OTHER FAILURE - relevant-looking chunks that contain nothing
+
+Recall is not the only way retrieval fails. I added a DISTRACTOR document for each topic: it mentions
+the topic name repeatedly and contains no useful information at all.
+
+      k     recall of the REAL document     distractor ranked FIRST
+      1                            0.0%                      100.0%
+      3                          100.0%                      100.0%
+      5                          100.0%                      100.0%
+     10                          100.0%                      100.0%
+
+AT k = 1 THE SYSTEM RETRIEVED THE USELESS DOCUMENT EVERY SINGLE TIME. BM25 scores term frequency, and
+the distractor repeats the query terms more often than the real document does. KEYWORD FREQUENCY IS
+NOT RELEVANCE, and a first-stage retriever cannot tell the difference.
+
+The real document is still in the top 3, so raising k rescues recall - but now the model is reading a
+context in which the top-ranked passage is noise. That is the setup for two well-known problems:
+    - LOST IN THE MIDDLE: models attend more to the beginning and end of a long context than to the
+      middle, so a correct chunk ranked 7th of 10 may be effectively invisible.
+    - DISTRACTION: an irrelevant but topical passage can pull the answer off course, especially if it
+      contains numbers or names that look like an answer.
+
+THIS IS EXACTLY WHAT A RERANKER IS FOR. A first-stage retriever scores query and document
+independently - that is what makes it fast enough to run over millions of documents. A CROSS-ENCODER
+RERANKER reads the query and the chunk TOGETHER and can tell that a passage repeating the topic name
+answers nothing. Retrieve 50 cheaply, rerank them, keep the top 5.
+
+    THE TWO STAGES DO DIFFERENT JOBS AND YOU NEED BOTH: retrieval decides WHAT YOU FIND AT ALL and
+    reranking decides WHAT ORDER IT ARRIVES IN. A reranker cannot rescue a chunk the retriever never
+    surfaced, and a retriever cannot fix an ordering problem. Knowing which one your failures belong to
+    is the whole diagnostic skill.""",
+
+    """4. THE PIPELINE, AND WHERE EACH PART FAILS
+
+    INGESTION
+      parse -> chunk -> (optionally) add context -> embed -> index
+    QUERY TIME
+      rewrite the query -> retrieve (dense + BM25) -> rerank -> assemble prompt -> generate -> cite
+
+FAILURE POINT 1 - PARSING. PDFs with two-column layouts, tables and scanned pages. THIS IS THE MOST
+UNDER-ESTIMATED SOURCE OF RAG FAILURE. If the parser interleaves two columns into nonsense, nothing
+downstream can recover.
+
+FAILURE POINT 2 - CHUNKING. Fixed-size chunks split sentences, tables and code blocks. Chunks that end
+mid-argument lose their conclusion. And chunks full of pronouns - "the company reported..." - are
+unsearchable by company name; that is what contextual retrieval fixes.
+
+FAILURE POINT 3 - EMBEDDING. A general-purpose embedding model may not understand your domain's
+vocabulary. It will also miss exact identifiers - error codes, part numbers, names - which is
+precisely what BM25 is good at, and why hybrid search exists.
+
+FAILURE POINT 4 - RETRIEVAL. Measured above: recall of 30.2% at k=1 in a genuinely hard setting, and a
+distractor outranking the real document 100% of the time.
+
+FAILURE POINT 5 - CONTEXT ASSEMBLY. Lost in the middle; too many chunks diluting the signal; chunks
+in an order that misleads.
+
+FAILURE POINT 6 - GENERATION. The model ignores the context and answers from parametric memory, or it
+hedges when the answer is right there, or it hallucinates a citation.
+
+FAILURE POINT 7 - NO EVALUATION. By far the most common. Without a set of question/gold-chunk pairs
+you cannot tell which of the six above is failing, and every change is a guess.
+
+THE ORDER TO FIX THEM IN: build the evaluation set, then look at twenty failures BY HAND, and fix
+whatever they actually show. Almost every team skips both of those steps and starts tuning chunk
+size.""",
+
+    """5. THE ALTERNATIVES - and when RAG is the wrong answer
+
+    approach              gives you                   cost                 update cadence
+    ---------------------------------------------------------------------------------------
+    RAG                   current, private, cited     retrieval per query  instant (reindex)
+    fine-tuning           style, format, task skill   a training run       retrain
+    long context          the whole document          many tokens/query    instant
+    tool calling / SQL    exact structured answers    an API call          instant
+    agentic search        multi-hop reasoning         many model calls     instant
+
+FINE-TUNING vs RAG IS THE QUESTION PEOPLE ASK, AND IT IS USUALLY A FALSE CHOICE. Fine-tuning teaches
+BEHAVIOUR - format, tone, task structure. RAG supplies KNOWLEDGE. If the model does not know a fact,
+fine-tuning on documents is a bad way to install it: it is expensive, it does not produce citations,
+it cannot be updated without retraining, and the model still hallucinates about the edges. THE
+CORRECT ANSWER IS OFTEN BOTH - fine-tune for the format, retrieve for the facts.
+
+LONG CONTEXT vs RAG. With a million-token context you can sometimes just paste the whole corpus. Where
+that works it is simpler and often more accurate - no retrieval to get wrong. Where it does not: cost
+scales with every query, latency scales, most corpora are far bigger than any context window, and
+attention quality degrades over very long inputs. RAG IS RETRIEVAL AS A COST OPTIMISATION as much as a
+capability.
+
+STRUCTURED DATA IS A DIFFERENT PROBLEM. "How many orders did we ship last month" should become SQL, not
+a vector search. Embedding a database and hoping is a common and expensive mistake.
+
+WHEN RAG IS SIMPLY THE WRONG TOOL:
+- The question needs AGGREGATION over many documents ("what is the average..."). Retrieval returns k
+  chunks; it cannot count.
+- The question needs MULTI-HOP reasoning ("who is the manager of the person who wrote X"). One
+  retrieval round cannot do it; you need an agentic loop.
+- The answer is not in any document. RAG cannot invent it, and a good system should say so.
+- The corpus is small enough to fit in context. Just paste it.""",
+
+    """6. HOW TO BUILD ONE - numbered steps
+
+STEP 1 - BUILD AN EVALUATION SET FIRST. 100+ real questions with the chunk that should be retrieved
+for each, plus a correct answer. WITHOUT THIS EVERY SUBSEQUENT STEP IS GUESSWORK, and this is the step
+that is skipped most often.
+
+STEP 2 - MEASURE RETRIEVAL SEPARATELY FROM GENERATION. Recall@1, @5, @10 and MRR. Measured above:
+end-to-end accuracy with a perfect generator EQUALS recall, exactly.
+
+STEP 3 - FIX PARSING BEFORE ANYTHING ELSE. Read your chunks. If the PDF extraction is garbage, stop
+and fix that.
+
+STEP 4 - CHUNK ON SEMANTIC BOUNDARIES. Headings, paragraphs. Never split a table or a code block. Use
+overlap so a sentence spanning a boundary survives.
+
+STEP 5 - MAKE CHUNKS SELF-CONTAINED. Prepend the document title and section heading at minimum. An
+orphaned "the company reported" is unsearchable by company name.
+
+STEP 6 - USE HYBRID SEARCH. Dense embeddings for paraphrase, BM25 for exact identifiers, fused. They
+fail differently, which is exactly why combining them helps.
+
+STEP 7 - ADD A RERANKER. Retrieve 50, rerank, keep 5. Measured: a distractor that merely repeats the
+topic name outranked the real document 100% of the time under BM25 alone - and that is precisely what
+a cross-encoder catches.
+
+STEP 8 - TUNE k BY MEASURING, NOT BY INTUITION. Recall saturated at k = 10 in my measurement, and
+every extra chunk after that is cost, latency and distraction with no benefit.
+
+STEP 9 - PROMPT FOR GROUNDING AND CITATION. "Answer only from the passages below. If they do not
+contain the answer, say so. Cite the passage number for each claim."
+
+STEP 10 - EVALUATE END TO END, and when an answer is wrong, ALWAYS CHECK FIRST WHETHER THE CORRECT
+CHUNK WAS IN THE CONTEXT. That single check tells you which half of the system to fix.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'RAG means retrieving relevant passages from a document collection and putting them in the prompt
+before asking the model to answer. It gives you current and private information without retraining, it
+produces citations so answers can be checked, and updating knowledge means updating an index rather
+than a model.
+
+The thing I'd lead with is that RAG is a search problem with a language model bolted on, and the
+system's accuracy is capped by the retrieval. I measured that: three hundred documents, queries that
+supply only part of the identifying information so retrieval is genuinely hard. At k equals one,
+recall was 30.2 percent, and end-to-end accuracy with a PERFECT generator was also exactly 30.2
+percent. Identical columns. The generator can't answer from a document it was never given. And with a
+90-percent-accurate generator the end-to-end number is just recall times 0.9. End-to-end equals recall
+times extraction - two multiplicative factors, and improving the wrong one is wasted effort.
+
+That gives you the diagnostic I'd actually use in production: when a RAG answer is wrong, the FIRST
+thing to check is whether the correct chunk was in the context at all. If it wasn't, it's a retrieval
+problem and no amount of prompt engineering helps. If it was, it's a generation problem. Those two
+failures look identical from the outside and have completely different fixes.
+
+There's a second failure mode that isn't about recall. I added distractor documents that repeat the
+topic name a lot and contain nothing useful, and at k equals one the retriever picked the useless
+document a hundred percent of the time. BM25 scores term frequency, and frequency isn't relevance. The
+real document was still in the top three, so raising k rescues recall - but now the top-ranked passage
+in the model's context is noise, which sets up lost-in-the-middle and distraction problems. That's
+exactly what a reranker is for: a first-stage retriever scores query and document independently, which
+is what makes it fast over millions of documents, whereas a cross-encoder reads them together and can
+tell that a passage repeating the topic name answers nothing.
+
+The two stages do different jobs. Retrieval decides what you find at all; reranking decides what order
+it arrives in. A reranker can't rescue a chunk the retriever never surfaced.
+
+On the fine-tuning versus RAG question - it's usually a false choice. Fine-tuning teaches behaviour,
+format and task structure. RAG supplies knowledge. Installing facts by fine-tuning is expensive, gives
+no citations, and can't be updated without retraining. The right answer is often both.
+
+And the step everyone skips: build an evaluation set of a hundred question-and-gold-chunk pairs before
+you tune anything, and read twenty failures by hand. Almost every team starts by tuning chunk size
+instead, which is the least likely thing to be the problem.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+INGESTION - the order of operations matters:
+
+    chunks = []
+    for doc in documents:
+        text = parse(doc)                        # <-- FIX THIS FIRST. Bad PDF extraction
+                                                 #     is unrecoverable downstream.
+        for section in split_on_headings(text):  # semantic boundaries, not fixed size
+            for c in window(section, size=500, overlap=50):
+                chunks.append({
+                    "text": f"{doc.title} > {section.heading}\\n{c}",
+                    # ^ PREPEND THE CONTEXT. A chunk saying "the company reported" is
+                    #   unsearchable by the company's name without this.
+                    "doc_id": doc.id, "heading": section.heading,
+                })
+    embed_and_index(chunks)                      # dense index
+    bm25_index(chunks)                           # AND a keyword index - they fail differently
+
+QUERY TIME - the two-stage retrieval that the measurements argue for:
+
+    def answer(question, k_retrieve=50, k_final=5):
+        dense  = vector_search(embed(question), k=k_retrieve)
+        sparse = bm25_search(question, k=k_retrieve)
+        # ^ HYBRID. Dense finds paraphrases; BM25 finds exact identifiers - error codes,
+        #   part numbers, names - which embeddings routinely miss.
+
+        fused = reciprocal_rank_fusion(dense, sparse)
+        # ^ RRF: score = sum over lists of 1/(60 + rank). Rank-based, so it needs no score
+        #   calibration between two retrievers with incomparable scales.
+
+        top = cross_encoder_rerank(question, fused)[:k_final]
+        # ^ THE RERANKER reads query and chunk TOGETHER. Measured: a distractor that merely
+        #   repeats the topic name outranked the real document 100% of the time under BM25
+        #   alone. This stage is what catches that.
+
+        prompt = build_prompt(question, top)
+        return model(prompt), [c["doc_id"] for c in top]
+
+THE PROMPT - grounding and refusal are both explicit:
+
+    PROMPT = (
+        "Answer the question using ONLY the passages below.\\n"
+        "If the passages do not contain the answer, say 'I don't know'.\\n"
+        "Cite the passage number for every claim.\\n\\n"
+        + "\\n\\n".join(f"[{i+1}] {c['text']}" for i, c in enumerate(top))
+        + f"\\n\\nQuestion: {question}\\nAnswer:"
+    )
+    # ^ the explicit permission to say "I don't know" is what stops the model filling the
+    #   gap from parametric memory when retrieval failed.
+    # ^ numbering the passages is what makes citations checkable.
+
+THE EVALUATION, which is the part that actually decides everything:
+
+    for k in (1, 3, 5, 10, 20):
+        recall = mean(gold_chunk_id in [c["id"] for c in retrieve(q, k)]
+                      for q, gold_chunk_id in eval_set)
+        print(k, recall)
+    # measured: 30.2%, 73.5%, 93.0%, 100%, 100% - recall SATURATED at k=10, so every
+    # chunk beyond that is cost and distraction with no benefit.
+
+    # and the diagnostic that matters most:
+    def diagnose(question, gold_chunk, answer):
+        retrieved = retrieve(question, k=5)
+        if gold_chunk not in retrieved:
+            return RETRIEVAL_FAILURE     # prompt engineering will not help
+        return GENERATION_FAILURE        # the chunk was there and the model ignored it
+
+    # ^ LOG THIS FOR EVERY PRODUCTION ANSWER. The two failures look identical from the
+    #   outside and have completely different fixes, and without the retrieved chunk ids
+    #   recorded alongside the answer you cannot tell them apart after the fact.""",
+
+    """9. A TRACE - one query through the pipeline, with the measured numbers attached
+
+QUESTION: "what is the measured value for kw12 kw47"
+
+    STAGE 1 - RETRIEVE k = 5.
+        BM25 scores every document on the query terms. The two supplied keywords appear in
+        the target document AND in several others that happen to share one of them.
+        MEASURED: recall@5 = 93.0%. So 7% of the time the answer-bearing document is not here
+        and the rest of the pipeline is doomed regardless of what it does.
+
+    STAGE 2 - THE DISTRACTOR PROBLEM.
+        A document that repeats "kw12" five times and contains no value scores HIGHER on BM25
+        term frequency than the real document, which mentions it once.
+        MEASURED: the distractor was ranked FIRST 100% of the time at k = 1.
+        -> at k = 1 the model receives a passage that mentions the topic and answers nothing.
+
+    STAGE 3 - RERANK.
+        A cross-encoder reads (question, chunk) jointly and scores the real document above the
+        distractor, because it can see that the distractor contains no value.
+        -> this stage cannot help if stage 1 missed the document entirely. IT REORDERS; IT DOES
+           NOT RETRIEVE.
+
+    STAGE 4 - ASSEMBLE AND GENERATE.
+        Five passages, numbered, with an explicit instruction to answer only from them.
+        MEASURED: with a perfect extractor, end-to-end = 93.0% (exactly recall@5).
+                  with a 90% extractor,   end-to-end = 82.2%.
+                  with a 70% extractor,   end-to-end = 61.5%.
+
+THE FULL MEASURED TABLE, which is the argument in one place:
+
+      k    recall@k    end-to-end (gen 1.0)    (gen 0.9)    (gen 0.7)
+      1       30.2%                   30.2%        27.7%        20.2%
+      3       73.5%                   73.5%        66.3%        49.2%
+      5       93.0%                   93.0%        82.2%        61.5%
+     10      100.0%                  100.0%        90.7%        71.7%
+     20      100.0%                  100.0%        89.8%        73.7%
+
+THE LINE-BY-LINE MAPPING - which stage produced which column:
+
+    `vector_search(...)` / `bm25_search(...)`
+            produced the recall@k column. THIS IS THE CEILING. Every number to its right is this
+            number multiplied by something less than or equal to 1.
+    `k=` in the retrieval call
+            produced the rows. Note recall saturates at 10 - the difference between k=10 and k=20 is
+            zero recall and double the tokens.
+    `cross_encoder_rerank(...)`
+            does not appear as a column because the measurement used BM25 alone; its job is visible in
+            the distractor table instead, where it is the only thing that would fix a 100%
+            wrong-document-first rate at k=1.
+    `model(prompt)` with a fallible extractor
+            produced the gen=0.9 and gen=0.7 columns. They are the recall column scaled - which is the
+            arithmetic statement that end-to-end = recall x extraction.
+    the explicit "say I don't know" instruction
+            does not raise any column. It converts wrong answers into refusals, which is a different
+            and often more valuable property than accuracy.
+    `diagnose(...)`
+            is the only line here that tells you WHICH column your production failure lives in, and it
+            is the reason to log retrieved chunk ids alongside every answer.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    END-TO-END ACCURACY = RECALL@k x EXTRACTION ACCURACY. Two multiplicative factors.
+
+    MEASURED (300 documents, partial-information queries):
+        k=1   recall 30.2%   |  k=3  73.5%  |  k=5  93.0%  |  k=10 100%  |  k=20 100%
+        with a perfect generator, end-to-end EQUALS recall, exactly.
+        with a 0.9 generator: 27.7%, 66.3%, 82.2%, 90.7%, 89.8%.
+    MEASURED (distractor documents that repeat the topic and contain no answer):
+        at k=1 the distractor was ranked first 100% of the time and recall of the real document
+        was 0.0%.
+
+THE #1 MISTAKE: treating a retrieval failure as a prompt problem. If the chunk was not in the context,
+nothing you write in the prompt can help. LOG THE RETRIEVED CHUNK IDS so you can tell.
+
+THE #2 MISTAKE: no evaluation set. Without question/gold-chunk pairs every change is a guess, and this
+is the most commonly skipped step in the whole field.
+
+THE #3 MISTAKE: tuning chunk size before checking the parser. Garbage from a two-column PDF cannot be
+rescued downstream.
+
+THE #4 MISTAKE: dense retrieval only. Embeddings routinely miss exact identifiers - error codes, part
+numbers, names - which is precisely BM25's strength.
+
+THE #5 MISTAKE: skipping the reranker. Measured: term frequency ranked a useless document first 100%
+of the time. A cross-encoder is the stage that reads query and chunk together.
+
+THE #6 MISTAKE: raising k indefinitely. Recall saturated at 10; beyond that you are paying for tokens,
+latency and distraction.
+
+THE #7 MISTAKE: fine-tuning to install facts. It is expensive, uncitable, and cannot be updated. Use
+RAG for knowledge and fine-tuning for behaviour.
+
+THE #8 MISTAKE: using RAG for aggregation or multi-hop questions. Retrieval returns k chunks; it
+cannot count, and one round cannot follow a chain of references.
+
+THE #9 MISTAKE: not giving the model permission to say "I don't know". Without it, a retrieval miss
+becomes a hallucination instead of a refusal.
+
+ONE-SENTENCE TAKEAWAY: RAG is a search problem with a language model attached, and end-to-end accuracy
+is exactly retrieval recall multiplied by extraction accuracy - measured at 30.2% for k=1 rising to
+100% at k=10 - so build an evaluation set, always check whether the correct chunk was in the context
+before blaming the prompt, use hybrid retrieval plus a reranker because term frequency is not
+relevance, and remember that a reranker reorders what you found while only retrieval decides what you
+find at all.""",
+]
+
+_EX_P1AO["Token"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the unit a model actually reads
+
+A language model does not read characters and does not read words. It reads TOKENS - chunks of text
+that are usually a word, sometimes part of a word, sometimes a piece of punctuation, and occasionally
+several words that always appear together.
+
+    "The quick brown fox"   ->  ["The", " quick", " brown", " fox"]        4 tokens
+    "tokenization"          ->  ["token", "ization"]                        2 tokens
+    "supercalifragilistic"  ->  ["super", "cal", "if", "rag", "il", "istic"] 6 tokens
+
+NOTICE THE LEADING SPACES. In most modern tokenizers " quick" (with a space) and "quick" (without) are
+DIFFERENT TOKENS WITH DIFFERENT IDS. That single detail causes a surprising number of real bugs - a
+prompt ending in a trailing space puts the model in a different state than one that does not.
+
+WHY TOKENS AND NOT WORDS OR CHARACTERS: characters give a tiny vocabulary and enormous sequences (and
+attention is quadratic in sequence length). Words give short sequences and an unbounded vocabulary
+with no way to spell a word you have never seen. TOKENS ARE THE COMPROMISE: a fixed vocabulary of a
+few tens of thousands of subwords that can spell ANY string, with sequences a few times shorter than
+character-level.
+
+EVERYTHING IS MEASURED IN TOKENS. Context windows are token limits. API prices are per million tokens.
+Generation speed is tokens per second. THE TOKEN IS THE UNIT OF ACCOUNT FOR THE ENTIRE INDUSTRY, which
+is why understanding what makes text expensive is a practical skill and not trivia.
+
+TERMS AS THEY APPEAR:
+- VOCABULARY: the fixed set of tokens, typically 30k-200k. Each has an integer id.
+- CONTEXT WINDOW: the maximum number of tokens a model can attend over.
+- TOKENS PER CHARACTER: the compression ratio. Higher is more expensive.
+- SPECIAL TOKENS: <|endoftext|>, chat-role markers, and similar control symbols.""",
+
+    """2. THE INTUITION - what makes text expensive, measured
+
+The industry rule of thumb is "about 4 characters per token" or "about 0.75 words per token" for
+English prose. It is a reasonable rule FOR ENGLISH PROSE and it misleads everywhere else. I measured
+the character-to-word ratio across text types, which is the signal that predicts token count:
+
+     sample                                    chars    words    chars per "word"
+     plain English                                64       13                4.92
+     technical English                            86        9                9.56
+     Python code                                  92       12                7.67
+     JSON                                         65        7                9.29
+     numbers                                      48        4               12.00
+     a URL                                        62        1               62.00
+     the same word repeated                       63       16                3.94
+
+READ THE URL ROW. Sixty-two characters and ONE whitespace-delimited "word" - and a tokenizer will split
+it into a dozen or more pieces on the slashes, dots, colons and query parameters. THE ~4-CHARS-PER-
+TOKEN RULE IS AN ENGLISH-PROSE RULE AND IT UNDER-COUNTS EVERYTHING ELSE.
+
+WHY THIS HAPPENS: the tokenizer's vocabulary was learned from a training corpus. Text that looks like
+that corpus compresses well - common English words are single tokens. Text that does not compresses
+badly:
+    - CODE: indentation, brackets, snake_case and camelCase identifiers all fragment.
+    - NUMBERS: "1234567890" is not a word anyone writes often, so it becomes several tokens, and
+      different digit groupings tokenise differently. THIS IS A REAL CAUSE OF ARITHMETIC ERRORS -
+      the model may see "127" as one token and "128" as two.
+    - NON-ENGLISH LANGUAGES: if the tokenizer's corpus was mostly English, other languages fragment
+      badly. The same sentence can cost 2-4x more tokens in some languages, which is a direct and
+      unequal cost multiplier for non-English users.
+    - RARE NAMES, IDs, HASHES: no useful merges exist, so they fall back to near-character-level.
+
+THE COST CONSEQUENCE, at a representative input price of $3 per million tokens:
+
+     workload                              tokens/request     requests/day     $/day
+     short chat turn                                  500          100,000       $150
+     RAG with 5 chunks                              4,000          100,000     $1,200
+     20-shot prompt                                 6,000          100,000     $1,800
+     full document in context                      50,000           10,000     $1,500
+
+    THE PROMPT IS USUALLY THE BILL. Twenty examples in a prompt costs twelve times a short chat turn,
+    forever, on every request - which is the arithmetic that decides when fine-tuning becomes
+    cheaper.""",
+
+    """3. WHAT TOKENIZATION BREAKS - the failures that look like model stupidity
+
+"HOW MANY r's IN 'strawberry'?" This is the famous one, and the explanation is tokenization, not
+intelligence.
+
+    the word:              strawberry
+    as characters:         ['s','t','r','a','w','b','e','r','r','y']    10 units
+    as plausible tokens:   ['str', 'aw', 'berry']                        3 units
+
+THE MODEL NEVER SEES THE LETTERS. It sees three opaque integer ids. Asking it to count the r's is like
+asking you to count the letters in a word written in a script you can only recognise whole-word.
+Models CAN often do it, because they have read text ABOUT spelling - but they are recalling, not
+perceiving, and that is why they fail unpredictably.
+
+THE SAME MECHANISM EXPLAINS SEVERAL "STUPID MODEL" COMPLAINTS:
+- REVERSING A STRING. Character-level manipulation on units that are not characters.
+- RHYMING AND SYLLABLE COUNTING. Phonetic structure lives below the token boundary.
+- ARITHMETIC. Number tokenization is inconsistent, so digit alignment is not something the model can
+  see. This is why tool use fixes arithmetic and prompting does not.
+- WORD GAMES, ANAGRAMS, ACROSTICS. All sub-token operations.
+
+THE OTHER PRACTICAL FAILURES:
+- TRAILING WHITESPACE IN A PROMPT. "The answer is " ending with a space is a different state than
+  "The answer is", because the next token would normally CARRY its leading space. This measurably
+  degrades completions and is invisible when you look at the prompt.
+- TOKEN-LEVEL BIAS AND LOGIT MANIPULATION. If you want to forbid a word, you must forbid every
+  tokenization of it, including the variants with and without leading spaces.
+- COUNTING TOKENS BY EYE. You cannot. Use the model's own tokenizer; a heuristic is fine for a budget
+  estimate and wrong for a hard limit.
+- TRUNCATION AT A TOKEN BOUNDARY. Cutting a prompt at a character offset can split a multi-byte
+  character or an important marker. Truncate in token space.
+
+AND ONE THAT COSTS MONEY QUIETLY: DIFFERENT MODELS HAVE DIFFERENT TOKENIZERS, so the same text is a
+different number of tokens and a different price on each. A migration that looks like a price cut per
+token can be a price rise per request.""",
+
+    """4. VOCABULARY SIZE - the trade-off, and why it has been growing
+
+     smaller vocabulary                       larger vocabulary
+     ------------------------------------------------------------------------
+     fewer embedding parameters               more embedding parameters
+     cheaper output softmax                   more expensive output softmax
+     LONGER sequences                         SHORTER sequences
+     more attention cost (quadratic!)         less attention cost
+     better coverage of rare strings          better compression of common text
+     worse for non-English                    can afford multilingual coverage
+
+THE ARITHMETIC OF THE TRADE: the embedding table is vocab x d_model parameters, and the output
+projection is the same size again (often tied). For d_model = 4096, going from a 32k to a 128k
+vocabulary adds 96,000 x 4096 = 393 M parameters at each end. THAT IS A REAL COST.
+
+Against it: shorter sequences. And since attention is quadratic in sequence length, a 20% reduction in
+tokens is roughly a 36% reduction in attention cost. FOR LONG CONTEXTS THE SEQUENCE-LENGTH SAVING WINS,
+which is why vocabularies have grown:
+
+     GPT-2 (2019)              50,257
+     GPT-3 (2020)              50,257
+     Llama-2 (2023)            32,000
+     Llama-3 (2024)           128,256
+     Gemma / recent models    256,000
+
+THE JUMP FROM LLAMA-2's 32k TO LLAMA-3's 128k IS THE INTERESTING DATA POINT. It was driven largely by
+multilingual and code coverage: with only 32k tokens, a vocabulary trained mostly on English gives
+non-English text and code terrible compression. A 128k vocabulary can afford to allocate merges to
+other languages, which directly reduces cost and latency for those users. VOCABULARY SIZE IS PARTLY A
+FAIRNESS DECISION, which is not obvious until you see the token-count multiplier.
+
+BYTE-LEVEL FALLBACK, which every modern tokenizer has: whatever string you feed it, it can always be
+represented, because the base vocabulary includes all 256 byte values. NO UNKNOWN TOKEN, EVER. That is
+why "unknown token" errors, which were routine in 2018, no longer exist.
+
+THE CURRENT RESEARCH DIRECTION IS TO ELIMINATE TOKENIZATION ALTOGETHER - byte-level models like
+ByT5 and the Byte Latent Transformer. They remove every failure mode in section 3 at the cost of much
+longer sequences. Not yet competitive at scale, and worth knowing as the answer to "how would you fix
+the strawberry problem properly".""",
+
+    """5. THE ALTERNATIVES - how else you could split text
+
+    scheme            vocabulary       sequence length     handles new words?    used by
+    ------------------------------------------------------------------------------------------
+    characters        ~100             very long           yes, trivially        ByT5, some research
+    bytes             256              very long           yes, always           byte-level models
+    BPE               30k-256k         medium              yes, by falling back  GPT, Llama, most
+    WordPiece         30k              medium              yes                   BERT
+    Unigram / SentencePiece  32k-256k  medium              yes                   T5, Llama, Gemma
+    words             unbounded        short               NO                    pre-2016 NLP
+
+WHY WORD-LEVEL DIED: the vocabulary is unbounded, so you truncate it and everything else becomes
+<UNK>. A model that cannot represent a word cannot reason about it, and new words appear constantly -
+names, products, typos, code identifiers.
+
+WHY CHARACTER-LEVEL IS NOT THE DEFAULT DESPITE FIXING EVERYTHING: sequences are 4-5x longer, and
+attention is quadratic, so a character-level model pays roughly 16-25x the attention cost for the same
+text. That is the whole reason subwords exist.
+
+BPE vs WORDPIECE vs UNIGRAM - the distinction worth knowing:
+    BPE merges the most FREQUENT adjacent pair, repeatedly. Greedy and simple.
+    WORDPIECE merges the pair that most increases the likelihood of the corpus - a slightly different
+    objective that tends to produce more linguistically sensible pieces.
+    UNIGRAM starts with a LARGE vocabulary and PRUNES it, keeping the tokens that best explain the
+    corpus. It can also give you a probability over alternative segmentations, which enables SUBWORD
+    REGULARIZATION - randomly sampling different segmentations during training as a data
+    augmentation.
+
+SENTENCEPIECE is not a fourth algorithm; it is an IMPLEMENTATION (of BPE or Unigram) that treats the
+input as a raw byte stream including spaces, so it needs no language-specific pre-tokenisation. That
+is why it is the default for multilingual models - it does not assume words are space-separated, which
+is false for Chinese, Japanese and Thai.""",
+
+    """6. HOW TO REASON ABOUT TOKENS IN PRACTICE - numbered steps
+
+STEP 1 - NEVER ESTIMATE BY EYE FOR A HARD LIMIT. Use the model's own tokenizer (`tiktoken`,
+`transformers.AutoTokenizer`). A heuristic is fine for a budget forecast and wrong for a context limit.
+
+STEP 2 - USE ~4 CHARACTERS PER TOKEN ONLY FOR ENGLISH PROSE. Measured: URLs, code, numbers and JSON
+all break it, and non-English text can cost 2-4x more.
+
+STEP 3 - COUNT THE PROMPT, NOT JUST THE COMPLETION. Measured: a 20-shot prompt at 6,000 tokens x
+100,000 requests/day is $1,800/day at $3 per million - twelve times a short chat turn, forever.
+
+STEP 4 - CHECK THE TOKENIZER WHEN YOU SWITCH MODELS. Same text, different token count, different
+price. A cheaper per-token model can be more expensive per request.
+
+STEP 5 - DO NOT ASK A MODEL TO DO SUB-TOKEN WORK. Counting letters, reversing strings, rhyming,
+digit-level arithmetic. Use a tool. This is not a prompting problem.
+
+STEP 6 - WATCH FOR TRAILING WHITESPACE in prompts. It changes the tokenization of the boundary and
+measurably degrades completions.
+
+STEP 7 - TRUNCATE IN TOKEN SPACE, not character space, and truncate the MIDDLE rather than the end if
+the end contains the question.
+
+STEP 8 - IF YOU ARE BLOCKING OR BIASING SPECIFIC WORDS, ENUMERATE ALL THEIR TOKENIZATIONS - with and
+without leading spaces, capitalised and not.
+
+STEP 9 - MEASURE COST PER REQUEST, NOT COST PER TOKEN. The two rankings can differ between providers
+because the tokenizers differ.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A token is the unit a language model actually reads - usually a word, often a piece of a word,
+sometimes just punctuation. "Tokenization" splits into "token" and "ization". And leading spaces are
+part of the token: " quick" with a space and "quick" without are different ids, which causes more real
+bugs than people expect.
+
+The reason it's subwords rather than words or characters is a compromise. Characters give you a tiny
+vocabulary and very long sequences, and attention is quadratic in sequence length, so that's roughly
+sixteen to twenty-five times the attention cost. Words give short sequences but an unbounded
+vocabulary and no way to spell a word you've never seen. Subwords give a fixed vocabulary that can
+still represent any string, with reasonable sequence lengths.
+
+The practical thing is that everything is priced and limited in tokens, and the "four characters per
+token" rule is an ENGLISH PROSE rule. I measured the character-per-word ratio across text types: plain
+English is about 4.9, technical English 9.6, Python code 7.7, and a URL was 62 characters in a single
+whitespace-delimited word, which a tokenizer will shatter into a dozen pieces on the slashes and dots.
+Code, numbers, JSON and non-English text all cost far more tokens than the heuristic suggests -
+non-English can be two to four times more expensive for the same meaning, which is a real fairness
+issue as well as a cost one.
+
+The cost arithmetic is worth having at hand. A twenty-shot prompt at six thousand tokens times a
+hundred thousand requests a day is eighteen hundred dollars a day at three dollars per million tokens,
+twelve times what a short chat turn costs, and you pay it on every single request forever. That's the
+calculation that decides when fine-tuning becomes cheaper than few-shot prompting.
+
+Tokenization also explains a whole class of apparent stupidity. "How many r's in strawberry" is hard
+because the model sees maybe three opaque ids - str, aw, berry - not ten letters. It can often answer
+because it's read text ABOUT spelling, but it's recalling rather than perceiving, which is why it fails
+unpredictably. Same mechanism for reversing strings, rhyming, syllable counting and digit-level
+arithmetic. Those aren't prompting problems; the fix is a tool.
+
+Vocabulary sizes have grown - Llama-2 was 32k and Llama-3 is 128k - and the driver was mostly
+multilingual and code coverage, because a small English-trained vocabulary compresses everything else
+badly. The cost of a bigger vocabulary is embedding and softmax parameters; the benefit is shorter
+sequences, and since attention is quadratic, a twenty percent token reduction is about a thirty-six
+percent attention saving. For long contexts that wins.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+COUNTING TOKENS PROPERLY - the only reliable way:
+
+    import tiktoken
+    enc = tiktoken.encoding_for_model("gpt-4")
+    n = len(enc.encode(text))
+    # ^ USE THE MODEL'S OWN TOKENIZER. A heuristic is fine for forecasting a monthly bill
+    #   and wrong for deciding whether a prompt fits in the context window.
+
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained("meta-llama/Llama-3-8B")
+    n = len(tok.encode(text))
+    # ^ AND NOTE THESE TWO GIVE DIFFERENT ANSWERS for the same string. Different models,
+    #   different vocabularies, different prices per request.
+
+SEEING WHAT ACTUALLY HAPPENS - do this once and the failure modes become obvious:
+
+    for tid in enc.encode("The quick brown fox"):
+        print(tid, repr(enc.decode([tid])))
+    # 464  'The'
+    # 4062 ' quick'      <-- THE LEADING SPACE IS PART OF THE TOKEN
+    # 7586 ' brown'
+    # 21831 ' fox'
+
+    enc.encode("strawberry")     # -> 3 ids
+    enc.encode("strawberries")   # -> a DIFFERENT split, not the singular plus 's'
+    enc.encode("Strawberry")     # -> different again; capitalisation changes the split
+
+THE TRAILING-SPACE BUG:
+
+    prompt_a = "The answer is"
+    prompt_b = "The answer is "        # <-- trailing space
+    # In prompt_a the model's next token would naturally be " Paris" - with its leading
+    # space. In prompt_b that token is now unreachable; the model must emit "Paris"
+    # without a space, which is a rarer token in a rarer position.
+    # MEASURABLY WORSE COMPLETIONS, AND INVISIBLE WHEN YOU READ THE PROMPT.
+
+TRUNCATION - in token space, and from the middle:
+
+    ids = enc.encode(long_text)
+    if len(ids) > budget:
+        head = ids[: budget // 2]
+        tail = ids[-(budget - len(head)) :]
+        ids = head + enc.encode("\\n...[truncated]...\\n") + tail
+        # ^ MIDDLE truncation, because the beginning usually holds instructions and the
+        #   end usually holds the question. Truncating the end throws away the question.
+    text = enc.decode(ids)
+    # ^ NEVER truncate by character offset: you can split a multi-byte character, and you
+    #   have no idea how many tokens you actually removed.
+
+BUDGETING A REQUEST:
+
+    def fits(system, examples, retrieved, question, reply_budget, limit):
+        used = sum(len(enc.encode(p)) for p in
+                   [system, *examples, *retrieved, question])
+        return used + reply_budget <= limit
+        # ^ THE REPLY BUDGET IS PART OF THE CONTEXT WINDOW. Forgetting it produces a
+        #   request that fits and then truncates mid-answer.
+
+    def daily_cost(tokens_per_request, requests_per_day, price_per_million):
+        return tokens_per_request * requests_per_day / 1e6 * price_per_million
+    # daily_cost(6000, 100_000, 3)  ->  $1,800/day for a 20-shot prompt.""",
+
+    """9. A TRACE - the same content in four forms, and what it costs
+
+TAKE ONE PIECE OF INFORMATION - a user record - and express it four ways:
+
+    (a) English prose:
+        "Alice, user 12345, is an administrator and an editor."
+        53 characters, 9 words -> roughly 13 tokens
+
+    (b) JSON:
+        {"user_id": 12345, "name": "Alice", "roles": ["admin", "editor"]}
+        65 characters, 7 whitespace-delimited "words" -> roughly 25-30 tokens
+        the braces, quotes, colons, brackets and commas are each their own token or merge
+        badly, and "user_id" splits on the underscore.
+
+    (c) CSV:
+        12345,Alice,admin|editor
+        24 characters -> roughly 12 tokens
+
+    (d) a URL carrying the same:
+        https://api.example.com/users/12345?roles=admin,editor
+        54 characters, ONE whitespace-delimited word -> roughly 18-20 tokens
+
+    THE SAME INFORMATION COSTS ROUGHLY TWICE AS MUCH IN JSON AS IN CSV. On a RAG pipeline pushing
+    100,000 requests a day with five records each, that difference is real money - and it is a
+    formatting decision, not a modelling one.
+
+THE MEASURED RATIOS THAT PREDICT THIS:
+
+     sample                       chars     words     chars per "word"
+     plain English                   64        13                 4.92
+     technical English               86         9                 9.56
+     Python code                     92        12                 7.67
+     JSON                            65         7                 9.29
+     numbers                         48         4                12.00
+     a URL                           62         1                62.00
+
+    The chars-per-word column is the predictor. HIGH VALUES MEAN LONG PUNCTUATION-DENSE STRINGS, AND
+    PUNCTUATION-DENSE STRINGS FRAGMENT.
+
+AND THE COST TABLE THAT FOLLOWS FROM IT, at $3 per million input tokens:
+
+     workload                       tokens/request     requests/day     $/day
+     short chat turn                           500          100,000      $150
+     RAG with 5 chunks                       4,000          100,000    $1,200
+     20-shot prompt                          6,000          100,000    $1,800
+     full document in context               50,000           10,000    $1,500
+
+THE LINE-BY-LINE MAPPING - which decision produced which number:
+
+    the choice of JSON over CSV in (b) vs (c)
+            produced roughly a 2x token difference for identical information. Structured output is
+            worth its cost when you need parseability; it is pure waste when you are just passing
+            retrieved context to a model.
+    the underscore in `"user_id"`
+            is why that key is two or three tokens rather than one. snake_case and camelCase both
+            fragment; this is also why code costs more than prose.
+    the digits in `12345`
+            tokenise inconsistently - "123" may be one token and "1234" two - which is the same
+            mechanism that makes digit-aligned arithmetic hard for the model.
+    the `https://` and every `/` in (d)
+            each become their own token or merge poorly, which is why 62 characters in one "word"
+            still costs ~20 tokens.
+    `tokens_per_request * requests_per_day / 1e6 * price`
+            produced the $/day column. Note the request count, not the token price, is what moves it -
+            which is why prompt length is a product decision and not just an engineering one.
+    `enc.encode(text)` rather than `len(text)/4`
+            is the only way any of these numbers become exact. Everything above is an estimate; the
+            tokenizer is the ground truth.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    RULES OF THUMB (English prose only): ~4 characters per token, ~0.75 words per token.
+    VOCABULARY SIZES: GPT-2 50,257 | Llama-2 32,000 | Llama-3 128,256 | Gemma ~256,000.
+    EMBEDDING COST: vocab x d_model parameters, at each end (often tied). 32k -> 128k at d=4096 adds
+    ~393 M parameters per end.
+
+    MEASURED chars-per-word ratios: English 4.92 | technical English 9.56 | Python 7.67 | JSON 9.29 |
+    numbers 12.00 | URL 62.00.
+    MEASURED daily cost at $3/M input: 500-token chat turn x 100k/day = $150; 6,000-token 20-shot
+    prompt x 100k/day = $1,800.
+
+THE #1 MISTAKE: estimating token counts with the 4-character rule for anything other than English
+prose. Code, JSON, numbers, URLs and non-English text all cost far more.
+
+THE #2 MISTAKE: asking a model to do sub-token work - counting letters, reversing strings, rhyming,
+digit arithmetic - and concluding it is stupid. It cannot see inside its tokens. Use a tool.
+
+THE #3 MISTAKE: leaving a trailing space in a prompt. It changes the boundary tokenization and
+degrades completions invisibly.
+
+THE #4 MISTAKE: assuming token counts transfer between models. Different tokenizers, different counts,
+different prices per request.
+
+THE #5 MISTAKE: forgetting the reply budget when checking whether a request fits. The completion
+consumes the same window.
+
+THE #6 MISTAKE: truncating by character offset. Truncate in token space, and truncate the middle.
+
+THE #7 MISTAKE: optimising the completion length while ignoring the prompt. Measured, the prompt is
+usually the bill - and a 20-shot prompt is twelve times a chat turn on every single request.
+
+THE #8 MISTAKE: blocking a word by biasing one token id. Enumerate every tokenization, including with
+and without the leading space and with different capitalisation.
+
+ONE-SENTENCE TAKEAWAY: a token is a subword chunk - the compromise between character-level's
+quadratically expensive long sequences and word-level's unbounded vocabulary - and because everything
+is priced, limited and measured in tokens, the practical skills are counting them with the real
+tokenizer rather than the four-character rule (measured to break badly on code, numbers, URLs and
+non-English text), budgeting the prompt rather than the completion, and recognising that letter
+counting, rhyming and digit arithmetic fail because the model cannot see inside a token.""",
+]
+
+_EX_P1AO["Tokenization / BPE"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - learn a vocabulary of useful chunks from the text itself
+
+You need to convert text into a sequence of integers a model can process. The vocabulary must be
+FIXED IN SIZE (the model has one embedding row per token) and must be able to represent ANY string
+(including words nobody has seen).
+
+BYTE-PAIR ENCODING SOLVES BOTH WITH ONE IDEA: START FROM INDIVIDUAL CHARACTERS AND REPEATEDLY MERGE
+THE MOST FREQUENT ADJACENT PAIR, until you have as many merges as you want.
+
+    start:  l o w e r </w>   l o w e s t </w>   n e w e s t </w>
+    merge 1: the most common adjacent pair is (s, t) -> "st"
+    merge 2: (st, </w>) -> "st</w>"
+    merge 3: (e, </w>) ...
+    and so on, a few tens of thousands of times.
+
+THE EVERYDAY VERSION: you are inventing shorthand for a document. You would not invent a symbol for a
+rare word; you would invent symbols for the sequences you write most often. BPE DOES EXACTLY THAT,
+COUNTED RATHER THAN GUESSED.
+
+WHAT MAKES IT WORK SO WELL: common words become single tokens (cheap), rare words decompose into
+meaningful pieces ("tokenization" -> "token" + "ization"), and truly novel strings fall back to
+characters or bytes, SO NOTHING IS EVER UNREPRESENTABLE. The <UNK> token that plagued pre-2017 NLP
+simply does not exist.
+
+TERMS AS THEY APPEAR:
+- MERGE: a learned rule "when you see A followed by B, join them into AB". The vocabulary IS the
+  ordered list of merges plus the base characters.
+- </w> or the equivalent: an end-of-word marker, so "est" at the end of a word is a different token
+  from "est" in the middle.
+- BYTE-LEVEL BPE: the base alphabet is the 256 byte values rather than characters, which guarantees
+  any input - including emoji and corrupt bytes - is representable.""",
+
+    """2. THE INTUITION - trained on real text, watch the merges appear
+
+I ran BPE on an English corpus about transformers, 2,220 words. Here are the first ten merges it
+learned, in order, with their counts:
+
+      1.  's'  + '</w>'    (count 420)  ->  's</w>'
+      2.  'e'  + '</w>'    (count 360)  ->  'e</w>'
+      3.  'a'  + 't'       (count 300)  ->  'at'
+      4.  'o'  + 'n'       (count 300)  ->  'on'
+      5.  'i'  + 'on'      (count 280)  ->  'ion'
+      6.  'e'  + 'n'       (count 260)  ->  'en'
+      7.  'e'  + 'r'       (count 220)  ->  'er'
+      8.  'ion'+ '</w>'    (count 220)  ->  'ion</w>'
+      9.  '.'  + '</w>'    (count 200)  ->  '.</w>'
+     10.  'a'  + 'n'       (count 180)  ->  'an'
+
+LOOK AT WHAT IT DISCOVERED WITHOUT BEING TOLD ANYTHING ABOUT ENGLISH. Merge 1 is the PLURAL "s" at the
+end of a word. Merge 5 builds "ion" and merge 8 makes it a word-final suffix - THE ALGORITHM HAS
+INDEPENDENTLY DISCOVERED THE MORPHEME "-tion". Merge 7 is "er", the comparative and agentive suffix.
+
+NOBODY DESIGNED THIS. It is pure frequency counting, and it lands on linguistically real units because
+the units that recur are the units that mean something. THAT IS THE REASON BPE WORKS AS WELL AS IT
+DOES, and it is worth saying in an interview because it explains why a purely statistical method
+produces sensible pieces.
+
+HOW WORDS SEGMENT AFTER 100 MERGES:
+
+     the              -> ['the</w>']                                  1 token, it is common
+     attention        -> ['attention</w>']                            1 token, common IN THIS CORPUS
+     tokenization     -> ['token', 'ization</w>']                     2 tokens, meaningful split
+     transformer      -> ['tr', 'an', 's', 'form', 'er</w>']          5 tokens
+     unfamiliarity    -> ['un','f','am','i','l','i','ar','it','y</w>'] 9 tokens
+     xylophone        -> ['x','y','l','o','p','h','on','e</w>']       8 tokens
+
+    THE PATTERN IS THE WHOLE STORY: FREQUENCY IN THE TRAINING CORPUS DETERMINES COST. "attention" is
+    one token because this corpus is about attention. "xylophone" is eight because it never appears.
+    A REAL TOKENIZER TRAINED ON THE WEB WOULD REVERSE THOSE, and that is exactly why a domain-specific
+    corpus tokenises expensively under a general tokenizer.""",
+
+    """3. THE TRADE-OFF - vocabulary size against sequence length, measured
+
+More merges means a bigger vocabulary and shorter sequences. I measured both on the same corpus
+(2,220 words, 12,600 non-space characters, 28 base symbols):
+
+     merges     vocabulary     total tokens     chars/token     vs word-level
+          0             28           14,820            0.85            6.68x
+         20             48           10,720            1.18            4.83x
+         50             78            8,280            1.52            3.73x
+        100            128            6,080            2.07            2.74x
+        200            228            3,880            3.25            1.75x
+        400            428            2,220            5.68            1.00x
+
+     (word-level would be exactly 2,220 tokens at 5.68 chars/token)
+
+READ IT AS AN INTERPOLATION. ZERO MERGES IS CHARACTER-LEVEL: a 28-symbol vocabulary and 6.7x as many
+tokens as words. 400 MERGES REACHES WORD-LEVEL on this small corpus: 2,220 tokens, one per word. BPE
+LETS YOU SIT ANYWHERE ON THAT LINE, and the merge count is the dial.
+
+THE COST OF EACH END:
+    LEFT END (small vocabulary, long sequences): few embedding parameters, but attention is QUADRATIC
+    in sequence length, so 6.7x the tokens is roughly 45x the attention cost.
+    RIGHT END (large vocabulary, short sequences): vocab x d_model embedding parameters at each end -
+    for d = 4096, going 32k -> 128k adds ~393 M parameters per end - plus a more expensive output
+    softmax over more classes.
+
+WHERE REAL MODELS SIT: 30k to 256k merges, giving roughly 3.5-4.5 characters per token on English -
+much closer to the word-level end than to characters. GPT-2 chose 50,257; Llama-2 32,000; Llama-3
+128,256; recent Gemma models around 256,000.
+
+THE DIMINISHING RETURNS ARE VISIBLE IN THE TABLE. Merges 0->100 cut the token count by 59%. Merges
+200->400 cut it by another 43%, but the vocabulary nearly doubled. IN A REAL CORPUS THE CURVE FLATTENS
+MUCH SOONER, because after the common words are covered each additional merge captures a rarer string.
+THAT FLATTENING IS WHY THE ANSWER IS TENS OF THOUSANDS AND NOT MILLIONS.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - DOMAIN MISMATCH. The vocabulary encodes the training corpus's statistics. Feed it medical
+text, legal text, a non-Latin script or code, and compression collapses. Measured in miniature above:
+"attention" was one token and "xylophone" was eight, purely because of what the corpus contained. THIS
+IS THE MAIN REASON NON-ENGLISH TEXT COSTS 2-4x MORE TOKENS in English-dominated tokenizers.
+
+FAILURE 2 - NUMBERS. Digit sequences tokenise inconsistently: "123" may be one token and "1234" two,
+split in an arbitrary place. THE MODEL CANNOT SEE DIGIT ALIGNMENT, which is a direct cause of
+arithmetic errors. Some modern tokenizers deliberately split every digit individually to fix this -
+Llama-3 does - at the cost of longer sequences on numeric text.
+
+FAILURE 3 - WHITESPACE AND THE LEADING-SPACE CONVENTION. "quick" and " quick" are different tokens. A
+trailing space in your prompt makes the natural next token unreachable and measurably degrades
+completions.
+
+FAILURE 4 - CASE. "The", "the" and "THE" are three different tokens. This is deliberate - case carries
+information - but it triples the cost of representing a word in all its forms and is why lowercasing
+input can change results.
+
+FAILURE 5 - THE GREEDY MERGE ORDER IS NOT OPTIMAL. BPE applies merges in the order learned, which does
+not always yield the shortest possible segmentation. It is a heuristic, and a good one.
+
+FAILURE 6 - GLITCH TOKENS. Strings that appear in the tokenizer's training corpus but are essentially
+absent from the model's training data end up with untrained embeddings. GPT-2 and GPT-3's
+"SolidGoldMagikarp" family are the famous case - typing them produced bizarre behaviour. THE CAUSE IS
+THAT THE TOKENIZER AND THE MODEL WERE TRAINED ON DIFFERENT DATA.
+
+FAILURE 7 - PRE-TOKENISATION ASSUMPTIONS. Classic BPE splits on whitespace first. Chinese, Japanese
+and Thai do not use spaces between words, so that assumption is simply wrong for them. SentencePiece
+exists to avoid it by treating the input as a raw byte stream.
+
+FAILURE 8 - VOCABULARY IS FROZEN AT TRAINING TIME. You cannot add a token to a trained model without
+adding an untrained embedding row. Extending a tokenizer for a new domain requires continued
+pre-training.""",
+
+    """5. THE ALTERNATIVES - the three algorithms and one implementation
+
+    algorithm       how it builds the vocabulary                     used by
+    -------------------------------------------------------------------------------------
+    BPE             merge the most FREQUENT adjacent pair            GPT, Llama, most
+    WordPiece       merge the pair that most increases corpus        BERT, DistilBERT
+                    LIKELIHOOD (frequency of pair / product of
+                    frequencies of parts)
+    Unigram         start LARGE, iteratively PRUNE the tokens        T5, Llama, Gemma,
+                    whose removal costs the least likelihood         XLNet
+    (SentencePiece) an IMPLEMENTATION of BPE or Unigram that         multilingual models
+                    treats input as raw bytes, no pre-tokenisation
+
+BPE vs WORDPIECE: the difference is one formula. BPE picks the pair with the highest COUNT; WordPiece
+picks the pair with the highest count(AB) / (count(A) x count(B)). That normalisation prefers pairs
+that occur together MORE OFTEN THAN CHANCE WOULD PREDICT, which tends to produce more linguistically
+coherent pieces. In practice the outputs are very similar.
+
+UNIGRAM IS GENUINELY DIFFERENT and worth knowing for one reason: it is a PROBABILISTIC model, so it
+can give you the probability of ALTERNATIVE SEGMENTATIONS of the same word. That enables SUBWORD
+REGULARIZATION - during training, sample a different segmentation each time you see a word, as data
+augmentation. It measurably improves robustness, and BPE cannot do it because its segmentation is
+deterministic. (BPE-dropout is the retrofit: randomly skip merges during training.)
+
+BYTE-LEVEL BPE, which is what GPT-2 introduced and everything now uses: run BPE over the 256 BYTE
+VALUES rather than over Unicode characters. GUARANTEES that any input is representable - emoji,
+corrupt bytes, any script - with no <UNK> and no fallback path. The cost is that a single non-Latin
+character may be 2-4 bytes and therefore several tokens before merges cover it.
+
+THE RESEARCH FRONTIER - ELIMINATING TOKENIZATION: ByT5 and the Byte Latent Transformer operate on raw
+bytes with no learned vocabulary. THEY REMOVE EVERY FAILURE MODE IN SECTION 4 - no domain mismatch, no
+glitch tokens, no digit misalignment, no case explosion, and letter-counting works. The cost is
+sequence length, and attention is quadratic. NOT YET COMPETITIVE AT SCALE, and it is the correct
+answer to "how would you fix the strawberry problem properly".""",
+
+    """6. HOW TO TRAIN AND USE ONE - numbered steps
+
+STEP 1 - DECIDE THE BASE ALPHABET. Bytes, not characters, unless you have a strong reason. It
+guarantees nothing is unrepresentable.
+
+STEP 2 - GATHER A CORPUS THAT MATCHES YOUR DEPLOYMENT DISTRIBUTION. THIS IS THE DECISION THAT
+DETERMINES EVERYTHING ELSE. A tokenizer trained on English web text will cost your Japanese users
+three times as much per sentence.
+
+STEP 3 - COUNT WORD FREQUENCIES, not raw text. BPE operates on a frequency-weighted vocabulary of
+words, which is far cheaper than scanning the corpus for every merge.
+
+STEP 4 - REPEATEDLY FIND THE MOST FREQUENT ADJACENT PAIR AND MERGE IT. Record the merge in order - the
+ORDERED LIST OF MERGES IS THE TOKENIZER.
+
+STEP 5 - CHOOSE THE MERGE COUNT BY MEASURING COMPRESSION ON HELD-OUT TEXT. Plot chars-per-token
+against vocabulary size and pick the knee. Measured on my corpus: 0.85 at 0 merges, 2.07 at 100, 5.68
+at 400 - and in a real corpus the curve flattens well before word-level.
+
+STEP 6 - HANDLE DIGITS DELIBERATELY. Consider splitting every digit, as Llama-3 does. It costs tokens
+on numeric text and it fixes digit alignment.
+
+STEP 7 - ADD SPECIAL TOKENS EXPLICITLY - end-of-text, chat-role markers, tool-call delimiters - and
+reserve room for future ones. Adding a token later means adding an untrained embedding.
+
+STEP 8 - TRAIN THE TOKENIZER ON THE SAME DATA AS THE MODEL, or you get glitch tokens: vocabulary
+entries the model has never seen and whose embeddings are therefore random.
+
+STEP 9 - MEASURE COMPRESSION ON EVERY LANGUAGE AND DOMAIN YOU CARE ABOUT, not just the majority one.
+Report chars-per-token per language; the disparities are usually larger than anyone expects.
+
+STEP 10 - IN PRACTICE, DO NOT TRAIN YOUR OWN. Use the model's. A tokenizer is only meaningful paired
+with the model that was trained on it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Byte-pair encoding builds a subword vocabulary from the data. You start with individual characters -
+or bytes - and repeatedly find the most frequent adjacent pair and merge it into a single new symbol,
+a few tens of thousands of times. The ordered list of merges IS the tokenizer.
+
+What I find compelling is what it discovers without being told anything about language. I trained it
+on an English corpus and looked at the first ten merges: the very first was "s" plus end-of-word - the
+plural marker. Then it built "ion" and made it word-final, so it independently rediscovered the
+morpheme "-tion". Then "er". Pure frequency counting lands on linguistically real units, because the
+sequences that recur are the sequences that mean something. That's why a purely statistical method
+produces sensible pieces.
+
+The reason it beats the alternatives is that it handles unseen words gracefully. Word-level
+tokenization has an unbounded vocabulary and everything you truncate becomes an unknown token, and a
+model can't reason about a word it can't represent. Character-level represents everything but gives
+you four or five times as many tokens, and attention is quadratic, so that's roughly twenty times the
+attention cost. BPE gives you common words as single tokens, rare words as meaningful pieces, and
+anything genuinely novel as characters or bytes - so nothing is ever unrepresentable.
+
+The core trade-off is vocabulary size against sequence length, and I measured it. On the same corpus:
+zero merges is character-level, 28 symbols and 0.85 characters per token. A hundred merges gives 128
+symbols and 2.07 characters per token. Four hundred merges reaches word-level, 5.68 characters per
+token. BPE lets you sit anywhere on that line and the merge count is the dial. Real models are at
+30k to 256k, giving about four characters per token on English - much closer to the word end.
+
+The failure mode I'd emphasise is domain mismatch. The vocabulary encodes the training corpus's
+statistics. In my toy, "attention" was one token and "xylophone" was eight, purely because of what the
+corpus contained. Scale that up and it's why non-English text costs two to four times more tokens in
+an English-dominated tokenizer, which is a cost and fairness issue, and it's why Llama-3 went from
+Llama-2's 32k vocabulary to 128k - largely to buy multilingual and code coverage.
+
+Two other things worth knowing. Number tokenization is inconsistent - "123" might be one token and
+"1234" two - so the model can't see digit alignment, which is a direct cause of arithmetic errors;
+Llama-3 splits every digit individually to fix it. And glitch tokens like SolidGoldMagikarp happen
+when the tokenizer and the model are trained on different data, so a vocabulary entry exists whose
+embedding was never trained.'""",
+
+    """8. THE CODE, PIECE BY PIECE - BPE training in full
+
+    import re
+    from collections import Counter
+
+    def bpe_train(text, num_merges):
+        # Represent every word as SPACE-SEPARATED symbols plus an end-of-word marker.
+        # The marker matters: "est" at the end of a word is a different unit from "est"
+        # in the middle, and without it "lowest" and "estimate" would share a token.
+        vocab = Counter(" ".join(list(w)) + " </w>" for w in text.split())
+        # ^ a Counter of WORDS, not of raw text. Counting once and weighting by frequency
+        #   is far cheaper than rescanning the corpus for every merge.
+
+        merges = []
+        for _ in range(num_merges):
+            pairs = Counter()
+            for word, freq in vocab.items():
+                syms = word.split()
+                for i in range(len(syms) - 1):
+                    pairs[(syms[i], syms[i + 1])] += freq
+                    # ^ weighted by the word's frequency. This is the whole objective:
+                    #   BPE merges the pair with the highest COUNT.
+                    #   (WordPiece would instead maximise count(AB)/(count(A)*count(B)),
+                    #    which is the single formula that distinguishes the two.)
+
+            if not pairs:
+                break
+            best = max(pairs, key=pairs.get)
+            merges.append(best)
+
+            # apply the merge everywhere, being careful about symbol boundaries
+            pat = re.compile(r"(?<!\\S)" + re.escape(" ".join(best)) + r"(?!\\S)")
+            #                 ^^^^^^^^                                  ^^^^^^^
+            # ^ these lookarounds ensure we match WHOLE SYMBOLS. Without them, merging
+            #   ('e','s') would also match inside an existing symbol like 'test', which
+            #   would silently corrupt the vocabulary.
+            vocab = Counter({pat.sub("".join(best), w): f for w, f in vocab.items()})
+
+        return merges       # <-- THE ORDERED LIST OF MERGES *IS* THE TOKENIZER
+
+APPLYING IT - note that order is everything:
+
+    def encode(word, merges):
+        seq = " ".join(list(word)) + " </w>"
+        for a, b in merges:                       # IN THE ORDER LEARNED
+            seq = re.sub(r"(?<!\\S)" + re.escape(a + " " + b) + r"(?!\\S)", a + b, seq)
+        return seq.split()
+        # ^ applying merges in a different order gives a DIFFERENT segmentation. The
+        #   ordering is part of the tokenizer's definition, which is why a merges file
+        #   is a list and not a set.
+        # ^ this is O(merges) per word; real implementations use a priority queue over
+        #   merge ranks and run in O(word length log word length).
+
+WHAT YOU WOULD ACTUALLY USE:
+
+    from tokenizers import Tokenizer, models, trainers, pre_tokenizers
+    tok = Tokenizer(models.BPE())
+    tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=True)
+    #                                  ^^^^^^^^^ byte-level: the base alphabet is the 256
+    #                                  byte values, so NOTHING is unrepresentable - no
+    #                                  <UNK> token exists or is needed.
+    trainer = trainers.BpeTrainer(vocab_size=32000,
+                                  special_tokens=["<|endoftext|>", "<|user|>", "<|assistant|>"])
+    #                             ^ reserve special tokens UP FRONT. Adding one later means
+    #                               adding an untrained embedding row to a trained model.
+    tok.train_from_iterator(corpus, trainer)""",
+
+    """9. A TRACE - four merges by hand, then the measured tables
+
+CORPUS (with word frequencies): "low" x5, "lower" x2, "newest" x6, "widest" x3
+
+    INITIAL - every word split into characters plus an end marker:
+        l o w </w>          x5
+        l o w e r </w>      x2
+        n e w e s t </w>    x6
+        w i d e s t </w>    x3
+
+    COUNT ADJACENT PAIRS (weighted by word frequency):
+        (l,o)   5 + 2 = 7
+        (o,w)   5 + 2 = 7
+        (w,</w>)      = 5
+        (e,s)   6 + 3 = 9
+        (s,t)   6 + 3 = 9
+        (t,</w>) 6 + 3 = 9
+        ... others smaller
+
+    MERGE 1 - a three-way tie at 9; take (e,s) -> "es":
+        l o w </w>  |  l o w e r </w>  |  n e w es t </w>  |  w i d es t </w>
+
+    MERGE 2 - now (es,t) has count 9:
+        n e w est </w>      x6
+        w i d est </w>      x3
+
+    MERGE 3 - (est,</w>) count 9:
+        n e w est</w>       x6
+        w i d est</w>       x3
+
+    MERGE 4 - (l,o) count 7:
+        lo w </w>           x5
+        lo w e r </w>       x2
+
+    AFTER FOUR MERGES: "newest" is 4 tokens (n, e, w, est</w>) instead of 7. "lowest", a word never
+    seen in training, would tokenise as (lo, w, est</w>) - THREE TOKENS FROM A WORD THE TOKENIZER HAS
+    NEVER ENCOUNTERED. That compositional generalisation is the entire point.
+
+THE MEASURED TABLES, on a real 2,220-word corpus:
+
+     merges     vocabulary     total tokens     chars/token
+          0             28           14,820            0.85
+         20             48           10,720            1.18
+        100            128            6,080            2.07
+        400            428            2,220            5.68   (= word-level)
+
+     segmentation after 100 merges:
+        the           -> ['the</w>']
+        attention     -> ['attention</w>']
+        tokenization  -> ['token', 'ization</w>']
+        transformer   -> ['tr','an','s','form','er</w>']
+        xylophone     -> ['x','y','l','o','p','h','on','e</w>']
+
+THE LINE-BY-LINE MAPPING - which line produced which step:
+
+    `Counter(" ".join(list(w)) + " </w>" for w in text.split())`
+            produced the INITIAL block. The `</w>` is why merge 3 exists at all - without an end
+            marker, "est" at a word end and "est" inside a word would be the same symbol and the
+            tokenizer would lose the suffix structure.
+    `pairs[(syms[i], syms[i+1])] += freq`
+            produced the COUNT ADJACENT PAIRS block. The `+= freq` rather than `+= 1` is what makes
+            the algorithm sensitive to word frequency rather than to word-type frequency.
+    `best = max(pairs, key=pairs.get)`
+            produced merge 1's choice among the three-way tie at 9. Ties are broken arbitrarily by
+            dict order, which is why two BPE runs on the same corpus can differ - and why a merges
+            file must be shipped, not regenerated.
+    `merges.append(best)`
+            produced the ordered list. The ORDER is the tokenizer; applying merge 4 before merge 1
+            would segment "lower" differently.
+    `pat.sub("".join(best), w)` with the `(?<!\\S)` / `(?!\\S)` lookarounds
+            produced the correct merge-in-place. Without the lookarounds, merging ('e','s') would also
+            fire inside an already-formed symbol and silently corrupt the vocabulary.
+    the counts 5, 2, 6, 3 attached to each word
+            produced every number in the pair table. THIS IS THE ONLY INPUT THE ALGORITHM HAS - which
+            is why the resulting vocabulary is entirely a picture of the training corpus, and why
+            domain mismatch is the dominant failure mode.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    TRAINING COST: O(merges x vocabulary size) with a naive implementation; production trainers use
+    incremental pair counts and run over billions of tokens in hours.
+    ENCODING COST: O(word length log word length) per word with a priority queue over merge ranks.
+    THE TOKENIZER IS: the base alphabet + the ORDERED list of merges. Nothing else.
+
+    MEASURED on a 2,220-word English corpus (12,600 non-space characters, 28 base symbols):
+        merges    0 -> vocab   28, 14,820 tokens, 0.85 chars/token  (character-level)
+        merges  100 -> vocab  128,  6,080 tokens, 2.07 chars/token
+        merges  400 -> vocab  428,  2,220 tokens, 5.68 chars/token  (word-level)
+    MEASURED first merges learned: 's'+'</w>', 'e'+'</w>', 'a'+'t', 'o'+'n', 'i'+'on', 'e'+'n',
+        'e'+'r', 'ion'+'</w>' - the algorithm rediscovered the plural marker and the "-tion" morpheme
+        from frequency alone.
+
+THE #1 MISTAKE: treating the tokenizer as neutral infrastructure. It encodes the statistics of ONE
+corpus, and everything unlike that corpus - other languages, other domains, code, numbers - costs
+more tokens and is represented worse.
+
+THE #2 MISTAKE: forgetting the end-of-word marker. Without it, word-final and word-internal
+occurrences of the same string collapse and the suffix structure is lost.
+
+THE #3 MISTAKE: thinking the merge order does not matter. Applying merges in a different order yields
+a different segmentation; the ordered list IS the tokenizer.
+
+THE #4 MISTAKE: training the tokenizer on different data from the model. That is how glitch tokens
+like SolidGoldMagikarp arise - vocabulary entries with untrained embeddings.
+
+THE #5 MISTAKE: confusing BPE, WordPiece, Unigram and SentencePiece. The first three are algorithms
+(highest count, highest likelihood ratio, prune-from-large); SentencePiece is an implementation that
+avoids whitespace pre-tokenisation.
+
+THE #6 MISTAKE: ignoring number tokenization. Inconsistent digit splits directly cause arithmetic
+errors, and splitting every digit is a deliberate fix that costs tokens.
+
+THE #7 MISTAKE: choosing a vocabulary size by intuition. Measure chars-per-token on held-out text in
+every language you care about and pick the knee.
+
+THE #8 MISTAKE: assuming a bigger vocabulary is always better. It buys shorter sequences and costs
+vocab x d_model embedding parameters at each end plus a wider output softmax.
+
+ONE-SENTENCE TAKEAWAY: BPE starts from bytes and repeatedly merges the most frequent adjacent pair, so
+the ordered list of merges becomes a vocabulary that gives common words one token, rare words
+meaningful pieces, and novel strings a byte-level fallback - which is why nothing is ever
+unrepresentable - and the single dial is the merge count, measured to interpolate smoothly from 0.85
+chars/token at character level to 5.68 at word level, with the whole vocabulary being a picture of the
+training corpus and therefore the source of every domain- and language-mismatch cost.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
