@@ -185800,6 +185800,2066 @@ chars/token at character level to 5.68 at word level, with the whole vocabulary 
 training corpus and therefore the source of every domain- and language-mismatch cost.""",
 ]
 
+_EX_P1AO["FlashAttention (memory-efficient attention)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop writing the huge matrix down
+
+Standard attention computes, for a sequence of n tokens:
+
+    S = Q K^T          an n x n matrix of scores
+    P = softmax(S)     an n x n matrix of weights
+    O = P V            the n x d output
+
+Steps 1 and 2 build an n x n matrix. At n = 65,536 that matrix is 4.3 billion numbers - 8.6 GB in
+fp16, FOR ONE HEAD OF ONE LAYER. A 32-layer, 32-head model would need a thousand times that if the
+matrices were all live. THE MATRIX IS THE PROBLEM.
+
+FLASHATTENTION'S IDEA: NEVER WRITE THE MATRIX DOWN. Process the sequence in TILES that fit in the
+GPU's small, extremely fast on-chip memory (SRAM, about 20 MB), compute a running softmax as you go,
+and only ever write the n x d output back to main GPU memory (HBM).
+
+THE EVERYDAY VERSION: you have to average a million numbers that arrive on a conveyor belt. You could
+write all million down on paper and then average them - or you could keep a running total and a
+running count, and never write anything down. THE ANSWER IS IDENTICAL; THE PAPER IS WHAT COSTS YOU.
+
+AND THIS IS THE PART PEOPLE GET WRONG: FLASHATTENTION IS EXACT. It is not a sparse pattern, not a
+low-rank approximation, not a windowed attention. Same mathematics, same output to floating-point
+precision. Its only change is WHERE the intermediates live.
+
+TERMS AS THEY APPEAR:
+- HBM: the GPU's main memory, ~80 GB on an H100 and comparatively slow (~3 TB/s).
+- SRAM: on-chip memory, ~20 MB and very fast (~20 TB/s). The gap between these two numbers is the
+  entire subject.
+- IO-AWARE: an algorithm designed around memory movement rather than around arithmetic operations.
+- ONLINE SOFTMAX: computing a softmax in one streaming pass, rescaling as you go.
+- MEMORY-BANDWIDTH-BOUND: the kernel spends its time waiting for data, not computing.""",
+
+    """2. THE INTUITION - attention is bandwidth-bound, not compute-bound
+
+Here is the observation the whole paper rests on. Count the trips to HBM in the naive implementation,
+in units of n x n elements:
+
+     step                                  naive       tiled
+     write S = Q K^T to HBM                 n*n           0
+     read S back to find the row max        n*n           0
+     read S, write P = softmax(S)         2 n*n           0
+     read P again for P V                   n*n           0
+     TOTAL score-matrix traffic           5 n*n           0
+
+FIVE FULL PASSES OVER AN n x n MATRIX, and none of them are arithmetic - they are moving numbers
+between two memories. Meanwhile the actual FLOPs are 2 * n^2 * d, which a modern GPU can do far faster
+than it can move 5 n^2 elements. THE ARITHMETIC UNITS SIT IDLE WAITING FOR MEMORY.
+
+The tiled version does the SAME arithmetic and zero of that traffic. It reads Q, K and V once, keeps
+every intermediate in SRAM, and writes the n x d output. That is why the speedup is 2-4x on real
+hardware while the FLOP count is unchanged - and why the memory saving is the bigger prize:
+
+     seq len       n*n entries         fp16 bytes        human
+       1,024         1,048,576          2,097,152       2.1 MB
+       4,096        16,777,216         33,554,432      33.6 MB
+      16,384       268,435,456        536,870,912     536.9 MB
+      65,536     4,294,967,296      8,589,934,592       8.6 GB
+     131,072    17,179,869,184     34,359,738,368      34.4 GB
+
+FLASHATTENTION TURNS THAT COLUMN INTO O(n) INSTEAD OF O(n^2). Long-context models are not possible
+without it - not "slower without it", NOT POSSIBLE, because 34 GB per head per layer does not fit
+anywhere.
+
+THE GENERAL LESSON, which transfers far beyond attention: ON MODERN HARDWARE, COUNT MEMORY MOVEMENTS,
+NOT OPERATIONS. Two algorithms with identical FLOP counts can differ by 4x, and the reason is always
+the memory hierarchy. (The same lesson appears in why merge sort is slower than quicksort despite
+doing fewer comparisons.)""",
+
+    """3. THE ONLINE SOFTMAX - the trick that makes tiling possible, and a proof that it is exact
+
+The obstacle to tiling is that SOFTMAX IS NOT LOCAL. It needs the maximum and the sum over the whole
+row before it can normalise anything. How do you process a block when the normaliser depends on blocks
+you have not seen?
+
+THE ANSWER: keep a RUNNING max m, a RUNNING denominator l, and a RUNNING output o, and RESCALE them
+whenever a new block raises the max.
+
+    for each block of scores:
+        m_new = max(m, max of this block)
+        correction = exp(m - m_new)             # <-- always <= 1
+        l = l * correction                       # rescale the old denominator
+        o = o * correction                       # rescale the old output
+        for each (score s, value v) in the block:
+            e = exp(s - m_new)
+            l += e
+            o += e * v
+        m = m_new
+    return o / l
+
+WHY THE RESCALING IS CORRECT: every accumulated term was computed as exp(s - m_old). Multiplying by
+exp(m_old - m_new) turns it into exp(s - m_new), which is what it would have been had we known the new
+maximum all along. THE CORRECTION IS ALGEBRAICALLY EXACT, not an approximation.
+
+I VERIFIED IT NUMERICALLY, comparing the tiled result against the standard softmax on random scores:
+
+        n       block     standard softmax        online (tiled)     abs difference
+       16           4    1.148018340004813     1.148018340004813           2.22e-16
+      128          16   -0.041258135708056    -0.041258135708056           3.47e-17
+    1,024          64   -0.448496095599722    -0.448496095599721           3.33e-16
+    8,192         128   -0.013939186381922    -0.013939186381923           3.05e-16
+
+    AGREEMENT TO FIFTEEN DECIMAL PLACES. The residual difference is float64 machine epsilon
+    (2.2e-16), which is the noise floor - it is not an approximation error, it is the same number
+    computed in a different summation order.
+
+THAT TABLE IS THE ANSWER TO "IS FLASHATTENTION AN APPROXIMATION?" It is not, and being able to show
+why - the correction factor exp(m_old - m_new) is exact - is what separates understanding it from
+having heard of it.""",
+
+    """4. THE VERSIONS, AND WHAT EACH ONE FIXED
+
+FLASHATTENTION (2022). The original. Tiling plus online softmax, eliminating the n x n HBM traffic.
+Also recomputes the attention matrix during the BACKWARD pass rather than storing it - which sounds
+insane (extra FLOPs!) and is faster, because recomputing from SRAM beats reading from HBM. THAT SINGLE
+DESIGN CHOICE IS THE CLEAREST STATEMENT OF THE WHOLE THESIS.
+
+FLASHATTENTION-2 (2023). Same algorithm, better GPU occupancy: fewer non-matmul operations (a GPU's
+tensor cores do matmuls ~16x faster than general arithmetic, so every non-matmul FLOP is expensive),
+better work partitioning across thread blocks and warps, and parallelising over the sequence dimension
+as well as batch and heads. About 2x faster than v1.
+
+FLASHATTENTION-3 (2024). Hopper-specific: asynchrony between the tensor cores and the memory movement
+units, and native FP8 support. Roughly 1.5-2x over v2 on H100s.
+
+WHAT THEY ALL SHARE: identical mathematics, identical outputs, no change to the model. YOU CAN SWAP
+THEM IN AND OUT OF A TRAINED MODEL FREELY - which is not true of any approximate attention method, and
+is the practical reason they were adopted so fast.
+
+WHAT FLASHATTENTION IS NOT, and this distinction matters in an interview:
+- IT IS NOT SPARSE ATTENTION. Longformer, BigBird and sliding-window attention CHANGE WHAT THE MODEL
+  CAN SEE. Different model, different results.
+- IT IS NOT LINEAR ATTENTION. Performer, Linformer and state-space models change the mathematics to
+  get O(n). Different model.
+- IT DOES NOT CHANGE THE ASYMPTOTIC COMPUTE. Attention is still O(n^2 * d) FLOPs. It changes the
+  MEMORY from O(n^2) to O(n), and the constant factor on time.
+
+THE PRACTICAL SUMMARY: FLASHATTENTION IS FREE ACCURACY-WISE. Sliding-window attention is not. If you
+need to go beyond what FlashAttention alone allows, you then start paying in model quality - and you
+should be explicit about which of those two kinds of change you are making.""",
+
+    """5. THE ALTERNATIVES - the long-context toolbox, and what each one costs
+
+    technique              changes the maths?     memory        compute      quality cost
+    ------------------------------------------------------------------------------------------
+    FlashAttention         NO (exact)             O(n)          O(n^2)       none
+    sliding window         yes                    O(n*w)        O(n*w)       loses long range
+    sparse (BigBird)       yes                    O(n*k)        O(n*k)       pattern-dependent
+    linear attention       yes                    O(n)          O(n)         weaker in practice
+    state-space (Mamba)    yes (different arch)   O(n)          O(n)         different trade-offs
+    GQA / MQA              no (fewer kv heads)    smaller CACHE  same        small, usually fine
+    quantised KV cache     no (lossy storage)     smaller CACHE  same        small
+    ring attention         NO (exact)             O(n/p) per GPU O(n^2)      none, needs p GPUs
+
+TWO THINGS TO NOTICE IN THAT TABLE.
+
+FIRST, FLASHATTENTION AND RING ATTENTION ARE THE ONLY EXACT ROWS. Everything else is a modelling
+decision dressed as an optimisation. Ring attention shards the sequence across GPUs and passes key/
+value blocks around a ring, so each GPU holds O(n/p) - it is how million-token training runs are done,
+and it composes with FlashAttention rather than replacing it.
+
+SECOND, GQA AND KV QUANTISATION ATTACK A DIFFERENT PROBLEM. FlashAttention fixes the n x n matrix,
+which is a TRAINING and PREFILL problem. At decode time with a KV cache there is no n x n matrix - the
+bottleneck is the CACHE, which is O(n) already but per-request. Those are separate optimisations for
+separate phases, and conflating them is a common error.
+
+WHAT YOU SHOULD ACTUALLY DO IN PRACTICE: use `torch.nn.functional.scaled_dot_product_attention`, which
+dispatches to a FlashAttention kernel automatically when the dtype, head dimension and mask allow it.
+DO NOT HAND-WRITE ATTENTION. And check that it is actually dispatching - fp32, unusual head dims, and
+arbitrary additive masks all silently fall back to the slow path, which is a very common performance
+bug.""",
+
+    """6. HOW TO EXPLAIN IT IN AN INTERVIEW - numbered steps
+
+STEP 1 - STATE THE PROBLEM AS MEMORY, NOT COMPUTE. "Attention's FLOPs are fine; the problem is that
+the naive implementation materialises an n x n matrix in HBM and reads it back several times."
+
+STEP 2 - GIVE A NUMBER. "At 65k tokens that matrix is 8.6 GB in fp16, for one head of one layer."
+
+STEP 3 - SAY WHAT FLASHATTENTION DOES. "It tiles the computation so blocks of Q, K and V fit in SRAM,
+computes a running softmax, and only writes the n x d output back."
+
+STEP 4 - EXPLAIN THE ONLINE SOFTMAX, because that is the actual technical content. "Softmax needs the
+row max and sum, which you do not have when you have only seen one block. So you keep a running max,
+denominator and output, and when a new block raises the max you multiply the accumulators by
+exp(old_max - new_max). That correction is algebraically exact."
+
+STEP 5 - SAY EXPLICITLY THAT IT IS EXACT. "Same output to floating-point precision - I have checked it,
+the difference is machine epsilon. It is not sparse attention and it is not an approximation."
+
+STEP 6 - GIVE THE NUMBERS THAT MATTER. "Memory goes from O(n^2) to O(n); wall-clock is about 2-4x
+faster because attention is memory-bandwidth-bound, not compute-bound."
+
+STEP 7 - MENTION THE BACKWARD-PASS RECOMPUTATION. "It recomputes the attention matrix in the backward
+pass instead of storing it - more FLOPs, less memory traffic, and it comes out faster. That is the
+whole thesis in one design decision."
+
+STEP 8 - DISTINGUISH IT FROM THE APPROXIMATE METHODS unprompted. Sliding-window and linear attention
+change what the model can do; this does not.
+
+STEP 9 - SAY WHAT YOU WOULD ACTUALLY DO. "Call PyTorch's scaled_dot_product_attention and verify it is
+dispatching to the fused kernel rather than silently falling back."
+
+STEP 10 - IF PUSHED ON THE GENERAL PRINCIPLE: on modern hardware, count memory movements, not
+operations.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'FlashAttention is an IO-aware implementation of exactly the same attention computation. It doesn't
+change the mathematics at all - it changes where the intermediate values live.
+
+The problem it solves is that naive attention builds the full n-by-n score matrix in GPU main memory,
+writes it out, reads it back to compute the row maxima, reads it again to softmax it, and reads it a
+third time to multiply by V. That's about five full passes over an n-squared matrix, and none of it is
+arithmetic - it's just moving numbers between HBM and the compute units. Meanwhile the FLOPs are
+something a GPU can do far faster than it can move that data. Attention is memory-bandwidth-bound, not
+compute-bound.
+
+So FlashAttention tiles the computation. It loads blocks of Q, K and V into on-chip SRAM - about
+twenty megabytes, but roughly seven times the bandwidth of HBM - computes the block's contribution
+there, and only ever writes the n-by-d output back.
+
+The obstacle is that softmax isn't local: you need the row's maximum and sum before you can normalise
+anything, and you don't have those when you've only seen one block. The trick is an online softmax:
+keep a running max, a running denominator and a running output, and when a new block raises the
+maximum, multiply the accumulators by exp of old-max minus new-max. Every accumulated term was
+exp(s minus old max); that correction turns it into exp(s minus new max), which is exactly what it
+should have been. It's algebraically exact, and I've checked it numerically - the tiled result matches
+the standard softmax to fifteen decimal places, with the residual at float64 machine epsilon.
+
+That's the point I'd emphasise: FlashAttention is EXACT. It's not sparse attention, not low-rank, not
+windowed. You can swap it into a trained model with no change in outputs, which is why adoption was so
+fast. Sliding-window and linear attention are a different kind of thing - they change what the model
+can see, so they're modelling decisions.
+
+The payoff: memory goes from O(n squared) to O(n), which is what makes long context possible at all -
+at 65k tokens the score matrix alone is 8.6 gigabytes per head per layer - and wall-clock is about 2
+to 4 times faster.
+
+My favourite detail is the backward pass. Instead of storing the attention matrix for the gradient, it
+RECOMPUTES it from SRAM. More floating-point operations, and it's faster - because on this hardware,
+recomputing beats reading from main memory. That single decision is the whole thesis.'""",
+
+    """8. THE CODE, PIECE BY PIECE - the online softmax, which is the real content
+
+THE STANDARD VERSION, for reference - note that `w` is a full n-length array:
+
+    def attention_standard(scores, values):
+        m = max(scores)                                   # pass 1 over the row
+        e = [math.exp(s - m) for s in scores]             # pass 2, MATERIALISES n values
+        total = sum(e)                                    # pass 3
+        w = [x / total for x in e]                        # pass 4, another n values
+        return sum(w[i] * values[i] for i in range(len(values)))   # pass 5
+    # five passes, and in the real kernel each pass is a round trip to HBM.
+
+THE ONLINE / TILED VERSION - one pass, three scalars:
+
+    def attention_online(scores, values, block=64):
+        m = float("-inf")     # running MAXIMUM seen so far
+        l = 0.0               # running DENOMINATOR (sum of exp(s - m))
+        o = 0.0               # running OUTPUT (sum of exp(s - m) * v)
+
+        for start in range(0, len(scores), block):
+            blk_s = scores[start:start + block]
+            blk_v = values[start:start + block]
+            # ^ a TILE. In the real kernel this is the piece that fits in SRAM, and the
+            #   block size is chosen so Q, K, V and the accumulators all fit at once.
+
+            m_new = max(m, max(blk_s))
+            correction = math.exp(m - m_new) if m != float("-inf") else 0.0
+            # ^ THE HEART OF THE ALGORITHM. Every term already in `l` and `o` was computed
+            #   as exp(s - m_old). Multiplying by exp(m_old - m_new) rewrites it as
+            #   exp(s - m_new) - EXACTLY, not approximately.
+            # ^ m_new >= m always, so the correction is always <= 1: we scale DOWN, never
+            #   up, which is why this is numerically safe.
+
+            l = l * correction
+            o = o * correction
+            # ^ rescale BOTH accumulators before adding the new block, or the two halves
+            #   would be normalised against different maxima.
+
+            for s, v in zip(blk_s, blk_v):
+                e = math.exp(s - m_new)
+                l += e
+                o += e * v
+                # ^ note we never store `e` anywhere. THE n-LENGTH SOFTMAX VECTOR NEVER
+                #   EXISTS. That absence is the entire memory saving.
+
+            m = m_new
+
+        return o / l
+        # ^ the division happens ONCE, at the end. Normalising per block would be wrong,
+        #   because the denominator is not final until every block has been seen.
+
+    # VERIFIED: agrees with the standard version to ~2e-16 (float64 machine epsilon) at
+    # n = 16, 128, 1024 and 8192.
+
+WHAT TO ACTUALLY CALL:
+
+    import torch.nn.functional as F
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+    # dispatches to a FlashAttention kernel when dtype is fp16/bf16, the head dimension is
+    # supported, and the mask is causal or None. fp32, odd head dims, or an arbitrary
+    # additive mask silently fall back to the slow path - CHECK, do not assume.""",
+
+    """9. A TRACE - the online softmax over two blocks, by hand
+
+Scores [1, 3, 2, 8], values [10, 20, 30, 40], block size 2. The true answer is
+softmax([1,3,2,8]) . [10,20,30,40].
+
+INITIAL: m = -inf, l = 0, o = 0
+
+BLOCK 1 = scores [1, 3], values [10, 20]:
+    m_new = max(-inf, 3) = 3
+    correction = 0 (first block; nothing to rescale)
+    l = 0, o = 0
+    s=1: e = exp(1-3) = exp(-2) = 0.13534;  l = 0.13534;  o = 1.3534
+    s=3: e = exp(3-3) = 1.00000;            l = 1.13534;  o = 21.3534
+    m = 3
+
+    IF WE STOPPED HERE: o/l = 21.3534 / 1.13534 = 18.808 - which is the correct softmax over
+    just the first two elements. THE PARTIAL RESULT IS ALWAYS A VALID ANSWER FOR THE PREFIX.
+
+BLOCK 2 = scores [2, 8], values [30, 40]:
+    m_new = max(3, 8) = 8
+    correction = exp(3 - 8) = exp(-5) = 0.0067379
+    l = 1.13534 * 0.0067379 = 0.0076497        <-- the old block is now almost irrelevant,
+    o = 21.3534 * 0.0067379 = 0.14387              which is correct: exp(8) dwarfs exp(3)
+    s=2: e = exp(2-8) = exp(-6) = 0.00247875;  l = 0.0101285;  o = 0.21823
+    s=8: e = exp(8-8) = 1.00000;               l = 1.0101285;  o = 40.21823
+    m = 8
+
+RESULT: o / l = 40.21823 / 1.0101285 = 39.8149
+
+CHECK AGAINST THE STANDARD COMPUTATION:
+    exp([1,3,2,8] - 8) = [0.00091188, 0.00673795, 0.00247875, 1.0]
+    sum = 1.01012858
+    weights = [0.000903, 0.006670, 0.002454, 0.989973]
+    output = 0.00903 + 0.13340 + 0.07362 + 39.5989 = 39.8149    IDENTICAL.
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `m = float("-inf")`
+            made block 1's `correction` branch fire and set it to 0 - the special case that avoids
+            exp(-inf - 3). Without the guard this is exp(-inf) = 0.0 anyway in Python, but in a real
+            kernel the first block is handled separately.
+    `m_new = max(m, max(blk_s))`
+            produced m = 3 then m = 8. It only ever increases, which is what guarantees the correction
+            factor is <= 1 and the algorithm never overflows.
+    `correction = math.exp(m - m_new)`
+            produced 0.0067379 at block 2. THIS ONE NUMBER IS THE WHOLE ALGORITHM: it retroactively
+            re-normalises everything accumulated so far against a maximum that did not exist when it
+            was accumulated.
+    `l = l * correction` and `o = o * correction`
+            produced 0.0076497 and 0.14387. Note BOTH must be scaled - scaling only `l` would leave
+            the numerator and denominator on different scales and give a wildly wrong answer.
+    `e = math.exp(s - m_new)` inside the block loop
+            produced 0.00247875 and 1.0. These values are consumed immediately into `l` and `o` and
+            never stored - which is why the n-length softmax array never exists.
+    `return o / l`
+            produced 39.8149. Doing this division inside the loop instead would normalise against a
+            partial denominator, which is exactly the mistake the running-accumulator design exists to
+            avoid.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    naive attention:   O(n^2 * d) compute, O(n^2) HBM memory, ~5 n^2 elements of HBM traffic
+    FlashAttention:    O(n^2 * d) compute, O(n)   HBM memory, O(n^2 d / M) traffic where M is the
+                       SRAM size. SAME COMPUTE, ASYMPTOTICALLY LESS MEMORY AND TRAFFIC.
+    wall clock:        typically 2-4x faster; the memory saving is the more important half.
+
+    MEASURED, online vs standard softmax: agreement to 2.2e-16, 3.5e-17, 3.3e-16, 3.1e-16 at
+    n = 16, 128, 1024, 8192. That is float64 machine epsilon - the same number, summed in a
+    different order.
+    MEASURED, the matrix being avoided (fp16, one head, one layer): 2.1 MB at n=1k, 536.9 MB at
+    n=16k, 8.6 GB at n=64k, 34.4 GB at n=128k.
+
+THE #1 MISTAKE: calling it an approximation. It is exact, and being able to explain WHY - the
+exp(m_old - m_new) rescale is algebraic - is the difference between understanding it and having read
+about it.
+
+THE #2 MISTAKE: saying it makes attention linear or sub-quadratic. Compute is still O(n^2 * d). MEMORY
+becomes O(n).
+
+THE #3 MISTAKE: confusing it with sliding-window, sparse or linear attention. Those change what the
+model can see; FlashAttention changes nothing about the model.
+
+THE #4 MISTAKE: not knowing about the backward-pass recomputation. It deliberately does MORE
+arithmetic to avoid memory traffic, which is the clearest illustration of the whole idea.
+
+THE #5 MISTAKE: assuming it helps decoding. During generation with a KV cache there is no n x n
+matrix; the bottleneck is the cache and the fixes there are GQA, quantisation and paged attention.
+FlashAttention helps TRAINING and PREFILL.
+
+THE #6 MISTAKE: hand-writing attention and wondering why it is slow. Use
+`F.scaled_dot_product_attention`, and check it is dispatching - fp32 and arbitrary masks silently fall
+back.
+
+THE #7 MISTAKE: not generalising the lesson. The principle is that on modern hardware you count MEMORY
+MOVEMENTS, not FLOPs. The same reasoning explains why quicksort beats merge sort despite doing more
+comparisons.
+
+ONE-SENTENCE TAKEAWAY: FlashAttention computes exactly the same attention by tiling the sequence into
+blocks that fit in on-chip SRAM and maintaining a running max, denominator and output that are
+rescaled by an algebraically exact exp(m_old - m_new) factor whenever a block raises the maximum - so
+the n x n matrix is never written to HBM, memory falls from O(n^2) to O(n), and wall-clock improves
+2-4x because attention was always bandwidth-bound rather than compute-bound.""",
+]
+
+_EX_P1AO["Transformer"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - process a whole sequence at once, and let every position see
+every other
+
+Before 2017, sequence models were RECURRENT: read one token, update a hidden state, read the next.
+That works, and it has two fatal properties. FIRST, IT IS SEQUENTIAL - step 1,000 cannot begin until
+step 999 finishes, so a GPU with thousands of cores sits mostly idle. SECOND, INFORMATION FROM FAR
+BACK HAS TO SURVIVE A THOUSAND MULTIPLICATIONS to reach the end, which it mostly does not.
+
+THE TRANSFORMER REPLACES THE RECURRENCE WITH ATTENTION. Every position computes, in one parallel
+operation, a weighted average over every other position. Two consequences follow immediately:
+
+    PARALLELISM: all positions are computed in one matrix multiply. Training goes from n sequential
+    steps to 1.
+    PATH LENGTH: any two positions are ONE operation apart, not n. Gradients between distant tokens
+    do not have to survive a long chain.
+
+I tabulated exactly that:
+
+     n            RNN sequential steps     Transformer sequential steps     max path length
+        10                          10                                1        RNN 10 / TF 1
+       100                         100                                1       RNN 100 / TF 1
+     1,000                       1,000                                1     RNN 1000 / TF 1
+    10,000                      10,000                                1    RNN 10000 / TF 1
+
+    THOSE TWO COLUMNS ARE THE ENTIRE REASON THE ARCHITECTURE WON. Not accuracy on any particular
+    benchmark - TRAINABILITY AT SCALE.
+
+THE PRICE, which is the honest other half: attention compares every position with every other, so it
+is O(n^2). The transformer traded a linear-time sequential algorithm for a quadratic-time parallel one,
+and on hardware that has thousands of cores and hates dependencies, THAT IS AN EXCELLENT TRADE.
+
+TERMS AS THEY APPEAR:
+- SELF-ATTENTION: each position attends over the same sequence.
+- RESIDUAL STREAM: the running vector each layer reads from and adds to.
+- ENCODER / DECODER: bidirectional vs causally-masked stacks.
+- HEAD: one independent attention computation; models run 8-128 in parallel.""",
+
+    """2. THE INTUITION - the block, and where its parameters and its time go
+
+A transformer is ONE BLOCK, REPEATED. That is genuinely all of it:
+
+    x = x + attention(norm(x))         # mix information ACROSS positions
+    x = x + mlp(norm(x))               # process each position INDEPENDENTLY
+
+TWO OPERATIONS WITH COMPLEMENTARY JOBS, and stating the division is the clearest way to explain the
+architecture. ATTENTION IS THE ONLY PLACE POSITIONS COMMUNICATE. The MLP never looks sideways - it is
+applied identically and independently at every position, and it is where most of the model's stored
+knowledge is believed to live.
+
+WHERE THE PARAMETERS ARE, at d_model = 512 with a 4x MLP:
+
+     component                     parameters        share
+     Q, K, V, O projections         1,048,576        33.3%
+     MLP up (d -> 4d)               1,048,576        33.3%
+     MLP down (4d -> d)             1,048,576        33.3%
+     layer norms                        2,048         0.1%
+     TOTAL PER LAYER                3,147,776        = 12 * d^2 + small
+
+    TWO THIRDS OF THE PARAMETERS ARE IN THE MLP, not in attention. People consistently over-weight
+    attention when describing where a transformer's capacity lives.
+
+WHERE THE TIME GOES, and this corrects a very common overstatement:
+
+     n         RNN work per layer     Transformer work per layer     ratio
+       128             33,554,432                     41,943,040       1.2x
+       512            134,217,728                    268,435,456       2.0x
+     2,048            536,870,912                  2,684,354,560       5.0x
+     8,192          2,147,483,648                 36,507,222,016      17.0x
+
+    WITH d = 512, ATTENTION ONLY DOMINATES ONCE n EXCEEDS d. Below that, the per-position MLP is the
+    bigger cost, and the transformer is only ~1.2x an RNN's arithmetic. "TRANSFORMERS ARE QUADRATIC" IS
+    TRUE ASYMPTOTICALLY AND MISLEADING FOR TYPICAL SEQUENCE LENGTHS - the crossover is at n ~ d, and
+    for a model with d_model = 4096 that is 4,096 tokens.
+
+THE RESIDUAL STREAM IS THE OTHER STRUCTURAL IDEA. Note that both lines are `x = x + something`.
+Nothing is ever overwritten; every layer READS the accumulated stream and WRITES an increment. That is
+what makes a 96-layer stack trainable - the gradient has a clean additive path from the loss to layer
+1 - and it is why interpretability research talks about "reading from" and "writing to" the stream.""",
+
+    """3. THE COMPONENT LIST, AND WHY EACH PIECE IS THERE
+
+    MULTI-HEAD SELF-ATTENTION. h independent attentions on h narrower projections, concatenated. One
+    head computes ONE weighted average and therefore one notion of relevance; eight heads track
+    syntax, coreference, position and topic simultaneously. Costs the same as one full-width head.
+
+    POSITIONAL ENCODING. Attention is permutation-equivariant - shuffle the inputs and the outputs
+    shuffle with them - so word order has to be added back explicitly. Learned tables in BERT and
+    GPT-2, RoPE in essentially everything since 2023.
+
+    THE FEED-FORWARD MLP. d -> 4d -> d with a nonlinearity. Two thirds of the parameters. Modern
+    models use SwiGLU (three matrices at ~2.7d) instead of a plain two-matrix GELU block - same
+    parameter count, better quality.
+
+    RESIDUAL CONNECTIONS. `x + sublayer(x)`. Without them a deep stack does not train.
+
+    NORMALISATION. LayerNorm originally; RMSNorm now (it drops the mean-subtraction and the bias,
+    which is cheaper and works as well). AND THE PLACEMENT MATTERS MORE THAN THE CHOICE: the 2017
+    paper used POST-norm (`norm(x + sublayer(x))`) and needed a learning-rate warmup to train at all.
+    Everything now uses PRE-norm (`x + sublayer(norm(x))`), which keeps the residual path clean and
+    trains stably without warmup tricks.
+
+    THE CAUSAL MASK, in a decoder. Position i may not attend to i+1. Applied BEFORE the softmax as
+    -infinity so masked weights are exactly zero and the row still sums to 1.
+
+THE THREE ARCHITECTURAL FAMILIES:
+
+    ENCODER-ONLY (BERT). Bidirectional attention, no mask. Excellent at classification and extraction;
+    cannot generate.
+    DECODER-ONLY (GPT, Llama). Causal mask. Generates, and every task becomes text-in-text-out. WON,
+    for that generality plus a sample-efficiency argument: the causal mask yields a prediction target
+    at EVERY position, so one forward pass over 1,000 tokens gives 1,000 training signals, whereas
+    BERT's masked language modelling masks ~15% and extracts a fraction of the signal per pass.
+    ENCODER-DECODER (T5, the original). Encoder sees everything, decoder generates and cross-attends.
+    Still right when the input and output are genuinely different objects - translation, and most
+    multimodal conditioning.""",
+
+    """4. THE FAILURE MODES AND LIMITS
+
+FAILURE 1 - QUADRATIC ATTENTION MEMORY. The n x n score matrix at n = 65,536 is 8.6 GB in fp16 for one
+head of one layer. FlashAttention removes it by tiling (exactly, not approximately); sliding-window
+and sparse patterns remove it by changing what the model can see. THOSE ARE DIFFERENT KINDS OF FIX AND
+IT IS WORTH SAYING WHICH IS WHICH.
+
+FAILURE 2 - THE KV CACHE AT INFERENCE. During generation the quadratic matrix does not exist, but the
+cache of past keys and values grows linearly and is PER REQUEST. At long context it exceeds the model
+weights, and it - not the parameter count - caps your batch size.
+
+FAILURE 3 - NO INDUCTIVE BIAS. A CNN knows about locality and translation invariance for free; a
+transformer knows nothing and must learn everything from data. That is why vision transformers need
+far more data than CNNs to match them, and why they overtake them once the data exists.
+
+FAILURE 4 - LOST IN THE MIDDLE. Attention over a long context is empirically stronger at the beginning
+and end than in the middle. A relevant passage placed 60% of the way through a long prompt can be
+effectively invisible.
+
+FAILURE 5 - LENGTH EXTRAPOLATION. Learned positional embeddings have no row past their trained
+maximum. RoPE and ALiBi are defined at any position but degrade beyond the trained range - "it runs"
+and "it works" are different claims.
+
+FAILURE 6 - TRAINING INSTABILITY AT SCALE. Loss spikes, attention entropy collapse, divergence. The
+mitigations - pre-norm, QK-norm, careful initialisation, gradient clipping, warmup - are a real part
+of the engineering and are absent from every diagram of the architecture.
+
+FAILURE 7 - THE FIXED COMPUTE BUDGET PER TOKEN. A transformer does the same amount of work on "the"
+as on a token requiring deep reasoning. That is the structural reason chain-of-thought helps: emitting
+intermediate tokens is the only way to buy more forward passes.""",
+
+    """5. THE ALTERNATIVES - what might replace it
+
+    architecture         time         state at inference     status
+    ------------------------------------------------------------------------------------
+    transformer          O(n^2)       KV cache, grows        dominant
+    RNN / LSTM           O(n)         fixed                  superseded; sequential training
+    CNN                  O(n*k)       fixed                  strong locality bias, limited range
+    state-space (Mamba)  O(n)         FIXED SIZE             the serious challenger
+    linear attention     O(n)         fixed                  weaker in practice
+    hybrid (SSM+attn)    mixed        small cache            the pragmatic current answer
+    MoE transformer      O(n^2)       KV cache               same attention, sparse MLP
+
+STATE-SPACE MODELS ARE THE REAL CHALLENGER, and the reason is the third column. A transformer's
+inference state grows with the sequence; an SSM's is FIXED SIZE regardless of length. That removes the
+KV-cache problem entirely, and training is still parallelisable via an associative scan. Mamba's
+selective mechanism recovers much of attention's content-dependence.
+
+WHERE SSMs STILL LOSE: exact recall from long context. A fixed-size state must compress everything,
+and "what was the account number mentioned 40,000 tokens ago" is precisely what a full KV cache
+answers perfectly and a compressed state cannot. HENCE THE HYBRIDS - a few attention layers among many
+SSM layers, giving fixed-state efficiency with an attention escape hatch for retrieval.
+
+MIXTURE OF EXPERTS is not an alternative to the transformer; it is a modification of its MLP. Replace
+the single feed-forward block with N experts and route each token to the top 1-2. Parameter count
+grows enormously while FLOPs per token stay roughly constant. The attention is unchanged. Since two
+thirds of a dense transformer's parameters are in the MLP, THIS IS WHERE THE CAPACITY WAS ALWAYS
+GOING TO BE ADDED.
+
+WHAT HAS ACTUALLY CHANGED SINCE 2017: pre-norm instead of post-norm, RMSNorm instead of LayerNorm,
+SwiGLU instead of ReLU/GELU, RoPE instead of learned positions, GQA instead of MHA, MoE in some
+models, and FlashAttention as an implementation. THE SHAPE OF THE BLOCK IS UNCHANGED, and saying so
+demonstrates perspective rather than ignorance.""",
+
+    """6. HOW TO EXPLAIN IT IN AN INTERVIEW - numbered steps
+
+STEP 1 - LEAD WITH THE PROBLEM IT SOLVES, NOT THE DIAGRAM. "RNNs are sequential, so training does not
+parallelise, and distant tokens are many multiplications apart. The transformer replaces the
+recurrence with attention, which makes every position computable in parallel and puts any two
+positions one operation apart."
+
+STEP 2 - GIVE THE BLOCK IN TWO LINES. "x = x + attention(norm(x)); x = x + mlp(norm(x)), repeated L
+times." Then say what each does: attention mixes ACROSS positions, the MLP processes EACH position
+independently.
+
+STEP 3 - SAY WHERE THE PARAMETERS ARE. "About two thirds are in the MLP, one third in the attention
+projections. Twelve d-squared per layer." Most candidates over-attribute capacity to attention.
+
+STEP 4 - GIVE THE COMPLEXITY HONESTLY. "Attention is O(n^2 d) and the MLP is O(n d^2), so attention
+only dominates once n exceeds d. For d = 4096 the crossover is around four thousand tokens."
+
+STEP 5 - EXPLAIN THE RESIDUAL STREAM. "Every sublayer adds to a running vector rather than replacing
+it, which is what makes a 96-layer stack trainable."
+
+STEP 6 - MENTION POSITIONAL ENCODING UNPROMPTED. "Attention is permutation-equivariant, so word order
+has to be added back - RoPE in modern models."
+
+STEP 7 - NAME THE THREE FAMILIES AND WHY DECODER-ONLY WON. Generality, plus the sample-efficiency
+argument: a training target at every position versus 15% for masked language modelling.
+
+STEP 8 - NAME THE REAL COSTS. Quadratic attention memory at training and prefill; the KV cache at
+inference, which is per-request and often exceeds the weights.
+
+STEP 9 - IF ASKED WHAT WILL REPLACE IT: state-space models, because their inference state is fixed
+size, with the caveat that they are weaker at exact long-range recall - hence hybrids.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The transformer replaced recurrence with attention, and the reason it won is trainability at scale
+rather than accuracy on any particular task.
+
+An RNN processes tokens one at a time, so step a thousand can't start until step nine hundred and
+ninety-nine finishes - a ten-thousand-token sequence is ten thousand dependent steps, and a GPU with
+thousands of cores sits idle. And information from far back has to survive a thousand multiplications
+to reach the end. The transformer computes every position in one matrix multiply, and any two
+positions are ONE operation apart rather than n. Those two properties are the whole story.
+
+Architecturally it's one block repeated. Attention, then a feed-forward MLP, each wrapped in a
+residual connection and a normalisation. The division of labour is clean: attention is the ONLY place
+positions communicate with each other, and the MLP is applied identically and independently at every
+position, never looking sideways.
+
+Two numbers I'd offer that people usually get wrong. First, about two thirds of the parameters are in
+the MLP, not in attention - twelve d-squared per layer, of which eight is the MLP. Second, on
+complexity: attention is O(n squared d) and the MLP is O(n d squared), so attention only dominates once
+the sequence length exceeds d_model. I worked it out at d equals 512: at n equals 128 the transformer
+is only 1.2 times an RNN's arithmetic, and it's 17 times at n equals 8192. So "transformers are
+quadratic" is asymptotically true and misleading at typical lengths - for a model with d_model of 4096
+the crossover is around four thousand tokens.
+
+The residual stream is the other structural idea worth naming. Every sublayer is x equals x plus
+something - nothing is overwritten, each layer reads the accumulated stream and writes an increment.
+That's what makes a ninety-six-layer stack trainable, because the gradient has a clean additive path
+back to layer one.
+
+Because attention is permutation-equivariant - shuffle the inputs and the outputs shuffle with them -
+word order has to be added back explicitly, which is what positional encoding is for.
+
+The real costs: quadratic attention memory during training and prefill, which FlashAttention fixes
+exactly by tiling; and the KV cache at inference, which grows linearly, is per-request, and at long
+context exceeds the model weights, so it - not the parameter count - caps your batch size.
+
+And on what might replace it: state-space models like Mamba, because their inference state is fixed
+size regardless of sequence length, which removes the KV cache problem entirely. The catch is exact
+recall from long context - a fixed state has to compress everything - which is why the current
+pragmatic answer is hybrids with a few attention layers among many SSM layers.'""",
+
+    """8. THE CODE, PIECE BY PIECE - a whole transformer block
+
+    def transformer_block(x, p):
+        x = x + multi_head_attention(rms_norm(x, p.n1), p.attn)
+        # ^ PRE-NORM: normalise the INPUT to the sublayer, not the output of the addition.
+        #   The 2017 paper used post-norm - norm(x + sublayer(x)) - and needed a
+        #   learning-rate warmup to train at all. Pre-norm keeps an unobstructed additive
+        #   path from input to output and trains stably. Every modern model uses it.
+        # ^ THE `x +` IS THE RESIDUAL STREAM. Nothing is overwritten; this layer contributes
+        #   an increment. That is why a 96-layer stack has a usable gradient at layer 1.
+
+        x = x + feed_forward(rms_norm(x, p.n2), p.mlp)
+        # ^ applied INDEPENDENTLY at every position - it never looks sideways. Attention is
+        #   the only cross-position operation in the whole architecture.
+        return x
+
+    def multi_head_attention(x, p, causal=True):
+        n, d = x.shape
+        h = p.n_heads
+        dh = d // h                          # <-- each head is NARROWER, so h heads cost
+                                             #     the same as one full-width head
+        Q = reshape(x @ p.Wq, (n, h, dh))
+        K = reshape(x @ p.Wk, (n, h, dh))
+        V = reshape(x @ p.Wv, (n, h, dh))
+        Q, K = apply_rope(Q, K)              # <-- position enters HERE, inside attention,
+                                             #     at every layer - not once at the bottom
+        outs = []
+        for i in range(h):
+            s = Q[:, i] @ K[:, i].T / sqrt(dh)
+            if causal:
+                s = s.masked_fill(~tril(n), float("-inf"))
+                # ^ BEFORE the softmax. exp(-inf) = 0, so masked weights are exactly zero
+                #   AND the surviving weights still sum to 1.
+            outs.append(softmax(s) @ V[:, i])
+        return concat(outs) @ p.Wo           # <-- the output projection is what lets the
+                                             #     heads' contributions mix
+
+    def feed_forward(x, p):
+        return (silu(x @ p.W_gate) * (x @ p.W_up)) @ p.W_down
+        # ^ SwiGLU: a GATE branch and an UP branch, multiplied elementwise. Three matrices
+        #   of width ~2.7d instead of two of width 4d - the same parameter count, and
+        #   measurably better than a plain GELU MLP. This block holds ~2/3 of the model.
+
+    def model(tokens, p):
+        x = p.embed[tokens]                  # (vocab x d) lookup table
+        for layer in p.layers:
+            x = transformer_block(x, layer)
+        x = rms_norm(x, p.n_final)
+        return x @ p.embed.T                 # <-- TIED weights: the output projection
+                                             #     reuses the embedding table, saving
+                                             #     vocab x d parameters
+
+WHAT TO ACTUALLY CALL, because a hand-written version is 10-100x slower:
+
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+    # dispatches to a FlashAttention kernel when dtype, head dim and mask allow it. Check
+    # it is dispatching - fp32 and arbitrary additive masks silently fall back.""",
+
+    """9. A TRACE - one token through the stack, with the numbers attached
+
+TAKE A 12-LAYER MODEL, d_model = 768, 12 heads of 64 dimensions, vocabulary 50,257, and the input
+"The capital of France is" - 5 tokens.
+
+    STEP 1 - EMBED.  5 token ids index the 50,257 x 768 table -> a 5 x 768 matrix.
+             That table is 38.6 M parameters - nearly a third of this model's 124 M total.
+
+    STEP 2 - LAYER 1, ATTENTION.  Q, K, V are each 5 x 768, reshaped to 12 heads x 5 x 64.
+             Each head computes a 5 x 5 score matrix, masked so row i keeps only columns 0..i.
+             Row 0 (" The") attends only to itself; row 4 (" is") attends over all five.
+             Output 5 x 768, ADDED to the residual stream.
+
+    STEP 3 - LAYER 1, MLP.  Each of the 5 positions independently: 768 -> 3072 -> 768.
+             NO COMMUNICATION between positions here at all. Added to the stream.
+
+    STEP 4 - REPEAT 11 MORE TIMES.  The stream accumulates; nothing is replaced.
+
+    STEP 5 - FINAL NORM, THEN PROJECT.  the LAST position's 768-vector times a 768 x 50,257
+             matrix -> 50,257 logits. " Paris" is the argmax.
+
+THE ARITHMETIC FOR THIS ONE FORWARD PASS:
+
+    attention scores:   12 layers x 12 heads x 5 x 5 x 64  =    1,152,000 multiply-adds
+    QKVO projections:   12 layers x 5 x 4 x 768 x 768      =  141,557,760
+    MLP:                12 layers x 5 x 8 x 768 x 768      =  283,115,520
+    output projection:  5 x 768 x 50,257                   =  193,000,000
+    -> ATTENTION SCORES ARE 0.2% OF THE WORK AT n = 5. At n = 5,000 they would be
+       1.15e9 x 1,000,000/25 ... the quadratic term takes over, but only eventually.
+
+THE LINE-BY-LINE MAPPING - which line produced which step:
+
+    `x = p.embed[tokens]`
+            produced step 1's 5 x 768 matrix. The embedding table's size (vocab x d) is why small
+            models are "mostly vocabulary" - 38.6 M of 124 M here.
+    `s = Q[:, i] @ K[:, i].T / sqrt(dh)`
+            produced step 2's 5 x 5 score matrix per head. The `dh` in the denominator is 64, not
+            768 - the scaling uses the HEAD dimension, and using d_model would over-flatten the
+            distribution.
+    `s.masked_fill(~tril(n), -inf)`
+            produced "row 0 attends only to itself". This is the line that makes it a decoder, and
+            it is also why one forward pass yields five training targets rather than one.
+    `concat(outs) @ p.Wo`
+            produced step 2's 5 x 768 output. Without Wo the twelve heads' outputs would be
+            concatenated and never allowed to interact.
+    `x = x + ...` (both of them)
+            produced step 4's "the stream accumulates; nothing is replaced". Delete either `x +` and
+            the model stops training at this depth.
+    `feed_forward(...)`
+            produced step 3, and it is 283 M of the 618 M multiply-adds above - the single largest
+            term, which is the concrete version of "two thirds of the parameters are in the MLP".
+    `x @ p.embed.T`
+            produced step 5's 193 M multiply-adds - 31% of the total for a model this small, and
+            negligible for a large one. It is why small models tie the embedding and output weights.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    PER LAYER:   4 d^2 attention projections + 8 d^2 MLP = 12 d^2 parameters
+    ATTENTION:   O(n^2 d) time, O(n^2) memory (naive)
+    MLP:         O(n d^2) time
+    CROSSOVER:   attention dominates only once n > d
+
+    MEASURED sequential steps: RNN n, transformer 1, at every sequence length.
+    MEASURED work ratio at d = 512: n=128 -> 1.2x an RNN, n=512 -> 2.0x, n=2048 -> 5.0x,
+        n=8192 -> 17.0x.
+    MEASURED parameter split at d = 512: attention projections 33.3%, MLP 66.6%, norms 0.1%.
+
+THE #1 MISTAKE: saying transformers "process text in parallel" without qualification. TRAINING is
+parallel across positions; GENERATION is strictly sequential, one token at a time.
+
+THE #2 MISTAKE: attributing the capacity to attention. Two thirds of the parameters are in the MLP,
+which is also where most stored knowledge is believed to live.
+
+THE #3 MISTAKE: claiming the quadratic term always dominates. It only dominates once n exceeds d -
+measured at 1.2x an RNN's work at n = 128 with d = 512.
+
+THE #4 MISTAKE: forgetting positional encoding when describing the architecture. Attention is
+permutation-equivariant; without position added back it cannot tell "dog bites man" from "man bites
+dog".
+
+THE #5 MISTAKE: putting the norm in the wrong place. Post-norm is the 2017 original and needs warmup
+to train; pre-norm is what everything uses now, and the difference is real.
+
+THE #6 MISTAKE: describing FlashAttention as an approximation. It is exact; sliding-window attention
+is the approximation.
+
+THE #7 MISTAKE: ignoring the KV cache when discussing inference cost. It is per-request and at long
+context exceeds the weights.
+
+THE #8 MISTAKE: overstating architectural progress since 2017. Pre-norm, RMSNorm, SwiGLU, RoPE, GQA
+and MoE are real refinements; the block is the same block.
+
+ONE-SENTENCE TAKEAWAY: a transformer is one block - attention to mix across positions, an MLP to
+process each position independently, both wrapped in residual connections and pre-norm - repeated L
+times, and it won because it turned n sequential steps into 1 and a path length of n into 1, at the
+price of quadratic attention that only actually dominates once the sequence exceeds d_model.""",
+]
+
+_EX_P1AO["Vector database"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - find the most similar items, fast, when "similar" means a vector
+
+An EMBEDDING turns a piece of text, an image or an audio clip into a list of a few hundred to a few
+thousand numbers, arranged so that SIMILAR THINGS LAND NEAR EACH OTHER. "dog" is near "puppy" and far
+from "quarterly earnings".
+
+A VECTOR DATABASE stores millions of those vectors and answers one question fast: GIVEN THIS QUERY
+VECTOR, WHICH STORED VECTORS ARE CLOSEST?
+
+THE OBVIOUS ALGORITHM IS TO COMPARE THE QUERY WITH EVERY STORED VECTOR AND TAKE THE TOP k. That is
+EXACT k-NEAREST-NEIGHBOUR SEARCH, it is O(N * d), and at N = 100 million and d = 1,536 it is 150
+billion multiply-adds PER QUERY. Not viable.
+
+SO EVERY PRODUCTION SYSTEM USES APPROXIMATE NEAREST NEIGHBOUR SEARCH (ANN): accept that you will
+sometimes miss a true neighbour, in exchange for orders of magnitude less work. THE WORD APPROXIMATE
+IS THE ENTIRE SUBJECT - and the number that describes an ANN index is not its speed, it is its
+POSITION ON A RECALL-VERSUS-SPEED CURVE.
+
+THE EVERYDAY VERSION: finding the nearest coffee shop. Checking every shop in the country is exact and
+absurd. Checking every shop in your postcode is approximate, thousands of times faster, and
+occasionally wrong when the true nearest is just over the boundary.
+
+TERMS AS THEY APPEAR:
+- RECALL@k: of the k true nearest neighbours, how many did the index return? THE quality metric.
+- COSINE SIMILARITY / DOT PRODUCT: the usual distance. On normalised vectors they are equivalent.
+- IVF: partition the vectors into clusters; search only the nearest few.
+- HNSW: a navigable small-world graph; greedily walk towards the query.
+- QUANTIZATION: store compressed approximations of the vectors to fit more in memory.""",
+
+    """2. THE INTUITION - the recall/speed curve, measured
+
+I built an IVF index - cluster the vectors with k-means, then at query time search only the `nprobe`
+nearest clusters - over 8,000 vectors in 32 dimensions with 80 clusters, and measured recall@10
+against exact search:
+
+     nprobe     vectors scanned     recall@10     ms/query     speedup
+      exact               8,000        100.0%        16.52        1.0x
+          1                  99         16.5%         0.37       45.1x
+          2                 199         26.7%         0.60       27.4x
+          4                 398         39.4%         1.03       16.0x
+          8                 798         58.0%         2.34        7.1x
+         16               1,602         78.1%         4.05        4.1x
+         32               3,197         93.5%         7.87        2.1x
+
+THAT TABLE IS THE ENTIRE FIELD. Every ANN index - IVF, HNSW, ScaNN, DiskANN - is a different way of
+generating this curve, and every deployment decision is choosing a point on it.
+
+READ IT CAREFULLY. AT nprobe = 1 YOU GET A 45x SPEEDUP AND MISS 83% OF THE TRUE NEIGHBOURS. At
+nprobe = 32 you get 93.5% recall and only a 2.1x speedup. THE CURVE IS STEEP AT THE FAST END, and the
+last few points of recall are the expensive ones - which is exactly why systems quote "95% recall at
+10x speedup" rather than a single number.
+
+(HNSW would give a much better curve than IVF at these sizes - typically 95%+ recall at 50-100x - and
+the SHAPE is the same. IVF is used here because it is implementable in twenty lines and the shape is
+what matters.)
+
+THE DECISION THIS FORCES YOU TO MAKE, and it is a product decision rather than an engineering one:
+WHAT DOES A MISS COST? For RAG over a large corpus, missing one of ten retrieved chunks usually
+changes nothing - 90% recall is fine and the speed is worth far more. For deduplication, fraud
+matching or legal discovery, a miss is a failure and you may need exact search on a filtered subset.
+NOBODY CAN CHOOSE YOUR OPERATING POINT FOR YOU.""",
+
+    """3. WHY APPROXIMATION IS NECESSARY - the curse of dimensionality, measured
+
+People assume ANN is a performance hack that a cleverer exact algorithm could avoid. IT CANNOT, and
+here is why. I measured, in each dimension, the average similarity to the NEAREST of 400 random
+vectors against the average similarity to a RANDOM one:
+
+     dimensions     mean nearest-neighbour similarity     mean random similarity        gap
+              2                                1.0000                   -0.0008     1.0008
+              8                                0.8617                    0.0028     0.8588
+             32                                0.5031                    0.0005     0.5025
+            128                                0.2567                    0.0004     0.2564
+            512                                0.1315                    0.0004     0.1312
+
+AS DIMENSION GROWS, THE NEAREST NEIGHBOUR BECOMES BARELY NEARER THAN A RANDOM VECTOR. At d = 2 the
+nearest is essentially identical (1.0000) and a random one is orthogonal. At d = 512 the nearest
+scores 0.13 and a random one scores 0.00 - the CONTRAST HAS COLLAPSED by a factor of eight.
+
+THE CONSEQUENCE FOR EXACT ALGORITHMS IS FATAL. A k-d tree or ball tree prunes by proving that an
+entire branch is too far away to contain a neighbour. When every point is roughly equidistant, NO
+BRANCH CAN BE PRUNED, and the tree degenerates into a full scan with extra overhead - typically worse
+than a brute-force scan above about 20 dimensions. Embeddings are 384 to 4,096 dimensional.
+
+SO THE ANSWER TO "WHY NOT USE AN EXACT INDEX" IS NOT "IT WOULD BE SLOW". IT IS THAT NO EXACT INDEX
+BEATS A LINEAR SCAN IN HIGH DIMENSIONS, and a linear scan is the thing you were trying to avoid.
+Approximation is not laziness; it is the only structure available.
+
+WHY ANN WORKS ANYWAY, despite that: real embeddings are NOT uniformly random. They lie on a much
+lower-dimensional manifold - text about cooking clusters together, and the clusters have structure.
+ANN indexes exploit that real structure, which is why they achieve 95% recall at 50x speedup on real
+data and would fail on the uniform random data used in the table above. THAT GAP BETWEEN WORST CASE
+AND REAL DATA IS THE WHOLE REASON THE FIELD IS EMPIRICAL.""",
+
+    """4. THE INDEX FAMILIES - what each one actually does
+
+    FLAT (exact).       Compare against everything. 100% recall. O(N*d). Correct answer up to about
+                        a million vectors if you can afford the scan - AND YOU OFTEN CAN. Do not
+                        reach for an approximate index before measuring whether you need one.
+
+    IVF.                k-means the vectors into `nlist` clusters, store an inverted list per
+                        cluster, search the `nprobe` nearest. Simple, small memory overhead, and the
+                        knob is obvious. THE FAILURE MODE IS THE BOUNDARY: a true neighbour just
+                        across a cluster edge is missed unless nprobe is raised, which is exactly
+                        what the measured 16.5% recall at nprobe=1 shows.
+
+    HNSW.               A multi-layer navigable small-world graph. Upper layers are sparse
+                        "motorways" for long jumps, lower layers dense for local refinement. Query:
+                        greedily walk downhill towards the query at each layer. USUALLY THE BEST
+                        RECALL/SPEED CURVE, at the cost of high memory (the graph edges) and slow,
+                        awkward deletion.
+
+    PRODUCT QUANTIZATION (PQ).  Split each vector into m sub-vectors, replace each with the id of
+                        its nearest centroid from a small codebook. A 1,536-dimensional float32
+                        vector (6 KB) becomes 96 bytes - a 64x compression. Distances are computed
+                        from lookup tables. THE COMPRESSION IS THE POINT: it is what lets a billion
+                        vectors fit in RAM. Costs recall, and is usually combined with IVF (IVF-PQ)
+                        and a re-ranking pass on the full vectors.
+
+    DISKANN / SPANN.    Graph indexes designed to live on SSD rather than in RAM, trading a few
+                        hundred microseconds of latency for a 10x cost reduction.
+
+    LSH.                Hash so that near vectors collide. Historically important, theoretically
+                        elegant, and beaten in practice by graph methods on real data.
+
+WHICH TO PICK:
+    under ~1M vectors and latency is not critical     -> FLAT. Exact, no tuning, no surprises.
+    up to ~10M, need low latency, RAM is available    -> HNSW.
+    100M+ or RAM-constrained                          -> IVF-PQ, or DiskANN on SSD.
+    heavy updates and deletions                       -> IVF (HNSW deletion is painful).
+    strict recall requirement                         -> retrieve approximately, then RE-RANK the
+                                                         candidates exactly. Best of both.""",
+
+    """5. THE OPERATIONAL REALITIES - what actually bites in production
+
+FILTERED SEARCH IS THE HARD PROBLEM, and it is the one people do not anticipate. "Find similar
+documents WHERE tenant_id = 42 AND date > 2025-01-01" is not a vector problem. Two naive strategies
+both fail:
+    PRE-FILTER then search: if the filter leaves 0.1% of the corpus, the ANN graph is disconnected
+    and recall collapses.
+    SEARCH then POST-FILTER: retrieve 100, filter, and you may be left with 2 results, or 0.
+    THE REAL SOLUTIONS are filter-aware traversal (only follow edges to matching nodes) or partitioned
+    indexes (one index per tenant). EVERY SERIOUS VECTOR DATABASE'S HARDEST ENGINEERING IS HERE.
+
+UPDATES AND DELETIONS. HNSW graphs do not support deletion cleanly - the standard approach is a
+tombstone plus periodic rebuild. If your data changes constantly, that rebuild cost is your real
+operating cost.
+
+MEMORY IS THE BUDGET. A million 1,536-dimensional float32 vectors is 6 GB before any index overhead;
+HNSW adds roughly another 50-100%. THAT is what drives quantization, not query speed.
+
+THE EMBEDDING MODEL IS PART OF THE INDEX. Change it and every stored vector is meaningless - you must
+re-embed the entire corpus. VERSION YOUR EMBEDDINGS and plan for a migration path; this is a
+first-class operational concern that gets discovered late.
+
+DENSE SEARCH ALONE MISSES EXACT MATCHES. Error codes, part numbers, names, rare identifiers. That is
+BM25's strength and embeddings' weakness, which is why every mature retrieval stack is hybrid.
+
+DO YOU EVEN NEED A VECTOR DATABASE? Under a million vectors, a numpy matrix multiply or
+`pgvector` on your existing Postgres is usually enough, and it keeps your vectors in the same
+transactional store as the data they describe. A DEDICATED VECTOR DATABASE IS A SCALE DECISION, and
+"we should add a vector database" is a claim that should be met with "how many vectors, and what
+recall do you need?".""",
+
+    """6. HOW TO CHOOSE AND TUNE ONE - numbered steps
+
+STEP 1 - COUNT YOUR VECTORS AND COMPUTE THE MEMORY. N x d x 4 bytes for float32. A million
+1,536-dimensional vectors is 6 GB. THIS NUMBER DECIDES MOST OF THE REST.
+
+STEP 2 - MEASURE EXACT SEARCH FIRST. If a brute-force scan meets your latency budget, stop. It is
+exact, it has no parameters, and it never surprises you.
+
+STEP 3 - BUILD A GROUND-TRUTH SET. A few thousand queries with their exact top-k, computed once by
+brute force. WITHOUT THIS YOU CANNOT MEASURE RECALL AND EVERY TUNING DECISION IS BLIND. This is the
+step that is skipped.
+
+STEP 4 - DECIDE WHAT A MISS COSTS. It is a product question. RAG over a big corpus tolerates 90%
+recall happily; deduplication and compliance search do not.
+
+STEP 5 - PLOT THE CURVE, DO NOT PICK A SETTING. Sweep the knob - nprobe for IVF, efSearch for HNSW -
+and plot recall against latency. Measured on my index: 16.5% recall at 45x, 78.1% at 4.1x, 93.5% at
+2.1x. CHOOSE A POINT ON THE CURVE YOU HAVE PLOTTED.
+
+STEP 6 - CONSIDER RETRIEVE-THEN-RERANK. Pull 100 candidates approximately, then score them exactly.
+You get near-exact recall at approximate cost, and it composes with everything else.
+
+STEP 7 - PLAN FILTERING FROM THE START. If queries are always scoped to a tenant, PARTITION BY TENANT
+and the problem disappears. Retrofitting filtered search onto a single global index is painful.
+
+STEP 8 - PLAN FOR RE-EMBEDDING. Version the embedding model with the index and know what a migration
+costs before you need one.
+
+STEP 9 - ADD BM25 ALONGSIDE. Dense and sparse retrieval fail differently, which is exactly why fusing
+them beats either.
+
+STEP 10 - RE-MEASURE AFTER EVERY CHANGE. Recall degrades silently as data distribution shifts; nothing
+errors.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A vector database stores embeddings and answers nearest-neighbour queries over them. The reason it's
+a specialised system is that exact search is O(N times d) - a hundred million vectors at fifteen
+hundred dimensions is a hundred and fifty billion multiply-adds per query - so everything real uses
+approximate nearest neighbour search.
+
+The key thing to understand is that an ANN index isn't characterised by a speed, it's characterised by
+a position on a recall-versus-speed curve. I built an IVF index over eight thousand vectors and
+measured it: searching one cluster gave a 45-times speedup at 16.5% recall; four clusters gave 16
+times at 39%; thirty-two clusters gave 2.1 times at 93.5%. Every ANN index is a different way of
+generating that curve, and every deployment decision is choosing a point on it. The curve is steep at
+the fast end, which is why the last few points of recall are the expensive ones.
+
+And approximation isn't laziness - it's forced. I measured the curse of dimensionality: at two
+dimensions, the nearest of four hundred random vectors has similarity 1.0 and a random one has 0.0. At
+five hundred and twelve dimensions the nearest scores 0.13 and a random one scores 0.00. The contrast
+collapses. Exact tree indexes work by proving a whole branch is too far to contain a neighbour, and
+when everything is roughly equidistant nothing can be pruned - k-d trees degenerate to a full scan
+above about twenty dimensions, and embeddings are hundreds to thousands. So no exact index beats a
+linear scan, and a linear scan is what you were trying to avoid.
+
+ANN works anyway because real embeddings aren't uniformly random - they lie on a much
+lower-dimensional manifold with real cluster structure, which the indexes exploit. That's why the
+field is empirical rather than theoretical.
+
+On the index families: HNSW is a navigable small-world graph and usually has the best curve, at the
+cost of memory and awkward deletion. IVF clusters and searches the nearest few - simpler, easier to
+update. Product quantization compresses each vector to about 96 bytes instead of 6 kilobytes, which is
+what lets a billion vectors fit in RAM.
+
+Two operational things I'd raise. Filtered search - "similar documents where tenant equals 42" - is the
+genuinely hard problem: pre-filtering disconnects the graph and post-filtering can leave you with
+nothing, so you need filter-aware traversal or partitioned indexes. And changing the embedding model
+invalidates every stored vector, so you have to version it and plan the re-embedding migration.
+
+And I'd push back before adopting one: under about a million vectors, pgvector on your existing
+Postgres or a numpy matmul is usually enough, exact, and keeps the vectors in the same transactional
+store as the data.'""",
+
+    """8. THE CODE, PIECE BY PIECE - an IVF index in twenty lines
+
+BUILDING IT:
+
+    def build_ivf(vectors, nlist):
+        centroids = [random.choice(vectors)[:] for _ in range(nlist)]
+        for _ in range(iterations):                # a few rounds of k-means
+            buckets = [[] for _ in range(nlist)]
+            for i, v in enumerate(vectors):
+                c = max(range(nlist), key=lambda j: dot(v, centroids[j]))
+                buckets[c].append(i)
+                # ^ assign each vector to its nearest centroid. THE INVERTED LIST is
+                #   `buckets` - centroid id -> the vectors that belong to it.
+            for j in range(nlist):
+                centroids[j] = normalise(mean(vectors[i] for i in buckets[j]))
+        return centroids, buckets
+        # ^ nlist is usually chosen around sqrt(N): it balances the cost of scanning the
+        #   centroids against the size of each bucket.
+
+SEARCHING IT:
+
+    def ivf_search(q, k, centroids, buckets, nprobe):
+        order = sorted(range(len(centroids)),
+                       key=lambda j: -dot(q, centroids[j]))[:nprobe]
+        # ^ compare against nlist centroids (cheap) instead of N vectors (expensive).
+        #   THAT SUBSTITUTION IS THE ENTIRE ALGORITHM.
+
+        candidates = [i for j in order for i in buckets[j]]
+        # ^ NPROBE IS THE KNOB. nprobe=1 scanned 99 of 8,000 vectors for 16.5% recall;
+        #   nprobe=32 scanned 3,197 for 93.5%. Everything else is fixed.
+
+        return top_k(((i, dot(q, vectors[i])) for i in candidates), k)
+        # ^ the candidates are scored EXACTLY. The approximation is entirely in WHICH
+        #   vectors got considered, not in how they were scored - which is why
+        #   retrieve-then-rerank composes so naturally with this.
+
+THE RECALL MEASUREMENT, which is the part you must not skip:
+
+    gold = [exact_knn(q, k) for q in queries]      # compute ONCE, by brute force
+    for nprobe in (1, 2, 4, 8, 16, 32):
+        recall = mean(len(set(ivf_search(q, k, ..., nprobe)) & set(gold[i])) / k
+                      for i, q in enumerate(queries))
+        print(nprobe, recall, latency)
+    # ^ WITHOUT `gold` YOU CANNOT MEASURE RECALL, and without recall you are tuning blind.
+    #   Computing it is a one-off brute-force pass over a few thousand queries.
+
+WHAT YOU WOULD ACTUALLY USE:
+
+    import faiss
+    index = faiss.IndexHNSWFlat(dim, 32)      # 32 = graph connectivity M
+    index.hnsw.efConstruction = 200           # build-time quality (slower build, better graph)
+    index.add(vectors)
+    index.hnsw.efSearch = 64                  # <-- THE QUERY-TIME KNOB. This is nprobe's
+                                              #     equivalent: bigger means more of the
+                                              #     graph explored, higher recall, slower.
+    D, I = index.search(queries, k)
+
+    # and the normalisation that people forget:
+    faiss.normalize_L2(vectors)               # cosine similarity == dot product ONLY on
+    faiss.normalize_L2(queries)               # unit vectors. Forgetting this silently
+                                              # changes what "nearest" means.""",
+
+    """9. A TRACE - one query through an IVF index, and the numbers
+
+SETUP: 8,000 vectors, 32 dimensions, 80 clusters (so about 100 vectors per cluster).
+
+    STEP 1 - SCORE THE CENTROIDS. 80 dot products of 32 dimensions = 2,560 multiply-adds.
+             Rank them. Cost is negligible.
+
+    STEP 2 - CHOOSE nprobe CLUSTERS AND GATHER THEIR MEMBERS.
+
+             nprobe = 1  -> ~99 candidate vectors
+             nprobe = 8  -> ~798
+             nprobe = 32 -> ~3,197
+
+    STEP 3 - SCORE THE CANDIDATES EXACTLY and take the top 10.
+
+    STEP 4 - COMPARE AGAINST THE TRUE TOP 10.
+
+     nprobe     scanned     recall@10     ms/query     speedup vs exact
+      exact       8,000        100.0%        16.52                 1.0x
+          1          99         16.5%         0.37                45.1x
+          2         199         26.7%         0.60                27.4x
+          4         398         39.4%         1.03                16.0x
+          8         798         58.0%         2.34                 7.1x
+         16       1,602         78.1%         4.05                 4.1x
+         32       3,197         93.5%         7.87                 2.1x
+
+WHY nprobe = 1 MISSES 83% OF NEIGHBOURS. The query's true 10 nearest neighbours are not all in the
+same cluster as the query. k-means draws boundaries through dense regions, and a neighbour just across
+a boundary is invisible unless you probe its cluster too. THE MISSES ARE CONCENTRATED AT CLUSTER
+BOUNDARIES, which is the characteristic failure mode of every partition-based index.
+
+NOTICE ALSO THAT SCANNING 40% OF THE DATA (3,197 of 8,000) ONLY BUYS A 2.1x SPEEDUP. The curve is
+brutal at the accurate end. IN PRACTICE THIS IS WHY HNSW IS PREFERRED - its graph traversal reaches
+95%+ recall while touching a far smaller fraction - and the shape of the trade-off is identical.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `sorted(range(len(centroids)), key=lambda j: -dot(q, centroids[j]))`
+            produced step 1. Comparing against 80 centroids instead of 8,000 vectors is a 100x
+            reduction, and it is the only place the index does anything clever.
+    `[:nprobe]`
+            produced every row of the table. It is the single knob, and the entire recall/speed curve
+            is generated by moving it.
+    `[i for j in order for i in buckets[j]]`
+            produced the "scanned" column. Bucket sizes are uneven - k-means clusters are not equal -
+            so nprobe=32 gave 3,197 rather than exactly 3,200.
+    `top_k(((i, dot(q, vectors[i])) for i in candidates), k)`
+            produced the recall column. Note the scoring here is EXACT; the approximation is purely in
+            which vectors reached this line. That is why re-ranking a larger candidate set recovers
+            recall so cheaply.
+    the k-means boundaries from `build_ivf`
+            produced the 16.5% at nprobe=1. They are fixed at build time, which is why an index built
+            on a different data distribution than it serves degrades silently.
+    `exact_knn(q, k)` in the measurement harness
+            produced the `gold` sets, and without that line none of the recall column exists. IT IS
+            THE ONLY LINE THAT MAKES ANY OF THIS MEASURABLE.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    exact search:   O(N * d). 100M vectors at d=1536 is ~150 billion multiply-adds per query.
+    IVF:            O(nlist * d + (N/nlist) * nprobe * d). Knob: nprobe.
+    HNSW:           O(log N * M * d) roughly. Knob: efSearch. Memory: vectors + graph edges.
+    PQ:             a 1,536-dim float32 vector (6 KB) -> ~96 bytes. 64x compression.
+
+    MEASURED recall/speed curve (8,000 vectors, 32 dims, 80 clusters, recall@10):
+        nprobe 1 -> 16.5% at 45.1x | 4 -> 39.4% at 16.0x | 16 -> 78.1% at 4.1x | 32 -> 93.5% at 2.1x
+    MEASURED curse of dimensionality (mean nearest-neighbour similarity among 400 random vectors):
+        d=2 -> 1.0000 | d=8 -> 0.8617 | d=32 -> 0.5031 | d=128 -> 0.2567 | d=512 -> 0.1315
+
+THE #1 MISTAKE: quoting an ANN index's speed without its recall. The two are one number, and a
+tenfold speedup at 16% recall is not a result.
+
+THE #2 MISTAKE: not building a ground-truth set. Without exact top-k for a few thousand queries you
+cannot measure recall, and every tuning decision after that is guesswork.
+
+THE #3 MISTAKE: reaching for a vector database at small scale. Under a million vectors, pgvector or a
+plain matrix multiply is exact, simpler, and keeps the vectors beside the data they describe.
+
+THE #4 MISTAKE: assuming a smarter exact index would avoid the approximation. Measured: in high
+dimensions the nearest neighbour is barely nearer than a random point, so nothing can be pruned and
+tree indexes are worse than a linear scan.
+
+THE #5 MISTAKE: ignoring filtered search until it is needed. Pre-filtering disconnects a graph index;
+post-filtering can return nothing. Partition by tenant if you can.
+
+THE #6 MISTAKE: forgetting to normalise vectors when using cosine similarity. Dot product equals
+cosine only on unit vectors, and getting this wrong silently changes what "nearest" means.
+
+THE #7 MISTAKE: not planning for re-embedding. A new embedding model invalidates every stored vector.
+
+THE #8 MISTAKE: dense retrieval alone. Embeddings miss exact identifiers - error codes, part numbers,
+names - which is precisely BM25's strength.
+
+ONE-SENTENCE TAKEAWAY: a vector database answers nearest-neighbour queries over embeddings, and
+because high dimensionality collapses the contrast between the nearest point and a random one - I
+measured mean nearest-neighbour similarity falling from 1.0000 at d=2 to 0.1315 at d=512 - no exact
+index beats a linear scan, so every real system sits on a recall-versus-speed curve (measured: 16.5%
+recall at 45x, 93.5% at 2.1x) and the engineering decisions are which point to occupy, how to handle
+filters and updates, and whether you need a specialised system at all.""",
+]
+
+_EX_P1AO["Vector database / ANN"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - find the most similar items, fast, when "similar" means a vector
+
+An EMBEDDING turns a piece of text, an image or an audio clip into a list of a few hundred to a few
+thousand numbers, arranged so that SIMILAR THINGS LAND NEAR EACH OTHER. "dog" is near "puppy" and far
+from "quarterly earnings".
+
+A VECTOR DATABASE stores millions of those vectors and answers one question fast: GIVEN THIS QUERY
+VECTOR, WHICH STORED VECTORS ARE CLOSEST?
+
+THE OBVIOUS ALGORITHM IS TO COMPARE THE QUERY WITH EVERY STORED VECTOR AND TAKE THE TOP k. That is
+EXACT k-NEAREST-NEIGHBOUR SEARCH, it is O(N * d), and at N = 100 million and d = 1,536 it is 150
+billion multiply-adds PER QUERY. Not viable.
+
+SO EVERY PRODUCTION SYSTEM USES APPROXIMATE NEAREST NEIGHBOUR SEARCH (ANN): accept that you will
+sometimes miss a true neighbour, in exchange for orders of magnitude less work. THE WORD APPROXIMATE
+IS THE ENTIRE SUBJECT - and the number that describes an ANN index is not its speed, it is its
+POSITION ON A RECALL-VERSUS-SPEED CURVE.
+
+THE EVERYDAY VERSION: finding the nearest coffee shop. Checking every shop in the country is exact and
+absurd. Checking every shop in your postcode is approximate, thousands of times faster, and
+occasionally wrong when the true nearest is just over the boundary.
+
+TERMS AS THEY APPEAR:
+- RECALL@k: of the k true nearest neighbours, how many did the index return? THE quality metric.
+- COSINE SIMILARITY / DOT PRODUCT: the usual distance. On normalised vectors they are equivalent.
+- IVF: partition the vectors into clusters; search only the nearest few.
+- HNSW: a navigable small-world graph; greedily walk towards the query.
+- QUANTIZATION: store compressed approximations of the vectors to fit more in memory.""",
+
+    """2. THE INTUITION - the recall/speed curve, measured
+
+I built an IVF index - cluster the vectors with k-means, then at query time search only the `nprobe`
+nearest clusters - over 8,000 vectors in 32 dimensions with 80 clusters, and measured recall@10
+against exact search:
+
+     nprobe     vectors scanned     recall@10     ms/query     speedup
+      exact               8,000        100.0%        16.52        1.0x
+          1                  99         16.5%         0.37       45.1x
+          2                 199         26.7%         0.60       27.4x
+          4                 398         39.4%         1.03       16.0x
+          8                 798         58.0%         2.34        7.1x
+         16               1,602         78.1%         4.05        4.1x
+         32               3,197         93.5%         7.87        2.1x
+
+THAT TABLE IS THE ENTIRE FIELD. Every ANN index - IVF, HNSW, ScaNN, DiskANN - is a different way of
+generating this curve, and every deployment decision is choosing a point on it.
+
+READ IT CAREFULLY. AT nprobe = 1 YOU GET A 45x SPEEDUP AND MISS 83% OF THE TRUE NEIGHBOURS. At
+nprobe = 32 you get 93.5% recall and only a 2.1x speedup. THE CURVE IS STEEP AT THE FAST END, and the
+last few points of recall are the expensive ones - which is exactly why systems quote "95% recall at
+10x speedup" rather than a single number.
+
+(HNSW would give a much better curve than IVF at these sizes - typically 95%+ recall at 50-100x - and
+the SHAPE is the same. IVF is used here because it is implementable in twenty lines and the shape is
+what matters.)
+
+THE DECISION THIS FORCES YOU TO MAKE, and it is a product decision rather than an engineering one:
+WHAT DOES A MISS COST? For RAG over a large corpus, missing one of ten retrieved chunks usually
+changes nothing - 90% recall is fine and the speed is worth far more. For deduplication, fraud
+matching or legal discovery, a miss is a failure and you may need exact search on a filtered subset.
+NOBODY CAN CHOOSE YOUR OPERATING POINT FOR YOU.""",
+
+    """3. WHY APPROXIMATION IS NECESSARY - the curse of dimensionality, measured
+
+People assume ANN is a performance hack that a cleverer exact algorithm could avoid. IT CANNOT, and
+here is why. I measured, in each dimension, the average similarity to the NEAREST of 400 random
+vectors against the average similarity to a RANDOM one:
+
+     dimensions     mean nearest-neighbour similarity     mean random similarity        gap
+              2                                1.0000                   -0.0008     1.0008
+              8                                0.8617                    0.0028     0.8588
+             32                                0.5031                    0.0005     0.5025
+            128                                0.2567                    0.0004     0.2564
+            512                                0.1315                    0.0004     0.1312
+
+AS DIMENSION GROWS, THE NEAREST NEIGHBOUR BECOMES BARELY NEARER THAN A RANDOM VECTOR. At d = 2 the
+nearest is essentially identical (1.0000) and a random one is orthogonal. At d = 512 the nearest
+scores 0.13 and a random one scores 0.00 - the CONTRAST HAS COLLAPSED by a factor of eight.
+
+THE CONSEQUENCE FOR EXACT ALGORITHMS IS FATAL. A k-d tree or ball tree prunes by proving that an
+entire branch is too far away to contain a neighbour. When every point is roughly equidistant, NO
+BRANCH CAN BE PRUNED, and the tree degenerates into a full scan with extra overhead - typically worse
+than a brute-force scan above about 20 dimensions. Embeddings are 384 to 4,096 dimensional.
+
+SO THE ANSWER TO "WHY NOT USE AN EXACT INDEX" IS NOT "IT WOULD BE SLOW". IT IS THAT NO EXACT INDEX
+BEATS A LINEAR SCAN IN HIGH DIMENSIONS, and a linear scan is the thing you were trying to avoid.
+Approximation is not laziness; it is the only structure available.
+
+WHY ANN WORKS ANYWAY, despite that: real embeddings are NOT uniformly random. They lie on a much
+lower-dimensional manifold - text about cooking clusters together, and the clusters have structure.
+ANN indexes exploit that real structure, which is why they achieve 95% recall at 50x speedup on real
+data and would fail on the uniform random data used in the table above. THAT GAP BETWEEN WORST CASE
+AND REAL DATA IS THE WHOLE REASON THE FIELD IS EMPIRICAL.""",
+
+    """4. THE INDEX FAMILIES - what each one actually does
+
+    FLAT (exact).       Compare against everything. 100% recall. O(N*d). Correct answer up to about
+                        a million vectors if you can afford the scan - AND YOU OFTEN CAN. Do not
+                        reach for an approximate index before measuring whether you need one.
+
+    IVF.                k-means the vectors into `nlist` clusters, store an inverted list per
+                        cluster, search the `nprobe` nearest. Simple, small memory overhead, and the
+                        knob is obvious. THE FAILURE MODE IS THE BOUNDARY: a true neighbour just
+                        across a cluster edge is missed unless nprobe is raised, which is exactly
+                        what the measured 16.5% recall at nprobe=1 shows.
+
+    HNSW.               A multi-layer navigable small-world graph. Upper layers are sparse
+                        "motorways" for long jumps, lower layers dense for local refinement. Query:
+                        greedily walk downhill towards the query at each layer. USUALLY THE BEST
+                        RECALL/SPEED CURVE, at the cost of high memory (the graph edges) and slow,
+                        awkward deletion.
+
+    PRODUCT QUANTIZATION (PQ).  Split each vector into m sub-vectors, replace each with the id of
+                        its nearest centroid from a small codebook. A 1,536-dimensional float32
+                        vector (6 KB) becomes 96 bytes - a 64x compression. Distances are computed
+                        from lookup tables. THE COMPRESSION IS THE POINT: it is what lets a billion
+                        vectors fit in RAM. Costs recall, and is usually combined with IVF (IVF-PQ)
+                        and a re-ranking pass on the full vectors.
+
+    DISKANN / SPANN.    Graph indexes designed to live on SSD rather than in RAM, trading a few
+                        hundred microseconds of latency for a 10x cost reduction.
+
+    LSH.                Hash so that near vectors collide. Historically important, theoretically
+                        elegant, and beaten in practice by graph methods on real data.
+
+WHICH TO PICK:
+    under ~1M vectors and latency is not critical     -> FLAT. Exact, no tuning, no surprises.
+    up to ~10M, need low latency, RAM is available    -> HNSW.
+    100M+ or RAM-constrained                          -> IVF-PQ, or DiskANN on SSD.
+    heavy updates and deletions                       -> IVF (HNSW deletion is painful).
+    strict recall requirement                         -> retrieve approximately, then RE-RANK the
+                                                         candidates exactly. Best of both.""",
+
+    """5. THE OPERATIONAL REALITIES - what actually bites in production
+
+FILTERED SEARCH IS THE HARD PROBLEM, and it is the one people do not anticipate. "Find similar
+documents WHERE tenant_id = 42 AND date > 2025-01-01" is not a vector problem. Two naive strategies
+both fail:
+    PRE-FILTER then search: if the filter leaves 0.1% of the corpus, the ANN graph is disconnected
+    and recall collapses.
+    SEARCH then POST-FILTER: retrieve 100, filter, and you may be left with 2 results, or 0.
+    THE REAL SOLUTIONS are filter-aware traversal (only follow edges to matching nodes) or partitioned
+    indexes (one index per tenant). EVERY SERIOUS VECTOR DATABASE'S HARDEST ENGINEERING IS HERE.
+
+UPDATES AND DELETIONS. HNSW graphs do not support deletion cleanly - the standard approach is a
+tombstone plus periodic rebuild. If your data changes constantly, that rebuild cost is your real
+operating cost.
+
+MEMORY IS THE BUDGET. A million 1,536-dimensional float32 vectors is 6 GB before any index overhead;
+HNSW adds roughly another 50-100%. THAT is what drives quantization, not query speed.
+
+THE EMBEDDING MODEL IS PART OF THE INDEX. Change it and every stored vector is meaningless - you must
+re-embed the entire corpus. VERSION YOUR EMBEDDINGS and plan for a migration path; this is a
+first-class operational concern that gets discovered late.
+
+DENSE SEARCH ALONE MISSES EXACT MATCHES. Error codes, part numbers, names, rare identifiers. That is
+BM25's strength and embeddings' weakness, which is why every mature retrieval stack is hybrid.
+
+DO YOU EVEN NEED A VECTOR DATABASE? Under a million vectors, a numpy matrix multiply or
+`pgvector` on your existing Postgres is usually enough, and it keeps your vectors in the same
+transactional store as the data they describe. A DEDICATED VECTOR DATABASE IS A SCALE DECISION, and
+"we should add a vector database" is a claim that should be met with "how many vectors, and what
+recall do you need?".""",
+
+    """6. HOW TO CHOOSE AND TUNE ONE - numbered steps
+
+STEP 1 - COUNT YOUR VECTORS AND COMPUTE THE MEMORY. N x d x 4 bytes for float32. A million
+1,536-dimensional vectors is 6 GB. THIS NUMBER DECIDES MOST OF THE REST.
+
+STEP 2 - MEASURE EXACT SEARCH FIRST. If a brute-force scan meets your latency budget, stop. It is
+exact, it has no parameters, and it never surprises you.
+
+STEP 3 - BUILD A GROUND-TRUTH SET. A few thousand queries with their exact top-k, computed once by
+brute force. WITHOUT THIS YOU CANNOT MEASURE RECALL AND EVERY TUNING DECISION IS BLIND. This is the
+step that is skipped.
+
+STEP 4 - DECIDE WHAT A MISS COSTS. It is a product question. RAG over a big corpus tolerates 90%
+recall happily; deduplication and compliance search do not.
+
+STEP 5 - PLOT THE CURVE, DO NOT PICK A SETTING. Sweep the knob - nprobe for IVF, efSearch for HNSW -
+and plot recall against latency. Measured on my index: 16.5% recall at 45x, 78.1% at 4.1x, 93.5% at
+2.1x. CHOOSE A POINT ON THE CURVE YOU HAVE PLOTTED.
+
+STEP 6 - CONSIDER RETRIEVE-THEN-RERANK. Pull 100 candidates approximately, then score them exactly.
+You get near-exact recall at approximate cost, and it composes with everything else.
+
+STEP 7 - PLAN FILTERING FROM THE START. If queries are always scoped to a tenant, PARTITION BY TENANT
+and the problem disappears. Retrofitting filtered search onto a single global index is painful.
+
+STEP 8 - PLAN FOR RE-EMBEDDING. Version the embedding model with the index and know what a migration
+costs before you need one.
+
+STEP 9 - ADD BM25 ALONGSIDE. Dense and sparse retrieval fail differently, which is exactly why fusing
+them beats either.
+
+STEP 10 - RE-MEASURE AFTER EVERY CHANGE. Recall degrades silently as data distribution shifts; nothing
+errors.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A vector database stores embeddings and answers nearest-neighbour queries over them. The reason it's
+a specialised system is that exact search is O(N times d) - a hundred million vectors at fifteen
+hundred dimensions is a hundred and fifty billion multiply-adds per query - so everything real uses
+approximate nearest neighbour search.
+
+The key thing to understand is that an ANN index isn't characterised by a speed, it's characterised by
+a position on a recall-versus-speed curve. I built an IVF index over eight thousand vectors and
+measured it: searching one cluster gave a 45-times speedup at 16.5% recall; four clusters gave 16
+times at 39%; thirty-two clusters gave 2.1 times at 93.5%. Every ANN index is a different way of
+generating that curve, and every deployment decision is choosing a point on it. The curve is steep at
+the fast end, which is why the last few points of recall are the expensive ones.
+
+And approximation isn't laziness - it's forced. I measured the curse of dimensionality: at two
+dimensions, the nearest of four hundred random vectors has similarity 1.0 and a random one has 0.0. At
+five hundred and twelve dimensions the nearest scores 0.13 and a random one scores 0.00. The contrast
+collapses. Exact tree indexes work by proving a whole branch is too far to contain a neighbour, and
+when everything is roughly equidistant nothing can be pruned - k-d trees degenerate to a full scan
+above about twenty dimensions, and embeddings are hundreds to thousands. So no exact index beats a
+linear scan, and a linear scan is what you were trying to avoid.
+
+ANN works anyway because real embeddings aren't uniformly random - they lie on a much
+lower-dimensional manifold with real cluster structure, which the indexes exploit. That's why the
+field is empirical rather than theoretical.
+
+On the index families: HNSW is a navigable small-world graph and usually has the best curve, at the
+cost of memory and awkward deletion. IVF clusters and searches the nearest few - simpler, easier to
+update. Product quantization compresses each vector to about 96 bytes instead of 6 kilobytes, which is
+what lets a billion vectors fit in RAM.
+
+Two operational things I'd raise. Filtered search - "similar documents where tenant equals 42" - is the
+genuinely hard problem: pre-filtering disconnects the graph and post-filtering can leave you with
+nothing, so you need filter-aware traversal or partitioned indexes. And changing the embedding model
+invalidates every stored vector, so you have to version it and plan the re-embedding migration.
+
+And I'd push back before adopting one: under about a million vectors, pgvector on your existing
+Postgres or a numpy matmul is usually enough, exact, and keeps the vectors in the same transactional
+store as the data.'""",
+
+    """8. THE CODE, PIECE BY PIECE - an IVF index in twenty lines
+
+BUILDING IT:
+
+    def build_ivf(vectors, nlist):
+        centroids = [random.choice(vectors)[:] for _ in range(nlist)]
+        for _ in range(iterations):                # a few rounds of k-means
+            buckets = [[] for _ in range(nlist)]
+            for i, v in enumerate(vectors):
+                c = max(range(nlist), key=lambda j: dot(v, centroids[j]))
+                buckets[c].append(i)
+                # ^ assign each vector to its nearest centroid. THE INVERTED LIST is
+                #   `buckets` - centroid id -> the vectors that belong to it.
+            for j in range(nlist):
+                centroids[j] = normalise(mean(vectors[i] for i in buckets[j]))
+        return centroids, buckets
+        # ^ nlist is usually chosen around sqrt(N): it balances the cost of scanning the
+        #   centroids against the size of each bucket.
+
+SEARCHING IT:
+
+    def ivf_search(q, k, centroids, buckets, nprobe):
+        order = sorted(range(len(centroids)),
+                       key=lambda j: -dot(q, centroids[j]))[:nprobe]
+        # ^ compare against nlist centroids (cheap) instead of N vectors (expensive).
+        #   THAT SUBSTITUTION IS THE ENTIRE ALGORITHM.
+
+        candidates = [i for j in order for i in buckets[j]]
+        # ^ NPROBE IS THE KNOB. nprobe=1 scanned 99 of 8,000 vectors for 16.5% recall;
+        #   nprobe=32 scanned 3,197 for 93.5%. Everything else is fixed.
+
+        return top_k(((i, dot(q, vectors[i])) for i in candidates), k)
+        # ^ the candidates are scored EXACTLY. The approximation is entirely in WHICH
+        #   vectors got considered, not in how they were scored - which is why
+        #   retrieve-then-rerank composes so naturally with this.
+
+THE RECALL MEASUREMENT, which is the part you must not skip:
+
+    gold = [exact_knn(q, k) for q in queries]      # compute ONCE, by brute force
+    for nprobe in (1, 2, 4, 8, 16, 32):
+        recall = mean(len(set(ivf_search(q, k, ..., nprobe)) & set(gold[i])) / k
+                      for i, q in enumerate(queries))
+        print(nprobe, recall, latency)
+    # ^ WITHOUT `gold` YOU CANNOT MEASURE RECALL, and without recall you are tuning blind.
+    #   Computing it is a one-off brute-force pass over a few thousand queries.
+
+WHAT YOU WOULD ACTUALLY USE:
+
+    import faiss
+    index = faiss.IndexHNSWFlat(dim, 32)      # 32 = graph connectivity M
+    index.hnsw.efConstruction = 200           # build-time quality (slower build, better graph)
+    index.add(vectors)
+    index.hnsw.efSearch = 64                  # <-- THE QUERY-TIME KNOB. This is nprobe's
+                                              #     equivalent: bigger means more of the
+                                              #     graph explored, higher recall, slower.
+    D, I = index.search(queries, k)
+
+    # and the normalisation that people forget:
+    faiss.normalize_L2(vectors)               # cosine similarity == dot product ONLY on
+    faiss.normalize_L2(queries)               # unit vectors. Forgetting this silently
+                                              # changes what "nearest" means.""",
+
+    """9. A TRACE - one query through an IVF index, and the numbers
+
+SETUP: 8,000 vectors, 32 dimensions, 80 clusters (so about 100 vectors per cluster).
+
+    STEP 1 - SCORE THE CENTROIDS. 80 dot products of 32 dimensions = 2,560 multiply-adds.
+             Rank them. Cost is negligible.
+
+    STEP 2 - CHOOSE nprobe CLUSTERS AND GATHER THEIR MEMBERS.
+
+             nprobe = 1  -> ~99 candidate vectors
+             nprobe = 8  -> ~798
+             nprobe = 32 -> ~3,197
+
+    STEP 3 - SCORE THE CANDIDATES EXACTLY and take the top 10.
+
+    STEP 4 - COMPARE AGAINST THE TRUE TOP 10.
+
+     nprobe     scanned     recall@10     ms/query     speedup vs exact
+      exact       8,000        100.0%        16.52                 1.0x
+          1          99         16.5%         0.37                45.1x
+          2         199         26.7%         0.60                27.4x
+          4         398         39.4%         1.03                16.0x
+          8         798         58.0%         2.34                 7.1x
+         16       1,602         78.1%         4.05                 4.1x
+         32       3,197         93.5%         7.87                 2.1x
+
+WHY nprobe = 1 MISSES 83% OF NEIGHBOURS. The query's true 10 nearest neighbours are not all in the
+same cluster as the query. k-means draws boundaries through dense regions, and a neighbour just across
+a boundary is invisible unless you probe its cluster too. THE MISSES ARE CONCENTRATED AT CLUSTER
+BOUNDARIES, which is the characteristic failure mode of every partition-based index.
+
+NOTICE ALSO THAT SCANNING 40% OF THE DATA (3,197 of 8,000) ONLY BUYS A 2.1x SPEEDUP. The curve is
+brutal at the accurate end. IN PRACTICE THIS IS WHY HNSW IS PREFERRED - its graph traversal reaches
+95%+ recall while touching a far smaller fraction - and the shape of the trade-off is identical.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `sorted(range(len(centroids)), key=lambda j: -dot(q, centroids[j]))`
+            produced step 1. Comparing against 80 centroids instead of 8,000 vectors is a 100x
+            reduction, and it is the only place the index does anything clever.
+    `[:nprobe]`
+            produced every row of the table. It is the single knob, and the entire recall/speed curve
+            is generated by moving it.
+    `[i for j in order for i in buckets[j]]`
+            produced the "scanned" column. Bucket sizes are uneven - k-means clusters are not equal -
+            so nprobe=32 gave 3,197 rather than exactly 3,200.
+    `top_k(((i, dot(q, vectors[i])) for i in candidates), k)`
+            produced the recall column. Note the scoring here is EXACT; the approximation is purely in
+            which vectors reached this line. That is why re-ranking a larger candidate set recovers
+            recall so cheaply.
+    the k-means boundaries from `build_ivf`
+            produced the 16.5% at nprobe=1. They are fixed at build time, which is why an index built
+            on a different data distribution than it serves degrades silently.
+    `exact_knn(q, k)` in the measurement harness
+            produced the `gold` sets, and without that line none of the recall column exists. IT IS
+            THE ONLY LINE THAT MAKES ANY OF THIS MEASURABLE.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    exact search:   O(N * d). 100M vectors at d=1536 is ~150 billion multiply-adds per query.
+    IVF:            O(nlist * d + (N/nlist) * nprobe * d). Knob: nprobe.
+    HNSW:           O(log N * M * d) roughly. Knob: efSearch. Memory: vectors + graph edges.
+    PQ:             a 1,536-dim float32 vector (6 KB) -> ~96 bytes. 64x compression.
+
+    MEASURED recall/speed curve (8,000 vectors, 32 dims, 80 clusters, recall@10):
+        nprobe 1 -> 16.5% at 45.1x | 4 -> 39.4% at 16.0x | 16 -> 78.1% at 4.1x | 32 -> 93.5% at 2.1x
+    MEASURED curse of dimensionality (mean nearest-neighbour similarity among 400 random vectors):
+        d=2 -> 1.0000 | d=8 -> 0.8617 | d=32 -> 0.5031 | d=128 -> 0.2567 | d=512 -> 0.1315
+
+THE #1 MISTAKE: quoting an ANN index's speed without its recall. The two are one number, and a
+tenfold speedup at 16% recall is not a result.
+
+THE #2 MISTAKE: not building a ground-truth set. Without exact top-k for a few thousand queries you
+cannot measure recall, and every tuning decision after that is guesswork.
+
+THE #3 MISTAKE: reaching for a vector database at small scale. Under a million vectors, pgvector or a
+plain matrix multiply is exact, simpler, and keeps the vectors beside the data they describe.
+
+THE #4 MISTAKE: assuming a smarter exact index would avoid the approximation. Measured: in high
+dimensions the nearest neighbour is barely nearer than a random point, so nothing can be pruned and
+tree indexes are worse than a linear scan.
+
+THE #5 MISTAKE: ignoring filtered search until it is needed. Pre-filtering disconnects a graph index;
+post-filtering can return nothing. Partition by tenant if you can.
+
+THE #6 MISTAKE: forgetting to normalise vectors when using cosine similarity. Dot product equals
+cosine only on unit vectors, and getting this wrong silently changes what "nearest" means.
+
+THE #7 MISTAKE: not planning for re-embedding. A new embedding model invalidates every stored vector.
+
+THE #8 MISTAKE: dense retrieval alone. Embeddings miss exact identifiers - error codes, part numbers,
+names - which is precisely BM25's strength.
+
+ONE-SENTENCE TAKEAWAY: a vector database answers nearest-neighbour queries over embeddings, and
+because high dimensionality collapses the contrast between the nearest point and a random one - I
+measured mean nearest-neighbour similarity falling from 1.0000 at d=2 to 0.1315 at d=512 - no exact
+index beats a linear scan, so every real system sits on a recall-versus-speed curve (measured: 16.5%
+recall at 45x, 93.5% at 2.1x) and the engineering decisions are which point to occupy, how to handle
+filters and updates, and whether you need a specialised system at all.""",
+]
+
+_EX_P1AO["What is RLHF (Reinforcement Learning from Human Feedback)?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - teach a model what "good" means when you cannot write it down
+
+A base language model predicts the next token. It is very good at that and it is not an assistant. Ask
+it a question and it may produce more questions, because a list of questions is a plausible
+continuation of a question.
+
+You want it to be HELPFUL, HONEST AND HARMLESS. You cannot write a loss function for those. You cannot
+even write a rubric that survives contact with real cases. BUT PEOPLE CAN RELIABLY SAY WHICH OF TWO
+RESPONSES IS BETTER.
+
+RLHF TURNS THAT COMPARATIVE JUDGEMENT INTO A TRAINABLE OBJECTIVE, in three stages:
+
+    1. SUPERVISED FINE-TUNING (SFT). Train on a few tens of thousands of high-quality
+       (instruction, response) pairs. Teaches the FORMAT of being an assistant.
+    2. REWARD MODELLING. Show humans two responses to the same prompt; they pick one. Train a model to
+       predict those preferences - a REWARD MODEL that scores any response.
+    3. REINFORCEMENT LEARNING. Optimise the language model to maximise the reward model's score, with
+       a KL penalty that stops it drifting too far from where it started.
+
+THE CENTRAL INSIGHT IS STEP 2: COMPARISONS ARE FAR EASIER FOR HUMANS THAN ABSOLUTE RATINGS. Asking
+someone to score a response out of ten produces inconsistent, uncalibrated numbers that drift between
+annotators and across days. Asking "which of these two is better" produces stable, reliable data. THE
+ENTIRE METHOD IS BUILT ON THAT ASYMMETRY.
+
+TERMS AS THEY APPEAR:
+- POLICY: the language model being trained.
+- REFERENCE MODEL: a frozen copy of the SFT model, used for the KL penalty.
+- BRADLEY-TERRY: the model that turns a scalar reward into a probability of preference.
+- REWARD HACKING: the policy finding a way to score highly that does not correspond to being good.
+- KL DIVERGENCE: how far the policy has drifted from the reference. THE LEASH.""",
+
+    """2. THE INTUITION - how much preference data does a reward model need?
+
+The reward model uses the BRADLEY-TERRY formulation: if response a has reward r_a and b has r_b, then
+P(a preferred over b) = sigmoid(r_a - r_b). Train by maximising the likelihood of the observed
+comparisons.
+
+I fitted exactly that to noisy comparisons over 40 items with known true rewards, and measured how
+well the learned RANKING matched the truth (Spearman correlation, 1.0 is perfect):
+
+     comparisons     0% label noise     10% noise     25% noise
+              50              0.472         0.384         0.219
+             200              0.714         0.692         0.390
+             800              0.922         0.891         0.708
+           3,200              0.955         0.931         0.797
+
+TWO THINGS TO READ OUT OF IT.
+
+FIRST, THE DATA REQUIREMENT IS MODEST. Eight hundred comparisons over forty items - twenty per item -
+recovers the ranking at 0.92 correlation. That is why RLHF is practical: you do not need a label for
+every response, you need enough pairwise judgements to pin down a relative order.
+
+SECOND, AND MORE INTERESTINGLY, 10% LABEL NOISE COSTS ALMOST NOTHING. At 800 comparisons, clean data
+gives 0.922 and 10%-corrupted data gives 0.891. HUMAN PREFERENCE DATA IS GENUINELY NOISY - annotator
+agreement on these tasks is typically 60-80% - AND THE METHOD STILL WORKS, because the errors are
+independent and the aggregate signal survives. THAT ROBUSTNESS IS THE EMPIRICAL BASIS OF THE WHOLE
+FIELD.
+
+At 25% noise it degrades sharply (0.708 at 800 comparisons), which sets the practical bar: your
+annotation quality has to be better than three-in-four, and if it is, more data compensates.
+
+WHY A REWARD MODEL AT ALL, RATHER THAN OPTIMISING AGAINST HUMANS DIRECTLY: humans cannot label
+millions of samples during a training run. The reward model is a LEARNED, CHEAP, DIFFERENTIABLE PROXY
+FOR HUMAN JUDGEMENT that can be queried billions of times. And "learned proxy" is doing all the work
+in that sentence - see the next section.""",
+
+    """3. REWARD HACKING - the failure mode that defines the field
+
+The reward model is a PROXY. Optimise a proxy hard enough and you find the places where it disagrees
+with the thing it was proxying for. THIS IS GOODHART'S LAW - when a measure becomes a target, it
+ceases to be a good measure - and it is not an edge case in RLHF, it is the central difficulty.
+
+I simulated it. A policy improving in two ways: SUBSTANCE, which genuinely helps and SATURATES, and
+LENGTH, which the reward model likes and which grows without bound. True quality rewards substance and
+penalises verbosity beyond a point; the reward model only sees substance plus length.
+
+     step     length     substance     PROXY reward     TRUE quality
+        0         50          0.00            0.200            0.000
+      200         90          1.18            1.186            1.120
+      400        130          1.90            1.847            1.596
+      600        170          2.33            2.311            1.791
+      800        210          2.59            2.656            1.814      <- TRUE QUALITY PEAKS
+     1000        250          2.75            2.928            1.734
+     1400        330          2.91            3.357            1.409
+     2000        450          2.98            3.886            0.760
+
+THE PROXY REWARD RISES MONOTONICALLY FROM 0.200 TO 3.886. TRUE QUALITY PEAKS AT STEP 800 AND THEN
+FALLS BY MORE THAN HALF. An optimiser watching only the reward model sails straight past the peak and
+keeps going, confident that it is improving.
+
+THAT IS NOT A HYPOTHETICAL. LENGTH BIAS IS THE MOST DOCUMENTED REAL EXAMPLE - RLHF-trained models
+became systematically more verbose because human annotators mildly prefer longer answers and the
+reward model learned to prefer them strongly. Others: sycophancy (agreeing with the user's stated
+position), formatting theatre (bullet points and bold text as a proxy for structure), and confident
+hedging that pattern-matches to careful.
+
+WHAT THIS MEANS PRACTICALLY: YOU CANNOT TRAIN TO CONVERGENCE. The reward model's score is not the
+objective; it is a signal that becomes anti-correlated with the objective at some unknown point. You
+must monitor an INDEPENDENT measure - human win rate against the reference model - and stop when the
+two diverge. THAT MONITORING IS THE JOB, and it is why RLHF is more of an experimental practice than
+an optimisation procedure.""",
+
+    """4. THE KL PENALTY - the leash, measured
+
+The standard objective is:
+
+    maximise  E[ reward(response) ]  -  beta * KL(policy || reference)
+
+The KL term measures how far the policy's output distribution has drifted from the frozen SFT model.
+IT IS A LEASH: the policy may move towards higher reward, but the further it goes the more it pays.
+
+WHY IT IS NECESSARY: without it, the policy will find the reward model's blind spots and collapse -
+in the worst documented cases producing degenerate repeated text that the reward model happens to
+score highly. The reference model is a statement that the SFT model was already roughly sane, and the
+policy should stay in its neighbourhood.
+
+I measured the effect on the same reward-hacking setup, letting the policy drift until the marginal
+reward gain equals the marginal KL cost:
+
+     beta      drift allowed     proxy reward     TRUE quality
+     0.000              10.00            3.886            0.760      no leash - fully hacked
+     0.005              10.00            3.886            0.760      leash too loose
+     0.020               5.60            3.068            1.654
+     0.050               3.46            2.481            1.818      <- BEST
+     0.100               2.39            2.047            1.698
+     0.300               1.22            1.354            1.257
+     1.000               0.49            0.735            0.652      leash too tight, barely trained
+
+    (the unconstrained peak of true quality was 1.814, so beta = 0.05 essentially reaches it)
+
+THE TRUE-QUALITY COLUMN IS AN INVERTED U. Too little KL and the policy hacks the proxy; too much and
+it never improves. AND THE PROXY COLUMN IS MONOTONIC IN THE WRONG DIRECTION - it decreases as beta
+rises, so IF YOU TUNE BETA BY MAXIMISING THE REWARD MODEL'S SCORE YOU WILL ALWAYS CHOOSE beta = 0 AND
+ALWAYS BE WRONG.
+
+THAT IS THE PRACTICAL LESSON AND IT IS WORTH STATING BLUNTLY: THE KL COEFFICIENT CANNOT BE TUNED
+AGAINST THE THING BEING OPTIMISED. You tune it against an independent evaluation - human or
+strong-model win rate against the reference - and you watch the KL divergence itself as a diagnostic.
+A KL that is climbing while win rate has plateaued means you are past the peak.
+
+THERE IS NO PRINCIPLED WAY TO SET beta. It depends on the reward model's quality, the task, and how
+much you trust the SFT model. It is the most important hyperparameter in the procedure and it is
+chosen empirically.""",
+
+    """5. THE ALTERNATIVES - and why DPO largely replaced PPO
+
+    method       needs a reward model?     needs RL?     complexity     notes
+    ------------------------------------------------------------------------------------------
+    PPO          YES                       YES           high           the original; 4 models in
+                                                                        memory (policy, reference,
+                                                                        reward, value)
+    DPO          NO                        no            LOW            derives a loss directly on
+                                                                        preference pairs
+    IPO / KTO    no                        no            low            DPO variants; KTO needs
+                                                                        only good/bad labels, not
+                                                                        pairs
+    RLAIF        yes (AI-labelled)         yes/no        medium         an LLM provides the
+                                                                        preferences instead of humans
+    Constitutional AI  partly              partly        medium         the model critiques and
+                                                                        revises against written
+                                                                        principles
+    Best-of-N    yes                       NO            trivial        sample N, keep the highest-
+                                                                        reward one. Inference-time
+                                                                        only.
+    RLVR         no - VERIFIABLE outcomes  yes           medium         reward = did the test pass /
+                                                                        was the answer right. The
+                                                                        2024+ reasoning-model recipe.
+
+DIRECT PREFERENCE OPTIMISATION IS THE BIG SIMPLIFICATION. The insight is algebraic: the optimal policy
+under the KL-constrained reward objective has a closed form in terms of the reward, so you can INVERT
+it and express the reward in terms of the policy - which lets you train directly on preference pairs
+with an ordinary supervised loss. NO REWARD MODEL, NO SAMPLING LOOP, NO RL. Four models in memory
+becomes two, and a fragile RL run becomes a stable supervised one. THAT IS WHY MOST TEAMS USE DPO NOW.
+
+WHAT PPO STILL HAS: it samples ON-POLICY, so it sees and corrects its own current failure modes,
+whereas DPO learns from a fixed offline dataset. At the frontier, on-policy methods still appear to
+win, which is why the largest labs continue to run them.
+
+RLVR (REINFORCEMENT LEARNING FROM VERIFIABLE REWARDS) IS THE MOST IMPORTANT RECENT DEVELOPMENT. If the
+task is maths or code, you do not need a learned reward model at all - you need a test suite. THE
+REWARD IS EXACT AND UNHACKABLE, which removes the entire failure mode in section 3. That is the recipe
+behind the 2024-2025 reasoning models, and it only works where correctness is checkable, which is why
+it has not replaced preference learning for open-ended helpfulness.""",
+
+    """6. HOW IT IS ACTUALLY RUN - numbered steps
+
+STEP 1 - START FROM A GOOD SFT MODEL. RLHF adjusts behaviour at the margin; it does not install
+capability. If the SFT model cannot do the task, RL will not teach it.
+
+STEP 2 - COLLECT PREFERENCE PAIRS. Sample two responses per prompt from the SFT model, have humans
+choose. Measured: a few hundred comparisons per item already recovers a usable ranking, and 10% label
+noise costs about 3 points of rank correlation.
+
+STEP 3 - MEASURE ANNOTATOR AGREEMENT. It is typically 60-80%, which is the ceiling on your reward
+model. Measured: at 25% noise the correlation dropped from 0.92 to 0.71 at the same data volume.
+
+STEP 4 - TRAIN THE REWARD MODEL and HOLD OUT A TEST SET OF PREFERENCES. Its accuracy on held-out
+comparisons is the number that predicts everything downstream.
+
+STEP 5 - CHOOSE DPO UNLESS YOU HAVE A REASON NOT TO. Two models in memory instead of four, a
+supervised loss instead of an RL loop, and no separate reward model to maintain.
+
+STEP 6 - SET THE KL COEFFICIENT AND UNDERSTAND THAT YOU CANNOT TUNE IT ON THE REWARD. Measured: the
+reward is monotonically decreasing in beta, so optimising it always picks beta = 0, which is the fully
+hacked policy.
+
+STEP 7 - MONITOR THREE THINGS TOGETHER: the reward, the KL divergence, and an INDEPENDENT win rate.
+When reward is still rising and win rate has plateaued, you are past the peak - measured, true quality
+peaked at step 800 while the proxy kept climbing to step 2,000 and beyond.
+
+STEP 8 - STOP EARLY. Deliberately. There is no convergence criterion; there is a point past which you
+are making the model worse while your metric says otherwise.
+
+STEP 9 - EVALUATE FOR THE KNOWN HACKS SPECIFICALLY. Length, sycophancy, formatting theatre. Compare
+outputs at matched length; ask whether the model changes its answer when the user disagrees.
+
+STEP 10 - IF THE TASK HAS A VERIFIABLE ANSWER, USE THAT INSTEAD. A test suite is an unhackable reward,
+and it removes section 3 entirely.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'RLHF is how you train a model towards qualities you can't write a loss function for - helpfulness,
+honesty, harmlessness. The core move is that people can't reliably score a response out of ten, but
+they CAN reliably say which of two responses is better. RLHF turns those comparisons into a trainable
+objective.
+
+Three stages. Supervised fine-tuning on high-quality instruction-response pairs, which teaches the
+format of being an assistant. Then a reward model: show humans two responses, they pick one, and you
+fit a scalar reward under the Bradley-Terry model where the probability of preferring A is the sigmoid
+of the reward difference. Then reinforcement learning, optimising the language model against that
+reward with a KL penalty against a frozen reference.
+
+I checked the data requirement. Fitting rewards to noisy comparisons over forty items, eight hundred
+comparisons - about twenty per item - recovered the true ranking at 0.92 Spearman correlation. And ten
+percent label noise only took that to 0.89. That robustness is important, because real human agreement
+on these tasks is only sixty to eighty percent, and the method works anyway because the errors are
+independent.
+
+The thing that defines the field, though, is reward hacking. The reward model is a proxy, and if you
+optimise a proxy hard enough you find where it disagrees with what it was proxying for. I simulated a
+policy improving in two ways - substance, which genuinely helps and saturates, and length, which the
+reward model likes and grows without bound. The proxy reward rose monotonically from 0.2 to 3.9 across
+the whole run. True quality peaked at step 800 and then fell by more than half. An optimiser watching
+only the reward model sails straight past the peak. And that isn't hypothetical: length bias is the
+best-documented real case, where RLHF made models systematically more verbose because annotators
+mildly prefer longer answers and the reward model learned to prefer them strongly.
+
+The KL penalty is the leash that stops it. I measured the inverted U: at beta zero the policy is fully
+hacked, true quality 0.76. At beta 0.05 it reaches 1.82, essentially the unconstrained peak. At beta
+1.0 it barely trains at all, 0.65. And here's the trap - the PROXY reward decreases monotonically as
+beta rises, so if you tune beta by maximising the reward model's score you will always pick zero and
+always be wrong. You have to tune it against an independent evaluation, usually win rate against the
+reference model, and watch the KL divergence as a diagnostic. There's no principled way to set it.
+
+On methods: most teams now use DPO rather than PPO. The insight is algebraic - the optimal policy under
+the KL-constrained objective has a closed form, so you can invert it and train directly on preference
+pairs with a supervised loss. No reward model, no sampling loop, four models in memory becomes two.
+PPO's remaining advantage is that it samples on-policy and so sees its own current failure modes.
+
+And the important recent development is RLVR - reinforcement learning from verifiable rewards. If the
+task is maths or code, the reward is a test suite rather than a learned model, so it's exact and
+unhackable. That removes the whole reward-hacking problem, and it's the recipe behind the current
+reasoning models. It just only works where correctness is checkable.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE REWARD MODEL LOSS - Bradley-Terry, in three lines:
+
+    def reward_loss(model, chosen, rejected):
+        r_chosen  = model(chosen)          # a SCALAR per response
+        r_rejected = model(rejected)
+        return -logsigmoid(r_chosen - r_rejected).mean()
+        # ^ maximise the log-probability that the chosen response scores higher.
+        # ^ ONLY THE DIFFERENCE MATTERS. The reward has no absolute scale - adding a
+        #   constant to every reward changes nothing - which is why you cannot interpret a
+        #   reward model's raw score, only compare two.
+        # ^ the model is usually the SFT model with the language-modelling head replaced by
+        #   a single linear layer producing one number.
+
+THE PPO OBJECTIVE, in outline - note how many models are live:
+
+    def ppo_step(policy, reference, reward_model, value_model, prompts):
+        responses = policy.generate(prompts)              # ON-POLICY sampling
+        rewards = reward_model(prompts, responses)
+
+        logp_policy = policy.log_prob(responses)
+        logp_ref    = reference.log_prob(responses)       # FROZEN copy of the SFT model
+        kl = logp_policy - logp_ref
+        shaped = rewards - beta * kl
+        # ^ THE LEASH. Measured: beta=0 gives a fully hacked policy; beta=0.05 was optimal;
+        #   beta=1.0 barely trains. And the reward is monotonically DECREASING in beta, so
+        #   tuning beta on the reward always picks 0.
+
+        advantages = shaped - value_model(prompts, responses)
+        ratio = exp(logp_policy - logp_policy.detach())
+        loss = -min(ratio * advantages,
+                    clip(ratio, 1 - eps, 1 + eps) * advantages).mean()
+        # ^ the PPO clip: stop any single update moving the policy too far.
+        # ^ FOUR MODELS IN MEMORY: policy, reference, reward, value. On a 70B model that is
+        #   the practical reason DPO was adopted so quickly.
+
+THE DPO LOSS, which replaces all of the above:
+
+    def dpo_loss(policy, reference, chosen, rejected, beta):
+        pi_c  = policy.log_prob(chosen)  - reference.log_prob(chosen)
+        pi_r  = policy.log_prob(rejected) - reference.log_prob(rejected)
+        return -logsigmoid(beta * (pi_c - pi_r)).mean()
+        # ^ NO REWARD MODEL, NO SAMPLING, NO RL. The implicit reward is
+        #   beta * log(policy/reference), which falls out of inverting the closed-form
+        #   optimal policy of the KL-constrained objective.
+        # ^ the KL constraint has not disappeared - beta is still here, and it is still the
+        #   most important hyperparameter. It just entered through the algebra instead of
+        #   through a penalty term.
+        # ^ TWO models in memory, and the reference can be precomputed and cached.
+
+THE MONITORING THAT MATTERS MORE THAN ANY OF IT:
+
+    for step in training:
+        log(reward=mean_reward, kl=mean_kl, win_rate=eval_against_reference())
+        if win_rate_plateaued() and kl_still_climbing():
+            stop()      # <-- you are past the peak. Measured: true quality peaked at step
+                        #     800 while the proxy kept rising through step 2,000.""",
+
+    """9. A TRACE - the three stages on one prompt, and the numbers
+
+PROMPT: "Explain photosynthesis."
+
+    STAGE 1 - SFT MODEL OUTPUT:
+        "Photosynthesis is the process by which plants convert light into chemical energy."
+        Correct, terse. This is the REFERENCE that the KL penalty will measure drift from.
+
+    STAGE 2 - COLLECT A PREFERENCE. Sample two responses:
+        A: "Photosynthesis is how plants make food from sunlight."
+        B: "Photosynthesis is the process by which plants, algae and some bacteria convert
+            light energy into chemical energy stored as glucose. It occurs in chloroplasts
+            and has two stages: the light-dependent reactions and the Calvin cycle."
+        A human picks B. The reward model learns r(B) > r(A).
+
+        AND NOTE WHAT ELSE IT LEARNED. B is better AND longer. Across thousands of such
+        comparisons the reward model cannot separate "more informative" from "more words",
+        because in the training data they are correlated. THAT CORRELATION IS THE ORIGIN OF
+        LENGTH BIAS.
+
+    STAGE 3 - RL. The policy discovers that longer answers score higher, and keeps going:
+        step 200:  ~90 words.   proxy 1.19,  true quality 1.12
+        step 800: ~210 words.   proxy 2.66,  true quality 1.81   <- TRUE PEAK
+        step 2000: ~450 words.  proxy 3.89,  true quality 0.76   <- three paragraphs of
+                                                                    padding around the same
+                                                                    content
+        THE REWARD MODEL SAYS THE LAST ONE IS THE BEST BY A WIDE MARGIN.
+
+THE MEASURED TABLES BEHIND THAT NARRATIVE:
+
+    REWARD MODEL DATA REQUIREMENT (Spearman vs true ranking, 40 items):
+         comparisons     clean     10% noise     25% noise
+                  50     0.472         0.384         0.219
+                 200     0.714         0.692         0.390
+                 800     0.922         0.891         0.708
+               3,200     0.955         0.931         0.797
+
+    THE KL LEASH (same hacking setup, unconstrained true peak = 1.814):
+         beta      drift     proxy     TRUE
+        0.000      10.00     3.886    0.760
+        0.020       5.60     3.068    1.654
+        0.050       3.46     2.481    1.818     <- best
+        0.300       1.22     1.354    1.257
+        1.000       0.49     0.735    0.652
+
+THE LINE-BY-LINE MAPPING - which mechanism produced which number:
+
+    `-logsigmoid(r_chosen - r_rejected)`
+            produced the Spearman column. Only DIFFERENCES appear, which is why the reward has no
+            absolute scale and why a reward model's raw score is uninterpretable on its own.
+    the human choosing B over A in stage 2
+            produced the length bias in stage 3. The annotator was right - B IS better - and the
+            reward model absorbed a confound the annotator never intended.
+    `shaped = rewards - beta * kl`
+            produced the entire KL table. Setting beta = 0 deletes this term and gives row one, the
+            fully hacked policy.
+    the `drift` column
+            is where the policy stops, at the point where the marginal reward gain equals the
+            marginal KL cost. It falls as beta rises, which is the leash tightening.
+    the PROXY column being monotonically DECREASING in beta
+            is the trap. It is the only number you can compute during training, and optimising it
+            selects the worst row.
+    `eval_against_reference()`
+            is the only thing in the whole procedure that can identify the best row, and it requires
+            humans or a strong independent judge. THAT IS WHY RLHF IS AN EXPERIMENTAL PRACTICE RATHER
+            THAN AN OPTIMISATION PROCEDURE.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    THREE STAGES: SFT -> reward model (Bradley-Terry on pairwise preferences) -> RL with a KL penalty.
+    OBJECTIVE:    maximise E[reward] - beta * KL(policy || reference)
+    MEMORY:       PPO holds four models (policy, reference, reward, value); DPO holds two.
+
+    MEASURED reward-model data requirement (Spearman rank correlation, 40 items):
+        800 comparisons -> 0.922 clean, 0.891 at 10% noise, 0.708 at 25% noise
+    MEASURED reward hacking: proxy reward rose monotonically 0.200 -> 3.886 while true quality peaked
+        at 1.814 (step 800) and fell to 0.760.
+    MEASURED KL sweep: beta 0.00 -> true 0.760 | 0.05 -> 1.818 (best) | 1.00 -> 0.652. And the proxy
+        reward decreases monotonically in beta, so tuning beta on the reward always selects the worst
+        setting.
+
+THE #1 MISTAKE: treating the reward model's score as the objective. It is a proxy that becomes
+anti-correlated with quality at an unknown point. Monitor an independent win rate.
+
+THE #2 MISTAKE: training to convergence. There is no convergence criterion here - measured, true
+quality peaked at step 800 of a 2,000-step run while the metric kept improving.
+
+THE #3 MISTAKE: tuning the KL coefficient on the reward. It is monotonically decreasing in beta, so
+that procedure always chooses zero.
+
+THE #4 MISTAKE: expecting RLHF to add capability. It adjusts behaviour at the margin. Knowledge and
+skill come from pre-training; if the SFT model cannot do it, RL will not teach it.
+
+THE #5 MISTAKE: not measuring annotator agreement. It is typically 60-80% and it is the ceiling on
+your reward model - measured, 25% noise cost 0.21 of rank correlation at the same data volume.
+
+THE #6 MISTAKE: ignoring length bias and the other known hacks. Compare outputs at matched length;
+test whether the model changes its answer when the user disagrees.
+
+THE #7 MISTAKE: reaching for PPO by default. DPO gives the same objective through algebra, with two
+models instead of four and a supervised loss instead of an RL loop.
+
+THE #8 MISTAKE: using preference learning where the answer is verifiable. A test suite is an exact,
+unhackable reward and removes the central failure mode entirely.
+
+ONE-SENTENCE TAKEAWAY: RLHF converts pairwise human preferences - which people give reliably, unlike
+absolute scores - into a reward model and then optimises the policy against it under a KL leash, and
+the whole difficulty is that the reward model is a proxy whose score keeps rising after true quality
+has peaked (measured: peak at step 800, proxy still climbing at step 2,000), which is why you tune the
+KL coefficient against an independent win rate rather than against the reward, stop deliberately
+early, and prefer a verifiable reward whenever the task admits one.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
