@@ -1335,6 +1335,20 @@ anywhere a silently wrong number would cost money.""",
 
 
 # ─────────────────────────────────────────────────────────────────────
+#  Expansion modules
+#
+#  Split at 14 entries rather than at 100, deliberately. The AI/SDE bank
+#  reached 200,000 lines in one file before it was split, and by then every
+#  edit was a scroll hunt. Each module exports build(Q) and receives the SAME
+#  constructor, so the required-field rules (plain, output-with-code) apply
+#  identically wherever an entry is written.
+# ─────────────────────────────────────────────────────────────────────
+from java_bank_core import build as _build_core
+
+ENTRIES.extend(_build_core(Q))
+
+
+# ─────────────────────────────────────────────────────────────────────
 #  Derived quiz + recall, and a self-check
 # ─────────────────────────────────────────────────────────────────────
 
