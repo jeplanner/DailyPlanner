@@ -1,0 +1,335 @@
+{# Java bank — browse.
+
+   THE ONE FEATURE THIS PAGE HAS THAT NO OTHER STUDY PAGE DOES: predict-the-
+   output mode. A Java interview asks "what does this print"; re-reading the
+   answer builds recognition, which is the weaker skill and the one that
+   already feels easy. So the output is HIDDEN BY DEFAULT and you commit to a
+   guess before revealing it. Everything else on the page is ordinary.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Java — DailyPlanner</title>
+{% include "_pwa_head.html" %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<style>
+  body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);
+       margin:0;overflow-x:hidden}
+  .wrap{max-width:820px;margin:0 auto;padding:16px 16px 72px}
+  h1{font-size:22px;font-weight:900;letter-spacing:-.02em;margin:6px 0 2px}
+  .sub{color:var(--color-text-secondary);font-size:13px;margin:0 0 14px}
+  .sub a{color:var(--color-primary);font-weight:700;text-decoration:none}
+  .btn{font:inherit;font-weight:700;border:1px solid var(--color-border);
+       background:var(--color-surface);color:var(--color-text);border-radius:10px;
+       padding:8px 12px;cursor:pointer}
+  .btn.sm{padding:5px 9px;font-size:12.5px}
+  .btn.on{border-color:var(--color-primary);color:var(--color-primary)}
+
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .controls select,.controls input[type=text]{font:inherit;font-size:14px;padding:9px 11px;
+       border:1px solid var(--color-border);border-radius:10px;
+       background:var(--color-bg);color:var(--color-text)}
+  .controls input.search{flex:1;min-width:150px}
+  .prog{font-size:12.5px;font-weight:700;color:var(--color-text-secondary)}
+
+  .rung{margin:18px 0 6px;font-size:12px;font-weight:800;letter-spacing:.09em;
+        text-transform:uppercase;color:var(--color-text-secondary)}
+  .rung .n{color:var(--color-text)}
+
+  .q-card{border:1px solid var(--color-border);border-radius:12px;margin-bottom:8px;
+          background:var(--color-surface);overflow:hidden}
+  .q-card.done{border-color:#34d399}
+  .q-head{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:11px 13px;cursor:pointer}
+  .q-head input{width:18px;height:18px;flex:none;cursor:pointer}
+  .q-head .t{flex:1;font-size:14.5px;font-weight:700;min-width:0;overflow-wrap:anywhere}
+  .chip{flex:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;
+        border:1px solid var(--color-border);color:var(--color-text-secondary)}
+  .chip.easy{border-color:#34d399;color:#059669}
+  .chip.medium{border-color:#fbbf24;color:#b45309}
+  .chip.hard{border-color:#f87171;color:#dc2626}
+  .chip.trap{border-color:#f472b6;color:#db2777}
+  .chip.deep{border-color:var(--color-primary);color:var(--color-primary)}
+
+  .q-body{display:none;padding:0 13px 13px;border-top:1px solid var(--color-border)}
+  .q-card.open .q-body{display:block}
+  .fld{margin-top:12px;overflow-wrap:anywhere}
+  .lbl{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+       color:var(--color-text-secondary);margin-bottom:4px}
+  .fld p{margin:0;font-size:14px;line-height:1.55}
+  pre{margin:0;background:var(--color-bg);border:1px solid var(--color-border);
+      border-radius:10px;padding:11px;overflow-x:auto;font-size:12.5px;line-height:1.5;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  /* ── PREDICT THE OUTPUT ─────────────────────────────────────────────
+     Hidden until committed to. Recognition is the weak skill; this page
+     exists to make her attempt an answer first. */
+  .out-guard{border:1px dashed var(--color-primary);border-radius:10px;padding:12px;
+             text-align:center;background:color-mix(in srgb,var(--color-primary) 6%,transparent)}
+  .out-guard p{margin:0 0 9px;font-size:13px;color:var(--color-text-secondary)}
+  .out-real{display:none}
+  .revealed .out-guard{display:none}
+  .revealed .out-real{display:block}
+
+  .recall{margin:0;padding-left:18px}
+  .recall li{font-size:13.5px;line-height:1.5;margin-bottom:5px}
+  .quizbox{border:1px solid var(--color-border);border-radius:10px;padding:11px;
+           background:var(--color-bg)}
+  .opt{display:block;width:100%;text-align:left;margin-bottom:6px;font:inherit;font-size:13.5px;
+       padding:9px 11px;border:1px solid var(--color-border);border-radius:9px;
+       background:var(--color-surface);color:var(--color-text);cursor:pointer}
+  .opt.right{border-color:#34d399;background:color-mix(in srgb,#34d399 12%,transparent)}
+  .opt.wrong{border-color:#f87171;background:color-mix(in srgb,#f87171 12%,transparent)}
+  .why{display:none;font-size:13px;line-height:1.55;margin-top:8px;
+       color:var(--color-text-secondary)}
+  .why.show{display:block}
+  .empty{padding:26px 12px;text-align:center;color:var(--color-text-secondary);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Java</h1>
+  <p class="sub">
+    Core language, in teaching order — each entry has a plain-English answer, runnable
+    code with its output, and the trap.
+    <a href="/java/quiz">Take the quiz →</a>
+  </p>
+
+  <div class="controls">
+    <input type="text" class="search" id="q" placeholder="Search titles and tags…">
+    <select id="cat"><option value="">All rungs</option></select>
+    <select id="diff">
+      <option value="">Any difficulty</option>
+      <option>Easy</option><option>Medium</option><option>Hard</option>
+    </select>
+    <button class="btn sm" id="fTrap" title="Only entries with a 'what does this print' trap">Traps</button>
+    <button class="btn sm" id="fTodo" title="Hide what you have marked studied">To study</button>
+    <span class="prog" id="prog"></span>
+  </div>
+
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Progress is a personal note, not shared data — localStorage, no table,
+  // no round trip on every checkbox. Keyed by TITLE rather than index, so
+  // inserting an entry in the middle of the bank does not shuffle every mark.
+  var KEY = "java-bank-done";
+  var done = {};
+  try { done = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { done = {}; }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) {} }
+
+  var ALL = [], CATS = [], bodies = {};
+  var onlyTrap = false, onlyTodo = false;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  fetch("/api/java", {credentials: "same-origin"})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      ALL = d.entries; CATS = d.categories;
+      var sel = $("cat");
+      CATS.forEach(function (c) {
+        var o = document.createElement("option");
+        o.value = c.key; o.textContent = c.label; sel.appendChild(o);
+      });
+      render();
+    })
+    .catch(function () {
+      $("list").innerHTML = '<div class="empty">Could not load the bank.</div>';
+    });
+
+  function matches(e) {
+    var q = $("q").value.trim().toLowerCase();
+    if (q && e.title.toLowerCase().indexOf(q) === -1) return false;
+    if ($("cat").value && e.cat !== $("cat").value) return false;
+    if ($("diff").value && e.difficulty !== $("diff").value) return false;
+    if (onlyTrap && !e.has_trap) return false;
+    if (onlyTodo && done[e.title]) return false;
+    return true;
+  }
+
+  function render() {
+    var rows = ALL.filter(matches);
+    var total = ALL.length, marked = ALL.filter(function (e) { return done[e.title]; }).length;
+    $("prog").textContent = marked + " / " + total + " studied";
+
+    if (!rows.length) {
+      $("list").innerHTML = '<div class="empty">Nothing matches those filters.</div>';
+      return;
+    }
+
+    // Grouped by the LADDER, in teaching order — never alphabetical, or
+    // concurrency lands before basics.
+    var html = "";
+    CATS.forEach(function (c) {
+      var group = rows.filter(function (e) { return e.cat === c.key; });
+      if (!group.length) return;
+      html += '<div class="rung">' + esc(c.label) + ' <span class="n">' +
+              group.length + '</span></div>';
+      group.forEach(function (e) { html += card(e); });
+    });
+    $("list").innerHTML = html;
+  }
+
+  function card(e) {
+    var chips = "";
+    if (e.difficulty) chips += chip(e.difficulty, e.difficulty.toLowerCase());
+    if (e.has_trap)   chips += chip("trap", "trap");
+    if (e.has_deep)   chips += chip("deep dive", "deep");
+    return '' +
+      '<div class="q-card' + (done[e.title] ? " done" : "") + '" data-id="' + e.id + '">' +
+        '<div class="q-head">' +
+          '<input type="checkbox" ' + (done[e.title] ? "checked" : "") +
+                 ' data-title="' + esc(e.title) + '" title="Mark studied">' +
+          '<span class="t">' + esc(e.title) + '</span>' + chips +
+        '</div>' +
+        '<div class="q-body"><div class="empty">Loading…</div></div>' +
+      '</div>';
+  }
+
+  function chip(text, cls) {
+    return '<span class="chip ' + cls + '">' + esc(text) + '</span>';
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function field(label, value, mono) {
+    if (!value || !String(value).trim()) return "";
+    return '<div class="fld"><div class="lbl">' + esc(label) + '</div>' +
+           (mono ? '<pre>' + esc(value) + '</pre>'
+                 : '<p>' + esc(value).replace(/\n/g, "<br>") + '</p>') + '</div>';
+  }
+
+  function body(d) {
+    var h = "";
+    h += field("In plain English", d.plain);
+    h += field("The technical answer", d.answer);
+    h += field("Code", d.code, true);
+
+    // THE POINT OF THE PAGE. Output is hidden behind a commitment step,
+    // because reading the answer builds recognition and the interview wants
+    // recall.
+    if (d.output) {
+      h += '<div class="fld out-wrap">' +
+             '<div class="lbl">Output</div>' +
+             '<div class="out-guard">' +
+               '<p>What does this print? Work it out line by line first.</p>' +
+               '<button class="btn sm reveal">Reveal the output</button>' +
+             '</div>' +
+             '<div class="out-real"><pre>' + esc(d.output) + '</pre></div>' +
+           '</div>';
+    }
+
+    h += field("The trap", d.gotcha);
+    h += field("Version notes", d.version);
+    h += field("Diagram", d.diagram, true);
+    h += field("Complexity / cost", d.complexity);
+    h += field("Pitfalls", d.pitfalls);
+    h += field("Follow-ups", d.followups);
+    h += field("Remember it as", d.mnemonic);
+
+    if (d.quiz) {
+      h += '<div class="fld"><div class="lbl">Quiz</div><div class="quizbox">' +
+           '<p style="margin:0 0 9px;font-size:13.5px;font-weight:600">' +
+           esc(d.quiz.q) + '</p>';
+      d.quiz.options.forEach(function (o, i) {
+        h += '<button class="opt" data-i="' + i + '" data-ans="' + d.quiz.answer + '">' +
+             String.fromCharCode(65 + i) + ') ' + esc(o) + '</button>';
+      });
+      h += '<div class="why">' + esc(d.quiz.why) + '</div></div></div>';
+    }
+
+    if (d.recall && d.recall.length) {
+      h += '<div class="fld"><div class="lbl">Recall drill — attempt from a blank page</div><ol class="recall">';
+      d.recall.forEach(function (r) { h += '<li>' + esc(r.prompt) + '</li>'; });
+      h += '</ol></div>';
+    }
+
+    if (d.examples && d.examples.length) {
+      h += '<div class="fld"><div class="lbl">Deep dive — ' + d.examples.length +
+           ' sections</div>';
+      d.examples.forEach(function (sec) { h += '<pre>' + esc(sec) + '</pre>'; });
+      h += '</div>';
+    }
+    return h;
+  }
+
+  // ── one delegated listener for the whole list ────────────────────────
+  $("list").addEventListener("click", function (ev) {
+    var card = ev.target.closest(".q-card");
+    if (!card) return;
+
+    // Mark studied — must not also toggle the card open.
+    if (ev.target.matches('input[type=checkbox]')) {
+      var t = ev.target.getAttribute("data-title");
+      if (ev.target.checked) { done[t] = 1; card.classList.add("done"); }
+      else { delete done[t]; card.classList.remove("done"); }
+      save();
+      var marked = ALL.filter(function (e) { return done[e.title]; }).length;
+      $("prog").textContent = marked + " / " + ALL.length + " studied";
+      ev.stopPropagation();
+      return;
+    }
+
+    if (ev.target.classList.contains("reveal")) {
+      ev.target.closest(".out-wrap").classList.add("revealed");
+      return;
+    }
+
+    if (ev.target.classList.contains("opt")) {
+      var box = ev.target.parentElement;
+      var ans = +ev.target.getAttribute("data-ans");
+      var picked = +ev.target.getAttribute("data-i");
+      box.querySelectorAll(".opt").forEach(function (b, i) {
+        b.disabled = true;
+        if (i === ans) b.classList.add("right");
+        else if (i === picked) b.classList.add("wrong");
+      });
+      box.querySelector(".why").classList.add("show");
+      return;
+    }
+
+    if (ev.target.closest(".q-body")) return;      // clicks inside stay inside
+
+    // Toggle, fetching the body the first time it is opened.
+    var id = card.getAttribute("data-id");
+    card.classList.toggle("open");
+    if (!card.classList.contains("open") || bodies[id]) return;
+
+    fetch("/api/java/entry/" + id, {credentials: "same-origin"})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        bodies[id] = true;
+        card.querySelector(".q-body").innerHTML = body(d);
+      })
+      .catch(function () {
+        card.querySelector(".q-body").innerHTML =
+          '<div class="empty">Could not load this entry.</div>';
+      });
+  });
+
+  ["q", "cat", "diff"].forEach(function (id) {
+    $(id).addEventListener("input", render);
+    $(id).addEventListener("change", render);
+  });
+  $("fTrap").addEventListener("click", function () {
+    onlyTrap = !onlyTrap; this.classList.toggle("on", onlyTrap); render();
+  });
+  $("fTodo").addEventListener("click", function () {
+    onlyTodo = !onlyTodo; this.classList.toggle("on", onlyTodo); render();
+  });
+})();
+</script>
+</body>
+</html>

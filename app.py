@@ -83,6 +83,7 @@ def create_app():
     from routes.tasks_bucket import tasks_bucket_bp
     from routes.quick_bucket import quick_bucket_bp
     from routes.day_board import day_board_bp
+    from routes.java_prep import java_prep_bp
     from routes.bedtime_stories import bedtime_stories_bp, user_allowed as _bedtime_allowed
     from routes.study import study_bp
     from routes.meetings import meetings_bp
@@ -126,6 +127,7 @@ def create_app():
     app.register_blueprint(tasks_bucket_bp)
     app.register_blueprint(quick_bucket_bp)
     app.register_blueprint(day_board_bp)
+    app.register_blueprint(java_prep_bp)
     app.register_blueprint(bedtime_stories_bp)
     app.register_blueprint(study_bp)
     app.register_blueprint(meetings_bp)

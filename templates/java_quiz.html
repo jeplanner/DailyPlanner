@@ -1,0 +1,157 @@
+{# Java quiz — multiple choice.
+
+   Every distractor here was written by hand as a real misconception, so the
+   page shows the FULL explanation after each answer rather than a tick or a
+   cross. Being told you are wrong teaches nothing; being told why the option
+   you picked is tempting is the whole value.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Java Quiz — DailyPlanner</title>
+{% include "_pwa_head.html" %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<style>
+  body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);margin:0}
+  .wrap{max-width:720px;margin:0 auto;padding:16px 16px 72px}
+  h1{font-size:22px;font-weight:900;letter-spacing:-.02em;margin:6px 0 2px}
+  .sub{color:var(--color-text-secondary);font-size:13px;margin:0 0 14px}
+  .sub a{color:var(--color-primary);font-weight:700;text-decoration:none}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  select,button{font:inherit}
+  select{font-size:14px;padding:9px 11px;border:1px solid var(--color-border);
+         border-radius:10px;background:var(--color-bg);color:var(--color-text)}
+  .btn{font-weight:700;border:1px solid var(--color-border);background:var(--color-surface);
+       color:var(--color-text);border-radius:10px;padding:9px 13px;cursor:pointer}
+  .btn.primary{border-color:var(--color-primary);color:var(--color-primary)}
+  .score{margin-left:auto;font-size:13px;font-weight:800;color:var(--color-text-secondary)}
+
+  .qc{border:1px solid var(--color-border);border-radius:12px;background:var(--color-surface);
+      padding:14px;margin-bottom:10px}
+  .topic{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+         color:var(--color-text-secondary);margin-bottom:6px}
+  .qtext{font-size:14.5px;font-weight:700;line-height:1.5;margin:0 0 11px;
+         overflow-wrap:anywhere;white-space:pre-wrap}
+  .opt{display:block;width:100%;text-align:left;margin-bottom:6px;font-size:13.5px;
+       padding:10px 12px;border:1px solid var(--color-border);border-radius:9px;
+       background:var(--color-bg);color:var(--color-text);cursor:pointer;line-height:1.45}
+  .opt:hover:not(:disabled){border-color:var(--color-primary)}
+  .opt.right{border-color:#34d399;background:color-mix(in srgb,#34d399 12%,transparent)}
+  .opt.wrong{border-color:#f87171;background:color-mix(in srgb,#f87171 12%,transparent)}
+  .why{display:none;margin-top:9px;padding:10px 12px;border-radius:9px;
+       background:var(--color-bg);border:1px solid var(--color-border);
+       font-size:13px;line-height:1.6;color:var(--color-text-secondary)}
+  .why.show{display:block}
+  .empty{padding:26px 12px;text-align:center;color:var(--color-text-secondary)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Java quiz</h1>
+  <p class="sub">
+    Every wrong option is a real misconception, not filler — so the explanation
+    covers why the one you picked was tempting.
+    <a href="/java">Back to the bank →</a>
+  </p>
+
+  <div class="controls">
+    <select id="cat"><option value="">All rungs</option></select>
+    <select id="n">
+      <option value="5">5 questions</option>
+      <option value="10" selected>10 questions</option>
+      <option value="20">20 questions</option>
+    </select>
+    <button class="btn primary" id="go">New quiz</button>
+    <span class="score" id="score"></span>
+  </div>
+
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var answered = 0, correct = 0, total = 0;
+
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function load() {
+    answered = 0; correct = 0;
+    $("score").textContent = "";
+    $("list").innerHTML = '<div class="empty">Loading…</div>';
+    var url = "/api/java/quiz?n=" + $("n").value +
+              ($("cat").value ? "&cat=" + encodeURIComponent($("cat").value) : "");
+    fetch(url, {credentials: "same-origin"})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!$("cat").options.length || $("cat").options.length === 1) {
+          d.categories.forEach(function (c) {
+            var o = document.createElement("option");
+            o.value = c.key; o.textContent = c.label; $("cat").appendChild(o);
+          });
+        }
+        total = d.questions.length;
+        if (!total) {
+          $("list").innerHTML = '<div class="empty">No questions for that rung yet.</div>';
+          return;
+        }
+        $("list").innerHTML = d.questions.map(render).join("");
+      })
+      .catch(function () {
+        $("list").innerHTML = '<div class="empty">Could not load the quiz.</div>';
+      });
+  }
+
+  function render(q, idx) {
+    var opts = q.options.map(function (o, i) {
+      return '<button class="opt" data-i="' + i + '">' +
+             String.fromCharCode(65 + i) + ') ' + esc(o) + '</button>';
+    }).join("");
+    return '<div class="qc" data-ans="' + q.answer + '">' +
+             '<div class="topic">' + (idx + 1) + '. ' + esc(q.topic) + '</div>' +
+             '<p class="qtext">' + esc(q.question) + '</p>' + opts +
+             '<div class="why">' + esc(q.why) + '</div>' +
+           '</div>';
+  }
+
+  $("list").addEventListener("click", function (ev) {
+    if (!ev.target.classList.contains("opt")) return;
+    var card = ev.target.closest(".qc");
+    if (card.dataset.locked) return;              // one attempt per question
+    card.dataset.locked = "1";
+
+    var ans = +card.getAttribute("data-ans");
+    var picked = +ev.target.getAttribute("data-i");
+    card.querySelectorAll(".opt").forEach(function (b, i) {
+      b.disabled = true;
+      if (i === ans) b.classList.add("right");
+      else if (i === picked) b.classList.add("wrong");
+    });
+    // The explanation is shown WHETHER OR NOT you were right — the reasoning
+    // about the distractors is the content, and getting it right by luck
+    // teaches nothing without it.
+    card.querySelector(".why").classList.add("show");
+
+    answered++;
+    if (picked === ans) correct++;
+    $("score").textContent = correct + " / " + answered +
+                             (answered === total ? "  — done" : "");
+  });
+
+  $("go").addEventListener("click", load);
+  $("cat").addEventListener("change", load);
+  $("n").addEventListener("change", load);
+  load();
+})();
+</script>
+</body>
+</html>
