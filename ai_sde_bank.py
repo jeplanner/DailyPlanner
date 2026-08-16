@@ -219546,6 +219546,2338 @@ rank 10, and NDCG awards 1.0000 to five mediocre results because it normalises b
 what you retrieved - so segment metrics by query intent and add a separate retrieval recall metric.""",
 ]
 
+_EX_P1AO["Design an Anomaly Detection service"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - notice when something is wrong, without crying wolf
+
+An anomaly detection service watches many signals - metrics, logs, business KPIs, sensor readings -
+and raises an alert when one of them behaves unusually.
+
+IT SOUNDS LIKE A MODELLING PROBLEM AND IT IS ALMOST ENTIRELY AN ALERT-VOLUME PROBLEM. The detector's
+statistical quality matters far less than the arithmetic of how many alerts it produces, because a
+system that pages a human 39,000 times a day is not a monitoring system - it is a denial-of-service
+attack on your on-call engineer.
+
+THE FIRST THING TO ESTABLISH IS WHAT KIND OF ANOMALY YOU MEAN, because they need different machinery:
+
+    POINT ANOMALY - a single value far from normal. A CPU spike. THE EASY CASE.
+    CONTEXTUAL ANOMALY - a value that is normal in general and abnormal here. 100 requests per second
+    is fine at noon and alarming at 4am. MOST REAL ANOMALIES ARE CONTEXTUAL, and section 3 measures
+    what happens if you ignore that.
+    COLLECTIVE ANOMALY - each individual point is fine and the SEQUENCE is not. A slow steady drift, or
+    a pattern of small transactions that together constitute fraud.
+    CHANGE POINT - the distribution has permanently shifted, which is a different question from "is
+    this point weird" and often more useful.
+
+AND THE SECOND THING: WHAT HAPPENS WHEN IT FIRES? An anomaly with no action attached is noise. A
+detector wired to a pager needs a precision an order of magnitude better than one wired to a dashboard,
+and knowing which you are building decides every threshold.
+
+TERMS AS THEY APPEAR:
+- FALSE POSITIVE RATE: fraction of NORMAL points that trigger an alert.
+- SEASONALITY: repeating structure - hourly, daily, weekly.
+- ALERT FATIGUE: the state in which engineers ignore alerts because most are wrong. IT IS THE FAILURE
+  MODE THAT KILLS THESE SYSTEMS, and it is irreversible once established.""",
+
+    """2. THE MEASUREMENT - the alert arithmetic that nobody does
+
+Take a realistic setup: 10,000 monitored time series, checked once a minute.
+
+    THAT IS 14,400,000 CHECKS PER DAY.
+
+Now apply the standard advice - "alert at three standard deviations":
+
+     detector threshold     false positive rate     ALERTS PER DAY     per on-call hour
+     2 sigma                           4.55e-02            655,200               27,300
+     3 sigma                           2.70e-03             38,880                1,620
+     4 sigma                           6.30e-05                907                   38
+     5 sigma                           5.70e-07                  8                    0
+     6 sigma                           2.00e-09                  0                    0
+
+    A THREE-SIGMA DETECTOR ON 10,000 SERIES PRODUCES THIRTY-NINE THOUSAND FALSE ALERTS PER DAY. That is
+    1,620 per hour, or one every two seconds, forever, with no incidents occurring at all.
+
+    EVEN FOUR SIGMA GIVES 907 A DAY. Five sigma gives 8 - and a five-sigma detector misses almost every
+    real incident, because real incidents are rarely five standard deviations from normal.
+
+RUN THE ARITHMETIC BACKWARDS, WHICH IS THE MORE USEFUL DIRECTION. If the team can absorb 10 alerts per
+day:
+
+    required false positive rate = 10 / 14,400,000 = 6.94e-07
+    which for a normal distribution is a threshold of about 4.96 SIGMA
+
+    AND A DETECTOR THAT STRICT IS ESSENTIALLY BLIND.
+
+    SO THE PROBLEM IS NOT SOLVABLE BY CHOOSING A BETTER THRESHOLD. THAT IS THE FINDING, and it is the
+    thing to say before proposing any model, because it reframes the whole design.
+
+THE ESCAPES, and they are all structural rather than statistical:
+
+    MONITOR FEWER, AGGREGATED SERIES. 10,000 series is usually 10,000 because someone auto-generated a
+    metric per host per endpoint. Aggregate to the service level and you have 50 series, not 10,000 -
+    AND THE ARITHMETIC IMPROVES BY A FACTOR OF 200 FOR FREE.
+    ALERT ON SYMPTOMS, NOT CAUSES. Alert on "checkout error rate is up" - one series - rather than on
+    every one of the two hundred metrics that might cause it.
+    GROUP CORRELATED ALERTS INTO INCIDENTS. When a database degrades, a hundred series go anomalous
+    simultaneously. THAT IS ONE INCIDENT, and the deduplication layer is worth more than the detector.
+    REQUIRE PERSISTENCE. Alert only if the anomaly holds for N consecutive checks. A single-point
+    excursion at 3 sigma is common; five consecutive ones are not - AND THIS IS THE CHEAPEST LARGE WIN
+    AVAILABLE, because it multiplies the effective false positive rate by itself.
+    TIER THE ROUTING. Page for a few things; ticket for more; dashboard for the rest.""",
+
+    """3. THE MEASUREMENT THAT CORRECTED ME - a global z-score does not cry wolf, it goes silent
+
+I expected a naive global z-score on a seasonal metric to fire constantly on the daily peaks. SO I
+MEASURED IT, and I was wrong in a way that is more useful than being right would have been.
+
+THE SETUP: 14 days of a metric with a strong daily cycle and a weekday/weekend pattern - 20,160
+minute-level points. The seasonal swing alone takes the hour-of-week mean from 15 up to 181. Then I
+injected 20 REAL incidents: a 40% drop lasting 15 minutes, giving 300 genuinely anomalous points.
+
+     detector                              alerts fired     true positives     recall     precision
+     GLOBAL z-score > 3                               0                  0       0.0%          0.0%
+     GLOBAL z-score > 2                             121                  0       0.0%          0.0%
+     hour-of-week baseline, z > 3                   369                299      99.7%         81.0%
+     hour-of-week baseline, z > 4                   280                277      92.3%         98.9%
+
+    THE GLOBAL Z-SCORE NEVER FIRES AT ALL AT 3 SIGMA. And at 2 sigma it fires 121 times and catches
+    ZERO of the 300 real anomalous points.
+
+    THE MECHANISM IS THE OPPOSITE OF WHAT I ASSUMED: THE SEASONAL SWING ITSELF INFLATES THE GLOBAL
+    STANDARD DEVIATION. The global mean is 92.6 with a standard deviation of 54.8 - a coefficient of
+    variation of 0.59, driven almost entirely by the daily cycle rather than by noise. A genuine 40%
+    drop is comfortably inside 3 sigma of that distribution.
+
+    SO THE NAIVE DETECTOR DOES NOT PRODUCE FALSE ALARMS. IT PRODUCES SILENCE. And silence is worse,
+    because a noisy detector gets fixed and a silent one gets trusted.
+
+THE FIX IS NOT A MODEL. IT IS ONE GROUP BY.
+
+    Compute a mean and standard deviation PER HOUR-OF-WEEK - 168 buckets - and compare each point to
+    what is normal FOR THAT HOUR. That single change takes recall from 0% to 99.7%, and moving the
+    threshold from 3 to 4 sigma trades 7 points of recall for 18 points of precision.
+
+    THAT IS THE ENTIRE LESSON: BEFORE REACHING FOR AN ALGORITHM, MODEL THE SEASONALITY. Most "anomaly
+    detection needs machine learning" arguments dissolve once the baseline is contextual, and the
+    per-hour-of-week baseline is a group-by over a rolling window.
+
+    AND NOTE THE 81% PRECISION AT z > 3 - the seasonal detector's false positives are real and they are
+    manageable, which is exactly the regime where the structural mitigations in section 2 (persistence,
+    aggregation, grouping) do the remaining work.""",
+
+    """4. THE METHODS - and when each is actually the right one
+
+STATISTICAL BASELINES, and you should start here:
+
+    Z-SCORE AGAINST A CONTEXTUAL BASELINE - per hour-of-week, per day-of-week. MEASURED at 99.7% recall
+    and 81% precision on injected 40% drops. IT IS A GROUP BY, IT IS EXPLICABLE, AND IT IS USUALLY
+    ENOUGH.
+    MEDIAN AND MAD instead of mean and standard deviation. THE MEDIAN ABSOLUTE DEVIATION IS ROBUST -
+    a single huge outlier inflates the standard deviation and thereby hides the next outlier, which is
+    a real self-defeating failure in a naive detector.
+    EWMA / HOLT-WINTERS - exponentially weighted baselines that adapt as the metric drifts.
+    SEASONAL DECOMPOSITION (STL) - split the series into trend, seasonal and residual, and detect on
+    the RESIDUAL. THE PRINCIPLED VERSION of section 3's group-by.
+    PROPHET or similar - a forecast plus a prediction interval; alert when reality leaves the interval.
+
+    A FORECAST-INTERVAL FRAMING IS OFTEN THE CLEANEST: "predict what this metric should be, with an
+    interval, and alert when it is outside" - because it handles trend, seasonality and holidays in one
+    object and the interval width is an interpretable knob.
+
+MACHINE LEARNING METHODS, and when they earn their place:
+
+    ISOLATION FOREST - isolates points by random splits; anomalies need fewer splits. Fast, handles
+    multivariate data, and needs no labels. THE DEFAULT ML CHOICE for tabular multivariate anomalies.
+    ONE-CLASS SVM - a boundary around normal data. Slower, sensitive to scaling.
+    AUTOENCODERS - train to reconstruct normal data; alert on high reconstruction error. Good for
+    high-dimensional data with structure - images, sensor arrays - and hard to debug.
+    LSTM / TRANSFORMER FORECASTERS - alert on forecast error. Powerful and heavy.
+
+    THE HONEST POSITION: MULTIVARIATE ML METHODS EARN THEIR PLACE WHEN THE ANOMALY IS A COMBINATION
+    RATHER THAN A SINGLE VALUE - CPU normal, memory normal, request rate normal, and the three together
+    impossible. FOR UNIVARIATE TIME SERIES A CONTEXTUAL BASELINE USUALLY WINS ON BOTH ACCURACY AND
+    DEBUGGABILITY, and section 3's measurement supports that.
+
+SUPERVISED, IF YOU HAVE LABELS. If past incidents are labelled, this stops being anomaly detection and
+becomes classification, which is a much easier problem with much better metrics. ASK WHETHER LABELS
+EXIST - most teams have an incident database and never think to use it.""",
+
+    """5. THE FAILURE MODES
+
+FAILURE 1 - IGNORING THE ALERT ARITHMETIC. Measured: 3 sigma across 10,000 series checked per minute is
+38,880 alerts a day. The threshold conversation is meaningless without the multiplication.
+
+FAILURE 2 - A GLOBAL BASELINE ON A SEASONAL METRIC. Measured: 0% recall on real 40% drops, because the
+seasonality inflates the standard deviation. It produces SILENCE, not noise - which is worse, because a
+silent detector gets trusted.
+
+FAILURE 3 - MEAN AND STANDARD DEVIATION ON CONTAMINATED DATA. A large outlier inflates the standard
+deviation, which hides the next outlier. USE MEDIAN AND MAD, or fit the baseline on data with known
+incidents excluded - as I did in the measurement.
+
+FAILURE 4 - ALERT FATIGUE, WHICH IS IRREVERSIBLE. Once engineers learn that alerts are usually wrong,
+they stop reading them, and you cannot recover that trust by improving precision later. THE FIRST
+VERSION MUST BE QUIET.
+
+FAILURE 5 - NO PERSISTENCE REQUIREMENT. Requiring N consecutive anomalous checks multiplies the
+effective false positive rate by itself and is the cheapest large win available.
+
+FAILURE 6 - ALERTING ON CAUSES RATHER THAN SYMPTOMS. Two hundred cause-metrics generate two hundred
+alerts for one incident. One symptom-metric generates one.
+
+FAILURE 7 - NO ALERT GROUPING. When a database degrades, a hundred series go anomalous at once. The
+deduplication layer is often worth more than the detector.
+
+FAILURE 8 - THE DETECTOR ADAPTING TO THE INCIDENT. An EWMA baseline that keeps updating during an
+outage treats the outage as the new normal and stops alerting after twenty minutes. FREEZE THE BASELINE
+WHILE AN ALERT IS ACTIVE.
+
+FAILURE 9 - NO FEEDBACK LOOP. Every alert should be resolvable as useful or not, and that feedback is
+the only path to tuning. WITHOUT IT YOU ARE GUESSING FOREVER.
+
+FAILURE 10 - IGNORING KNOWN EVENTS. Black Friday, a deployment, a marketing campaign, a holiday. A
+CALENDAR OF EXPECTED ANOMALIES IS CHEAP AND ELIMINATES A LARGE FRACTION OF FALSE ALERTS.
+
+FAILURE 11 - NOT ASKING WHETHER LABELS EXIST. Most organisations have an incident database, and with
+labels this becomes supervised classification - a strictly easier problem.
+
+FAILURE 12 - MISSING DATA TREATED AS ZERO. A metric that stops reporting is usually a bigger incident
+than any value it could have reported, and a detector that sees "0" instead of "absent" gets it exactly
+backwards.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - DO THE ALERT ARITHMETIC OUT LOUD, FIRST. Series x checks per day x false positive rate. It
+reframes everything and it is the number nobody computes.
+
+STEP 2 - ASK WHAT HAPPENS WHEN IT FIRES. A pager needs an order of magnitude better precision than a
+dashboard.
+
+STEP 3 - ASK WHICH KIND OF ANOMALY: point, contextual, collective, or change point. Most real ones are
+contextual.
+
+STEP 4 - REDUCE THE NUMBER OF SERIES BEFORE IMPROVING THE DETECTOR. Aggregate to the service level;
+alert on symptoms rather than causes. Measured: this improves the arithmetic by orders of magnitude for
+free.
+
+STEP 5 - MODEL THE SEASONALITY BEFORE REACHING FOR AN ALGORITHM. Measured: a global z-score got 0%
+recall on real incidents, and a per-hour-of-week baseline got 99.7%. That is a GROUP BY, not a model.
+
+STEP 6 - USE ROBUST STATISTICS. Median and MAD, so one outlier does not hide the next.
+
+STEP 7 - REQUIRE PERSISTENCE. N consecutive anomalous checks. Cheapest large reduction in alert volume
+available.
+
+STEP 8 - GROUP CORRELATED ALERTS INTO INCIDENTS and tier the routing: page, ticket, dashboard.
+
+STEP 9 - FREEZE THE BASELINE DURING AN ACTIVE ALERT, and maintain a calendar of expected anomalies -
+deployments, holidays, campaigns.
+
+STEP 10 - BUILD THE FEEDBACK LOOP FROM DAY ONE. Every alert marked useful or not, and ask whether an
+incident database already exists - if it does, this is supervised classification and a much easier
+problem.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I'd start with arithmetic rather than modelling, because it reframes the whole problem. Take ten
+thousand monitored series checked once a minute - that's fourteen point four MILLION checks a day. Now
+apply the standard advice of alerting at three standard deviations: a normal distribution puts 0.27 per
+cent outside three sigma, so that's THIRTY-NINE THOUSAND FALSE ALERTS PER DAY. One every two seconds,
+forever, with no incidents at all. Even four sigma gives you nine hundred a day.
+
+Run it backwards: to get ten alerts a day you need a false positive rate under seven times ten to the
+minus seven, which is about five sigma - and a detector that strict misses essentially every real
+incident, because real incidents are rarely five standard deviations from normal.
+
+SO THE PROBLEM IS NOT SOLVABLE BY PICKING A BETTER THRESHOLD. The escapes are all structural: monitor
+FEWER, AGGREGATED series - ten thousand is usually ten thousand because someone auto-generated a metric
+per host per endpoint, and aggregating to the service level gives you fifty; alert on SYMPTOMS rather
+than causes, so a database problem is one alert instead of two hundred; GROUP correlated alerts into
+incidents; and REQUIRE PERSISTENCE - N consecutive anomalous checks, which multiplies the effective
+false positive rate by itself and is the cheapest big win there is.
+
+Then the second thing, and I got this wrong before I measured it. I assumed a naive global z-score on a
+seasonal metric would fire constantly on the daily peaks. I built fourteen days of a metric with a
+strong daily and weekly cycle, injected twenty real incidents - a forty per cent drop for fifteen
+minutes - and measured.
+
+THE GLOBAL Z-SCORE NEVER FIRED AT ALL at three sigma. At two sigma it fired 121 times and caught ZERO
+of the three hundred genuinely anomalous points. The mechanism is the opposite of what I assumed: the
+SEASONAL SWING ITSELF inflates the global standard deviation - the coefficient of variation was 0.59,
+driven almost entirely by the daily cycle - so a real forty per cent drop sits comfortably inside three
+sigma. The naive detector doesn't cry wolf, it goes SILENT. And silence is worse, because a noisy
+detector gets fixed and a silent one gets trusted.
+
+The fix isn't a model, it's ONE GROUP BY. Compute a mean and standard deviation per hour-of-week - a
+hundred and sixty-eight buckets - and compare each point to what's normal FOR THAT HOUR. That took
+recall from zero to 99.7 per cent at 81 per cent precision, and moving to four sigma traded seven points
+of recall for eighteen points of precision.
+
+So my ordering would be: do the arithmetic, cut the number of series, model the seasonality with a
+contextual baseline, use median and MAD rather than mean and standard deviation so one outlier doesn't
+hide the next, require persistence, and group alerts into incidents. Machine learning earns its place
+when the anomaly is a COMBINATION rather than a single value - CPU normal, memory normal, request rate
+normal, and the three together impossible - and for that I'd use an isolation forest.
+
+Two last things. FREEZE THE BASELINE during an active alert, or an adaptive baseline treats the outage
+as the new normal and stops alerting after twenty minutes. And ask whether an incident database already
+exists - if past incidents are labelled, this stops being anomaly detection and becomes classification,
+which is a strictly easier problem with far better metrics.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  STEP ZERO: DO THE ARITHMETIC                                            │
+    │    series x checks/day x FPR = ALERTS/DAY                                │
+    │    MEASURED, 10,000 series checked per minute = 14,400,000 checks/day:   │
+    │      2 sigma -> 655,200/day |  3 sigma -> 38,880/day                     │
+    │      4 sigma ->     907/day |  5 sigma ->      8/day                     │
+    │    to absorb 10/day you need ~4.96 sigma, AND THAT DETECTOR IS BLIND.    │
+    │  >> THE PROBLEM IS NOT SOLVABLE BY CHOOSING A BETTER THRESHOLD.          │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (1) REDUCE THE NUMBER OF SERIES  - THE BIGGEST LEVER, AND IT IS FREE   │
+    │    aggregate per-host per-endpoint metrics to the SERVICE level:         │
+    │      10,000 series -> 50 series is a 200x improvement in the arithmetic  │
+    │    ALERT ON SYMPTOMS, NOT CAUSES: "checkout error rate is up" is ONE     │
+    │      series; the 200 metrics that might cause it are 200 alerts.         │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (2) CONTEXTUAL BASELINE  - MODEL THE SEASONALITY FIRST                 │
+    │    per HOUR-OF-WEEK mean and spread (168 buckets), on a rolling window   │
+    │    ROBUST STATISTICS: MEDIAN and MAD, not mean and sd - one big outlier  │
+    │      inflates sd and thereby HIDES THE NEXT OUTLIER.                     │
+    │    or STL decomposition -> detect on the RESIDUAL (the principled form)  │
+    │    or a forecast + prediction interval (handles trend, season, holidays  │
+    │      in one object, with an interpretable width knob)                    │
+    │                                                                          │
+    │    MEASURED, 14 days with 20 injected 40%-drop incidents:                │
+    │      detector                  alerts    TP    recall   precision        │
+    │      GLOBAL z > 3                   0     0      0.0%        0.0%        │
+    │      GLOBAL z > 2                 121     0      0.0%        0.0%        │
+    │      hour-of-week z > 3           369   299     99.7%       81.0%        │
+    │      hour-of-week z > 4           280   277     92.3%       98.9%        │
+    │    >> THE GLOBAL Z-SCORE PRODUCES SILENCE, NOT NOISE. The seasonal swing │
+    │       inflates sd (CV = 0.59) so a real 40% drop is inside 3 sigma.      │
+    │       SILENCE IS WORSE: a noisy detector gets fixed, a silent one gets   │
+    │       trusted. The fix is ONE GROUP BY, not a model.                     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (3) OPTIONAL ML LAYER - only where it earns its place                  │
+    │    ISOLATION FOREST for MULTIVARIATE anomalies: CPU normal, memory       │
+    │      normal, request rate normal, THE THREE TOGETHER IMPOSSIBLE.         │
+    │    autoencoders for high-dimensional structured data (sensor arrays)     │
+    │    >> FOR UNIVARIATE TIME SERIES A CONTEXTUAL BASELINE USUALLY WINS on   │
+    │       both accuracy and debuggability.                                   │
+    │    >> IF AN INCIDENT DATABASE EXISTS, THIS IS SUPERVISED CLASSIFICATION  │
+    │       AND A STRICTLY EASIER PROBLEM. Ask.                                │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (4) SUPPRESSION - WHERE MOST OF THE VOLUME REDUCTION HAPPENS           │
+    │    PERSISTENCE: require N consecutive anomalous checks. Multiplies the   │
+    │      effective FPR by itself. CHEAPEST LARGE WIN AVAILABLE.              │
+    │    CALENDAR of expected anomalies: deployments, Black Friday, holidays,  │
+    │      marketing campaigns.                                                 │
+    │    MISSING DATA IS NOT ZERO. A metric that stops reporting is usually a  │
+    │      bigger incident than any value it could have reported.              │
+    │    FREEZE THE BASELINE while an alert is ACTIVE, or an adaptive baseline │
+    │      treats the outage as the new normal and goes quiet after 20 min.    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (5) GROUPING AND ROUTING                                                │
+    │    GROUP CORRELATED ALERTS INTO ONE INCIDENT. A degraded database sends  │
+    │      a hundred series anomalous at once - THAT IS ONE INCIDENT, and the  │
+    │      dedup layer is often worth more than the detector.                  │
+    │    TIER: PAGE (few) | TICKET (more) | DASHBOARD (the rest)               │
+    │    >> ALERT FATIGUE IS IRREVERSIBLE. Once engineers learn alerts are     │
+    │       usually wrong they stop reading them, and improving precision      │
+    │       later does not win the trust back. THE FIRST VERSION MUST BE QUIET.│
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (6) FEEDBACK LOOP - from day one                                        │
+    │    every alert resolvable as useful / not useful. WITHOUT IT YOU ARE     │
+    │    GUESSING FOREVER, and it is also how you accumulate the labels that   │
+    │    turn this into supervised classification.                             │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+MEASUREMENT 1 - THE ALERT ARITHMETIC. Closed form, not simulated: alerts/day = series x checks/day x
+P(|z| > threshold) for a standard normal.
+
+     threshold     two-sided tail probability     x 14,400,000 checks
+     2 sigma                         4.55e-02                 655,200
+     3 sigma                         2.70e-03                  38,880
+     4 sigma                         6.30e-05                     907
+     5 sigma                         5.70e-07                       8
+     6 sigma                         2.00e-09                       0
+
+    AND INVERTED: 10 alerts/day requires FPR <= 6.94e-07, i.e. about 4.96 sigma.
+
+    THE ASSUMPTION HERE IS NORMALITY, AND REAL METRICS ARE HEAVIER-TAILED THAN NORMAL - so the true
+    alert counts at every threshold are HIGHER than this table, not lower. THE ARITHMETIC IS A BEST
+    CASE.
+
+MEASUREMENT 2 - THE SEASONAL DETECTOR. 14 days of minute-level data, 20,160 points. The generator is
+100 x (1 + 0.8 sin(2 pi (hour-8)/24)) x (0.75 on weekends) x lognormal noise with sigma 0.08. Then 20
+incidents injected: a 40% multiplicative drop for 15 consecutive minutes, giving 300 anomalous points.
+The hour-of-week baseline was fitted EXCLUDING the injected points, which is the equivalent of fitting
+on clean historical data.
+
+     detector                              alerts fired     true positives     recall     precision
+     GLOBAL z-score > 3                               0                  0       0.0%          0.0%
+     GLOBAL z-score > 2                             121                  0       0.0%          0.0%
+     hour-of-week baseline, z > 3                   369                299      99.7%         81.0%
+     hour-of-week baseline, z > 4                   280                277      92.3%         98.9%
+
+     global mean 92.6, global sd 54.8, so CV = 0.59
+     the hour-of-week MEANS alone span 15 to 181
+
+    THE KEY NUMBER IS THE 15-TO-181 RANGE OF THE SEASONAL MEANS AGAINST A GLOBAL SD OF 54.8. The
+    seasonal structure IS most of the global variance, which is precisely why the global z-score has
+    no discriminating power left.
+
+    THE 2-SIGMA ROW IS THE MOST DAMNING: 121 alerts, ZERO true positives. It is not merely insensitive,
+    it is anti-correlated with the truth - the points it flags are the ordinary daily peaks and troughs,
+    and the injected drops occur at all hours, most of which are nowhere near the global extremes.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE 0.8 AMPLITUDE ON THE DAILY SINE
+            is what makes the seasonal variance dominate. A METRIC WITH WEAK SEASONALITY WOULD NOT SHOW
+            THIS FAILURE - and the prediction I originally made (that the global z-score would fire on
+            every peak) would have been correct for a metric with a SHARP, RARE peak rather than a
+            smooth cycle. THE SHAPE OF THE SEASONALITY DECIDES WHICH WAY THE NAIVE DETECTOR FAILS.
+    INJECTING A MULTIPLICATIVE 40% DROP RATHER THAN AN ADDITIVE ONE
+            means the incident's absolute size varies with the time of day - a 40% drop at 3am is a
+            small absolute change. THAT IS REALISTIC and it is another reason the global detector
+            cannot see them.
+    FITTING THE HOUR-OF-WEEK BASELINE WITH THE INJECTED POINTS EXCLUDED
+            is the clean-historical-data assumption. INCLUDING THEM WOULD INFLATE THE PER-BUCKET SD AND
+            REDUCE RECALL, which is exactly the "contaminated baseline" failure that motivates median
+            and MAD - so this measurement understates that particular problem.
+    THE 15-MINUTE INCIDENT DURATION
+            is what makes a persistence requirement viable: 15 consecutive anomalous points is easy to
+            distinguish from a single-point excursion. A ONE-MINUTE INCIDENT WOULD NOT SURVIVE A
+            PERSISTENCE FILTER, which is the trade that filter makes.
+    WHAT IS NOT MEASURED
+            is alert grouping, isolation forests, or the multivariate case. THOSE SECTIONS ARE
+            REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you do the alert arithmetic before proposing a detector?
+    Did you propose reducing the number of series before improving the model?
+    Did you model seasonality with a CONTEXTUAL baseline?
+    Did you use robust statistics?
+    Did you require persistence and group correlated alerts?
+    Did you name alert fatigue as the terminal failure?
+    Did you ask whether labels already exist?
+
+    THE ARITHMETIC IS THE STRONGEST OPENING AVAILABLE. Everybody proposes an algorithm; almost nobody
+    multiplies out how many alerts it produces.
+
+THE #1 MISTAKE: choosing a threshold without multiplying. Measured: 3 sigma on 10,000 per-minute series
+is 38,880 alerts a day.
+
+THE #2 MISTAKE: a global baseline on a seasonal metric. Measured: 0% recall on real 40% drops, and 121
+alerts at 2 sigma with zero true positives. It fails by going SILENT, which is worse than being noisy.
+
+THE #3 MISTAKE: mean and standard deviation on data containing outliers. One outlier inflates the sd
+and hides the next. Median and MAD.
+
+THE #4 MISTAKE: no persistence requirement. It is the cheapest large reduction in volume available.
+
+THE #5 MISTAKE: alerting on causes rather than symptoms - two hundred alerts for one incident.
+
+THE #6 MISTAKE: no alert grouping. The dedup layer is often worth more than the detector.
+
+THE #7 MISTAKE: an adaptive baseline that keeps updating during an outage, so it goes quiet after
+twenty minutes. Freeze it while an alert is active.
+
+THE #8 MISTAKE: ignoring alert fatigue, which is irreversible. The first version must be quiet.
+
+THE #9 MISTAKE: treating missing data as zero. An absent metric is usually a bigger incident than any
+value it could report.
+
+THE #10 MISTAKE: not asking whether an incident database exists. With labels this is supervised
+classification, which is strictly easier.
+
+ONE-SENTENCE TAKEAWAY: anomaly detection is an ALERT VOLUME problem before it is a modelling problem -
+measured, a 3-sigma detector on 10,000 per-minute series produces 38,880 false alerts a day and the
+threshold needed to get 10 is about 5 sigma, which is blind - so the design is fewer aggregated series,
+symptoms not causes, persistence requirements and alert grouping; and before any algorithm, model the
+SEASONALITY, because measured, a global z-score caught ZERO of 300 genuinely anomalous points (the
+seasonal swing inflates the standard deviation until a real 40% drop sits inside 3 sigma) while a
+per-hour-of-week baseline - one GROUP BY - caught 99.7% of them.""",
+]
+
+_EX_P1AO["Design a Spam / Abuse Detection system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop the bad actors, not just the bad messages
+
+A spam and abuse system decides which content, accounts and actions to allow, restrict or remove. It
+overlaps with content moderation and it is a genuinely different problem, and stating the difference is
+the best way to open:
+
+    CONTENT MODERATION asks "IS THIS PIECE OF CONTENT ACCEPTABLE?" - a policy question about an item.
+    SPAM AND ABUSE ASKS "IS THIS ACTOR BEHAVING LIKE AN ATTACKER?" - a question about a PATTERN OF
+    BEHAVIOUR across many items and many accounts.
+
+    THAT DISTINCTION IS THE WHOLE DESIGN, AND SECTION 2 MEASURES IT. Spam is defined by intent and
+    volume, not by the text of any single message. A single message saying "check out my page" is
+    fine; ten thousand of them from accounts registered this morning is an attack.
+
+THE THREE THINGS THAT MAKE THIS DIFFERENT FROM ORDINARY CLASSIFICATION:
+
+    THE ADVERSARY ADAPTS. Every signal you use will be probed and evaded. Character substitution,
+    homoglyphs, text baked into images, message templating, deliberately slow drip rates. YOUR MODEL'S
+    LIFETIME IS MEASURED IN WEEKS.
+    THE ECONOMICS ARE ASYMMETRIC AND THAT IS YOUR LEVER. The attacker's profit per message is tiny, so
+    you do not need to catch everything - YOU NEED TO MAKE THE ATTACK UNPROFITABLE. Raising their cost
+    per account by a factor of ten kills most campaigns without catching a single message.
+    ATTACKS ARE COORDINATED. Ten accounts posting the same thing is a campaign, and an item-level
+    classifier is structurally blind to it.
+
+TERMS AS THEY APPEAR:
+- ACTOR: the entity behind the behaviour - an account, a device, a payment method, an IP range.
+- VELOCITY: rate of actions per unit time, per actor.
+- SYBIL ATTACK: one adversary operating many fake identities.""",
+
+    """2. THE MEASUREMENT - the content classifier is the weakest signal
+
+I built 6,000 accounts, 2.8% of them spam. Spam accounts are younger and post far more, and their
+individual posts are only MILDLY distinguishable - each post gets a content score drawn from a normal
+distribution shifted by one standard deviation for spam. THEN I RANKED ACCOUNTS BY DIFFERENT SIGNALS
+and measured precision at the operating point that catches 80% of spam accounts.
+
+     signal                                          precision at 80% spam recall
+     the account's single WORST post                                        42.9%
+     the MEAN of the account's post scores                                  28.0%
+     account AGE alone (younger is worse)                                   27.4%
+     POST VOLUME alone                                                      14.1%
+     content mean + volume + age COMBINED                                   78.2%
+
+    THE COMBINATION BEATS THE BEST SINGLE SIGNAL BY THIRTY-FIVE PERCENTAGE POINTS. That is not an
+    incremental gain from feature engineering - it is the difference between a system that is usable
+    and one that is not.
+
+    AND NOTE THE ORDERING OF THE INDIVIDUAL SIGNALS. Account age alone - a single number requiring no
+    model at all - is within 15 points of the best content-based signal. POST VOLUME ALONE IS WEAK, and
+    yet it contributes enormously in combination, because volume distinguishes spam only ONCE YOU
+    CONDITION ON AGE: a five-year-old account posting a lot is a power user, and a five-hour-old
+    account posting a lot is a bot.
+
+    THAT INTERACTION IS WHY THE COMBINED MODEL WINS SO DECISIVELY, and it is the reason a content
+    classifier deployed alone underperforms even a crude behavioural heuristic.
+
+LOOK ALSO AT "WORST POST" VERSUS "MEAN POST". The single worst post scores 42.9% and the mean scores
+28.0% - IN THIS SIMULATION THE MAXIMUM IS THE BETTER AGGREGATE, because spam accounts post more and
+therefore get more draws from the shifted distribution.
+
+    BUT THAT IS A PROPERTY OF THIS SIMULATION AND IT REVERSES IN PRACTICE, AND THE REASON MATTERS: in
+    reality every large legitimate account eventually produces one odd-looking post, so a max-based
+    rule fires on your most valuable users. THE MEASUREMENT SHOWS MAX WINNING HERE BECAUSE MY
+    SIMULATED POST COUNTS ARE MODEST AND MY LEGITIMATE ACCOUNTS DO NOT HAVE HEAVY TAILS - and saying
+    that is more useful than quoting the number as if it generalised.
+
+    THE ROBUST AGGREGATE IN PRODUCTION IS USUALLY A HIGH QUANTILE OR A COUNT ABOVE THRESHOLD - "how
+    many of this account's posts scored above 0.9" - rather than either the max or the mean.
+
+THE TAKEAWAY: ABUSE IS AN ACTOR PROBLEM WEARING A CONTENT PROBLEM'S CLOTHES. Investing in behavioural
+and graph features beats investing in a better text classifier, and it beats it by a lot.""",
+
+    """3. THE FEATURES - and why the graph is where the value is
+
+ACCOUNT-LEVEL BEHAVIOURAL FEATURES, which section 2 shows carry most of the signal:
+
+    AGE OF THE ACCOUNT, and age at first action. A brand-new account acting immediately is the single
+    strongest cheap signal.
+    VELOCITY - actions per hour, per day - AND ITS REGULARITY. Humans are bursty and irregular; scripts
+    are not. THE VARIANCE OF THE INTER-ACTION INTERVAL IS OFTEN MORE INFORMATIVE THAN THE RATE, because
+    an attacker who throttles their rate to look human usually forgets to randomise their spacing.
+    RATIO FEATURES - outbound messages per received reply, follows per follower, posts per
+    engagement. A ONE-SIDED RATIO IS THE SIGNATURE OF BROADCAST BEHAVIOUR.
+    CONTENT DIVERSITY across the account's own posts. Near-duplicate content from one account is the
+    definition of spam, and this is where MinHash and LSH re-enter.
+    COMPLETENESS OF THE PROFILE, whether the email is verified, whether a payment method exists.
+
+NETWORK AND GRAPH FEATURES, WHICH ARE WHERE THE REAL VALUE IS:
+
+    SHARED INFRASTRUCTURE - how many accounts share this IP, this device fingerprint, this phone number
+    prefix, this payment method, this email domain, this signup timestamp bucket.
+    COORDINATION - accounts that act within seconds of each other, follow the same targets in the same
+    order, or post near-identical content. TEMPORAL CO-OCCURRENCE IS EXTREMELY HARD TO FAKE and
+    extremely cheap to compute.
+    CONNECTED COMPONENTS in the account-device-IP graph. A component of 400 accounts sharing 3 devices
+    is a farm, and no per-account classifier can see it.
+    THE INVITE AND REFERRAL TREE. Sybil accounts cluster in it.
+
+    THE GENERAL PRINCIPLE: DEDUPLICATE BY THE UNDERLYING ENTITY, NOT BY THE ACCOUNT. An attacker can
+    make a million accounts cheaply; they cannot make a million phones, a million payment methods or a
+    million residential IPs cheaply. TIE THE SCORE TO THE SCARCE THING.
+
+CONTENT FEATURES, which matter and matter less than people assume:
+    the text classifier, URL reputation, image hashes against known-bad, near-duplicate detection
+    across accounts.
+
+    NEAR-DUPLICATE DETECTION ACROSS ACCOUNTS IS THE HIGHEST-VALUE CONTENT SIGNAL, because it is the one
+    that detects the CAMPAIGN rather than the message - and it is exactly the MinHash/LSH machinery
+    from the near-duplicate entry.""",
+
+    """4. THE ECONOMICS - which is the actual strategy
+
+THIS IS THE SECTION THAT SEPARATES A SENIOR ANSWER, AND IT IS THE ONE MOST CANDIDATES NEVER REACH.
+
+    YOU ARE NOT TRYING TO ACHIEVE 100% RECALL. YOU ARE TRYING TO MAKE THE ATTACK UNPROFITABLE.
+
+    The attacker's economics are: revenue per successful message x messages delivered, minus the cost of
+    accounts, infrastructure and effort. IF YOU RAISE THEIR COST PER ACCOUNT BY 10x, MOST CAMPAIGNS
+    BECOME UNPROFITABLE AND STOP - WITHOUT YOU CLASSIFYING A SINGLE MESSAGE CORRECTLY.
+
+THE COST-RAISING MECHANISMS, in rough order of value per unit of friction:
+
+    RATE LIMITS. A new account can send 5 messages a day, not 5,000. THIS IS THE SINGLE HIGHEST-VALUE
+    CONTROL IN THE ENTIRE SYSTEM and it requires no model at all. It also caps the damage of every
+    failure mode below it.
+    PROGRESSIVE TRUST. Capabilities unlock with age and good behaviour rather than at signup. AN
+    ATTACKER MUST NOW AGE THEIR ACCOUNTS, which converts a one-off cost into a carrying cost - and
+    carrying costs are what kill spam operations.
+    VERIFICATION FRICTION AT SIGNUP - phone, payment method, email confirmation. Each one has a real
+    per-account cost to the attacker and a small cost to the legitimate user.
+    SHADOW ACTIONS - the spam is accepted and simply not delivered. THE ATTACKER'S FEEDBACK LOOP IS
+    BROKEN: they cannot tell which accounts are burned, so they cannot iterate. THIS IS
+    DISPROPORTIONATELY EFFECTIVE and it is the cheapest way to blunt an adaptive adversary.
+    DELAYED ENFORCEMENT. Do not ban the instant you detect. Batch the enforcement, so the attacker
+    cannot A/B test their way around your detector by watching which variants survive.
+
+    THE LAST TWO ARE THE SAME IDEA: DENY THE ADVERSARY FEEDBACK. An attacker who learns quickly beats
+    any static defence, and an attacker who cannot tell what worked cannot learn at all.
+
+THE COST TO LEGITIMATE USERS IS THE CONSTRAINT, and every mechanism above trades against onboarding
+conversion. THAT TRADE IS A PRODUCT DECISION, and it should be stated as one rather than optimised
+silently by the anti-abuse team.
+
+    AND THE MEASUREMENT THAT MATTERS IS NOT PRECISION AND RECALL. IT IS SPAM DELIVERED PER USER PER DAY
+    AND FALSE-ENFORCEMENT RATE ON GOOD ACCOUNTS. Those are what the product experiences, and a model
+    metric that improves while spam-delivered stays flat is telling you nothing.""",
+
+    """5. THE FAILURE MODES
+
+FAILURE 1 - AN ITEM-LEVEL CLASSIFIER ONLY. Measured: content signals alone reached 42.9% precision at
+80% recall, and combining content with age and volume reached 78.2%. Abuse is an actor problem.
+
+FAILURE 2 - IGNORING THE ACCOUNT-DEVICE-IP GRAPH. A component of 400 accounts sharing 3 devices is a
+farm, and no per-account model can see it.
+
+FAILURE 3 - NO RATE LIMITS. The highest-value control in the system requires no model, and without it
+every detection failure is unbounded.
+
+FAILURE 4 - IMMEDIATE, VISIBLE ENFORCEMENT. It gives the adversary a fast feedback loop and lets them
+A/B test around your detector. Delay it and batch it.
+
+FAILURE 5 - A STATIC MODEL. Attacks evolve in weeks. Retraining cadence here is a security parameter,
+and the ability to ship a RULE in minutes is essential because a retrain takes days.
+
+FAILURE 6 - FALSE POSITIVES ON POWER USERS. Your most active legitimate users look most like spam on
+volume features. SEGMENT THE EVALUATION BY ACCOUNT AGE AND ACTIVITY LEVEL, or you will ship a system
+that punishes your best users.
+
+FAILURE 7 - NO APPEALS PATH. Wrongly banning a legitimate user is a serious harm, and appeals is also
+your best source of labelled false positives.
+
+FAILURE 8 - PUBLISHING YOUR SIGNALS. Feature importance in an adversarial system is a map for the
+attacker.
+
+FAILURE 9 - MEASURING MODEL METRICS RATHER THAN OUTCOMES. Report SPAM DELIVERED PER USER PER DAY and
+FALSE-ENFORCEMENT RATE. An AUC improvement with flat spam-delivered means nothing.
+
+FAILURE 10 - TREATING ALL ABUSE AS ONE PROBLEM. Commercial spam, harassment, scams, fake engagement and
+account takeover have different signals, different costs and different correct responses. THEY ARE
+DIFFERENT PRODUCTS.
+
+FAILURE 11 - IGNORING ACCOUNT TAKEOVER. A compromised five-year-old account with a real history defeats
+every age and reputation signal you have, and it is a different detection problem - a sudden change in
+an established account's OWN behaviour.
+
+FAILURE 12 - LABEL LAG AND CONTAMINATION. Spam labels come from user reports and manual review, both
+delayed and both incomplete. Your negatives contain undetected spam, which caps measured performance
+and means your precision estimates are a lower bound.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - DISTINGUISH ABUSE FROM CONTENT MODERATION. This is about ACTORS and PATTERNS, not about
+whether one item is acceptable.
+
+STEP 2 - ASK WHICH ABUSE TYPE. Commercial spam, harassment, scams, fake engagement and account takeover
+are different products with different signals.
+
+STEP 3 - START WITH RATE LIMITS AND PROGRESSIVE TRUST. The highest-value control needs no model and it
+bounds the damage of every later failure.
+
+STEP 4 - PUT BEHAVIOURAL FEATURES BEFORE CONTENT FEATURES. Measured: content alone reached 42.9%
+precision at 80% recall; content plus age plus volume reached 78.2%.
+
+STEP 5 - EXPLAIN WHY VOLUME ONLY WORKS CONDITIONED ON AGE. Measured, volume alone is the weakest signal
+at 14.1% and contributes enormously in combination - a five-year-old account posting a lot is a power
+user and a five-hour-old one is a bot.
+
+STEP 6 - BUILD THE ACTOR GRAPH. Accounts, devices, IPs, payment methods, phone numbers. TIE THE SCORE
+TO THE SCARCE THING - an attacker can make a million accounts cheaply and not a million phones.
+
+STEP 7 - ADD NEAR-DUPLICATE DETECTION ACROSS ACCOUNTS. It is the highest-value content signal because
+it detects the CAMPAIGN rather than the message.
+
+STEP 8 - FRAME THE STRATEGY ECONOMICALLY. You are making the attack unprofitable, not achieving 100%
+recall. Raising cost per account by 10x kills most campaigns.
+
+STEP 9 - DENY THE ADVERSARY FEEDBACK. Shadow actions and delayed batched enforcement, so they cannot
+tell which accounts are burned and cannot iterate.
+
+STEP 10 - MEASURE OUTCOMES, NOT MODEL METRICS. Spam delivered per user per day, and false-enforcement
+rate on good accounts, segmented by account age and activity so power users are visible.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd separate this from content moderation, because they look similar and aren't. Moderation asks
+"is this piece of content acceptable" - a policy question about an item. Abuse asks "is this ACTOR
+behaving like an attacker" - a question about a pattern across many items and many accounts. Spam is
+defined by intent and volume, not by the text of any single message: one message saying "check out my
+page" is fine, and ten thousand from accounts registered this morning is an attack.
+
+I measured how much that matters. I built six thousand accounts, about three per cent spam, where the
+individual posts were only mildly distinguishable, and ranked accounts by different signals at the
+operating point that catches eighty per cent of spam. The best content-based signal gave 42.9 per cent
+precision. Account AGE alone - one number, no model - gave 27.4. Post volume alone gave 14.1. And
+CONTENT PLUS AGE PLUS VOLUME COMBINED gave 78.2 PER CENT. Thirty-five points better than the best single
+signal.
+
+The interesting part is WHY volume helps so much when it's the weakest signal alone. It only
+discriminates ONCE YOU CONDITION ON AGE - a five-year-old account posting a lot is a power user, and a
+five-HOUR-old account posting a lot is a bot. That interaction is why a content classifier deployed
+alone underperforms even a crude behavioural heuristic. ABUSE IS AN ACTOR PROBLEM WEARING A CONTENT
+PROBLEM'S CLOTHES.
+
+Beyond account features, the real value is in the GRAPH: how many accounts share this device, this IP,
+this payment method, this phone number; which accounts act within seconds of each other or follow the
+same targets in the same order. A connected component of four hundred accounts sharing three devices is
+a farm, and no per-account classifier can see it. The principle is DEDUPLICATE BY THE UNDERLYING ENTITY
+rather than by the account - an attacker can make a million accounts cheaply, but not a million phones
+or a million residential IPs. TIE THE SCORE TO THE SCARCE THING.
+
+Then the part I'd most want to land, which is the STRATEGY. You are not trying to reach a hundred per
+cent recall. YOU ARE TRYING TO MAKE THE ATTACK UNPROFITABLE. The attacker's revenue per message is
+tiny, so if you raise their cost per account by ten times, most campaigns stop being worth running -
+and you haven't classified a single message correctly.
+
+So: RATE LIMITS first, because a new account sending five messages a day instead of five thousand is
+the highest-value control in the entire system and it needs no model at all. PROGRESSIVE TRUST, where
+capabilities unlock with age and good behaviour - which forces the attacker to AGE their accounts,
+converting a one-off cost into a carrying cost, and carrying costs are what kill spam operations. And
+verification friction at signup.
+
+Two mechanisms I'd specifically call out because they're both about DENYING THE ADVERSARY FEEDBACK.
+SHADOW ACTIONS, where the spam is accepted and simply not delivered, so the attacker can't tell which
+accounts are burned. And DELAYED, BATCHED ENFORCEMENT, so they can't A/B test their way around your
+detector by watching which variants survive. An attacker who learns fast beats any static defence, and
+one who can't tell what worked can't learn at all.
+
+Last: I'd measure OUTCOMES, not model metrics. Spam delivered per user per day, and false-enforcement
+rate on good accounts, segmented by account age and activity - because your most active legitimate users
+look most like spam on volume features, and an AUC improvement with flat spam-delivered is telling you
+nothing.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  LAYER 0  RATE LIMITS AND PROGRESSIVE TRUST  - NO MODEL REQUIRED         │
+    │    a new account: 5 messages/day, not 5,000                              │
+    │    capabilities unlock with AGE and GOOD BEHAVIOUR, not at signup        │
+    │  >> HIGHEST-VALUE CONTROL IN THE SYSTEM. It bounds the damage of every   │
+    │     failure below it, and it forces the attacker to AGE their accounts - │
+    │     turning a one-off cost into a CARRYING cost, which is what kills     │
+    │     spam operations.                                                      │
+    │  >> SIGNUP FRICTION (phone, payment method, email) raises cost per       │
+    │     account. THE TRADE AGAINST ONBOARDING CONVERSION IS A PRODUCT        │
+    │     DECISION and should be stated as one.                                │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 1  ACTOR GRAPH  - WHERE THE REAL VALUE IS                        │
+    │    nodes: accounts, DEVICES, IPs, PAYMENT METHODS, phone numbers, emails │
+    │    CONNECTED COMPONENTS: 400 accounts sharing 3 devices is a FARM, and   │
+    │      no per-account classifier can see it                                 │
+    │    COORDINATION: accounts acting within seconds of each other, following │
+    │      the same targets in the same ORDER - temporal co-occurrence is very │
+    │      hard to fake and very cheap to compute                              │
+    │  >> DEDUPLICATE BY THE UNDERLYING ENTITY, NOT THE ACCOUNT. A million     │
+    │     accounts are cheap; a million phones are not. TIE THE SCORE TO THE   │
+    │     SCARCE THING.                                                         │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 2  ACCOUNT BEHAVIOURAL FEATURES                                  │
+    │    account AGE, and age at first action                                  │
+    │    VELOCITY and - more informative - THE VARIANCE OF THE INTER-ACTION    │
+    │      INTERVAL. Humans are bursty; scripts are regular. An attacker who   │
+    │      throttles their rate usually forgets to randomise their SPACING.    │
+    │    RATIO features: messages sent per reply received, follows per         │
+    │      follower. A ONE-SIDED RATIO IS THE SIGNATURE OF BROADCAST.          │
+    │    content diversity WITHIN the account; profile completeness            │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 3  CONTENT SIGNALS  - REAL, AND WEAKER THAN PEOPLE ASSUME        │
+    │    text classifier | URL reputation | image hashes vs known-bad          │
+    │    NEAR-DUPLICATE DETECTION ACROSS ACCOUNTS (MinHash + LSH)              │
+    │      <- THE HIGHEST-VALUE CONTENT SIGNAL, because it detects the         │
+    │         CAMPAIGN rather than the message                                  │
+    │                                                                          │
+    │  MEASURED, precision at 80% spam-account recall (6,000 accounts, 2.8%    │
+    │  spam):                                                                   │
+    │    single WORST post's content score            42.9%                    │
+    │    MEAN of the account's post scores            28.0%                    │
+    │    account AGE alone                            27.4%                    │
+    │    POST VOLUME alone                            14.1%                    │
+    │    content + volume + age COMBINED              78.2%                    │
+    │  >> THE COMBINATION BEATS THE BEST SINGLE SIGNAL BY 35 POINTS. And       │
+    │     VOLUME - the weakest alone - contributes most, because it only       │
+    │     discriminates ONCE CONDITIONED ON AGE.                                │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  ENFORCEMENT  - AND THE GOAL IS UNPROFITABILITY, NOT 100% RECALL        │
+    │    SHADOW ACTIONS: accept the spam, do not deliver it. THE ATTACKER      │
+    │      CANNOT TELL WHICH ACCOUNTS ARE BURNED, so they cannot iterate.      │
+    │    DELAYED, BATCHED ENFORCEMENT: they cannot A/B test around the         │
+    │      detector by watching which variants survive.                         │
+    │    >> BOTH ARE THE SAME IDEA - DENY THE ADVERSARY FEEDBACK. An attacker  │
+    │       who learns fast beats any static defence; one who cannot tell what │
+    │       worked cannot learn at all.                                         │
+    │    graduated: rate-limit -> restrict -> suspend -> ban, with APPEALS     │
+    │    HOTFIX RULES ship in minutes; a retrain takes days.                   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  MEASUREMENT - OUTCOMES, NOT MODEL METRICS                              │
+    │    SPAM DELIVERED PER USER PER DAY  |  FALSE-ENFORCEMENT RATE            │
+    │    SEGMENTED BY ACCOUNT AGE AND ACTIVITY - your most active legitimate   │
+    │      users look most like spam on volume features                        │
+    │    DO NOT PUBLISH FEATURE IMPORTANCE. In an adversarial system it is a   │
+    │      map for the attacker.                                                │
+    │    LABELS ARE LAGGED AND CONTAMINATED: negatives contain undetected      │
+    │      spam, so measured precision is a LOWER BOUND.                        │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 6,000 accounts, of which 169 (2.8%) are spam. Spam accounts differ in three ways:
+    AGE: drawn from Exponential(mean 8 days) versus Exponential(mean 200 days) for legitimate.
+    VOLUME: Exponential(mean 60 posts) versus Exponential(mean 8).
+    CONTENT: each post gets a score from Normal(1.0, 1.0) for spam and Normal(0.0, 1.0) for legitimate
+    - A ONE-STANDARD-DEVIATION SEPARATION, deliberately weak, because the whole question is what a
+    mediocre content classifier is worth.
+
+Accounts are ranked by each candidate signal, and precision is read at the threshold catching 80% of
+spam accounts.
+
+     signal                                          precision at 80% spam recall
+     the account's single WORST post                                        42.9%
+     the MEAN of the account's post scores                                  28.0%
+     account AGE alone (younger is worse)                                   27.4%
+     POST VOLUME alone                                                      14.1%
+     content mean + volume + age COMBINED                                   78.2%
+
+    THE BASE RATE IS 2.8%, so a random ranker would score 2.8% precision. EVERY SIGNAL BEATS RANDOM;
+    the interesting comparison is the 35-point gap between the best single signal and the combination.
+
+    WHY VOLUME ALONE IS SO WEAK (14.1%) AND SO VALUABLE IN COMBINATION: the legitimate volume
+    distribution has a long right tail - a legitimate account with an exponential mean of 8 posts still
+    sometimes produces 60 - so volume alone confuses power users with bots. CONDITIONED ON AGE THE
+    CONFUSION DISAPPEARS, because a high-volume account that is 200 days old is unambiguous. THE
+    COMBINED FEATURE IS DOING AN INTERACTION, NOT AN ADDITION.
+
+    WHY "WORST POST" (42.9%) BEATS "MEAN POST" (28.0%) HERE: spam accounts post more, so they take more
+    draws from the shifted distribution and their maximum runs higher. THAT IS AN ARTEFACT OF THE
+    VOLUME DIFFERENCE, NOT EVIDENCE THAT MAX IS THE RIGHT AGGREGATE - and in production the max-based
+    rule fires on your most valuable users, because every large legitimate account eventually produces
+    one odd-looking post. MY LEGITIMATE ACCOUNTS HAVE MODEST POST COUNTS AND NO HEAVY TAIL, WHICH IS
+    EXACTLY THE CONDITION UNDER WHICH MAX LOOKS GOOD. The robust production choice is a high quantile or
+    a count-above-threshold.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE ONE-SD CONTENT SEPARATION
+            is deliberately weak, and it is what makes the comparison meaningful. A STRONG CONTENT
+            CLASSIFIER WOULD DOMINATE EVERY OTHER SIGNAL and the entry's thesis would be wrong - so the
+            claim is properly stated as "when the content signal is mediocre, behaviour dominates",
+            which is the realistic case for evolving spam.
+    THE EXPONENTIAL AGE AND VOLUME DISTRIBUTIONS
+            give both classes long tails, which is what creates the overlap that makes single signals
+            fail. Uniform distributions would make every signal look far better than it is.
+    THE 2.8% BASE RATE
+            is realistic for account-level spam and it is what makes precision the interesting metric -
+            at 50% prevalence all these numbers would be much higher and would tell you nothing about
+            the operating regime.
+    EVALUATING AT 80% RECALL RATHER THAN AT A FIXED THRESHOLD
+            makes the signals comparable, and it is also the realistic operating point: enforcement
+            teams pick a recall target and live with the precision.
+    THE ABSENCE OF ANY GRAPH FEATURE IN THE SIMULATION
+            is the biggest limitation, and it understates the entry's own argument: in production the
+            shared-device and coordination features are typically STRONGER than any of the five tested
+            here. THE MEASURED 78.2% IS A FLOOR ON WHAT A COMBINED ACTOR MODEL ACHIEVES.
+    WHAT IS NOT MEASURED
+            is the economics, shadow actions, or adversarial adaptation. THOSE SECTIONS ARE REASONED,
+            NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you distinguish abuse from content moderation?
+    Did you put ACTOR and GRAPH features ahead of content features?
+    Did you propose rate limits and progressive trust before any model?
+    Did you frame the goal as UNPROFITABILITY rather than recall?
+    Did you think about denying the adversary feedback?
+    Did you measure outcomes rather than model metrics?
+    Did you worry about false positives on power users?
+
+    THE ECONOMIC FRAMING IS THE STRONGEST SIGNAL AVAILABLE. Treating this as a classification problem
+    with a better classifier is the answer of someone who has not fought an adaptive adversary.
+
+THE #1 MISTAKE: a content classifier alone. Measured: 42.9% precision at 80% recall for the best
+content signal, against 78.2% for content plus age plus volume.
+
+THE #2 MISTAKE: ignoring the account-device-IP graph. Coordinated farms are invisible to per-account
+models, and the graph features are typically stronger than anything measured here.
+
+THE #3 MISTAKE: no rate limits. The highest-value control needs no model and bounds every downstream
+failure.
+
+THE #4 MISTAKE: immediate visible enforcement. It hands the adversary a fast feedback loop.
+
+THE #5 MISTAKE: a static model. Attacks evolve in weeks, and a rule that ships in minutes matters more
+than a retrain that takes days.
+
+THE #6 MISTAKE: not segmenting evaluation by account age and activity. Power users look most like spam
+on volume features.
+
+THE #7 MISTAKE: no appeals path. It is a real harm and it is your best source of labelled false
+positives.
+
+THE #8 MISTAKE: publishing feature importance in an adversarial system.
+
+THE #9 MISTAKE: reporting AUC rather than spam-delivered-per-user-per-day and false-enforcement rate.
+
+THE #10 MISTAKE: treating all abuse as one problem. Commercial spam, harassment, scams, fake engagement
+and account takeover are different products - and account takeover in particular defeats every age and
+reputation signal, because the account is genuinely old.
+
+ONE-SENTENCE TAKEAWAY: spam and abuse is an ACTOR problem, not a content problem - measured, the best
+content signal reached 42.9% precision at 80% recall while content combined with account age and volume
+reached 78.2%, and volume was the weakest signal alone (14.1%) precisely because it only discriminates
+once conditioned on age - so build the actor graph, tie the score to scarce entities like devices and
+payment methods rather than to accounts, and frame the strategy economically: rate limits and
+progressive trust make the attack unprofitable without classifying anything, while shadow actions and
+delayed enforcement deny the adversary the feedback they need to adapt.""",
+]
+
+_EX_P1AO["Design a Similar-items / Related-products system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - given this one thing, what else should we show
+
+A similar-items system answers a narrower question than a recommender: GIVEN THIS SPECIFIC ITEM, WHAT
+ARE THE MOST RELEVANT OTHER ITEMS? It powers "customers also bought", "related videos", "more like
+this", and the module below every product page.
+
+IT IS SIMPLER THAN PERSONALISED RECOMMENDATION IN ONE IMPORTANT WAY AND HARDER IN ANOTHER:
+
+    SIMPLER: the query is a single item rather than a whole user history, so THE ANSWER CAN BE
+    PRECOMPUTED. Millions of items times a top-50 list is a table you build nightly and serve from a
+    key-value store in microseconds. NO PERSONALISATION MEANS NO PER-REQUEST COMPUTATION.
+
+    HARDER: "SIMILAR" IS AMBIGUOUS AND THE AMBIGUITY IS THE ENTIRE DESIGN. Section 3 is about that.
+
+THE FIRST QUESTION, AND IT IS NOT PEDANTRY: WHAT DOES "RELATED" MEAN ON THIS SURFACE?
+
+    SUBSTITUTES - other things that do the same job. Another 55-inch television. RIGHT FOR "you might
+    prefer this instead", and WRONG immediately after purchase, because nobody buys two televisions.
+    COMPLEMENTS - things that go with it. A wall mount, an HDMI cable. RIGHT after purchase and in a
+    basket module.
+    SAME-SERIES / SAME-CREATOR - the next episode, another book by this author.
+    VISUALLY OR TEXTUALLY SIMILAR - looks like this.
+
+    A SINGLE MODEL CANNOT SERVE ALL FOUR, AND THE COMMONEST FAILURE IN THIS SYSTEM IS SHOWING
+    SUBSTITUTES WHERE COMPLEMENTS BELONG - the "you just bought a fridge, here are five more fridges"
+    failure that everyone has seen and that is entirely a definitional error rather than a modelling
+    one.
+
+TERMS AS THEY APPEAR:
+- CO-OCCURRENCE: how often two items appear together in the same basket, session or user history.
+- LIFT: how much more often they co-occur than chance would predict.
+- ITEM-ITEM COLLABORATIVE FILTERING: similarity computed from co-occurrence rather than from content.""",
+
+    """2. THE MEASUREMENT - raw co-occurrence recommends popular things to everything
+
+I built 8,000 baskets over 1,500 items in 12 latent categories, with a heavily skewed popularity
+distribution. Each basket is drawn mostly from one category, so ITEMS IN THE SAME CATEGORY ARE THE
+GROUND-TRUTH "SIMILAR" ONES. Then I scored item-item similarity four ways and measured, for 400 probe
+items, what fraction of each item's top 10 came from its own category.
+
+     scoring function                      % of top-10 in the SAME category     mean popularity rank of picks
+     raw co-occurrence count                                          79.5%                              484
+     co-occurrence / sqrt(popularity_j)                               96.4%                              836
+     cosine: c_ij / sqrt(n_i x n_j)                                   96.4%                              836
+     LIFT: P(i,j) / (P(i) x P(j))                                     95.4%                              958
+
+     (popularity rank 0 = the most popular of 1,500 items; higher = deeper into the tail)
+
+    ONE NORMALISATION TERM TAKES ACCURACY FROM 79.5% TO 96.4% - A SEVENTEEN-POINT GAIN FOR DIVIDING BY
+    A SQUARE ROOT.
+
+    AND THE SECOND COLUMN EXPLAINS WHY. Raw co-occurrence picks items at an average popularity rank of
+    484; the normalised versions pick at 836, and lift at 958 - two thirds of the way down the
+    catalogue.
+
+    THE MECHANISM IS SIMPLE AND WORTH STATING PRECISELY: A POPULAR ITEM CO-OCCURS WITH EVERYTHING,
+    BECAUSE IT IS IN EVERYTHING. Raw co-occurrence therefore recommends the same handful of
+    best-sellers as "related to" every item in the catalogue. It is not measuring relatedness at all -
+    it is measuring popularity, with a thin coating of relatedness on top.
+
+    THE FIX IS TO ASK A BETTER QUESTION. Not "how often do these two appear together" but "HOW MUCH
+    MORE OFTEN THAN CHANCE". That is exactly what lift computes, and dividing by sqrt(popularity) is a
+    cheaper approximation of the same correction.
+
+    IT IS ALSO THE SAME CORRECTION AS IDF IN SEARCH, AND AS THE POPULARITY NORMALISATION IN THE
+    RECOMMENDER ENTRY. A term appearing in every document tells you nothing about which document to
+    return; an item appearing in every basket tells you nothing about which item is related. POPULARITY
+    IS DOCUMENT FREQUENCY, and recognising that the same fix appears in three different systems is
+    worth more than any one of them.
+
+NOTE THAT COSINE AND THE sqrt-NORMALISED VERSION ARE IDENTICAL HERE (96.4%, 836). They differ only by
+the sqrt(n_i) term, which is CONSTANT for a fixed query item i and therefore cannot change the ranking
+of its neighbours. THAT IS WORTH KNOWING: for the top-N-per-item use case, normalising by the QUERY
+item's popularity is a no-op, and only the CANDIDATE's popularity matters.""",
+
+    """3. THE AMBIGUITY OF "SIMILAR" - which is the real design work
+
+CO-OCCURRENCE DATA CANNOT DISTINGUISH SUBSTITUTES FROM COMPLEMENTS, and that is the fundamental
+limitation of the approach in section 2.
+
+    A television and a wall mount co-occur. Two televisions co-occur - people compare before buying.
+    THE SIGNAL LOOKS IDENTICAL and the correct action is opposite.
+
+THE SIGNALS THAT DO SEPARATE THEM, and this is the genuinely useful content of the entry:
+
+    VIEW-CO-OCCURRENCE VERSUS PURCHASE-CO-OCCURRENCE. Items VIEWED in the same session are usually
+    SUBSTITUTES - the user is comparing. Items PURCHASED in the same basket are usually COMPLEMENTS.
+    THAT SINGLE DISTINCTION SOLVES MOST OF THE PROBLEM AND COSTS NOTHING BUT KEEPING TWO CO-OCCURRENCE
+    MATRICES INSTEAD OF ONE.
+
+    SEQUENCE AND DIRECTION. "Bought A then B" is asymmetric and points at complements; "viewed A then
+    viewed B then bought one of them" points at substitutes. CO-OCCURRENCE IS SYMMETRIC AND THROWS THIS
+    AWAY.
+
+    CATEGORY RELATIONSHIPS. Same category usually means substitute; different-but-associated category
+    usually means complement. A taxonomy you already have does a lot of work here.
+
+    PRICE AND ATTRIBUTE PROXIMITY. Substitutes cluster in price and specification; complements do not.
+
+    THE SURFACE DECIDES WHICH YOU WANT. On a product page before purchase: substitutes, because the
+    user is still choosing. In the basket or after purchase: complements, because the choice is made.
+    ON A CONTENT PLATFORM: "more like this" is substitutes and "watch next" is sequential.
+
+    SO THE RIGHT ARCHITECTURE IS SEVERAL PRECOMPUTED LISTS PER ITEM - a substitutes list, a complements
+    list, a same-series list - AND THE SURFACE PICKS WHICH TO SHOW. That is a much better answer than
+    one model with a tuned blend, because it makes the product decision explicit and auditable.
+
+THE OTHER MAJOR AXIS IS CO-OCCURRENCE VERSUS CONTENT:
+
+    CO-OCCURRENCE (behavioural) captures relationships nobody would encode - the association between a
+    specific phone case and a specific phone, or between two unrelated-looking products that share an
+    audience. IT IS USUALLY MORE ACCURATE and it FAILS COMPLETELY ON NEW ITEMS.
+    CONTENT (attributes, text, image embeddings) works on day zero, generalises across the catalogue,
+    and misses everything that is not encoded in the attributes.
+
+    THE ANSWER IS A CASCADE, NOT A CHOICE: behavioural where the interaction data is sufficient,
+    content-based where it is not, and a rule that decides which by interaction count. THAT IS THE SAME
+    COLD-START CASCADE AS THE RECOMMENDER, applied at the item level.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - RAW CO-OCCURRENCE. Measured: 79.5% same-category accuracy against 96.4% with one
+normalisation term, and it picks items twice as popular. It measures popularity, not relatedness.
+
+FAILURE 2 - SHOWING SUBSTITUTES WHERE COMPLEMENTS BELONG. Five more fridges after the fridge purchase.
+It is a definitional error, not a modelling one, and the fix is separate view-based and purchase-based
+lists.
+
+FAILURE 3 - NO ITEM COLD START. A new product has no co-occurrence data at all, and on a marketplace
+that is a permanent condition for a large slice of the catalogue. Content-based similarity is the
+fallback and it must be built.
+
+FAILURE 4 - IGNORING AVAILABILITY AND PRICE. Recommending an out-of-stock item, or a £900 accessory
+next to a £40 product, is a business failure that no similarity metric can see.
+
+FAILURE 5 - STALE PRECOMPUTED LISTS. The whole architecture depends on a nightly batch job, so a
+seasonal or trending relationship takes a day to appear. ACCEPTABLE FOR MOST CATALOGUES AND NOT FOR
+FAST-MOVING CONTENT, which needs a streaming layer merged at read time.
+
+FAILURE 6 - NO DIVERSITY IN THE LIST. Ten near-identical variants of the same product - the same shirt
+in ten colours - is a useless module. DEDUPE BY PRODUCT FAMILY, and it is a bigger quality win than
+most scoring changes.
+
+FAILURE 7 - SYMMETRY WHERE ASYMMETRY IS CORRECT. "People who bought a printer bought ink" is strong;
+"people who bought ink bought a printer" is much weaker. RAW CO-OCCURRENCE IS SYMMETRIC BY
+CONSTRUCTION and conditional probability P(j|i) is not.
+
+FAILURE 8 - IGNORING THE FEEDBACK LOOP. The module drives the co-occurrence it is trained on, so
+whatever it recommends becomes more related over time. AN EXPLORATION SLOT AND A DECAY ON OLD
+CO-OCCURRENCES ARE THE MITIGATIONS.
+
+FAILURE 9 - NOT EVALUATING SEPARATELY BY ITEM POPULARITY. Head items have abundant co-occurrence data
+and look excellent; tail items have none, and the aggregate hides it.
+
+FAILURE 10 - COMPUTING THE FULL ITEM-ITEM MATRIX NAIVELY. A million items is a trillion pairs. YOU ONLY
+NEED PAIRS THAT ACTUALLY CO-OCCUR, which is a sparse and tractable set - and you must cap the
+contribution of enormous baskets, because a basket of 500 items contributes 250,000 pairs on its own
+and swamps everything.""",
+
+    """5. THE ARCHITECTURE - and why it is a batch job
+
+THE DEFINING ARCHITECTURAL FACT: THERE IS NO PERSONALISATION, SO THE ANSWER DEPENDS ONLY ON THE ITEM,
+SO IT CAN BE FULLY PRECOMPUTED.
+
+    OFFLINE, NIGHTLY:
+        read the interaction logs
+        build co-occurrence counts, SEPARATELY for views and for purchases
+        normalise (lift, or divide by sqrt(popularity)) - MEASURED, worth 17 points
+        apply business rules: availability, price band, category constraints
+        DIVERSIFY: dedupe by product family
+        write the top 50 per item per list type to a key-value store
+
+    ONLINE:
+        one key-value lookup. MICROSECONDS. No model, no ranking, no feature fetch.
+
+    THAT IS WHY THIS SYSTEM IS CHEAP TO SERVE AND WHY IT IS USUALLY THE FIRST RECOMMENDATION SURFACE A
+    COMPANY SHIPS - it delivers most of the value of personalisation for a tiny fraction of the
+    engineering.
+
+THE COMPUTATION IS THE ONLY HARD PART, AND IT IS A CLASSIC MAP-REDUCE SHAPE:
+
+    for each basket, emit every (item_i, item_j) pair -> aggregate counts by pair.
+
+    THE TRAP: a basket of size k contributes k^2 pairs. A basket of 500 items contributes 250,000 -
+    dominating the entire job and producing meaningless associations. CAP THE BASKET SIZE, OR
+    DOWN-WEIGHT PAIRS BY 1/log(basket size). THAT CAP IS LOAD-BEARING, exactly like the bucket-size cap
+    in LSH and the hub suppression in item-CF.
+
+    AND YOU NEVER MATERIALISE THE FULL MATRIX. A million items is a trillion cells and almost all of
+    them are zero; you only ever store pairs that actually co-occurred.
+
+THE EMBEDDING ALTERNATIVE, worth naming:
+
+    ITEM2VEC - treat each basket or session as a "sentence" of item IDs and run word2vec over it.
+    Similar items end up with similar vectors, and neighbours come from an ANN index.
+    ADVANTAGES: it generalises - items that never co-occur directly can still be neighbours through
+    shared context - and it gives a dense representation reusable by other systems.
+    DISADVANTAGES: it is harder to explain, harder to debug, and it does not obviously beat a
+    well-normalised co-occurrence count on the head of the catalogue.
+
+    A HYBRID IS COMMON: co-occurrence for items with enough data, embeddings or content similarity for
+    the tail, blended by interaction count.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHAT "RELATED" MEANS ON THIS SURFACE. Substitutes before purchase, complements after. The
+"five more fridges" failure is definitional, not statistical.
+
+STEP 2 - PROPOSE SEPARATE LISTS PER RELATIONSHIP TYPE, precomputed, with the surface choosing which to
+show. It makes the product decision explicit rather than hidden in a blend.
+
+STEP 3 - USE VIEW-CO-OCCURRENCE FOR SUBSTITUTES AND PURCHASE-CO-OCCURRENCE FOR COMPLEMENTS. It costs
+nothing but two matrices instead of one and it solves most of the ambiguity.
+
+STEP 4 - NORMALISE FOR POPULARITY, AND SAY WHY. Measured: raw co-occurrence gives 79.5% same-category
+accuracy and picks items at popularity rank 484; dividing by sqrt(popularity) gives 96.4% at rank 836.
+A popular item co-occurs with everything because it is in everything.
+
+STEP 5 - NAME LIFT AS THE PRINCIPLED VERSION - P(i,j)/(P(i)P(j)) asks whether they co-occur MORE THAN
+CHANCE - and note it is the same correction as IDF in search.
+
+STEP 6 - CONSIDER ASYMMETRY. P(j|i) is not P(i|j): printers imply ink far more strongly than ink
+implies printers.
+
+STEP 7 - CAP BASKET SIZE IN THE CO-OCCURRENCE JOB. A 500-item basket contributes 250,000 pairs and
+swamps everything.
+
+STEP 8 - ADD A CONTENT-BASED FALLBACK FOR NEW AND LOW-DATA ITEMS, selected by interaction count. It is
+the item-level cold-start cascade.
+
+STEP 9 - DIVERSIFY AND APPLY BUSINESS RULES: dedupe by product family, filter out-of-stock, constrain
+the price band. Ten colours of the same shirt is a useless module.
+
+STEP 10 - PRECOMPUTE NIGHTLY INTO A KEY-VALUE STORE, and evaluate SEPARATELY BY ITEM POPULARITY,
+because head items look excellent and tail items have no data at all.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The first question is what "related" MEANS on this surface, and it isn't pedantry - it's the commonest
+failure in the whole system. SUBSTITUTES are other things that do the same job, which is right when the
+user is still choosing and wrong immediately after purchase, because nobody buys two fridges.
+COMPLEMENTS are things that go with it, which is right in the basket and after purchase. Everyone has
+seen the "you just bought a fridge, here are five more fridges" module, and that's a DEFINITIONAL error
+rather than a modelling one.
+
+The good news is that the data separates them almost for free. Items VIEWED in the same session are
+usually SUBSTITUTES - the user is comparing. Items PURCHASED in the same basket are usually
+COMPLEMENTS. So you keep two co-occurrence matrices instead of one, precompute a separate list for
+each, and let the SURFACE choose which to show. That's a better answer than one model with a tuned
+blend, because it makes the product decision explicit.
+
+Architecturally the defining fact is that there's NO PERSONALISATION - the answer depends only on the
+item - SO IT CAN BE FULLY PRECOMPUTED. A nightly batch job writes the top fifty per item per list type
+into a key-value store, and serving is one lookup in microseconds. No model at serving time, no feature
+fetch. That's why this is usually the first recommendation surface a company ships: most of the value
+of personalisation for a tiny fraction of the engineering.
+
+The scoring is where I'd make the specific point. I built eight thousand baskets over fifteen hundred
+items in twelve latent categories, so same-category is the ground truth, and measured what fraction of
+each item's top ten came from its own category.
+
+RAW CO-OCCURRENCE COUNT got 79.5 per cent. Dividing by the square root of the candidate's popularity
+got 96.4. That's SEVENTEEN POINTS for one square root. And the reason is visible in the second thing I
+measured: raw co-occurrence picks items at an average popularity rank of 484 out of 1,500, and the
+normalised version picks at 836 - deep into the tail.
+
+The mechanism is simple: A POPULAR ITEM CO-OCCURS WITH EVERYTHING, BECAUSE IT IS IN EVERYTHING. So raw
+co-occurrence recommends the same handful of best-sellers as "related to" every item in the catalogue.
+It isn't measuring relatedness at all, it's measuring popularity with a thin coating of relatedness.
+The fix is to ask a better question - not "how often do these appear together" but "HOW MUCH MORE OFTEN
+THAN CHANCE", which is exactly what LIFT computes. And it's the same correction as IDF in search: a
+term in every document tells you nothing about which document to return.
+
+Three implementation things. CAP THE BASKET SIZE in the co-occurrence job, because a basket of five
+hundred items contributes two hundred and fifty thousand pairs and swamps everything. Consider
+ASYMMETRY - printers imply ink far more strongly than ink implies printers, and raw co-occurrence is
+symmetric by construction. And DIVERSIFY the output list, because ten colours of the same shirt is a
+useless module, and deduping by product family is a bigger quality win than most scoring changes.
+
+For new items with no co-occurrence data at all, content-based similarity - attributes, text, image
+embeddings - is the fallback, chosen by interaction count. It's the same cold-start cascade as a
+recommender, applied at the item level.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  DEFINE "RELATED" PER SURFACE - THE COMMONEST FAILURE IS DEFINITIONAL    │
+    │    SUBSTITUTES   - same job. Product page BEFORE purchase.               │
+    │    COMPLEMENTS   - go together. Basket and AFTER purchase.               │
+    │    SAME-SERIES   - next episode, same author.                            │
+    │    VISUAL/TEXTUAL- looks like this.                                       │
+    │  >> "You just bought a fridge, here are five more fridges" is a          │
+    │     DEFINITIONAL error, not a modelling one.                              │
+    │  >> BUILD SEVERAL LISTS PER ITEM AND LET THE SURFACE CHOOSE. Better than │
+    │     one blended model, because the product decision stays explicit.       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  OFFLINE BATCH (nightly) - THE WHOLE SYSTEM LIVES HERE                  │
+    │                                                                          │
+    │  1. TWO CO-OCCURRENCE MATRICES, not one:                                 │
+    │       VIEWS in a session   -> SUBSTITUTES (the user is comparing)        │
+    │       PURCHASES in a basket -> COMPLEMENTS (the choice is made)          │
+    │     >> COSTS NOTHING AND SOLVES MOST OF THE AMBIGUITY.                   │
+    │                                                                          │
+    │  2. MAP-REDUCE: for each basket emit every (i,j) pair, aggregate.        │
+    │     >> A BASKET OF SIZE k CONTRIBUTES k^2 PAIRS. A 500-item basket is    │
+    │        250,000 pairs and dominates the job. CAP BASKET SIZE or           │
+    │        down-weight by 1/log(size). THE CAP IS LOAD-BEARING - the same    │
+    │        shape as LSH's bucket cap and item-CF's hub suppression.          │
+    │     >> NEVER MATERIALISE THE FULL MATRIX. A million items is a trillion  │
+    │        cells, almost all zero. Store only pairs that co-occurred.         │
+    │                                                                          │
+    │  3. NORMALISE FOR POPULARITY  <- THE HIGHEST-VALUE LINE IN THE JOB       │
+    │     MEASURED, % of top-10 in the same category (8,000 baskets,           │
+    │     1,500 items, 12 categories, 400 probes):                             │
+    │       raw co-occurrence count            79.5%   mean pop rank 484       │
+    │       co-occurrence / sqrt(pop_j)        96.4%   mean pop rank 836       │
+    │       cosine c/sqrt(n_i n_j)             96.4%   mean pop rank 836       │
+    │       LIFT P(i,j)/(P(i)P(j))             95.4%   mean pop rank 958       │
+    │     >> A POPULAR ITEM CO-OCCURS WITH EVERYTHING BECAUSE IT IS IN         │
+    │        EVERYTHING. Raw counts measure popularity, not relatedness.       │
+    │     >> LIFT asks "MORE THAN CHANCE?" - the same correction as IDF.       │
+    │     >> COSINE == sqrt-normalised here, because sqrt(n_i) is CONSTANT for │
+    │        a fixed query item and cannot reorder its own neighbours.          │
+    │                                                                          │
+    │  4. CONSIDER ASYMMETRY: P(j|i) != P(i|j). Printers imply ink far more    │
+    │     strongly than ink implies printers; co-occurrence is symmetric.       │
+    │                                                                          │
+    │  5. BUSINESS RULES: in stock, price band, category constraints.          │
+    │  6. DIVERSIFY: dedupe by PRODUCT FAMILY. Ten colours of one shirt is a   │
+    │     useless module, and this beats most scoring changes.                  │
+    │  7. WRITE TOP-50 PER ITEM PER LIST TYPE to a key-value store.            │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  COLD-START FALLBACK - by interaction count                             │
+    │    enough co-occurrence data  -> behavioural list                        │
+    │    little or none             -> CONTENT similarity (attributes, text,   │
+    │                                  image embeddings)                        │
+    │    >> THE SAME CASCADE AS RECOMMENDER COLD START, at the ITEM level. On  │
+    │       a marketplace this is a PERMANENT condition for a large slice of   │
+    │       the catalogue, not a transient one.                                 │
+    │    OPTIONAL: item2vec over baskets-as-sentences + ANN. Generalises to    │
+    │    items that never co-occur directly; harder to debug.                   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  ONLINE SERVING - ONE KEY-VALUE LOOKUP, MICROSECONDS                    │
+    │    no model, no ranking, no feature fetch. THIS IS WHY IT IS USUALLY THE │
+    │    FIRST RECOMMENDATION SURFACE A COMPANY SHIPS.                          │
+    │    For fast-moving content, merge a small STREAMING layer at read time,  │
+    │    because a nightly batch cannot see a trending relationship.            │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  EVALUATION                                                              │
+    │    SEGMENT BY ITEM POPULARITY. Head items have abundant co-occurrence    │
+    │      and look excellent; tail items have none, and the aggregate hides   │
+    │      it entirely.                                                         │
+    │    WATCH THE FEEDBACK LOOP: the module DRIVES the co-occurrence it is    │
+    │      trained on, so whatever it shows becomes more "related" over time.  │
+    │      Decay old co-occurrences and keep an exploration slot.               │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 1,500 items assigned to 12 latent categories. Item popularity is lognormal, so the
+catalogue is heavily skewed. 8,000 baskets are generated: each picks a category, then draws 2-10 items,
+70% from that category and 30% from the global popularity distribution. SAME-CATEGORY IS THEREFORE THE
+GROUND TRUTH FOR "SIMILAR", and the 30% cross-category draws are the noise the scorer has to see
+through.
+
+400 probe items with at least 5 appearances were scored, and their top 10 neighbours evaluated.
+
+     scoring function                      % of top-10 in the SAME category     mean popularity rank of picks
+     raw co-occurrence count                                          79.5%                              484
+     co-occurrence / sqrt(popularity_j)                               96.4%                              836
+     cosine: c_ij / sqrt(n_i x n_j)                                   96.4%                              836
+     LIFT: P(i,j) / (P(i) x P(j))                                     95.4%                              958
+
+    THE COSINE AND sqrt ROWS ARE IDENTICAL TO THE DECIMAL, and that is not a coincidence: cosine
+    divides by sqrt(n_i x n_j) and the sqrt(n_i) factor is CONSTANT across all candidates j for a fixed
+    query item i. IT CANNOT CHANGE THE ORDER OF i's OWN NEIGHBOURS. For a top-N-per-item task, cosine
+    and candidate-popularity normalisation are the same function.
+
+    LIFT SCORES SLIGHTLY LOWER ON ACCURACY (95.4% vs 96.4%) AND MUCH DEEPER ON POPULARITY (958 vs 836).
+    It divides by the FULL popularity rather than its square root, so it over-corrects slightly -
+    promoting very rare items whose co-occurrence counts are themselves noisy. THE SQUARE ROOT IS A
+    DELIBERATE HALF-MEASURE and it wins here; which one is right depends on how much you value tail
+    exposure, and the table is what lets you decide rather than guess.
+
+    THE POPULARITY-RANK COLUMN IS THE ONE THAT EXPLAINS THE ACCURACY COLUMN. Raw co-occurrence's picks
+    average rank 484 out of 1,500 - the top third of the catalogue - because the most popular items
+    appear in a large share of all baskets and therefore co-occur with everything. IT IS RANKING BY
+    POPULARITY AND CALLING IT SIMILARITY.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE LOGNORMAL POPULARITY WITH sigma = 1.6
+            is what creates the effect at all. ON A UNIFORM-POPULARITY CATALOGUE ALL FOUR SCORERS WOULD
+            TIE, because there would be no popular item for raw counts to over-promote. Real catalogues
+            are more skewed than this, so the 17-point gap is if anything understated.
+    THE 70/30 IN-CATEGORY SPLIT
+            sets the achievable ceiling. With 100% in-category draws every scorer would approach 100%
+            and the comparison would be uninformative; the 30% noise is what separates them.
+    USING CATEGORY AS THE GROUND TRUTH FOR "SIMILAR"
+            is the measurement's biggest limitation and it should be stated: IT MEASURES SUBSTITUTE-LIKE
+            SIMILARITY ONLY. A complements-oriented scorer would look BAD on this metric while being
+            correct for a basket module - which is exactly section 3's point that the metric encodes the
+            definition.
+    REQUIRING PROBE ITEMS TO HAVE AT LEAST 5 APPEARANCES
+            excludes the cold tail entirely. THE MEASURED NUMBERS THEREFORE DESCRIBE THE HEAD AND MIDDLE
+            OF THE CATALOGUE, and the cold-start cascade in section 5 exists for the part not measured
+            here.
+    NOT CAPPING BASKET SIZE (baskets are only 2-10 items)
+            means the k^2 explosion never bites in this simulation. IT IS A REAL PROBLEM AT PRODUCTION
+            BASKET SIZES and the entry flags it on reasoning rather than measurement.
+    WHAT IS NOT MEASURED
+            is substitutes-versus-complements separation, item2vec, diversity, or the feedback loop.
+            THOSE SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask what "related" means, and distinguish substitutes from complements?
+    Did you propose view-co-occurrence for substitutes and purchase-co-occurrence for complements?
+    Did you normalise for popularity, and can you say why?
+    Did you recognise that the whole thing can be precomputed?
+    Did you handle item cold start?
+    Did you mention diversity and business rules?
+
+    THE SUBSTITUTES-VERSUS-COMPLEMENTS DISTINCTION IS THE STRONGEST OPENING, because it is the failure
+    everyone has personally experienced and almost nobody names in an interview.
+
+THE #1 MISTAKE: raw co-occurrence counts. Measured: 79.5% same-category accuracy against 96.4%
+normalised, and its picks average popularity rank 484 against 836. It measures popularity, not
+relatedness.
+
+THE #2 MISTAKE: one list for all surfaces. Substitutes after purchase is the fridge failure.
+
+THE #3 MISTAKE: no content-based fallback. On a marketplace, item cold start is permanent for a large
+slice of the catalogue rather than transient.
+
+THE #4 MISTAKE: no basket-size cap. A 500-item basket contributes 250,000 pairs and swamps the job.
+
+THE #5 MISTAKE: materialising the full item-item matrix. A million items is a trillion cells, almost
+all zero.
+
+THE #6 MISTAKE: no diversity. Ten colours of the same shirt is a useless module, and deduping by
+product family beats most scoring changes.
+
+THE #7 MISTAKE: assuming symmetry. Printers imply ink far more strongly than ink implies printers.
+
+THE #8 MISTAKE: ignoring availability and price. Recommending an out-of-stock or wildly mispriced item
+is a business failure no similarity metric can see.
+
+THE #9 MISTAKE: aggregate evaluation. Head items look excellent and tail items have no data, and the
+average hides it.
+
+THE #10 MISTAKE: ignoring the feedback loop. The module drives the co-occurrence it trains on, so
+decay old counts and keep an exploration slot.
+
+ONE-SENTENCE TAKEAWAY: similar-items is a fully PRECOMPUTABLE problem - one nightly job, one key-value
+lookup - whose two real decisions are DEFINITIONAL and STATISTICAL: define "related" per surface and
+keep separate view-based (substitutes) and purchase-based (complements) lists, and normalise the
+co-occurrence for popularity, because measured, raw counts gave 79.5% same-category accuracy while
+dividing by sqrt(popularity) gave 96.4% and pushed the picks from popularity rank 484 to 836 - since a
+popular item co-occurs with everything simply because it is in everything, which is the same correction
+IDF makes in search.""",
+]
+
+_EX_P1AO["Design a Video Recommendation system (YouTube-style)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - pick a few items, out of millions, for one person
+
+A recommendation system answers one question: OF EVERYTHING WE COULD SHOW THIS PERSON RIGHT NOW,
+WHICH TEN THINGS SHOULD WE SHOW?
+
+The everyday version is a shop assistant who knows what you bought before. The engineering version has
+three properties that make it hard, and none of them are about the model:
+
+    1. THE CATALOGUE IS ENORMOUS AND THE PERSON IS ONE PERSON. Millions of items, ten slots, and
+       usually under 100 milliseconds to decide.
+    2. THE DATA IS ALMOST ENTIRELY MISSING. I built a small system to measure this: 3,000 users,
+       2,000 items, 90,578 interactions - A DENSITY OF 1.5%. The user-item matrix is 98.5% empty, and
+       real systems are far sparser than that.
+    3. WHAT YOU MEASURE IS NOT WHAT YOU WANT. This is the part that decides whether the design is any
+       good, and section 3 measures it.
+
+THE STANDARD ARCHITECTURE, which you should be able to draw in thirty seconds:
+
+    CANDIDATE GENERATION (retrieval)  ->  RANKING  ->  RE-RANKING / BUSINESS RULES
+    millions -> hundreds                  hundreds -> ordered      diversity, freshness, policy
+
+    RETRIEVAL is cheap and approximate, and its job is RECALL: get the good items into the shortlist.
+    RANKING is expensive and precise, and its job is ORDER: it only ever sees a few hundred items, so
+    it can afford a big model.
+    RE-RANKING applies what the model does not know: do not show six items from the same creator, do
+    not show the thing they bought an hour ago, respect the policy list.
+
+TERMS AS THEY APPEAR:
+- COLLABORATIVE FILTERING (CF): recommend what similar users liked. Uses only the interaction matrix.
+- CONTENT-BASED: recommend items similar to ones they liked, using item features.
+- COLD START: a new user or new item with no interaction history.
+- RECALL@K: of the things the user actually went on to engage with, what fraction appeared in your
+  top K.""",
+
+    """2. THE MEASUREMENT THAT SHOULD CHANGE HOW YOU DESIGN THIS
+
+I built four recommenders over the same data and evaluated them the same way - recall@10 on a
+held-out 20% of each user's interactions, 400 sampled users.
+
+     recommender                        recall@10     distinct items shown     avg item popularity
+     random                                  0.8%                    1,719                      36
+     MOST POPULAR (no personalisation)       9.7%                       17                     490
+     item-CF, no popularity normalisation    8.3%                       26                     485
+     item-CF WITH popularity normalisation   9.3%                      438                     418
+
+    READ THE SECOND ROW AGAIN. A RECOMMENDER THAT IGNORES THE USER ENTIRELY - it shows everybody the
+    same ten most popular items - SCORED THE HIGHEST RECALL OF ALL FOUR. It beat both collaborative
+    filtering variants.
+
+    AND LOOK AT THE THIRD COLUMN. Across 400 users it showed SEVENTEEN DISTINCT ITEMS. Out of two
+    thousand. The item-CF version with popularity normalisation showed 438 - twenty-six times more of
+    the catalogue - and scored 0.4 points LOWER on the metric.
+
+WHY THIS HAPPENS, and it is not a bug in the experiment: THE HELD-OUT SET IS ITSELF
+POPULARITY-BIASED. The test data is what users historically engaged with, and what they engaged with
+is what they were historically shown, which was the popular things. So predicting "popular" predicts
+the test set well. THE METRIC CANNOT TELL THE DIFFERENCE BETWEEN A GOOD RECOMMENDER AND NO
+RECOMMENDER.
+
+    THAT IS THE SINGLE MOST IMPORTANT THING TO SAY IN THIS INTERVIEW. If you present recall@K as your
+    success metric and nothing else, a reviewer who knows this domain will conclude you have never
+    shipped one.
+
+THE FIX IS NOT A BETTER MODEL, IT IS MORE METRICS:
+    COVERAGE - how much of the catalogue ever gets shown. 17 items versus 438 is the entire story.
+    INTRA-LIST DIVERSITY - are the ten items different from each other?
+    NOVELTY - average popularity of what you show. 490 versus 418 above.
+    AND THE ONLY ONE THAT SETTLES IT: AN ONLINE A/B TEST on a business metric.""",
+
+    """3. THE POPULARITY NORMALISATION IS WHERE THE DESIGN WORK IS
+
+The two item-CF rows differ by a single term. Both score a candidate item j by counting how many
+similar users interacted with it; the second divides by the square root of j's own popularity:
+
+    score[j] += 1                              # no normalisation
+    score[j] += 1 / sqrt(popularity[j] + 1)    # with normalisation
+
+    MEASURED EFFECT:
+                                    recall@10     distinct items     avg popularity
+     no normalisation                    8.3%                 26                485
+     with normalisation                  9.3%                438                418
+
+    IT IMPROVED RECALL BY A POINT AND INCREASED CATALOGUE COVERAGE SEVENTEENFOLD. One term.
+
+WHY IT WORKS: without normalisation, a popular item appears in almost every user's neighbourhood, so
+it accumulates score from every direction and drowns out anything specific. The item is not being
+recommended because it suits this user; it is being recommended because it suits everyone. DIVIDING BY
+POPULARITY ASKS A BETTER QUESTION - not "how many similar users liked this" but "how much MORE than
+chance did similar users like this".
+
+    THIS IS THE SAME IDEA AS IDF IN SEARCH, and saying so is worth doing: a term that appears in every
+    document tells you nothing about which document to return. A term that appears in three tells you
+    a lot. POPULARITY IS DOCUMENT FREQUENCY.
+
+THE OTHER LEVER I MEASURED - HUB SUPPRESSION. Items interacted with by more than 300 users were
+skipped entirely when building neighbourhoods, because they connect everyone to everyone and add
+nothing but cost. That single filter is what makes the CF loop tractable: without it, one
+mega-popular item makes the neighbourhood of every user include every other user.
+
+AND THE HONEST NOTE ON EFFECT SIZE: the recall differences here are 8.3% to 9.7% - about one and a
+half points across four fundamentally different systems. THE METRIC IS NEARLY FLAT WHILE THE USER
+EXPERIENCE IS COMPLETELY DIFFERENT (17 items versus 438). That flatness is exactly why offline
+evaluation cannot be the only gate, and it is a far more useful thing to say than a bigger number
+would be.""",
+
+    """4. COLD START, MEASURED - and the answer is not a model
+
+Cold start is the case where you have no history for a user (or an item), and it is where most
+recommendation designs are actually judged, because it is a large fraction of real traffic.
+
+MEASURED, splitting users by how many interactions they have in the training set:
+
+     user history size     users     item-CF recall@10     most-popular recall@10
+     3-5                     117                  7.7%                       8.5%
+     6-15                    200                  8.7%                      10.2%
+     16-40                   200                  9.3%                       9.3%
+     41+                     200                  8.2%                       8.3%
+
+    COLLABORATIVE FILTERING LOSES TO "SHOW EVERYONE THE SAME POPULAR ITEMS" AT EVERY HISTORY SIZE
+    BELOW 16, and ties above it. At 6-15 interactions the gap is a point and a half in popularity's
+    favour.
+
+    THAT IS NOT A FAILURE OF THE IMPLEMENTATION. It is the definition of the problem: CF works by
+    finding users similar to you, and with three interactions there is not enough signal to find them.
+    The neighbourhood is noise.
+
+SO THE DESIGN ANSWER FOR COLD START IS NOT "USE A BETTER MODEL". IT IS A CASCADE:
+
+    NO HISTORY AT ALL         -> popularity, possibly segmented by country / device / referrer
+    1-5 INTERACTIONS          -> content-based similarity to what they touched, plus popularity
+    5-20 INTERACTIONS         -> a blend, weighted towards CF as history grows
+    20+                       -> full personalisation
+    AND ALWAYS                -> a small exploration budget, because you cannot learn about an item
+                                 you never show
+
+FOR COLD-START ITEMS the answer is content features - the item's text, category, creator, embeddings
+of its thumbnail - because those exist on day zero while interactions do not. AND AN EXPLICIT
+EXPLORATION SLOT, because a new item with no impressions can never earn any.
+
+    THE SENTENCE TO SAY: "I'd fall back to popularity for new users, and I'd say that not as a
+    concession but because I measured it - CF is worse than popularity below about fifteen
+    interactions, so switching over early would make the product worse."
+
+AND THE ASYMMETRY WORTH NAMING: a cold user costs you one bad session. A cold ITEM that never gets
+shown is inventory you paid for and can never monetise, and it is why marketplaces care far more about
+item cold start than user cold start.""",
+
+    """5. THE FEEDBACK LOOP - measured, and it is the failure mode that outlives everything else
+
+A recommender trains on interaction data. The interaction data is produced by users choosing among
+what the recommender showed them. THAT IS A CLOSED LOOP, and it drifts.
+
+I simulated six generations: each round, show the current top 50, let users pick from what they were
+shown 90% of the time and explore 10%, then retrain on the result.
+
+     generation     distinct items with any interaction     top-20 items' share of all interactions
+     1                                          1,999                                        12.4%
+     2                                          1,999                                        13.7%
+     3                                          1,999                                        14.8%
+     4                                          1,999                                        15.8%
+     5                                          1,999                                        16.7%
+     6                                          1,999                                        17.6%
+
+    CONCENTRATION CLIMBS EVERY SINGLE GENERATION - 12.4% to 17.6%, a 42% relative increase in six
+    rounds - AND IT NEVER REVERSES. The trend is monotone.
+
+    NOTE WHAT DID NOT HAPPEN: the catalogue did not collapse. All 1,999 items still have interactions,
+    because of the 10% exploration. THE EXPLORATION IS WHAT PREVENTS COLLAPSE, and without it the tail
+    would go to zero. That is worth stating precisely, because "the system collapses" is an
+    overstatement and "the head gets steadily heavier while the tail is starved" is what actually
+    happens.
+
+NOTHING IN THIS LOOP IS BROKEN. Every component is doing its job correctly. THE SYSTEM IS FAITHFULLY
+OPTIMISING THE METRIC IT WAS GIVEN, and the metric does not mention diversity, so diversity decays.
+That is the general shape of every feedback-loop failure and it is why "the model is working as
+designed" is not a defence.
+
+THE MITIGATIONS, in the order you would actually apply them:
+    EXPLORATION - reserve a slot for items the model is uncertain about. Epsilon-greedy is enough;
+    bandits are better. IT IS THE ONLY MITIGATION THAT ADDRESSES THE CAUSE.
+    LOG THE IMPRESSIONS, NOT JUST THE CLICKS - so you can tell "not shown" from "shown and ignored".
+    Without impression logs you cannot even measure this problem, let alone correct for it.
+    POSITION AND POPULARITY DEBIASING in training - weight examples by inverse propensity.
+    DIVERSITY CONSTRAINTS in re-ranking - a hard cap on items per creator or category.
+    MONITOR COVERAGE AND NOVELTY AS PRODUCTION METRICS, with alerts. The failure is gradual, so a
+    threshold alarm catches it and a dashboard nobody reads does not.""",
+
+    """6. HOW TO RUN THE INTERVIEW - numbered steps
+
+STEP 1 - CLARIFY THE OBJECTIVE BEFORE ANYTHING ELSE. "Recommend videos" is not a specification.
+What are we optimising - watch time, completion, subscriptions, revenue, retention? THE ANSWER CHANGES
+THE ENTIRE DESIGN, and asking is the highest-value thirty seconds in the interview.
+
+STEP 2 - GET THE SCALE NUMBERS. How many users, how many items, how many requests per second, what
+latency budget, how fresh must the items be. Millions of items and a 100 ms budget is what forces the
+two-stage architecture; a thousand items and a nightly batch does not.
+
+STEP 3 - DRAW THE TWO-STAGE ARCHITECTURE. Retrieval optimises recall over millions; ranking optimises
+order over hundreds; re-ranking applies business rules. Say why: THE RANKER CAN AFFORD TO BE EXPENSIVE
+PRECISELY BECAUSE RETRIEVAL ALREADY CUT THE CANDIDATE SET.
+
+STEP 4 - NAME THE RETRIEVAL SOURCES AND SAY THERE ARE SEVERAL. Item-CF neighbours, a two-tower
+embedding model with ANN search, trending, recently-viewed, subscribed creators. REAL SYSTEMS UNION
+SEVERAL RETRIEVERS because each has a different blind spot, and saying so is a strong signal.
+
+STEP 5 - SPECIFY FEATURES FOR THE RANKER: user features, item features, and crucially INTERACTION
+features (has this user watched this creator before, how long since they last saw this category).
+Interaction features are where ranking gains come from.
+
+STEP 6 - RAISE COLD START UNPROMPTED, with the cascade from section 4, and say you would fall back to
+popularity below roughly fifteen interactions because CF measurably loses there.
+
+STEP 7 - STATE THE METRICS AND THEIR LIMITS. Offline recall@K and NDCG for iteration speed; COVERAGE
+AND NOVELTY alongside them; and an online A/B test as the only real gate. Give the measurement: a
+most-popular baseline beat CF on recall@10 while showing 17 distinct items out of 2,000.
+
+STEP 8 - RAISE THE FEEDBACK LOOP UNPROMPTED. Concentration climbed 42% in six generations in my
+simulation, and exploration is what stops it.
+
+STEP 9 - COVER THE SERVING PATH: precompute what you can, cache aggressively, and say what happens on
+a cache miss. Embeddings and neighbour lists are batch-computed; the ranker runs live.
+
+STEP 10 - CLOSE WITH WHAT YOU WOULD BUILD FIRST. Popularity plus recently-viewed, shipped in a week,
+with impression logging from day one - because without impression logs you can never train or evaluate
+anything better.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Before I design anything I'd ask what we're optimising. "Recommend videos" isn't a specification -
+watch time, completion rate, subscriptions and revenue give you four different systems, and the
+metric is what the whole thing gets tuned against. And I'd want the scale: how many items, how many
+requests a second, what latency budget.
+
+Assuming millions of items and about a hundred milliseconds, the architecture is two-stage. RETRIEVAL
+takes the catalogue down to a few hundred candidates and is optimised for RECALL - just get the good
+stuff into the shortlist. RANKING orders those few hundred with an expensive model, and it can AFFORD
+to be expensive precisely because retrieval already cut the set. Then a re-ranking pass applies what
+the model doesn't know: don't show six things from the same creator, don't re-show what they watched
+an hour ago, respect the policy list.
+
+Retrieval would be several sources unioned together - item-CF neighbours, a two-tower embedding model
+with approximate nearest neighbour search, trending, subscribed creators - because each source has a
+different blind spot.
+
+Now the thing I'd most want to say, because it changed how I think about this. I built a small version
+of this and measured four recommenders on the same data. A recommender that IGNORES THE USER ENTIRELY
+- just shows everyone the same ten most popular items - got the HIGHEST recall at ten. It beat both
+collaborative filtering variants. And across four hundred users it showed SEVENTEEN distinct items out
+of two thousand.
+
+The reason isn't a bug. The held-out test set is itself popularity-biased, because it's what users
+historically engaged with, and what they engaged with is what they were historically shown. So
+predicting "popular" predicts the test set. THE METRIC CANNOT DISTINGUISH A GOOD RECOMMENDER FROM NO
+RECOMMENDER. That's why I'd report coverage and novelty alongside recall, and treat an online A/B
+test as the only real gate.
+
+On cold start, I measured that too: collaborative filtering LOSES to popularity at every history size
+below about fifteen interactions - 7.7 against 8.5 per cent at three-to-five items. So the design is a
+cascade: popularity for new users, content-based similarity once they've touched a few things, blend
+in CF as history grows, and always keep a small exploration budget.
+
+And the failure mode I'd raise unprompted is the feedback loop. The model trains on interactions, and
+the interactions come from what the model showed. I simulated six rounds of that and the share of
+traffic going to the top twenty items climbed every single generation, from 12.4 to 17.6 per cent,
+monotonically. Nothing was broken - the system was faithfully optimising the metric it was given, and
+the metric doesn't mention diversity. Exploration is the only mitigation that addresses the cause, and
+impression logging is the prerequisite, because without it you can't even tell "not shown" from
+"shown and ignored".
+
+If I were shipping this, version one would be popularity plus recently-viewed, live in a week, with
+impression logging from day one.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │  REQUEST: user_id, context (device, time, page, session so far)        │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  CANDIDATE GENERATION  -  millions -> ~500,  budget ~10 ms             │
+    │                                                                        │
+    │   item-CF neighbours    two-tower ANN    trending    subscriptions     │
+    │        (batch)            (batch+ANN)     (stream)     (lookup)        │
+    │                            \\   |   /   /                                │
+    │                             UNION AND DEDUPE                           │
+    │                                                                        │
+    │  OPTIMISED FOR RECALL. A relevant item missed here can never be        │
+    │  ranked, so retrieval errors are UNRECOVERABLE and ranking errors are  │
+    │  not. That asymmetry is why retrieval is over-generous.                │
+    │  MEASURED: my candidate set held 84.9% of each user's held-out items.  │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  RANKING  -  ~500 -> ordered,  budget ~50 ms                          │
+    │                                                                        │
+    │  A gradient-boosted tree or a DNN scoring each (user, item, context).  │
+    │  FEATURES:                                                             │
+    │    user     - history stats, demographics, session state               │
+    │    item     - age, popularity, category, creator, quality signals      │
+    │    INTERACTION - has this user watched this creator, days since they   │
+    │                  last saw this category, their CTR on this category    │
+    │                  <- THE INTERACTION FEATURES ARE WHERE THE GAINS ARE.  │
+    │                     User-only and item-only features are largely       │
+    │                     already captured by retrieval.                     │
+    │  It can afford this because it sees 500 items, not 5,000,000.          │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  RE-RANKING AND BUSINESS RULES  -  budget ~5 ms                       │
+    │    diversity  - at most N per creator/category                         │
+    │    freshness  - boost new items; they have no history to earn it       │
+    │    dedupe     - not the thing they watched an hour ago                 │
+    │    policy     - age gates, regional restrictions, safety               │
+    │    EXPLORATION - reserve 1-2 slots. THIS IS WHAT STOPS THE FEEDBACK    │
+    │                  LOOP, and it belongs here where it is auditable.      │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+                              ┌─────▼─────┐
+                              │  10 items │
+                              └─────┬─────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  LOGGING  -  IMPRESSIONS AND CLICKS, WITH POSITION                     │
+    │                                                                        │
+    │  LOG WHAT WAS SHOWN, NOT ONLY WHAT WAS CLICKED. Without impressions    │
+    │  you cannot distinguish "not shown" from "shown and ignored", which    │
+    │  means you cannot debias training, cannot compute a real CTR, and      │
+    │  cannot measure the feedback loop. IT IS THE CHEAPEST THING TO GET     │
+    │  RIGHT ON DAY ONE AND THE MOST EXPENSIVE TO RETROFIT.                  │
+    └────────────────────────────────────────────────────────────────────────┘
+
+    OFFLINE, ON A SCHEDULE: embeddings, item-item neighbour lists, popularity
+    tables, model training. ONLINE: feature lookup, ranking, re-ranking.
+    THE SPLIT IS DECIDED BY THE LATENCY BUDGET, and it is the first thing to say
+    when asked how you would serve this.""",
+
+    """9. THE FULL WORKED TRACE - the numbers, end to end
+
+THE DATA I BUILT:
+
+     users                                    3,000
+     items                                    2,000
+     interactions                            90,578
+     density                                  1.510%      <- 98.5% of the matrix is empty
+     top  1% of items carry                    11.0% of all interactions
+     top  5% of items carry                    23.0%
+     top 10% of items carry                    33.7%
+     top 20% of items carry                    50.4%      <- HALF the traffic on a fifth of the items
+
+    THE LONG TAIL IS THE PROBLEM STATEMENT. Twenty per cent of the catalogue takes half the traffic,
+    and that skew is milder than most real catalogues.
+
+THE FOUR RECOMMENDERS, recall@10 over 400 sampled users:
+
+     recommender                        recall@10     distinct items     avg item popularity
+     random                                  0.8%              1,719                      36
+     MOST POPULAR                            9.7%                 17                     490
+     item-CF, no popularity norm             8.3%                 26                     485
+     item-CF WITH popularity norm            9.3%                438                     418
+
+COLD START, by user history size:
+
+     history size     users     item-CF     most-popular
+     3-5                117        7.7%             8.5%
+     6-15               200        8.7%            10.2%
+     16-40              200        9.3%             9.3%
+     41+                200        8.2%             8.3%
+
+TWO-STAGE RETRIEVAL, per user:
+
+     full catalogue scan      2,000 items      0.089 ms
+     candidate generation     1,187 items      0.739 ms
+     candidate set retained 84.9% of the user's held-out items
+
+    AN HONEST NEGATIVE HERE: ON THIS TOY CATALOGUE THE TWO-STAGE ARCHITECTURE IS A LOSS. The candidate
+    set is only 1.7x smaller than the catalogue and it costs 8x more to build than simply scanning
+    everything. WITH 2,000 ITEMS YOU SHOULD JUST SCORE ALL OF THEM.
+    THE ARCHITECTURE PAYS OFF WHEN THE RATIO IS MILLIONS-TO-HUNDREDS, not thousands-to-thousands - and
+    knowing where that crossover is, rather than reciting the two-stage diagram unconditionally, is
+    the actual engineering judgement.
+
+THE FEEDBACK LOOP, six generations:
+
+     generation     distinct items     top-20 share of interactions
+     1                       1,999                            12.4%
+     2                       1,999                            13.7%
+     3                       1,999                            14.8%
+     4                       1,999                            15.8%
+     5                       1,999                            16.7%
+     6                       1,999                            17.6%
+
+THE LINE-BY-LINE MAPPING - which design choice produced which number:
+
+    THE ZIPF POPULARITY DISTRIBUTION in the data generator
+            produced the "top 20% carry 50.4%" row, and therefore everything downstream. A uniform
+            catalogue would have made the popularity baseline useless and the whole experiment
+            uninformative.
+    `score[j] += 1` versus `score[j] += 1/sqrt(popularity[j]+1)`
+            produced rows 3 and 4 of the recommender table. ONE TERM took coverage from 26 items to
+            438 and recall from 8.3% to 9.3%.
+    `if len(users_of_item) > 300: continue` (hub suppression)
+            is what made the CF loop finish at all. Without it a single mega-popular item connects
+            every user to every other user.
+    THE 80/20 TRAIN-TEST SPLIT PER USER
+            produced the recall column - and it is also the source of the central problem, because the
+            held-out 20% inherits the popularity bias of the history it was drawn from.
+    THE HISTORY-SIZE BUCKETING
+            produced the cold-start table, and it is the only reason the CF-loses-below-15 finding is
+            visible. An aggregate recall number averages it away completely.
+    THE 90% EXPLOIT / 10% EXPLORE RULE in the feedback simulation
+            produced BOTH the rising concentration AND the fact that all 1,999 items survived. Set
+            exploration to zero and the tail goes to zero; that one parameter is the whole mitigation.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask what we are optimising before designing?
+    Did you get to the two-stage architecture and explain WHY - the asymmetry that a retrieval miss is
+        unrecoverable and a ranking miss is not?
+    Did you raise cold start yourself, with a cascade rather than a single model?
+    Did you raise the feedback loop yourself?
+    Do you know that offline metrics are insufficient, and can you say specifically why?
+    Would you ship something small first?
+
+    THE LAST THREE ARE WHAT SEPARATE A SENIOR ANSWER FROM A TEXTBOOK ONE. Everybody can draw the
+    two-stage box diagram.
+
+THE #1 MISTAKE: presenting recall@K or NDCG as the success metric with nothing beside it. MEASURED: a
+most-popular baseline that shows 17 distinct items out of 2,000 beat collaborative filtering on
+recall@10. The metric cannot see the difference.
+
+THE #2 MISTAKE: not raising cold start. It is a large fraction of real traffic, and MEASURED, CF is
+worse than popularity below roughly fifteen interactions.
+
+THE #3 MISTAKE: not raising the feedback loop. Concentration rose monotonically for six generations in
+simulation, 12.4% to 17.6%, with nothing broken anywhere in the system.
+
+THE #4 MISTAKE: logging clicks without impressions. You then cannot distinguish "not shown" from
+"shown and ignored", which makes debiasing, real CTR and feedback-loop measurement all impossible.
+Cheapest thing to get right on day one, most expensive to retrofit.
+
+THE #5 MISTAKE: jumping to deep learning. The gains in the measurement above came from a popularity
+normalisation term and a hub filter, not from model capacity.
+
+THE #6 MISTAKE: reciting the two-stage architecture unconditionally. MEASURED: at 2,000 items it is
+8x SLOWER than scoring everything and only 1.7x more selective. It pays off at millions-to-hundreds,
+and knowing the crossover is the point.
+
+THE #7 MISTAKE: no exploration. It is the only mitigation that addresses the feedback loop's cause,
+and in the simulation it is what kept all 1,999 items alive.
+
+THE #8 MISTAKE: forgetting interaction features in the ranker. User-only and item-only features are
+largely already encoded by retrieval; "has this user watched this creator before" is where the gains
+are.
+
+THE #9 MISTAKE: no diversity or business-rule layer. The model does not know that six clips from one
+creator is a bad page.
+
+ONE-SENTENCE TAKEAWAY: recommendation is a two-stage retrieval-then-ranking problem whose real
+difficulty is not the model but the evaluation - a most-popular baseline showing 17 distinct items out
+of 2,000 beat collaborative filtering on recall@10 in my measurement, CF loses to popularity below
+about fifteen interactions of history, and a six-generation feedback simulation concentrated traffic
+monotonically while nothing was broken - so the design that matters is coverage and novelty metrics
+alongside recall, a cold-start cascade, impression logging from day one, and an exploration budget.""",
+]
+
+_EX_P1AO["Design a YouTube-style Video Recommendation System"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - pick a few items, out of millions, for one person
+
+A recommendation system answers one question: OF EVERYTHING WE COULD SHOW THIS PERSON RIGHT NOW,
+WHICH TEN THINGS SHOULD WE SHOW?
+
+The everyday version is a shop assistant who knows what you bought before. The engineering version has
+three properties that make it hard, and none of them are about the model:
+
+    1. THE CATALOGUE IS ENORMOUS AND THE PERSON IS ONE PERSON. Millions of items, ten slots, and
+       usually under 100 milliseconds to decide.
+    2. THE DATA IS ALMOST ENTIRELY MISSING. I built a small system to measure this: 3,000 users,
+       2,000 items, 90,578 interactions - A DENSITY OF 1.5%. The user-item matrix is 98.5% empty, and
+       real systems are far sparser than that.
+    3. WHAT YOU MEASURE IS NOT WHAT YOU WANT. This is the part that decides whether the design is any
+       good, and section 3 measures it.
+
+THE STANDARD ARCHITECTURE, which you should be able to draw in thirty seconds:
+
+    CANDIDATE GENERATION (retrieval)  ->  RANKING  ->  RE-RANKING / BUSINESS RULES
+    millions -> hundreds                  hundreds -> ordered      diversity, freshness, policy
+
+    RETRIEVAL is cheap and approximate, and its job is RECALL: get the good items into the shortlist.
+    RANKING is expensive and precise, and its job is ORDER: it only ever sees a few hundred items, so
+    it can afford a big model.
+    RE-RANKING applies what the model does not know: do not show six items from the same creator, do
+    not show the thing they bought an hour ago, respect the policy list.
+
+TERMS AS THEY APPEAR:
+- COLLABORATIVE FILTERING (CF): recommend what similar users liked. Uses only the interaction matrix.
+- CONTENT-BASED: recommend items similar to ones they liked, using item features.
+- COLD START: a new user or new item with no interaction history.
+- RECALL@K: of the things the user actually went on to engage with, what fraction appeared in your
+  top K.""",
+
+    """2. THE MEASUREMENT THAT SHOULD CHANGE HOW YOU DESIGN THIS
+
+I built four recommenders over the same data and evaluated them the same way - recall@10 on a
+held-out 20% of each user's interactions, 400 sampled users.
+
+     recommender                        recall@10     distinct items shown     avg item popularity
+     random                                  0.8%                    1,719                      36
+     MOST POPULAR (no personalisation)       9.7%                       17                     490
+     item-CF, no popularity normalisation    8.3%                       26                     485
+     item-CF WITH popularity normalisation   9.3%                      438                     418
+
+    READ THE SECOND ROW AGAIN. A RECOMMENDER THAT IGNORES THE USER ENTIRELY - it shows everybody the
+    same ten most popular items - SCORED THE HIGHEST RECALL OF ALL FOUR. It beat both collaborative
+    filtering variants.
+
+    AND LOOK AT THE THIRD COLUMN. Across 400 users it showed SEVENTEEN DISTINCT ITEMS. Out of two
+    thousand. The item-CF version with popularity normalisation showed 438 - twenty-six times more of
+    the catalogue - and scored 0.4 points LOWER on the metric.
+
+WHY THIS HAPPENS, and it is not a bug in the experiment: THE HELD-OUT SET IS ITSELF
+POPULARITY-BIASED. The test data is what users historically engaged with, and what they engaged with
+is what they were historically shown, which was the popular things. So predicting "popular" predicts
+the test set well. THE METRIC CANNOT TELL THE DIFFERENCE BETWEEN A GOOD RECOMMENDER AND NO
+RECOMMENDER.
+
+    THAT IS THE SINGLE MOST IMPORTANT THING TO SAY IN THIS INTERVIEW. If you present recall@K as your
+    success metric and nothing else, a reviewer who knows this domain will conclude you have never
+    shipped one.
+
+THE FIX IS NOT A BETTER MODEL, IT IS MORE METRICS:
+    COVERAGE - how much of the catalogue ever gets shown. 17 items versus 438 is the entire story.
+    INTRA-LIST DIVERSITY - are the ten items different from each other?
+    NOVELTY - average popularity of what you show. 490 versus 418 above.
+    AND THE ONLY ONE THAT SETTLES IT: AN ONLINE A/B TEST on a business metric.""",
+
+    """3. THE POPULARITY NORMALISATION IS WHERE THE DESIGN WORK IS
+
+The two item-CF rows differ by a single term. Both score a candidate item j by counting how many
+similar users interacted with it; the second divides by the square root of j's own popularity:
+
+    score[j] += 1                              # no normalisation
+    score[j] += 1 / sqrt(popularity[j] + 1)    # with normalisation
+
+    MEASURED EFFECT:
+                                    recall@10     distinct items     avg popularity
+     no normalisation                    8.3%                 26                485
+     with normalisation                  9.3%                438                418
+
+    IT IMPROVED RECALL BY A POINT AND INCREASED CATALOGUE COVERAGE SEVENTEENFOLD. One term.
+
+WHY IT WORKS: without normalisation, a popular item appears in almost every user's neighbourhood, so
+it accumulates score from every direction and drowns out anything specific. The item is not being
+recommended because it suits this user; it is being recommended because it suits everyone. DIVIDING BY
+POPULARITY ASKS A BETTER QUESTION - not "how many similar users liked this" but "how much MORE than
+chance did similar users like this".
+
+    THIS IS THE SAME IDEA AS IDF IN SEARCH, and saying so is worth doing: a term that appears in every
+    document tells you nothing about which document to return. A term that appears in three tells you
+    a lot. POPULARITY IS DOCUMENT FREQUENCY.
+
+THE OTHER LEVER I MEASURED - HUB SUPPRESSION. Items interacted with by more than 300 users were
+skipped entirely when building neighbourhoods, because they connect everyone to everyone and add
+nothing but cost. That single filter is what makes the CF loop tractable: without it, one
+mega-popular item makes the neighbourhood of every user include every other user.
+
+AND THE HONEST NOTE ON EFFECT SIZE: the recall differences here are 8.3% to 9.7% - about one and a
+half points across four fundamentally different systems. THE METRIC IS NEARLY FLAT WHILE THE USER
+EXPERIENCE IS COMPLETELY DIFFERENT (17 items versus 438). That flatness is exactly why offline
+evaluation cannot be the only gate, and it is a far more useful thing to say than a bigger number
+would be.""",
+
+    """4. COLD START, MEASURED - and the answer is not a model
+
+Cold start is the case where you have no history for a user (or an item), and it is where most
+recommendation designs are actually judged, because it is a large fraction of real traffic.
+
+MEASURED, splitting users by how many interactions they have in the training set:
+
+     user history size     users     item-CF recall@10     most-popular recall@10
+     3-5                     117                  7.7%                       8.5%
+     6-15                    200                  8.7%                      10.2%
+     16-40                   200                  9.3%                       9.3%
+     41+                     200                  8.2%                       8.3%
+
+    COLLABORATIVE FILTERING LOSES TO "SHOW EVERYONE THE SAME POPULAR ITEMS" AT EVERY HISTORY SIZE
+    BELOW 16, and ties above it. At 6-15 interactions the gap is a point and a half in popularity's
+    favour.
+
+    THAT IS NOT A FAILURE OF THE IMPLEMENTATION. It is the definition of the problem: CF works by
+    finding users similar to you, and with three interactions there is not enough signal to find them.
+    The neighbourhood is noise.
+
+SO THE DESIGN ANSWER FOR COLD START IS NOT "USE A BETTER MODEL". IT IS A CASCADE:
+
+    NO HISTORY AT ALL         -> popularity, possibly segmented by country / device / referrer
+    1-5 INTERACTIONS          -> content-based similarity to what they touched, plus popularity
+    5-20 INTERACTIONS         -> a blend, weighted towards CF as history grows
+    20+                       -> full personalisation
+    AND ALWAYS                -> a small exploration budget, because you cannot learn about an item
+                                 you never show
+
+FOR COLD-START ITEMS the answer is content features - the item's text, category, creator, embeddings
+of its thumbnail - because those exist on day zero while interactions do not. AND AN EXPLICIT
+EXPLORATION SLOT, because a new item with no impressions can never earn any.
+
+    THE SENTENCE TO SAY: "I'd fall back to popularity for new users, and I'd say that not as a
+    concession but because I measured it - CF is worse than popularity below about fifteen
+    interactions, so switching over early would make the product worse."
+
+AND THE ASYMMETRY WORTH NAMING: a cold user costs you one bad session. A cold ITEM that never gets
+shown is inventory you paid for and can never monetise, and it is why marketplaces care far more about
+item cold start than user cold start.""",
+
+    """5. THE FEEDBACK LOOP - measured, and it is the failure mode that outlives everything else
+
+A recommender trains on interaction data. The interaction data is produced by users choosing among
+what the recommender showed them. THAT IS A CLOSED LOOP, and it drifts.
+
+I simulated six generations: each round, show the current top 50, let users pick from what they were
+shown 90% of the time and explore 10%, then retrain on the result.
+
+     generation     distinct items with any interaction     top-20 items' share of all interactions
+     1                                          1,999                                        12.4%
+     2                                          1,999                                        13.7%
+     3                                          1,999                                        14.8%
+     4                                          1,999                                        15.8%
+     5                                          1,999                                        16.7%
+     6                                          1,999                                        17.6%
+
+    CONCENTRATION CLIMBS EVERY SINGLE GENERATION - 12.4% to 17.6%, a 42% relative increase in six
+    rounds - AND IT NEVER REVERSES. The trend is monotone.
+
+    NOTE WHAT DID NOT HAPPEN: the catalogue did not collapse. All 1,999 items still have interactions,
+    because of the 10% exploration. THE EXPLORATION IS WHAT PREVENTS COLLAPSE, and without it the tail
+    would go to zero. That is worth stating precisely, because "the system collapses" is an
+    overstatement and "the head gets steadily heavier while the tail is starved" is what actually
+    happens.
+
+NOTHING IN THIS LOOP IS BROKEN. Every component is doing its job correctly. THE SYSTEM IS FAITHFULLY
+OPTIMISING THE METRIC IT WAS GIVEN, and the metric does not mention diversity, so diversity decays.
+That is the general shape of every feedback-loop failure and it is why "the model is working as
+designed" is not a defence.
+
+THE MITIGATIONS, in the order you would actually apply them:
+    EXPLORATION - reserve a slot for items the model is uncertain about. Epsilon-greedy is enough;
+    bandits are better. IT IS THE ONLY MITIGATION THAT ADDRESSES THE CAUSE.
+    LOG THE IMPRESSIONS, NOT JUST THE CLICKS - so you can tell "not shown" from "shown and ignored".
+    Without impression logs you cannot even measure this problem, let alone correct for it.
+    POSITION AND POPULARITY DEBIASING in training - weight examples by inverse propensity.
+    DIVERSITY CONSTRAINTS in re-ranking - a hard cap on items per creator or category.
+    MONITOR COVERAGE AND NOVELTY AS PRODUCTION METRICS, with alerts. The failure is gradual, so a
+    threshold alarm catches it and a dashboard nobody reads does not.""",
+
+    """6. HOW TO RUN THE INTERVIEW - numbered steps
+
+STEP 1 - CLARIFY THE OBJECTIVE BEFORE ANYTHING ELSE. "Recommend videos" is not a specification.
+What are we optimising - watch time, completion, subscriptions, revenue, retention? THE ANSWER CHANGES
+THE ENTIRE DESIGN, and asking is the highest-value thirty seconds in the interview.
+
+STEP 2 - GET THE SCALE NUMBERS. How many users, how many items, how many requests per second, what
+latency budget, how fresh must the items be. Millions of items and a 100 ms budget is what forces the
+two-stage architecture; a thousand items and a nightly batch does not.
+
+STEP 3 - DRAW THE TWO-STAGE ARCHITECTURE. Retrieval optimises recall over millions; ranking optimises
+order over hundreds; re-ranking applies business rules. Say why: THE RANKER CAN AFFORD TO BE EXPENSIVE
+PRECISELY BECAUSE RETRIEVAL ALREADY CUT THE CANDIDATE SET.
+
+STEP 4 - NAME THE RETRIEVAL SOURCES AND SAY THERE ARE SEVERAL. Item-CF neighbours, a two-tower
+embedding model with ANN search, trending, recently-viewed, subscribed creators. REAL SYSTEMS UNION
+SEVERAL RETRIEVERS because each has a different blind spot, and saying so is a strong signal.
+
+STEP 5 - SPECIFY FEATURES FOR THE RANKER: user features, item features, and crucially INTERACTION
+features (has this user watched this creator before, how long since they last saw this category).
+Interaction features are where ranking gains come from.
+
+STEP 6 - RAISE COLD START UNPROMPTED, with the cascade from section 4, and say you would fall back to
+popularity below roughly fifteen interactions because CF measurably loses there.
+
+STEP 7 - STATE THE METRICS AND THEIR LIMITS. Offline recall@K and NDCG for iteration speed; COVERAGE
+AND NOVELTY alongside them; and an online A/B test as the only real gate. Give the measurement: a
+most-popular baseline beat CF on recall@10 while showing 17 distinct items out of 2,000.
+
+STEP 8 - RAISE THE FEEDBACK LOOP UNPROMPTED. Concentration climbed 42% in six generations in my
+simulation, and exploration is what stops it.
+
+STEP 9 - COVER THE SERVING PATH: precompute what you can, cache aggressively, and say what happens on
+a cache miss. Embeddings and neighbour lists are batch-computed; the ranker runs live.
+
+STEP 10 - CLOSE WITH WHAT YOU WOULD BUILD FIRST. Popularity plus recently-viewed, shipped in a week,
+with impression logging from day one - because without impression logs you can never train or evaluate
+anything better.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Before I design anything I'd ask what we're optimising. "Recommend videos" isn't a specification -
+watch time, completion rate, subscriptions and revenue give you four different systems, and the
+metric is what the whole thing gets tuned against. And I'd want the scale: how many items, how many
+requests a second, what latency budget.
+
+Assuming millions of items and about a hundred milliseconds, the architecture is two-stage. RETRIEVAL
+takes the catalogue down to a few hundred candidates and is optimised for RECALL - just get the good
+stuff into the shortlist. RANKING orders those few hundred with an expensive model, and it can AFFORD
+to be expensive precisely because retrieval already cut the set. Then a re-ranking pass applies what
+the model doesn't know: don't show six things from the same creator, don't re-show what they watched
+an hour ago, respect the policy list.
+
+Retrieval would be several sources unioned together - item-CF neighbours, a two-tower embedding model
+with approximate nearest neighbour search, trending, subscribed creators - because each source has a
+different blind spot.
+
+Now the thing I'd most want to say, because it changed how I think about this. I built a small version
+of this and measured four recommenders on the same data. A recommender that IGNORES THE USER ENTIRELY
+- just shows everyone the same ten most popular items - got the HIGHEST recall at ten. It beat both
+collaborative filtering variants. And across four hundred users it showed SEVENTEEN distinct items out
+of two thousand.
+
+The reason isn't a bug. The held-out test set is itself popularity-biased, because it's what users
+historically engaged with, and what they engaged with is what they were historically shown. So
+predicting "popular" predicts the test set. THE METRIC CANNOT DISTINGUISH A GOOD RECOMMENDER FROM NO
+RECOMMENDER. That's why I'd report coverage and novelty alongside recall, and treat an online A/B
+test as the only real gate.
+
+On cold start, I measured that too: collaborative filtering LOSES to popularity at every history size
+below about fifteen interactions - 7.7 against 8.5 per cent at three-to-five items. So the design is a
+cascade: popularity for new users, content-based similarity once they've touched a few things, blend
+in CF as history grows, and always keep a small exploration budget.
+
+And the failure mode I'd raise unprompted is the feedback loop. The model trains on interactions, and
+the interactions come from what the model showed. I simulated six rounds of that and the share of
+traffic going to the top twenty items climbed every single generation, from 12.4 to 17.6 per cent,
+monotonically. Nothing was broken - the system was faithfully optimising the metric it was given, and
+the metric doesn't mention diversity. Exploration is the only mitigation that addresses the cause, and
+impression logging is the prerequisite, because without it you can't even tell "not shown" from
+"shown and ignored".
+
+If I were shipping this, version one would be popularity plus recently-viewed, live in a week, with
+impression logging from day one.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │  REQUEST: user_id, context (device, time, page, session so far)        │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  CANDIDATE GENERATION  -  millions -> ~500,  budget ~10 ms             │
+    │                                                                        │
+    │   item-CF neighbours    two-tower ANN    trending    subscriptions     │
+    │        (batch)            (batch+ANN)     (stream)     (lookup)        │
+    │                            \\   |   /   /                                │
+    │                             UNION AND DEDUPE                           │
+    │                                                                        │
+    │  OPTIMISED FOR RECALL. A relevant item missed here can never be        │
+    │  ranked, so retrieval errors are UNRECOVERABLE and ranking errors are  │
+    │  not. That asymmetry is why retrieval is over-generous.                │
+    │  MEASURED: my candidate set held 84.9% of each user's held-out items.  │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  RANKING  -  ~500 -> ordered,  budget ~50 ms                          │
+    │                                                                        │
+    │  A gradient-boosted tree or a DNN scoring each (user, item, context).  │
+    │  FEATURES:                                                             │
+    │    user     - history stats, demographics, session state               │
+    │    item     - age, popularity, category, creator, quality signals      │
+    │    INTERACTION - has this user watched this creator, days since they   │
+    │                  last saw this category, their CTR on this category    │
+    │                  <- THE INTERACTION FEATURES ARE WHERE THE GAINS ARE.  │
+    │                     User-only and item-only features are largely       │
+    │                     already captured by retrieval.                     │
+    │  It can afford this because it sees 500 items, not 5,000,000.          │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  RE-RANKING AND BUSINESS RULES  -  budget ~5 ms                       │
+    │    diversity  - at most N per creator/category                         │
+    │    freshness  - boost new items; they have no history to earn it       │
+    │    dedupe     - not the thing they watched an hour ago                 │
+    │    policy     - age gates, regional restrictions, safety               │
+    │    EXPLORATION - reserve 1-2 slots. THIS IS WHAT STOPS THE FEEDBACK    │
+    │                  LOOP, and it belongs here where it is auditable.      │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+                              ┌─────▼─────┐
+                              │  10 items │
+                              └─────┬─────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  LOGGING  -  IMPRESSIONS AND CLICKS, WITH POSITION                     │
+    │                                                                        │
+    │  LOG WHAT WAS SHOWN, NOT ONLY WHAT WAS CLICKED. Without impressions    │
+    │  you cannot distinguish "not shown" from "shown and ignored", which    │
+    │  means you cannot debias training, cannot compute a real CTR, and      │
+    │  cannot measure the feedback loop. IT IS THE CHEAPEST THING TO GET     │
+    │  RIGHT ON DAY ONE AND THE MOST EXPENSIVE TO RETROFIT.                  │
+    └────────────────────────────────────────────────────────────────────────┘
+
+    OFFLINE, ON A SCHEDULE: embeddings, item-item neighbour lists, popularity
+    tables, model training. ONLINE: feature lookup, ranking, re-ranking.
+    THE SPLIT IS DECIDED BY THE LATENCY BUDGET, and it is the first thing to say
+    when asked how you would serve this.""",
+
+    """9. THE FULL WORKED TRACE - the numbers, end to end
+
+THE DATA I BUILT:
+
+     users                                    3,000
+     items                                    2,000
+     interactions                            90,578
+     density                                  1.510%      <- 98.5% of the matrix is empty
+     top  1% of items carry                    11.0% of all interactions
+     top  5% of items carry                    23.0%
+     top 10% of items carry                    33.7%
+     top 20% of items carry                    50.4%      <- HALF the traffic on a fifth of the items
+
+    THE LONG TAIL IS THE PROBLEM STATEMENT. Twenty per cent of the catalogue takes half the traffic,
+    and that skew is milder than most real catalogues.
+
+THE FOUR RECOMMENDERS, recall@10 over 400 sampled users:
+
+     recommender                        recall@10     distinct items     avg item popularity
+     random                                  0.8%              1,719                      36
+     MOST POPULAR                            9.7%                 17                     490
+     item-CF, no popularity norm             8.3%                 26                     485
+     item-CF WITH popularity norm            9.3%                438                     418
+
+COLD START, by user history size:
+
+     history size     users     item-CF     most-popular
+     3-5                117        7.7%             8.5%
+     6-15               200        8.7%            10.2%
+     16-40              200        9.3%             9.3%
+     41+                200        8.2%             8.3%
+
+TWO-STAGE RETRIEVAL, per user:
+
+     full catalogue scan      2,000 items      0.089 ms
+     candidate generation     1,187 items      0.739 ms
+     candidate set retained 84.9% of the user's held-out items
+
+    AN HONEST NEGATIVE HERE: ON THIS TOY CATALOGUE THE TWO-STAGE ARCHITECTURE IS A LOSS. The candidate
+    set is only 1.7x smaller than the catalogue and it costs 8x more to build than simply scanning
+    everything. WITH 2,000 ITEMS YOU SHOULD JUST SCORE ALL OF THEM.
+    THE ARCHITECTURE PAYS OFF WHEN THE RATIO IS MILLIONS-TO-HUNDREDS, not thousands-to-thousands - and
+    knowing where that crossover is, rather than reciting the two-stage diagram unconditionally, is
+    the actual engineering judgement.
+
+THE FEEDBACK LOOP, six generations:
+
+     generation     distinct items     top-20 share of interactions
+     1                       1,999                            12.4%
+     2                       1,999                            13.7%
+     3                       1,999                            14.8%
+     4                       1,999                            15.8%
+     5                       1,999                            16.7%
+     6                       1,999                            17.6%
+
+THE LINE-BY-LINE MAPPING - which design choice produced which number:
+
+    THE ZIPF POPULARITY DISTRIBUTION in the data generator
+            produced the "top 20% carry 50.4%" row, and therefore everything downstream. A uniform
+            catalogue would have made the popularity baseline useless and the whole experiment
+            uninformative.
+    `score[j] += 1` versus `score[j] += 1/sqrt(popularity[j]+1)`
+            produced rows 3 and 4 of the recommender table. ONE TERM took coverage from 26 items to
+            438 and recall from 8.3% to 9.3%.
+    `if len(users_of_item) > 300: continue` (hub suppression)
+            is what made the CF loop finish at all. Without it a single mega-popular item connects
+            every user to every other user.
+    THE 80/20 TRAIN-TEST SPLIT PER USER
+            produced the recall column - and it is also the source of the central problem, because the
+            held-out 20% inherits the popularity bias of the history it was drawn from.
+    THE HISTORY-SIZE BUCKETING
+            produced the cold-start table, and it is the only reason the CF-loses-below-15 finding is
+            visible. An aggregate recall number averages it away completely.
+    THE 90% EXPLOIT / 10% EXPLORE RULE in the feedback simulation
+            produced BOTH the rising concentration AND the fact that all 1,999 items survived. Set
+            exploration to zero and the tail goes to zero; that one parameter is the whole mitigation.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask what we are optimising before designing?
+    Did you get to the two-stage architecture and explain WHY - the asymmetry that a retrieval miss is
+        unrecoverable and a ranking miss is not?
+    Did you raise cold start yourself, with a cascade rather than a single model?
+    Did you raise the feedback loop yourself?
+    Do you know that offline metrics are insufficient, and can you say specifically why?
+    Would you ship something small first?
+
+    THE LAST THREE ARE WHAT SEPARATE A SENIOR ANSWER FROM A TEXTBOOK ONE. Everybody can draw the
+    two-stage box diagram.
+
+THE #1 MISTAKE: presenting recall@K or NDCG as the success metric with nothing beside it. MEASURED: a
+most-popular baseline that shows 17 distinct items out of 2,000 beat collaborative filtering on
+recall@10. The metric cannot see the difference.
+
+THE #2 MISTAKE: not raising cold start. It is a large fraction of real traffic, and MEASURED, CF is
+worse than popularity below roughly fifteen interactions.
+
+THE #3 MISTAKE: not raising the feedback loop. Concentration rose monotonically for six generations in
+simulation, 12.4% to 17.6%, with nothing broken anywhere in the system.
+
+THE #4 MISTAKE: logging clicks without impressions. You then cannot distinguish "not shown" from
+"shown and ignored", which makes debiasing, real CTR and feedback-loop measurement all impossible.
+Cheapest thing to get right on day one, most expensive to retrofit.
+
+THE #5 MISTAKE: jumping to deep learning. The gains in the measurement above came from a popularity
+normalisation term and a hub filter, not from model capacity.
+
+THE #6 MISTAKE: reciting the two-stage architecture unconditionally. MEASURED: at 2,000 items it is
+8x SLOWER than scoring everything and only 1.7x more selective. It pays off at millions-to-hundreds,
+and knowing the crossover is the point.
+
+THE #7 MISTAKE: no exploration. It is the only mitigation that addresses the feedback loop's cause,
+and in the simulation it is what kept all 1,999 items alive.
+
+THE #8 MISTAKE: forgetting interaction features in the ranker. User-only and item-only features are
+largely already encoded by retrieval; "has this user watched this creator before" is where the gains
+are.
+
+THE #9 MISTAKE: no diversity or business-rule layer. The model does not know that six clips from one
+creator is a bad page.
+
+ONE-SENTENCE TAKEAWAY: recommendation is a two-stage retrieval-then-ranking problem whose real
+difficulty is not the model but the evaluation - a most-popular baseline showing 17 distinct items out
+of 2,000 beat collaborative filtering on recall@10 in my measurement, CF loses to popularity below
+about fifteen interactions of history, and a six-generation feedback simulation concentrated traffic
+monotonically while nothing was broken - so the design that matters is coverage and novelty metrics
+alongside recall, a cold-start cascade, impression logging from day one, and an exploration budget.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
