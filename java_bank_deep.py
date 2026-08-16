@@ -17573,3 +17573,1028 @@ still because they cannot throw at all and simply return nothing forever — so 
 value case as `Integer.valueOf(x)`, and turn on the collection-method inspection, since four of those five
 methods give no runtime signal whatsoever.""",
 ]
+
+
+DEEP["NaN, -0.0, and the three different meanings of 'equal' for a double"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — a value that is not equal to itself
+
+    double nan = 0.0 / 0.0;
+    System.out.println(nan == nan);                       // false
+    System.out.println(Double.valueOf(nan).equals(nan));  // TRUE
+    System.out.println(Double.compare(nan, nan));         // 0  (meaning "equal")
+    System.out.println(List.of(nan).contains(nan));       // TRUE
+
+    FOUR WAYS OF ASKING "ARE THESE THE SAME?" AND THEY DO NOT AGREE. And none of them is a bug — each
+    is the correct answer to a slightly different question.
+
+`NaN` means "not a number": the result of an operation with no meaningful numeric answer — `0.0/0.0`,
+`Infinity - Infinity`, `Math.sqrt(-1)`. IEEE 754 SPECIFIES THAT NaN IS NOT EQUAL TO ANYTHING, INCLUDING
+ITSELF, and that is deliberate rather than an oversight: if two different failed calculations both
+produced NaN, calling them "equal" would assert something false.
+
+    IT ALSO GIVES YOU THE PORTABLE NaN TEST. `x != x` is true for exactly one value in the whole
+    `double` range, which is why `Double.isNaN` is literally implemented as `return v != v;`.
+
+BUT COLLECTIONS CANNOT LIVE WITH THAT. A `HashMap` needs `equals` to be reflexive — `x.equals(x)` must
+be true — or an object put into a map can never be found again, including by itself. And `TreeMap` needs
+a TOTAL ORDER, or its search invariant collapses.
+
+    SO `Double.equals` AND `Double.compare` DELIBERATELY DEVIATE FROM `==`. They compare the BIT
+    PATTERNS, canonicalising NaN to a single value, so NaN equals NaN and NaN has a defined position in
+    the ordering (last, above `+Infinity`).
+
+    THREE ANSWERS, THREE CONSTITUENCIES: `==` serves IEEE 754 arithmetic, `equals` serves hash-based
+    collections, and `compare` serves sorted ones. THAT IS THE WHOLE ENTRY.
+
+AND `-0.0` IS THE SAME STORY IN MIRROR. `-0.0 == 0.0` is TRUE, while `Double.compare(-0.0, 0.0)` is −1
+and `Double.valueOf(-0.0).equals(0.0)` is FALSE. So the two zeros are equal to arithmetic and distinct
+to collections — the exact opposite arrangement from NaN.
+
+THE EVERYDAY VERSION: "no answer" written in two different exam papers. As results they are not the same
+answer — you cannot say those two students agreed. But if you are FILING the papers you need "no answer"
+to be one category, or you can never retrieve them. Same mark, two legitimate readings.
+
+TERMS AS THEY APPEAR:
+- IEEE 754: the floating-point standard every CPU implements.
+- REFLEXIVE: `x.equals(x)` is true. Required of `equals`, and what hashing depends on.
+- TOTAL ORDER: every pair is comparable, consistently. What sorted collections require.""",
+
+"""2. THE INTUITION — why each of the three is right for its own job
+
+`==` FOLLOWS IEEE 754, AND IT HAS TO. The hardware implements the standard; Java's `==` on primitives
+compiles to the machine's comparison instruction. Changing it would mean Java's arithmetic disagreed
+with the CPU's, and with every other language's.
+
+    THE STANDARD'S REASONING FOR NaN != NaN: a NaN records that a computation FAILED. Two failed
+    computations are not "the same result" — they have no result. Declaring them equal would let
+    `if (a == b)` succeed on two unrelated errors.
+
+    AND THE CONSEQUENCE THAT SURPRISES PEOPLE MOST: EVERY comparison with NaN is false. `<`, `>`, `<=`,
+    `>=` and `==` all return false; only `!=` returns true.
+
+        SO `!(a > b)` IS NOT THE SAME AS `a <= b`. With `b` NaN, both `a > b` and `a <= b` are false, so
+        the negation and the "opposite" comparison disagree. Every `if/else` written on that assumption
+        has a third case it does not handle.
+
+`equals` MUST BE REFLEXIVE, OR HASHING BREAKS. The `Object.equals` contract requires `x.equals(x)`. If
+`Double.equals` delegated to `==`, then:
+
+    map.put(nan, "v");
+    map.get(nan);            // → null. The key cannot find ITSELF.
+
+    An object you cannot retrieve with the very key you stored it under is not a usable map. SO
+    `Double.equals` COMPARES `doubleToLongBits`, which canonicalises every NaN bit pattern to one value —
+    making NaN equal to NaN and making the map work.
+
+    THE SAME CHOICE CREATES THE `-0.0` DEVIATION IN THE OTHER DIRECTION: `-0.0` and `0.0` have DIFFERENT
+    bit patterns, so `equals` says they differ even though `==` says they are equal. A `HashSet`
+    containing both has two elements.
+
+`compare` MUST GIVE A TOTAL ORDER, OR SORTING BREAKS. A `TreeMap` is a search tree; its correctness
+depends on the comparator being antisymmetric and transitive. With NaN incomparable to everything, no
+such order exists.
+
+    SO `Double.compare` IMPOSES ONE: −Infinity < … < −0.0 < 0.0 < … < +Infinity < NaN.
+    NaN SORTS LAST, ABOVE POSITIVE INFINITY, and `-0.0` sorts strictly before `0.0`.
+
+    AND THIS IS WHY A HAND-WRITTEN COMPARATOR IS A BUG WAITING FOR A NaN. `(a, b) -> a < b ? -1 : 1`
+    reports "a before b" for both orderings when either is NaN, violating antisymmetry — and `Arrays.sort`
+    eventually throws "Comparison method violates its general contract!", data-dependent, months later.
+
+THE UNIFYING IDEA: THERE IS NO SINGLE CORRECT ANSWER TO "ARE THESE DOUBLES EQUAL", because arithmetic
+and data structures need different things. Java did not choose one and break the other; it gave each
+constituency its own operation, and the cost is that you have to know which one you are using.""",
+
+"""3. THE MECHANISM — bits, and the four ways to ask
+
+`Double.equals` AND `Double.compare` ARE BUILT ON `doubleToLongBits`:
+
+    public boolean equals(Object obj) {
+        return (obj instanceof Double d)
+            && doubleToLongBits(d.value) == doubleToLongBits(value);
+    }
+
+    `doubleToLongBits` CANONICALISES: every NaN bit pattern — and there are about 2^52 of them, because
+    NaN has a "payload" — collapses to the single value `0x7ff8000000000000L`. So all NaNs are `equals`
+    to each other.
+    `doubleToRawLongBits` DOES NOT canonicalise, and preserves the payload. Use it only when you
+    genuinely care about which NaN.
+    `-0.0` has bit pattern `0x8000000000000000L`, `0.0` has `0x0`. DIFFERENT BITS, hence not `equals`.
+
+`Double.compare` IS THE ORDERING, and its implementation is worth knowing because it explains the
+ordering exactly:
+
+    public static int compare(double d1, double d2) {
+        if (d1 < d2) return -1;
+        if (d1 > d2) return  1;
+        long b1 = doubleToLongBits(d1), b2 = doubleToLongBits(d2);
+        return (b1 == b2 ? 0 : (b1 < b2 ? -1 : 1));   // ← handles NaN and ±0.0
+    }
+
+    The first two lines handle ordinary values. The fall-through handles the cases where `<` and `>` are
+    both false: two NaNs (equal bits → 0), NaN versus anything (NaN's bits are large → NaN sorts last),
+    and `-0.0` versus `0.0` (a set sign bit reads as a negative long → −0.0 sorts first).
+
+WHERE NaN COMES FROM, so you can recognise the source:
+    `0.0 / 0.0`, `Infinity - Infinity`, `Infinity * 0`, `Infinity / Infinity`
+    `Math.sqrt(negative)`, `Math.log(negative)`, `Math.asin(x)` for |x| > 1
+    ANY ARITHMETIC INVOLVING A NaN. It propagates: one NaN in a sum poisons the total, one bad sensor
+    reading turns an average into NaN, and nothing throws.
+
+AND WHERE `-0.0` COMES FROM: `-1.0 * 0.0`, `0.0 / -1.0`, underflow of a small negative value, and
+`Math.round`-style operations on negatives. IT IS OBSERVABLE, which is the point: `1/0.0` is
+`+Infinity` and `1/-0.0` is `-Infinity`, so the sign of zero can change the sign of a later result.
+
+TWO LIBRARY DETAILS THAT FOLLOW:
+    `Math.min(-0.0, 0.0)` RETURNS `-0.0`, correctly — and it is NOT implemented as `a < b ? a : b`,
+    because that would return `0.0` (since `-0.0 < 0.0` is false). The JDK special-cases it.
+    `List.contains`, `Set.contains` and `Map.get` all use `equals`, so they find NaN and distinguish the
+    two zeros — while `==` does the opposite in both cases.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `nan == nan` IS FALSE. Required by IEEE 754. `Double.isNaN(x)` — which is literally `x != x` —
+is the test.
+
+CASE 2 — EVERY COMPARISON WITH NaN IS FALSE. `<`, `>`, `<=`, `>=`, `==` all false; only `!=` is true.
+
+CASE 3 — `!(a > b)` IS NOT `a <= b`. With a NaN both are false, so an `if/else` written on that
+assumption has an unhandled third case.
+
+CASE 4 — A HAND-WRITTEN COMPARATOR USING `<` AND `>`. Violates antisymmetry when a NaN appears, and
+`Arrays.sort` eventually throws "Comparison method violates its general contract!" — data-dependent, so
+it appears long after the code was written.
+
+CASE 5 — `Double.equals(NaN, NaN)` IS TRUE while `==` is false. Deliberate: `equals` must be reflexive
+or a map key cannot find itself.
+
+CASE 6 — `-0.0 == 0.0` IS TRUE but `Double.valueOf(-0.0).equals(0.0)` IS FALSE. A `HashSet` containing
+both has TWO elements; a `TreeSet` has two as well, since `compare` also separates them.
+
+CASE 7 — `Math.min(-0.0, 0.0)` RETURNS `-0.0`, but a hand-written `a < b ? a : b` returns `0.0`. The JDK
+special-cases it and your one-liner does not.
+
+CASE 8 — NaN PROPAGATES SILENTLY. One NaN in a list turns the sum, the average, the max and the standard
+deviation into NaN. Nothing throws, and the report simply says NaN.
+
+CASE 9 — NaN SORTS LAST. `Double.compare` places it above `+Infinity`, so a "top 10" over data
+containing NaN returns the NaNs.
+
+CASE 10 — `Math.max(NaN, 5.0)` RETURNS NaN, and so does `min`. That is specified, and it means a single
+bad reading dominates an aggregate.
+
+CASE 11 — `Collections.max` ON A LIST CONTAINING NaN returns NaN via `compare`, whereas a hand-rolled
+loop with `>` returns whatever came first. Two "maximums" that disagree.
+
+CASE 12 — `1/0.0` IS `+Infinity` AND `1/-0.0` IS `-Infinity`. Floating-point division by zero does not
+throw; only INTEGER division does.
+
+CASE 13 — `doubleToRawLongBits` USED WHERE `doubleToLongBits` BELONGS. The raw form preserves NaN
+payloads, so two NaNs can compare unequal.
+
+CASE 14 — A NaN REACHING JSON OR A DATABASE. JSON has no NaN literal, so serialisers either fail or emit
+`null`; SQL has no NaN for most numeric types. The failure surfaces at a boundary, far from the
+division.""",
+
+"""5. THE ALTERNATIVES — how to keep NaN out and handle it when it arrives
+
+CHECK AT THE SOURCE. `Double.isNaN(x)` and `Double.isFinite(x)` at the boundary where numbers enter —
+parsing, a sensor reading, a division you cannot prove is safe. IT IS FAR CHEAPER TO REJECT A NaN AT
+ENTRY THAN TO EXPLAIN ONE IN A REPORT.
+
+    `if (!Double.isFinite(x)) throw new IllegalArgumentException(...)` covers NaN and both infinities in
+    one check, which is usually what you want.
+
+`Double.compare` IN EVERY COMPARATOR, ALWAYS. It gives a total order over NaN and ±0.0, so the
+comparator contract holds. `Comparator.comparingDouble(...)` uses it for you, which is one more reason
+to prefer the combinators over hand-written comparisons.
+
+`Objects.equals` OR `Double.valueOf(a).equals(b)` when you want the collections semantics deliberately —
+NaN equal to NaN, zeros distinct.
+
+`Math.min` / `Math.max` RATHER THAN A TERNARY. They handle `-0.0` and NaN as specified; the one-liner
+does not.
+
+FILTER BEFORE AGGREGATING. `stream.filter(Double::isFinite).average()` — otherwise one bad value makes
+every downstream statistic NaN, and the report says NaN with no indication of which row caused it.
+
+`DoubleSummaryStatistics` gives count, sum, min, max and average in one pass, and combining it with a
+filter makes the discarded count visible — which is the honest version of "we ignored the bad readings".
+
+FOR MONEY AND EXACT VALUES, DO NOT USE `double` AT ALL. `long` of minor units or `BigDecimal`. NaN,
+±0.0 and infinity are all symptoms of using a measurement type for a counting problem — and `BigDecimal`
+has none of these values, which is part of why it is the right answer there.
+
+FOR EPSILON COMPARISONS, REMEMBER NaN DEFEATS THEM TOO. `Math.abs(a - b) < eps` is false when either is
+NaN, which may or may not be what you meant — decide, and check explicitly.
+
+STATIC ANALYSIS: ErrorProne and SpotBugs both flag comparators built from `<`/`>` on doubles, and
+`x == Double.NaN` (which is always false and is the mistake people make when they mean `isNaN`).
+
+WHAT TO SAY: "There are three answers because there are three constituencies. `==` follows IEEE 754,
+where NaN is not equal to itself because two failed computations are not the same result. `equals` must
+be reflexive or a map key cannot find itself, so it compares canonicalised bits. And `compare` must give
+a total order or a TreeMap's search invariant collapses, so it puts NaN last. `-0.0` is the same story
+inverted — equal to arithmetic, distinct to collections. I use `Double.compare` in every comparator and
+check `isFinite` at the boundary."
+
+""",
+
+"""6. HOW TO HANDLE IT — numbered steps
+
+STEP 1 — TEST WITH `Double.isNaN(x)`, NEVER `x == Double.NaN`. The latter is ALWAYS false — it is the
+mistake the rule exists to prevent.
+
+STEP 2 — VALIDATE AT THE BOUNDARY. `Double.isFinite(x)` rejects NaN and both infinities in one check,
+where the value enters the system.
+
+STEP 3 — USE `Double.compare` IN EVERY COMPARATOR. Hand-written `<`/`>` comparators violate their
+contract the first time a NaN appears.
+
+STEP 4 — PREFER `Comparator.comparingDouble(...)`. It uses `Double.compare` for you.
+
+STEP 5 — USE `Math.min`/`Math.max`, NOT A TERNARY. They handle `-0.0` and NaN as specified.
+
+STEP 6 — FILTER BEFORE AGGREGATING. `filter(Double::isFinite)` — and log how many were dropped, so the
+report is honest.
+
+STEP 7 — REMEMBER `!(a > b)` IS NOT `a <= b`. If NaN is possible, handle it as an explicit third case.
+
+STEP 8 — REMEMBER FLOATING-POINT DIVISION BY ZERO DOES NOT THROW. It gives ±Infinity, and
+`Infinity - Infinity` then gives NaN, which propagates.
+
+STEP 9 — KNOW WHICH SEMANTICS A COLLECTION USES. `contains`, `get` and `remove` use `equals`, so they
+find NaN and separate `-0.0` from `0.0` — the opposite of `==` in both cases.
+
+STEP 10 — USE `doubleToLongBits`, NOT `doubleToRawLongBits`, unless you specifically care about a NaN's
+payload.
+
+STEP 11 — CHECK FOR NaN BEFORE SERIALISING. JSON has no NaN literal and most SQL numeric types have
+none; the failure otherwise surfaces at the boundary, far from its cause.
+
+STEP 12 — IF THE VALUE IS MONEY OR AN EXACT COUNT, USE `long` OR `BigDecimal`. None of this exists there.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'There are three different answers to "are these doubles equal", and none of them is a bug — each is the
+right answer to a different question.
+
+`nan == nan` is FALSE, and IEEE 754 requires that. The reasoning is that a NaN records that a
+computation FAILED — two failed computations aren't "the same result", they have no result. Declaring
+them equal would let `if (a == b)` succeed on two unrelated errors. It also gives you the portable NaN
+test: `x != x` is true for exactly one value in the whole double range, which is why Double.isNaN is
+literally implemented as `return v != v`.
+
+But `Double.valueOf(nan).equals(nan)` is TRUE, and it has to be. The equals contract requires
+reflexivity — `x.equals(x)` must be true — because otherwise you can put a key in a HashMap and never
+retrieve it with that very same key. A map where a key can't find itself isn't a map. So Double.equals
+compares `doubleToLongBits`, which canonicalises all NaN bit patterns to one value.
+
+And `Double.compare(nan, nan)` is 0, because a TreeMap is a search tree whose correctness depends on a
+total order, and NaN being incomparable to everything means no such order exists. So compare imposes
+one: minus infinity, up through minus zero, zero, plus infinity, and NaN LAST — above positive infinity.
+
+So: `==` serves IEEE arithmetic, `equals` serves hash-based collections, `compare` serves sorted ones.
+Three constituencies, three operations. Java didn't pick one and break the others.
+
+`-0.0` is the same story in mirror. `-0.0 == 0.0` is TRUE, but `Double.compare` says −1 and `equals`
+says false — because the bit patterns differ. So a HashSet with both has two elements. Equal to
+arithmetic, distinct to collections; exactly the opposite arrangement from NaN. And the sign of zero is
+observable: `1/0.0` is plus infinity and `1/-0.0` is minus infinity.
+
+The consequence I'd flag hardest in real code is that EVERY comparison with NaN is false — less than,
+greater than, less-or-equal, greater-or-equal, and equals, all false. Only `!=` is true. Which means
+`!(a > b)` is NOT the same as `a <= b`. With a NaN both are false, so every if/else written on that
+assumption has an unhandled third case. And a comparator built from `<` and `>` violates antisymmetry
+the moment a NaN appears — Arrays.sort eventually throws "Comparison method violates its general
+contract", data-dependent, months after the code was written.
+
+Practically: Double.isNaN rather than `== Double.NaN`, which is always false; isFinite at the boundary
+where numbers enter; Double.compare in every comparator; Math.min rather than a ternary, because the
+ternary gets minus zero wrong; and filter before aggregating, because one NaN turns the sum, the
+average, the max and the standard deviation into NaN with nothing thrown.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── FOUR QUESTIONS, FOUR ANSWERS ────────────────────────────────────
+    double nan = 0.0 / 0.0;
+    nan == nan                              // false  ← IEEE 754 arithmetic
+    Double.valueOf(nan).equals(nan)         // TRUE   ← collections need reflexivity
+    Double.compare(nan, nan)                // 0      ← sorted collections need a
+    //                                                   total order
+    List.of(nan).contains(nan)              // TRUE   ← contains uses equals
+    // None is a bug. Each is correct for a different constituency.
+
+    // ── THE PORTABLE NaN TEST, AND THE MISTAKE ──────────────────────────
+    public static boolean isNaN(double v) { return v != v; }   // ← the actual JDK
+    if (x == Double.NaN) { ... }            // ✗ ALWAYS FALSE. Never true, ever.
+    if (Double.isNaN(x)) { ... }            // ✓
+
+    // ── EVERY COMPARISON WITH NaN IS FALSE ──────────────────────────────
+    nan <  1.0    // false        nan >  1.0    // false
+    nan <= 1.0    // false        nan >= 1.0    // false
+    nan == 1.0    // false        nan != 1.0    // TRUE  ← the only one
+    //
+    // THEREFORE:
+    if (a > b) { ... } else { /* assumes a <= b */ }
+    //                        ^^^^^^^^^^^^^^^^^^^ WRONG when b is NaN: BOTH a > b and
+    //   a <= b are false, so `!(a > b)` is not `a <= b`. There is an unhandled third
+    //   case in every if/else written this way.
+
+    // ── WHY equals DEVIATES: a key that cannot find itself ──────────────
+    Map<Double,String> m = new HashMap<>();
+    m.put(nan, "v");
+    m.get(nan);                             // "v"  ← works, BECAUSE equals says
+    //                                                 NaN equals NaN
+    // If Double.equals delegated to ==, this would return null and the map would be
+    // unusable. The equals contract REQUIRES reflexivity.
+    public boolean equals(Object obj) {
+        return (obj instanceof Double d)
+            && doubleToLongBits(d.value) == doubleToLongBits(value);
+    //         ^^^^^^^^^^^^^^^^ CANONICALISES: all ~2^52 NaN bit patterns collapse to
+    //         0x7ff8000000000000L. (doubleToRawLongBits does NOT — use it only if you
+    //         genuinely care which NaN.)
+    }
+
+    // ── -0.0: THE SAME STORY, INVERTED ──────────────────────────────────
+    -0.0 == 0.0                                   // TRUE   ← arithmetic
+    Double.valueOf(-0.0).equals(0.0)              // FALSE  ← different BITS
+    Double.compare(-0.0, 0.0)                     // -1     ← -0.0 sorts first
+    new HashSet<>(List.of(-0.0, 0.0)).size()      // 2
+    1 / 0.0                                       // +Infinity
+    1 / -0.0                                      // -Infinity  ← the sign is OBSERVABLE
+    // Equal to arithmetic, DISTINCT to collections. Exactly the opposite arrangement
+    // from NaN.
+
+    // ── THE ORDER compare IMPOSES ───────────────────────────────────────
+    // -Infinity < ... < -0.0 < 0.0 < ... < +Infinity < NaN
+    //                                                  ^^^ NaN SORTS LAST, above
+    //   positive infinity. So a "top 10 by value" over data containing NaN returns
+    //   the NaNs.
+    public static int compare(double d1, double d2) {
+        if (d1 < d2) return -1;
+        if (d1 > d2) return  1;
+        long b1 = doubleToLongBits(d1), b2 = doubleToLongBits(d2);
+        return (b1 == b2 ? 0 : (b1 < b2 ? -1 : 1));   // ← handles NaN and ±0.0
+    }
+
+    // ── THE COMPARATOR THAT BREAKS MONTHS LATER ─────────────────────────
+    Comparator<Double> bad = (a, b) -> a < b ? -1 : 1;
+    //                                  ^^^^^ with a NaN, `a < b` is false BOTH ways,
+    //   so it reports "a before b" for both orderings. Antisymmetry violated.
+    // → IllegalArgumentException: Comparison method violates its general contract!
+    //   ...but only once the list is long enough for TimSort's merge to notice.
+    Comparator<Double> good = Comparator.naturalOrder();          // uses compare
+    Comparator<Item> ok = Comparator.comparingDouble(Item::score); // uses compare
+
+    // ── Math.min IS NOT A TERNARY ───────────────────────────────────────
+    Math.min(-0.0, 0.0)                     // -0.0   ← correct, special-cased
+    (-0.0 < 0.0 ? -0.0 : 0.0)               //  0.0   ← because -0.0 < 0.0 is FALSE
+    Math.max(Double.NaN, 5.0)               // NaN    ← specified; one bad reading wins
+
+    // ── PROPAGATION: nothing throws ─────────────────────────────────────
+    double[] readings = {1.0, 2.0, 0.0/0.0, 4.0};
+    Arrays.stream(readings).sum();                        // NaN
+    Arrays.stream(readings).average().getAsDouble();      // NaN
+    Arrays.stream(readings).filter(Double::isFinite).average();   // ← the fix
+    // One bad sensor value turns the sum, the average, the max and the standard
+    // deviation into NaN, and the report just says NaN.""",
+
+"""9. THE TRACE — one NaN through four data structures, and one through an aggregate
+
+TRACE 1 — THE SAME VALUE, FOUR CONTAINERS:
+
+    operation                              uses        result       why
+    ---------------------------------------------------------------------------------
+    nan == nan                              IEEE ==     false        two failed
+                                                                     computations are not
+                                                                     one result
+    HashMap.put(nan,"v"); get(nan)          equals      "v"          equals must be
+                                                                     REFLEXIVE or a key
+                                                                     cannot find itself
+    TreeMap.put(nan,"v"); get(nan)          compare     "v"          compare gives NaN a
+                                                                     defined position
+    List.of(nan).contains(nan)              equals      true         contains uses equals
+    ---------------------------------------------------------------------------------
+    THREE OF THE FOUR SAY "SAME" AND THE PRIMITIVE COMPARISON SAYS "DIFFERENT". Which is exactly
+    backwards from what most people predict, and it is because the collections had to deviate from IEEE
+    to remain usable at all.
+
+TRACE 2 — `-0.0`, THE MIRROR IMAGE:
+
+    operation                              uses        result       why
+    ---------------------------------------------------------------------------------
+    -0.0 == 0.0                             IEEE ==     TRUE         the standard says the
+                                                                     zeros are equal
+    HashSet.of(-0.0, 0.0).size()            equals      2            different BIT PATTERNS
+    TreeSet.of(-0.0, 0.0).size()            compare     2            -0.0 sorts strictly
+                                                                     before 0.0
+    1/0.0  vs  1/-0.0                       IEEE        +Inf, -Inf   the sign IS observable
+    ---------------------------------------------------------------------------------
+    EXACTLY THE OPPOSITE ARRANGEMENT FROM TRACE 1. For NaN, `==` is the odd one out saying "different";
+    for `-0.0`, `==` is the odd one out saying "same". Both follow from the same rule — `equals` and
+    `compare` look at BITS, and `==` follows IEEE semantics — and the two values happen to disagree with
+    IEEE in opposite directions.
+
+TRACE 3 — THE COMPARATOR, AND WHY IT FAILS LATE:
+
+    comparator: (a, b) -> a < b ? -1 : 1        values: [3.0, NaN, 1.0]
+    step                                        result
+    ---------------------------------------------------------------------------------
+    compare(3.0, NaN)  → 3.0 < NaN is FALSE     → returns 1  ("3.0 after NaN")
+    compare(NaN, 3.0)  → NaN < 3.0 is FALSE     → returns 1  ("NaN after 3.0")
+    ---------------------------------------------------------------------------------
+    BOTH SAY "THE OTHER ONE COMES FIRST". sgn(x) == -sgn(y) requires 1 == -1. Antisymmetry violated.
+    ---------------------------------------------------------------------------------
+    on a 3-element list      TimSort uses one run; no merge exposes it     NO ERROR
+    on a 2,000-element list  multiple runs merged; the invariant fails     IllegalArgumentException:
+                                                                          "Comparison method
+                                                                          violates its general
+                                                                          contract!"
+    ---------------------------------------------------------------------------------
+    THE SAME COMPARATOR, PASSING FOR AS LONG AS THE DATA STAYS SHORT. The exception names the sort, not
+    the lambda, and arrives whenever the dataset grows — which is to say, when the system succeeds.
+
+TRACE 4 — ONE BAD READING THROUGH AN AGGREGATE:
+
+    stage                        value                    anything thrown?
+    ---------------------------------------------------------------------------------
+    sensor returns               0.0 / 0.0 → NaN          no
+    stored in a double[]         NaN                      no
+    sum()                        NaN                      no
+    average()                    NaN                      no
+    max()                        NaN  (Math.max(NaN,x)    no — SPECIFIED behaviour
+                                 is NaN)
+    standard deviation           NaN                      no
+    rendered in a report         "NaN"                    no
+    serialised to JSON           serialiser FAILS, or     ← the first sign of trouble,
+                                 emits null                 at a boundary far from the
+                                                            division that caused it
+    ---------------------------------------------------------------------------------
+    SEVEN STAGES, NO EXCEPTION. The value propagates through every arithmetic operation and every
+    aggregate, and the first thing that objects is a serialiser at the edge of the system — because JSON
+    has no NaN literal. By then nothing points back at the division.
+
+    `filter(Double::isFinite)` AT STAGE 2 ENDS ALL OF IT, and logging how many were dropped is the
+    honest version.
+
+WHAT PRODUCED WHAT:
+    IEEE 754's DEFINITION OF NaN   produced traces 1's first row and all of trace 3.
+    THE equals CONTRACT             produced the deviation in rows 2 and 4 — reflexivity is
+                                    non-negotiable for hashing.
+    THE TOTAL-ORDER REQUIREMENT     produced NaN sorting last, and therefore "top 10" returning NaNs.
+    SILENT PROPAGATION              produced trace 4, and the fact that the failure surfaces at a
+                                    boundary rather than at its cause.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `==` follows IEEE 754: NaN is unequal to everything including itself; `-0.0 == 0.0` is true.
+    `equals` compares `doubleToLongBits`: NaN equals NaN, and `-0.0` differs from `0.0`.
+    `compare` imposes a total order: −Infinity < … < −0.0 < 0.0 < … < +Infinity < NaN.
+    `Double.isNaN(v)` is literally `v != v`.
+    All comparison operators with NaN are false except `!=`.
+    Floating-point division by zero yields ±Infinity and does not throw; integer division does.
+    NaN propagates through every arithmetic operation silently.
+
+THE #1 MISTAKE: `x == Double.NaN`. Always false. Use `Double.isNaN`.
+
+THE #2 MISTAKE: assuming `!(a > b)` means `a <= b`. With a NaN both are false.
+
+THE #3 MISTAKE: a comparator built from `<` and `>` on doubles. It violates antisymmetry on NaN, and
+`Arrays.sort` throws later, data-dependent.
+
+THE #4 MISTAKE: expecting `equals` and `==` to agree. They deliberately do not, in opposite directions
+for NaN and for `-0.0`.
+
+THE #5 MISTAKE: a hand-written `a < b ? a : b` instead of `Math.min`. It returns the wrong zero.
+
+THE #6 MISTAKE: aggregating without filtering. One NaN makes the sum, average, max and deviation all
+NaN, with nothing thrown.
+
+THE #7 MISTAKE: expecting `Math.max(NaN, x)` to ignore the NaN. It returns NaN, by specification.
+
+THE #8 MISTAKE: forgetting NaN sorts LAST. A "top N by value" returns the NaNs.
+
+THE #9 MISTAKE: `doubleToRawLongBits` where `doubleToLongBits` belongs. The raw form preserves payloads,
+so two NaNs can compare unequal.
+
+THE #10 MISTAKE: letting a NaN reach JSON or SQL. Neither has a representation, so the failure surfaces
+at a boundary far from its cause.
+
+THE #11 MISTAKE: using `double` for money, and then meeting all of this. `long` of minor units or
+`BigDecimal` has none of these values.
+
+ONE-SENTENCE TAKEAWAY: there are three answers to "are these doubles equal" because there are three
+constituencies — `==` follows IEEE 754, where NaN is unequal even to itself (two failed computations are
+not one result, and `x != x` is therefore the portable NaN test) while `-0.0 == 0.0` is true; `equals`
+compares canonicalised BITS because the contract demands reflexivity, or a NaN key could never find
+itself in a `HashMap`; and `compare` imposes a TOTAL ORDER with NaN last, because a `TreeMap`'s search
+invariant needs one — so NaN and `-0.0` deviate from `==` in OPPOSITE directions, every comparison
+operator with NaN is false except `!=` (which is why `!(a > b)` is not `a <= b` and why hand-written
+comparators break), and a single NaN propagates silently through every aggregate until a serialiser at
+the system's edge finally objects.""",
+]
+
+
+DEEP["Array covariance — the assignment that compiles and throws"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the type system letting you write something it cannot honour
+
+    String[] strings = new String[3];
+    Object[] objects = strings;          // ← legal. Arrays are COVARIANT.
+    objects[0] = 42;                     // ← COMPILES. Throws ArrayStoreException.
+
+    THE COMPILER APPROVED EVERY LINE. `objects` is declared `Object[]`, and an `Integer` is an `Object`,
+    so storing one is obviously fine as far as the static types go. AT RUNTIME THE ARRAY REMEMBERS THAT
+    IT IS REALLY A `String[]`, checks the element, and refuses.
+
+    THAT IS A TYPE SYSTEM ADMITTING IT CANNOT KEEP ITS PROMISE. Normally "it compiles" means "the types
+    are consistent". Here it means "the types are consistent as far as I can see, and the runtime will
+    have to check".
+
+WHY IT IS LIKE THIS: `String[]` IS A SUBTYPE OF `Object[]`. Java calls that COVARIANCE, and it was a
+deliberate decision in 1995 — because there were no generics, and without covariance you could not write
+a single `sort(Object[])` or `Arrays.fill(Object[], Object)` that worked on any array. THE ALTERNATIVE
+WAS TO DUPLICATE EVERY UTILITY METHOD PER ELEMENT TYPE.
+
+    IT IS ALSO WIDELY CONSIDERED A MISTAKE — Java's own designers have said so — and it was NOT repeated
+    when generics arrived. `List<String>` is NOT a `List<Object>`; generics are INVARIANT, and the
+    compiler rejects the equivalent code rather than deferring to the runtime.
+
+    SO THE TWO FEATURES ANSWER THE SAME QUESTION DIFFERENTLY, IN THE SAME LANGUAGE, AND COMPARING THEM
+    IS THE POINT OF THIS ENTRY.
+
+AND THERE IS A COST YOU PAY EVEN WHEN NOTHING GOES WRONG: BECAUSE THE STORE MIGHT BE ILLEGAL, EVERY
+WRITE TO A REFERENCE ARRAY CARRIES A RUNTIME TYPE CHECK. The `aastore` bytecode checks the element
+against the array's actual component type, on every single store, forever, in every Java program.
+
+THE EVERYDAY VERSION: a shelf labelled "any book". Someone points out it is really the poetry shelf, and
+the label was accurate when it was written — poetry IS a kind of book. But putting a cookbook there is
+refused, and because it MIGHT be refused, every single shelving action has to be checked first.
+
+TERMS AS THEY APPEAR:
+- COVARIANT: if `B` is a subtype of `A`, then `B[]` is a subtype of `A[]`. Arrays.
+- INVARIANT: `List<B>` has no subtype relationship with `List<A>`. Generics.
+- REIFIED: the type is known at runtime. Arrays are reified; generics are not.""",
+
+"""2. THE INTUITION — why covariance is unsound for writing but fine for reading
+
+COVARIANCE IS SAFE FOR READING AND UNSAFE FOR WRITING, and once you see that split the whole design
+follows.
+
+    READING: every element of a `String[]` really is an `Object`, so `Object o = objects[0]` can never
+    fail. Covariance is completely sound here.
+    WRITING: `objects[0] = 42` is legal by the STATIC type and wrong by the RUNTIME type. The array
+    holds Strings and you are putting an Integer in it.
+
+    SO THE UNSOUNDNESS IS ENTIRELY IN THE WRITE DIRECTION. Java's response was to keep the convenient
+    subtyping and check every write at runtime.
+
+GENERICS MADE THE OPPOSITE CHOICE, and expressed the same insight in the type system instead:
+
+    List<String> strings = new ArrayList<>();
+    List<Object> objects = strings;        // ✗ DOES NOT COMPILE. Invariant.
+
+    List<? extends Object> readable = strings;   // ✓ legal, and READ-ONLY
+    readable.add("x");                            // ✗ does not compile
+
+    `? extends T` IS EXACTLY "COVARIANT, THEREFORE YOU MAY READ BUT NOT WRITE". The compiler enforces at
+    compile time the restriction that arrays enforce at runtime. Same insight, better place. And `?
+    super T` is the mirror — contravariant, write but not usefully read — which is the whole of the PECS
+    rule: Producer Extends, Consumer Super.
+
+WHY ARRAYS WERE MADE COVARIANT ANYWAY: IN 1995 THERE WERE NO GENERICS, and the language needed:
+
+    void sort(Object[] a)
+    void fill(Object[] a, Object val)
+    boolean equals(Object[] a, Object[] b)
+
+    to work on a `String[]`, an `Integer[]`, and anything else. Without covariance, `Arrays.sort` would
+    have needed one overload per element type — and for user-defined types that is impossible. COVARIANCE
+    WAS THE ONLY WAY TO HAVE POLYMORPHIC ARRAY UTILITIES IN A LANGUAGE WITHOUT GENERICS.
+
+    IT WAS A REASONABLE TRADE FOR 1995 AND THE WRONG ANSWER PERMANENTLY, which is why generics did not
+    copy it — and why the two mechanisms coexist with different rules, one checked at compile time and
+    one at runtime.
+
+THE OTHER HALF OF THE STORY IS REIFICATION, and it explains why the two could not simply be unified:
+
+    AN ARRAY KNOWS ITS COMPONENT TYPE AT RUNTIME. `new String[3].getClass()` is `String[].class`. THAT
+    IS WHY THE CHECK IS POSSIBLE AT ALL.
+    A GENERIC TYPE DOES NOT. Erasure means a `List<String>` is just a `List` at runtime, so no equivalent
+    check could ever be performed.
+
+    SO `new T[10]` IS FORBIDDEN: covariance would let you store the wrong thing, and erasure means there
+    is nothing to check against. Combine covariance with erasure and you get unsoundness with no runtime
+    defence — which is exactly why the language refuses.""",
+
+"""3. THE MECHANISM — `aastore`, the check, and the generic-array workaround
+
+EVERY STORE INTO A REFERENCE ARRAY COMPILES TO `aastore`, AND `aastore` CHECKS.
+
+    The JVM specification requires it: if the value is not `null` and not assignable to the array's
+    actual COMPONENT TYPE, throw `ArrayStoreException`.
+
+    THAT CHECK EXISTS ON EVERY REFERENCE-ARRAY WRITE IN EVERY JAVA PROGRAM, because the compiler cannot
+    know whether an `Object[]` is really a `String[]`. It is usually cheap — the JIT can often prove the
+    types match at a monomorphic site and remove it — but it is a real cost that primitive arrays
+    (`iastore`, `dastore`) do not pay, since `int[]` has no subtype relationships.
+
+WHAT IS AND IS NOT COVARIANT:
+
+    String[]  →  Object[]              ✓ covariant, checked at runtime
+    Integer[] →  Number[]  → Object[]  ✓ covariant
+    int[]     →  Object[]              ✗ NOT a subtype. `int[]` is an `Object`, but not an `Object[]`.
+    List<String> → List<Object>        ✗ invariant, rejected at compile time
+    String[]  →  Object                ✓ every array IS an Object
+
+    THE `int[]` ROW IS WORTH SEPARATING OUT, because it explains a family of surprises:
+    `Arrays.asList(intArray)` gives a `List<int[]>` of size 1, because `int[]` matches the single
+    varargs element rather than being spread; and `Object[] o = intArray;` does not compile at all.
+
+GENERIC ARRAYS ARE FORBIDDEN, AND THE WORKAROUND IS IN THE JDK ITSELF:
+
+    T[] a = new T[10];                 // ✗ "generic array creation" — a compile error
+    T[] a = (T[]) new Object[10];      // ✓ compiles, with an UNCHECKED warning
+
+    `ArrayList` DOES EXACTLY THIS. Its backing field is `Object[] elementData`, and `get` casts on the
+    way out. The cast is unchecked, so it is the AUTHOR guaranteeing that nothing of the wrong type ever
+    enters — the compiler cannot.
+
+    AND THE CONSEQUENCE LEAKS INTO THE API: `ArrayList.toArray()` returns `Object[]`, not `T[]`,
+    because there is no `T` at runtime to make an array of. `toArray(new String[0])` exists precisely so
+    you can supply the runtime type. Passing a zero-length array is idiomatic AND fastest — the JDK
+    allocates the right-sized one itself and the zero-length prototype is free.
+
+THE HISTORICAL FAILURE THIS ENABLED: before generics, a method taking `Object[]` could be handed a
+`String[]` and try to store a `Date` in it. `System.arraycopy` between incompatible arrays throws
+`ArrayStoreException` MID-COPY, having already written the earlier elements — so the destination is left
+PARTIALLY MODIFIED, which is one of the few places in the JDK where an exception leaves observable
+partial state.
+
+COVARIANT RETURN TYPES ARE A DIFFERENT AND SOUND THING. An overriding method may return a NARROWER type
+than the one it overrides — `clone()` returning your own type instead of `Object`. That is safe because
+returning is READING, and covariance is sound for reading. SAME WORD, OPPOSITE SAFETY, and worth keeping
+separate.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `Object[] o = new String[1]; o[0] = 42;` COMPILES AND THROWS `ArrayStoreException`. The
+headline: the static type approved a store the runtime type refuses.
+
+CASE 2 — A METHOD TAKING `Object[]` HANDED A `String[]`. Everything is fine until it tries to store
+something. The failure is at the callee's write, and the cause is at the caller's argument.
+
+CASE 3 — `System.arraycopy` BETWEEN INCOMPATIBLE ARRAYS. It throws MID-COPY, leaving the destination
+partially modified. Rare, and one of the few places an exception leaves observable partial state.
+
+CASE 4 — `new T[10]` DOES NOT COMPILE. Erasure means there is no `T` at runtime to check against, and
+covariance means a check would be needed. `(T[]) new Object[10]` with an unchecked warning is the
+standard workaround, and `ArrayList` uses it.
+
+CASE 5 — `List<T>.toArray()` RETURNING `Object[]`. Casting the result to `String[]` throws
+`ClassCastException` — the ARRAY is genuinely an `Object[]`. Use `toArray(new String[0])`.
+
+CASE 6 — `int[]` IS NOT AN `Object[]`. `Object[] o = intArray;` does not compile, and
+`Arrays.asList(intArray)` gives a size-1 `List<int[]>`.
+
+CASE 7 — GENERIC VARARGS. `T...` becomes `Object[]`, so the array can be aliased and written through
+with the wrong type. That is HEAP POLLUTION, and `@SafeVarargs` is you promising the method only reads.
+
+CASE 8 — A COVARIANT ARRAY PASSED TO SOMETHING THAT SORTS IN PLACE. Reading is safe, writing is not, and
+a sort writes. `Arrays.sort(Object[])` is fine because it only reorders EXISTING elements — but a method
+that substitutes elements is not.
+
+CASE 9 — `Arrays.fill(objectArray, someValue)` where the array is really a `String[]`. Throws on the
+first element, having written none — but `arraycopy` throws having written some.
+
+CASE 10 — RELYING ON THE COMPILER TO CATCH ARRAY TYPE ERRORS. It cannot; that is the entire point.
+Static analysis cannot either, in general.
+
+CASE 11 — CONFUSING ARRAY COVARIANCE WITH COVARIANT RETURN TYPES. The second is sound, because returning
+is reading.
+
+CASE 12 — EXPECTING `List<? extends Number>` TO ACCEPT AN `add`. It does not, and that is the compiler
+enforcing at compile time exactly what `aastore` enforces at runtime.""",
+
+"""5. THE ALTERNATIVES — generics, and when an array is still right
+
+USE `List<T>` INSTEAD OF `T[]` FOR ANYTHING THAT IS AN API. Effective Java Item 28 — "prefer lists to
+arrays" — and the reason is precisely this: generics catch at COMPILE time what arrays defer to runtime.
+A `List<String>` cannot be assigned to a `List<Object>`, so the illegal store never gets written.
+
+USE WILDCARDS TO EXPRESS WHAT YOU ACTUALLY NEED — this is the type system saying the thing arrays could
+not:
+
+    `List<? extends Number>`  — a PRODUCER. You may read `Number`s, you may not add. Covariant, safely.
+    `List<? super Integer>`   — a CONSUMER. You may add `Integer`s, you may only read `Object`s.
+    PECS: PRODUCER EXTENDS, CONSUMER SUPER.
+
+    `Collections.copy(List<? super T> dest, List<? extends T> src)` is the canonical illustration, and
+    it is exactly the operation that is unsound with arrays.
+
+WHEN AN ARRAY IS STILL THE RIGHT CHOICE:
+    PRIMITIVES. `int[]`, `double[]` — no boxing, perfect locality, and no covariance problem at all
+    since primitives have no subtypes.
+    A FIXED-SIZE, PERFORMANCE-CRITICAL BUFFER where the extra indirection of a `List` matters.
+    INSIDE A DATA STRUCTURE you control, as `ArrayList` does — the unchecked cast is fine when a single
+    class guarantees the invariant.
+    VARARGS, which is an array parameter by definition.
+
+FOR CONVERTING BETWEEN THEM:
+    `list.toArray(new String[0])` — supply the runtime type. Zero length is idiomatic AND fastest; the
+    JDK allocates the right size itself.
+    `Arrays.asList(array)` — a fixed-size VIEW, not a copy. `set` writes through; `add` throws.
+    `List.of(array)` — an immutable copy.
+    `Arrays.stream(array).toList()` — a proper list.
+
+FOR GENERIC CODE THAT MUST MAKE AN ARRAY: pass a `IntFunction<T[]>` generator, as
+`Stream.toArray(String[]::new)` does. THE CALLER SUPPLIES THE RUNTIME TYPE, which is the only way to get
+a genuinely typed array out of erased code.
+
+`Class.getComponentType()` AND `Array.newInstance(type, n)` for reflective array creation when you have
+a `Class<T>` in hand.
+
+WHAT TO SAY: "Arrays are covariant — `String[]` is an `Object[]` — which was necessary in 1995 to have a
+single `sort(Object[])` without generics, and it is unsound for WRITING, so every reference-array store
+carries a runtime check and can throw `ArrayStoreException`. Generics deliberately did not repeat it:
+they are invariant, and `? extends T` expresses 'covariant, read-only' at COMPILE time. So I prefer
+lists to arrays for anything that is an API, and keep arrays for primitives and for internals."
+
+""",
+
+"""6. HOW TO AVOID IT — numbered steps
+
+STEP 1 — PREFER `List<T>` TO `T[]` IN ANY API. The compiler then rejects at build time what arrays defer
+to runtime.
+
+STEP 2 — DO NOT WIDEN AN ARRAY'S TYPE. Assigning a `String[]` to an `Object[]` variable is the moment
+the guarantee is lost, even though nothing has gone wrong yet.
+
+STEP 3 — IF A METHOD TAKES `Object[]` AND WRITES TO IT, DOCUMENT THAT IT REQUIRES AN ACTUAL `Object[]`.
+Better: take a `List<Object>`, or a `T[]` with a type parameter.
+
+STEP 4 — USE WILDCARDS TO SAY WHAT YOU MEAN. `? extends T` to read, `? super T` to write. PECS.
+
+STEP 5 — USE ARRAYS FOR PRIMITIVES. `int[]` has no subtypes, so none of this applies, and you avoid
+boxing at the same time.
+
+STEP 6 — `list.toArray(new String[0])` FOR A TYPED ARRAY. Zero length is idiomatic and fastest.
+
+STEP 7 — EXPECT `toArray()` WITH NO ARGUMENT TO GIVE `Object[]`. Casting it to `String[]` throws.
+
+STEP 8 — DO NOT WRITE `new T[n]`. Use `(T[]) new Object[n]` inside a class that guarantees the invariant,
+or take an `IntFunction<T[]>` generator from the caller.
+
+STEP 9 — TREAT AN UNCHECKED-CAST WARNING AS A PROMISE YOU ARE MAKING. Suppress it only where a single
+class controls every write.
+
+STEP 10 — REMEMBER `System.arraycopy` CAN THROW MID-COPY, leaving the destination partly written. Copy
+into a fresh array if partial state would matter.
+
+STEP 11 — WITH GENERIC VARARGS, PREFER `List<T>`; otherwise apply `@SafeVarargs` and verify the method
+only reads.
+
+STEP 12 — KEEP COVARIANT RETURN TYPES SEPARATE IN YOUR HEAD. They are sound, because returning is
+reading.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`String[] s = new String[3]; Object[] o = s; o[0] = 42;` compiles cleanly and throws
+ArrayStoreException at runtime. The compiler approved every line — `o` is declared `Object[]` and an
+Integer is an Object — and at runtime the array remembers it's really a String[] and refuses.
+
+That's a type system admitting it can't keep its promise. Normally "it compiles" means the types are
+consistent; here it means "consistent as far as I can see, and the runtime will have to check".
+
+The reason is that arrays are COVARIANT: String[] is a subtype of Object[]. And that was deliberate in
+1995, because there were no generics, and without covariance you couldn't write a single
+`sort(Object[])` or `fill(Object[], Object)` that worked on any array — you'd need one overload per
+element type, which is impossible for user-defined types. Covariance was the only way to have
+polymorphic array utilities in a language without generics.
+
+The key insight is that covariance is SAFE FOR READING and UNSAFE FOR WRITING. Every element of a
+String[] really is an Object, so reading can never fail. It's the write direction that's unsound. Java's
+response was to keep the subtyping and check every write at runtime — which is why every reference-array
+store compiles to `aastore`, and `aastore` checks the element against the array's actual component type.
+That check is in every Java program, forever. Primitive arrays don't pay it, because int[] has no
+subtypes.
+
+Generics deliberately did NOT repeat this. `List<String>` is not a `List<Object>` — generics are
+INVARIANT, and the compiler rejects the equivalent code rather than deferring. And then wildcards express
+the insight properly: `? extends T` is exactly "covariant, therefore read-only", and the compiler
+enforces at COMPILE time the restriction that arrays enforce at runtime. `? super T` is the mirror. That's
+the whole of PECS — producer extends, consumer super.
+
+There's a second half to why they couldn't be unified: REIFICATION. An array knows its component type at
+runtime — `new String[3].getClass()` is `String[].class` — which is why the check is possible at all. A
+generic type doesn't; erasure means a `List<String>` is just a `List`. So `new T[10]` is forbidden,
+because covariance would let you store the wrong thing and erasure means there's nothing to check
+against. Combine covariance with erasure and you get unsoundness with no runtime defence.
+
+The workaround is in the JDK itself: ArrayList's backing field is `Object[] elementData` with an
+unchecked cast on the way out — the author guaranteeing what the compiler can't. And that leaks into
+the API, which is why `toArray()` returns Object[] and `toArray(new String[0])` exists.
+
+So: prefer lists to arrays for anything that's an API, and keep arrays for primitives and internals.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE ASSIGNMENT THAT COMPILES AND THROWS ─────────────────────────
+    String[] strings = new String[3];
+    Object[] objects = strings;        // ← legal. String[] IS a subtype of Object[].
+    objects[0] = 42;                   // ← COMPILES. The static type says Object,
+    //                                    and 42 boxes to an Integer, which IS an
+    //                                    Object.
+    // → java.lang.ArrayStoreException: java.lang.Integer
+    //   At RUNTIME the array knows it is really a String[] and refuses.
+
+    // ── THE SAME THING WITH GENERICS ────────────────────────────────────
+    List<String> strs = new ArrayList<>();
+    List<Object> objs = strs;          // ✗ DOES NOT COMPILE. Generics are INVARIANT.
+    //                                    Rejected at BUILD time, not deferred.
+    List<? extends Object> readable = strs;   // ✓ legal
+    readable.add("x");                        // ✗ does not compile
+    //       ^^^ `? extends T` IS "covariant, therefore READ-ONLY". The compiler
+    //   enforces at COMPILE time exactly what aastore enforces at RUNTIME.
+
+    // ── WHY COVARIANCE EXISTED AT ALL ───────────────────────────────────
+    // In 1995, with no generics, these had to work on ANY array:
+    void sort(Object[] a)
+    void fill(Object[] a, Object val)
+    // Without covariance you would need one overload per element type — impossible
+    // for user-defined types. Covariance was the ONLY way to have polymorphic array
+    // utilities in a language without generics.
+
+    // ── THE COST YOU PAY EVEN WHEN NOTHING GOES WRONG ───────────────────
+    objects[0] = something;
+    // compiles to `aastore`, and the JVM spec REQUIRES aastore to check the value
+    // against the array's ACTUAL component type on EVERY store. That check is in
+    // every Java program, forever.
+    intArray[0] = 5;
+    // compiles to `iastore` — NO CHECK. int[] has no subtypes, so none is possible
+    // or needed.
+
+    // ── WHAT IS AND IS NOT COVARIANT ────────────────────────────────────
+    Object[] a = new String[1];        // ✓ covariant
+    Number[] b = new Integer[1];       // ✓ covariant
+    Object[] c = new int[1];           // ✗ int[] IS an Object, but NOT an Object[]
+    Object   d = new int[1];           // ✓ every array is an Object
+
+    // ── WHY new T[10] IS FORBIDDEN ──────────────────────────────────────
+    <T> T[] make() { return new T[10]; }        // ✗ "generic array creation"
+    // Covariance would let you store the wrong thing; ERASURE means there is no T at
+    // runtime to check against. Unsoundness with no possible runtime defence.
+    <T> T[] make() { return (T[]) new Object[10]; }   // ✓ with an UNCHECKED warning
+    // ArrayList does exactly this:
+    transient Object[] elementData;             // ← the real field
+    public E get(int i) { return (E) elementData[i]; }   // ← unchecked cast out
+    // The AUTHOR guarantees nothing of the wrong type enters. The compiler cannot.
+
+    // ── AND IT LEAKS INTO THE API ───────────────────────────────────────
+    Object[] o = list.toArray();                 // Object[], because there is no T
+    //                                              at runtime to make an array of
+    String[] s = (String[]) list.toArray();      // → ClassCastException. The array
+    //                                              genuinely IS an Object[].
+    String[] s = list.toArray(new String[0]);    // ✓ you supply the RUNTIME type.
+    //                                              Zero length is idiomatic AND
+    //                                              fastest — the JDK allocates the
+    //                                              right size itself.
+    String[] s = stream.toArray(String[]::new);  // ✓ a generator, same idea
+
+    // ── THE ONE THAT LEAVES PARTIAL STATE ───────────────────────────────
+    Object[] dest = new String[3];
+    System.arraycopy(new Object[]{"a", "b", 42}, 0, dest, 0, 3);
+    // → ArrayStoreException, AFTER "a" and "b" have already been written.
+    //   One of the few places in the JDK where an exception leaves the target
+    //   observably half-modified.
+
+    // ── AND A DIFFERENT, SOUND THING WITH THE SAME WORD ─────────────────
+    class Base   { Object clone() { ... } }
+    class Derived extends Base { @Override Derived clone() { ... } }
+    //                          ^^^^^^^ a COVARIANT RETURN TYPE. Perfectly sound,
+    //   because returning is READING, and covariance is safe for reading.""",
+
+"""9. THE TRACE — the same operation, three type systems
+
+TRACE 1 — WHERE THE GUARANTEE IS LOST:
+
+    line                          static type of `objects`   actual object      safe?
+    ---------------------------------------------------------------------------------
+    String[] strings = new ...     String[]                   String[]           yes
+    Object[] objects = strings     Object[]                   STILL a String[]   ← HERE
+    Object o = objects[0]          reading an Object          String[]           yes —
+                                                                                 always
+    objects[0] = "hi"              storing a String           String[]           yes
+    objects[0] = 42                storing an Integer         String[]           NO
+    ---------------------------------------------------------------------------------
+    NOTHING WENT WRONG ON THE ASSIGNMENT LINE — it is where the static type stopped describing the
+    object, and where the compiler's knowledge and the runtime's diverged. Rows 3 and 4 are still fine.
+    ONLY ROW 5 IS UNSOUND, AND ONLY BECAUSE IT IS A WRITE.
+
+TRACE 2 — THE SAME FOUR OPERATIONS UNDER GENERICS:
+
+    line                              generics                arrays
+    ---------------------------------------------------------------------------------
+    widen the reference               COMPILE ERROR            allowed
+    read an element                   allowed via ? extends    allowed
+    write a correct element           blocked by ? extends     allowed, check passes
+    write a wrong element             COMPILE ERROR            ArrayStoreException
+    ---------------------------------------------------------------------------------
+    GENERICS FAIL IN COLUMN ONE, AT BUILD TIME. Arrays fail in row four, at runtime, possibly in
+    production, possibly on a rare code path. The information is the same; only the MOMENT differs, and
+    the moment is the entire value.
+
+    NOTE ALSO THAT `? extends` BLOCKS ROW 3 — a write that would have been fine. That is the price of
+    compile-time enforcement: it is conservative, and it refuses some safe programs. Arrays are
+    permissive and check later. NEITHER IS FREE.
+
+TRACE 3 — WHY `new T[10]` CANNOT EXIST, followed through:
+
+    step                                            what is known at runtime
+    ---------------------------------------------------------------------------------
+    `new String[10]`                                 the array's class IS String[]
+    `aastore` on it                                  can compare against String
+    → the covariance check is POSSIBLE               ✓
+    ---------------------------------------------------------------------------------
+    `new T[10]` where T is erased to Object          the array's class would be Object[]
+    `aastore` on it                                  can only compare against Object
+    → EVERY store passes, whatever the type          ✗ NO CHECK IS POSSIBLE
+    ---------------------------------------------------------------------------------
+    SO COVARIANCE PLUS ERASURE WOULD GIVE UNSOUNDNESS WITH NO RUNTIME DEFENCE AT ALL — the write would
+    succeed and the wrong type would sit in the array until something read it and got a
+    ClassCastException far away. The language forbids the construction rather than allow that, and
+    `(T[]) new Object[10]` makes the author take responsibility explicitly.
+
+TRACE 4 — THE PARTIAL COPY, which is the rarest and nastiest consequence:
+
+    System.arraycopy(src, 0, dest, 0, 3)   where dest is really a String[]
+    element  value   store            result
+    ---------------------------------------------------------------------------------
+    0        "a"     assignable       WRITTEN
+    1        "b"     assignable       WRITTEN
+    2        42      NOT assignable   ArrayStoreException
+    ---------------------------------------------------------------------------------
+    `dest` IS NOW ["a", "b", null]. The exception propagated and the destination is observably
+    half-modified — one of the very few places in the JDK where a throw leaves partial state. (Contrast
+    `Arrays.fill`, which throws on the FIRST element and writes nothing.)
+
+WHAT PRODUCED WHAT:
+    COVARIANCE                 produced the widening in trace 1 — necessary in 1995, unsound for writes.
+    THE aastore CHECK          produced the exception instead of memory corruption, and a per-write cost
+                               in every Java program.
+    INVARIANCE + WILDCARDS     produced trace 2's left column: the same information, moved to build time.
+    REIFICATION vs ERASURE     produced trace 3, and therefore the ban on generic array creation.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Arrays are COVARIANT and REIFIED: `String[]` is an `Object[]`, and knows its component type at
+    runtime.
+    Generics are INVARIANT and ERASED: `List<String>` is not a `List<Object>`, and there is no `T` at
+    runtime.
+    Every reference-array store is `aastore`, which checks the component type. Primitive stores do not.
+    `? extends T` = covariant and read-only; `? super T` = contravariant and write-only. PECS.
+    `new T[n]` is a compile error; `(T[]) new Object[n]` with an unchecked cast is the workaround, and
+    `ArrayList` uses it.
+    `toArray()` returns `Object[]`; `toArray(new String[0])` supplies the runtime type and is fastest.
+
+THE #1 MISTAKE: widening an array's declared type and then writing to it. `Object[] o = stringArray` is
+where the guarantee is lost.
+
+THE #2 MISTAKE: expecting the compiler to catch it. It cannot — deferring the check to runtime is the
+whole design.
+
+THE #3 MISTAKE: `(String[]) list.toArray()`. The array genuinely IS an `Object[]`; use the typed
+overload.
+
+THE #4 MISTAKE: `new T[n]`. Forbidden, because covariance plus erasure would leave no check possible.
+
+THE #5 MISTAKE: treating an unchecked-cast warning as noise. It is you taking responsibility for what
+the compiler cannot verify.
+
+THE #6 MISTAKE: `Object[]` parameters on a method that writes. Take a `List` or a `T[]`.
+
+THE #7 MISTAKE: assuming `int[]` is an `Object[]`. It is an `Object`, and not an `Object[]` — which is
+also why `Arrays.asList(intArray)` gives a size-1 list.
+
+THE #8 MISTAKE: expecting `System.arraycopy` to be atomic. It can throw mid-copy with the destination
+partly written.
+
+THE #9 MISTAKE: generic varargs without `@SafeVarargs`, or with it and without checking. `T...` is an
+`Object[]` and can be written through.
+
+THE #10 MISTAKE: confusing array covariance with covariant RETURN types. The latter is sound, because
+returning is reading.
+
+THE #11 MISTAKE: reaching for arrays in an API because they seem faster. Use `List` at boundaries and
+arrays for primitives and internals.
+
+ONE-SENTENCE TAKEAWAY: arrays are COVARIANT — `String[]` is an `Object[]` — because in 1995 there were no
+generics and that was the only way to write a single `sort(Object[])`, and covariance is sound for
+READING and unsound for WRITING, so Java keeps the subtyping and checks every reference-array store at
+runtime with `aastore`, throwing `ArrayStoreException` on code the compiler approved; generics
+deliberately did not repeat the mistake — they are INVARIANT, with `? extends T` expressing "covariant,
+therefore read-only" at COMPILE time — and because arrays are REIFIED while generics are ERASED, `new
+T[n]` is forbidden outright, since covariance plus erasure would produce unsoundness with no runtime
+check possible at all, which is why `ArrayList` holds an `Object[]` behind an unchecked cast and why
+`toArray()` hands you an `Object[]`.""",
+]
