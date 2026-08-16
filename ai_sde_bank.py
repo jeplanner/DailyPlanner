@@ -198188,6 +198188,2170 @@ test, and fix by REMOVING CAPABILITY rather than by adding a sentence to the sys
 scoping defeats every phrasing at once.""",
 ]
 
+_EX_P1AO["Why do we need a separate validation set AND a test set?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the moment you choose using a set, that set stops being honest
+
+You are hiring, and you have one final interview question you have never shown anyone. It is your
+clean signal.
+
+Now you use that question to decide between twelve candidate interview FORMATS - you try each format,
+see which produces the best scores on that question, and keep the winner. The question has now been
+used to make a choice. Whatever score the winner got is partly the format being good and partly the
+question happening to suit it, and you have no way left to tell those apart, because you have no
+unused question.
+
+THAT IS THE ENTIRE ARGUMENT FOR THREE SPLITS.
+    TRAIN      - the model fits its parameters here.
+    VALIDATION - YOU make your choices here: which algorithm, which hyperparameters, when to stop,
+                 which features, which of your seventeen experiments to keep.
+    TEST       - looked at ONCE, at the very end, to report a number.
+
+Train/test alone gives you nowhere to make choices. So people make them on the test set, and the
+reported number becomes optimistic by an amount nobody can measure.
+
+TERMS AS THEY APPEAR:
+- TRAINING: the optimiser adjusting weights to fit data.
+- MODEL SELECTION: a human (or a search) choosing between trained models. THIS IS ALSO FITTING - it
+  is fitting your choices to data - and it consumes the honesty of whatever set it uses.
+- OPTIMISTIC BIAS: the gap between a score measured on the set used to select, and the true
+  performance on fresh data. Always positive, never negative.
+- GENERALISATION: performance on data from the same distribution that the model has never seen.
+- LEAKAGE: any path by which information from the evaluation data influenced the model.""",
+
+    """2. THE INTUITION - measured, with models that are provably all identical
+
+Here is the cleanest possible demonstration. I created K models that are ALL EXACTLY THE SAME - each
+is a coin flip with true accuracy 50%. There is no best model; there is nothing to select. I scored
+each on a 200-example evaluation set, kept the highest scorer, and then measured that same model on a
+fresh 20,000-example set.
+
+ANY SCORE ABOVE 50% IS PURE SELECTION BIAS, because by construction there is nothing else it could be.
+
+Averaged over 200 repeats so a single run's luck cannot mislead:
+
+     models tried     mean best-on-eval     mean true     mean optimism
+                1                 49.9%         50.0%           -0.1pp
+                2                 51.8%         50.0%            1.8pp
+                5                 54.1%         50.0%            4.1pp
+               20                 56.5%         50.0%            6.5pp
+              100                 58.8%         50.0%            8.8pp
+
+TRY ONE MODEL AND THE MEASUREMENT IS HONEST: 49.9% against a true 50.0%. That is the K=1 row and it
+is the whole point - a single evaluation with no selection is unbiased.
+
+TRY A HUNDRED AND YOU REPORT 58.8% FOR A MODEL THAT IS A COIN FLIP. Nearly nine points of pure
+fantasy, and every model in the pool is worthless.
+
+THE MECHANISM: max() of K noisy estimates is a BIASED estimate of the underlying value. The maximum
+of a sample is systematically above the mean of what was sampled, and the more you sample the further
+above it goes. YOU ARE NOT MEASURING THE BEST MODEL; YOU ARE MEASURING THE LUCKIEST MEASUREMENT.
+
+AND K IS ALWAYS BIGGER THAN YOU THINK. A hyperparameter sweep of 5 learning rates x 4 depths x 3
+regularisation strengths is K = 60. Every 'let me just try one more thing' is another K. Every early
+stopping decision is a selection over epochs. THE NUMBER OF TIMES YOU LOOKED IS THE NUMBER THAT SETS
+THE BIAS, and almost nobody counts it.""",
+
+    """3. THE SECOND QUESTION - does the winner actually turn out to be the best model?
+
+The section above used identical models to isolate the bias. Now the realistic case: ten models with
+genuinely different abilities, from 60% up to 72%. There IS a best model. How often does validation
+find it?
+
+     validation size     picked the truly-best model     mean regret
+                  50                           27.8%          3.91pp
+                 200                           52.8%          1.65pp
+                2000                           90.8%          0.19pp
+
+('Regret' is how much true accuracy you gave up by picking the model you picked instead of the actual
+best one.)
+
+WITH 50 VALIDATION EXAMPLES YOU PICK THE RIGHT MODEL BARELY MORE THAN A QUARTER OF THE TIME, and you
+lose almost 4 points of accuracy on average by choosing wrong. That is a bigger loss than most of the
+differences people agonise over between architectures.
+
+THIS IS THE OTHER HALF OF THE VALIDATION-SET ARGUMENT, and it is the half people forget. A validation
+set does two jobs:
+    (a) it absorbs the optimistic bias so the test set stays clean, and
+    (b) it has to be BIG ENOUGH TO ACTUALLY RANK YOUR CANDIDATES.
+A tiny validation set fails at (b) even though it succeeds at (a). You get an honest test number for a
+model you chose essentially at random.
+
+HOW BIG IS BIG ENOUGH? The standard error of an accuracy estimate on n examples is about
+sqrt(p(1-p)/n). At p = 0.65 that is 6.7pp at n = 50, 3.4pp at n = 200, and 1.1pp at n = 2000. IF YOUR
+MODELS DIFFER BY LESS THAN TWO STANDARD ERRORS, YOUR VALIDATION SET CANNOT TELL THEM APART, and the
+'winner' is noise. My models differed by 1-2 points, which is why n = 50 was hopeless and n = 2000 was
+reliable.
+
+THE PRACTICAL RULE: before you trust a validation comparison, compute the standard error and check
+that the gap you are acting on is bigger than it.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - THE TEST SET BECOMES A VALIDATION SET BY EROSION. You look at test once. The number
+disappoints. You change something and look again. Nothing announced itself as a violation, and the
+test set is now a validation set with K = 2. By the tenth time it is worthless. THE ONLY DEFENCE IS
+PROCEDURAL: lock it, and count every look.
+
+FAILURE 2 - THE SPLIT IS RANDOM WHEN THE DATA IS NOT INDEPENDENT.
+    - TIME SERIES: a random split lets the model train on the future and be tested on the past. Split
+      by time, always.
+    - GROUPED DATA: multiple rows per patient, per user, per document. A random split puts the same
+      patient in train and test, and the model recognises the patient rather than the disease. Split
+      by GROUP.
+    - NEAR-DUPLICATES: scraped datasets are full of them. A duplicate straddling the split is leakage.
+
+FAILURE 3 - PREPROCESSING FITTED BEFORE THE SPLIT. Computing a mean and standard deviation, a
+vocabulary, a target encoding, or a feature-selection step on the FULL dataset and then splitting
+leaks test information into training. Fit every transformer on train only, then apply it to
+validation and test.
+
+FAILURE 4 - THE VALIDATION SET IS TOO SMALL TO RANK. Measured above: 27.8% correct selection at
+n = 50. An honest test number for a randomly chosen model is not a success.
+
+FAILURE 5 - DISTRIBUTION SHIFT MAKES ALL THREE SPLITS AGREE AND ALL THREE WRONG. If train, validation
+and test all come from the same historical snapshot and production data has moved, every number is
+optimistic and the splits cannot tell you. THE THREE-WAY SPLIT PROTECTS AGAINST SELECTION BIAS, NOT
+AGAINST THE WORLD CHANGING.
+
+FAILURE 6 - CLASS IMBALANCE AND SMALL SPLITS. With 2% positives and a 200-row validation set you have
+about 4 positive examples. Stratify the split, and expect your recall estimate to be worthless
+regardless.
+
+FAILURE 7 - TREATING THE TEST SCORE AS A POINT ESTIMATE. It has a standard error too. Report a
+confidence interval, or at minimum say the test set size.""",
+
+    """5. THE ALTERNATIVES - when three fixed splits is not the right structure
+
+K-FOLD CROSS-VALIDATION. Split the training data into k parts; train k times, each time holding out
+one part for validation; average. Uses all the data for both roles and gives you a VARIANCE estimate
+as well as a mean. Costs k times the training compute. THE DEFAULT WHEN DATA IS SCARCE AND TRAINING
+IS CHEAP - which is most classical ML and almost no deep learning.
+
+NESTED CROSS-VALIDATION. An outer loop for evaluation, an inner loop for selection. This is the
+statistically correct way to do model selection AND get an unbiased estimate from limited data, and it
+costs k_outer x k_inner trainings. Worth naming in an interview to show you know the fully correct
+answer even if you would not pay for it.
+
+TIME-SERIES / ROLLING-ORIGIN VALIDATION. Train on weeks 1-4, validate on week 5; train on 1-5,
+validate on 6; and so on. Respects causality. THE ONLY CORRECT OPTION FOR TEMPORAL DATA, and using
+plain k-fold there is one of the most common serious mistakes in applied ML.
+
+GROUP K-FOLD. Same as k-fold but every group stays entirely within one fold.
+
+TRAIN / VALIDATION ONLY, WITH THE TEST SET COMING FROM PRODUCTION. Increasingly the honest industrial
+answer: validate offline, then run an A/B test or shadow deployment. The 'test set' is real traffic,
+which cannot be overfitted and measures what actually matters.
+
+A HOLD-OUT YOU NEVER LOOK AT UNTIL LAUNCH. Some teams keep a sealed set opened only once, at the
+release decision. Crude and extremely effective, because the procedure is what protects it, not the
+statistics.
+
+TYPICAL RATIOS: 60/20/20 for a few thousand rows; 80/10/10 for tens of thousands; 98/1/1 for millions,
+because 1% of ten million is 100,000 examples and that is far more than enough precision. THE
+VALIDATION AND TEST SETS SHOULD BE SIZED BY THE PRECISION YOU NEED, NOT BY A PERCENTAGE.""",
+
+    """6. HOW TO SET IT UP - numbered steps
+
+STEP 1 - DECIDE THE SPLIT AXIS BEFORE THE RATIOS. Random? By time? By user or patient or document? By
+geography? THE AXIS IS THE DECISION THAT DETERMINES WHETHER THE SPLIT MEANS ANYTHING; the ratio is a
+detail.
+
+STEP 2 - SPLIT FIRST, BEFORE ANY PREPROCESSING. Any statistic computed over the whole dataset before
+splitting is leakage.
+
+STEP 3 - SIZE THE VALIDATION SET BY THE DIFFERENCE YOU NEED TO DETECT. Standard error is about
+sqrt(p(1-p)/n). To resolve a 2-point difference you want a standard error well under 1 point, so
+n in the low thousands. My measurement: 50 examples picked the best of ten models 27.8% of the time,
+2,000 examples 90.8%.
+
+STEP 4 - PUT THE TEST SET SOMEWHERE AWKWARD TO REACH. A separate file, a locked bucket, a CI job that
+runs once. Make the honest path easier than the dishonest one.
+
+STEP 5 - DO ALL SELECTION ON VALIDATION. Hyperparameters, architecture, features, early stopping,
+threshold tuning, prompt variants. ALL OF IT.
+
+STEP 6 - COUNT YOUR SELECTIONS. Write down K. If K is in the hundreds, your validation score is
+optimistic by several points and you should hold out a second validation set to check it.
+
+STEP 7 - LOOK AT TEST ONCE, AND REPORT IT WITH ITS UNCERTAINTY. 'Test accuracy 84.2% on 2,000
+examples, standard error 0.8pp.' If you then change the model, say plainly that the test number is now
+a validation number.
+
+STEP 8 - EXPECT TEST BELOW VALIDATION, AND SIZE THE GAP. A 1-2 point drop is normal selection bias. A
+10-point drop means something is wrong - too many selections, a leak, or a bad split axis.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would actually say out loud
+
+'Because training isn't the only thing that fits the data - choosing is too.
+
+The test set is meant to be your one honest estimate of performance on data the model has never seen.
+But while building a model you make hundreds of choices: which algorithm, which hyperparameters, when
+to stop, which features. If you make those choices by looking at the test set, you've fitted your
+choices to it, and its score stops being an estimate of generalisation. You need a third set to make
+choices against, so the test set stays untouched.
+
+I measured how bad it gets. I made K models that were all identical - every one a coin flip with true
+accuracy 50% - scored them on a 200-example set, kept the best, and then measured that model properly.
+With one model, the reported score was 49.9% against a true 50%: honest. With five, 54.1%. With a
+hundred, 58.8%. Nearly nine points of pure selection bias on models that are all worthless, because
+the maximum of K noisy estimates is systematically above the truth and grows with K. And K is always
+bigger than people think - a sweep of five learning rates by four depths by three regularisation
+settings is sixty.
+
+There's a second reason for the validation set that people forget, which is that it has to be big
+enough to actually rank the candidates. I took ten models with true abilities from 60% to 72% and
+asked how often validation picks the genuinely best one. With 50 validation examples: 27.8% of the
+time, and the average regret was 3.9 points of accuracy. With 2,000: 90.8%. So a small validation set
+can leave your test number perfectly honest for a model you chose essentially at random. The check is
+whether the gap you're acting on exceeds the standard error, which is roughly sqrt(p times one-minus-p
+over n) - about 6.7 points at n=50 and 1.1 at n=2000.
+
+The failure modes I'd watch for: splitting randomly when the data is temporal or grouped, so the model
+trains on the future or recognises the same patient; fitting a scaler or a vocabulary before the split;
+and the slow erosion where you look at test, get a disappointing number, change something, and look
+again - after ten rounds it's just a validation set with extra steps.
+
+And if data is scarce I'd use k-fold cross-validation instead of a fixed validation split, with a
+sealed test set on top, or nested cross-validation if I need the fully correct version.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE SELECTION-BIAS EXPERIMENT - short enough to reproduce in an interview:
+
+    import random
+
+    def evaluate(true_acc, n):
+        # simulate scoring a model of known true accuracy on n examples
+        return sum(1 for _ in range(n) if random.random() < true_acc) / n
+
+    TRUE = 0.50
+    for k in (1, 2, 5, 20, 100):
+        optimism = []
+        for _ in range(200):                       # repeat so one run's luck cannot mislead
+            scores = [evaluate(TRUE, 200) for _ in range(k)]
+            optimism.append(max(scores) - TRUE)    # <-- THE WHOLE EFFECT IS THIS max()
+        print(k, sum(optimism) / len(optimism))
+
+    # every model has the SAME true accuracy, so there is nothing to select. Whatever
+    # max() returns above TRUE is bias, by construction. That is what makes this a
+    # proof rather than an illustration.
+
+THE CORRECT SPLIT, in the order the steps must happen:
+
+    from sklearn.model_selection import train_test_split
+
+    # 1. SPLIT FIRST. Nothing has been computed over the data yet.
+    train_val, test = train_test_split(data, test_size=0.2, random_state=0,
+                                       stratify=data.label)     # stratify: keep class
+                                                                # balance in every split
+    train, val = train_test_split(train_val, test_size=0.25, random_state=0,
+                                  stratify=train_val.label)     # 0.25 of 0.8 = 0.2 overall
+
+    # 2. FIT PREPROCESSING ON TRAIN ONLY.
+    scaler = StandardScaler().fit(train[features])   # <-- .fit() sees TRAIN. Fitting it on
+                                                     #     `data` would leak test statistics
+                                                     #     into every training example.
+    Xtr = scaler.transform(train[features])
+    Xva = scaler.transform(val[features])            # transform, never fit_transform, here
+    Xte = scaler.transform(test[features])
+
+    # 3. SELECT ON VALIDATION.
+    best = max(candidates, key=lambda m: m.fit(Xtr, ytr).score(Xva, yva))
+
+    # 4. LOOK AT TEST ONCE.
+    print("test:", best.score(Xte, yte))
+
+THE GROUPED / TEMPORAL VERSIONS, which are what real data usually needs:
+
+    from sklearn.model_selection import GroupShuffleSplit, TimeSeriesSplit
+
+    # every row for a given patient lands in exactly one side of the split
+    gss = GroupShuffleSplit(test_size=0.2, random_state=0)
+    tr_idx, te_idx = next(gss.split(X, y, groups=df.patient_id))
+
+    # rolling origin: fold i trains on everything before it and validates on what follows
+    for tr_idx, va_idx in TimeSeriesSplit(n_splits=5).split(X):
+        ...                                          # NEVER shuffle temporal data
+
+THE STANDARD ERROR, so you can size a validation set instead of guessing:
+
+    import math
+    def se(p, n):
+        return math.sqrt(p * (1 - p) / n)
+    # se(0.65, 50)   = 0.067  -> cannot resolve a 2-point difference
+    # se(0.65, 2000) = 0.011  -> can""",
+
+    """9. A TRACE - one run of the experiment, and the line-by-line mapping
+
+A SINGLE RUN, K = 5, evaluation set of 200, every model a true 50% coin flip:
+
+    model 1 scores 96/200 = 48.0%
+    model 2 scores 104/200 = 52.0%
+    model 3 scores  99/200 = 49.5%
+    model 4 scores 106/200 = 53.0%     <-- the winner
+    model 5 scores 101/200 = 50.5%
+
+    reported score for 'the best model': 53.0%
+    the same model on a fresh 20,000 examples: 50.2%
+    OPTIMISM: 2.8 percentage points, from a model that is provably a coin flip.
+
+Model 4 did not do anything. It got six extra heads. And notice that the SPREAD of the five scores -
+48.0% to 53.0% - is not a spread of ability, it is entirely the standard error, which at n = 200 and
+p = 0.5 is 3.5pp. FIVE DRAWS FROM A DISTRIBUTION WITH A 3.5-POINT STANDARD DEVIATION WILL SPAN ABOUT
+FIVE POINTS, EVERY TIME, no matter what the models are.
+
+THE FULL MEASURED TABLE, from 200 repeats of that procedure:
+
+     K       mean best-on-eval     optimism
+     1                   49.9%       -0.1pp     <- one look is honest
+     2                   51.8%        1.8pp
+     5                   54.1%        4.1pp
+    20                   56.5%        6.5pp
+   100                   58.8%        8.8pp
+
+AND THE SELECTION-QUALITY TABLE, ten models spanning 60%-72% true ability:
+
+    validation n = 50    -> picks the truly-best model 27.8% of the time, regret 3.91pp
+    validation n = 200   -> 52.8%, regret 1.65pp
+    validation n = 2000  -> 90.8%, regret 0.19pp
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `evaluate(TRUE, 200)`
+            produced '96/200 = 48.0%' and the other four scores. Its spread is the standard error
+            sqrt(0.5*0.5/200) = 3.5pp, which is where the whole illusion of 'differences between
+            models' comes from.
+    `[evaluate(TRUE, 200) for _ in range(k)]`
+            produced the five-model list. Increasing k is what walked the table from 49.9% to 58.8% -
+            nothing else in the code changed.
+    `max(scores)`
+            produced 53.0%, the reported number. THIS IS THE LINE THAT CREATES THE BIAS. Replace it
+            with `scores[0]` - pick a model without looking - and the optimism column becomes zero at
+            every k.
+    `- TRUE`
+            produced the 2.8pp. In real work you cannot compute this column, because you do not know
+            TRUE - which is exactly why you need a set you have not selected on.
+    `for _ in range(200)` (the repeat loop)
+            turned the single noisy run into the mean column. Without it, K=1 would sometimes show
+            positive optimism by luck and the table would be unreadable.
+    `evaluate(a, size) for a in ABILITIES` then `max(range(...), key=...)`
+            produced the 27.8% / 52.8% / 90.8% selection-quality rows. `size` is the ONLY thing that
+            changed between them, which is the argument for making the validation set large.
+    `stratify=data.label` in the split
+            does not appear in these numbers at all - it matters for imbalanced data, and its absence
+            is a separate failure mode from the one measured here.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    MEASURED - optimism from selecting the best of K identical (true 50%) models on 200 examples,
+    averaged over 200 repeats:
+        K=1: -0.1pp    K=2: +1.8pp    K=5: +4.1pp    K=20: +6.5pp    K=100: +8.8pp
+
+    MEASURED - probability of selecting the truly-best of ten models spanning 60%-72%:
+        n=50: 27.8% (regret 3.91pp)   n=200: 52.8% (1.65pp)   n=2000: 90.8% (0.19pp)
+
+    STANDARD ERROR of an accuracy estimate: sqrt(p(1-p)/n). At p=0.65 -> 6.7pp at n=50, 3.4pp at
+    n=200, 1.1pp at n=2000. Two models closer than about two standard errors are indistinguishable.
+
+THE #1 MISTAKE: tuning on the test set. It converts your one honest number into a validation number
+and you lose the ability to detect that it happened.
+
+THE #2 MISTAKE: not counting K. Every hyperparameter combination, every architecture tried, every
+early-stopping decision. A 60-point sweep carries roughly 6-7 points of optimism at a 200-example
+validation set.
+
+THE #3 MISTAKE: a validation set too small to rank the candidates. 27.8% correct selection at n=50 -
+an honest test score for a model chosen close to at random.
+
+THE #4 MISTAKE: splitting randomly on temporal or grouped data. Training on the future, or on the
+same patient. This is the most damaging error on this list because the resulting numbers look
+excellent.
+
+THE #5 MISTAKE: fitting scalers, vocabularies, imputers or target encodings before the split.
+
+THE #6 MISTAKE: believing three splits protect you from distribution shift. They protect against
+selection bias only. If production has moved away from your snapshot, all three numbers are wrong
+together.
+
+THE #7 MISTAKE: reporting a test score as a point with no uncertainty. Give the set size and the
+standard error, or the number invites false precision.
+
+THE #8 MISTAKE: not knowing the alternatives. K-fold when data is scarce, group k-fold when rows are
+correlated, rolling-origin for time series, nested CV when you need selection AND an unbiased estimate
+from limited data.
+
+ONE-SENTENCE TAKEAWAY: fitting parameters and choosing between models are both fitting, so each needs
+its own data - validation absorbs the optimism of choosing (measured at up to 8.8 points for a hundred
+candidates) and test stays sealed for one honest look at the end, with the validation set sized large
+enough that the winner it picks is actually the best model rather than the luckiest measurement.""",
+]
+
+_EX_P1AO["Why can a model with 99% accuracy be useless?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - accuracy compares you to "always guess the majority"
+
+ACCURACY is the fraction of predictions you got right. It is the first metric anyone learns and it is
+the wrong one for most real problems, for a reason that is pure arithmetic.
+
+    accuracy = (true positives + true negatives) / everything
+
+THE PROBLEM IS THAT `true negatives` IS IN THE NUMERATOR. When one class dominates, a model that
+always predicts that class collects an enormous pile of true negatives and scores brilliantly while
+doing nothing at all.
+
+    99% of transactions are legitimate -> "never flag fraud" is 99% accurate.
+    99.9% of scans are healthy         -> "never diagnose disease" is 99.9% accurate.
+    99.99% of requests are benign      -> "never block anything" is 99.99% accurate.
+
+    NONE OF THOSE MODELS CONTAINS ANY CODE. They are a constant, and on the metric everybody quotes
+    they beat most real systems.
+
+THE EVERYDAY VERSION: a smoke alarm that never goes off is correct on 99.99% of days. It is also
+useless, and describing it as "99.99% accurate" is technically true and actively misleading.
+
+THE PRECISE STATEMENT, and it is worth having: ACCURACY'S IMPLICIT BASELINE IS "ALWAYS PREDICT THE
+MAJORITY CLASS". Reporting accuracy without that baseline is like reporting a temperature without
+saying which scale. And the baseline is not fixed - it is your class balance, which changes between
+your test set and production.
+
+TERMS AS THEY APPEAR:
+- CLASS IMBALANCE: one class far more common than another. The normal case in fraud, disease,
+  moderation, defects, churn, and almost anything worth detecting.
+- BASE RATE / PREVALENCE: how common the positive class is.
+- BALANCED ACCURACY: the average of the per-class recalls. 0.5 for any constant classifier.
+- MCC: the Matthews correlation coefficient. 0 for any constant classifier, at any imbalance.""",
+
+    """2. THE INTUITION - one detector, four worlds, measured
+
+I took a SINGLE detector - 80% recall, 2% false-positive rate - and ran it at four class balances over
+200,000 examples. THE DETECTOR IS IDENTICAL IN EVERY ROW; only how rare positives are changes:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+THREE THINGS TO READ, AND THE SECOND IS THE ONE THAT SHOULD ALARM YOU.
+
+FIRST: at a 0.1% positive rate, "ALWAYS PREDICT ZERO" SCORES 99.90% ACCURACY. A model with no code in
+it.
+
+SECOND: AT BOTH 1% AND 0.1%, THE USELESS MODEL HAS HIGHER ACCURACY THAN THE REAL DETECTOR. 98.98%
+against 97.82%, and 99.90% against 97.98%. OPTIMISING ACCURACY WOULD ACTIVELY SELECT THE MODEL THAT
+DOES NOTHING. This is not "accuracy is uninformative"; it is "accuracy points the wrong way".
+
+THIRD: look along the DETECTOR rows. Its recall stayed at ~80% and its false-positive rate at 2% in
+every world - it did not change at all. Its PRECISION went 97.5%, 81.4%, 29.3%, 3.6%. THE MODEL IS
+FIXED AND THE METRIC MOVED, because precision depends on how many negatives there are to generate
+false positives from.
+
+    THAT IS WHY A FRAUD MODEL THAT LOOKED FINE IN TESTING FLOODS OPERATIONS WITH FALSE ALARMS IN
+    PRODUCTION: the test set was balanced by resampling and production is not.
+
+AND NOTE WHICH METRICS BEHAVED. Recall is flat across all four rows and balanced accuracy is flat at
+~0.89 - both are averages of per-class RATES and so are prevalence-independent. F1 and MCC both fall,
+because both contain precision. AND BOTH SCORE EXACTLY 0.000 FOR THE DO-NOTHING MODEL AT EVERY
+PREVALENCE, which is precisely the property accuracy lacks.""",
+
+    """3. WHY THE THRESHOLD MAKES A SINGLE NUMBER MEANINGLESS TOO
+
+Even setting imbalance aside, a classifier that outputs a SCORE has no single accuracy. Moving the
+threshold moves everything. I swept it on one fixed set of 20,000 scores at a 10% positive rate:
+
+     threshold      TP      FP      FN      TN     precision     recall        F1
+          -1.0   1,958  15,113      23   2,906         11.5%      98.8%     0.206
+           0.0   1,765   8,954     216   9,065         16.5%      89.1%     0.278
+           0.5   1,530   5,521     451  12,498         21.7%      77.2%     0.339
+           1.0   1,174   2,787     807  15,232         29.6%      59.3%     0.395
+           1.5     763   1,178   1,218  16,841         39.3%      38.5%     0.389
+           2.5     191     117   1,790  17,902         62.0%       9.6%     0.167
+
+THE MODEL DID NOT CHANGE ONCE IN THAT TABLE. The scores are identical in every row. Precision went
+from 11.5% to 62.0% and recall from 98.8% to 9.6%, by moving one number.
+
+    SO "OUR MODEL IS 90% ACCURATE" IS NOT A CLAIM ABOUT A MODEL. It is a claim about a model AND a
+    threshold AND a class balance, and two of those three are usually unstated.
+
+WHAT THIS MEANS PRACTICALLY - always report a PAIR at a stated operating point:
+    "precision 29.6% at recall 59.3%, threshold 1.0"
+
+AND CHOOSE THE OPERATING POINT FROM THE COSTS, because that is a business decision and not a modelling
+one:
+    A FALSE NEGATIVE IS EXPENSIVE (cancer screening, fraud, security) -> threshold LOW, maximise
+    recall, and accept false positives because there is a second stage - a human, a confirmatory test -
+    to filter them.
+    A FALSE POSITIVE IS EXPENSIVE (spam, auto-blocking accounts, paging someone at 3am) -> threshold
+    HIGH, maximise precision.
+    THERE IS A CAPACITY CONSTRAINT (a review team that handles 500 cases a day) -> set the threshold so
+    the VOLUME matches the capacity and report precision at that volume. THIS IS THE MOST COMMON REAL
+    SITUATION AND IT IS ALMOST NEVER TAUGHT.
+
+NOTE THAT F1 PEAKS AT THRESHOLD 1.0 IN THAT TABLE, at 0.395. F1 assumes precision and recall matter
+EQUALLY, which is a strong and usually false assumption. If a missed fraud costs a hundred times a
+false alarm, the F1-optimal threshold is the wrong one, and F-beta - which weights recall by beta -
+exists for exactly that.""",
+
+    """4. WHAT TO REPORT INSTEAD
+
+    metric                 formula                             constant classifier scores
+    ------------------------------------------------------------------------------------
+    accuracy               (TP+TN)/N                           the majority class's share
+    precision              TP/(TP+FP)                          0 or undefined
+    recall / sensitivity   TP/(TP+FN)                          0
+    specificity            TN/(TN+FP)                          1
+    BALANCED ACCURACY      (recall + specificity)/2            EXACTLY 0.5, at any imbalance
+    F1                     2PR/(P+R)                           0
+    MCC                    (TP*TN-FP*FN)/sqrt(...)             EXACTLY 0, at any imbalance
+    PR AUC                 area under precision-recall         the PREVALENCE
+    ROC AUC                P(random pos > random neg)          EXACTLY 0.5
+
+THE COLUMN ON THE RIGHT IS THE SELECTION CRITERION. A GOOD METRIC GIVES A DEGENERATE MODEL A
+DEGENERATE SCORE, INDEPENDENT OF THE CLASS BALANCE. Accuracy is the only row that fails, and it fails
+by giving the do-nothing model a score that LOOKS EXCELLENT and RISES as the problem gets harder.
+
+BALANCED ACCURACY is the simplest fix: average the two per-class recalls. Measured, it was 0.500 for
+"always predict 0" in every one of the four worlds, and ~0.89 for the real detector in all four.
+
+MCC is the most honest single number, because IT IS THE ONLY COMMON METRIC THAT USES ALL FOUR CELLS.
+F1 ignores true negatives entirely - swap the class labels and F1 changes, which for a symmetric
+problem is absurd. Measured: MCC was 0.000 for the do-nothing model at every prevalence.
+
+PR AUC is the right threshold-free metric for a rare positive class, and it must be reported AGAINST
+ITS BASELINE, which is the prevalence. Measured elsewhere: at the same separability, ROC AUC was 0.858,
+0.857, 0.863, 0.836 across a 500x change in prevalence while PR AUC went 0.855, 0.474, 0.138, 0.018.
+ROC AUC HONESTLY REPORTS THAT THE RANKING DID NOT CHANGE; PR AUC HONESTLY REPORTS THAT THE PRODUCT IS
+NOW UNUSABLE. Both are true, about different things.
+
+AND THE ONE THAT IS ALWAYS WORTH REPORTING: THE BASELINE ITSELF. "Always predict the majority" scores
+99.90% accuracy and 0.000 MCC. Put both numbers next to your model's, and the reader can tell
+instantly which of those your result resembles.""",
+
+    """5. THE ALTERNATIVES - and what to do about imbalance itself
+
+    approach                     what it does                       caveat
+    ---------------------------------------------------------------------------------
+    report the right metric      changes nothing about the model    THE FIRST THING TO DO
+    threshold tuning             moves along the existing curve     free; needs validation data
+    class weighting              weights the loss per class         changes the model's
+                                                                     calibration
+    oversampling / SMOTE         duplicates or synthesises          can overfit the minority;
+                                 minority examples                   evaluate on the REAL balance
+    undersampling                discards majority examples         throws away data
+    anomaly detection            model the majority, flag outliers  when positives are too rare
+                                                                     to learn from at all
+    two-stage / cascade          cheap recall filter, then a        THE STANDARD PRODUCTION
+                                 precise second stage                ANSWER
+    collect more positives       actually fixes it                  usually expensive
+
+THE TWO-STAGE CASCADE is what production systems converge on and it is worth being able to describe.
+Stage one is tuned for RECALL - catch 99% of the positives, accept a large number of false positives -
+because it is cheap and it only has to narrow the field. Stage two is expensive and tuned for
+PRECISION, and it only runs on stage one's output. THE COMBINED SYSTEM ACHIEVES A PRECISION/RECALL
+POINT NEITHER STAGE COULD REACH ALONE, at a cost that is dominated by the cheap stage.
+
+THE MOST IMPORTANT PRACTICAL RULE ABOUT RESAMPLING, and it is broken constantly: RESAMPLE TO TRAIN,
+NEVER TO EVALUATE. Balancing your training set is a reasonable way to help the optimiser. Balancing
+your TEST set makes every metric describe a world that does not exist. Measured: the same detector had
+97.5% precision at a 50% base rate and 3.6% at 0.1%. IF YOU BALANCE YOUR TEST SET YOU HAVE MEASURED
+THE FIRST NUMBER AND YOU WILL DEPLOY INTO THE SECOND.
+
+AND THE HONEST FIRST QUESTION: IS THE IMBALANCE A PROBLEM AT ALL? If the classes are separable, a
+model can learn a rare class perfectly well; imbalance mainly hurts when the classes overlap and the
+minority gets rounded away. TRY IT WITHOUT ANY REBALANCING FIRST, with the right metric, and see.""",
+
+    """6. HOW TO REPORT A CLASSIFIER - numbered steps
+
+STEP 1 - PRINT THE CLASS BALANCE FIRST, before any metric. It determines which metrics mean anything.
+
+STEP 2 - COMPUTE THE MAJORITY BASELINE AND PUT IT NEXT TO YOUR MODEL. Measured: 99.90% accuracy and
+0.000 MCC at a 0.1% positive rate. A reader can then see which of those your number resembles.
+
+STEP 3 - REPORT THE FOUR RAW COUNTS. TP, FP, FN, TN. Every metric is derivable, and the counts show
+the sample sizes behind each one.
+
+STEP 4 - REPORT PRECISION AND RECALL AS A PAIR, WITH THE THRESHOLD. Measured: one model swept from
+11.5%/98.8% to 62.0%/9.6% by moving a number.
+
+STEP 5 - ADD BALANCED ACCURACY OR MCC. Both give a constant classifier its degenerate score at any
+imbalance, which is exactly what accuracy fails to do.
+
+STEP 6 - IF THE POSITIVE CLASS IS RARE, ADD PR AUC WITH ITS BASELINE (the prevalence). Without the
+baseline the number is uninterpretable.
+
+STEP 7 - EVALUATE AT THE PRODUCTION CLASS BALANCE. If you resampled for training, do not evaluate on
+the resampled distribution.
+
+STEP 8 - CHOOSE THE OPERATING POINT FROM THE COSTS OR THE CAPACITY, on validation data, and say which.
+"Threshold set so we flag 500 cases a day, which is the review team's capacity; precision at that
+volume is 34%."
+
+STEP 9 - IF SOMEONE QUOTES YOU AN ACCURACY, ASK TWO QUESTIONS: what is the class balance, and what does
+"always predict the majority" score? Those two questions settle most of these conversations.
+
+STEP 10 - PLOT THE PRECISION-RECALL CURVE. One model gives the whole curve, and choosing a point on a
+curve you have plotted is a decision; quoting one point without it is an accident.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Accuracy is the fraction of predictions you got right, and the problem is that true NEGATIVES are in
+the numerator. When one class dominates, a model that always predicts that class collects a huge pile
+of true negatives and scores brilliantly while containing no code.
+
+If 99.9% of scans are healthy, "never diagnose disease" is 99.9% accurate.
+
+I measured how bad it gets. I took ONE detector - 80% recall, 2% false-positive rate - and ran it at
+four class balances. At a 0.1% positive rate, "always predict zero" scored 99.90% accuracy. And here's
+the part that should alarm people: at BOTH 1% and 0.1%, the useless model had HIGHER accuracy than the
+real detector - 98.98% against 97.82%, and 99.90% against 97.98%. So optimising accuracy doesn't just
+fail to distinguish them, it actively SELECTS the model that does nothing.
+
+The other half of that measurement is that the detector's precision went 97.5%, then 81.4%, then
+29.3%, then 3.6% across those four worlds - and the detector never changed. Its recall stayed at 80%
+and its false-positive rate at 2% throughout. Only the prevalence changed. That's exactly why a fraud
+model that looked fine on a balanced test set floods operations with false alarms in production.
+
+And even ignoring imbalance, a single accuracy number is meaningless because of the threshold. I swept
+it on one fixed set of scores: precision went from 11.5% to 62.0% and recall from 98.8% to 9.6%. Same
+model, same scores, every row.
+
+So what I'd report: the class balance first; the majority baseline next to my model; the four raw
+counts; precision and recall as a PAIR with the threshold; and balanced accuracy or MCC alongside.
+Those last two are the key ones, because they give a constant classifier its degenerate score at any
+imbalance - balanced accuracy is exactly 0.5 and MCC is exactly 0.0 for "always predict zero" in every
+one of my four worlds. That's the property accuracy lacks.
+
+For a rare positive class I'd add PR AUC, reported against its baseline, which is the prevalence -
+otherwise the number can't be read.
+
+And on fixing the imbalance itself: the first thing is to report the right metric, which changes
+nothing about the model. Then threshold tuning, which moves along the curve you already have. Then
+class weighting or resampling if needed - and the rule that gets broken constantly is RESAMPLE TO
+TRAIN, NEVER TO EVALUATE, because balancing your test set means you measure a world that doesn't
+exist. Production systems usually converge on a two-stage cascade: a cheap high-recall filter, then an
+expensive high-precision second stage on its output.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE FOUR COUNTS, AND EVERY METRIC FROM THEM:
+
+    def confusion(y_true, y_pred):
+        tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+        fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 1)
+        fn = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 0)
+        tn = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 0)
+        return tp, fp, fn, tn
+
+    accuracy = (tp + tn) / n
+    #           ^^^^^^^ THE PROBLEM IS RIGHT HERE. `tn` is in the numerator, and when
+    #           negatives dominate, tn dominates the score. A constant classifier maximises
+    #           tn by construction.
+
+    balanced = (tp/(tp+fn) + tn/(tn+fp)) / 2
+    #           ^^^^^^^^^^^   ^^^^^^^^^^^ two per-class RATES, averaged. Neither depends on
+    #           how many of each class there are, so this is prevalence-independent and
+    #           scores EXACTLY 0.5 for any constant classifier. MEASURED, in all four worlds.
+
+    mcc = (tp*tn - fp*fn) / sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn))
+    #      ^^^^^^^^^^^^^^ ALL FOUR CELLS. F1 never touches tn, which is why swapping the
+    #      class labels changes F1 and does not change MCC. Scores EXACTLY 0.000 for a
+    #      constant classifier at any imbalance - MEASURED.
+
+THE BASELINE YOU MUST ALWAYS PRINT:
+
+    from collections import Counter
+    majority = Counter(y_true).most_common(1)[0][0]
+    baseline = [majority] * len(y_true)
+    print("baseline:", metrics(*confusion(y_true, baseline)))
+    print("model:   ", metrics(*confusion(y_true, y_pred)))
+    # MEASURED at a 0.1% positive rate: baseline accuracy 99.90%, MCC 0.000;
+    #                                   the real detector 97.98%, MCC 0.166.
+    # PRINTING BOTH LINES IS THE SINGLE MOST USEFUL HABIT IN THIS ENTIRE TOPIC. It takes
+    # two lines and it makes the trap impossible to fall into.
+
+THE THRESHOLD SWEEP - what you should produce instead of one number:
+
+    for thr in thresholds:
+        pred = [1 if s >= thr else 0 for s in scores]
+        tp, fp, fn, tn = confusion(y_true, pred)
+        print(thr, tp, fp, fn, tn, tp/(tp+fp), tp/(tp+fn))
+    # ONE MODEL, ONE SET OF SCORES, AN ENTIRE CURVE.
+    # MEASURED: precision 11.5% -> 62.0%, recall 98.8% -> 9.6%, from moving one number.
+
+CHOOSING THE OPERATING POINT FROM A CAPACITY CONSTRAINT, which is the most common real case:
+
+    def threshold_for_volume(scores, daily_capacity):
+        return sorted(scores, reverse=True)[daily_capacity]
+    # ^ "we can review 500 cases a day" -> set the threshold at the 500th highest score and
+    #   report PRECISION AT THAT VOLUME. That is the number the business actually needs, and
+    #   it is almost never the number that gets reported.
+
+WHAT NOT TO DO:
+
+    X_bal, y_bal = balance(X, y)                 # 50/50 by resampling
+    X_tr, X_te, y_tr, y_te = split(X_bal, y_bal)
+    print(accuracy(model, X_te, y_te))           # <-- MEASURES A WORLD THAT DOES NOT EXIST
+    # MEASURED: the same detector had 97.5% precision at a 50% base rate and 3.6% at 0.1%.
+    # RESAMPLE TO TRAIN, NEVER TO EVALUATE.""",
+
+    """9. A TRACE - the same detector in two worlds, counted out
+
+A FIXED DETECTOR: 80% recall (it catches 4 of every 5 real positives), 2% false-positive rate (it
+fires on 2 of every 100 negatives). ITS BEHAVIOUR IS THE SAME IN BOTH WORLDS.
+
+WORLD A - 10% POSITIVES, 200,000 examples:
+
+     actual positives  = 20,000   ->  TP = 16,000    FN =  4,000
+     actual negatives  = 180,000  ->  FP =  3,600    TN = 176,400
+
+     accuracy  = (16,000 + 176,400) / 200,000 = 96.2%
+     precision = 16,000 / 19,600              = 81.6%
+     recall    = 16,000 / 20,000              = 80.0%
+     "always 0" accuracy = 180,000 / 200,000  = 90.0%
+     -> the model beats the baseline by 6 points. Reasonable.
+
+WORLD B - 0.1% POSITIVES, the same 200,000 examples:
+
+     actual positives  = 200      ->  TP =    160    FN =     40
+     actual negatives  = 199,800  ->  FP =  3,996    TN = 195,804
+
+     accuracy  = (160 + 195,804) / 200,000 = 98.0%
+     precision = 160 / 4,156               =  3.9%
+     recall    = 160 / 200                 = 80.0%
+     "always 0" accuracy = 199,800/200,000 = 99.9%
+     -> THE BASELINE BEATS THE MODEL BY TWO POINTS OF ACCURACY.
+
+    NOW LOOK AT WHY. THE FALSE POSITIVES BARELY MOVED - 3,600 to 3,996 - because the 2% rate is
+    applied to a negative pool that only grew by 11%. THE TRUE POSITIVES FELL FROM 16,000 TO 160,
+    because there are a hundred times fewer of them to find.
+
+    PRECISION IS TP/(TP+FP). THE NUMERATOR COLLAPSED BY A FACTOR OF 100 AND THE DENOMINATOR'S LARGER
+    TERM DID NOT MOVE. THAT ONE SENTENCE IS THE WHOLE REASON RARE-EVENT DETECTION IS HARD, and it is
+    why a 2% false-positive rate - which sounds excellent - produces 25 false alarms for every real
+    catch.
+
+THE FULL MEASURED TABLE:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+THE LINE-BY-LINE MAPPING - which quantity produced which column:
+
+    the 80% recall rate
+            produced the recall column, FLAT at ~80% in every row. Recall is TP/(TP+FN) and both terms
+            scale with the number of positives, so the ratio is invariant. THAT INVARIANCE IS WHY
+            RECALL AND SPECIFICITY ARE THE PREVALENCE-INDEPENDENT METRICS.
+    the 2% false-positive rate on the NEGATIVE pool
+            produced FP = 3,600 and then 3,996 - almost unchanged. This asymmetry between the two
+            terms of the precision denominator is the entire mechanism.
+    `(tp + tn) / n`
+            produced 99.90% for the do-nothing classifier. TN dominates the numerator when negatives
+            dominate the population.
+    `(recall + specificity) / 2`
+            produced exactly 0.500 for "always predict 0" in every row. A useless model scoring the
+            useless value regardless of prevalence is the property you are looking for in a metric.
+    `(tp*tn - fp*fn) / sqrt(...)`
+            produced 0.000 for the baseline everywhere, and 0.790 down to 0.166 for the detector. It
+            falls with prevalence, and it never rewards the degenerate classifier.
+    the threshold, in the separate sweep
+            produced precision 11.5% to 62.0% on ONE unchanged set of scores, which is the second,
+            independent reason a single accuracy figure is not a claim.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    accuracy    = (TP + TN) / N          <- TN in the numerator is the whole problem
+    balanced    = (recall + specificity) / 2      -> EXACTLY 0.5 for any constant classifier
+    MCC         = (TP*TN - FP*FN)/sqrt((TP+FP)(TP+FN)(TN+FP)(TN+FN))  -> EXACTLY 0 for one
+    PR AUC baseline = the prevalence.   ROC AUC baseline = 0.5.
+
+    MEASURED, one detector (80% recall, 2% FPR) at four prevalences:
+        50%:   accuracy 88.85% | baseline 49.84% | precision 97.5% | MCC 0.790
+        10%:   accuracy 96.20% | baseline 89.96% | precision 81.4% | MCC 0.788
+         1%:   accuracy 97.82% | baseline 98.98% | precision 29.3% | MCC 0.480   <- BASELINE WINS
+       0.1%:   accuracy 97.98% | baseline 99.90% | precision  3.6% | MCC 0.166   <- BASELINE WINS
+    MEASURED, one model, threshold swept: precision 11.5% -> 62.0%, recall 98.8% -> 9.6%.
+
+THE #1 MISTAKE: reporting accuracy on imbalanced data. Measured, the do-nothing model scored 99.90%
+and BEAT the real detector at the two rarest prevalences.
+
+THE #2 MISTAKE: not printing the majority baseline. Two lines of code, and it makes the trap
+impossible to fall into.
+
+THE #3 MISTAKE: quoting a single precision or accuracy without the threshold. One model swept from
+11.5% to 62.0% precision by moving a number.
+
+THE #4 MISTAKE: evaluating on a resampled, balanced test set. Measured: the same detector had 97.5%
+precision at a 50% base rate and 3.6% at 0.1%. Resample to train, never to evaluate.
+
+THE #5 MISTAKE: using F1 as though it were neutral. It weights precision and recall equally, which is
+a strong assumption, and it ignores true negatives entirely.
+
+THE #6 MISTAKE: reporting PR AUC without its baseline, which is the prevalence. 0.018 is either
+terrible or an 18x lift depending on a number you did not print.
+
+THE #7 MISTAKE: reaching for SMOTE or class weights before checking whether the imbalance is actually
+hurting. If the classes are separable, a model can learn a rare class fine.
+
+THE #8 MISTAKE: choosing the threshold to maximise a metric rather than from the costs or the capacity.
+The most common real constraint is "the review team can handle 500 cases a day", and that sets the
+threshold directly.
+
+ONE-SENTENCE TAKEAWAY: accuracy puts true negatives in the numerator, so its implicit baseline is
+"always predict the majority" - measured, that baseline scores 99.90% at a 0.1% positive rate and
+BEATS a real 80%-recall detector - and since the same detector's precision fell from 97.5% to 3.6%
+purely because positives got rarer, always print the majority baseline beside your number, report
+precision and recall as a pair with the threshold, add balanced accuracy or MCC because both give a
+degenerate model a degenerate score at any imbalance, and never evaluate on a resampled test set.""",
+]
+
+_EX_P1AO["Why is accuracy a poor metric for imbalanced classification?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - accuracy compares you to "always guess the majority"
+
+ACCURACY is the fraction of predictions you got right. It is the first metric anyone learns and it is
+the wrong one for most real problems, for a reason that is pure arithmetic.
+
+    accuracy = (true positives + true negatives) / everything
+
+THE PROBLEM IS THAT `true negatives` IS IN THE NUMERATOR. When one class dominates, a model that
+always predicts that class collects an enormous pile of true negatives and scores brilliantly while
+doing nothing at all.
+
+    99% of transactions are legitimate -> "never flag fraud" is 99% accurate.
+    99.9% of scans are healthy         -> "never diagnose disease" is 99.9% accurate.
+    99.99% of requests are benign      -> "never block anything" is 99.99% accurate.
+
+    NONE OF THOSE MODELS CONTAINS ANY CODE. They are a constant, and on the metric everybody quotes
+    they beat most real systems.
+
+THE EVERYDAY VERSION: a smoke alarm that never goes off is correct on 99.99% of days. It is also
+useless, and describing it as "99.99% accurate" is technically true and actively misleading.
+
+THE PRECISE STATEMENT, and it is worth having: ACCURACY'S IMPLICIT BASELINE IS "ALWAYS PREDICT THE
+MAJORITY CLASS". Reporting accuracy without that baseline is like reporting a temperature without
+saying which scale. And the baseline is not fixed - it is your class balance, which changes between
+your test set and production.
+
+TERMS AS THEY APPEAR:
+- CLASS IMBALANCE: one class far more common than another. The normal case in fraud, disease,
+  moderation, defects, churn, and almost anything worth detecting.
+- BASE RATE / PREVALENCE: how common the positive class is.
+- BALANCED ACCURACY: the average of the per-class recalls. 0.5 for any constant classifier.
+- MCC: the Matthews correlation coefficient. 0 for any constant classifier, at any imbalance.""",
+
+    """2. THE INTUITION - one detector, four worlds, measured
+
+I took a SINGLE detector - 80% recall, 2% false-positive rate - and ran it at four class balances over
+200,000 examples. THE DETECTOR IS IDENTICAL IN EVERY ROW; only how rare positives are changes:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+THREE THINGS TO READ, AND THE SECOND IS THE ONE THAT SHOULD ALARM YOU.
+
+FIRST: at a 0.1% positive rate, "ALWAYS PREDICT ZERO" SCORES 99.90% ACCURACY. A model with no code in
+it.
+
+SECOND: AT BOTH 1% AND 0.1%, THE USELESS MODEL HAS HIGHER ACCURACY THAN THE REAL DETECTOR. 98.98%
+against 97.82%, and 99.90% against 97.98%. OPTIMISING ACCURACY WOULD ACTIVELY SELECT THE MODEL THAT
+DOES NOTHING. This is not "accuracy is uninformative"; it is "accuracy points the wrong way".
+
+THIRD: look along the DETECTOR rows. Its recall stayed at ~80% and its false-positive rate at 2% in
+every world - it did not change at all. Its PRECISION went 97.5%, 81.4%, 29.3%, 3.6%. THE MODEL IS
+FIXED AND THE METRIC MOVED, because precision depends on how many negatives there are to generate
+false positives from.
+
+    THAT IS WHY A FRAUD MODEL THAT LOOKED FINE IN TESTING FLOODS OPERATIONS WITH FALSE ALARMS IN
+    PRODUCTION: the test set was balanced by resampling and production is not.
+
+AND NOTE WHICH METRICS BEHAVED. Recall is flat across all four rows and balanced accuracy is flat at
+~0.89 - both are averages of per-class RATES and so are prevalence-independent. F1 and MCC both fall,
+because both contain precision. AND BOTH SCORE EXACTLY 0.000 FOR THE DO-NOTHING MODEL AT EVERY
+PREVALENCE, which is precisely the property accuracy lacks.""",
+
+    """3. WHY THE THRESHOLD MAKES A SINGLE NUMBER MEANINGLESS TOO
+
+Even setting imbalance aside, a classifier that outputs a SCORE has no single accuracy. Moving the
+threshold moves everything. I swept it on one fixed set of 20,000 scores at a 10% positive rate:
+
+     threshold      TP      FP      FN      TN     precision     recall        F1
+          -1.0   1,958  15,113      23   2,906         11.5%      98.8%     0.206
+           0.0   1,765   8,954     216   9,065         16.5%      89.1%     0.278
+           0.5   1,530   5,521     451  12,498         21.7%      77.2%     0.339
+           1.0   1,174   2,787     807  15,232         29.6%      59.3%     0.395
+           1.5     763   1,178   1,218  16,841         39.3%      38.5%     0.389
+           2.5     191     117   1,790  17,902         62.0%       9.6%     0.167
+
+THE MODEL DID NOT CHANGE ONCE IN THAT TABLE. The scores are identical in every row. Precision went
+from 11.5% to 62.0% and recall from 98.8% to 9.6%, by moving one number.
+
+    SO "OUR MODEL IS 90% ACCURATE" IS NOT A CLAIM ABOUT A MODEL. It is a claim about a model AND a
+    threshold AND a class balance, and two of those three are usually unstated.
+
+WHAT THIS MEANS PRACTICALLY - always report a PAIR at a stated operating point:
+    "precision 29.6% at recall 59.3%, threshold 1.0"
+
+AND CHOOSE THE OPERATING POINT FROM THE COSTS, because that is a business decision and not a modelling
+one:
+    A FALSE NEGATIVE IS EXPENSIVE (cancer screening, fraud, security) -> threshold LOW, maximise
+    recall, and accept false positives because there is a second stage - a human, a confirmatory test -
+    to filter them.
+    A FALSE POSITIVE IS EXPENSIVE (spam, auto-blocking accounts, paging someone at 3am) -> threshold
+    HIGH, maximise precision.
+    THERE IS A CAPACITY CONSTRAINT (a review team that handles 500 cases a day) -> set the threshold so
+    the VOLUME matches the capacity and report precision at that volume. THIS IS THE MOST COMMON REAL
+    SITUATION AND IT IS ALMOST NEVER TAUGHT.
+
+NOTE THAT F1 PEAKS AT THRESHOLD 1.0 IN THAT TABLE, at 0.395. F1 assumes precision and recall matter
+EQUALLY, which is a strong and usually false assumption. If a missed fraud costs a hundred times a
+false alarm, the F1-optimal threshold is the wrong one, and F-beta - which weights recall by beta -
+exists for exactly that.""",
+
+    """4. WHAT TO REPORT INSTEAD
+
+    metric                 formula                             constant classifier scores
+    ------------------------------------------------------------------------------------
+    accuracy               (TP+TN)/N                           the majority class's share
+    precision              TP/(TP+FP)                          0 or undefined
+    recall / sensitivity   TP/(TP+FN)                          0
+    specificity            TN/(TN+FP)                          1
+    BALANCED ACCURACY      (recall + specificity)/2            EXACTLY 0.5, at any imbalance
+    F1                     2PR/(P+R)                           0
+    MCC                    (TP*TN-FP*FN)/sqrt(...)             EXACTLY 0, at any imbalance
+    PR AUC                 area under precision-recall         the PREVALENCE
+    ROC AUC                P(random pos > random neg)          EXACTLY 0.5
+
+THE COLUMN ON THE RIGHT IS THE SELECTION CRITERION. A GOOD METRIC GIVES A DEGENERATE MODEL A
+DEGENERATE SCORE, INDEPENDENT OF THE CLASS BALANCE. Accuracy is the only row that fails, and it fails
+by giving the do-nothing model a score that LOOKS EXCELLENT and RISES as the problem gets harder.
+
+BALANCED ACCURACY is the simplest fix: average the two per-class recalls. Measured, it was 0.500 for
+"always predict 0" in every one of the four worlds, and ~0.89 for the real detector in all four.
+
+MCC is the most honest single number, because IT IS THE ONLY COMMON METRIC THAT USES ALL FOUR CELLS.
+F1 ignores true negatives entirely - swap the class labels and F1 changes, which for a symmetric
+problem is absurd. Measured: MCC was 0.000 for the do-nothing model at every prevalence.
+
+PR AUC is the right threshold-free metric for a rare positive class, and it must be reported AGAINST
+ITS BASELINE, which is the prevalence. Measured elsewhere: at the same separability, ROC AUC was 0.858,
+0.857, 0.863, 0.836 across a 500x change in prevalence while PR AUC went 0.855, 0.474, 0.138, 0.018.
+ROC AUC HONESTLY REPORTS THAT THE RANKING DID NOT CHANGE; PR AUC HONESTLY REPORTS THAT THE PRODUCT IS
+NOW UNUSABLE. Both are true, about different things.
+
+AND THE ONE THAT IS ALWAYS WORTH REPORTING: THE BASELINE ITSELF. "Always predict the majority" scores
+99.90% accuracy and 0.000 MCC. Put both numbers next to your model's, and the reader can tell
+instantly which of those your result resembles.""",
+
+    """5. THE ALTERNATIVES - and what to do about imbalance itself
+
+    approach                     what it does                       caveat
+    ---------------------------------------------------------------------------------
+    report the right metric      changes nothing about the model    THE FIRST THING TO DO
+    threshold tuning             moves along the existing curve     free; needs validation data
+    class weighting              weights the loss per class         changes the model's
+                                                                     calibration
+    oversampling / SMOTE         duplicates or synthesises          can overfit the minority;
+                                 minority examples                   evaluate on the REAL balance
+    undersampling                discards majority examples         throws away data
+    anomaly detection            model the majority, flag outliers  when positives are too rare
+                                                                     to learn from at all
+    two-stage / cascade          cheap recall filter, then a        THE STANDARD PRODUCTION
+                                 precise second stage                ANSWER
+    collect more positives       actually fixes it                  usually expensive
+
+THE TWO-STAGE CASCADE is what production systems converge on and it is worth being able to describe.
+Stage one is tuned for RECALL - catch 99% of the positives, accept a large number of false positives -
+because it is cheap and it only has to narrow the field. Stage two is expensive and tuned for
+PRECISION, and it only runs on stage one's output. THE COMBINED SYSTEM ACHIEVES A PRECISION/RECALL
+POINT NEITHER STAGE COULD REACH ALONE, at a cost that is dominated by the cheap stage.
+
+THE MOST IMPORTANT PRACTICAL RULE ABOUT RESAMPLING, and it is broken constantly: RESAMPLE TO TRAIN,
+NEVER TO EVALUATE. Balancing your training set is a reasonable way to help the optimiser. Balancing
+your TEST set makes every metric describe a world that does not exist. Measured: the same detector had
+97.5% precision at a 50% base rate and 3.6% at 0.1%. IF YOU BALANCE YOUR TEST SET YOU HAVE MEASURED
+THE FIRST NUMBER AND YOU WILL DEPLOY INTO THE SECOND.
+
+AND THE HONEST FIRST QUESTION: IS THE IMBALANCE A PROBLEM AT ALL? If the classes are separable, a
+model can learn a rare class perfectly well; imbalance mainly hurts when the classes overlap and the
+minority gets rounded away. TRY IT WITHOUT ANY REBALANCING FIRST, with the right metric, and see.""",
+
+    """6. HOW TO REPORT A CLASSIFIER - numbered steps
+
+STEP 1 - PRINT THE CLASS BALANCE FIRST, before any metric. It determines which metrics mean anything.
+
+STEP 2 - COMPUTE THE MAJORITY BASELINE AND PUT IT NEXT TO YOUR MODEL. Measured: 99.90% accuracy and
+0.000 MCC at a 0.1% positive rate. A reader can then see which of those your number resembles.
+
+STEP 3 - REPORT THE FOUR RAW COUNTS. TP, FP, FN, TN. Every metric is derivable, and the counts show
+the sample sizes behind each one.
+
+STEP 4 - REPORT PRECISION AND RECALL AS A PAIR, WITH THE THRESHOLD. Measured: one model swept from
+11.5%/98.8% to 62.0%/9.6% by moving a number.
+
+STEP 5 - ADD BALANCED ACCURACY OR MCC. Both give a constant classifier its degenerate score at any
+imbalance, which is exactly what accuracy fails to do.
+
+STEP 6 - IF THE POSITIVE CLASS IS RARE, ADD PR AUC WITH ITS BASELINE (the prevalence). Without the
+baseline the number is uninterpretable.
+
+STEP 7 - EVALUATE AT THE PRODUCTION CLASS BALANCE. If you resampled for training, do not evaluate on
+the resampled distribution.
+
+STEP 8 - CHOOSE THE OPERATING POINT FROM THE COSTS OR THE CAPACITY, on validation data, and say which.
+"Threshold set so we flag 500 cases a day, which is the review team's capacity; precision at that
+volume is 34%."
+
+STEP 9 - IF SOMEONE QUOTES YOU AN ACCURACY, ASK TWO QUESTIONS: what is the class balance, and what does
+"always predict the majority" score? Those two questions settle most of these conversations.
+
+STEP 10 - PLOT THE PRECISION-RECALL CURVE. One model gives the whole curve, and choosing a point on a
+curve you have plotted is a decision; quoting one point without it is an accident.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Accuracy is the fraction of predictions you got right, and the problem is that true NEGATIVES are in
+the numerator. When one class dominates, a model that always predicts that class collects a huge pile
+of true negatives and scores brilliantly while containing no code.
+
+If 99.9% of scans are healthy, "never diagnose disease" is 99.9% accurate.
+
+I measured how bad it gets. I took ONE detector - 80% recall, 2% false-positive rate - and ran it at
+four class balances. At a 0.1% positive rate, "always predict zero" scored 99.90% accuracy. And here's
+the part that should alarm people: at BOTH 1% and 0.1%, the useless model had HIGHER accuracy than the
+real detector - 98.98% against 97.82%, and 99.90% against 97.98%. So optimising accuracy doesn't just
+fail to distinguish them, it actively SELECTS the model that does nothing.
+
+The other half of that measurement is that the detector's precision went 97.5%, then 81.4%, then
+29.3%, then 3.6% across those four worlds - and the detector never changed. Its recall stayed at 80%
+and its false-positive rate at 2% throughout. Only the prevalence changed. That's exactly why a fraud
+model that looked fine on a balanced test set floods operations with false alarms in production.
+
+And even ignoring imbalance, a single accuracy number is meaningless because of the threshold. I swept
+it on one fixed set of scores: precision went from 11.5% to 62.0% and recall from 98.8% to 9.6%. Same
+model, same scores, every row.
+
+So what I'd report: the class balance first; the majority baseline next to my model; the four raw
+counts; precision and recall as a PAIR with the threshold; and balanced accuracy or MCC alongside.
+Those last two are the key ones, because they give a constant classifier its degenerate score at any
+imbalance - balanced accuracy is exactly 0.5 and MCC is exactly 0.0 for "always predict zero" in every
+one of my four worlds. That's the property accuracy lacks.
+
+For a rare positive class I'd add PR AUC, reported against its baseline, which is the prevalence -
+otherwise the number can't be read.
+
+And on fixing the imbalance itself: the first thing is to report the right metric, which changes
+nothing about the model. Then threshold tuning, which moves along the curve you already have. Then
+class weighting or resampling if needed - and the rule that gets broken constantly is RESAMPLE TO
+TRAIN, NEVER TO EVALUATE, because balancing your test set means you measure a world that doesn't
+exist. Production systems usually converge on a two-stage cascade: a cheap high-recall filter, then an
+expensive high-precision second stage on its output.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE FOUR COUNTS, AND EVERY METRIC FROM THEM:
+
+    def confusion(y_true, y_pred):
+        tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+        fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 1)
+        fn = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 0)
+        tn = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 0)
+        return tp, fp, fn, tn
+
+    accuracy = (tp + tn) / n
+    #           ^^^^^^^ THE PROBLEM IS RIGHT HERE. `tn` is in the numerator, and when
+    #           negatives dominate, tn dominates the score. A constant classifier maximises
+    #           tn by construction.
+
+    balanced = (tp/(tp+fn) + tn/(tn+fp)) / 2
+    #           ^^^^^^^^^^^   ^^^^^^^^^^^ two per-class RATES, averaged. Neither depends on
+    #           how many of each class there are, so this is prevalence-independent and
+    #           scores EXACTLY 0.5 for any constant classifier. MEASURED, in all four worlds.
+
+    mcc = (tp*tn - fp*fn) / sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn))
+    #      ^^^^^^^^^^^^^^ ALL FOUR CELLS. F1 never touches tn, which is why swapping the
+    #      class labels changes F1 and does not change MCC. Scores EXACTLY 0.000 for a
+    #      constant classifier at any imbalance - MEASURED.
+
+THE BASELINE YOU MUST ALWAYS PRINT:
+
+    from collections import Counter
+    majority = Counter(y_true).most_common(1)[0][0]
+    baseline = [majority] * len(y_true)
+    print("baseline:", metrics(*confusion(y_true, baseline)))
+    print("model:   ", metrics(*confusion(y_true, y_pred)))
+    # MEASURED at a 0.1% positive rate: baseline accuracy 99.90%, MCC 0.000;
+    #                                   the real detector 97.98%, MCC 0.166.
+    # PRINTING BOTH LINES IS THE SINGLE MOST USEFUL HABIT IN THIS ENTIRE TOPIC. It takes
+    # two lines and it makes the trap impossible to fall into.
+
+THE THRESHOLD SWEEP - what you should produce instead of one number:
+
+    for thr in thresholds:
+        pred = [1 if s >= thr else 0 for s in scores]
+        tp, fp, fn, tn = confusion(y_true, pred)
+        print(thr, tp, fp, fn, tn, tp/(tp+fp), tp/(tp+fn))
+    # ONE MODEL, ONE SET OF SCORES, AN ENTIRE CURVE.
+    # MEASURED: precision 11.5% -> 62.0%, recall 98.8% -> 9.6%, from moving one number.
+
+CHOOSING THE OPERATING POINT FROM A CAPACITY CONSTRAINT, which is the most common real case:
+
+    def threshold_for_volume(scores, daily_capacity):
+        return sorted(scores, reverse=True)[daily_capacity]
+    # ^ "we can review 500 cases a day" -> set the threshold at the 500th highest score and
+    #   report PRECISION AT THAT VOLUME. That is the number the business actually needs, and
+    #   it is almost never the number that gets reported.
+
+WHAT NOT TO DO:
+
+    X_bal, y_bal = balance(X, y)                 # 50/50 by resampling
+    X_tr, X_te, y_tr, y_te = split(X_bal, y_bal)
+    print(accuracy(model, X_te, y_te))           # <-- MEASURES A WORLD THAT DOES NOT EXIST
+    # MEASURED: the same detector had 97.5% precision at a 50% base rate and 3.6% at 0.1%.
+    # RESAMPLE TO TRAIN, NEVER TO EVALUATE.""",
+
+    """9. A TRACE - the same detector in two worlds, counted out
+
+A FIXED DETECTOR: 80% recall (it catches 4 of every 5 real positives), 2% false-positive rate (it
+fires on 2 of every 100 negatives). ITS BEHAVIOUR IS THE SAME IN BOTH WORLDS.
+
+WORLD A - 10% POSITIVES, 200,000 examples:
+
+     actual positives  = 20,000   ->  TP = 16,000    FN =  4,000
+     actual negatives  = 180,000  ->  FP =  3,600    TN = 176,400
+
+     accuracy  = (16,000 + 176,400) / 200,000 = 96.2%
+     precision = 16,000 / 19,600              = 81.6%
+     recall    = 16,000 / 20,000              = 80.0%
+     "always 0" accuracy = 180,000 / 200,000  = 90.0%
+     -> the model beats the baseline by 6 points. Reasonable.
+
+WORLD B - 0.1% POSITIVES, the same 200,000 examples:
+
+     actual positives  = 200      ->  TP =    160    FN =     40
+     actual negatives  = 199,800  ->  FP =  3,996    TN = 195,804
+
+     accuracy  = (160 + 195,804) / 200,000 = 98.0%
+     precision = 160 / 4,156               =  3.9%
+     recall    = 160 / 200                 = 80.0%
+     "always 0" accuracy = 199,800/200,000 = 99.9%
+     -> THE BASELINE BEATS THE MODEL BY TWO POINTS OF ACCURACY.
+
+    NOW LOOK AT WHY. THE FALSE POSITIVES BARELY MOVED - 3,600 to 3,996 - because the 2% rate is
+    applied to a negative pool that only grew by 11%. THE TRUE POSITIVES FELL FROM 16,000 TO 160,
+    because there are a hundred times fewer of them to find.
+
+    PRECISION IS TP/(TP+FP). THE NUMERATOR COLLAPSED BY A FACTOR OF 100 AND THE DENOMINATOR'S LARGER
+    TERM DID NOT MOVE. THAT ONE SENTENCE IS THE WHOLE REASON RARE-EVENT DETECTION IS HARD, and it is
+    why a 2% false-positive rate - which sounds excellent - produces 25 false alarms for every real
+    catch.
+
+THE FULL MEASURED TABLE:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+THE LINE-BY-LINE MAPPING - which quantity produced which column:
+
+    the 80% recall rate
+            produced the recall column, FLAT at ~80% in every row. Recall is TP/(TP+FN) and both terms
+            scale with the number of positives, so the ratio is invariant. THAT INVARIANCE IS WHY
+            RECALL AND SPECIFICITY ARE THE PREVALENCE-INDEPENDENT METRICS.
+    the 2% false-positive rate on the NEGATIVE pool
+            produced FP = 3,600 and then 3,996 - almost unchanged. This asymmetry between the two
+            terms of the precision denominator is the entire mechanism.
+    `(tp + tn) / n`
+            produced 99.90% for the do-nothing classifier. TN dominates the numerator when negatives
+            dominate the population.
+    `(recall + specificity) / 2`
+            produced exactly 0.500 for "always predict 0" in every row. A useless model scoring the
+            useless value regardless of prevalence is the property you are looking for in a metric.
+    `(tp*tn - fp*fn) / sqrt(...)`
+            produced 0.000 for the baseline everywhere, and 0.790 down to 0.166 for the detector. It
+            falls with prevalence, and it never rewards the degenerate classifier.
+    the threshold, in the separate sweep
+            produced precision 11.5% to 62.0% on ONE unchanged set of scores, which is the second,
+            independent reason a single accuracy figure is not a claim.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    accuracy    = (TP + TN) / N          <- TN in the numerator is the whole problem
+    balanced    = (recall + specificity) / 2      -> EXACTLY 0.5 for any constant classifier
+    MCC         = (TP*TN - FP*FN)/sqrt((TP+FP)(TP+FN)(TN+FP)(TN+FN))  -> EXACTLY 0 for one
+    PR AUC baseline = the prevalence.   ROC AUC baseline = 0.5.
+
+    MEASURED, one detector (80% recall, 2% FPR) at four prevalences:
+        50%:   accuracy 88.85% | baseline 49.84% | precision 97.5% | MCC 0.790
+        10%:   accuracy 96.20% | baseline 89.96% | precision 81.4% | MCC 0.788
+         1%:   accuracy 97.82% | baseline 98.98% | precision 29.3% | MCC 0.480   <- BASELINE WINS
+       0.1%:   accuracy 97.98% | baseline 99.90% | precision  3.6% | MCC 0.166   <- BASELINE WINS
+    MEASURED, one model, threshold swept: precision 11.5% -> 62.0%, recall 98.8% -> 9.6%.
+
+THE #1 MISTAKE: reporting accuracy on imbalanced data. Measured, the do-nothing model scored 99.90%
+and BEAT the real detector at the two rarest prevalences.
+
+THE #2 MISTAKE: not printing the majority baseline. Two lines of code, and it makes the trap
+impossible to fall into.
+
+THE #3 MISTAKE: quoting a single precision or accuracy without the threshold. One model swept from
+11.5% to 62.0% precision by moving a number.
+
+THE #4 MISTAKE: evaluating on a resampled, balanced test set. Measured: the same detector had 97.5%
+precision at a 50% base rate and 3.6% at 0.1%. Resample to train, never to evaluate.
+
+THE #5 MISTAKE: using F1 as though it were neutral. It weights precision and recall equally, which is
+a strong assumption, and it ignores true negatives entirely.
+
+THE #6 MISTAKE: reporting PR AUC without its baseline, which is the prevalence. 0.018 is either
+terrible or an 18x lift depending on a number you did not print.
+
+THE #7 MISTAKE: reaching for SMOTE or class weights before checking whether the imbalance is actually
+hurting. If the classes are separable, a model can learn a rare class fine.
+
+THE #8 MISTAKE: choosing the threshold to maximise a metric rather than from the costs or the capacity.
+The most common real constraint is "the review team can handle 500 cases a day", and that sets the
+threshold directly.
+
+ONE-SENTENCE TAKEAWAY: accuracy puts true negatives in the numerator, so its implicit baseline is
+"always predict the majority" - measured, that baseline scores 99.90% at a 0.1% positive rate and
+BEATS a real 80%-recall detector - and since the same detector's precision fell from 97.5% to 3.6%
+purely because positives got rarer, always print the majority baseline beside your number, report
+precision and recall as a pair with the threshold, add balanced accuracy or MCC because both give a
+degenerate model a degenerate score at any imbalance, and never evaluate on a resampled test set.""",
+]
+
+_EX_P1AO["Why does L2 regularization reduce overfitting, and how does it differ from L1?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add a penalty for being complicated
+
+A model overfits when it uses its capacity to memorise the accidents of the training data rather than
+the pattern underneath. REGULARIZATION ADDS A TERM TO THE LOSS THAT PENALISES COMPLEXITY, so the
+optimiser has to trade fitting the data against staying simple.
+
+    L2 (RIDGE):   loss  +  lambda x SUM of w_i^2
+    L1 (LASSO):   loss  +  lambda x SUM of |w_i|
+
+Both say "large weights are suspicious". They differ in HOW they say it, and that difference produces
+completely different behaviour.
+
+WHY LARGE WEIGHTS ARE SUSPICIOUS IN THE FIRST PLACE - the intuition that makes the rest follow: a
+large weight means a small change in one input produces a large change in the output. THAT IS A MODEL
+THAT REACTS SHARPLY TO NOISE. A function that fits every training point exactly has to swing violently
+between them, and swinging violently requires large coefficients. CONSTRAINING THE WEIGHTS CONSTRAINS
+HOW WIGGLY THE FUNCTION CAN BE.
+
+THE EVERYDAY VERSION: a rule that says "if the applicant is 34 and lives on this street and applied on
+a Tuesday, reject" is a large, specific weight fitted to one training example. A rule that says
+"income matters somewhat and debt matters somewhat" is small weights. THE SECOND ONE SURVIVES CONTACT
+WITH NEW APPLICANTS.
+
+TERMS AS THEY APPEAR:
+- LAMBDA (or alpha): the regularisation strength. The only knob.
+- SPARSITY: many weights exactly zero. L1 produces it; L2 does not.
+- WEIGHT DECAY: the same idea implemented directly on the weights rather than through the loss.
+- SHRINKAGE: the general name for pulling estimates towards zero.""",
+
+    """2. THE INTUITION - measured, on a problem designed to overfit
+
+I built a problem where the right answer is known: 20 features, ONLY 3 OF WHICH CARRY SIGNAL, 60
+training rows with 15% of labels flipped, and 3,000 clean test rows.
+
+     method                    train      test      gap     sum |w|    weights below 0.05
+     none                      81.7%     71.5%   10.2pp       8.50                1 / 20
+     L2 (ridge) 0.01           83.3%     72.9%   10.4pp       6.63                3 / 20
+     L2 (ridge) 0.05           85.0%     75.0%   10.0pp       4.53                3 / 20
+     L1 (lasso) 0.01           83.3%     74.8%    8.5pp       5.33                4 / 20
+     L1 (lasso) 0.05           80.0%     77.8%    2.2pp       2.71                7 / 20
+
+L1 AT 0.05 WON, AND IT WON IN THE WAY REGULARIZATION IS SUPPOSED TO: test accuracy up 6.3 points while
+TRAINING accuracy went DOWN, and the gap collapsed from 10.2pp to 2.2pp.
+
+    THAT PATTERN IS THE SIGNATURE. A regularizer should make the model WORSE at what it has seen and
+    BETTER at what it has not. If both went up, you found a better optimum and learned nothing about
+    generalisation.
+
+L2 BEHAVED DIFFERENTLY AND IT IS WORTH NOTICING. It shrank the total weight magnitude from 8.50 to
+4.53 - almost halving it - and gained 3.5 points of test accuracy, but the GAP BARELY MOVED (10.2 to
+10.0) and only 3 weights fell below 0.05. IT REDUCED THE MAGNITUDE OF THE OVERFITTING WITHOUT CHANGING
+ITS STRUCTURE. The model is still using all twenty features; it is just using them less emphatically.
+
+L1 CHANGED THE STRUCTURE. Total magnitude down to 2.71 AND seven weights driven to effectively zero.
+It did not just shrink the model, it SIMPLIFIED it.
+
+    THE TWO COLUMNS ON THE RIGHT ARE THE ANSWER TO "HOW DO THEY DIFFER". Same direction, different
+    mechanism: L2 makes every weight smaller; L1 makes some weights disappear.""",
+
+    """3. WHY ONE PRODUCES ZEROS AND THE OTHER DOES NOT - the mechanism
+
+This is the question interviewers actually ask, and the answer is in the GRADIENTS.
+
+    L2 PENALTY:  lambda x SUM w_i^2      gradient contribution:  2 x lambda x w_i
+    L1 PENALTY:  lambda x SUM |w_i|      gradient contribution:  lambda x sign(w_i)
+
+L2's PULL TOWARDS ZERO IS PROPORTIONAL TO THE WEIGHT. A weight of 100 feels a pull of 200 lambda. A
+weight of 0.001 feels a pull of 0.002 lambda - essentially nothing. So L2 crushes large weights and
+barely touches small ones, and weights approach zero ASYMPTOTICALLY AND NEVER ARRIVE.
+
+L1's PULL IS CONSTANT. A weight of 100 and a weight of 0.001 feel the SAME lambda-sized pull. That
+constant pull pushes small weights all the way to exactly zero and holds them there, because at zero
+the subgradient is zero and there is nothing to move it off.
+
+WATCH ONE WEIGHT, starting at 2.0 with lambda = 0.05 and a learning rate of 0.1, and no data gradient:
+
+     step          L2:  w -= 0.1 x 0.05 x w        L1:  w -= 0.1 x 0.05 x sign(w)
+        0                              2.0000                                2.0000
+        1                              1.9900                                1.9950
+       10                              1.9019                                1.9500
+      100                              1.6058                                1.5000
+      400                              0.2662                                0.0000  <- AND IT STAYS
+
+    L2 IS EXPONENTIAL DECAY: each step multiplies by (1 - lr x lambda). Asymptotic, never arrives.
+    L1 IS LINEAR DECAY: each step subtracts a fixed amount. Reaches zero in finite time and stops.
+
+    AND NOW THE SMALL WEIGHT, w = 0.01:
+        L2 pull per step: 0.1 x 0.05 x 0.01 = 0.00005   -> it survives essentially forever
+        L1 pull per step: 0.1 x 0.05 x 1    = 0.005     -> gone in two steps
+    THAT ASYMMETRY IS THE ENTIRE DIFFERENCE BETWEEN SHRINKAGE AND SPARSITY.
+
+THE GEOMETRIC PICTURE, if you prefer it: the L2 constraint region is a SPHERE and the L1 region is a
+DIAMOND with corners on the axes. The optimum lands where the loss contours first touch the constraint
+region, and a diamond touches at a CORNER - where all but one coordinate is zero. A sphere has no
+corners, so the touch point generically has every coordinate non-zero.
+
+    BOTH EXPLANATIONS ARE THE SAME FACT. Use the gradient one; it is shorter and it predicts the
+    dynamics as well as the solution.""",
+
+    """4. WHEN TO USE WHICH, AND THE HONEST LIMITS
+
+    use L2 when                                  use L1 when
+    --------------------------------------------------------------------------------
+    you believe all features matter a bit        you believe most features are irrelevant
+    features are correlated                      you want a sparse, inspectable model
+    you want a stable, unique solution           you want automatic feature selection
+    you are training a neural network            you need a small model at inference
+    (L2 / weight decay is THE default)
+
+L2 IS THE DEFAULT FOR NEURAL NETWORKS and it is not close. Sparsity is not useful when you have a
+hundred million weights that all interact, the solution is unique and stable, and the gradient is
+smooth everywhere - whereas L1's gradient is undefined at zero, which is exactly where most of the
+weights end up.
+
+L1 WITH CORRELATED FEATURES IS UNSTABLE, and this is the limitation worth knowing. If two features are
+nearly identical, L1 picks ONE of them essentially arbitrarily and zeroes the other. Resample the data
+and it may pick the other one. YOUR "SELECTED FEATURES" ARE NOT REPRODUCIBLE, which undermines the
+main reason people reach for L1. ELASTIC NET - both penalties at once - exists precisely to fix this:
+the L2 component makes correlated features share the weight, and the L1 component still produces
+sparsity.
+
+AND THE HONEST LIMIT ON L1's HEADLINE CLAIM. Measured, on the problem where only 3 of 20 features
+mattered:
+
+     no regularization:   19 of 20 features above 0.05
+     L2 at 0.05:          17 of 20 features above 0.05
+     L1 at 0.05:          13 of 20 features above 0.05
+
+    L1 GAVE ME FEWER FEATURES, NOT THE RIGHT FEATURES. It kept features 0, 1 and 2 - the true signal -
+    and also kept ten irrelevant ones. With 60 rows and 15% label noise, several noise features
+    genuinely correlate with the labels well enough to survive. ANYONE SELLING L1 AS AUTOMATIC FEATURE
+    SELECTION ON SMALL, NOISY DATA IS OVERSELLING IT.
+
+ONE MORE DISTINCTION THAT MATTERS IN PRACTICE - L2 VERSUS WEIGHT DECAY. With plain SGD they are
+identical. WITH ADAM THEY ARE NOT: an L2 term added to the loss passes through Adam's per-parameter
+adaptive scaling and gets rescaled differently for every weight, which is not what anyone intends.
+True weight decay applies the shrinkage DIRECTLY to the weights, outside the adaptive scaling. THAT IS
+THE ENTIRE CONTENT OF THE AdamW PAPER, and it is why AdamW is the default optimiser for transformers.""",
+
+    """5. THE ALTERNATIVES - and where these fit among them
+
+    technique              mechanism                        cost           notes
+    --------------------------------------------------------------------------------------
+    L2 / weight decay      shrink all weights               ~free          THE DEFAULT
+    L1 / lasso             drive weights to zero            ~free          sparsity
+    elastic net            both                             ~free          sparsity with
+                                                                            correlated features
+    early stopping         stop at the validation peak      FREE           always available
+    dropout                delete random units              slower         over-parameterised
+                                                             training       dense layers only
+    data augmentation      transform the inputs             cheap          STRICTLY BETTER
+                                                                            where it applies
+    batch / layer norm     normalise activations            small          regularises as a
+                                                                            side effect
+    more data              -                                expensive      always the best fix
+    a smaller model        less capacity                    -              the blunt instrument
+
+DATA AUGMENTATION IS STRICTLY BETTER THAN ANY PENALTY WHERE IT APPLIES, because it injects REAL
+INFORMATION - a rotated cat is still a cat - rather than merely expressing a preference for small
+numbers. In vision it largely displaced dropout for exactly this reason.
+
+EARLY STOPPING IS FREE AND IT ALSO SAVES COMPUTE. Measured on the same problem, the validation peak
+was at epoch 10 of 600 - the model had already reached its best generalisation after under 2% of the
+training budget.
+
+THE DEEPER FRAMING, worth having: EVERY REGULARIZER IS A PRIOR. L2 is a Gaussian prior on the weights
+(the log of a Gaussian is a squared term). L1 is a Laplace prior (the log of a Laplace is an absolute
+value). Dropout is a prior that says an explanation surviving the loss of random pieces is more
+plausible. Augmentation is a prior about invariance.
+
+    SEEN THAT WAY, CHOOSING A REGULARIZER IS CHOOSING WHAT YOU BELIEVE ABOUT THE SOLUTION BEFORE YOU
+    SEE THE DATA - and on small data, a wrong strong prior beats an unconstrained fit, which is why
+    these help at all.
+
+THE STEP THAT COMES BEFORE ALL OF THEM: CONFIRM YOU ARE OVERFITTING. If training and validation
+accuracy are both poor, you are UNDERFITTING and every technique on that list makes it worse. Get the
+model to overfit first, deliberately, and then regularise.""",
+
+    """6. HOW TO USE THEM - numbered steps
+
+STEP 1 - MEASURE THE TRAIN/VALIDATION GAP FIRST. No gap, no problem. Measured: the unregularised
+baseline had a 10.2pp gap, which is what gave the regularizers something to work with.
+
+STEP 2 - SCALE YOUR FEATURES BEFORE REGULARISING. THE PENALTY IS PER-UNIT, so a feature measured in
+millimetres needs a weight a thousand times smaller than the same feature in metres, and therefore
+receives a millionth of the penalty. YOU ARE APPLYING A DIFFERENT LAMBDA TO EVERY COLUMN otherwise.
+
+STEP 3 - START WITH L2. It is the default, it always applies, and it has a unique stable solution.
+
+STEP 4 - USE AdamW, NOT ADAM PLUS AN L2 TERM. With an adaptive optimiser they are different things and
+only one of them is what you meant.
+
+STEP 5 - SWEEP LAMBDA LOGARITHMICALLY - 1e-5, 1e-4, 1e-3, 1e-2, 1e-1 - and plot validation accuracy.
+The curve is an inverted U. Measured: L1 at 0.01 gave 74.8% and at 0.05 gave 77.8%.
+
+STEP 6 - DO NOT REGULARISE THE BIAS TERM. It shifts the whole function and penalising it just biases
+the intercept towards zero for no reason.
+
+STEP 7 - CHECK THE SIGNATURE. A working regularizer makes TRAINING accuracy worse. Measured: L1 at
+0.05 took training from 81.7% to 80.0% while test went 71.5% to 77.8%.
+
+STEP 8 - IF YOU WANT SPARSITY, USE L1 AND THEN VERIFY IT. Measured: it kept 13 of 20 features when
+only 3 mattered. Look at which ones survived.
+
+STEP 9 - IF FEATURES ARE CORRELATED AND YOU WANT SPARSITY, USE ELASTIC NET. L1 alone picks one of a
+correlated group arbitrarily and the choice is not reproducible across samples.
+
+STEP 10 - TUNE IT TOGETHER WITH THE LEARNING RATE AND THE MODEL SIZE. They trade against each other;
+they are not independent dials.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Both add a penalty on the size of the weights to the loss - L2 penalises the sum of squares, L1 the
+sum of absolute values - and both work because a large weight means a small change in an input
+produces a large change in the output, which is a model reacting sharply to noise. A function that
+fits every training point exactly has to swing violently between them, and swinging violently requires
+large coefficients. So constraining the weights constrains how wiggly the function can be.
+
+The difference between them is in the GRADIENTS. L2's pull towards zero is PROPORTIONAL to the weight,
+so a weight of 100 feels a pull of 200 lambda and a weight of 0.001 feels essentially nothing - it
+crushes large weights and approaches zero asymptotically without ever arriving. L1's pull is CONSTANT
+regardless of magnitude, so a tiny weight feels the same pull as a huge one, gets pushed all the way
+to exactly zero, and stays there because the subgradient at zero is zero. That's why L1 gives you
+sparsity and L2 doesn't.
+
+I measured it on a problem where only 3 of 20 features carried signal, with 60 noisy training rows.
+The unregularised model was 81.7% on train and 71.5% on test - a ten-point gap. L2 at strength 0.05
+shrank the total weight magnitude from 8.5 to 4.5 and gained 3.5 points of test accuracy, but the gap
+barely moved and only 3 weights fell below 0.05. It reduced the MAGNITUDE of the overfitting without
+changing its STRUCTURE. L1 at the same strength got test accuracy to 77.8% with the gap collapsing
+from 10.2 to 2.2 points, total magnitude down to 2.7, and SEVEN weights driven to zero. It didn't just
+shrink the model, it simplified it.
+
+And crucially, L1's training accuracy went DOWN - 81.7 to 80.0 - while test went up. That's the
+signature you want. If both went up you found a better optimum and learned nothing about
+generalisation.
+
+Two honest qualifications I'd add. L1 kept THIRTEEN of twenty features when only three mattered - it
+gave me fewer features, not the right features, because with sixty rows and fifteen percent label
+noise several irrelevant features genuinely correlate well enough to survive. And L1 with correlated
+features is unstable: it picks one of a correlated pair essentially arbitrarily and zeroes the other,
+so your selected feature set isn't reproducible across samples. Elastic net exists to fix that.
+
+Practically: L2 is the default, especially for neural networks, where sparsity isn't useful and the
+non-differentiability at zero is a nuisance. Scale your features first, because the penalty is
+per-unit so unscaled columns get wildly different effective lambdas. And use AdamW rather than Adam
+with an L2 term, because with an adaptive optimiser those are genuinely different things.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE PENALTIES, WHERE THEY ACTUALLY LIVE - in the gradient:
+
+    for i in range(n_features):
+        g = error * x[i]                       # the data-fitting gradient
+
+        if l2:
+            g += l2 * w[i]
+            # ^ PROPORTIONAL TO THE WEIGHT. w = 100 -> pull of 100*l2. w = 0.001 -> pull of
+            #   0.001*l2, which is nothing. THIS IS WHY L2 NEVER REACHES ZERO: the force
+            #   vanishes as the weight does.
+            # ^ the derivative of (l2/2) * w^2 is l2 * w; the 1/2 in the loss exists purely
+            #   to make this clean.
+
+        if l1:
+            g += l1 * (1 if w[i] > 0 else (-1 if w[i] < 0 else 0))
+            # ^ CONSTANT MAGNITUDE. w = 100 and w = 0.001 feel the SAME pull. That is what
+            #   drives small weights to exactly zero and pins them there.
+            # ^ the derivative of |w| is UNDEFINED at 0, so this is a SUBGRADIENT. Serious
+            #   L1 implementations use proximal gradient descent (soft-thresholding)
+            #   instead, which sets the weight to exactly zero rather than oscillating
+            #   around it.
+
+        w[i] -= lr * g
+        # NOTE: no penalty on the bias. Penalising the intercept just biases the whole
+        # function towards zero output for no reason.
+
+SOFT-THRESHOLDING - what a real L1 solver does:
+
+    def prox_l1(w, t):
+        return max(0.0, abs(w) - t) * (1 if w > 0 else -1)
+    # ^ shrink by t, and CLAMP AT EXACTLY ZERO. Subgradient descent leaves tiny non-zero
+    #   values oscillating around zero; this sets them to zero and they stay. IF YOUR "L1"
+    #   MODEL HAS NO EXACT ZEROS, THIS IS WHY.
+
+WEIGHT DECAY VS L2 UNDER AN ADAPTIVE OPTIMISER - a real distinction:
+
+    # Adam with an L2 term in the loss: the penalty gradient goes through Adam's
+    # per-parameter scaling, so a parameter with historically large gradients gets its
+    # decay divided down. NOT what you meant.
+    loss = data_loss + l2 * sum(w*w for w in params)     # <-- L2 in the loss
+
+    # AdamW applies the decay DIRECTLY, outside the adaptive scaling:
+    for p in params:
+        p -= lr * adam_step(p) + lr * weight_decay * p
+        #                        ^^^^^^^^^^^^^^^^^^^^^ untouched by the second-moment
+        #                        normalisation. THAT IS THE ENTIRE ADAMW PAPER.
+
+ELASTIC NET, for sparsity with correlated features:
+
+    g += l1 * sign(w[i]) + l2 * w[i]
+    # ^ the L2 part makes correlated features SHARE the weight (so the selection is stable
+    #   across resamples); the L1 part still produces zeros. Two hyperparameters, usually
+    #   parameterised as (alpha, l1_ratio).
+
+THE DIAGNOSTIC THAT TELLS YOU IT IS WORKING:
+
+    print("train", train_acc, "test", test_acc, "gap", train_acc - test_acc)
+    print("sum|w|", sum(abs(x) for x in w), "zeros", sum(1 for x in w if abs(x) < 0.05))
+    # A WORKING REGULARIZER: train DOWN, test UP, gap SMALLER, sum|w| SMALLER.
+    # MEASURED: none -> 81.7/71.5/10.2pp/8.50/1 zero
+    #           L1 0.05 -> 80.0/77.8/2.2pp/2.71/7 zeros
+    # IF TRAIN WENT UP TOO, you found a better optimum, not a regularised model.""",
+
+    """9. A TRACE - one weight, two penalties, and the measured outcome
+
+TAKE A SINGLE WEIGHT w = 2.0 that the DATA no longer wants to move (its data gradient is zero - it has
+fitted whatever it was going to fit). Learning rate 0.1, lambda 0.05. Watch only the penalty:
+
+     step        L2:  w <- w(1 - 0.005)        L1:  w <- w - 0.005
+        0                          2.0000                       2.0000
+        1                          1.9900                       1.9950
+        2                          1.9801                       1.9900
+        5                          1.9505                       1.9750
+       10                          1.9019                       1.9500
+      100                          1.6058                       1.5000
+      400                          0.2662                       0.0000   <- AND IT STAYS AT 0
+
+    L2 MULTIPLIES BY A CONSTANT FACTOR each step: 0.995^400 = 0.135, so 2.0 x 0.135 = 0.27. IT NEVER
+    REACHES ZERO because a geometric sequence with ratio less than 1 never does.
+    L1 SUBTRACTS A CONSTANT each step: 2.0 - 400 x 0.005 = 0.0 exactly. It arrives, and at zero the
+    subgradient is zero so nothing moves it off.
+
+NOW THE SAME TWO PENALTIES ON A SMALL WEIGHT, w = 0.01:
+
+     L2 pull per step:  0.1 x 0.05 x 0.01 = 0.00005   -> 0.995 per step; after 400 steps, 0.00135.
+                                                         STILL THERE.
+     L1 pull per step:  0.1 x 0.05 x 1    = 0.005     -> reaches 0 in TWO steps.
+
+    THAT IS THE WHOLE DIFFERENCE IN FOUR NUMBERS. The pull that L2 applies to a small weight is
+    proportional to how small it is, so it is self-limiting. L1's is not.
+
+AND THE MEASURED CONSEQUENCE ON A REAL PROBLEM (20 features, 3 informative, 60 noisy training rows,
+3,000 clean test rows):
+
+     method                    train      test      gap     sum |w|    weights below 0.05
+     none                      81.7%     71.5%   10.2pp       8.50                1 / 20
+     L2 (ridge) 0.01           83.3%     72.9%   10.4pp       6.63                3 / 20
+     L2 (ridge) 0.05           85.0%     75.0%   10.0pp       4.53                3 / 20
+     L1 (lasso) 0.01           83.3%     74.8%    8.5pp       5.33                4 / 20
+     L1 (lasso) 0.05           80.0%     77.8%    2.2pp       2.71                7 / 20
+
+    STARE AT THE L2 0.05 ROW. Sum |w| nearly halved - from 8.50 to 4.53 - AND ONLY THREE WEIGHTS FELL
+    BELOW 0.05. That is exactly the geometric-decay behaviour above: everything got smaller, nothing
+    arrived at zero.
+    AND THE L1 0.05 ROW: sum |w| down to 2.71 AND seven zeros. Linear decay, reaching the boundary.
+
+    NOTE ALSO THAT L2 AT 0.05 RAISED TRAINING ACCURACY to 85.0%. At that strength it found a better
+    optimum rather than a more constrained one, which is why its GAP did not move. L1 LOWERED training
+    accuracy to 80.0%, which is what a regularizer is supposed to do.
+
+WHICH FEATURES SURVIVED (the true signal is features 0, 1, 2):
+
+     no regularization:   19 of 20 above 0.05
+     L2 at 0.05:          17 of 20 above 0.05
+     L1 at 0.05:          13 of 20 above 0.05   <- fewer, and still ten irrelevant ones
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `g += l2 * w[i]`
+            produced the L2 rows' `sum |w|` falling from 8.50 to 4.53 with only 3 zeros. Proportional
+            pull, geometric decay, asymptotic approach.
+    `g += l1 * sign(w[i])`
+            produced sum |w| down to 2.71 AND seven zeros. Constant pull, linear decay, finite arrival.
+            IT IS THE ONLY DIFFERENCE BETWEEN THE TWO ROWS AND IT PRODUCES BOTH DIFFERENCES.
+    the `train` column
+            is the diagnostic. L2 0.05 raised it (a better optimum); L1 0.05 lowered it (a genuine
+            constraint). Only the second is regularisation doing its job.
+    the absence of a penalty on the bias
+            does not show in these numbers and would bias the intercept towards zero if added.
+    the 15% label noise in the data generator
+            is why L1 kept 13 features rather than 3. Several noise features genuinely predict the
+            flipped labels on 60 rows, and no penalty can distinguish a real weak signal from a lucky
+            correlation.""",
+
+    """10. THE FORMULAS, THE MISTAKES, AND THE TAKEAWAY
+
+    L2 (ridge):  loss + lambda x SUM w^2      gradient: 2 x lambda x w        PROPORTIONAL pull
+                 -> shrinkage, geometric decay, asymptotic, NO exact zeros
+                 -> a GAUSSIAN prior on the weights
+    L1 (lasso):  loss + lambda x SUM |w|      gradient: lambda x sign(w)      CONSTANT pull
+                 -> sparsity, linear decay, reaches zero in finite time
+                 -> a LAPLACE prior on the weights
+    ELASTIC NET: both. Sparsity that is stable under correlated features.
+
+    MEASURED (20 features, 3 informative, 60 noisy training rows, 3,000 clean test rows):
+        none         81.7 / 71.5 / gap 10.2pp / sum|w| 8.50 / 1 zero
+        L2 0.01      83.3 / 72.9 / gap 10.4pp / sum|w| 6.63 / 3 zeros
+        L2 0.05      85.0 / 75.0 / gap 10.0pp / sum|w| 4.53 / 3 zeros
+        L1 0.01      83.3 / 74.8 / gap  8.5pp / sum|w| 5.33 / 4 zeros
+        L1 0.05      80.0 / 77.8 / gap  2.2pp / sum|w| 2.71 / 7 zeros   <- best
+    MEASURED sparsity claim: L1 kept 13 of 20 features when only 3 mattered.
+
+THE #1 MISTAKE: saying L1 gives sparsity without being able to say why. The gradient of |w| is
+CONSTANT and the gradient of w^2 is PROPORTIONAL, so only one of them can push a small weight all the
+way to zero.
+
+THE #2 MISTAKE: expecting L1 to identify the true features. Measured: 13 of 20 kept when 3 mattered.
+Fewer features, not the right features.
+
+THE #3 MISTAKE: using L1 with correlated features and trusting the selection. It picks one arbitrarily
+and the choice is not reproducible. Use elastic net.
+
+THE #4 MISTAKE: regularising unscaled features. The penalty is per-unit, so every column gets a
+different effective lambda decided by whatever units someone chose.
+
+THE #5 MISTAKE: confusing L2-in-the-loss with weight decay under Adam. They are different, AdamW
+exists because of it, and it is the default for a reason.
+
+THE #6 MISTAKE: penalising the bias term. It shifts the function; there is no reason to want it near
+zero.
+
+THE #7 MISTAKE: not checking the signature. A working regularizer makes TRAINING accuracy worse.
+Measured: L2 at 0.05 RAISED training accuracy, which means at that strength it found a better optimum
+rather than a constraint.
+
+THE #8 MISTAKE: regularising a model that is underfitting. If train and validation are both poor,
+every penalty makes it worse.
+
+THE #9 MISTAKE: copying a lambda from a paper. The optimum depends on your dataset size and noise
+level; sweep it logarithmically and plot the inverted U.
+
+ONE-SENTENCE TAKEAWAY: both penalties shrink weights because large weights mean a function that swings
+violently between training points, and they differ entirely in the gradient - L2's pull is
+PROPORTIONAL to the weight so it shrinks everything and reaches zero only asymptotically, while L1's
+is CONSTANT so it drives small weights to exactly zero and holds them - which is why, measured on the
+same problem, L2 halved the total weight magnitude with 3 zeros and L1 produced 7 zeros and collapsed
+the train/test gap from 10.2pp to 2.2pp, though it kept 13 of 20 features when only 3 mattered.""",
+]
+
+_EX_P1AO["Why does a hash table give O(1) lookup — and when does it fail?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - compute the address instead of searching for it
+
+To find a value in an array you scan: O(n). In a sorted array you binary-search: O(log n). A HASH TABLE
+DOES NEITHER - IT COMPUTES WHERE THE VALUE SHOULD BE.
+
+    index = hash(key) % number_of_buckets
+
+You go straight there. No comparisons, no searching, no traversal. THAT IS WHERE THE O(1) COMES FROM,
+and it is worth stating plainly: A HASH TABLE TRADES A SEARCH FOR AN ARITHMETIC CALCULATION.
+
+THE EVERYDAY VERSION: finding a book in a library by walking the shelves is a scan. Finding it by
+looking up its catalogue number and going straight to that shelf is a hash table. THE CATALOGUE NUMBER
+IS COMPUTED FROM THE TITLE, so you never have to look at any other book.
+
+THE COMPLICATION IS COLLISIONS. Two different keys can hash to the same bucket - they must, because
+there are more possible keys than buckets. So each bucket holds a small collection (a linked list, or
+a run of adjacent slots) and you scan THAT. The O(1) claim is really:
+
+    O(1) ON AVERAGE, PROVIDED THE COLLISIONS STAY SMALL.
+
+And "provided the collisions stay small" is doing an enormous amount of work in that sentence. It
+depends on the LOAD FACTOR, on the HASH FUNCTION, and on whether anyone is deliberately attacking you.
+Sections 2, 3 and 4 measure each of those.
+
+TERMS AS THEY APPEAR:
+- BUCKET: one slot in the underlying array.
+- LOAD FACTOR: items divided by buckets. THE quantity that controls performance.
+- CHAINING: each bucket holds a list of colliding entries.
+- OPEN ADDRESSING: on a collision, probe the next slot instead. No lists.
+- AMORTISED: averaged over a sequence of operations, allowing some to be expensive.""",
+
+    """2. THE INTUITION - the O(1) is really O(load factor), measured
+
+I built a separate-chaining table with 1,024 buckets and varied the number of items:
+
+     load factor     items     buckets     mean chain     LONGEST chain     probes per lookup
+            0.25       256       1,024           0.25                 3                  1.12
+            0.50       512       1,024           0.50                 4                  1.24
+            0.75       768       1,024           0.75                 4                  1.36
+            1.00     1,024       1,024           1.00                 5                  1.51
+            2.00     2,048       1,024           2.00                 7                  2.01
+            8.00     8,192       1,024           8.00                18                  4.96
+           64.00    65,536       1,024          64.00                87                 32.94
+
+THE MEAN CHAIN LENGTH IS EXACTLY THE LOAD FACTOR, every time. That is not a coincidence - it is the
+definition: items divided by buckets IS the average number of items per bucket.
+
+AND PROBES PER LOOKUP IS ABOUT HALF THE LOAD FACTOR PLUS ONE, because a successful lookup scans on
+average half the chain.
+
+    SO THE LOOKUP IS O(1 + load factor), NOT O(1). At a load factor of 64 it takes 33 probes, which is
+    not constant time in any useful sense.
+
+THE REASON A HASH TABLE IS O(1) IN PRACTICE IS THAT IMPLEMENTATIONS RESIZE. When the load factor
+exceeds a threshold - 0.75 in Java's HashMap, about 0.66 in Python's dict, 0.875 in Rust's HashMap -
+the table allocates a bigger array and rehashes everything into it. THE LOAD FACTOR IS HELD BOUNDED BY
+CONSTRUCTION, AND THAT IS THE ENTIRE BASIS OF THE O(1) CLAIM.
+
+    NOTICE THE LONGEST-CHAIN COLUMN TOO. At a load factor of 1.0 the average chain is 1 and the LONGEST
+    is 5. Randomness is lumpy - the maximum chain length in a table with n items and n buckets grows
+    like log n / log log n, so a few buckets are always several times worse than average. A LOOKUP'S
+    AVERAGE COST IS O(1) AND ITS WORST-CASE COST IS NOT, which matters if you have a latency budget
+    rather than a throughput budget.""",
+
+    """3. THE HASH FUNCTION - and what a bad one does
+
+The O(1) assumes the hash function SPREADS THE KEYS UNIFORMLY. I put the same 4,096 keys into the same
+1,024-bucket table with five different hash functions:
+
+     hash function                 mean chain     LONGEST chain     empty buckets
+     built-in hash                       4.00                13                14
+     length of the key                   4.00             4,096             1,023
+     first character                     4.00             4,096             1,023
+     sum of characters                   4.00               304               993
+     last 3 characters as a number       4.00                 5                24
+
+THE MEAN CHAIN IS 4.00 IN EVERY ROW, BECAUSE THE MEAN IS ALWAYS items/buckets NO MATTER WHAT THE HASH
+DOES. The mean tells you nothing. THE LONGEST CHAIN IS THE DIAGNOSTIC.
+
+    "LENGTH OF THE KEY" PUT ALL 4,096 ITEMS IN ONE BUCKET, because all the keys had the same length.
+    1,023 of 1,024 buckets are empty. THE LOOKUP IS NOW A LINEAR SCAN OF 4,096 ITEMS and the data
+    structure is a linked list with extra arithmetic.
+
+    "SUM OF CHARACTERS" is the interesting middle case: a longest chain of 304 and 993 empty buckets.
+    It looks like a reasonable hash and it clusters badly, because character sums are concentrated
+    around a narrow range for similar-length strings.
+
+WHAT MAKES A GOOD HASH FUNCTION:
+    AVALANCHE: changing one bit of the input changes about half the output bits. This is what stops
+    similar keys landing in adjacent buckets.
+    USE ALL OF THE INPUT. "First character" and "length" throw away almost everything.
+    SPEED. It runs on every operation, so it competes with the lookup it is meant to accelerate.
+
+AND THE PRACTICAL ADVICE THAT FOLLOWS: USE THE LANGUAGE'S BUILT-IN HASH. Writing your own is a
+well-known way to produce the "sum of characters" row. If you implement `__hash__` or `hashCode` on a
+custom type, DERIVE IT FROM A TUPLE OF THE FIELDS and let the standard library do the mixing.
+
+THE OTHER RULE THAT BREAKS THINGS SILENTLY: OBJECTS THAT ARE EQUAL MUST HASH EQUAL, and A KEY MUST NOT
+CHANGE WHILE IT IS IN THE TABLE. Mutate a key after inserting it and its hash changes, so the lookup
+goes to a different bucket and the entry becomes UNREACHABLE while still consuming memory. That is why
+Python requires immutable keys and why Java documents this as a contract.""",
+
+    """4. THE ADVERSARIAL CASE - HashDoS, measured
+
+If an attacker knows your hash function, they can choose keys that ALL COLLIDE. I built a 64-bucket
+table with a weak hash (sum of character codes) and inserted 2,000 random keys, then 2,000 keys chosen
+to land in the same bucket:
+
+     key set                 items     mean chain     LONGEST chain     probes per lookup
+     random keys             2,000           31.2                43                   5.0
+     ADVERSARIAL keys        2,000           31.2             2,000                 250.5
+
+    SAME NUMBER OF KEYS, SAME TABLE, SAME HASH FUNCTION. 5 probes per lookup for random keys and 250
+    for chosen ones - A FIFTY-FOLD DEGRADATION, and the longest chain went from 43 to all 2,000
+    entries in one bucket.
+
+    SCALE THAT UP: every operation becomes O(n), so a service doing one dictionary lookup per request
+    goes from constant time to linear, and the CPU cost grows QUADRATICALLY with the number of
+    attacker-supplied keys.
+
+THIS IS A REAL, EXPLOITED VULNERABILITY. In 2011 researchers demonstrated that most web frameworks
+parsed POST form parameters into a hash table, so a single request with a few thousand
+carefully-chosen parameter names could consume minutes of CPU. PHP, Java, Python, Ruby, ASP.NET and
+Node were all affected.
+
+THE FIX THAT THE INDUSTRY ADOPTED: RANDOMISE THE HASH SEED PER PROCESS. Python, Java, Rust, Go and the
+others now mix a random per-process value into every hash, so an attacker cannot compute which keys
+collide without knowing that seed. THAT IS WHY `hash("abc")` GIVES A DIFFERENT ANSWER IN EVERY PYTHON
+PROCESS, and why you must never persist a hash value or rely on dictionary iteration order matching
+across runs.
+
+    (Java's HashMap took a different additional route: above a threshold, a bucket's linked list is
+    converted into a BALANCED TREE, so the worst case degrades to O(log n) instead of O(n). That is
+    defence in depth rather than an alternative.)
+
+THE GENERAL LESSON, and it transfers: AN AVERAGE-CASE GUARANTEE IS NOT A SECURITY GUARANTEE. Anywhere a
+data structure's performance depends on inputs being "typical", an attacker who controls the inputs
+controls your performance. The same reasoning applies to quicksort's pivot choice and to regular
+expressions with catastrophic backtracking.""",
+
+    """5. THE OTHER FAILURE MODES, AND WHAT TO USE INSTEAD
+
+FAILURE - RESIZING IS O(n) AND HAPPENS AT UNPREDICTABLE TIMES. Measured, inserting into a Python dict:
+
+     inserts          total time     time per insert
+     10,000              0.8 ms          0.083 us
+     100,000            11.0 ms          0.110 us
+     1,000,000         141.0 ms          0.141 us
+
+    AMORTISED O(1) - the per-insert cost is roughly constant across two orders of magnitude. But each
+    doubling copies EVERY existing entry, so ONE INSERT IN THE SEQUENCE IS O(n). For a throughput
+    workload that is irrelevant; for a latency-sensitive one it is a periodic spike, and it is why
+    real-time systems pre-size their tables or avoid hash tables entirely.
+
+FAILURE - HASH TABLES DESTROY ORDER, BY DESIGN. That is what buys the O(1), and it means an entire
+class of operations is simply not available:
+
+     operation                    hash table          balanced tree
+     find the minimum             O(n)                O(log n)
+     range query a..b             O(n)                O(log n + k)
+     iterate in sorted order      O(n log n)          O(n)
+     predecessor / successor      O(n)                O(log n)
+
+    IF YOU EVER NEED "THE ITEMS BETWEEN X AND Y" OR "THE SMALLEST ONE", A HASH TABLE IS THE WRONG
+    STRUCTURE and no amount of tuning fixes it. That is why databases use B-trees for indexes that
+    must support range scans, and hash indexes only for exact-match lookups.
+
+FAILURE - MEMORY OVERHEAD. To keep the load factor low you keep buckets empty on purpose. A table at a
+0.66 load factor is a third empty, plus per-entry overhead for the stored hash and the pointers. A hash
+table typically uses 2-3x the memory of a packed array of the same data.
+
+FAILURE - CACHE BEHAVIOUR. `hash(key) % n` is a RANDOM memory address by construction, so every lookup
+is a cache miss. An array scan of 100 elements can beat a hash lookup, because the array is sequential
+and the prefetcher handles it. FOR SMALL COLLECTIONS - under a few dozen entries - A LINEAR SCAN OF A
+FLAT ARRAY IS OFTEN FASTER, which is why small-map optimisations exist in many libraries.
+
+CHAINING VERSUS OPEN ADDRESSING, since it is a standard follow-up:
+    CHAINING: a list per bucket. Simple, tolerates load factors above 1, deletion is trivial, and it
+    costs a pointer per entry and scatters memory.
+    OPEN ADDRESSING: probe the next slot. Better cache behaviour (the probe sequence is contiguous
+    with linear probing), no per-entry pointers, and DELETION IS AWKWARD - you cannot just empty a slot
+    or you break the probe chains for later entries, so you need tombstones. Degrades sharply above a
+    0.7 load factor.
+    MOST MODERN IMPLEMENTATIONS USE OPEN ADDRESSING for the cache behaviour - Python's dict, Rust's
+    hashbrown, Google's Swiss tables.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+STEP 1 - SAY WHERE THE O(1) COMES FROM: the index is COMPUTED from the key rather than searched for.
+That one sentence is the answer to the first half of the question.
+
+STEP 2 - IMMEDIATELY QUALIFY IT. It is O(1 + load factor) on average, and it is O(1) only because
+implementations RESIZE to keep the load factor bounded.
+
+STEP 3 - NAME THE THREE THINGS THAT BREAK IT: a bad hash function, an adversarial key set, and a load
+factor allowed to grow.
+
+STEP 4 - GIVE THE WORST CASE HONESTLY. All keys colliding makes every operation O(n). Measured: 250
+probes per lookup against 5, for the same number of keys in the same table.
+
+STEP 5 - MENTION HASH SEED RANDOMISATION AND WHY IT EXISTS. HashDoS was exploited in 2011 against most
+web frameworks, and it is why `hash("abc")` differs between Python processes.
+
+STEP 6 - MENTION THE AMORTISED COST. Each insert is O(1) on average and one insert in the sequence is
+O(n) because of the rehash. Relevant for latency, not for throughput.
+
+STEP 7 - NAME WHAT A HASH TABLE CANNOT DO. Minimum, range query, sorted iteration, predecessor. Those
+need a tree, and that is why database indexes are B-trees.
+
+STEP 8 - IF ASKED ABOUT COLLISION RESOLUTION, compare chaining and open addressing on cache behaviour
+and deletion, and say that modern implementations favour open addressing.
+
+STEP 9 - USE THE BUILT-IN HASH. If you write `__hash__`, derive it from a tuple of the fields, and
+never mutate a key while it is in the table.
+
+STEP 10 - FOR SMALL COLLECTIONS, CONSIDER A FLAT ARRAY. Every hash lookup is a cache miss by
+construction, and a sequential scan of a few dozen items can win.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The O(1) comes from computing the address rather than searching for it. You take the key, hash it, mod
+by the number of buckets, and go straight there - no comparisons, no traversal. It trades a search for
+an arithmetic calculation.
+
+But it's really O(1 plus the load factor), where the load factor is items divided by buckets. I
+measured that on a hand-rolled table: at a load factor of 1 the mean chain is 1.00 and lookups take
+1.51 probes; at a load factor of 64 the mean chain is 64 and lookups take 33 probes. The mean chain
+length is EXACTLY the load factor, by definition. So the reason it's O(1) in practice is that
+implementations RESIZE - Java at 0.75, Python around 0.66, Rust at 0.875 - to keep the load factor
+bounded by construction.
+
+There are three ways it fails.
+
+First, a bad hash function. I put the same four thousand keys through five hash functions into the
+same table. The MEAN chain was 4.00 in every case, because the mean is always items over buckets no
+matter what the hash does - the mean tells you nothing. The LONGEST chain is the diagnostic, and
+"length of the key" put all 4,096 items in ONE bucket, so 1,023 of 1,024 buckets were empty and the
+lookup became a linear scan.
+
+Second, and more interesting, the adversarial case. If an attacker knows your hash function they can
+choose keys that all collide. I measured 2,000 random keys against 2,000 chosen ones in the same
+64-bucket table: 5 probes per lookup versus 250, and the longest chain went from 43 to all 2,000. Every
+operation becomes O(n), so CPU cost grows quadratically with the number of attacker-supplied keys.
+That's HashDoS, it was exploited in 2011 against most web frameworks parsing POST parameters into a
+hash map, and the fix the industry adopted is randomising the hash seed per process - which is why
+hash of "abc" differs between Python runs and why you must never persist a hash value.
+
+Third, resizing. Each rehash is O(n), so the cost is AMORTISED constant - I measured per-insert time at
+0.083, 0.110 and 0.141 microseconds across ten thousand to a million inserts - but one insert in the
+sequence is O(n), which is a periodic latency spike.
+
+And the thing I'd finish with is what hashing gives up: ORDER. Finding the minimum, a range query,
+sorted iteration and predecessor are all O(n) in a hash table and O(log n) in a balanced tree. Hashing
+destroys order by design, and that's exactly what buys the constant time - which is why database
+indexes are B-trees when they need range scans, and hash indexes only for exact match.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+A SEPARATE-CHAINING TABLE, small enough to see everything:
+
+    class HashTable:
+        def __init__(self, nbuckets=8):
+            self.buckets = [[] for _ in range(nbuckets)]
+            self.count = 0
+
+        def _index(self, key):
+            return hash(key) % len(self.buckets)
+            #      ^^^^^^^^^ THIS IS WHERE THE O(1) COMES FROM. One arithmetic operation
+            #      turns a key into an address. No comparisons with any other key.
+            #      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the modulo maps an arbitrary integer into
+            #      the bucket range. With a power-of-two size, implementations use a bitmask
+            #      instead - `& (n-1)` - which is faster, and which requires the hash to have
+            #      good LOW bits, so they mix the hash first.
+
+        def get(self, key):
+            for k, v in self.buckets[self._index(key)]:
+                if k == key:
+                    return v
+            raise KeyError(key)
+            # ^ THE SCAN. It is over ONE bucket, and its length is the load factor on
+            #   average - which is why the whole thing is O(1 + load factor) and not O(1).
+
+        def put(self, key, value):
+            b = self.buckets[self._index(key)]
+            for i, (k, _) in enumerate(b):
+                if k == key:
+                    b[i] = (key, value); return
+            b.append((key, value)); self.count += 1
+            if self.count > 0.75 * len(self.buckets):
+                self._resize()
+                # ^ THIS LINE IS WHY IT IS O(1). Without it the load factor grows without
+                #   bound and lookups become linear. Measured: load factor 64 -> 33 probes
+                #   per lookup.
+
+        def _resize(self):
+            old = self.buckets
+            self.buckets = [[] for _ in range(len(old) * 2)]
+            self.count = 0
+            for b in old:
+                for k, v in b:
+                    self.put(k, v)
+            # ^ O(n), EVERY ENTRY REHASHED, because the bucket index depends on the table
+            #   size. Doubling means this happens O(log n) times over n inserts, and the
+            #   total work is O(n) - hence AMORTISED O(1) per insert, with one insert in the
+            #   sequence costing O(n).
+
+WRITING A HASH FOR YOUR OWN TYPE:
+
+    class Point:
+        def __hash__(self):
+            return hash((self.x, self.y))
+            #      ^^^^^^^^^^^^^^^^^^^^^ DERIVE IT FROM A TUPLE. The standard library's
+            #      tuple hash already does proper mixing. Writing `self.x + self.y` produces
+            #      the "sum of characters" row from the measurements - a plausible-looking
+            #      hash with a longest chain of 304 where the built-in gave 13.
+        def __eq__(self, other):
+            return (self.x, self.y) == (other.x, other.y)
+            # ^ EQUAL OBJECTS MUST HASH EQUAL. Define one without the other and lookups
+            #   silently fail: the key is in the table and `get` looks in the wrong bucket.
+
+    # AND NEVER MUTATE A KEY WHILE IT IS IN THE TABLE:
+    p = Point(1, 2); d[p] = "a"
+    p.x = 99                       # its hash has changed
+    d[p]                           # KeyError - the entry is now UNREACHABLE and still
+                                   # occupying memory. This is why Python requires
+                                   # immutable keys.
+
+THE DIAGNOSTIC, when a hash table is unexpectedly slow:
+
+    lengths = [len(b) for b in table.buckets]
+    print("load factor:", sum(lengths)/len(lengths))    # is it being resized?
+    print("longest chain:", max(lengths))               # <- THE REAL DIAGNOSTIC
+    print("empty buckets:", sum(1 for l in lengths if l == 0))
+    # MEASURED: the mean was 4.00 for FIVE different hash functions including one that put
+    # everything in a single bucket. THE MEAN CANNOT DETECT A BAD HASH; the maximum can.""",
+
+    """9. A TRACE - three lookups, and then the same table under attack
+
+A TABLE WITH 8 BUCKETS. Insert "cat", "dog", "bird", "fish". Suppose the hashes mod 8 are:
+
+     key       hash % 8       bucket contents after all four inserts
+     cat              3       bucket 0: []
+     dog              5       bucket 1: []
+     bird             3       bucket 2: []
+     fish             1       bucket 3: [("cat",...), ("bird",...)]   <- a COLLISION
+                              bucket 4: []
+                              bucket 5: [("dog",...)]
+                              bucket 6: []
+                              bucket 7: []
+
+LOOKUP "dog":
+    hash("dog") % 8 = 5. Go to bucket 5. It contains one entry. Compare "dog" == "dog". FOUND.
+    ONE HASH, ONE ARRAY INDEX, ONE COMPARISON. That is the O(1) case, and note that the
+    other three keys were never examined.
+
+LOOKUP "bird":
+    hash("bird") % 8 = 3. Go to bucket 3. It contains two entries. Compare "cat" == "bird" -> no.
+    Compare "bird" == "bird" -> FOUND.
+    TWO COMPARISONS. The collision cost one extra comparison, and that is exactly what the
+    load factor predicts on average.
+
+LOOKUP "zebra" (not present):
+    hash("zebra") % 8 = 3. Go to bucket 3. Compare against both entries. NOT FOUND.
+    AN UNSUCCESSFUL LOOKUP SCANS THE WHOLE CHAIN, which is why unsuccessful lookups are
+    slightly more expensive than successful ones on average.
+
+NOW THE SAME STRUCTURE UNDER ATTACK. Suppose every inserted key hashes to bucket 3:
+
+     bucket 3: [k1, k2, k3, ..., k2000]
+     all other buckets: []
+
+     LOOKUP ANY KEY: hash, go to bucket 3, scan 2,000 entries.
+     MEASURED: 250.5 probes per lookup, against 5.0 for random keys in the same table.
+
+    THE DATA STRUCTURE HAS SILENTLY BECOME A LINKED LIST. Nothing errors, nothing warns, and the
+    service simply gets 50x slower - and because the cost per operation grows with the number of
+    inserted keys, the total cost of inserting n attacker keys is O(n^2).
+
+THE FULL MEASURED TABLES:
+
+     load factor     items     mean chain     LONGEST chain     probes per lookup
+            0.25       256           0.25                 3                  1.12
+            1.00     1,024           1.00                 5                  1.51
+            8.00     8,192           8.00                18                  4.96
+           64.00    65,536          64.00                87                 32.94
+
+     hash function                 mean chain     LONGEST chain     empty buckets
+     built-in hash                       4.00                13                14
+     length of the key                   4.00             4,096             1,023
+     sum of characters                   4.00               304               993
+
+     key set                 items     mean chain     LONGEST chain     probes/lookup
+     random keys             2,000           31.2                43               5.0
+     ADVERSARIAL keys        2,000           31.2             2,000             250.5
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `hash(key) % len(self.buckets)`
+            produced every "go to bucket k" step. It is ONE operation regardless of table size, and it
+            is the entire source of the O(1).
+    `for k, v in self.buckets[...]`
+            produced the probe counts. Its length is the chain length, which averages to the load
+            factor - hence O(1 + load factor).
+    `if self.count > 0.75 * len(self.buckets): self._resize()`
+            is what keeps the first table's load factor from ever reaching 64 in a real
+            implementation. Delete this line and lookups degrade to 33 probes.
+    the CHOICE of hash function
+            produced the second table. Note the mean chain is 4.00 in every row - IT CANNOT DETECT THE
+            PROBLEM - and the longest chain ranges from 13 to 4,096.
+    an attacker choosing keys with the same hash
+            produced the third table. Same code, same table, same key count; 50x slower. AN
+            AVERAGE-CASE GUARANTEE IS NOT A SECURITY GUARANTEE.
+    the per-process random hash seed in a modern runtime
+            does not appear in these numbers and is what makes the third table impossible to construct
+            against a real Python or Java process without knowing the seed.""",
+
+    """10. THE COMPLEXITIES, THE MISTAKES, AND THE TAKEAWAY
+
+    lookup / insert / delete:  O(1) AVERAGE, O(n) WORST CASE
+    the average is really O(1 + load factor), and load factor is bounded only because of RESIZING
+    resize: O(n), so inserts are AMORTISED O(1) with one O(n) insert per doubling
+    space: 2-3x a packed array, because empty buckets are deliberate
+
+    MEASURED, 1,024 buckets:
+        load factor 0.25 -> 1.12 probes | 1.00 -> 1.51 | 8.00 -> 4.96 | 64.00 -> 32.94
+        mean chain length EQUALS the load factor in every case
+    MEASURED, 4,096 keys, 1,024 buckets, five hash functions:
+        built-in: longest chain 13 | "sum of characters": 304 | "length of key": 4,096
+        THE MEAN WAS 4.00 IN ALL FIVE.
+    MEASURED, 2,000 keys in 64 buckets:
+        random keys 5.0 probes/lookup | ADVERSARIAL keys 250.5 probes/lookup
+    MEASURED, Python dict inserts: 0.083, 0.110, 0.141 microseconds each at 10k, 100k, 1M.
+
+THE #1 MISTAKE: saying "O(1)" without the qualifier. It is O(1) AVERAGE with a GOOD HASH and a BOUNDED
+LOAD FACTOR, and O(n) worst case.
+
+THE #2 MISTAKE: judging a hash function by the mean chain length. Measured: 4.00 for all five,
+including one that put everything in a single bucket. USE THE MAXIMUM.
+
+THE #3 MISTAKE: writing your own hash function. `self.x + self.y` is the "sum of characters" row.
+Derive it from a tuple of the fields.
+
+THE #4 MISTAKE: defining `__eq__` without `__hash__`, or vice versa. Lookups then silently fail
+because the key is in the table and you are looking in the wrong bucket.
+
+THE #5 MISTAKE: mutating a key while it is in the table. The entry becomes unreachable and still
+occupies memory.
+
+THE #6 MISTAKE: assuming the average case holds under attack. Measured 50x degradation from chosen
+keys; HashDoS was exploited in 2011 and hash-seed randomisation is the reason it is not now.
+
+THE #7 MISTAKE: forgetting the amortised O(n) insert. Irrelevant for throughput, a periodic spike for
+latency-sensitive code; pre-size the table if it matters.
+
+THE #8 MISTAKE: reaching for a hash table when you need ORDER. Minimum, range query, sorted iteration
+and predecessor are all O(n) here and O(log n) in a tree - which is why database range indexes are
+B-trees.
+
+THE #9 MISTAKE: using one for a handful of items. Every lookup is a cache miss by construction, and a
+linear scan of a small flat array is often faster.
+
+ONE-SENTENCE TAKEAWAY: a hash table is O(1) because it COMPUTES the bucket index instead of searching
+for it, but the true cost is O(1 + load factor) - measured at 1.51 probes at load factor 1 and 32.94
+at 64 - so it is constant only because implementations resize; and it degrades to O(n) whenever the
+hash clusters (measured: a longest chain of 4,096 versus 13 for the same keys) or an attacker chooses
+colliding keys (measured: 250 probes versus 5), which is why hash seeds are randomised per process and
+why anything needing ORDER belongs in a tree instead.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
