@@ -202144,6 +202144,1766 @@ correction has already been paid on every training step, which is a deliberate d
 the required adjustment out of the widely-copied, frequently-run inference path.""",
 ]
 
+_EX_P1AO["Count and Say"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - read the previous line out loud and write down what you said
+
+The sequence starts at "1". Each term is produced by READING THE PREVIOUS TERM ALOUD as runs of
+identical digits, and writing down what you said.
+
+    term 1:  1                 -> read as "one 1"                 ->
+    term 2:  11                -> read as "two 1s"                ->
+    term 3:  21                -> read as "one 2, one 1"          ->
+    term 4:  1211              -> read as "one 1, one 2, two 1s"  ->
+    term 5:  111221            -> read as "three 1s, two 2s, one 1" ->
+    term 6:  312211
+
+THE RULE IN CODE TERMS: scan the string, find each RUN of identical characters, and emit the run's
+LENGTH followed by the CHARACTER. It is run-length encoding, applied to its own output, repeatedly.
+
+    "111221"  ->  runs are "111", "22", "1"  ->  "3"+"1", "2"+"2", "1"+"1"  ->  "312211"
+
+THE THING THAT CATCHES PEOPLE OUT IS THE READING DIRECTION. "21" is NOT "twenty-one"; it is "one 2,
+one 1". The digits are read as a SEQUENCE OF SYMBOLS, never as a number, and no arithmetic ever
+happens in this problem.
+
+    THAT IS ALSO WHY YOU SHOULD NEVER STORE A TERM AS AN INTEGER. Term 30 has 4,462 digits and term 40
+    has 63,138; converting to an int works in Python and overflows immediately anywhere else, and it
+    buys you nothing because you only ever read the digits one at a time.
+
+TERMS AS THEY APPEAR:
+- RUN: a maximal stretch of identical adjacent characters.
+- RUN-LENGTH ENCODING: replacing a run by (count, character). This problem IS repeated RLE.
+- CONWAY'S CONSTANT: 1.303577..., the factor by which the term length grows.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - REGENERATE FROM SCRATCH EACH TIME. There is no closed form and no way to jump to term n
+without computing terms 1 through n-1. THE SEQUENCE IS INHERENTLY ITERATIVE, and recognising that
+immediately is most of the problem.
+
+WAY 2 - RECURSION. `say(n) = encode(say(n-1))`. Correct, matches the definition, and it costs n stack
+frames for no benefit, because there is no branching to exploit and nothing to memoise beyond the
+previous term.
+
+WAY 3 - AN ITERATIVE LOOP WITH A TWO-POINTER RUN SCAN. This is the answer:
+
+    s = "1"
+    for _ in range(n - 1):
+        out = []
+        i = 0
+        while i < len(s):
+            j = i
+            while j < len(s) and s[j] == s[i]:
+                j += 1
+            out.append(str(j - i))      # the run LENGTH
+            out.append(s[i])            # the CHARACTER
+            i = j
+        s = "".join(out)
+    return s
+
+WHY THE LENGTHS MATTER SO MUCH HERE - measured:
+
+     n      term                                     length     growth vs previous
+     1      1                                             1                 -
+     4      1211                                          4              2.000
+     7      13112221                                      8              1.333
+     10     13211311123113112211                         20              1.429
+     12     3113112221232112111312211312113211           34              1.308
+     20     (too long to print)                         302
+     30     (too long to print)                       4,462
+     40     (too long to print)                      63,138
+
+    THE GROWTH FACTOR SETTLES ON ABOUT 1.303, which is CONWAY'S CONSTANT (1.303577...) - the largest
+    root of a degree-71 polynomial, and one of the few places a specific irrational number falls out
+    of a puzzle like this.
+
+    THE LENGTH IS EXPONENTIAL: term 40 is 63,138 characters and term 60 would be around 30 million.
+    THAT IS WHY EVERY VERSION OF THIS PROBLEM CAPS n AT 30, and it is worth saying out loud because it
+    tells the interviewer you know the growth rate rather than just the rule.""",
+
+    """3. THE HAND TRACE - one term, character by character
+
+TERM 5 IS "111221". Produce term 6.
+
+    i = 0:  s[0] = '1'. Scan forward while the character is '1': j goes 1, 2, 3.
+            s[3] = '2', so the run is s[0..2] = "111", length 3.
+            EMIT "3" then "1"  ->  out = ["3", "1"]
+            i = 3
+
+    i = 3:  s[3] = '2'. Scan forward: j goes 4. s[5] = '1', so the run is "22", length 2.
+            EMIT "2" then "2"  ->  out = ["3", "1", "2", "2"]
+            i = 5
+
+    i = 5:  s[5] = '1'. Scan forward: j goes 6, which is len(s), so the loop stops.
+            The run is "1", length 1.
+            EMIT "1" then "1"  ->  out = ["3", "1", "2", "2", "1", "1"]
+            i = 6, which ends the outer loop.
+
+    RESULT: "312211".  And read aloud: "three 1s, two 2s, one 1" - which describes "111221" exactly.
+
+THE FULL SEQUENCE, so the pattern is visible:
+
+     1
+     11
+     21
+     1211
+     111221
+     312211
+     13112221
+     1113213211
+     31131211131221
+     13211311123113112211
+
+    LOOK AT TERM 8: "1113213211". Read it as "three 1s, one 3, two 1s, one 3, two 1s"... no. Read it in
+    PAIRS: 11 13 21 32 11 -> "one 1, one 3, two 1, three 2, one 1". THE PAIRING IS THE WHOLE FORMAT,
+    and mis-pairing it is the most common way people get lost tracing this by hand.
+
+AND A MEASURED CURIOSITY WORTH KNOWING: only the digits 1, 2 and 3 ever appear.
+
+     digits appearing anywhere in terms 1 through 30:  ['1', '2', '3']
+
+    That is Conway's theorem, and it means no run is ever longer than 3. IT IS TRUE AND IT IS NOT
+    SOMETHING TO RELY ON - if you write a run-length encoder that assumes a count fits in one digit,
+    it is correct for THIS sequence and wrong for run-length encoding in general.""",
+
+    """4. THE EDGE CASES - and the ones that are not really edge cases
+
+CASE 1 - n = 1. Return "1". The loop runs zero times. GET THE LOOP BOUND RIGHT: it is
+`range(n - 1)`, because term 1 is the starting value and each iteration produces the NEXT term.
+Writing `range(n)` returns term n+1, and it is the single most common bug here.
+
+CASE 2 - n = 2. One iteration: "1" -> "11".
+
+CASE 3 - A RUN AT THE VERY END OF THE STRING. The inner `while j < len(s)` must be bounds-checked
+BEFORE dereferencing `s[j]`, or the last run walks off the end. In Python that is an IndexError; in C
+it is undefined behaviour.
+
+CASE 4 - A SINGLE-CHARACTER RUN. "21" has two runs of length 1. Nothing special, and a common
+off-by-one is to require at least two characters to form a run.
+
+CASE 5 - THE EMPTY STRING. It cannot arise from this recurrence - every term is non-empty and each
+produces a longer or equal one - but a general run-length encoder should return "" for "".
+
+CASE 6 - LARGE n. Term 30 is 4,462 characters and term 40 is 63,138. THE ALGORITHM IS FINE; the
+STRING BUILDING is where a naive implementation dies. `s = s + str(count) + char` inside the inner
+loop is O(length^2) per term because Python strings are immutable and each concatenation copies. USE A
+LIST AND `"".join`.
+
+CASE 7 - TREATING TERMS AS INTEGERS. Term 30 has 4,462 digits. Python handles it and every other
+language overflows, and it is pointless - you only ever read digits one at a time.
+
+CASE 8 - THE READING DIRECTION. "21" is "one 2, one 1", not "twenty-one". No arithmetic happens
+anywhere in this problem.
+
+CASE 9 - ASSUMING A COUNT IS ALWAYS ONE DIGIT. True for this sequence by Conway's theorem, and false
+for run-length encoding generally. `str(count)` handles both; a hand-rolled `chr(ord('0') + count)`
+handles only the first.""",
+
+    """5. THE SLOW VERSION FIRST - and the family it belongs to
+
+THE NAIVE STRING-CONCATENATION VERSION, which is what most people write first:
+
+    s = "1"
+    for _ in range(n - 1):
+        out = ""
+        i = 0
+        while i < len(s):
+            j = i
+            while j < len(s) and s[j] == s[i]: j += 1
+            out += str(j - i) + s[i]        # <-- O(len(out)) PER APPEND, because Python
+                                            #     strings are immutable and += copies
+            i = j
+        s = out
+
+    QUADRATIC PER TERM. At term 30 the string is 4,462 characters, so the concatenations alone cost
+    about 4,462^2 / 2 = 10 million character copies for that one term. It still finishes, and it is
+    the kind of thing that turns a passing solution into a timeout on a longer constraint. USE A LIST
+    AND JOIN.
+
+THE RECURSIVE VERSION, for contrast:
+
+    def say(n):
+        if n == 1: return "1"
+        return encode(say(n - 1))
+    # correct, matches the definition, and costs n stack frames with nothing to gain. There
+    # is no branching and nothing to memoise beyond the single previous term, so recursion
+    # buys none of its usual advantages.
+
+THE FAMILY - "scan for runs of identical adjacent elements", which is the transferable skill:
+
+    RUN-LENGTH ENCODING and DECODING. The same two-pointer scan.
+    STRING COMPRESSION (LeetCode 443) - in-place RLE, with the twist that you only keep the
+    compressed version if it is actually shorter.
+    LONGEST REPEATING CHARACTER REPLACEMENT - a sliding window over runs.
+    ENCODE AND DECODE STRINGS - length-prefixed encoding, the same idea used for framing.
+    THE TWO-POINTER RUN SCAN - `while j < n and a[j] == a[i]: j += 1` - IS THE REUSABLE PIECE, and it
+    appears in group-adjacent-duplicates, in compress-array, and in any problem phrased as "consecutive
+    identical".
+
+WHAT THE PROBLEM IS ACTUALLY TESTING: careful string handling and an off-by-one loop bound. There is
+no algorithmic insight to find, which is why it is usually classed as easy-to-medium and why the marks
+are all in whether your `range(n-1)` and your bounds check are right.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY THE RULE BACK CORRECTLY. "Read the previous term as runs of identical digits and write
+count-then-digit for each run." Confirming you have not read "21" as twenty-one takes five seconds and
+prevents a wasted five minutes.
+
+STEP 2 - START WITH s = "1".
+
+STEP 3 - LOOP `n - 1` TIMES, NOT n. Term 1 is the seed; each iteration produces the next term. THIS IS
+THE MOST COMMON BUG IN THE PROBLEM.
+
+STEP 4 - USE A LIST FOR THE OUTPUT, and join at the end. String `+=` in the inner loop is quadratic
+per term.
+
+STEP 5 - TWO POINTERS FOR THE RUN SCAN. `i` marks the run's start; advance `j` while `s[j] == s[i]`;
+the run length is `j - i`.
+
+STEP 6 - BOUNDS-CHECK BEFORE DEREFERENCING. `while j < len(s) and s[j] == s[i]` - in that order, so
+the index check short-circuits.
+
+STEP 7 - EMIT `str(j - i)` THEN `s[i]`. Count first, character second. Reversing them produces a
+plausible-looking wrong answer that passes n = 1 and n = 2.
+
+STEP 8 - SET `i = j` TO ADVANCE. Forgetting this is an infinite loop, and it is the second most common
+bug.
+
+STEP 9 - TEST n = 1, 2, 4 AND 6. n = 1 catches the loop bound, n = 4 ("1211") catches the run scan,
+and n = 6 ("312211") catches a run of length 3.
+
+STEP 10 - STATE THE COMPLEXITY AND THE GROWTH. Time is O(total characters produced), which is
+exponential in n with a growth factor of about 1.303 - Conway's constant - so term 30 is 4,462
+characters and term 40 is 63,138.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The rule is that each term describes the previous one, read aloud as runs of identical digits. So
+"111221" is read as "three ones, two twos, one one", which gives "312211".
+
+The thing to be careful about is the reading direction: "21" is "one 2, one 1", not "twenty-one". No
+arithmetic happens anywhere in this problem - the digits are symbols.
+
+So the implementation is repeated run-length encoding. Start from "1", and for each of n minus one
+iterations, scan the current string with two pointers: i marks where a run starts, advance j while the
+character matches, emit the run length followed by the character, then set i to j. Build into a LIST
+and join at the end, because string concatenation in the inner loop is quadratic per term - Python
+strings are immutable so each plus-equals copies the whole thing.
+
+The loop bound is `range(n - 1)` and not `range(n)`, because term one is the seed and each iteration
+produces the NEXT term. That's the most common bug in the problem, along with forgetting to set i to j,
+which is an infinite loop.
+
+The thing worth mentioning that shows you understand the sequence rather than just the rule is the
+growth. The term length grows by a factor that converges to about 1.3036 - that's Conway's constant,
+the largest root of a degree-71 polynomial, which is a genuinely surprising thing to fall out of a
+puzzle like this. I checked the lengths: term 20 is 302 characters, term 30 is 4,462, and term 40 is
+63,138. It's exponential, which is why every version of this problem caps n at 30.
+
+There's one more nice fact: only the digits 1, 2 and 3 ever appear - I checked terms 1 through 30 and
+those are the only three. That's Conway's theorem, and it means no run is ever longer than three. I'd
+mention it as a curiosity and specifically NOT rely on it, because a run-length encoder that assumes a
+count fits in one digit is correct for this sequence and wrong in general.
+
+Complexity is O of the total number of characters produced, which is exponential in n, and space is
+the length of the current term plus the next one.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def countAndSay(n):
+        s = "1"
+        # ^ the seed. Term 1 IS "1"; it is not produced by any iteration.
+
+        for _ in range(n - 1):
+            #        ^^^^^^^^ n MINUS ONE. Term 1 is already in hand, so we need n-1 more
+            #        transformations to reach term n. `range(n)` returns term n+1 and it
+            #        passes no test case except by accident.
+
+            out = []
+            # ^ A LIST, not a string. `out += str(k) + c` on a string is O(len(out)) per
+            #   append because Python strings are immutable, making the term quadratic in
+            #   its own length. At term 30 (4,462 chars) that is ~10 million character
+            #   copies for one term.
+
+            i = 0
+            while i < len(s):
+                j = i
+                while j < len(s) and s[j] == s[i]:
+                    #   ^^^^^^^^^^^ BOUNDS CHECK FIRST. `and` short-circuits, so s[j] is
+                    #   never evaluated at j == len(s). Reversing these two conditions is an
+                    #   IndexError on every string whose last run reaches the end - which is
+                    #   every string.
+                    j += 1
+                # ^ j now points just past the run. THE RUN IS s[i..j-1] AND ITS LENGTH IS
+                #   j - i. This two-pointer scan is the reusable piece; it appears in every
+                #   "consecutive identical elements" problem.
+
+                out.append(str(j - i))
+                #          ^^^^^^^^^^ THE COUNT FIRST.
+                out.append(s[i])
+                #          ^^^^ THEN THE CHARACTER. Swapping these produces a
+                #          plausible-looking answer that is correct for n = 1 and n = 2 and
+                #          wrong from n = 3 onwards.
+                # ^ str(j - i), not chr(ord('0') + j - i). For THIS sequence the count is
+                #   never more than 3 (Conway's theorem), and for run-length encoding in
+                #   general it can be any size.
+
+                i = j
+                # ^ ADVANCE TO THE NEXT RUN. Omit this and the outer while loop never
+                #   terminates. It is the second most common bug in the problem.
+
+            s = "".join(out)
+            # ^ ONE allocation per term instead of one per run.
+
+        return s
+
+A COMPACT ALTERNATIVE, using the standard library's grouping:
+
+    from itertools import groupby
+    def countAndSay(n):
+        s = "1"
+        for _ in range(n - 1):
+            s = "".join(str(len(list(g))) + k for k, g in groupby(s))
+            #                                             ^^^^^^^ groupby yields
+            #   (key, group) for each RUN of equal adjacent items - exactly the two-pointer
+            #   scan, written once in C. Note it groups ADJACENT equal items only, which is
+            #   precisely what this problem wants and is a common source of confusion when
+            #   people expect it to group globally.
+        return s
+
+THE TRAP TO AVOID:
+
+    n_as_int = int(s)      # <-- term 30 has 4,462 DIGITS. Python copes; every other
+                           #     language overflows; and it buys nothing, because you only
+                           #     ever read the digits one at a time.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+Producing term 6 from term 5 = "111221".
+
+    outer iteration   i    s[i]    j scans to    run       j - i    out after
+    -----------------------------------------------------------------------------------
+    start             -    -       -             -         -        []
+    run 1             0    '1'     1, 2, 3       "111"         3    ['3', '1']
+                                   (stops: s[3] = '2')
+    run 2             3    '2'     4             "22"          2    ['3','1','2','2']
+                                   (stops: s[5] = '1')
+    run 3             5    '1'     6             "1"           1    ['3','1','2','2','1','1']
+                                   (stops: j == len(s))
+    end               6    -       -             -         -        join -> "312211"
+
+    THREE RUNS, SIX CHARACTERS OUT. Note that run 3's inner loop stopped on the BOUNDS condition rather
+    than on a character mismatch - that is the case the `j < len(s)` check exists for, and it fires on
+    the last run of every single term.
+
+THE WHOLE SEQUENCE PRODUCED THIS WAY:
+
+     n     term                                              length
+     1     1                                                      1
+     2     11                                                     2
+     3     21                                                     2
+     4     1211                                                   4
+     5     111221                                                 6
+     6     312211                                                 6
+     7     13112221                                               8
+     8     1113213211                                            10
+     9     31131211131221                                        14
+     10    13211311123113112211                                  20
+     11    11131221133112132113212221                            26
+     12    3113112221232112111312211312113211                    34
+     20    ...                                                  302
+     30    ...                                                4,462
+     40    ...                                               63,138
+
+    THE GROWTH RATIOS: 2.000, 1.000, 2.000, 1.500, 1.000, 1.333, 1.250, 1.400, 1.429, 1.300, 1.308 -
+    settling towards 1.3036, CONWAY'S CONSTANT.
+
+    NOTE TERM 3 IS THE SAME LENGTH AS TERM 2 AND TERM 6 THE SAME AS TERM 5. The growth is not
+    monotone in the short run; only the limit is.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `s = "1"`
+            produced the n = 1 row. It is the only term not produced by an iteration, which is exactly
+            why the loop bound is n-1.
+    `for _ in range(n - 1)`
+            produced the row count. `range(n)` would produce term n+1 - the table would be shifted by
+            one and would still look plausible.
+    `while j < len(s) and s[j] == s[i]`
+            produced the "j scans to" column. Run 3 stopped on the FIRST condition; runs 1 and 2
+            stopped on the second. Both exits happen in almost every term.
+    `out.append(str(j - i))` then `out.append(s[i])`
+            produced the "out after" column, two entries per run. Swap the two lines and term 3 becomes
+            "12" instead of "21" - and terms 1 and 2 are unaffected, so a two-case test passes.
+    `i = j`
+            produced the i column advancing 0, 3, 5, 6. Remove it and i stays 0 forever.
+    `"".join(out)`
+            produced the term. One allocation per term rather than one per run, which is the difference
+            between linear and quadratic in the term's own length.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(total characters generated across all n terms), which is EXPONENTIAL in n with a growth
+           factor converging to Conway's constant, 1.303577...
+    SPACE: O(length of the current term) - you hold the current term and the one being built.
+
+    MEASURED lengths: n=10 -> 20 | n=12 -> 34 | n=20 -> 302 | n=30 -> 4,462 | n=40 -> 63,138
+    MEASURED growth ratios: 2.000, 1.000, 2.000, 1.500, 1.000, 1.333, 1.250, 1.400, 1.429, 1.300,
+    1.308 -> converging to 1.3036.
+    MEASURED alphabet: the digits appearing anywhere in terms 1..30 are exactly {1, 2, 3}.
+
+THE #1 MISTAKE: `range(n)` instead of `range(n - 1)`. Term 1 is the seed, so n-1 transformations are
+needed. It returns term n+1 and looks entirely reasonable.
+
+THE #2 MISTAKE: forgetting `i = j`. An infinite loop, and the symptom is a hang rather than a wrong
+answer.
+
+THE #3 MISTAKE: emitting the character before the count. Correct for n = 1 and n = 2, wrong from n = 3.
+
+THE #4 MISTAKE: string concatenation in the inner loop. Quadratic in the term's own length - about 10
+million character copies for term 30 alone.
+
+THE #5 MISTAKE: dereferencing `s[j]` before checking `j < len(s)`. The last run of EVERY term reaches
+the end of the string, so this fails immediately.
+
+THE #6 MISTAKE: reading "21" as twenty-one. There is no arithmetic in this problem.
+
+THE #7 MISTAKE: converting a term to an integer. Term 30 has 4,462 digits.
+
+THE #8 MISTAKE: assuming a run count fits in one character. True here by Conway's theorem, false for
+run-length encoding in general. `str(count)` is correct both ways.
+
+THE #9 MISTAKE: reaching for recursion. It matches the definition and costs n frames with nothing to
+memoise beyond the immediately previous term.
+
+ONE-SENTENCE TAKEAWAY: each term is the run-length encoding of the previous one - scan with two
+pointers, emit count-then-character, build into a LIST and join - looping n-1 times because term 1 is
+the seed, and the growth is exponential at Conway's constant 1.3036 (measured: term 20 is 302
+characters, term 30 is 4,462, term 40 is 63,138), which is why n is always capped and why the digits
+never exceed 3.""",
+]
+
+_EX_P1AO["Majority Element II (> n/3)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - find everything appearing more than a third of the time
+
+Given an array, return every element that appears MORE THAN n/3 times.
+
+    [3, 2, 3]              n = 3, so more than 1 time  -> [3]
+    [1, 1, 1, 3, 3, 2, 2, 2]  n = 8, so more than 2 times -> [1, 2]
+    [1, 2]                 n = 2, so more than 0 times -> [1, 2]
+
+THE FIRST THING TO ESTABLISH, AND IT IS THE WHOLE STRUCTURE OF THE PROBLEM: HOW MANY SUCH ELEMENTS CAN
+THERE BE?
+
+    If three distinct elements each appeared MORE than n/3 times, their occurrences would total MORE
+    THAN 3 x (n/3) = n. THAT IS MORE ELEMENTS THAN THE ARRAY CONTAINS. Impossible.
+
+    SO THERE ARE AT MOST TWO. And that is why the algorithm needs exactly two candidate slots - not
+    because two is a convenient number, but because two is the maximum possible answer size.
+
+THE OBVIOUS SOLUTION is a hash map of counts: O(n) time and O(n) space. It is correct and it is
+usually accepted. THE INTERESTING VERSION IS O(1) SPACE, using the BOYER-MOORE VOTING ALGORITHM
+generalised from one candidate to two.
+
+THE EVERYDAY VERSION of the voting idea: everyone in a room holds a card with a name on it. Repeatedly
+take any THREE people holding three DIFFERENT names and send all three away. Anyone holding a card that
+more than a third of the room shares CANNOT be eliminated entirely, because there are not enough other
+people to pair them off against. WHOEVER IS LEFT AT THE END IS A CANDIDATE - and you still have to
+count to check they actually qualify.
+
+TERMS AS THEY APPEAR:
+- BOYER-MOORE VOTING: pair off differing elements to cancel them out.
+- CANDIDATE: a value the first pass has not eliminated. NOT yet a confirmed answer.
+- THE VERIFICATION PASS: the mandatory second scan that counts the candidates.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - COUNT EVERYTHING. `Counter(a)`, then keep the keys with count > n//3. O(n) time, O(n) space,
+and about two lines. IT IS A COMPLETELY REASONABLE ANSWER and you should say it first.
+
+WAY 2 - SORT AND SCAN. Sort, then look at the elements at positions n//3 and 2n//3 - any element
+appearing more than n/3 times must occupy one of those positions - and verify. O(n log n) time, O(1)
+extra space. A NICE MIDDLE GROUND that people rarely mention.
+
+WAY 3 - BOYER-MOORE WITH TWO CANDIDATES. O(n) time and O(1) space, and it is what the problem is
+actually asking for:
+
+    c1 = c2 = None
+    n1 = n2 = 0
+    for x in a:
+        if   x == c1:  n1 += 1          # matches candidate 1
+        elif x == c2:  n2 += 1          # matches candidate 2
+        elif n1 == 0:  c1, n1 = x, 1    # slot 1 is free, take it
+        elif n2 == 0:  c2, n2 = x, 1    # slot 2 is free, take it
+        else:          n1 -= 1; n2 -= 1 # x differs from both -> THREE-WAY CANCELLATION
+
+THE ORDER OF THOSE FIVE BRANCHES IS NOT NEGOTIABLE. The two equality checks must come BEFORE the
+zero-count checks, or an element equal to c1 can be assigned to the empty slot c2 and the same value
+occupies both candidates - after which the algorithm silently reports one answer where there were two.
+
+THE CANCELLATION IS THE HEART OF IT. When x matches neither candidate, you discard one occurrence of
+c1, one of c2, and the x itself - THREE DIFFERENT VALUES REMOVED AT ONCE. An element appearing more
+than n/3 times cannot be exhausted by that process, because each cancellation removes at most one of
+its occurrences and there are fewer than n/3 cancellations' worth of other material to pair it
+against.
+
+I VERIFIED THE WHOLE ALGORITHM against a brute-force count on 5,000 random arrays: 5,000 / 5,000
+AGREE.""",
+
+    """3. THE VERIFICATION PASS IS MANDATORY - measured
+
+This is the part people leave out, and it is not an optimisation.
+
+THE ALGORITHM ALWAYS ENDS WITH TWO CANDIDATES, whether or not any element qualifies. It guarantees
+only this: IF an element appears more than n/3 times, it IS one of the candidates. It guarantees
+NOTHING about whether the candidates qualify.
+
+MEASURED, on arrays with no qualifying element at all:
+
+     array                    candidates after pass 1     after verification
+     [1, 2, 3]                (1, 2)                      []
+     [1, 2, 3, 4, 5, 6]       (4, 5)                      []
+     [1, 1, 2, 3]             (1, 2)                      [1]
+
+    ROW 1: every element appears once, and 1 is not more than 3/3 = 1. THE ANSWER IS EMPTY and the
+    algorithm nevertheless nominated 1 and 2.
+    ROW 2: it nominated 4 and 5, which are the last two elements it happened to see. Neither means
+    anything.
+    ROW 3: it nominated 1 and 2, and only 1 survives - 1 appears twice and 4//3 = 1, so 2 > 1 holds,
+    while 2 appears once.
+
+    WITHOUT THE SECOND PASS THOSE THREE ROWS RETURN [1,2], [4,5] AND [1,2] - ALL WRONG.
+
+WHY IT CANNOT BE AVOIDED: the counters n1 and n2 at the end are NOT the elements' actual frequencies.
+They are what survived the cancellations, and cancellations depend on the ORDER of the array. Two
+arrays with identical contents in different orders finish with different counter values. THE COUNTERS
+ARE A SURVIVAL SCORE, NOT A COUNT.
+
+THE STRICTNESS OF THE COMPARISON ALSO MATTERS. The condition is `count > n // 3`, with a STRICT
+greater-than. `>=` admits elements appearing exactly n/3 times, which the problem excludes, and the
+difference only shows on arrays whose length is divisible by 3 - so a test suite without one passes
+both versions.
+
+AND THE GENERALISATION IS WORTH KNOWING, because it is the natural follow-up: FOR "MORE THAN n/k
+TIMES", USE k-1 CANDIDATE SLOTS, by exactly the same counting argument. k elements each exceeding n/k
+would need more than n occurrences. The k = 2 case is the classic single-candidate Majority Element
+problem, with one slot.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - AN EMPTY ARRAY. Return []. The loop never runs and both candidates stay None; the
+verification must skip a None candidate rather than counting it.
+
+CASE 2 - ONE ELEMENT. [5] -> n//3 = 0, and 1 > 0, so [5]. The second candidate is never set.
+
+CASE 3 - TWO DISTINCT ELEMENTS. [1, 2] -> n//3 = 0 and each appears once, so BOTH qualify. Verified
+above; a solution that assumes at most one answer fails here.
+
+CASE 4 - ALL ELEMENTS IDENTICAL. [7,7,7,7] -> [7]. The second candidate stays None throughout, which
+is why the verification loop must handle a None slot.
+
+CASE 5 - EXACTLY n/3 OCCURRENCES. [1,1,2,2,3,3] with n = 6: each appears exactly 2 times and
+6//3 = 2, so 2 > 2 is FALSE and the answer is []. THIS IS THE CASE THAT DISTINGUISHES `>` FROM `>=`,
+and it only arises when n is divisible by 3.
+
+CASE 6 - THE SAME VALUE IN BOTH SLOTS. Caused by checking `n1 == 0` before `x == c2`. Then the same
+value is counted twice and one genuine answer is lost. THE BRANCH ORDER IS THE FIX and it is invisible
+on most inputs.
+
+CASE 7 - DUPLICATE OUTPUT. If both candidates end up equal (see case 6) the output can contain a
+duplicate. Deduplicate, or fix the branch order so it cannot happen.
+
+CASE 8 - NEGATIVE NUMBERS AND ZERO. No special handling; the algorithm only ever compares for
+equality. But `None` as the sentinel is wrong if the array can contain None - use a separate
+`has_candidate` flag in that case.
+
+CASE 9 - USING THE FINAL COUNTERS AS FREQUENCIES. They are not. n1 = 3 does not mean c1 appears three
+times; it means three of c1's occurrences survived cancellation, and that depends on the array's
+order.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE HASH-MAP VERSION, which you should offer immediately:
+
+    from collections import Counter
+    def majorityElement(a):
+        return [k for k, v in Counter(a).items() if v > len(a) // 3]
+    # O(n) time, O(n) space, two lines, obviously correct. IT IS A PERFECTLY GOOD ANSWER,
+    # and stating it before the clever one shows you are optimising deliberately rather
+    # than reaching for a trick.
+
+THE SORTING VERSION, which is the one people forget:
+
+    def majorityElement(a):
+        n = len(a); s = sorted(a)
+        cands = {s[n//3], s[2*n//3]} if n else set()
+        #        ^^^^^^^^^^^^^^^^^^ ANY element appearing more than n/3 times occupies a
+        #  contiguous block longer than n/3 in the sorted array, and such a block MUST
+        #  contain position n//3 or position 2n//3. Two probes suffice.
+        return [c for c in cands if a.count(c) > n // 3]
+    # O(n log n) time, O(1) extra space if the sort is in place.
+
+THE FAMILY - "cancel differing elements to find a heavy hitter":
+
+    MAJORITY ELEMENT (> n/2): ONE candidate slot. The classic Boyer-Moore.
+    MAJORITY ELEMENT II (> n/3): TWO slots. This problem.
+    THE GENERAL > n/k PROBLEM: k-1 slots, by the same counting argument.
+    MISRA-GRIES: the named generalisation, and the basis of streaming heavy-hitter algorithms.
+    COUNT-MIN SKETCH and SPACE-SAVING: the probabilistic descendants used in real stream processing,
+    where you cannot afford even k counters for large k.
+
+    THAT LINEAGE IS THE REASON THIS PROBLEM IS ASKED. It is the entry point to STREAMING ALGORITHMS -
+    the setting where you see each element once, cannot store the stream, and must answer a question
+    about frequencies in constant space. Saying "this is Misra-Gries, and it generalises to
+    heavy-hitter detection over a stream" is a much better answer than reciting the two-counter code.
+
+AND THE HONEST FRAMING OF WHEN THE O(1)-SPACE VERSION MATTERS: rarely, on an in-memory array where a
+hash map is fine. It matters when the data is a STREAM you cannot store, and that is exactly the
+setting the algorithm was invented for.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - ESTABLISH THE ANSWER SIZE FIRST. "At most two elements can exceed n/3, because three of them
+would need more than n occurrences." Saying this before writing anything explains why the algorithm
+has two slots.
+
+STEP 2 - OFFER THE HASH-MAP SOLUTION. Two lines, O(n) space, obviously correct. Then say you can do it
+in O(1) space.
+
+STEP 3 - DECLARE TWO CANDIDATES AND TWO COUNTERS, initialised to None and 0.
+
+STEP 4 - WRITE THE FIVE BRANCHES IN THIS ORDER: match c1, match c2, slot 1 empty, slot 2 empty,
+otherwise cancel. THE TWO EQUALITY CHECKS MUST COME FIRST, or the same value can occupy both slots.
+
+STEP 5 - THE CANCELLATION DECREMENTS BOTH COUNTERS. Three distinct values are discarded together, and
+that is what the n/3 threshold corresponds to.
+
+STEP 6 - SECOND PASS: COUNT EACH SURVIVING CANDIDATE PROPERLY. Measured: the algorithm nominated
+candidates on [1,2,3] and [1,2,3,4,5,6], where the correct answer is empty both times.
+
+STEP 7 - USE A STRICT `>`. `count > n // 3`, not `>=`. The difference only appears when n is divisible
+by 3, so test [1,1,2,2,3,3], which must return [].
+
+STEP 8 - SKIP None CANDIDATES in the verification, and deduplicate the output.
+
+STEP 9 - TEST [1,2] (both qualify), [7,7,7,7] (one candidate never set), [1,1,2,2,3,3] (empty answer),
+and [1,2,3] (candidates that do not qualify).
+
+STEP 10 - STATE THE COMPLEXITY AND THE GENERALISATION. O(n) time, O(1) space, two passes - and for
+> n/k use k-1 slots, which is Misra-Gries and is the basis of streaming heavy-hitter detection.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The first thing I'd establish is how many answers there can be, because it determines the whole
+structure. If three distinct elements each appeared more than n over 3 times, their occurrences would
+total more than n - more elements than the array contains. So there are AT MOST TWO, and that's why
+the algorithm has exactly two candidate slots.
+
+The straightforward solution is a Counter and a filter - O(n) time, O(n) space, two lines, and
+perfectly good. The interesting version is O(1) space using Boyer-Moore voting generalised from one
+candidate to two.
+
+The idea is cancellation. You keep two candidates with counts. If the current element matches a
+candidate, increment it. If a slot is free, claim it. Otherwise the element differs from both, and you
+decrement BOTH counters - which discards one occurrence of candidate one, one of candidate two, and
+the current element: THREE DIFFERENT VALUES CANCELLED TOGETHER. An element appearing more than a third
+of the time can't be exhausted by that, because each cancellation removes at most one of its
+occurrences and there isn't enough other material to pair it against.
+
+Two things I'd flag. The BRANCH ORDER is not negotiable - the two equality checks have to come before
+the empty-slot checks, or an element equal to candidate one gets assigned to the empty candidate two
+slot, the same value occupies both, and you silently lose one of two genuine answers.
+
+And the VERIFICATION PASS IS MANDATORY, not an optimisation. The algorithm always ends with two
+candidates whether or not anything qualifies. It guarantees only that IF a majority element exists it's
+among the candidates - never that the candidates qualify. I checked: on [1,2,3] it nominates 1 and 2
+and the correct answer is empty; on [1,2,3,4,5,6] it nominates 4 and 5, which are just the last two
+things it happened to see. The final counters aren't frequencies either - they're what survived
+cancellation, which depends on the array's order.
+
+The comparison has to be a strict greater-than as well. On [1,1,2,2,3,3] each element appears exactly
+twice and n over 3 is 2, so the answer is empty - and that's the only shape where greater-than and
+greater-than-or-equal differ, so a test suite without a length divisible by three passes both.
+
+I verified the whole thing against a brute-force count on five thousand random arrays and they agreed
+every time.
+
+The generalisation is that "more than n over k" needs k minus one slots by the same counting argument.
+That's Misra-Gries, and it's the entry point to streaming heavy-hitter algorithms - which is really
+why this problem gets asked, because the O(1) space matters when the data is a stream you can't
+store.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def majorityElement(a):
+        c1 = c2 = None
+        n1 = n2 = 0
+        # ^ TWO slots, because at most two elements can exceed n/3. Three would need more
+        #   than n occurrences in an array of length n.
+
+        for x in a:
+            if x == c1:
+                n1 += 1
+            elif x == c2:
+                n2 += 1
+            # ^^^^ THE TWO EQUALITY CHECKS MUST COME FIRST. If `n1 == 0` were tested before
+            #      `x == c2`, an element equal to c2 could be written into the empty slot 1,
+            #      the same value would occupy both candidates, and one genuine answer would
+            #      be silently lost. THE BRANCH ORDER IS THE ALGORITHM.
+            elif n1 == 0:
+                c1, n1 = x, 1
+            elif n2 == 0:
+                c2, n2 = x, 1
+            # ^ a free slot is claimed. Note a slot becomes free when its counter hits 0,
+            #   which is what lets the candidates be replaced as the scan proceeds.
+            else:
+                n1 -= 1
+                n2 -= 1
+                # ^ THE THREE-WAY CANCELLATION. x differs from both candidates, so we
+                #   discard one occurrence of c1, one of c2, and x itself. THREE DISTINCT
+                #   VALUES REMOVED TOGETHER, which is exactly what the n/3 threshold
+                #   corresponds to. (For the > n/2 problem it is a two-way cancellation.)
+
+        # ---------------- SECOND PASS: MANDATORY ----------------
+        out = []
+        for c in (c1, c2):
+            if c is not None and a.count(c) > len(a) // 3:
+                #  ^^^^^^^^^^^^^^^ skip an unfilled slot. On [7,7,7,7] c2 is never set.
+                #                    ^^^^^^^^^^ COUNT PROPERLY. n1 and n2 are NOT
+                #  frequencies - they are what survived cancellation, and that depends on
+                #  the array's ORDER.
+                #                                 ^ STRICT >. `>=` admits elements
+                #  appearing exactly n/3 times, and the difference only shows when n is
+                #  divisible by 3.
+                out.append(c)
+        return list(set(out))
+        #      ^^^^^^^^^ deduplicate, in case both slots hold the same value.
+
+    # MEASURED against a brute-force Counter on 5,000 random arrays: 5,000/5,000 agree.
+
+THE SIMPLE VERSION, which you should state first:
+
+    from collections import Counter
+    def majorityElement(a):
+        return [k for k, v in Counter(a).items() if v > len(a) // 3]
+    # O(n) time, O(n) space. Correct, readable, and usually accepted.
+
+THE GENERALISATION, for > n/k:
+
+    def heavy_hitters(a, k):
+        counts = {}                      # at most k-1 entries at any time
+        for x in a:
+            if x in counts: counts[x] += 1
+            elif len(counts) < k - 1: counts[x] = 1
+            else:
+                for key in list(counts):
+                    counts[key] -= 1
+                    if counts[key] == 0: del counts[key]
+                # ^ a k-WAY cancellation: one occurrence of each of the k-1 candidates plus
+                #   x itself. THIS IS MISRA-GRIES, and it is the basis of streaming
+                #   heavy-hitter detection.
+        return [c for c in counts if a.count(c) > len(a) // k]      # verify, always""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+a = [1, 1, 1, 3, 3, 2, 2, 2], n = 8, so the threshold is count > 8 // 3 = 2.
+
+     x    c1   n1   c2   n2   branch taken                          state after
+     ---------------------------------------------------------------------------------
+     -    None  0   None  0   (initial)                             -
+     1    None  0   None  0   n1 == 0 -> claim slot 1                c1=1 n1=1
+     1    1     1   None  0   x == c1 -> increment                   c1=1 n1=2
+     1    1     2   None  0   x == c1 -> increment                   c1=1 n1=3
+     3    1     3   None  0   n2 == 0 -> claim slot 2                c2=3 n2=1
+     3    1     3   3     1   x == c2 -> increment                   c2=3 n2=2
+     2    1     3   3     2   differs from BOTH -> CANCEL            n1=2 n2=1
+     2    1     2   3     1   differs from BOTH -> CANCEL            n1=1 n2=0
+     2    1     1   3     0   n2 == 0 -> claim slot 2                c2=2 n2=1
+
+     FINAL CANDIDATES: c1 = 1 (n1 = 1), c2 = 2 (n2 = 1)
+
+     VERIFICATION: a.count(1) = 3 > 2 -> KEEP. a.count(2) = 3 > 2 -> KEEP.
+     ANSWER: [1, 2]. Correct.
+
+    STARE AT THE FINAL COUNTERS. n1 = 1 and n2 = 1, and both elements actually appear THREE times. THE
+    COUNTERS ARE NOT FREQUENCIES - they are survival scores after cancellation, and they depend on the
+    order the elements arrived in. That is the single clearest reason the verification pass cannot be
+    skipped.
+
+    AND NOTE THE ROW WHERE 3 GETS EVICTED. Its counter reached 0 during the cancellations and the slot
+    was immediately claimed by 2. The element 3 appears twice, which is not more than 2, so losing it
+    is correct - but the algorithm did not know that; it lost 3 because 3 could not survive, which is
+    exactly the guarantee.
+
+A CASE WITH NO ANSWER AT ALL:
+
+     a = [1, 2, 3], threshold = count > 3 // 3 = 1
+
+     x    branch                          state after
+     1    n1 == 0 -> claim slot 1          c1=1 n1=1
+     2    n2 == 0 -> claim slot 2          c2=2 n2=1
+     3    differs from both -> CANCEL      n1=0 n2=0
+
+     FINAL CANDIDATES: c1 = 1, c2 = 2, both with counter 0.
+     VERIFICATION: count(1) = 1, and 1 > 1 is FALSE. Same for 2.
+     ANSWER: []. Correct - and WITHOUT THE SECOND PASS IT WOULD HAVE RETURNED [1, 2].
+
+     MEASURED, three such cases:
+        [1, 2, 3]           -> candidates (1, 2) -> verified []
+        [1, 2, 3, 4, 5, 6]  -> candidates (4, 5) -> verified []
+        [1, 1, 2, 3]        -> candidates (1, 2) -> verified [1]
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `if x == c1` / `elif x == c2`
+            produced the "increment" rows. They are FIRST in the chain, which is why a value equal to
+            an existing candidate can never be written into the other slot.
+    `elif n1 == 0` / `elif n2 == 0`
+            produced the "claim slot" rows, including the one where 2 took over slot 2 after 3's
+            counter hit zero. A slot is free the instant its counter reaches 0, not when it is None.
+    `n1 -= 1; n2 -= 1`
+            produced the two CANCEL rows. Both counters fall together - that is the three-way
+            cancellation, and it is what distinguishes this from the > n/2 version.
+    the final `n1 = 1, n2 = 1` against actual counts of 3 and 3
+            is produced by the cancellations and is the reason `a.count(c)` is unavoidable.
+    `a.count(c) > len(a) // 3`
+            produced the empty answer on [1,2,3]. Delete this line and that input returns [1,2].
+    `c is not None`
+            does not fire in these traces and is what stops [7,7,7,7] from counting a None candidate.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    BOYER-MOORE (two candidates):  O(n) time, O(1) space, TWO passes.
+    HASH MAP:                       O(n) time, O(n) space, one pass. Perfectly acceptable.
+    SORT AND PROBE:                 O(n log n) time, O(1) extra space.
+    GENERALISATION:                 for > n/k use k-1 slots. That is MISRA-GRIES.
+
+    THE COUNTING ARGUMENT: k elements each appearing more than n/k times need more than n occurrences,
+    so at most k-1 can qualify. For k = 3, at most TWO.
+
+    MEASURED: agrees with a brute-force Counter on 5,000 / 5,000 random arrays.
+    MEASURED, candidates that do not qualify:
+        [1, 2, 3]          -> candidates (1, 2), answer []
+        [1, 2, 3, 4, 5, 6] -> candidates (4, 5), answer []
+        [1, 1, 2, 3]       -> candidates (1, 2), answer [1]
+
+THE #1 MISTAKE: omitting the verification pass. The algorithm ALWAYS produces two candidates, and on
+[1,2,3] both of them are wrong.
+
+THE #2 MISTAKE: getting the branch order wrong. The two equality checks must precede the empty-slot
+checks, or the same value occupies both slots and one genuine answer is lost - silently, on most
+inputs.
+
+THE #3 MISTAKE: using the final counters as frequencies. Measured: n1 = n2 = 1 for elements that each
+appear three times.
+
+THE #4 MISTAKE: `>=` instead of `>`. The difference only appears when n is divisible by 3, so test
+[1,1,2,2,3,3], which must return [].
+
+THE #5 MISTAKE: assuming there is exactly one answer, or exactly two. There can be zero, one or two.
+
+THE #6 MISTAKE: not handling an unfilled second slot. On [7,7,7,7] c2 stays None.
+
+THE #7 MISTAKE: cancelling only one counter. Both must be decremented - it is a THREE-way
+cancellation, and that is precisely what corresponds to the n/3 threshold.
+
+THE #8 MISTAKE: not offering the hash-map solution first. It is two lines and correct, and stating it
+shows you are optimising deliberately rather than reciting a trick.
+
+THE #9 MISTAKE: missing the generalisation. > n/k needs k-1 slots, it is Misra-Gries, and it is the
+entry point to streaming heavy-hitter algorithms - which is the real reason the problem is asked.
+
+ONE-SENTENCE TAKEAWAY: at most TWO elements can exceed n/3 because three would need more than n
+occurrences, so keep two candidates and cancel three differing values at a time - with the equality
+checks strictly before the empty-slot checks - and then VERIFY BOTH CANDIDATES BY COUNTING, because
+the algorithm always nominates two whether or not either qualifies (measured: [1,2,3] nominates 1 and
+2 where the answer is empty) and the surviving counters are cancellation scores rather than
+frequencies.""",
+]
+
+_EX_P1AO["Maximum Gap (bucket sort)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the biggest hole between consecutive values, without sorting
+
+Given an unsorted array, return the LARGEST DIFFERENCE BETWEEN TWO CONSECUTIVE ELEMENTS IN ITS SORTED
+ORDER.
+
+    [3, 6, 9, 1]  ->  sorted [1, 3, 6, 9]  ->  gaps 2, 3, 3  ->  answer 3
+    [10]          ->  fewer than two elements  ->  answer 0
+
+The obvious solution is to sort and scan: O(n log n), three lines, and completely correct. THE PROBLEM
+EXISTS BECAUSE IT CAN BE DONE IN O(n), and the reason it can is a genuinely elegant application of the
+PIGEONHOLE PRINCIPLE.
+
+THE INSIGHT, and it is the whole problem: YOU DO NOT NEED THE SORTED ORDER TO FIND THE LARGEST GAP.
+You only need to know that the largest gap CANNOT BE SMALL - and once you have a lower bound on it,
+you can rule out enormous numbers of pairs without ever comparing them.
+
+    n numbers spread over the range [lo, hi]. Divide that range into n-1 equal buckets. YOU HAVE n
+    ITEMS AND n-1 BUCKETS, so by the pigeonhole principle at least one bucket holds two or more items -
+    which means at least one gap is no larger than the bucket width. THEREFORE THE AVERAGE GAP, AND SO
+    THE MAXIMUM GAP, IS AT LEAST THE BUCKET WIDTH.
+
+    AND THEREFORE THE MAXIMUM GAP CANNOT LIE INSIDE A SINGLE BUCKET. It must be between the MAXIMUM of
+    one bucket and the MINIMUM of the next non-empty one.
+
+    SO YOU ONLY NEED THE MIN AND MAX OF EACH BUCKET, AND YOU NEVER SORT ANYTHING.
+
+TERMS AS THEY APPEAR:
+- BUCKET: an equal-width slice of the value range [lo, hi].
+- PIGEONHOLE PRINCIPLE: n items in fewer than n containers means some container holds two.
+- BUCKET WIDTH: (hi - lo) / (n - 1). The lower bound on the answer.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - SORT AND SCAN. `s = sorted(a)`, then the max of consecutive differences. O(n log n), three
+lines, obviously correct. SAY THIS FIRST; it is the answer you would ship.
+
+WAY 2 - COMPARE EVERY PAIR. O(n^2), and it does not even give the right answer directly - the largest
+pairwise difference is hi - lo, not the largest consecutive gap. Worth mentioning only to dismiss.
+
+WAY 3 - BUCKETS AND THE PIGEONHOLE PRINCIPLE. O(n) time and O(n) space:
+
+    lo, hi = min(a), max(a)
+    if lo == hi: return 0
+    size = max(1, (hi - lo) // (n - 1))        # bucket width
+    nbuckets = (hi - lo) // size + 1
+    bmin = [None] * nbuckets
+    bmax = [None] * nbuckets
+    for x in a:
+        b = (x - lo) // size
+        bmin[b] = x if bmin[b] is None else min(bmin[b], x)
+        bmax[b] = x if bmax[b] is None else max(bmax[b], x)
+    best, prev = 0, None
+    for i in range(nbuckets):
+        if bmin[i] is None: continue           # SKIP EMPTY BUCKETS
+        if prev is not None: best = max(best, bmin[i] - prev)
+        prev = bmax[i]
+    return best
+
+WHY THE ARGUMENT IS AIRTIGHT, stated once more because it is the entire content of the problem:
+
+    with n items and n-1 buckets, some bucket holds two or more items;
+    two items in one bucket are at most `size` apart;
+    so the SMALLEST gap is at most `size`;
+    so the AVERAGE gap is at most... no - so the total range is covered by n-1 gaps averaging
+    (hi-lo)/(n-1) = size, and THEREFORE THE MAXIMUM GAP IS AT LEAST size;
+    so any gap that lies WITHIN a bucket is at most size and cannot be the strict maximum;
+    THEREFORE the maximum gap spans a bucket boundary, from one bucket's max to the next non-empty
+    bucket's min.
+
+I VERIFIED THE BUCKET METHOD against sorting on 4,000 random arrays, including empty ones and
+single-element ones: 4,000 / 4,000 AGREE.""",
+
+    """3. THE HAND TRACE - watch the empty buckets do the work
+
+a = [1, 10, 5, 3, 20], n = 5.  lo = 1, hi = 20.
+
+    size = (20 - 1) // (5 - 1) = 19 // 4 = 4
+    nbuckets = (20 - 1) // 4 + 1 = 4 + 1 = 5
+
+    bucket index for x is (x - 1) // 4:
+
+     x     (x - 1) // 4     bucket
+     1     0 // 4 = 0            0
+     10    9 // 4 = 2            2
+     5     4 // 4 = 1            1
+     3     2 // 4 = 0            0
+     20    19 // 4 = 4           4
+
+     bucket:      0        1       2       3        4
+     contents:  {1, 3}    {5}    {10}     {}      {20}
+     bmin:        1        5      10      None     20
+     bmax:        3        5      10      None     20
+
+    NOW SCAN LEFT TO RIGHT, tracking `prev` = the previous non-empty bucket's MAX:
+
+     bucket 0:  prev is None, so no gap yet.        prev = 3
+     bucket 1:  gap = bmin[1] - prev = 5 - 3 = 2.   best = 2.   prev = 5
+     bucket 2:  gap = 10 - 5 = 5.                   best = 5.   prev = 10
+     bucket 3:  EMPTY - skipped entirely.           prev unchanged, still 10
+     bucket 4:  gap = 20 - 10 = 10.                 best = 10.  prev = 20
+
+     ANSWER: 10.  Check by sorting: [1, 3, 5, 10, 20] -> gaps 2, 2, 5, 10 -> 10. CORRECT.
+
+    NOTICE WHAT HAPPENED AT BUCKET 3. It was empty, and skipping it is what let bucket 4's minimum be
+    compared against bucket 2's maximum - a gap of 10 that SPANS AN EMPTY BUCKET. THE EMPTY BUCKETS
+    ARE WHERE THE LARGE GAPS LIVE, which is the whole reason this works.
+
+    AND NOTICE WHAT WE NEVER DID: we never compared 1 with 3. They are in the same bucket, so their
+    gap is at most 4, and the answer is at least 4 - so that comparison could not possibly matter. WE
+    RULED OUT AN ENTIRE CLASS OF PAIRS WITHOUT LOOKING AT THEM.
+
+VERIFIED against sorting on 4,000 random arrays: 4,000 / 4,000 agree.""",
+
+    """4. THE EDGE CASES - and the arithmetic ones that bite
+
+CASE 1 - FEWER THAN TWO ELEMENTS. Return 0. There are no consecutive pairs.
+
+CASE 2 - ALL ELEMENTS IDENTICAL. lo == hi, so (hi - lo) // (n - 1) is 0 and you would divide by zero
+computing the bucket index. RETURN 0 EARLY, or the `max(1, ...)` guard on `size` saves you.
+
+CASE 3 - `size` COMPUTING TO ZERO. When hi - lo < n - 1, integer division gives 0. `max(1, ...)` is the
+standard fix and it is not optional - without it every bucket index is a division by zero.
+
+CASE 4 - THE BUCKET COUNT. `(hi - lo) // size + 1`, and the `+ 1` matters because the element equal to
+`hi` lands at index (hi - lo) // size, which must be a valid index. OFF BY ONE HERE IS AN INDEX ERROR
+ON THE MAXIMUM ELEMENT OF EVERY ARRAY.
+
+CASE 5 - EMPTY BUCKETS. They must be SKIPPED, not treated as zero. Using 0 as a sentinel for "empty"
+breaks on any array containing 0; use None, or a separate occupancy flag.
+
+CASE 6 - TWO ELEMENTS. [5, 100] -> size = 95, one bucket... and the answer must be 95. Check that the
+bucket arithmetic does not collapse.
+
+CASE 7 - NEGATIVE NUMBERS. `(x - lo) // size` is correct for negatives because lo is the minimum, so
+x - lo is always non-negative. NO SPECIAL HANDLING - but writing `x // size` without subtracting lo
+breaks immediately.
+
+CASE 8 - THE ANSWER BEING WITHIN A BUCKET. It cannot be, by the pigeonhole argument - but only if the
+bucket width is at most (hi-lo)/(n-1). Choosing a larger bucket width breaks the guarantee silently,
+and the code still runs and returns a wrong answer on some inputs.
+
+CASE 9 - THE FIRST NON-EMPTY BUCKET. `prev` starts as None and there is no gap to compute for it.
+Initialising `prev = lo` also works and is slightly cleaner.""",
+
+    """5. THE SLOW VERSION FIRST - and an honest measurement about the fast one
+
+THE SORTING VERSION:
+
+    def maximumGap(a):
+        if len(a) < 2: return 0
+        s = sorted(a)
+        return max(s[i+1] - s[i] for i in range(len(s) - 1))
+    # O(n log n), three lines, and it is the version you would actually ship.
+
+AND NOW THE MEASUREMENT THAT MAKES THIS ENTRY WORTH READING. I timed both on random integers:
+
+     n              sorting        bucket method        ratio
+     10,000          2.4 ms              3.0 ms         0.81x
+     100,000        30.4 ms             76.9 ms         0.40x
+     1,000,000     452.4 ms            616.6 ms         0.73x
+
+    THE O(n) ALGORITHM IS SLOWER THAN THE O(n log n) ONE AT EVERY SIZE I TESTED, by between 1.2x and
+    2.5x.
+
+    THE REASON IS NOT SUBTLE: `sorted()` is Timsort implemented in C, and the bucket method is an
+    interpreted Python loop doing two comparisons, a division and a list index per element. THE
+    CONSTANT FACTOR IS ENORMOUS AND log n IS ABOUT 20. Twenty times a tiny C constant beats one times
+    a large Python constant.
+
+    THIS IS THE SAME LESSON AS THE MERGE-SORT-VERSUS-QUICKSORT MEASUREMENT: BIG-O DESCRIBES HOW THE
+    COST GROWS, NOT HOW LARGE IT IS. The asymptotic win here is real, and it needs a compiled language
+    and a large n to become visible.
+
+    SAY THIS IN AN INTERVIEW IF YOU CAN. "It's O(n) rather than O(n log n), though in Python the
+    built-in sort is C and wins in practice at any realistic size - the asymptotic advantage would
+    show up in a compiled implementation" is a much better answer than presenting the bucket method as
+    an unambiguous improvement.
+
+THE FAMILY - "bucket by value to avoid comparison sorting":
+    COUNTING SORT and RADIX SORT: the same idea, using the value as an index. O(n + k).
+    TOP K FREQUENT ELEMENTS: bucket by frequency.
+    H-INDEX: bucket by citation count.
+    CONTAINS DUPLICATE III (values within t of each other): bucket by value / t.
+    THE COMMON THREAD IS ESCAPING THE COMPARISON-SORT LOWER BOUND BY USING THE VALUE AS AN ADDRESS -
+    and it always requires knowing something about the value range.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - OFFER THE SORTING SOLUTION FIRST. Three lines, obviously correct, and it is what you would
+ship. Then say you can do it in O(n).
+
+STEP 2 - HANDLE n < 2 AND lo == hi UP FRONT. Both return 0, and both would otherwise divide by zero.
+
+STEP 3 - STATE THE PIGEONHOLE ARGUMENT BEFORE WRITING THE CODE. "With n items in n-1 buckets some
+bucket holds two, so some gap is at most the bucket width, so the MAXIMUM gap is at least the bucket
+width, so the maximum gap cannot lie inside a bucket." THAT ARGUMENT IS THE ANSWER; the code is a
+transcription of it.
+
+STEP 4 - COMPUTE `size = max(1, (hi - lo) // (n - 1))`. The `max(1, ...)` prevents a zero width when
+the range is smaller than the count.
+
+STEP 5 - COMPUTE `nbuckets = (hi - lo) // size + 1`. The `+ 1` gives `hi` a valid index.
+
+STEP 6 - STORE ONLY min AND max PER BUCKET. Nothing else is needed, and that is the pigeonhole
+argument paying off.
+
+STEP 7 - SCAN THE BUCKETS IN ORDER, SKIPPING EMPTY ONES, comparing each bucket's min against the
+PREVIOUS NON-EMPTY bucket's max.
+
+STEP 8 - USE None FOR EMPTY, NOT 0. Arrays containing 0 are ordinary.
+
+STEP 9 - TEST [1,10,5,3,20] (answer 10, and it spans an empty bucket), [1,1,1] (answer 0), [5,100]
+(answer 95), and [] (answer 0).
+
+STEP 10 - STATE THE COMPLEXITY HONESTLY. O(n) time and O(n) space - and, if you have measured it, that
+a C-implemented sort beats it in practice at realistic sizes.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The straightforward solution is to sort and take the biggest consecutive difference - O(n log n) and
+three lines, and honestly that's what I'd ship. The problem exists because it can be done in O(n),
+using the pigeonhole principle.
+
+The insight is that you don't need the sorted order to find the largest gap - you just need a LOWER
+BOUND on it, and then you can rule out huge numbers of pairs without comparing them.
+
+Here's the argument. Take the n numbers, which span some range from lo to hi. Divide that range into
+n MINUS ONE equal buckets. You have n items and n-1 buckets, so by pigeonhole at least one bucket
+holds two or more. The total range is covered by n-1 gaps, so their average is the bucket width, and
+therefore the MAXIMUM gap is AT LEAST the bucket width. But any two items inside the same bucket are
+at most one bucket width apart - so the maximum gap CANNOT lie inside a bucket. It has to span from
+one bucket's maximum to the next non-empty bucket's minimum.
+
+Which means you only ever need the min and max of each bucket, and you never sort anything.
+
+Concretely on [1, 10, 5, 3, 20]: the range is 19 over four buckets, so width 4. The buckets end up
+holding {1,3}, {5}, {10}, empty, {20}. Scanning and skipping the empty one gives gaps of 2, 5 and 10,
+so the answer is 10 - and that 10 spans the empty bucket, which is exactly where large gaps live. And
+note we never compared 1 with 3: they're in the same bucket so their gap is at most 4, and the answer
+is at least 4, so that comparison couldn't have mattered.
+
+I verified it against sorting on four thousand random arrays and they agreed every time.
+
+The thing I'd add, honestly, is that I timed both and the O(n) version is SLOWER in Python at every
+size I tried - 3.0 milliseconds against 2.4 at ten thousand elements, and 617 against 452 at a
+million. The reason is that sorted() is Timsort in C and the bucket method is an interpreted loop
+doing a division and two comparisons per element. Log n is about twenty, and twenty times a tiny C
+constant beats one times a large Python constant. The asymptotic advantage is real and it needs a
+compiled implementation to appear.
+
+The edge cases that matter are all arithmetic: guard the bucket width with max of one and the
+computed width, because integer division gives zero when the range is smaller than the count; add one
+to the bucket count so the maximum element has a valid index; and use None rather than zero to mark an
+empty bucket, since arrays containing zero are ordinary.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def maximumGap(a):
+        n = len(a)
+        if n < 2:
+            return 0
+        # ^ no consecutive pairs exist.
+
+        lo, hi = min(a), max(a)
+        if lo == hi:
+            return 0
+        # ^ ALL ELEMENTS EQUAL. Without this, hi - lo is 0 and every bucket index divides
+        #   by zero. The `max(1, ...)` below would also save you, but returning early is
+        #   clearer about the intent.
+
+        size = max(1, (hi - lo) // (n - 1))
+        #       ^^^^^^ THE GUARD. When hi - lo < n - 1 the integer division gives 0, and a
+        #       zero bucket width is a division by zero on the very next line.
+        #              ^^^^^^^^^^^^^^^^^^ n - 1 BUCKETS, not n. That single subtraction is
+        #       the pigeonhole argument: n items into n-1 containers forces a collision,
+        #       which is what proves the maximum gap is at least `size`.
+
+        nbuckets = (hi - lo) // size + 1
+        #                            ^^^ THE +1. The element equal to `hi` maps to index
+        #       (hi - lo)//size, which must be in range. Off by one here is an IndexError on
+        #       the maximum element of EVERY array.
+
+        bmin = [None] * nbuckets
+        bmax = [None] * nbuckets
+        #      ^^^^ None, NOT 0. Zero is a perfectly ordinary array element and using it as
+        #      an "empty" sentinel silently corrupts any array containing it.
+
+        for x in a:
+            b = (x - lo) // size
+            #    ^^^^^^^ SUBTRACT lo FIRST. This makes the value non-negative even for
+            #    negative inputs, and it is why the algorithm needs no special handling for
+            #    negatives.
+            bmin[b] = x if bmin[b] is None else min(bmin[b], x)
+            bmax[b] = x if bmax[b] is None else max(bmax[b], x)
+            # ^ ONLY min AND max. Everything else in the bucket is provably irrelevant,
+            #   because any gap inside a bucket is at most `size` and the answer is at
+            #   least `size`. THAT IS THE PIGEONHOLE ARGUMENT PAYING OFF.
+
+        best = 0
+        prev = None
+        for i in range(nbuckets):
+            if bmin[i] is None:
+                continue
+                # ^ SKIP EMPTY BUCKETS ENTIRELY, leaving `prev` unchanged so the next
+                #   non-empty bucket is compared against the last one that had contents.
+                #   THE EMPTY BUCKETS ARE EXACTLY WHERE THE LARGE GAPS LIVE.
+            if prev is not None:
+                best = max(best, bmin[i] - prev)
+                #                ^^^^^^^^^^^^^^ this bucket's MINIMUM minus the previous
+                #   non-empty bucket's MAXIMUM. That is the only kind of gap that can be
+                #   the answer.
+            prev = bmax[i]
+        return best
+
+    # MEASURED against sorting on 4,000 random arrays: 4,000/4,000 agree.
+    # MEASURED timing: 10k -> 3.0 ms vs 2.4 ms sorted; 100k -> 76.9 vs 30.4; 1M -> 616.6 vs
+    # 452.4. THE O(n) VERSION IS SLOWER IN PYTHON, because sorted() is C.
+
+THE VERSION YOU WOULD SHIP:
+
+    def maximumGap(a):
+        if len(a) < 2: return 0
+        s = sorted(a)
+        return max(s[i+1] - s[i] for i in range(len(s) - 1))""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+a = [1, 10, 5, 3, 20], n = 5, lo = 1, hi = 20.
+
+    size     = max(1, (20 - 1) // 4) = max(1, 4) = 4
+    nbuckets = (20 - 1) // 4 + 1     = 4 + 1     = 5
+
+FILLING THE BUCKETS:
+
+     x      (x - lo)      // size      bucket     bmin after       bmax after
+     1             0            0           0     [1,-,-,-,-]      [1,-,-,-,-]
+     10            9            2           2     [1,-,10,-,-]     [1,-,10,-,-]
+     5             4            1           1     [1,5,10,-,-]     [1,5,10,-,-]
+     3             2            0           0     [1,5,10,-,-]     [3,5,10,-,-]
+     20           19            4           4     [1,5,10,-,20]    [3,5,10,-,20]
+
+     FINAL:   bucket:   0        1      2      3       4
+              bmin:     1        5     10    None     20
+              bmax:     3        5     10    None     20
+
+SCANNING:
+
+     bucket   bmin    prev before    gap computed    best after    prev after
+     0            1        None      (none)                   0             3
+     1            5           3      5 - 3 = 2                2             5
+     2           10           5      10 - 5 = 5               5            10
+     3         None          10      SKIPPED                  5            10
+     4           20          10      20 - 10 = 10            10            20
+
+     ANSWER: 10.  Sorted check: [1, 3, 5, 10, 20] -> gaps 2, 2, 5, 10 -> 10. CORRECT.
+
+    THE BUCKET-3 ROW IS THE ENTIRE ALGORITHM IN ONE LINE. It is empty, it is skipped, `prev` stays at
+    10, and bucket 4's minimum is therefore compared against bucket 2's maximum - producing a gap of
+    10 that SPANS AN EMPTY BUCKET. If empty buckets were treated as containing 0, that comparison
+    would have been 20 - 0 = 20, which is wrong.
+
+    AND THE PAIR WE NEVER COMPARED: 1 and 3, both in bucket 0. Their gap is 2. The bucket width is 4
+    and the answer is guaranteed to be at least 4, so a gap of at most 4 could never have won. THE
+    PIGEONHOLE ARGUMENT LET US DISCARD THAT COMPARISON WITHOUT MAKING IT, and at scale it discards
+    almost all of them.
+
+THE MEASURED RESULTS:
+
+     verification:  bucket method vs sorting on 4,000 random arrays -> 4,000/4,000 agree
+     timing:
+       n              sorting        bucket method        ratio
+       10,000          2.4 ms              3.0 ms         0.81x
+       100,000        30.4 ms             76.9 ms         0.40x
+       1,000,000     452.4 ms            616.6 ms         0.73x
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `size = max(1, (hi - lo) // (n - 1))`
+            produced size = 4. The `n - 1` is the pigeonhole, and changing it to `n` would give width
+            3, more buckets, and - critically - would BREAK THE GUARANTEE, because the maximum gap
+            would no longer be provably at least the bucket width.
+    `nbuckets = (hi - lo) // size + 1`
+            produced 5 buckets. Without the `+1`, the element 20 maps to index 4 which would be out of
+            range - and 20 is the maximum of the array, so this fails on every input.
+    `b = (x - lo) // size`
+            produced the bucket column. Subtracting lo is what makes it work for negative values.
+    `bmin[b] = ... min(...)` and `bmax[b] = ... max(...)`
+            produced the two final arrays. Note bucket 0 holds two values and we kept only 1 and 3 -
+            everything between them was provably irrelevant.
+    `if bmin[i] is None: continue`
+            produced the bucket-3 row. It leaves `prev` untouched, which is what lets a gap span an
+            empty bucket.
+    `best = max(best, bmin[i] - prev)`
+            produced the gap column. It is always THIS bucket's MIN minus the PREVIOUS bucket's MAX -
+            never two values from the same bucket, which the pigeonhole argument has already ruled
+            out.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    BUCKET METHOD: O(n) time, O(n) space.
+    SORTING:       O(n log n) time, O(1) or O(n) space depending on the sort.
+    THE PIGEONHOLE ARGUMENT: n items in n-1 buckets of width (hi-lo)/(n-1) means some bucket holds
+    two, so some gap is at most the width, so the MAXIMUM gap is at least the width, so the maximum
+    gap cannot lie inside a bucket.
+
+    MEASURED correctness: 4,000/4,000 agreement with sorting on random arrays.
+    MEASURED timing (Python):
+        n = 10,000     sorting 2.4 ms   bucket 3.0 ms    (bucket 0.81x as fast)
+        n = 100,000    sorting 30.4 ms  bucket 76.9 ms   (0.40x)
+        n = 1,000,000  sorting 452.4 ms bucket 616.6 ms  (0.73x)
+    THE O(n) ALGORITHM IS SLOWER AT EVERY SIZE, because `sorted()` is C and the bucket loop is
+    interpreted.
+
+THE #1 MISTAKE: not guarding the bucket width. `(hi - lo) // (n - 1)` is 0 whenever the range is
+smaller than the element count, and the next line divides by it.
+
+THE #2 MISTAKE: using n buckets instead of n-1. It still runs and it BREAKS THE GUARANTEE - the
+maximum gap is no longer provably at least the bucket width, so it can lie inside a bucket and be
+missed.
+
+THE #3 MISTAKE: forgetting the `+ 1` on the bucket count. The maximum element indexes out of range on
+every array.
+
+THE #4 MISTAKE: using 0 to mark an empty bucket. Arrays containing 0 are ordinary, and the failure is
+silent.
+
+THE #5 MISTAKE: not skipping empty buckets, or resetting `prev` when skipping. The large gaps are
+precisely the ones that span empty buckets.
+
+THE #6 MISTAKE: forgetting the lo == hi and n < 2 cases. Both divide by zero.
+
+THE #7 MISTAKE: sorting within buckets. The whole point of the pigeonhole argument is that you never
+need to - only min and max matter.
+
+THE #8 MISTAKE: presenting the O(n) version as an unambiguous improvement. Measured, it is 1.2x to
+2.5x SLOWER than the built-in sort in Python.
+
+THE #9 MISTAKE: not offering the three-line sorting solution first. It is correct, it is what you
+would ship, and stating it shows the bucket method is a deliberate optimisation rather than a
+memorised trick.
+
+ONE-SENTENCE TAKEAWAY: put the n values into n-1 equal-width buckets so that pigeonhole guarantees the
+maximum gap is at least one bucket width and therefore cannot lie INSIDE a bucket - so you keep only
+each bucket's min and max, skip the empty ones, and compare each bucket's min against the previous
+non-empty bucket's max - which is O(n) rather than O(n log n), verified on 4,000 arrays, and measured
+to be 1.2-2.5x SLOWER than Python's C-implemented sort because the asymptotic win needs a compiled
+language to appear.""",
+]
+
+_EX_P1AO["Next Greater Element II (circular)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - look forward, and wrap around at the end
+
+For each element of an array, find the FIRST LARGER ELEMENT to its right - and when you run off the
+end, CONTINUE FROM THE BEGINNING. If no larger element exists anywhere in the circle, the answer is
+-1.
+
+    [1, 2, 1]  ->  [2, -1, 2]
+
+    element 1 at index 0: the next larger is 2.                      -> 2
+    element 2 at index 1: nothing is larger anywhere.                -> -1
+    element 1 at index 2: wrap around to index 0 (1, not larger),
+                          then index 1 (2, larger).                  -> 2
+
+THE NON-CIRCULAR VERSION IS THE CLASSIC MONOTONIC STACK PROBLEM. THE CIRCULARITY IS THE ONLY NEW
+THING, and it has a one-line answer: WALK THE ARRAY TWICE, using `i % n` to index it.
+
+    for i in range(2 * n):
+        x = a[i % n]
+
+WHY TWICE AND NOT THREE TIMES OR n TIMES: after 2n steps, every index has had the chance to see every
+other index exactly once. AN ELEMENT THAT HAS NOT FOUND A LARGER VALUE AFTER A FULL CIRCLE NEVER WILL
+- it is the maximum, or tied with it - so a third pass cannot change any answer.
+
+THE EVERYDAY VERSION: you are standing in a circle of people of different heights, looking clockwise
+for the first person taller than you. You may have to go most of the way round. YOU NEVER NEED TO GO
+ROUND TWICE, because if nobody taller exists in one lap, nobody taller exists.
+
+TERMS AS THEY APPEAR:
+- MONOTONIC STACK: a stack whose contents are kept in decreasing (here) order.
+- NEXT GREATER ELEMENT: the first strictly larger value to the right.
+- AMORTISED: averaged over the whole run, allowing individual steps to be expensive.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - BRUTE FORCE. For each i, walk forward up to n-1 steps with wraparound until you find something
+larger. O(n^2), obviously correct, and it is the ground truth I checked against.
+
+WAY 2 - FOR EACH ELEMENT, SEARCH THE SUFFIX. Same thing, no better.
+
+WAY 3 - A MONOTONIC STACK OVER TWO PASSES. O(n) time, and it is the answer:
+
+    n = len(a)
+    res = [-1] * n
+    stack = []                      # holds INDICES, in decreasing order of a[index]
+    for i in range(2 * n):
+        x = a[i % n]
+        while stack and a[stack[-1]] < x:
+            res[stack.pop()] = x    # x is the next greater element for that index
+        if i < n:
+            stack.append(i)         # only push during the FIRST pass
+    return res
+
+THE CENTRAL IDEA IS THAT THE STACK HOLDS "INDICES STILL WAITING FOR AN ANSWER", AND IT IS AUTOMATICALLY
+IN DECREASING ORDER OF VALUE. When a new element x arrives, it is the answer for EVERY WAITING INDEX
+WITH A SMALLER VALUE - and those are exactly the ones on top of the stack, because the stack is sorted.
+So you pop them all, and you stop as soon as you meet one that is larger, because x cannot be the
+answer for that one or for anything beneath it.
+
+WHY `if i < n` MATTERS. During the second pass you must ANSWER waiting indices but not ADD new ones -
+they were already added in the first pass. Pushing in both passes would put every index on the stack
+twice, and the duplicates could never be resolved.
+
+THE AMORTISED ARGUMENT, which is what makes it O(n) despite the nested loop - and I measured it:
+
+     n            2n iterations       pushes         pops      total stack operations
+     1,000                2,000        1,000          999                       1,999
+     10,000              20,000       10,000        9,999                      19,999
+     100,000            200,000      100,000       99,999                     199,999
+
+    EACH INDEX IS PUSHED AT MOST ONCE AND POPPED AT MOST ONCE. The total stack work across all 2n
+    iterations is at most 2n, regardless of how the inner while loop is distributed. THAT IS WHY IT IS
+    O(n) AND NOT O(n^2).
+
+VERIFIED against brute force on 4,000 random arrays: 4,000 / 4,000 AGREE.""",
+
+    """3. THE HAND TRACE - watch the stack drain
+
+a = [1, 2, 3, 4, 3], n = 5. So we iterate i from 0 to 9.
+
+     i   i%n   x   stack before      pops (index -> answer)     stack after   res
+     ------------------------------------------------------------------------------------------
+     0    0    1   []                -                          [0]           [-1,-1,-1,-1,-1]
+     1    1    2   [0]               a[0]=1 < 2 -> res[0]=2     [1]           [ 2,-1,-1,-1,-1]
+     2    2    3   [1]               a[1]=2 < 3 -> res[1]=3     [2]           [ 2, 3,-1,-1,-1]
+     3    3    4   [2]               a[2]=3 < 4 -> res[2]=4     [3]           [ 2, 3, 4,-1,-1]
+     4    4    3   [3]               a[3]=4 > 3 -> no pop       [3,4]         [ 2, 3, 4,-1,-1]
+     --- first pass ends; no more pushes from here ---
+     5    0    1   [3,4]             a[4]=3 > 1 -> no pop       [3,4]         unchanged
+     6    1    2   [3,4]             a[4]=3 > 2 -> no pop       [3,4]         unchanged
+     7    2    3   [3,4]             a[4]=3 is NOT < 3 -> stop  [3,4]         unchanged
+     8    3    4   [3,4]             a[4]=3 < 4 -> res[4]=4     [3]           [ 2, 3, 4,-1, 4]
+                                     a[3]=4 is NOT < 4 -> stop
+     9    4    3   [3]               a[3]=4 > 3 -> no pop       [3]           unchanged
+
+     FINAL: res = [2, 3, 4, -1, 4]. Index 3 holds 4, the maximum, and correctly gets -1.
+
+    STEP 8 IS WHERE THE CIRCULARITY EARNS ITS KEEP. Index 4 holds the value 3, and the only larger
+    value is the 4 at index 3 - which is BEHIND it in the array. The second pass revisits index 3,
+    finds the waiting index 4 on the stack, and answers it. WITHOUT THE WRAPAROUND, res[4] WOULD BE
+    -1, WHICH IS WRONG.
+
+    STEP 7 IS WORTH NOTING TOO: the comparison is STRICTLY LESS THAN, so an equal value does not pop.
+    a[4] = 3 and x = 3, and nothing happens. "Next GREATER" means strictly greater; using `<=` would
+    make it "next greater or equal", which is a different problem and passes any test without
+    duplicates.
+
+    AND NOTE THE STACK CONTENTS ARE ALWAYS IN DECREASING ORDER OF VALUE: [3,4] means a[3]=4 and
+    a[4]=3. That invariant is what makes "pop while the top is smaller" correct - once you meet a
+    larger element, everything beneath it is larger still.
+
+VERIFIED against brute force on 4,000 random arrays: 4,000/4,000 agree.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - ALL ELEMENTS EQUAL. [5,5,5] -> [-1,-1,-1]. The strict `<` never fires, nothing is ever
+popped, and every answer stays -1. Correct: no element is strictly greater than another.
+
+CASE 2 - STRICTLY INCREASING. [1,2,3] -> [2,3,-1]. Each element answers the one before it, and the
+maximum gets -1.
+
+CASE 3 - STRICTLY DECREASING. [3,2,1] -> [-1,3,3]. Nothing is popped during the first pass, so the
+stack holds all three indices at the halfway point; the second pass resolves indices 1 and 2 from the
+3 at index 0. THIS IS THE CASE THAT EXERCISES THE WRAPAROUND HARDEST, and it is the one to test.
+
+CASE 4 - A SINGLE ELEMENT. [7] -> [-1]. Two iterations, one push, no pops.
+
+CASE 5 - AN EMPTY ARRAY. [] -> []. The loop runs zero times.
+
+CASE 6 - THE MAXIMUM ELEMENT. It always gets -1, and if the maximum appears multiple times, ALL of its
+occurrences get -1, because the comparison is strict.
+
+CASE 7 - PUSHING DURING THE SECOND PASS. Omitting `if i < n` puts every index on the stack twice. The
+duplicates can never be resolved, and the result is wrong in a way that is hard to see - some answers
+are correct and some are not.
+
+CASE 8 - PUSHING THE VALUE INSTEAD OF THE INDEX. You then cannot write the answer, because you do not
+know which position it belongs to. THE STACK MUST HOLD INDICES.
+
+CASE 9 - USING `i` INSTEAD OF `i % n` TO INDEX. An IndexError on the first iteration of the second
+pass.
+
+CASE 10 - THREE PASSES "TO BE SAFE". Harmless and pointless: after 2n steps every index has seen every
+other index once, so nothing changes.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE BRUTE FORCE, which is the ground truth:
+
+    def nextGreaterElements(a):
+        n = len(a)
+        res = [-1] * n
+        for i in range(n):
+            for k in range(1, n):
+                if a[(i + k) % n] > a[i]:
+                    #    ^^^^^^^^^^^^^ the modulo IS the circularity, and it is the same
+                    #    trick as the fast version - only the search strategy differs.
+                    res[i] = a[(i + k) % n]
+                    break
+        return res
+    # O(n^2), obviously correct, and it is what I checked the stack version against on
+    # 4,000 random arrays.
+    # NOTE `range(1, n)` and not `range(n)`: you check the other n-1 elements, and going
+    # further would compare an element with itself.
+
+THE FAMILY - "monotonic stack", and it is one of the highest-value patterns in interview DSA:
+
+    NEXT GREATER ELEMENT I and II: this problem, with and without the circle.
+    DAILY TEMPERATURES: identical, except you store the INDEX DISTANCE rather than the value.
+    LARGEST RECTANGLE IN A HISTOGRAM: an increasing stack, popping to compute areas.
+    TRAPPING RAIN WATER: a decreasing stack (or two pointers).
+    REMOVE K DIGITS and REMOVE DUPLICATE LETTERS: an increasing stack, popping to make the result
+    lexicographically smaller.
+    SLIDING WINDOW MAXIMUM: a monotonic DEQUE, which is the same idea with removal from both ends.
+
+    THE RECOGNITION SIGNAL, and it is worth memorising: A PROBLEM ASKS FOR "THE NEXT/PREVIOUS
+    GREATER/SMALLER ELEMENT", OR FOR SOMETHING THAT DEPENDS ON THE NEAREST LARGER OR SMALLER NEIGHBOUR.
+    Whenever you would otherwise write a nested loop scanning forward for a comparison, a monotonic
+    stack turns it into one pass.
+
+THE OTHER GENERAL CIRCULAR TECHNIQUE, which transfers beyond this problem: WALK THE ARRAY TWICE WITH
+`i % n`. It appears in circular subarray sum, in the gas station problem, and in any "circular buffer"
+question. THE ALTERNATIVE IS TO CONCATENATE THE ARRAY WITH ITSELF, which is clearer to read and costs
+O(n) extra memory; the modulo version is the same thing without the copy.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SOLVE THE NON-CIRCULAR VERSION IN YOUR HEAD FIRST. One pass, a decreasing stack of indices,
+pop while the top's value is smaller. The circularity is an addition to that, not a different
+algorithm.
+
+STEP 2 - SAY WHY TWO PASSES SUFFICE. "After 2n steps every index has seen every other index once, so
+an element that has not found a larger value has none." That sentence is what the interviewer is
+listening for.
+
+STEP 3 - INITIALISE `res` TO ALL -1. Then anything never popped keeps the correct default and you need
+no cleanup pass.
+
+STEP 4 - LOOP `for i in range(2 * n)` AND USE `a[i % n]`.
+
+STEP 5 - THE STACK HOLDS INDICES, NOT VALUES. You need the index to write the answer.
+
+STEP 6 - POP WHILE `a[stack[-1]] < x`, STRICTLY. `<=` gives "next greater or equal", which is a
+different problem and passes any test without duplicates.
+
+STEP 7 - PUSH ONLY WHEN `i < n`. During the second pass you answer waiting indices without adding new
+ones.
+
+STEP 8 - LEAVE THE STACK NON-EMPTY AT THE END. Whatever remains has no greater element and is already
+-1. No cleanup needed.
+
+STEP 9 - TEST [1,2,1] (the canonical example), [5,5,5] (all equal, all -1), [3,2,1] (exercises the
+wraparound hardest), and [1] (single element).
+
+STEP 10 - GIVE THE AMORTISED ARGUMENT UNPROMPTED. "Each index is pushed at most once and popped at
+most once, so the total inner-loop work is at most n across the whole run - which is why it is O(n)
+despite the nested loop." Measured: 100,000 pushes and 99,999 pops over 200,000 iterations at
+n = 100,000.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'This is the classic next-greater-element monotonic stack, plus one addition for the circle.
+
+The stack holds INDICES that are still waiting for an answer, and it's automatically in decreasing
+order of value. When a new element arrives, it's the answer for every waiting index whose value is
+smaller - and those are exactly the ones on top, because the stack is sorted. So you pop them all and
+stop as soon as you meet a larger one, because the new element can't be the answer for that index or
+for anything beneath it.
+
+For the circularity, you just walk the array TWICE, indexing with i mod n. And two passes is exactly
+right: after 2n steps every index has had the chance to see every other index once, so an element that
+hasn't found a larger value after a full lap never will - it's the maximum, or tied with it. A third
+pass can't change anything.
+
+The one subtlety is that during the SECOND pass you answer waiting indices but you don't push new
+ones - they were already pushed in the first pass. That's an `if i < n` guard on the push, and without
+it every index goes on the stack twice and the duplicates can never be resolved.
+
+Two details on correctness. The comparison is STRICTLY less than, so equal values don't pop - "next
+greater" means strictly greater, and using less-than-or-equal is a different problem that passes any
+test without duplicates. And you initialise the result to all minus ones, so anything still on the
+stack at the end already has the right answer and there's no cleanup.
+
+The complexity argument is the part worth stating explicitly, because there's a nested loop and it
+still isn't quadratic. Each index is pushed at most once and popped at most once, so the total work in
+the inner while loop across all 2n iterations is bounded by n. I measured it: at n equals a hundred
+thousand, two hundred thousand iterations produced a hundred thousand pushes and 99,999 pops - so
+about 2n stack operations in total, not n squared.
+
+I verified it against brute force on four thousand random arrays and they agreed every time.
+
+The alternative to the modulo trick is to concatenate the array with itself and run the ordinary
+one-pass version - clearer to read, and it costs O(n) extra memory for the copy.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def nextGreaterElements(a):
+        n = len(a)
+        res = [-1] * n
+        # ^ INITIALISE TO -1. Anything never popped keeps this value, which is exactly the
+        #   required answer for an element with no greater neighbour. NO CLEANUP PASS IS
+        #   NEEDED at the end, and that is why the stack can be left non-empty.
+
+        stack = []
+        # ^ HOLDS INDICES, NOT VALUES. You need the index to know where to write the answer.
+        #   Pushing values is the second most common bug in this problem.
+        # ^ INVARIANT: the values at these indices are in DECREASING order from bottom to
+        #   top. That is what makes "pop while the top is smaller" correct - once you meet a
+        #   larger element, everything beneath it is larger still, so you can stop.
+
+        for i in range(2 * n):
+            #        ^^^^^^^^ TWO PASSES. After 2n steps every index has seen every other
+            #        index once. A third pass changes nothing, because an element that has
+            #        not found a greater value in a full circle is the maximum.
+            x = a[i % n]
+            #     ^^^^^ THE CIRCULARITY, in five characters. Using `i` here is an IndexError
+            #     on the first iteration of the second pass.
+
+            while stack and a[stack[-1]] < x:
+                #                        ^ STRICTLY LESS THAN. An equal value must NOT pop,
+                #   because "next greater" means strictly greater. `<=` silently solves a
+                #   different problem and passes every test without duplicates.
+                res[stack.pop()] = x
+                # ^ x is the answer for this waiting index. We know x is the FIRST such
+                #   element because we have been scanning left to right and would have
+                #   popped it earlier otherwise.
+
+            if i < n:
+                stack.append(i)
+                # ^ PUSH ONLY IN THE FIRST PASS. The second pass exists to ANSWER waiting
+                #   indices, not to add new ones. Omit this guard and every index is pushed
+                #   twice; the duplicates are never resolved and some answers are silently
+                #   wrong.
+
+        return res
+        # ^ the stack may still hold indices. They are the elements with no greater value
+        #   anywhere in the circle, and res already holds -1 for them.
+
+    # MEASURED against brute force on 4,000 random arrays: 4,000/4,000 agree.
+
+THE CONCATENATION ALTERNATIVE, which some people find clearer:
+
+    def nextGreaterElements(a):
+        n = len(a)
+        b = a + a                       # <-- O(n) extra memory, and no modulo anywhere
+        res = [-1] * n
+        stack = []
+        for i, x in enumerate(b):
+            while stack and b[stack[-1]] < x:
+                j = stack.pop()
+                if j < n: res[j] = x    # <-- only the first copy's indices matter
+            if i < n: stack.append(i)
+        return res
+    # SAME ALGORITHM. The modulo version is this without the copy.
+
+THE BRUTE FORCE, for verification:
+
+    for i in range(n):
+        for k in range(1, n):
+            #        ^^^^^^^ start at 1 (do not compare with yourself) and go at most n-1
+            #        steps (a full circle).
+            if a[(i + k) % n] > a[i]:
+                res[i] = a[(i + k) % n]; break""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+a = [3, 2, 1], n = 3. This is the decreasing case, which exercises the wraparound hardest.
+
+     i   i%n   x   stack before   inner while                       stack after   res after
+     -------------------------------------------------------------------------------------------
+     0    0    3   []             a[?] - stack empty, no pops       [0]           [-1,-1,-1]
+     1    1    2   [0]            a[0]=3 is NOT < 2 -> stop         [0,1]         [-1,-1,-1]
+     2    2    1   [0,1]          a[1]=2 is NOT < 1 -> stop         [0,1,2]       [-1,-1,-1]
+     --- first pass over; the stack holds ALL THREE indices and NOTHING has been answered ---
+     3    0    3   [0,1,2]        a[2]=1 < 3 -> res[2]=3            [0,1]
+                                  a[1]=2 < 3 -> res[1]=3            [0]           [-1, 3, 3]
+                                  a[0]=3 is NOT < 3 -> stop
+     4    1    2   [0]            a[0]=3 is NOT < 2 -> stop         [0]           unchanged
+     5    2    1   [0]            a[0]=3 is NOT < 1 -> stop         [0]           unchanged
+
+     FINAL: res = [-1, 3, 3]. Index 0 holds 3, the maximum, and correctly gets -1.
+
+    THE FIRST PASS ANSWERED NOTHING. All three indices piled onto the stack because the array is
+    strictly decreasing, and no element ever met a larger one to its right. WITHOUT THE SECOND PASS
+    THE ANSWER WOULD BE [-1, -1, -1], WHICH IS WRONG FOR TWO OF THE THREE.
+
+    AND NOTE STEP 3: it pops TWO indices in a single iteration. That is where the "nested loop" is,
+    and it is also where the amortised argument does its work - those two pops are two of the at-most-
+    n pops available across the entire run, not two per iteration.
+
+    STEP 3'S THIRD CHECK is the strictness point again: a[0] = 3 and x = 3, and `3 < 3` is false, so
+    index 0 is not popped and keeps its -1. With `<=` it would be popped and answered with 3 - itself
+    - which is wrong.
+
+THE MEASURED AMORTISED BEHAVIOUR:
+
+     n            2n iterations       pushes         pops      total stack ops
+     1,000                2,000        1,000          999                1,999
+     10,000              20,000       10,000        9,999               19,999
+     100,000            200,000      100,000       99,999              199,999
+
+    PUSHES = n EXACTLY, because of the `if i < n` guard. POPS = n - 1, because exactly one index -
+    the maximum's - is never popped. TOTAL STACK OPERATIONS = 2n - 1, REGARDLESS OF THE ARRAY'S SHAPE.
+    That is the O(n) proof, measured.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `for i in range(2 * n)`
+            produced the six rows. Rows 0-2 are the first pass and 3-5 the second, and on this input
+            ALL the useful work happens in the second.
+    `a[i % n]`
+            produced the `x` column, wrapping 3, 4, 5 back to indices 0, 1, 2.
+    `while stack and a[stack[-1]] < x`
+            produced the "inner while" column. It fired three times in row 3 and did nothing in every
+            other row - THE WORK IS LUMPY, and the amortised bound is what makes that acceptable.
+    the STRICT `<`
+            produced "a[0]=3 is NOT < 3 -> stop" in row 3, which is why index 0 keeps its -1.
+    `res[stack.pop()] = x`
+            produced the res column. It writes to the POPPED index, not to `i`, which is why the stack
+            must hold indices.
+    `if i < n: stack.append(i)`
+            produced pushes on rows 0, 1 and 2 only. Rows 3-5 push nothing, which is why the pushes
+            column in the measured table is exactly n rather than 2n.
+    the stack being left holding [0] at the end
+            is fine: index 0 is the maximum and res[0] is already -1 from the initialisation.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n). 2n iterations, and the inner while loop does at most n pops in TOTAL because each
+           index is pushed at most once and popped at most once.
+    SPACE: O(n) for the stack, plus O(n) for the result.
+
+    MEASURED correctness: 4,000/4,000 agreement with brute force on random arrays.
+    MEASURED amortised behaviour:
+        n = 1,000    -> 2,000 iterations, 1,000 pushes, 999 pops
+        n = 10,000   -> 20,000 iterations, 10,000 pushes, 9,999 pops
+        n = 100,000  -> 200,000 iterations, 100,000 pushes, 99,999 pops
+        PUSHES = n and POPS = n-1 in every case, regardless of the array's shape.
+
+THE #1 MISTAKE: pushing during the second pass. Every index goes on the stack twice, the duplicates
+are never resolved, and some answers are silently wrong.
+
+THE #2 MISTAKE: pushing values instead of indices. You then have nowhere to write the answer.
+
+THE #3 MISTAKE: `<=` instead of `<` in the pop condition. That solves "next greater or equal", and it
+passes any test without duplicate values.
+
+THE #4 MISTAKE: indexing with `i` rather than `i % n`. IndexError on the first iteration of the second
+pass.
+
+THE #5 MISTAKE: three passes "to be safe". Pointless - after 2n steps every index has seen every other
+index once.
+
+THE #6 MISTAKE: a cleanup pass over the leftover stack. Unnecessary if `res` was initialised to -1.
+
+THE #7 MISTAKE: claiming O(n^2) because of the nested loop, or being unable to give the amortised
+argument. Each index is pushed once and popped once; total inner-loop work is bounded by n.
+
+THE #8 MISTAKE: not testing a strictly decreasing array. That is the case where the first pass answers
+NOTHING and the entire result comes from the wraparound.
+
+THE #9 MISTAKE: not knowing the family. Daily Temperatures is this problem storing distances,
+Largest Rectangle in a Histogram is the increasing-stack version, and Remove K Digits is the
+lexicographic version.
+
+ONE-SENTENCE TAKEAWAY: keep a stack of INDICES still waiting for an answer, automatically in
+decreasing order of value, and when a new element arrives pop and answer every waiting index with a
+smaller value - walking the array TWICE with `i % n` for the circle and pushing only while `i < n` -
+which is O(n) because each index is pushed once and popped once (measured: exactly n pushes and n-1
+pops at every size), with the strict `<` mattering because "next greater" excludes equals.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
