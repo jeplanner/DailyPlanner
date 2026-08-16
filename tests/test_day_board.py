@@ -178,6 +178,44 @@ def test_template_escapes_titles():
     assert "&lt;script&gt;" in html
 
 
+def test_header_carries_the_navigation_controls(rendered):
+    """The board is a kiosk with no nav, so these three ARE the navigation:
+    a way out, a way to step days, and a way to jump to any day. Losing any
+    one of them strands whoever tapped in from the menu."""
+    assert 'href="/summary?view=daily"' in rendered      # a way back to the menu
+    assert 'id="prev"' in rendered and 'id="next"' in rendered
+    assert 'type="date"' in rendered                     # jump to any day
+    assert 'id="pick"' in rendered
+
+
+def test_today_button_only_appears_when_not_on_today():
+    """A "Today" button while already on today is noise on a screen that has
+    no room for noise."""
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader("templates"),
+                             autoescape=True)
+    env.globals["url_for"] = lambda *a, **k: "#"
+
+    def render(is_today):
+        return env.get_template("day_board.html").render(
+            plan_date=dt.date(2026, 8, 16), is_today=is_today,
+            date_label="Sun 16 Aug", prev_date="2026-08-15",
+            next_date="2026-08-17", hours=[dt.time(9, 0)],
+            win_start=dt.time(8, 0), win_end=dt.time(18, 0),
+            placed=[], untimed=[], tasks=[], open_task_count=0,
+            checklist=[], checklist_done=0, now_pct=None, refresh=0,
+            theme="dark")
+
+    assert 'id="today"' not in render(True)
+    assert 'id="today"' in render(False)
+
+
+def test_day_navigation_preserves_other_query_params(rendered):
+    """Stepping to tomorrow must not silently drop a pinned ?from/?to window
+    or a chosen theme — a setting that quietly resets feels broken."""
+    assert "URLSearchParams(location.search)" in rendered
+    assert 'p.set("date"' in rendered
+
+
 def test_blueprint_is_registered(app):
     """Uses conftest's `app` fixture rather than `import app`.
 

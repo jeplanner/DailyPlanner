@@ -58,12 +58,33 @@ header{
   padding:0 calc(var(--u) * .3);
 }
 .date{font-size:calc(var(--u) * 2.2); font-weight:800; letter-spacing:-.02em;
-       color:inherit; text-decoration:none}
-.date:hover, .date:focus-visible{
-  text-decoration:underline; text-decoration-thickness:2px;
-  text-underline-offset:calc(var(--u) * .25);
+       color:inherit; white-space:nowrap}
+
+/* CONTROLS. Deliberately small and dim: on a board they are furniture, not
+   content. Big enough to hit with a finger on a touch panel (the 2.1u box is
+   ~34px at the default unit and grows with everything else), quiet enough
+   that the eye still lands on the day rather than on the buttons. */
+.ctl{display:flex; align-items:center; gap:calc(var(--u) * .25)}
+.ico{
+  display:grid; place-items:center;
+  width:calc(var(--u) * 2.1); height:calc(var(--u) * 2.1);
+  border:1px solid var(--line); border-radius:calc(var(--u) * .45);
+  background:transparent; color:var(--dim); cursor:pointer;
+  font-size:calc(var(--u) * 1.15); line-height:1; text-decoration:none;
+  font-family:inherit; padding:0;
 }
-.date:focus-visible{outline:2px solid var(--accent); outline-offset:3px}
+.ico:hover{color:var(--text); border-color:var(--accent)}
+.ico:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.ico.wide{width:auto; padding:0 calc(var(--u) * .6);
+          font-size:calc(var(--u) * .95); font-weight:650}
+/* The native date input sits invisibly on top of the calendar button, so a
+   tap opens the OS picker on every platform — no showPicker() support needed
+   and no custom calendar widget to maintain. */
+.picker{position:relative; display:inline-grid}
+.picker input{
+  position:absolute; inset:0; opacity:0; width:100%; height:100%;
+  cursor:pointer; border:0; padding:0;
+}
 .clock{font-size:calc(var(--u) * 2.2); font-weight:800; font-variant-numeric:tabular-nums;
        color:var(--accent)}
 .counts{margin-left:auto; display:flex; gap:calc(var(--u) * 1.1);
@@ -167,8 +188,24 @@ li.done .txt{text-decoration:line-through}
 <div id="board">
 
   <header>
-    <a class="date" href="/summary?view=daily"
-       title="Back to Today's Plan  ·  ← → change day  ·  T today  ·  Esc exit">{{ date_label }}</a>
+    <div class="ctl">
+      <a class="ico" href="/summary?view=daily" title="Main menu (Esc)"
+         aria-label="Main menu">&#9776;</a>
+      <button class="ico" id="prev" title="Previous day (left arrow)"
+              aria-label="Previous day">&lsaquo;</button>
+      <button class="ico" id="next" title="Next day (right arrow)"
+              aria-label="Next day">&rsaquo;</button>
+      <span class="picker">
+        <span class="ico" aria-hidden="true">&#128197;</span>
+        <input type="date" id="pick" value="{{ plan_date.isoformat() }}"
+               aria-label="Choose a day to display">
+      </span>
+      {% if not is_today %}
+      <button class="ico wide" id="today" title="Back to today (T)">Today</button>
+      {% endif %}
+    </div>
+
+    <div class="date">{{ date_label }}</div>
     {% if is_today %}<div class="clock" id="clock">--:--</div>{% endif %}
     <div class="counts">
       <span><b>{{ placed|length }}</b> events</span>
@@ -388,7 +425,11 @@ li.done .txt{text-decoration:line-through}
 
   if (REFRESH > 0) {
     setInterval(function () {
-      if (document.visibilityState === "visible") location.reload();
+      if (document.visibilityState !== "visible") return;
+      // Do not reload out from under an open picker or a focused control.
+      var a = document.activeElement;
+      if (a && (a.id === "pick" || a.tagName === "INPUT")) return;
+      location.reload();
     }, REFRESH * 1000);
   }
 
@@ -412,16 +453,41 @@ li.done .txt{text-decoration:line-through}
   setInterval(tick, 20000);
   setInterval(freshness, 60000);
 
-  // Arrow keys walk the days — the only interaction a board needs.
+  // ── DAY NAVIGATION ──────────────────────────────────────────────────
+  // goTo PRESERVES the other query params. Someone who has pinned the window
+  // with ?from=06:00&to=23:00 or set ?theme=light should not silently lose it
+  // by stepping to tomorrow — that is the kind of thing that makes a setting
+  // feel unreliable.
+  function goTo(iso) {
+    var p = new URLSearchParams(location.search);
+    if (iso) { p.set("date", iso); } else { p.delete("date"); }
+    var q = p.toString();
+    location.href = location.pathname + (q ? "?" + q : "");
+  }
+
+  bind("prev",  function () { goTo("{{ prev_date }}"); });
+  bind("next",  function () { goTo("{{ next_date }}"); });
+  bind("today", function () { goTo(null); });
+
+  var pick = document.getElementById("pick");
+  if (pick) pick.addEventListener("change", function () {
+    if (pick.value) goTo(pick.value);
+  });
+
+  function bind(id, fn) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener("click", fn);
+  }
+
   document.addEventListener("keydown", function (e) {
-    if (e.key === "ArrowLeft")  location.search = updateParam("date", "{{ prev_date }}");
-    if (e.key === "ArrowRight") location.search = updateParam("date", "{{ next_date }}");
-    if (e.key === "t" || e.key === "T") location.search = "";
+    // Never hijack a key while the date picker has focus — the native widget
+    // uses the arrows itself.
+    if (document.activeElement && document.activeElement.id === "pick") return;
+    if (e.key === "ArrowLeft")  goTo("{{ prev_date }}");
+    if (e.key === "ArrowRight") goTo("{{ next_date }}");
+    if (e.key === "t" || e.key === "T") goTo(null);
     if (e.key === "Escape") location.href = "/summary?view=daily";
   });
-  function updateParam(k, v) {
-    var p = new URLSearchParams(location.search); p.set(k, v); return "?" + p.toString();
-  }
 })();
 </script>
 </body>
