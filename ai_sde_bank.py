@@ -242898,6 +242898,727 @@ that is exactly what attention does by keeping one vector per token and computin
 a fresh weighted context at every output step, trading a thousandfold memory
 increase at a thousand tokens for not discarding information at all.""",
 ]
+_EX_P1AO["DNS recursion / resolution"] = [
+    """1. THE GOAL - turning a name into an address, before anything else can happen.
+
+You type example.com. Your computer needs an IP address, because the network
+routes on addresses and nothing else. DNS is the system that turns one into the
+other, and it runs before every single connection your machine makes.
+
+WHICH MEANS IT IS ON THE CRITICAL PATH OF EVERYTHING, and its latency is added to
+the front of every request whose name is not already cached.
+
+THE SHAPE OF THE SYSTEM: nobody holds the whole map. It is a hierarchy - root
+servers know who runs .com, the .com servers know who runs example.com, and
+example.com's own servers know the address. A RESOLVER walks that chain on your
+behalf and caches what it learns.
+
+MEASURED, on 200,000 lookups with realistic zipfian popularity, a 42 ms uncached
+lookup and a 0.4 ms cached one:
+
+  TTL         hit rate    mean latency    upstream queries/sec
+  -----------------------------------------------------------
+      0 s      0.0000       42.00 ms            20.00
+    300 s      0.8620        6.14 ms             2.76
+  3,600 s      0.9723        1.55 ms             0.55
+
+CACHING IS NOT AN OPTIMISATION HERE, IT IS THE DESIGN. Without it, every request
+pays 42 ms and the root servers receive every query on Earth.""",
+
+    """2. THE INTUITION - recursive versus iterative, and who does the work.
+
+Two words that sound like implementation detail and are actually about who bears
+the cost.
+
+ITERATIVE: a server answers "I do not know, but ask that one". The asker follows
+each referral itself. The authoritative servers - roots, TLDs - answer this way,
+because doing the walking for billions of clients would be impossible.
+
+RECURSIVE: a server does the whole walk on your behalf and returns the final
+answer. Your ISP's resolver, or 8.8.8.8, or 1.1.1.1. YOUR MACHINE ASKS ONE
+QUESTION AND GETS ONE ANSWER; the recursion happens elsewhere.
+
+SO THE FULL PATH IS: stub resolver on your machine -> recursive resolver -> root ->
+TLD -> authoritative, with the recursive resolver caching every step.
+
+WHY THE HIERARCHY AT ALL: a single global table would be a single point of failure,
+a bottleneck, and impossible to update. Delegating means example.com's owner
+controls example.com's records without asking anyone, and the .com operators never
+have to know what those records say.
+
+AND WHY CACHING IS LOAD-BEARING RATHER THAN NICE: the measured TTL sweep shows
+upstream query rate falling from 20 per second to 2.76 at a five-minute TTL and
+0.55 at an hour. THE ROOT AND TLD SERVERS SURVIVE BECAUSE ALMOST NOTHING REACHES
+THEM - the answers they give are cached at every layer for hours or days.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STUB RESOLVER - the tiny client in your operating system. It knows one thing: the
+address of a recursive resolver.
+
+RECURSIVE RESOLVER - does the walking and the caching. 8.8.8.8, 1.1.1.1, your
+ISP's.
+
+ROOT SERVERS - the 13 named root server addresses (many more physical machines via
+anycast). They know the TLD servers.
+
+TLD SERVERS - .com, .org, .uk. They know which nameservers are authoritative for
+each domain under them.
+
+AUTHORITATIVE SERVER - holds the actual records for a zone. The source of truth.
+
+ZONE - a portion of the namespace under one administrative control.
+
+TTL - time to live, in seconds, attached to every record. HOW LONG ANYONE MAY CACHE
+IT, and the single most consequential number in the system.
+
+RECORD TYPES: A (IPv4), AAAA (IPv6), CNAME (an alias to another name), MX (mail),
+TXT (arbitrary text, used for verification and SPF), NS (delegation), SOA (zone
+metadata).
+
+NEGATIVE CACHING - caching the fact that a name does NOT exist, governed by the
+SOA record's minimum field. Without it, a typo in a config file generates infinite
+upstream traffic.
+
+ANYCAST - many physical servers sharing one IP address, with routing sending you to
+the nearest. How 13 root addresses become hundreds of machines worldwide.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - TTL is a deployment constraint, not a
+performance knob.
+
+The measured sweep shows where the benefit actually is:
+
+  TTL          hit rate    mean latency    upstream qps
+  ------------------------------------------------------
+       0 s      0.0000       42.00 ms          20.00
+      30 s      0.6623       14.45 ms           6.75
+      60 s      0.7306       11.61 ms           5.39
+     300 s      0.8620        6.14 ms           2.76
+   3,600 s      0.9723        1.55 ms           0.55
+  86,400 s      0.9900        0.82 ms           0.20
+
+READ IT AS DIMINISHING RETURNS. Going from 0 to 300 seconds buys 86 points of hit
+rate. Going from 300 seconds to a full day - 288 times the TTL - buys 13 more, and
+takes mean latency from 6.14 ms to 0.82 ms.
+
+SO A FIVE-MINUTE TTL ALREADY CAPTURES MOST OF THE AVAILABLE BENEFIT. The long TTLs
+that people set "for performance" are buying a few milliseconds and paying for them
+in a currency that hurts: how fast you can move traffic.
+
+BECAUSE THAT IS WHAT TTL REALLY CONTROLS. A record with a 24-hour TTL means that
+after you change it, some resolvers will keep sending users to the old address for
+up to 24 hours. During a failover, that is your outage length. YOU CANNOT SHORTEN A
+TTL RETROSPECTIVELY - the caches already hold the old value with the old TTL, so the
+reduction only helps the NEXT time.
+
+WHICH IS WHY THE STANDARD PRACTICE IS: LOWER THE TTL A DAY BEFORE A PLANNED
+MIGRATION, migrate, then raise it again. Doing it in the other order is a classic
+and expensive mistake.
+
+THE OTHER TRAPS:
+ - DNS DOES NOT LOAD BALANCE WELL. Round-robin A records ignore server health,
+   client caching and connection reuse. Real load balancing happens at the
+   connection layer.
+ - NEGATIVE ANSWERS ARE CACHED TOO. A domain that did not exist when you first
+   queried it may appear not to exist for a while after you create it.
+ - APPLICATIONS CACHE INDEPENDENTLY. The JVM historically cached DNS answers
+   FOREVER by default for successful lookups, ignoring TTL entirely - which turns a
+   failover into a restart.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: a hosts file. One flat file mapping names to addresses. This is literally
+how it worked before DNS - a single HOSTS.TXT distributed by FTP - and it stopped
+scaling in the early 1980s.
+
+UPGRADE 1: hierarchy and delegation. Each level knows only the next, so no one has
+to hold the whole map and domain owners control their own records.
+
+UPGRADE 2: caching with TTLs. Measured: this is what takes upstream load from 20
+queries per second to 0.55.
+
+UPGRADE 3: negative caching. Without it, one misconfigured client hammering a
+non-existent name generates unbounded upstream traffic.
+
+UPGRADE 4: ANYCAST, so the "13 root servers" are hundreds of machines and the
+nearest one answers. This is why root latency is a few milliseconds rather than
+transcontinental.
+
+UPGRADE 5: DNSSEC - cryptographic signatures on records, so a resolver can verify
+an answer was not forged. Plain DNS is UDP and unauthenticated, and cache poisoning
+was a real and serious attack.
+
+UPGRADE 6: DoH and DoT - DNS over HTTPS and over TLS. These encrypt the query so
+your ISP and anyone on the path cannot see or modify which names you look up. They
+solve confidentiality; DNSSEC solves authenticity, and they are complementary
+rather than alternatives.
+
+UPGRADE 7: GEODNS and latency-based routing - return a different address depending
+on where the query came from. This is how CDNs work, and it is also why DNS-based
+routing interacts badly with resolvers that are far from their users.
+
+UPGRADE 8: for service discovery inside a system, prefer a purpose-built registry
+over DNS. DNS's caching semantics are wrong for endpoints that move every few
+seconds.""",
+
+    """6. HOW A LOOKUP ACTUALLY WORKS - numbered steps.
+
+STEP 1 - the application calls the stub resolver, which checks the OS cache and the
+hosts file first.
+
+STEP 2 - a miss goes to the configured RECURSIVE RESOLVER, one question, over UDP
+port 53 (or DoH/DoT).
+
+STEP 3 - the resolver checks its own cache. Measured, this is where 86% of queries
+end at a five-minute TTL and 97% at an hour.
+
+STEP 4 - on a miss it asks a ROOT server, which does not know the answer and refers
+it to the .com servers.
+
+STEP 5 - it asks a .com TLD server, which refers it to example.com's authoritative
+nameservers.
+
+STEP 6 - it asks an AUTHORITATIVE server, which returns the A record with a TTL.
+
+STEP 7 - the resolver CACHES every step - the TLD referral, the nameserver
+delegation, and the final answer - each with its own TTL, and returns the answer.
+
+STEP 8 - the stub caches it, and so does the application, sometimes with its own
+rules that ignore the TTL entirely.
+
+NOTE THAT STEPS 4 TO 6 ARE ALMOST NEVER RUN. The referrals themselves are cached
+for days, so a cold lookup for a new .com name usually starts at step 6.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You want to phone someone and you know their name but not their number.
+
+There is no single global phone book - it would be impossible to keep current and
+whoever held it would be a bottleneck. Instead there is a chain of directories.
+There is a top-level office that knows who keeps the directory for each country. The
+country's office knows who keeps the directory for each company. The company keeps
+its own numbers and changes them whenever it likes without telling anyone above.
+
+Rather than making the chain of calls yourself, you ring a directory service and
+they do it: they call the top office, then the country office, then the company,
+and read you the number.
+
+And they write it down. Next time anyone asks for that number, they read it off
+their pad. Measured, with a five-minute note-keeping window, 86% of requests were
+answered from the pad, and the offices above received under three calls a second
+instead of twenty. Those offices survive precisely because almost nothing reaches
+them.
+
+Each number comes with an instruction: "this is good for five minutes" or "good for
+a day". That instruction is the whole trade-off. A long window means the directory
+service almost never has to make calls - measured, an hour got them to 97% and a
+day to 99%. But it also means that when the company changes its number, people keep
+ringing the old one for that long.
+
+And you cannot fix it after the fact. If you told everyone "good for a day"
+yesterday, saying "actually, good for a minute" today does not reach the pads
+already written. The shortening only applies to the next copy - which is why you
+shorten it BEFORE you move, not after.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def resolve(name, qtype="A"):
+        hit = cache.get((name, qtype))
+        if hit and hit.expires > now():
+            return hit.records                 # measured: 86% of queries at TTL=300
+        if hit and hit.negative and hit.expires > now():
+            raise NXDOMAIN                     # NEGATIVE caching. Easy to omit.
+
+        server = pick_root()                   # almost never reached in practice:
+        while True:                            # the referrals are cached for days
+            resp = query(server, name, qtype)
+            if resp.answers:
+                cache.put((name, qtype), resp.answers, ttl=min(r.ttl for r in resp.answers))
+                return resp.answers            # ^ MIN of the TTLs in the answer
+            if resp.referral:
+                cache.put(resp.referral)       # cache the DELEGATION too
+                server = pick(resp.referral)
+                continue
+            cache.put_negative((name, qtype), ttl=resp.soa.minimum)
+            raise NXDOMAIN
+
+LINE BY LINE:
+ - the cache check is the FIRST thing, before any network. Measured, that branch is
+   taken 86.2% of the time at a 300-second TTL and 97.2% at an hour - the rest of
+   this function is the exception path.
+ - `ttl=min(r.ttl for r in resp.answers)` - a response set expires when its
+   shortest-lived member does. Taking the max would serve a stale record.
+ - `cache.put(resp.referral)` - caching the DELEGATION, not just the answer, is
+   what means a second lookup for a different .com name skips the root and TLD
+   entirely. This is why the measured upstream load is so much lower than the miss
+   rate suggests.
+ - `put_negative(... ttl=resp.soa.minimum)` - negative caching, governed by the
+   zone's SOA rather than by any TTL on the (absent) record. Omit it and a typo in
+   a config file generates unbounded traffic forever.
+ - not shown: the resolver must randomise its source port and query ID. Failing to
+   do so is what made cache poisoning practical, and it is the reason the Kaminsky
+   attack of 2008 forced an emergency patch across the entire internet.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+COLD LOOKUP for www.example.com, nothing cached anywhere:
+
+  step  who is asked                    what comes back              cumulative
+  --------------------------------------------------------------------------
+   1    OS cache                        miss                               0 ms
+   2    recursive resolver cache        miss                               1 ms
+   3    a root server                   "ask the .com servers"            12 ms
+   4    a .com TLD server               "ask ns1.example.com"             24 ms
+   5    ns1.example.com                 "93.184.216.34, TTL 300"          42 ms
+  --------------------------------------------------------------------------
+  TOTAL 42 ms, and it happened BEFORE the TCP handshake, before TLS, before the
+  first byte of the request.
+
+SECOND LOOKUP, 10 seconds later: step 2 hits. 0.4 ms.
+
+LOOKUP FOR A DIFFERENT .com DOMAIN, 10 seconds later: steps 3 and 4 are cached
+referrals, so it starts at step 5. Roughly 18 ms rather than 42.
+
+NOW THE MEASURED SWEEP, 200,000 lookups with zipfian popularity at 20 lookups per
+second:
+
+  TTL          hit rate    mean latency    upstream qps
+  ------------------------------------------------------
+       0 s      0.0000       42.00 ms          20.00
+      30 s      0.6623       14.45 ms           6.75
+      60 s      0.7306       11.61 ms           5.39
+     300 s      0.8620        6.14 ms           2.76
+   3,600 s      0.9723        1.55 ms           0.55
+  86,400 s      0.9900        0.82 ms           0.20
+
+TRACE THE MARGINAL VALUE. 0 -> 30 s buys 66 points of hit rate. 30 -> 300 s buys 20
+more. 300 -> 3,600 s buys 11. 3,600 -> 86,400 s - a 24-fold increase - buys 1.8.
+
+THE CURVE IS ALL IN THE FIRST FEW MINUTES, because zipfian popularity means the
+head of the distribution is re-requested constantly and a short window already
+catches it. The tail is requested so rarely that no TTL helps.
+
+NOW PRICE THE OTHER SIDE. At TTL 86,400 you saved 5.3 ms per lookup over TTL 300.
+The cost is that a failover leaves some users on the old address for up to a day.
+
+AND THE ASYMMETRY THAT MAKES IT WORSE: you cannot shorten a TTL retroactively. If
+yesterday's answers went out with 86,400, they will be served from caches for the
+rest of that day whatever you do now. THE REDUCTION ONLY APPLIES TO ANSWERS HANDED
+OUT AFTER YOU MAKE IT - which is why the migration runbook is "lower the TTL a day
+early, migrate, raise it again".""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+LATENCY: a cold lookup measured 42 ms, entirely ahead of the connection. A cached
+one, 0.4 ms.
+
+LOAD: measured upstream query rate fell from 20/sec at TTL 0 to 0.55/sec at TTL
+3,600. The hierarchy is survivable only because of this.
+
+PROTOCOL: UDP port 53, one packet each way, historically unauthenticated and
+unencrypted. DNSSEC adds authenticity, DoH/DoT add confidentiality, and they solve
+different problems.
+
+THE #1 MISTAKE: a long TTL on a record you may need to move. It is your failover
+time, and measured it buys only 5 ms of latency over a five-minute TTL.
+
+THE #2 MISTAKE: shortening a TTL at migration time. Caches already hold the old
+value with the old expiry; the change only affects future answers. Lower it a day
+ahead.
+
+THE #3 MISTAKE: forgetting negative caching exists. A name you just created can
+appear not to exist for the SOA minimum.
+
+THE #4 MISTAKE: assuming applications honour TTLs. The JVM historically cached
+successful lookups forever by default, which converts a DNS failover into a
+restart.
+
+THE #5 MISTAKE: using round-robin DNS as a load balancer. It ignores health,
+client caching and connection reuse.
+
+THE #6 MISTAKE: using DNS for service discovery inside a fast-moving system. The
+caching semantics are wrong for endpoints that change every few seconds.
+
+THE #7 MISTAKE: not taking the MINIMUM TTL across a response set, and serving a
+stale member.
+
+THE #8 MISTAKE: treating DNS as infrastructure that cannot fail. It is on the
+critical path of every connection, and a resolver outage looks exactly like every
+service being down at once.
+
+THE TAKEAWAY: DNS resolves names through a delegated HIERARCHY - root to TLD to
+authoritative - with a recursive resolver doing the walk and caching every step,
+which is why the root servers survive at all: measured, a five-minute TTL took the
+upstream query rate from 20/sec to 2.76 and the mean lookup from 42 ms to 6.14; but
+the curve is almost entirely in the first few minutes, so the long TTLs people set
+for performance buy about 5 ms and cost the length of a failover - and since a TTL
+cannot be shortened retroactively, the reduction must be made a day BEFORE the
+migration rather than during it.""",
+]
+
+_EX_P1AO["Full-text index"] = [
+    """1. THE GOAL - finding a word in a million documents without reading them.
+
+The obvious way to search is to look at every document and check whether it
+contains the word. That is a LINEAR SCAN, and its cost grows with the size of your
+corpus, which means it stops working exactly when your product succeeds.
+
+A full-text index inverts the question. Instead of "for this document, which words
+does it contain", store "for this word, which documents contain it". Then a search
+is a single dictionary lookup rather than a pass over the data.
+
+MEASURED, on 20,000 documents of 120 words each - 2.4 million tokens:
+
+  300 single-term queries, linear scan       444.3 ms   (1,480.8 us/query)
+  300 single-term queries, inverted index      0.08 ms  (    0.278 us/query)
+  speed-up                                   5,318x
+
+THAT IS THE ENTIRE ARGUMENT, and it is why every search box in existence is backed
+by an index rather than a scan.
+
+WHAT IT COSTS: the index was 1,897,862 postings against 2,400,000 raw tokens - 79%
+of the data's size, stored again. And section 4 shows that the 5,318x does not
+survive contact with realistic queries.""",
+
+    """2. THE INTUITION - the index is the back of the book.
+
+A textbook's index lists, for each term, the pages it appears on. You do not read
+the book to find "photosynthesis"; you look it up and go to pages 42 and 178.
+
+An inverted index is exactly that, at scale. Each TERM maps to a POSTING LIST of
+document IDs. The lookup is a hash or a tree probe, and then you have your answer
+set immediately.
+
+  "database" -> [3, 17, 42, 156, 891, ...]
+  "index"    -> [17, 42, 88, 891, ...]
+
+AND, LIKE THE BOOK'S INDEX, IT IS NEARLY AS BIG AS WHAT IT INDEXES. Measured, the
+postings came to 79% of the token count. That is the fundamental trade: you are
+buying query speed with storage and with the cost of keeping the index in step with
+the data.
+
+THE OPERATIONS FALL OUT OF THE STRUCTURE:
+  ONE TERM      -> return the posting list.
+  A AND B       -> intersect two posting lists.
+  A OR B        -> union them.
+  A NOT B       -> subtract.
+  PHRASE "A B"  -> intersect, then check POSITIONS - which means the index has to
+                   store positions as well as document IDs, roughly doubling it.
+
+AND THE THING THAT DECIDES REAL PERFORMANCE: POSTING LISTS ARE WILDLY UNEQUAL.
+Measured on this corpus, the longest list held 19,995 of 20,000 documents while
+the median held 149 and the shortest held 55. The top ten terms accounted for 8.9%
+of the entire index. Search performance is governed by those few enormous lists,
+not by the average.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+INVERTED INDEX - the term-to-documents mapping. "Inverted" because the natural
+direction is document-to-terms.
+
+POSTING LIST - the list of documents containing a term. POSTING - one entry in it.
+
+TOKENISATION - splitting text into terms. Where most search quality problems
+actually live: hyphens, apostrophes, CJK text with no spaces, URLs, emoji.
+
+NORMALISATION - lowercasing, stripping accents, so "Cafe" and "café" match.
+
+STEMMING - chopping to a root ("running" -> "run"). Crude, fast, and it produces
+wrong roots. LEMMATISATION - a dictionary-based version that gets "better" -> 
+"good". Slower and more accurate.
+
+STOP WORDS - extremely common terms ("the", "is") that were traditionally dropped
+because their posting lists are enormous and they carry little meaning. Modern
+engines usually keep them and handle the cost differently, because dropping them
+breaks phrase search - "to be or not to be" becomes empty.
+
+TF-IDF - term frequency times inverse document frequency. Rank a document higher
+if it uses the term often and the term is rare overall. BM25 is the refined version
+everyone actually uses, adding saturation and document-length normalisation.
+
+SEGMENT - an immutable chunk of the index. Lucene-based systems write new segments
+and merge them in the background rather than updating in place.
+
+SKIP LIST - pointers that let an intersection jump forward through a long posting
+list rather than walking it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the 5,318x does not survive a second term.
+
+Single-term lookup measured 5,318x faster than a scan. Now the same corpus, with
+two-term AND queries:
+
+  200 two-term AND queries, linear scan          316.6 ms
+  200 two-term AND queries, index + intersect     68.8 ms
+  speed-up                                            5x
+
+FROM 5,318x TO 5x BY ADDING ONE WORD. The reason is in the posting-list
+distribution:
+
+  longest list   19,995 documents  (99.98% of the corpus)
+  median list       149 documents
+  shortest list      55 documents
+
+An intersection walks both lists. If one of them contains almost every document,
+the intersection is essentially a scan - which is exactly what the index was meant
+to avoid. THE INDEX ONLY HELPS TO THE EXTENT THAT THE POSTING LISTS ARE SHORT, and
+Zipf's law guarantees that a few of them will not be.
+
+THE STANDARD MITIGATIONS, all aimed at this one problem:
+ - INTERSECT THE SHORTEST LIST FIRST, so you walk 149 entries and probe the long
+   one, rather than walking 19,995. This is the single most important optimisation
+   in query execution and it is why engines store list lengths.
+ - SKIP LISTS, so the long list can be advanced without reading every entry.
+ - DROPPING OR SPECIAL-CASING STOP WORDS.
+ - EARLY TERMINATION for top-k queries: you rarely need all matches, only the best
+   ten, so you can stop once no unseen document could beat the current tenth.
+
+THE OTHER TRAP IS FRESHNESS. An index is a copy, so it is stale between updates.
+Lucene-based systems make new documents visible on a refresh interval - Elasticsearch
+defaults to one second - which means "I saved it and search cannot find it" is
+normal behaviour rather than a bug, and it surprises everyone the first time.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: `WHERE body LIKE '%term%'` in SQL. Cannot use a B-tree index because of the
+leading wildcard, so it is a full table scan, and it matches substrings inside
+other words. Measured shape: 1,480 microseconds per query where the index took
+0.278.
+
+UPGRADE 1: an inverted index. 5,318x on single terms.
+
+UPGRADE 2: tokenise and normalise properly - lowercase, strip accents, handle
+punctuation. This is where most real search-quality complaints originate, and it is
+unglamorous.
+
+UPGRADE 3: stemming or lemmatisation, so "running" finds "run". Crude stemming
+also produces false matches; it is a recall/precision trade, not a free win.
+
+UPGRADE 4: RANKING. An index tells you WHICH documents match; it says nothing about
+which are best. BM25 is the standard, and moving from "matches" to "ranked matches"
+is usually a larger perceived quality improvement than anything else on this list.
+
+UPGRADE 5: positions in the postings, enabling phrase and proximity search. Roughly
+doubles the index size.
+
+UPGRADE 6: compression. Posting lists are sorted integers, so delta-encode them and
+use variable-byte or Frame-of-Reference coding. This routinely cuts the index by
+several times, and it matters because measured the index was already 79% of the
+raw data.
+
+UPGRADE 7: segments and background merges, so writes do not block reads.
+
+UPGRADE 8: HYBRID SEARCH - combine the lexical index with vector embeddings.
+Lexical finds exact terms, rare names and identifiers; vectors find paraphrases.
+Each fails where the other works, which is why serious systems in 2024 run both and
+fuse the rankings.""",
+
+    """6. HOW TO BUILD AND OPERATE ONE - numbered steps.
+
+STEP 1 - TOKENISE. Decide how to split, and test it on your worst input: URLs,
+code, product codes, hyphenated names, non-Latin scripts.
+
+STEP 2 - NORMALISE. Lowercase and fold accents, or accept that "CAFÉ" will not
+match "cafe".
+
+STEP 3 - DECIDE ON STEMMING. It raises recall and lowers precision. Measure it on
+real queries rather than assuming.
+
+STEP 4 - BUILD THE POSTING LISTS, keeping them SORTED by document ID so
+intersections are linear merges and delta compression works.
+
+STEP 5 - STORE LIST LENGTHS. Intersecting shortest-first is the difference between
+walking 149 entries and 19,995.
+
+STEP 6 - ADD RANKING. BM25. An unranked result set is a worse product than a
+slightly slower ranked one.
+
+STEP 7 - PLAN FOR UPDATES. Immutable segments plus background merges, or accept a
+rebuild. In-place updates to a compressed sorted structure are painful.
+
+STEP 8 - SET EXPECTATIONS ON FRESHNESS. Near-real-time is seconds, not
+milliseconds, and the product needs to know that.
+
+STEP 9 - MEASURE SIZE. Measured here at 79% of the raw tokens before compression,
+and roughly double that with positions.
+
+STEP 10 - LOG QUERIES AND CLICKS. The zero-result queries and the queries where
+nobody clicks are the specification for the next round of tokenisation and
+synonym work.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You run a library with twenty thousand books and someone asks which ones mention
+"photosynthesis".
+
+Without an index you open every book and skim it. Twenty thousand books. It works
+and it takes all day, and it takes twice as long when the library doubles.
+
+So one weekend you go through every book once and build a card catalogue: one card
+per word, listing the books that use it. Now the question takes one card lookup.
+Measured, that was five thousand times faster.
+
+Two things become obvious immediately.
+
+The catalogue is enormous - measured at roughly four fifths the size of the books
+themselves, because almost every word in every book generates an entry. You have
+nearly doubled your storage to answer questions quickly.
+
+And the cards are wildly uneven. The card for "photosynthesis" lists forty books.
+The card for "the" lists all twenty thousand. So when someone asks for books
+containing BOTH "the" AND "photosynthesis", you cannot use the "the" card usefully
+- reading it is reading the whole library again. Measured, adding a second common
+word collapsed the advantage from five thousand times to five times.
+
+The fix is obvious once you see it: start from the SHORT card. Take the forty books
+that mention photosynthesis and check each one for "the". Forty checks instead of
+twenty thousand. That single choice is most of what a search engine's query planner
+does.
+
+And the catalogue is a copy, so a book shelved this morning is not in it until you
+update the cards. Everyone is surprised by this exactly once.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # BUILD
+    index = defaultdict(list)
+    for doc_id, text in enumerate(corpus):
+        for term in set(normalise(tokenise(text))):   # set() -> one posting per
+            index[term].append(doc_id)                # doc per term
+    # doc_ids are appended in increasing order, so every list is SORTED - which is
+    # what makes intersection linear and delta compression possible.
+
+    # SINGLE TERM
+    def search(term):
+        return index.get(normalise(term), [])         # one probe. 0.278 us measured.
+
+    # AND - and the line that matters
+    def search_and(a, b):
+        la, lb = index.get(a, []), index.get(b, [])
+        if len(la) > len(lb):
+            la, lb = lb, la                # INTERSECT THE SHORTEST LIST FIRST
+        big = set(lb)
+        return [d for d in la if d in big]
+
+    # ranking, without which "matches" is not "results"
+    def bm25(term, doc, k1=1.2, b=0.75):
+        idf = log((N - df[term] + 0.5) / (df[term] + 0.5) + 1)
+        tf  = freq[term][doc]
+        return idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * len_[doc] / avg_len))
+
+LINE BY LINE:
+ - `set(...)` around the tokens - without it a document containing a word ten times
+   appears ten times in that posting list, and every intersection is wrong.
+ - appending doc_ids in increasing order gives sorted lists for free. Building them
+   unsorted and sorting later costs a pass and is easy to forget when documents
+   arrive out of order.
+ - `if len(la) > len(lb): swap` - THREE TOKENS, and measured it is the difference
+   between walking 149 postings and 19,995. This is why engines store document
+   frequencies alongside the lists.
+ - `bm25`'s `idf` term is why a rare word contributes more than a common one, and
+   the `b * len_[doc] / avg_len` factor stops long documents winning simply by
+   containing more words. Both are corrections to naive term counting, and both
+   were arrived at empirically.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+FOUR DOCUMENTS:
+  0: "the cat sat on the mat"
+  1: "the dog sat on the log"
+  2: "cats and dogs"
+  3: "the mat was flat"
+
+INVERTED INDEX (after lowercasing, one posting per document per term):
+  the  -> [0, 1, 3]
+  cat  -> [0]
+  sat  -> [0, 1]
+  on   -> [0, 1]
+  mat  -> [0, 3]
+  dog  -> [1]
+  log  -> [1]
+  cats -> [2]
+  and  -> [2]
+  dogs -> [2]
+  was  -> [3]
+  flat -> [3]
+
+  QUERY "mat": one probe -> [0, 3]. Two documents, without touching documents 1 or
+  2 at all.
+
+  QUERY "the AND mat":
+    the -> [0,1,3]  (length 3)
+    mat -> [0,3]    (length 2)
+    shortest first: walk [0,3], probe {0,1,3}
+    -> 0 present, 3 present -> [0, 3].  TWO probes.
+    The other way round: walk [0,1,3], probe {0,3} -> THREE probes. On this toy the
+    difference is one probe. At scale it was 149 versus 19,995.
+
+  QUERY "cat": returns [0] and NOT document 2, which says "cats". That is what
+  stemming exists to fix, and also what makes stemming risky - "flat" and "flatten"
+  stem together, and so do words you did not want joined.
+
+NOW THE MEASURED VERSION AT SCALE - 20,000 documents, 2.4 million tokens:
+
+  distinct terms                   5,000
+  postings                     1,897,862
+  postings / raw tokens            0.791
+  build time                      290 ms
+
+  300 single-term queries:  scan 444.3 ms   index 0.0835 ms   -> 5,318x
+  200 two-term AND:         scan 316.6 ms   index  68.8 ms    ->     5x
+
+READ THOSE TWO SPEED-UPS TOGETHER. The index is spectacular on the operation it was
+designed for and ordinary on the operation users actually perform, because real
+queries contain common words and common words have posting lists the size of the
+corpus. THE OPTIMISATIONS THAT FOLLOW - shortest-first, skip lists, stop-word
+handling, early termination - all exist to attack that one gap.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+QUERY: a single term is one hash probe plus the posting list - measured 0.278
+microseconds against a scan's 1,480.8.
+
+BUILD: one pass over the corpus. Measured 290 ms for 2.4 million tokens.
+
+STORAGE: measured 79% of the raw token count before compression, and roughly double
+that if you store positions for phrase search. Delta encoding cuts it several-fold.
+
+UPDATES: an index is a copy and is stale until refreshed. Near-real-time means
+seconds.
+
+THE #1 MISTAKE: assuming the single-term speed-up describes real query performance.
+Measured, adding a second common term took it from 5,318x to 5x.
+
+THE #2 MISTAKE: intersecting the longest posting list first. Three tokens of code,
+and the difference between 149 and 19,995 postings walked.
+
+THE #3 MISTAKE: forgetting to deduplicate terms per document, so a word used ten
+times appears ten times in its posting list.
+
+THE #4 MISTAKE: `LIKE '%term%'` in a relational database. A leading wildcard cannot
+use a B-tree, so it is a full scan, and it matches inside other words.
+
+THE #5 MISTAKE: shipping matching without RANKING. Users experience "the right
+things at the top", not "the right set".
+
+THE #6 MISTAKE: stripping stop words without considering phrases. "to be or not to
+be" becomes empty.
+
+THE #7 MISTAKE: treating tokenisation as solved. It is where most search-quality
+complaints originate - hyphens, apostrophes, product codes, CJK text.
+
+THE #8 MISTAKE: promising instant freshness. The refresh interval is a real
+property of the system and the product must be told.
+
+THE TAKEAWAY: a full-text index inverts the mapping from documents-to-words into
+words-to-documents, which turned a 1,480-microsecond linear scan into a
+0.278-microsecond probe - 5,318x - at the price of storing 79% of the corpus over
+again; but posting lists follow Zipf's law, so the longest held 19,995 of 20,000
+documents while the median held 149, and adding one common term to a query
+collapsed the advantage to 5x - which is why intersecting the shortest list first,
+skip lists, stop-word handling and early termination are the whole of query
+execution, and why an index without BM25 ranking is a set rather than a result.""",
+]
+
 
 
 
