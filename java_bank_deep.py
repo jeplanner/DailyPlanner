@@ -15613,3 +15613,987 @@ as a LAST resort in phase three after widening and boxing, not as a preference b
 obligation to programs written before Java 5 — and since every call allocates an array, `List.of`
 declares eleven fixed-arity overloads before falling back to it.""",
 ]
+
+
+DEEP["JDK vs JRE vs JVM — and which one do you install?"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — three nested things, and only one you install
+
+    JVM   the engine that executes bytecode. It is BOTH a written SPECIFICATION and a set of
+          implementations of it — HotSpot, OpenJ9, GraalVM, Zing.
+    JRE   the JVM PLUS the standard library — `java.lang`, `java.util`, `java.io` and the rest. Enough
+          to RUN a program and nothing more.
+    JDK   the JRE PLUS the tools that PRODUCE and INSPECT programs — `javac`, `jar`, `javadoc`,
+          `jshell`, `jlink`, plus the diagnostic set: `jcmd`, `jstack`, `jmap`, `jfr`.
+
+    THEY NEST: JDK ⊃ JRE ⊃ JVM. Every JDK contains a JRE; every JRE contains a JVM.
+
+    AND THE ANSWER TO "WHICH DO I INSTALL" IS THE JDK, ALWAYS — including in production. Since Java 11
+    Oracle stopped shipping a standalone JRE at all. If you want a smaller runtime for a container you
+    build one with `jlink`, containing only the modules you actually use, which produces something
+    smaller than the old JRE ever was.
+
+    THE PRACTICAL REASON TO INSTALL A JDK IN PRODUCTION IS NOT COMPILATION. IT IS THE TOOLS. When a
+    service is stuck at 3am, `jstack` gives you a thread dump, `jcmd GC.heap_dump` gives you a heap
+    dump, and `jfr` gives you a flight recording. A JRE-only container has none of them, and you cannot
+    install them into a running incident.
+
+THE SECOND THING WORTH KNOWING IS THAT "WHICH JDK" IS A REAL QUESTION WITH A BORING ANSWER. Temurin,
+Corretto, Zulu, Liberica, Microsoft, Oracle — ALL OF THEM ARE BUILT FROM THE SAME OpenJDK SOURCE. They
+differ in who builds and tests them, how long each version is supported, and what extras are bundled.
+They do not differ in what your code does.
+
+THE EVERYDAY VERSION: the JVM is the engine, the JRE is the finished car, and the JDK is the car plus the
+workshop — the tools to build one and, more importantly, the diagnostics to find out why one stopped.
+You ship the car, but you keep the workshop in the garage, because "we removed the tools to save space"
+is a sentence you regret exactly once.
+
+TERMS AS THEY APPEAR:
+- BYTECODE: what `javac` produces and the JVM executes.
+- LTS: a long-term support release. 8, 11, 17, 21, 25 — supported for years rather than six months.
+- TCK: the Technology Compatibility Kit, the test suite a build must pass to call itself Java SE.""",
+
+"""2. THE INTUITION — the specification is the product
+
+THE MOST IMPORTANT IDEA HERE IS THAT JAVA IS TWO SPECIFICATIONS, NOT ONE:
+
+    THE JAVA LANGUAGE SPECIFICATION describes the source language — syntax, types, overload resolution,
+    what `final` means.
+    THE JAVA VIRTUAL MACHINE SPECIFICATION describes the class file format and the bytecode instruction
+    set. IT DOES NOT MENTION THE JAVA LANGUAGE AT ALL.
+
+    THAT SEPARATION IS WHY KOTLIN, SCALA, CLOJURE AND GROOVY EXIST. They are not "Java with different
+    syntax" — they are independent languages whose compilers emit class files. The JVM has no idea which
+    language produced what it is running, and cannot tell.
+
+    IT IS ALSO WHY THE JVM IS ARGUABLY THE MORE VALUABLE OF THE TWO ARTIFACTS. Thirty years of work on
+    garbage collection, JIT compilation and observability is available to any language willing to target
+    the format.
+
+AND BECAUSE THE JVM IS A SPECIFICATION, THERE ARE SEVERAL IMPLEMENTATIONS, each with a real reason to
+exist:
+
+    HOTSPOT      the OpenJDK default. Tiered JIT (C1/C2), and the collectors everyone knows.
+    OPENJ9       from IBM. Lower memory footprint and faster startup, with a shared class cache — a
+                 genuinely different set of trade-offs, attractive in containers.
+    GRAALVM      HotSpot with a JIT written in Java, plus AHEAD-OF-TIME native image compilation.
+    ZING / AZUL   a pauseless collector for very large heaps, and an AOT-assisted JIT.
+
+    ALL OF THEM RUN THE SAME CLASS FILES. That is the point of specifying the format rather than the
+    implementation.
+
+NOW THE DISTRIBUTION QUESTION, which is where teams actually spend time and which has a short answer:
+
+    ALMOST EVERY DISTRIBUTION IS BUILT FROM THE SAME OpenJDK SOURCE. Temurin (Eclipse Adoptium),
+    Corretto (Amazon), Zulu (Azul), Liberica (BellSoft), Microsoft Build of OpenJDK, Red Hat's build,
+    SapMachine, and Oracle's own JDK. The differences are:
+        WHO BUILDS AND CERTIFIES IT — all the serious ones pass the TCK, so they are all "Java SE
+        compatible" in the formal sense.
+        HOW LONG IT IS SUPPORTED — Corretto and Zulu offer long horizons; Adoptium follows the LTS
+        cadence.
+        WHAT IS BUNDLED — Liberica ships a variant with JavaFX; Corretto carries some Amazon patches;
+        Zulu offers CRaC builds.
+        THE LICENCE — the one genuine trap. Oracle's own JDK has changed terms three times since 2019.
+        The OpenJDK builds are GPL+CE and have not.
+    THE PRACTICAL ANSWER FOR MOST TEAMS IS TEMURIN OR CORRETTO, PINNED TO AN LTS.
+
+VERSIONS: 8, 11, 17, 21 and 25 are LTS; everything between is a six-month release supported for six
+months. Java 8 is still enormously deployed and is where most "why does this not compile" surprises come
+from. AND THE NUMBERING HISTORY IS WORTH KNOWING BECAUSE IT SHOWS UP IN VERSION STRINGS: 1.0 to 1.4, then
+5 (still `1.5` internally), through 8 (`1.8`), and from 9 onward the marketing number and the internal
+number finally agree.""",
+
+"""3. THE MECHANISM — what is actually in each, and how the pieces are laid out
+
+INSIDE A MODERN JDK (Java 9+, after the module system reorganised everything):
+
+    bin/     java        the launcher — creates the JVM and calls `main`
+             javac       the compiler
+             jar         packaging
+             javadoc     documentation
+             jshell      the REPL (Java 9+)
+             jlink       build a custom runtime image containing only what you use
+             jpackage    build a native installer (Java 14+)
+             jdeps       analyse dependencies, and find internal-API usage before an upgrade
+             THE DIAGNOSTIC SET — the reason a JDK belongs in production:
+             jcmd        the swiss army knife: thread dumps, heap dumps, VM flags, GC info, JFR control
+             jstack      thread dumps (and it DETECTS DEADLOCKS automatically)
+             jmap        heap dumps and heap summaries
+             jstat       GC and class-loading statistics over time
+             jfr         Flight Recorder — low-overhead production profiling
+             jinfo       inspect and change some VM flags on a live process
+    lib/     modules     a single file containing the linked standard library. Replaced `rt.jar`.
+             server/libjvm.so   THE JVM ITSELF — the native library `java` loads
+    conf/    logging.properties, security policy, networking defaults
+
+    NOTE `lib/modules`. Before Java 9 the library was `rt.jar`, a plain zip you could open. Since 9 it
+    is a linked image in the jimage format, optimised for load speed and not designed to be poked at —
+    which is one reason old tools that unpacked `rt.jar` broke on 9.
+
+WHAT `jlink` DOES, since it replaced the JRE:
+
+    jlink --add-modules java.base,java.logging --output myruntime
+
+    It produces a self-contained runtime with only the named modules and their dependencies. A `java.base`-
+    only image is around 40 MB versus roughly 200 MB for a full JDK — WHICH IS THE ACTUAL ANSWER TO
+    "I want a small runtime for my container", and it beats the old JRE because it is tailored to your
+    program rather than to everyone's.
+
+    THE CATCH: `jlink` needs your dependencies to be modular, or at least to be automatic modules, and
+    reflection-heavy frameworks can need extra modules added by hand. `jdeps` tells you which.
+
+HOW THE VERSION PIECES RELATE AT RUNTIME:
+    `java -version` reports the RUNTIME. `javac -version` reports the COMPILER. THEY CAN DIFFER, and a
+    mismatch is one of the most common setup problems — compile with 21, run on 17, get
+    `UnsupportedClassVersionError`. `--release N` is the fix: it targets both the bytecode version AND
+    the API surface of N.
+    `JAVA_HOME` is what build tools read; `PATH` is what your shell resolves. THEY CAN POINT AT
+    DIFFERENT JDKs, which produces the memorable experience of Maven and your terminal disagreeing.
+    SDKMAN, `jenv` or your distribution's alternatives system manage several installed JDKs; a project
+    should pin its version in the build file (`maven.compiler.release`, Gradle's toolchain block) rather
+    than relying on whatever is installed.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — A JRE-ONLY CONTAINER IN PRODUCTION. No `jstack`, no `jcmd`, no `jfr`. During an incident you
+cannot take a thread dump or a heap dump, and you cannot install them into a running pod.
+
+CASE 2 — `java -version` AND `javac -version` DISAGREEING. Compile with a newer JDK, run on an older
+JVM, get `UnsupportedClassVersionError` — which helpfully reports both class-file versions.
+
+CASE 3 — `JAVA_HOME` AND `PATH` POINTING AT DIFFERENT JDKs. Maven or Gradle uses one, your terminal uses
+another, and the two disagree about a compile error.
+
+CASE 4 — `-source`/`-target` WITHOUT `--release`. You get older bytecode compiled against the NEWER
+JDK's API, so it compiles cleanly and then throws `NoSuchMethodError` on the older runtime.
+
+CASE 5 — ASSUMING ORACLE JDK AND OpenJDK BEHAVE DIFFERENTLY. Since Java 11 they are built from
+essentially the same source. The difference is the LICENCE and the support contract, not the behaviour.
+
+CASE 6 — THE ORACLE LICENCE. It changed in 2019 (paid for production), again with the NFTC in 17 (free
+again), and again afterwards. Teams have been billed for this. An OpenJDK build under GPL+CE avoids the
+question entirely.
+
+CASE 7 — ASSUMING A NON-LTS RELEASE IS SUPPORTED. Java 18, 19, 20, 22 and so on get six months of
+updates. Fine for experimenting, wrong for a service you will still be running next year.
+
+CASE 8 — UPGRADING FROM JAVA 8 AND HITTING REMOVED INTERNAL APIS. `sun.misc.Unsafe`, `--add-opens` for
+reflection into JDK internals, the removal of JAXB and CORBA from the JDK in 11. `jdeps --jdk-internals`
+finds these before you upgrade rather than after.
+
+CASE 9 — 32-BIT VERSUS 64-BIT. A 32-bit JVM caps the heap at roughly 4 GB, and 32-bit builds have been
+dropped from most distributions.
+
+CASE 10 — A JDK IN A CONTAINER THAT DOES NOT SEE THE CGROUP LIMIT. Very old JVMs size the heap from the
+HOST's memory and are OOM-killed with no Java-level error. `-XX:MaxRAMPercentage` on a modern one.
+
+CASE 11 — CONFUSING JAVA SE WITH JAKARTA EE. Servlets, JPA and CDI are not in the JDK and never were.
+Jakarta EE is a separate specification implemented by application servers.
+
+CASE 12 — `jlink` FAILING ON A NON-MODULAR DEPENDENCY. Automatic modules help; reflection-heavy
+frameworks often need modules added explicitly.
+
+CASE 13 — RELYING ON THE DEFAULT LOCALE, CHARSET OR TIMEZONE. These come from the environment, not the
+JDK. Java 18 finally made UTF-8 the default charset; before that the same program produced different
+bytes on different machines.""",
+
+"""5. THE ALTERNATIVES — choosing a distribution and a runtime shape
+
+FOR MOST TEAMS: ECLIPSE TEMURIN OR AMAZON CORRETTO, pinned to an LTS. Both free, both TCK-certified,
+both with predictable update cadence, and neither carries a licence question.
+
+    AZUL ZULU if you want long support horizons or CRaC (checkpoint/restore for near-instant startup).
+    LIBERICA if you need bundled JavaFX.
+    MICROSOFT BUILD if you are on Azure and want their support relationship.
+    RED HAT'S BUILD if you are on RHEL and want it in the platform's support contract.
+    ORACLE JDK only if you have a commercial reason — and read the current licence, because it has
+    changed three times.
+    ECLIPSE OPENJ9 (via IBM Semeru) when memory footprint and startup matter more than peak throughput.
+    A genuinely different trade, not a rebadge.
+
+FOR THE RUNTIME YOU SHIP:
+    A FULL JDK IMAGE — simplest, ~200-400 MB, and every diagnostic tool present. FINE FOR MOST SERVICES,
+    and the extra megabytes are cached layers.
+    `jlink` CUSTOM IMAGE — ~40-100 MB with only the modules you use. Worth it when image size genuinely
+    matters. Include `jdk.jcmd` and `jdk.management` explicitly, or you have recreated the JRE problem.
+    ALPINE + A MUSL BUILD — smallest, and be aware musl versus glibc has produced real performance
+    differences.
+    GRAALVM NATIVE IMAGE — no JVM at all. Millisecond startup, low memory, lower peak, closed world.
+    Right for CLI tools and short-lived functions; wrong for a long-running server where the JIT wins.
+
+FOR MANAGING VERSIONS LOCALLY: SDKMAN or `jenv`, and PIN THE VERSION IN THE BUILD rather than relying on
+what is installed:
+    Maven `<maven.compiler.release>21</maven.compiler.release>`
+    Gradle `java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }`
+    Gradle toolchains will even DOWNLOAD the right JDK, which removes the whole class of "works on my
+    machine" caused by version drift.
+
+FOR UPGRADING: `jdeps --jdk-internals` to find dependencies on removed internals, and the JDK's own
+release notes for removals. THE JAVA 8 → 11 STEP IS THE HARD ONE, because of the module system and the
+removal of JAXB, CORBA and the extension mechanism. 11 → 17 → 21 are comparatively easy.
+
+WHAT TO SAY: "Install a JDK, including in production — not for `javac` but for `jstack`, `jcmd` and
+`jfr`, which you cannot add during an incident. Temurin or Corretto pinned to an LTS; they are all built
+from the same OpenJDK source, so the differences are support and licence, not behaviour. And `jlink` if
+the image size genuinely matters, remembering to include the diagnostic modules."
+
+""",
+
+"""6. HOW TO SET THIS UP — numbered steps
+
+STEP 1 — INSTALL A JDK, NOT A JRE. There is no standalone JRE from Oracle since Java 11, and you want
+the tools anyway.
+
+STEP 2 — PICK AN LTS: 17 or 21 for new work; 25 as it matures. Non-LTS releases get six months of
+updates.
+
+STEP 3 — PICK A DISTRIBUTION AND STOP THINKING ABOUT IT. Temurin or Corretto. They are the same source
+as the others.
+
+STEP 4 — PIN THE VERSION IN THE BUILD FILE, not in a README. Gradle toolchains or Maven's
+`maven.compiler.release`.
+
+STEP 5 — COMPILE WITH `--release N`, NEVER `-source`/`-target`. Only `--release` restricts the API
+surface as well as the bytecode version.
+
+STEP 6 — CHECK `java -version` AND `javac -version` MATCH, and that `JAVA_HOME` agrees with `PATH`.
+
+STEP 7 — SHIP A JDK IMAGE IN PRODUCTION, or a `jlink` image that explicitly includes `jdk.jcmd` and
+`jdk.management`. The diagnostics are the point.
+
+STEP 8 — SET `-XX:MaxRAMPercentage` IN A CONTAINER rather than a hard `-Xmx`, and confirm the JVM sees
+the cgroup limit.
+
+STEP 9 — SET THE CHARSET, LOCALE AND TIMEZONE EXPLICITLY if behaviour depends on them. They come from
+the environment, and UTF-8 only became the default in Java 18.
+
+STEP 10 — BEFORE AN UPGRADE, RUN `jdeps --jdk-internals` over your artifacts. It finds the removed
+internal APIs before production does.
+
+STEP 11 — USE SDKMAN OR `jenv` LOCALLY, so several JDKs coexist and switching is one command.
+
+STEP 12 — IF STARTUP GENUINELY DOMINATES — a CLI tool, a short-lived function — EVALUATE A NATIVE IMAGE
+OR OPENJ9. For a long-running server, stay on HotSpot and let the JIT do its work.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'They nest. The JVM is the engine that executes bytecode — and it's both a written SPECIFICATION and
+several implementations of it: HotSpot, OpenJ9, GraalVM, Zing. The JRE is the JVM plus the standard
+library, which is enough to run a program. The JDK is the JRE plus the tools — javac, jar, jshell,
+jlink, and the diagnostics: jcmd, jstack, jmap, jfr.
+
+The answer to "which do I install" is always the JDK, including in production. Oracle stopped shipping a
+standalone JRE at Java 11, and if you want a small runtime you build one with jlink containing only the
+modules you use — which is smaller than the old JRE ever was.
+
+But the real reason to have a JDK in production isn't compilation, it's the TOOLS. When a service is
+stuck at 3am, jstack gives you a thread dump and detects deadlocks automatically, jcmd gives you a heap
+dump, jfr gives you a flight recording. A JRE-only container has none of those and you cannot install
+them into a running incident.
+
+The idea I find most worth stating is that Java is TWO specifications. The language spec describes the
+source language. The JVM spec describes the class file format and the bytecode instruction set — and it
+doesn't mention the Java language at all. That separation is why Kotlin, Scala, Clojure and Groovy
+exist: they're independent languages whose compilers emit class files, and the JVM can't tell which
+language produced what it's running. It also means the JVM is arguably the more valuable artifact —
+thirty years of GC, JIT and observability work available to anything willing to target the format.
+
+On distributions: Temurin, Corretto, Zulu, Liberica, Microsoft, Oracle — they're all built from the same
+OpenJDK source. What differs is who builds and certifies them, how long each version is supported,
+what's bundled, and the licence. Oracle's own terms have changed three times since 2019 and teams have
+been billed for it; the OpenJDK builds are GPL with classpath exception and haven't changed. So the
+practical answer is Temurin or Corretto, pinned to an LTS — 8, 11, 17, 21, 25 — and the six-month
+releases in between get six months of updates, which is fine for experimenting and wrong for a service
+you'll still be running next year.
+
+The setup mistake I'd flag is `-source`/`-target` instead of `--release`. Only --release restricts the
+API SURFACE as well as the bytecode version, so with the older flags you get old bytecode compiled
+against the new JDK's API — it compiles cleanly and then throws NoSuchMethodError on the older runtime.
+And check that JAVA_HOME agrees with PATH, because Maven reads one and your shell resolves the other,
+and that's where "the IDE compiles it and the terminal doesn't" comes from.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE NESTING ─────────────────────────────────────────────────────
+    //  ┌─ JDK ────────────────────────────────────────────────┐
+    //  │  javac  jar  javadoc  jshell  jlink  jpackage  jdeps │  ← produce & inspect
+    //  │  jcmd  jstack  jmap  jstat  jfr  jinfo               │  ← THE 3AM TOOLS
+    //  │  ┌─ JRE ─────────────────────────────────────────┐   │
+    //  │  │  lib/modules   (the standard library)         │   │  ← enough to RUN
+    //  │  │  ┌─ JVM ───────────────────────────────────┐  │   │
+    //  │  │  │  lib/server/libjvm.so                   │  │   │  ← the engine
+    //  │  │  └─────────────────────────────────────────┘  │   │
+    //  │  └───────────────────────────────────────────────┘   │
+    //  └──────────────────────────────────────────────────────┘
+
+    // ── THE TOOLS THAT ARE THE REAL REASON ──────────────────────────────
+    jstack <pid>                     # thread dump — AND it detects deadlocks
+    jcmd <pid> Thread.print          # the same, via the modern entry point
+    jcmd <pid> GC.heap_dump /d.hprof # heap dump, for Eclipse MAT
+    jcmd <pid> VM.flags              # what this JVM is ACTUALLY running with
+    jcmd <pid> VM.native_memory summary   # RSS broken down by pool
+    jfr start --name=r duration=60s filename=r.jfr   # production profiling
+    # NONE OF THESE EXIST IN A JRE-ONLY IMAGE, and you cannot add them mid-incident.
+
+    // ── TWO SPECIFICATIONS, NOT ONE ─────────────────────────────────────
+    // The JAVA LANGUAGE SPEC describes source: syntax, types, overload resolution.
+    // The JVM SPEC describes the class file format and bytecode.
+    //   IT DOES NOT MENTION THE JAVA LANGUAGE AT ALL.
+    // Which is why:
+    kotlinc Hello.kt   → Hello.class    # the JVM cannot tell what produced it
+    scalac  Hello.scala → Hello.class
+    javac   Hello.java  → Hello.class
+
+    // ── THE SETUP MISTAKE ───────────────────────────────────────────────
+    javac -source 8 -target 8 App.java     # ✗ old BYTECODE, NEW JDK's API surface
+    //                                        → compiles fine, then NoSuchMethodError
+    //                                          on the Java 8 runtime
+    javac --release 8 App.java             # ✓ restricts BOTH bytecode and API
+    java -version                          # the RUNTIME
+    javac -version                         # the COMPILER — THESE CAN DIFFER
+    echo $JAVA_HOME                        # what Maven/Gradle read
+    which java                             # what your shell resolves — ALSO CAN DIFFER
+
+    // ── PIN IT IN THE BUILD, NOT IN A README ────────────────────────────
+    // Maven:
+    //   <maven.compiler.release>21</maven.compiler.release>
+    // Gradle:
+    //   java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+    //   ^ Gradle toolchains will DOWNLOAD the right JDK, removing the whole class
+    //     of "works on my machine" caused by version drift.
+
+    // ── jlink: what replaced the JRE ────────────────────────────────────
+    jlink --add-modules java.base,java.logging,jdk.jcmd,jdk.management           --strip-debug --no-man-pages --compress=2 --output myruntime
+    //                  ^^^^^^^^^^^^^^^^^^^^^^^^ INCLUDE THE DIAGNOSTICS, or you have
+    //                  recreated the JRE problem with extra steps.
+    // ~40-100 MB instead of ~200-400 MB, tailored to YOUR program rather than
+    // to everyone's — which is why it beats the old JRE.
+
+    // ── BEFORE AN UPGRADE ───────────────────────────────────────────────
+    jdeps --jdk-internals app.jar     # finds sun.misc.Unsafe and friends BEFORE
+    //                                  production does
+    // Java 8 → 11 is the hard step: the module system, and JAXB/CORBA removed from
+    // the JDK. 11 → 17 → 21 are comparatively easy.
+
+    // ── AND ONE ENVIRONMENT TRAP ────────────────────────────────────────
+    // The default CHARSET, LOCALE and TIMEZONE come from the environment, not the
+    // JDK. UTF-8 only became the default charset in Java 18 — before that the same
+    // program produced different bytes on different machines.
+    java -Dfile.encoding=UTF-8 -Duser.timezone=UTC -Duser.language=en ...""",
+
+"""9. THE TRACE — four decisions, and what each one costs later
+
+DECISION 1 — JRE-ONLY IMAGE VERSUS JDK IMAGE
+
+    situation                          JRE-only image           JDK image
+    ---------------------------------------------------------------------------------
+    normal operation                   works                     works
+    image size                         ~120 MB                   ~350 MB (cached layers)
+    3am: requests hanging               NO jstack. NO jcmd.       jstack → "Found one
+                                        You can restart and hope. Java-level deadlock",
+                                                                  with the exact lines.
+    3am: memory climbing                NO heap dump possible.    jcmd GC.heap_dump →
+                                                                  dominator tree → the
+                                                                  retaining path
+    ---------------------------------------------------------------------------------
+    THE SAVING IS A FEW HUNDRED CACHED MEGABYTES. THE COST IS THAT AN INCIDENT BECOMES UNDIAGNOSABLE, and
+    you cannot change the decision while it is happening. This is the whole argument, and it is why
+    "install the JDK" is not a compilation question.
+
+DECISION 2 — `-source 8 -target 8` VERSUS `--release 8`
+
+    step                                     -source/-target        --release
+    ---------------------------------------------------------------------------------
+    you call List.of(...) (a Java 9 method)  COMPILES — the API      COMPILE ERROR:
+                                             surface is the NEW      "cannot find symbol"
+                                             JDK's
+    bytecode version emitted                 52 (Java 8)             52 (Java 8)
+    running on a Java 8 JVM                  NoSuchMethodError at    n/a — you fixed it
+                                             the first call          at compile time
+    ---------------------------------------------------------------------------------
+    THE OLD FLAGS RESTRICT THE FORMAT AND NOT THE VOCABULARY. Which produces a build that succeeds and a
+    runtime that fails, on a machine you do not control, on a code path that may be rare.
+
+DECISION 3 — WHICH DISTRIBUTION
+
+    axis                          does it differ?
+    ---------------------------------------------------------------------------------
+    what your code does           NO. Same OpenJDK source, same TCK certification.
+    performance                   NO, between HotSpot-based builds. YES for OpenJ9 and
+                                  GraalVM native, which are genuinely different engines.
+    support duration              YES. Corretto and Zulu offer long horizons.
+    bundled extras                YES. Liberica has a JavaFX variant; Corretto carries
+                                  some Amazon patches.
+    LICENCE                       YES, AND THIS IS THE ONLY ONE THAT HAS COST PEOPLE
+                                  MONEY. Oracle's terms changed in 2019, again with the
+                                  NFTC in 17, and again after. GPL+CE builds did not.
+    ---------------------------------------------------------------------------------
+    FOUR OF THE FIVE ROWS ARE "NO" OR "MINOR". This is a decision that deserves ten minutes, once, and
+    then never again.
+
+DECISION 4 — LTS VERSUS LATEST
+
+    release      updates for              suitable for
+    ---------------------------------------------------------------------------------
+    17, 21, 25   years                    anything you will still be running next year
+    18-20, 22-24 SIX MONTHS               experimenting, previewing language features
+    8            still widely deployed    and still the source of most "why does this
+                                          not compile" surprises
+    ---------------------------------------------------------------------------------
+    THE FAILURE MODE OF PICKING A NON-LTS IS NOT IMMEDIATE. It is discovering, eight months later, that
+    your runtime has no security updates and the upgrade path is now two versions long.
+
+AND THE VERSION-MISMATCH TRACE, which is the single most common setup problem:
+
+    what you see                              what is actually true
+    ---------------------------------------------------------------------------------
+    "It compiles in IntelliJ, fails in Maven"  IntelliJ uses its configured SDK; Maven
+                                               uses JAVA_HOME. They differ.
+    "UnsupportedClassVersionError: class file  compiled by 21, run on 17. The message
+     version 65.0 ... recognizes up to 61.0"   names BOTH halves — 65 is 21, 61 is 17.
+    "NoSuchMethodError on a method in the jar" two library versions on the classpath,
+                                               OR -source/-target without --release
+    ---------------------------------------------------------------------------------
+    ALL THREE ARE THE SAME ROOT CAUSE IN DIFFERENT CLOTHES: more than one Java version is in play and
+    nothing pinned which one. `java -version`, `javac -version`, `echo $JAVA_HOME`, `which java` — four
+    commands that resolve it in under a minute.
+
+WHAT PRODUCED WHAT:
+    THE TOOLS LIVING IN THE JDK       produced decision 1's asymmetry.
+    --release RESTRICTING THE API     produced decision 2 — the flag that fails at build time instead
+                                      of runtime.
+    A SHARED OpenJDK SOURCE           produced decision 3's four "no"s.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    JDK ⊃ JRE ⊃ JVM. No standalone JRE from Oracle since Java 11; `jlink` replaced it.
+    A full JDK image is ~200–400 MB; a `jlink` image is ~40–100 MB; a native image has no JVM at all.
+    LTS releases: 8, 11, 17, 21, 25. Everything else gets six months.
+    Class file versions: 52 = Java 8, 61 = 17, 65 = 21.
+    Two specifications: the language spec and the JVM spec, and the second does not mention Java.
+    Essentially every distribution is built from the same OpenJDK source and TCK-certified.
+
+THE #1 MISTAKE: a JRE-only production image. No `jstack`, no `jcmd`, no `jfr`, and no way to add them
+during an incident.
+
+THE #2 MISTAKE: `-source`/`-target` instead of `--release`. Old bytecode against the new API surface —
+compiles clean, fails at runtime.
+
+THE #3 MISTAKE: `JAVA_HOME` and `PATH` disagreeing. Maven and your shell then disagree about your code.
+
+THE #4 MISTAKE: assuming Oracle JDK behaves differently from an OpenJDK build. Same source; the
+difference is the licence and the support contract.
+
+THE #5 MISTAKE: ignoring the Oracle licence. It has changed three times since 2019 and has generated real
+invoices.
+
+THE #6 MISTAKE: deploying a non-LTS release. Six months of updates, discovered eight months later.
+
+THE #7 MISTAKE: not pinning the JDK version in the build. Version drift across machines is the classic
+"works on mine".
+
+THE #8 MISTAKE: expecting servlets or JPA in the JDK. Jakarta EE is a separate specification and always
+was.
+
+THE #9 MISTAKE: `jlink` without `jdk.jcmd` and `jdk.management`. You have rebuilt the JRE problem.
+
+THE #10 MISTAKE: upgrading from Java 8 without running `jdeps --jdk-internals` first. Removed internals
+surface at runtime, on a rare code path.
+
+THE #11 MISTAKE: relying on the default charset, locale or timezone. They come from the environment, and
+UTF-8 only became the default in Java 18.
+
+ONE-SENTENCE TAKEAWAY: JDK ⊃ JRE ⊃ JVM, and you install the JDK everywhere including production — not for
+`javac` but for `jstack`, `jcmd` and `jfr`, which are the difference between diagnosing an incident and
+restarting and hoping, and which cannot be added once one is under way; the JVM is a SPECIFICATION
+separate from the Java language specification, which is why Kotlin and Scala exist and why the class file
+rather than the source is the real interface; and since essentially every distribution — Temurin,
+Corretto, Zulu, Liberica, Oracle — is built from the same TCK-certified OpenJDK source, the only choices
+that actually matter are picking an LTS, pinning it in the build file, and compiling with `--release`
+rather than `-source`/`-target`, which restricts the API surface as well as the bytecode version and so
+fails at build time instead of on someone else's runtime.""",
+]
+
+
+DEEP["Integer caching — why 127 == 127 but 128 != 128"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the same comparison, two answers, one byte apart
+
+    Integer a = 127, b = 127;   System.out.println(a == b);   // true
+    Integer c = 128, d = 128;   System.out.println(c == d);   // FALSE
+
+    THE ONLY DIFFERENCE IS THE NUMBER. Nothing about the code changed, and the comparison went from
+    "correct" to "wrong".
+
+The reason is that `==` on objects asks "ARE THESE THE SAME OBJECT?", never "do they hold the same
+value". And when you write `Integer a = 127`, the compiler inserts `Integer.valueOf(127)` — which
+returns a CACHED, SHARED instance for values from −128 to 127, and a brand-new object outside that
+range.
+
+    SO AT 127 BOTH VARIABLES POINT AT LITERALLY THE SAME OBJECT AND `==` IS TRUE. At 128 they point at
+    two different objects holding the same number, and `==` is false. THE COMPARISON WAS NEVER ABOUT
+    VALUE; IT ONLY LOOKED CORRECT BECAUSE OF THE CACHE.
+
+WHY THIS IS THE WORST POSSIBLE FAILURE PATTERN, and why it deserves a whole entry:
+
+    IT WORKS FOR EXACTLY THE VALUES A DEVELOPER TESTS WITH. Loop counters, small ids, list sizes, the
+    numbers 1 and 2 and 3 in a unit test. All under 128.
+    IT FAILS FOR THE VALUES PRODUCTION USES. Real database ids, real counts, real amounts.
+    AND IT IS REQUIRED BY THE LANGUAGE SPECIFICATION for −128..127, so it is PORTABLE behaviour, not a
+    quirk of one JVM. No runtime will save you and no other JVM will behave differently.
+
+THE EVERYDAY VERSION: a library that keeps one physical copy of its hundred most popular books and
+prints a fresh copy of anything else on request. Ask two people to fetch "book 42" and they come back
+with the same physical object — so "is it the same book?" and "does it say the same thing?" happen to
+agree. Ask for "book 900" and they return two different printed copies, and the first question suddenly
+gives a different answer from the second. Nothing about the question changed.
+
+TERMS AS THEY APPEAR:
+- AUTOBOXING: the compiler inserting `Integer.valueOf(x)` when a primitive is used where an object is
+  required.
+- THE INTEGER CACHE: a preallocated array of `Integer` objects for −128..127, held in a static nested
+  class.
+- IDENTITY: whether two references point at the same object. What `==` tests.""",
+
+"""2. THE INTUITION — why a cache exists at all, and why it stops at 127
+
+THE CACHE IS NOT AN OPTIMISATION SOMEONE BOLTED ON. It is a response to a measured fact: SMALL INTEGERS
+ARE OVERWHELMINGLY THE COMMON CASE. Loop counters, array sizes, small identifiers, HTTP status codes,
+enum ordinals, month numbers. In a program that boxes millions of integers, the overwhelming majority
+are tiny.
+
+    SO `Integer.valueOf` PREALLOCATES 256 OBJECTS — one for each value from −128 to 127 — AT CLASS
+    INITIALISATION, and hands out the shared instance whenever the value is in range. That turns
+    millions of allocations into zero, for the values that actually occur.
+
+    THE RANGE IS −128..127 BECAUSE THAT IS EXACTLY THE RANGE OF A SIGNED BYTE. It is not arbitrary; it
+    is the natural "small number" boundary, and it is the same range used for `Byte`, `Short` and
+    `Long`.
+
+AND THE LANGUAGE SPECIFICATION REQUIRES IT, which is the part that makes this worth knowing rather than
+just avoiding:
+
+    The JLS mandates that boxing a value in −128..127 yields the same object for equal values. It also
+    explicitly PERMITS an implementation to cache more. So −128..127 is guaranteed, and above it is
+    unspecified — which means `128 == 128` being false is not promised either, it just happens to be
+    true on every real JVM.
+
+    THE REASON THE SPEC MANDATES IT is memory and performance for the common case; the reason it does
+    NOT mandate more is that caching every integer would need unbounded memory.
+
+WHICH WRAPPERS CACHE, AND WHICH DO NOT — the pattern is informative:
+
+    Integer, Short, Byte, Long     −128 to 127
+    Character                      0 to 127
+    Boolean                        both values, always — there are only two
+    Float, Double                  NEVER
+
+    `Float` AND `Double` ARE NOT CACHED BECAUSE THERE IS NO SENSIBLE FINITE SET TO CACHE. There is no
+    "small double". So `Double a = 1.0, b = 1.0; a == b` is ALWAYS false — which at least fails
+    consistently, and is arguably kinder than the Integer behaviour.
+
+NOW THE DETAIL THAT MOST PEOPLE MISS, AND IT IS GENUINELY USEFUL:
+
+    Integer big = 1000;
+    int prim = 1000;
+    System.out.println(big == prim);      // TRUE
+
+    COMPARING A WRAPPER WITH A PRIMITIVE UNBOXES THE WRAPPER AND COMPARES VALUES. Binary numeric
+    promotion applies, so this is `big.intValue() == prim` — a genuine value comparison, correct for
+    every number.
+
+    SO `Integer == Integer` IS IDENTITY AND `Integer == int` IS VALUE. Two comparisons that look
+    identical in source, differing only in whether one side happens to be declared as a primitive. That
+    is also the safest quick fix when you find this bug: unbox one side deliberately.""",
+
+"""3. THE MECHANISM — the cache class, and what the compiler inserts
+
+`Integer.valueOf` IS ABOUT FIVE LINES, and reading them removes all the mystery:
+
+    public static Integer valueOf(int i) {
+        if (i >= IntegerCache.low && i <= IntegerCache.high)
+            return IntegerCache.cache[i + (-IntegerCache.low)];   // ← THE SHARED INSTANCE
+        return new Integer(i);                                    // ← a fresh object
+    }
+
+    private static class IntegerCache {
+        static final int low = -128;
+        static final int high;              // 127, or higher via a flag
+        static final Integer[] cache;
+        static { ... allocate every value from low to high ... }
+    }
+
+    NOTE THAT `IntegerCache` IS A STATIC NESTED CLASS. That is the initialization-on-demand holder idiom
+    again: the 256 objects are not allocated until `valueOf` is first called, and the JVM's per-class
+    initialisation lock makes that exactly-once and thread-safe for free.
+
+WHAT THE COMPILER INSERTS, WHICH IS THE WHOLE REASON THIS IS INVISIBLE:
+
+    Integer a = 127;          →   Integer a = Integer.valueOf(127);
+    list.add(5);              →   list.add(Integer.valueOf(5));
+    map.put("k", 200);        →   map.put("k", Integer.valueOf(200));
+    int x = someInteger;      →   int x = someInteger.intValue();
+
+    NONE OF THAT APPEARS IN YOUR SOURCE. You wrote `Integer a = 127` and a factory call happened.
+
+THE UPPER BOUND IS TUNABLE: `-XX:AutoBoxCacheMax=<n>` raises `IntegerCache.high` — for `Integer` ONLY,
+not the other wrappers, and the lower bound is fixed at −128.
+
+    WHICH IS A REASON NOT TO RELY ON THE BEHAVIOUR EVEN WITHIN THE RANGE: someone can change where the
+    boundary is. Code that is correct at 127 and broken at 128 is fragile; code that is correct because
+    a JVM flag was set is not code you want.
+
+`new Integer(128)` versus `Integer.valueOf(128)`:
+    `new` ALWAYS creates a distinct object, even for cached values — so `new Integer(1) == new Integer(1)`
+    is false. It has been DEPRECATED FOR REMOVAL since Java 9 precisely because it defeats the cache and
+    manufactures identity nobody wanted.
+
+THE SAME PHENOMENON WEARING DIFFERENT CLOTHES — worth recognising as one idea:
+    STRING LITERALS are interned into a shared pool, so `"hi" == "hi"` is true and
+    `"hi" == new String("hi")` is false. Identical mechanism, identical trap.
+    `Boolean.valueOf` returns `Boolean.TRUE`/`FALSE`, so `==` on boxed booleans happens to work
+    everywhere — which teaches exactly the wrong lesson.
+    ENUM constants are genuinely unique per constant, which is why `==` on enums IS correct and
+    idiomatic. THAT IS THE ONE PLACE THE HABIT IS RIGHT, and it is a good reason to convert a closed set
+    of integer codes into an enum.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `Integer a = 128, b = 128; a == b` IS FALSE while 127 is true. The headline, and it passes every
+test written with small numbers.
+
+CASE 2 — `Integer big = 1000; int prim = 1000; big == prim` IS TRUE. Comparing a wrapper with a primitive
+UNBOXES and compares values. Two comparisons that look identical behave differently.
+
+CASE 3 — `new Integer(1) == new Integer(1)` IS FALSE. `new` always allocates, even inside the cache
+range. Deprecated for removal since Java 9.
+
+CASE 4 — `Long` HAS ITS OWN CACHE WITH THE SAME BOUNDS. `Long x = 128L, y = 128L; x == y` is false. And
+a `Long` compared with an `Integer` by `.equals` is ALWAYS false regardless of value, because `equals`
+checks the type.
+
+CASE 5 — `Double a = 1.0, b = 1.0; a == b` IS ALWAYS FALSE. No cache exists for floating point. At least
+it fails consistently.
+
+CASE 6 — `-XX:AutoBoxCacheMax` MOVING THE BOUNDARY. Code that works on one JVM configuration and fails
+on another, for a value in between.
+
+CASE 7 — A COUNTER IN A `Map<String, Integer>` COMPARED WITH `==`. Works while counts are small; breaks
+the day traffic grows past 127. THE FAILURE ARRIVES WITH SUCCESS.
+
+CASE 8 — UNBOXING A NULL. `int x = map.get(k)` where the key is absent throws
+`NullPointerException` on a line with no visible method call — the same autoboxing machinery, failing the
+other way.
+
+CASE 9 — `==` IN A LAMBDA OR A COMPARATOR. `list.stream().filter(i -> i == target)` where both are
+`Integer` compares identities. Silent, and the filter simply returns nothing for large values.
+
+CASE 10 — `synchronized (Integer.valueOf(1))`. That is a GLOBALLY SHARED cached object. Completely
+unrelated code can hold your lock.
+
+CASE 11 — `Integer.valueOf(x).equals(someLong)`. False for every value, because `Integer.equals` checks
+`instanceof Integer`. Cross-type numeric equality never works with `equals`.
+
+CASE 12 — RELYING ON `==` FOR BOXED BOOLEANS BECAUSE IT ALWAYS WORKS. It does, and it teaches a habit
+that breaks on the next type.
+
+CASE 13 — TREATING THIS AS A JVM BUG. The −128..127 behaviour is MANDATED by the specification. It is
+portable, deliberate, and will never change.""",
+
+"""5. THE ALTERNATIVES — how to never meet this again
+
+USE PRIMITIVES. `int`, `long`, `double` — no identity, no cache, no null, and `==` means exactly what it
+says. THIS IS THE REAL ANSWER: the bug only exists because a value became an object.
+
+USE `.equals` ON WRAPPERS, ALWAYS. Or `Objects.equals(a, b)` when either might be null.
+
+UNBOX ONE SIDE DELIBERATELY. `a.intValue() == b` is a value comparison and reads as one. Useful as the
+minimal fix in existing code.
+
+`Integer.compare(a, b) == 0` when you are already writing a comparator, and `Double.compare` for
+floating point, which also handles `NaN` and `-0.0` correctly.
+
+TURN ON THE STATIC ANALYSIS RULE. SpotBugs `RC_REF_COMPARISON`, ErrorProne `ReferenceEquality`, IntelliJ's
+"Number objects are compared using ==" inspection. THIS IS A BUG CLASS A TOOL CAN ELIMINATE ENTIRELY,
+which is a much better answer than remembering.
+
+USE AN ENUM WHEN THE VALUE SET IS CLOSED. Status codes, types, categories. Then `==` becomes genuinely
+correct, `switch` becomes exhaustive, and a typo becomes a compile error. THE HABIT OF USING `==` IS
+RIGHT FOR ENUMS AND WRONG FOR EVERYTHING ELSE, which is worth internalising as the rule rather than the
+exception.
+
+USE PRIMITIVE COLLECTIONS FOR BULK NUMERIC DATA — `int[]`, or Eclipse Collections / fastutil. No boxing
+at all, five times less memory, and the whole question disappears.
+
+`IntStream` / `LongStream` / `DoubleStream` rather than `Stream<Integer>`, for the same reason.
+
+`Map.getOrDefault(k, 0)` INSTEAD OF `map.get(k)` at the boundary where a nullable wrapper becomes a
+primitive, so the other autoboxing failure — the NPE — cannot happen either.
+
+WHAT TO SAY: "`==` on objects tests identity, and `Integer.valueOf` returns a shared cached instance for
+−128 to 127, so the comparison works for exactly the small values a developer tests with and fails for
+the large ones production uses. It is mandated by the specification, so no JVM will behave differently.
+I use primitives wherever the value is a number, `.equals` on wrappers, and an enum the moment the set of
+values is closed — that is the one place `==` is genuinely right."
+
+""",
+
+"""6. HOW TO AVOID IT — numbered steps
+
+STEP 1 — USE PRIMITIVES WHEREVER THE VALUE IS A NUMBER. The bug exists only because a value became an
+object.
+
+STEP 2 — NEVER USE `==` ON WRAPPERS. Not "usually not" — never. It works for the values you test with,
+which is the worst possible property.
+
+STEP 3 — USE `.equals`, OR `Objects.equals` WHEN NULL IS POSSIBLE.
+
+STEP 4 — IF YOU MUST COMPARE IN PLACE, UNBOX ONE SIDE. `a.intValue() == b` is a value comparison and
+looks like one.
+
+STEP 5 — TURN ON THE STATIC ANALYSIS RULE. ErrorProne `ReferenceEquality` or SpotBugs
+`RC_REF_COMPARISON`. A tool can remove this bug class entirely.
+
+STEP 6 — CONVERT CLOSED SETS OF NUMERIC CODES INTO ENUMS. Then `==` is correct, `switch` is exhaustive,
+and typos are compile errors.
+
+STEP 7 — DO NOT WRITE `new Integer(x)`. Deprecated for removal, and it defeats the cache deliberately.
+
+STEP 8 — NEVER `synchronized` ON A WRAPPER. Cached instances are process-wide shared objects.
+
+STEP 9 — REMEMBER `Long`, `Short`, `Byte` AND `Character` HAVE THE SAME BOUNDS, and `Float`/`Double` have
+no cache at all.
+
+STEP 10 — REMEMBER CROSS-TYPE `equals` IS ALWAYS FALSE. An `Integer` never equals a `Long`, whatever the
+values.
+
+STEP 11 — USE `getOrDefault` AT THE BOUNDARY where a nullable wrapper becomes a primitive, so the NPE
+version of this trap cannot happen either.
+
+STEP 12 — WHEN A COMPARISON "WORKS ON MY MACHINE" ON SMALL NUMBERS, TEST IT WITH A LARGE ONE. That
+single check finds this bug immediately.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`Integer a = 127, b = 127; a == b` is TRUE. Change both to 128 and it's FALSE. The only difference is
+the number.
+
+The reason is that `==` on objects asks "are these the same OBJECT" — it has never asked about value.
+And when you write `Integer a = 127`, the compiler inserts `Integer.valueOf(127)`, which returns a
+CACHED shared instance for −128 to 127 and a brand-new object outside that range. So at 127 both
+variables point at literally the same object and `==` is true; at 128 they're two objects holding the
+same number. The comparison was never about value — it only looked correct because of the cache.
+
+And that's the worst possible failure pattern, which is why it's worth knowing rather than just
+avoiding. It works for exactly the values a developer tests with — loop counters, small ids, the numbers
+1 and 2 in a unit test, all under 128. It fails for the values production uses: real database ids, real
+counts. And it's REQUIRED by the language specification for that range, so it's portable behaviour, not
+a quirk of one JVM. Nothing will save you and no other JVM behaves differently.
+
+The cache isn't arbitrary either. Small integers are overwhelmingly the common case — counters, sizes,
+status codes — so valueOf preallocates 256 objects at class init and hands out the shared one when the
+value is in range. That turns millions of allocations into zero for the values that actually occur. And
+−128 to 127 is exactly the range of a signed byte, which is the natural "small number" boundary; the
+same range is used for Byte, Short and Long. Character caches 0 to 127. Float and Double are never
+cached, because there's no sensible finite set of "small doubles" — so `Double a = 1.0, b = 1.0; a == b`
+is always false, which at least fails consistently.
+
+One detail most people miss, and it's genuinely useful: `Integer big = 1000; int prim = 1000; big ==
+prim` is TRUE. Comparing a wrapper with a PRIMITIVE unboxes the wrapper and compares values — binary
+numeric promotion applies. So `Integer == Integer` is identity and `Integer == int` is value. Two
+comparisons that look identical in source, differing only in how one side happens to be declared. That's
+also the safest minimal fix when you find this in existing code: unbox one side deliberately.
+
+Practically: primitives wherever the value is a number, because the bug only exists because a value
+became an object. `.equals` on wrappers, always. Turn on the ErrorProne or SpotBugs reference-equality
+rule, because this is a bug class a tool can eliminate entirely rather than something to remember. And
+an ENUM the moment the value set is closed — that's the one place the `==` habit is genuinely right, and
+you also get exhaustive switches and typos as compile errors.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE WHOLE PHENOMENON ────────────────────────────────────────────
+    Integer a = 127, b = 127;   System.out.println(a == b);   // true
+    Integer c = 128, d = 128;   System.out.println(c == d);   // FALSE
+    //                                             ^^^^^^ the ONLY difference is the
+    //   number. Nothing about the code changed.
+
+    // ── WHAT THE COMPILER INSERTED ──────────────────────────────────────
+    Integer a = 127;      // → Integer a = Integer.valueOf(127);
+    list.add(5);          // → list.add(Integer.valueOf(5));
+    int x = someInteger;  // → int x = someInteger.intValue();
+    // NONE of that is in your source. You wrote an assignment; a factory call ran.
+
+    // ── valueOf, IN FULL ────────────────────────────────────────────────
+    public static Integer valueOf(int i) {
+        if (i >= IntegerCache.low && i <= IntegerCache.high)
+            return IntegerCache.cache[i + (-IntegerCache.low)];  // ← SHARED INSTANCE
+        return new Integer(i);                                   // ← a fresh object
+    }
+    private static class IntegerCache {          // ← the holder idiom: 256 objects are
+        static final int low = -128;             //   not allocated until valueOf is
+        static final int high;                   //   first called, and the JVM's class
+        static final Integer[] cache;            //   init lock makes that exactly-once
+        static { /* allocate every value low..high */ }
+    }
+    // −128..127 is exactly the range of a SIGNED BYTE. Not arbitrary — the natural
+    // "small number" boundary, and the same range for Byte, Short and Long.
+
+    // ── THE DETAIL MOST PEOPLE MISS ─────────────────────────────────────
+    Integer big = 1000;
+    int prim = 1000;
+    System.out.println(big == prim);       // TRUE
+    //                 ^^^^^^^^^^^ comparing a wrapper with a PRIMITIVE unboxes the
+    //   wrapper and compares VALUES (binary numeric promotion). So:
+    //     Integer == Integer  →  IDENTITY
+    //     Integer == int      →  VALUE
+    //   Two comparisons that look identical, differing only in a declaration.
+
+    // ── WHICH WRAPPERS CACHE ────────────────────────────────────────────
+    Integer, Short, Byte, Long   →  −128 to 127
+    Character                    →  0 to 127
+    Boolean                      →  both values, always (there are only two)
+    Float, Double                →  NEVER — there is no "small double"
+    Double x = 1.0, y = 1.0;  System.out.println(x == y);   // ALWAYS false.
+    //                                                          At least it is honest.
+
+    // ── new DEFEATS THE CACHE DELIBERATELY ──────────────────────────────
+    System.out.println(new Integer(1) == new Integer(1));   // false, even at 1
+    // Deprecated for removal since Java 9, precisely because it manufactures identity
+    // nobody wanted.
+
+    // ── THE BUG THAT ARRIVES WITH SUCCESS ───────────────────────────────
+    Map<String,Integer> counts = new HashMap<>();
+    if (counts.get(user) == threshold) { ... }
+    //                   ^^ works perfectly while counts stay under 128.
+    //   Breaks the day traffic grows. THE FAILURE ARRIVES WITH SUCCESS.
+    if (counts.get(user).equals(threshold)) { ... }        // ← correct
+    if (counts.getOrDefault(user, 0) == thresholdInt) { }  // ← better: primitives
+
+    // ── AND THE ONE PLACE THE HABIT IS RIGHT ────────────────────────────
+    if (status == Status.ACTIVE) { ... }
+    //          ^^ CORRECT and idiomatic. Enum constants are genuinely unique, so
+    //   identity IS value equality. Which is a good argument for turning a closed set
+    //   of integer codes into an enum: `==` becomes right, `switch` becomes
+    //   exhaustive, and a typo becomes a compile error.
+
+    // ── AND ONE THAT IS ALWAYS WRONG ────────────────────────────────────
+    Integer.valueOf(1).equals(Long.valueOf(1L));   // FALSE, for every value —
+    //                                                Integer.equals checks the TYPE.
+    synchronized (Integer.valueOf(1)) { ... }      // a GLOBALLY SHARED lock object""",
+
+"""9. THE TRACE — the same code, four values
+
+FOLLOW `Integer x = N, y = N; x == y` FOR FOUR VALUES:
+
+    N       valueOf does                        x and y point at        x == y
+    ---------------------------------------------------------------------------------
+    5       in −128..127 → cache[133]            THE SAME OBJECT         true
+    127     in range → cache[255]                THE SAME OBJECT         true
+    128     OUT of range → new Integer(128)      two DIFFERENT objects   FALSE
+    1000    out of range → new Integer(1000)     two different objects   false
+    ---------------------------------------------------------------------------------
+    THE BOUNDARY IS BETWEEN ROWS 2 AND 3, and there is nothing in the source to mark it. A test written
+    with the numbers in rows 1 and 2 certifies code that fails on rows 3 and 4.
+
+NOW THE SAME COMPARISON WITH ONE SIDE DECLARED `int`:
+
+    declaration                          what the comparison compiles to     result
+    ---------------------------------------------------------------------------------
+    Integer x = 1000; Integer y = 1000;  reference comparison                 FALSE
+    Integer x = 1000; int y = 1000;      x.intValue() == y                    TRUE
+    int x = 1000;     int y = 1000;      value comparison                     TRUE
+    ---------------------------------------------------------------------------------
+    ROW 2 IS THE SURPRISING ONE. Changing a single declaration from `Integer` to `int` — nothing about
+    the comparison itself — turns identity into value. Binary numeric promotion applies as soon as one
+    operand is a primitive, so the wrapper is unboxed.
+
+    AND THAT MEANS THE FIX IS SOMETIMES A DECLARATION RATHER THAN AN EXPRESSION, which is worth knowing
+    when you are looking at existing code and wondering why one comparison in a file is fine.
+
+THE PRODUCTION TIMELINE, which is why this entry exists:
+
+    week    what happens                                    the comparison
+    ---------------------------------------------------------------------------------
+    1       code written; `if (count == LIMIT)` where both   counts are 3, 7, 12 in the
+            are Integer                                      tests → all true → PASSES
+    2       code review; nothing looks wrong                 —
+    3       deployed; real counts are 40, 90, 110            still works
+    12      traffic grows; counts reach 130                  SILENTLY FALSE. The branch
+                                                             stops firing. Nothing throws.
+    12      symptom: "alerts stopped working"                and no exception, no log
+    ---------------------------------------------------------------------------------
+    THE BUG WAS ALWAYS THERE. It became visible when the system became successful, which is the most
+    expensive time for a bug to appear and the hardest moment to reason clearly. And there is no
+    exception, no log line and no stack trace — the branch simply stops being taken.
+
+AND THE CACHE-BOUNDARY TRACE, showing why it is not tunable-away:
+
+    configuration                     127   128   1000
+    ---------------------------------------------------------------------------------
+    default                           true  false false
+    -XX:AutoBoxCacheMax=1000          true  TRUE  TRUE
+    a JVM with a different default    true  ?     ?
+    ---------------------------------------------------------------------------------
+    RAISING THE FLAG MAKES THE BUG DISAPPEAR IN TESTING AND REAPPEAR IN AN ENVIRONMENT THAT DOES NOT SET
+    IT. Which is strictly worse than the original problem: the code is now correct only because of a
+    deployment detail. The specification guarantees −128..127 and permits more, so "it works here" is
+    never evidence.
+
+WHAT PRODUCED WHAT:
+    == MEANING IDENTITY          produced the whole phenomenon. The cache only decides WHEN identity
+                                 and value happen to coincide.
+    THE COMMON CASE BEING SMALL  produced the cache — and therefore produced the alignment between
+                                 "values I test with" and "values that work".
+    NUMERIC PROMOTION            produced row 2 of the second table, where a declaration changes the
+                                 meaning of a comparison.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `Integer.valueOf`: O(1), and ZERO allocation inside −128..127 — 256 preallocated objects.
+    Outside the range: one allocation per call, a 16-byte object plus a 4-byte reference to reach it.
+    Cached: Integer, Short, Byte, Long (−128..127), Character (0..127), Boolean (always).
+    NOT cached: Float, Double.
+    The −128..127 behaviour is MANDATED by the language specification; caching more is permitted.
+    `-XX:AutoBoxCacheMax` raises the upper bound for `Integer` only.
+
+THE #1 MISTAKE: `==` on wrappers. It works for exactly the values you test with and fails for the ones
+production uses.
+
+THE #2 MISTAKE: concluding from `127 == 127` that boxed comparison is fine. That is the cache, not the
+value.
+
+THE #3 MISTAKE: not knowing `Integer == int` is a VALUE comparison. One declaration changes the meaning.
+
+THE #4 MISTAKE: `new Integer(x)`. Always distinct, even inside the cache range. Deprecated for removal.
+
+THE #5 MISTAKE: expecting `Double` to behave the same way. There is no cache; boxed doubles are never
+`==`.
+
+THE #6 MISTAKE: cross-type `equals`. An `Integer` never equals a `Long`, whatever the values.
+
+THE #7 MISTAKE: raising `-XX:AutoBoxCacheMax` to make the symptom go away. Now correctness depends on a
+deployment flag.
+
+THE #8 MISTAKE: `synchronized` on a wrapper. Cached instances are process-wide shared objects.
+
+THE #9 MISTAKE: `==` inside a lambda or comparator on boxed values. Silent, and the filter simply returns
+nothing.
+
+THE #10 MISTAKE: relying on boxed `Boolean ==` because it always works. It teaches a habit that breaks
+on the next type.
+
+THE #11 MISTAKE: treating this as a JVM bug. It is specified, portable, deliberate, and permanent.
+
+THE #12 MISTAKE: leaving a closed set of numeric codes as `Integer`s. An enum makes `==` correct,
+`switch` exhaustive, and typos compile errors.
+
+ONE-SENTENCE TAKEAWAY: `==` on objects asks whether two references point at the SAME OBJECT, and
+autoboxing routes through `Integer.valueOf`, which returns one of 256 preallocated shared instances for
+−128..127 and a fresh object outside that range — so the comparison is never about value and merely
+COINCIDES with value for small numbers, which is why it passes every test written with loop counters and
+fails silently on real database ids, with no exception and no log line; the behaviour is mandated by the
+specification so no JVM will differ, `Float` and `Double` are never cached at all, and the one detail
+worth carrying is that `Integer == int` UNBOXES and genuinely compares values — so use primitives where
+the value is a number, `.equals` on wrappers, a static-analysis rule to eliminate the bug class
+entirely, and an enum the moment the value set is closed, which is the single place the `==` habit is
+right.""",
+]
