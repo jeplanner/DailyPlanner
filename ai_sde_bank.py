@@ -221878,6 +221878,1460 @@ monotonically while nothing was broken - so the design that matters is coverage 
 alongside recall, a cold-start cascade, impression logging from day one, and an exploration budget.""",
 ]
 
+_EX_P1AO["Design a Real-Time Bidding (RTB) system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - decide what to pay for one advertising impression, in 100 milliseconds
+
+A real-time bidding system receives a bid request - "a user is about to load this page, what will you
+pay to show them an ad?" - and must return a bid before the page renders.
+
+    THE BUDGET IS ROUGHLY 100 MILLISECONDS END TO END, INCLUDING THE NETWORK ROUND TRIP. Exchanges
+    enforce this hard: exceed it and your bid is simply discarded, silently.
+    THE VOLUME IS MILLIONS OF REQUESTS PER SECOND at the exchange level, and typically tens to hundreds
+    of thousands per second for one bidder.
+
+THE ECONOMICS ARE THE DESIGN, and they decompose cleanly:
+
+    expected value of this impression = P(click) x value of a click
+    and the bid is some function of that, subject to a budget and a target cost per acquisition.
+
+    SO AN RTB SYSTEM CONTAINS A CTR MODEL, A CONVERSION MODEL, A BID CALCULATION, AND A BUDGET PACER -
+    and the interesting design questions are in the last two, because the first two are covered by the
+    CTR entry.
+
+THE THREE QUESTIONS THAT DECIDE EVERYTHING:
+
+    WHAT AUCTION IS THIS? Second-price and first-price require COMPLETELY DIFFERENT BIDDING
+    STRATEGIES, and section 2 measures why. The industry moved from second to first price around 2019,
+    which turned bid shading from a non-issue into a machine-learning problem.
+    WHOSE MONEY IS IT? A demand-side platform spends the advertiser's budget against their goals; an
+    exchange runs the auction; a supply-side platform maximises the publisher's yield. THEY ARE
+    DIFFERENT SYSTEMS.
+    WHAT IS THE ADVERTISER'S GOAL? Impressions, clicks, conversions, or a target return on ad spend?
+    THE BID FORMULA IS DIFFERENT FOR EACH.
+
+TERMS AS THEY APPEAR:
+- DSP / SSP: demand-side platform (buys for advertisers) / supply-side platform (sells for publishers).
+- BID SHADING: bidding below your true value, which is necessary in a first-price auction.
+- PACING: spreading a budget across the day rather than spending it as fast as possible.""",
+
+    """2. THE MEASUREMENT - second-price is truthful and first-price is not
+
+This is the single most important fact in RTB and it has a clean demonstration.
+
+SETUP: bidder 0 values an impression at exactly 100. Four competitors bid uniformly between 0 and 150.
+200,000 auctions per row.
+
+     auction type     bidder 0's strategy       win rate     mean profit per auction
+     SECOND-price     bid TRUE value (100)         19.6%                       3.929
+     SECOND-price     bid 80                        8.0%                       2.866
+     SECOND-price     bid 120                      40.9%                       1.647
+     SECOND-price     bid 60                        2.6%                       1.324
+     FIRST-price      bid TRUE value (100)         19.7%                       0.000
+     FIRST-price      bid 80                        8.1%                       1.623
+     FIRST-price      bid 120                      40.8%                      -8.164
+     FIRST-price      bid 60                        2.5%                       1.015
+
+    IN A SECOND-PRICE AUCTION, BIDDING YOUR TRUE VALUE IS STRICTLY OPTIMAL. Every deviation earns
+    less. Bidding 120 wins twice as many auctions and earns 58% less, because the extra auctions are
+    ones where the price exceeded what the impression was worth. Bidding 80 forfeits profitable wins.
+
+    IN A FIRST-PRICE AUCTION, BIDDING YOUR TRUE VALUE EARNS EXACTLY ZERO - and that is not an
+    approximation, it is arithmetic: you pay what you bid, so you pay exactly what it was worth, every
+    time. You must SHADE below value or the entire enterprise is pointless.
+
+    AND LOOK AT THE 120 ROW UNDER FIRST-PRICE: -8.164. Overbidding in a first-price auction is not
+    merely suboptimal, it is actively ruinous, because you pay your overbid on every win.
+
+WHY THIS MATTERS ENORMOUSLY FOR THE ML DESIGN:
+
+    UNDER SECOND-PRICE, the optimal bid is your true expected value, so THE ENTIRE PROBLEM REDUCES TO
+    ESTIMATING THAT VALUE ACCURATELY. That is why CTR model CALIBRATION - not ranking - is the whole
+    game, and it is the same point the CTR entry makes with a different measurement.
+
+    UNDER FIRST-PRICE, the optimal bid depends on WHAT YOUR COMPETITORS WILL BID, which you cannot
+    observe. BID SHADING BECOMES ITS OWN PREDICTION PROBLEM: model the distribution of the winning
+    price given the request's features, and bid just above where you expect to win.
+
+    THE INDUSTRY'S MOVE FROM SECOND-PRICE TO FIRST-PRICE AROUND 2019 THEREFORE CREATED AN ENTIRE NEW
+    MODELLING PROBLEM, and knowing that is a strong signal that you understand this domain rather than
+    just its architecture diagram.
+
+    AND THE FEEDBACK IS CENSORED: when you LOSE you usually learn only that you lost, not the winning
+    price. So the shading model must be trained on CENSORED DATA - you observe the winning price only
+    when you win, which is exactly when it was below your bid. THAT IS A SURVIVAL-ANALYSIS PROBLEM
+    WEARING A REGRESSION PROBLEM'S CLOTHES.""",
+
+    """3. THE MEASUREMENT - pacing is a quality control, not a cost control
+
+Everyone assumes budget pacing exists to stop overspending. It does not - the budget cap already does
+that. I measured what pacing is actually for.
+
+SETUP: a £1,500 daily budget, 600 auctions per hour for 24 hours, prices uniform between £0.10 and
+£1.50. THE VALUE OF AN IMPRESSION VARIES BY HOUR, peaking around 8pm when the advertiser's audience is
+online.
+
+     strategy       spend     impressions     TOTAL VALUE     value per impression     last active hour
+     no pacing      1,500           1,849             555                    0.300                    3
+     paced          1,500           1,892           1,662                    0.879                   23
+
+     impressions bought, by hour:
+     hour       0    2    4    6    8   10   12   14   16   18   20   22
+     unpaced  600  600    0    0    0    0    0    0    0    0    0    0
+     paced     83   82   80   80   74   80   75   74   75   85   78   79
+
+    SAME BUDGET. ESSENTIALLY THE SAME NUMBER OF IMPRESSIONS - 1,849 versus 1,892. AND THREE TIMES THE
+    TOTAL VALUE.
+
+    THE UNPACED CAMPAIGN SPENDS ITS ENTIRE BUDGET BY 3AM. It buys the cheap overnight inventory, wins a
+    lot of auctions, looks efficient on cost-per-impression, and NEVER SEES THE EVENING - which is when
+    the people it wants are actually online.
+
+    PACING IS NOT ABOUT NOT OVERSPENDING. IT IS ABOUT NOT BUYING ALL YOUR INVENTORY AT THE WORST TIME
+    OF DAY. That reframing is the useful content of this section.
+
+THE PACING MECHANISM ITSELF is simple in principle and subtle in practice:
+
+    THE SIMPLE VERSION: allow spending up to budget x (fraction of day elapsed). That is what produced
+    the table above, and it flattens the hourly distribution almost perfectly - 74 to 85 impressions in
+    every two-hour bucket.
+    THE PROBLEM WITH IT: a uniform spend rate is not optimal either. If evening impressions are worth
+    three times morning ones, you SHOULD spend more in the evening - the flat curve above is better
+    than the unpaced one and it is not the optimum.
+    THE BETTER VERSION: pace against a FORECAST of the day's value distribution, spending
+    proportionally to expected value rather than to elapsed time. That requires forecasting both
+    traffic volume and value by hour, which is a demand-forecasting problem inside the RTB system.
+    AND THE CONTROL-THEORY FRAMING: pacing is a feedback controller. You have a target spend
+    trajectory, you observe the actual, and you adjust either the BID MULTIPLIER or the PARTICIPATION
+    RATE. THROTTLING BY BID MULTIPLIER BUYS FEWER, CHEAPER IMPRESSIONS; THROTTLING BY PARTICIPATION
+    RATE BUYS FEWER, UNBIASED ONES - and which you want depends on whether the campaign is optimising
+    reach or value.""",
+
+    """4. THE ARCHITECTURE - and where the 100 milliseconds go
+
+    ┌ BID REQUEST arrives from the exchange. HARD DEADLINE ~100 ms including network.
+    │  The exchange discards a late bid SILENTLY - you do not get an error, you just lose.
+    │
+    ├─ 1. TARGETING FILTER  (~1 ms). Which of this advertiser's campaigns are even eligible?
+    │     geography, device, audience segment, brand safety, frequency cap, budget remaining.
+    │     CHEAP BOOLEAN OPERATIONS ON AN INDEX. This cuts thousands of campaigns to a handful.
+    │
+    ├─ 2. FEATURE LOOKUP  (~20-30 ms, AND USUALLY THE BOTTLENECK).
+    │     user segments, campaign state, historical performance, contextual features.
+    │     THE USER-ID LOOKUP IS THE EXPENSIVE PART, and it is why bidders co-locate their
+    │     key-value stores with their bidding servers in the same rack.
+    │
+    ├─ 3. CTR AND CONVERSION PREDICTION  (~10 ms). Shallow models over embeddings.
+    │     CALIBRATION MATTERS MORE THAN RANKING here - see section 2.
+    │
+    ├─ 4. BID CALCULATION  (~1 ms).
+    │     value = P(click) x P(convert|click) x value_of_conversion
+    │     bid   = shade(value, predicted_win_price_distribution) x pacing_multiplier
+    │
+    └─ 5. RESPOND. And log everything, because you will need it.
+
+THE INFRASTRUCTURE CONSEQUENCES, which are what make RTB distinctive:
+
+    YOU CANNOT CALL A DATABASE ACROSS A NETWORK BOUNDARY MORE THAN ONCE. Everything is in memory or in
+    a co-located store, and the whole bidder is usually one process with the models loaded in RAM.
+    GARBAGE COLLECTION PAUSES ARE A REAL, TOP-LEVEL CONCERN. A 200 ms GC pause loses every bid in that
+    window, and it is a known reason RTB systems are written in C++, Go or Rust rather than in
+    JVM languages without careful tuning.
+    YOU MUST BE ABLE TO SHED LOAD. If you cannot bid in time, DO NOT BID - a late bid is wasted compute
+    and the deadline is not negotiable. TIMEOUT BUDGETS PER STAGE, with a default no-bid.
+    THE ECONOMICS OF PARTICIPATION: you receive far more requests than you can profitably bid on, so a
+    cheap pre-filter that no-bids 95% of traffic before any model runs is a cost control, not a
+    limitation. COMPUTE COST PER BID IS A REAL LINE ITEM at millions of requests per second.
+
+    LOGGING IS DELIBERATE AND EXPENSIVE. You must log bids, wins, losses, prices and the features used,
+    because without them you cannot train the shading model or diagnose anything - and at this volume
+    the log stream is itself a large system.""",
+
+    """5. THE FAILURE MODES
+
+FAILURE 1 - BIDDING TRUE VALUE IN A FIRST-PRICE AUCTION. Measured: it earns EXACTLY ZERO profit. And
+overbidding earns -8.164 per auction, because you pay your overbid on every win.
+
+FAILURE 2 - SHADING IN A SECOND-PRICE AUCTION. Measured: bidding 80 instead of 100 cuts profit from
+3.929 to 2.866, because you forfeit auctions you would have won profitably.
+
+FAILURE 3 - NO PACING. Measured: the budget is exhausted by 3am and total value is a third of the paced
+campaign's, for the same spend and the same impression count.
+
+FAILURE 4 - PACING TO A FLAT SPEND CURVE. Better than nothing and not optimal - if evening inventory is
+worth three times as much you should buy more of it. PACE AGAINST A FORECAST OF VALUE, not against the
+clock.
+
+FAILURE 5 - TRAINING THE SHADING MODEL ON UNCENSORED DATA. You observe the winning price only when you
+WIN, which is exactly when it was below your bid. Treating those observations as a representative
+sample biases the model downwards, and it is a survival-analysis problem.
+
+FAILURE 6 - MISCALIBRATED CTR. Under second-price the optimal bid IS your expected value, so a model
+predicting three times too high systematically overpays on every impression. This is the CTR entry's
+measurement and it lands here.
+
+FAILURE 7 - GARBAGE COLLECTION PAUSES AND TAIL LATENCY. The p99 is what matters, not the mean, because
+a bid that misses the deadline is worth zero and you receive no error.
+
+FAILURE 8 - NOT SHEDDING LOAD. Computing a bid you cannot deliver in time is pure waste at millions of
+requests per second.
+
+FAILURE 9 - IGNORING FREQUENCY CAPS. Showing one user the same ad forty times is both wasteful and
+actively damaging to the brand, and the cap has to be enforced within the latency budget.
+
+FAILURE 10 - FRAUD AND INVALID TRAFFIC. A meaningful share of programmatic inventory is bots, hidden
+ads and domain spoofing. A BIDDER WITHOUT AN INVALID-TRAFFIC FILTER IS BUYING NOTHING, EXPENSIVELY, and
+its performance metrics will look fine because the fake traffic also fakes clicks.
+
+FAILURE 11 - OPTIMISING THE WRONG OBJECTIVE. Cost per click is easy to optimise and easy to game with
+low-quality inventory. Cost per acquisition or return on ad spend is what the advertiser wants, and it
+has delayed labels.
+
+FAILURE 12 - IGNORING THE FEEDBACK LOOP. Your bids determine which impressions you win, which
+determines your training data, so the model becomes progressively more confident about the inventory
+you already buy. An exploration budget is the mitigation.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHICH AUCTION TYPE. Measured: bidding true value is optimal in second-price and earns
+exactly zero in first-price. It changes the entire strategy.
+
+STEP 2 - ASK WHOSE SYSTEM THIS IS - DSP, SSP or exchange - and what the advertiser's goal is:
+impressions, clicks, conversions, or return on ad spend.
+
+STEP 3 - STATE THE LATENCY AND VOLUME NUMBERS. ~100 ms including network, tens to hundreds of thousands
+of requests per second, and a late bid is silently discarded.
+
+STEP 4 - DECOMPOSE THE BID: value = P(click) x P(convert|click) x conversion value; bid = shade(value)
+x pacing multiplier.
+
+STEP 5 - UNDER FIRST-PRICE, TREAT SHADING AS A PREDICTION PROBLEM. Model the winning-price distribution
+given the request, and note the data is CENSORED - you only see the price when you win.
+
+STEP 6 - UNDER SECOND-PRICE, EMPHASISE CTR CALIBRATION, because the optimal bid is your expected value
+and a miscalibrated model overpays or underbids on everything.
+
+STEP 7 - BUILD PACING AS A FEEDBACK CONTROLLER, and pace against a FORECAST OF VALUE rather than the
+clock. Measured: no pacing spends out by 3am and gets a third of the value for the same money.
+
+STEP 8 - SAY WHETHER YOU THROTTLE BY BID MULTIPLIER OR BY PARTICIPATION RATE. The first buys cheaper
+impressions; the second buys an unbiased sample of fewer.
+
+STEP 9 - DESIGN FOR TAIL LATENCY: in-memory everything, co-located stores, per-stage timeout budgets
+with a default no-bid, and GC pauses treated as a first-class concern.
+
+STEP 10 - COVER INVALID TRAFFIC FILTERING, FREQUENCY CAPS, AND AN EXPLORATION BUDGET, and log bids,
+wins, losses and prices, because the shading model cannot be trained without them.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd ask which auction type, because it changes the entire strategy, and I'd want to show why
+rather than assert it.
+
+I ran the numbers. A bidder who values an impression at 100, against four competitors bidding uniformly
+zero to 150. IN A SECOND-PRICE AUCTION, BIDDING YOUR TRUE VALUE IS STRICTLY OPTIMAL - it earns 3.93 per
+auction, against 2.87 if you bid 80 and 1.65 if you bid 120. Bidding high wins twice as many auctions
+and earns forty per cent less, because the extra wins are ones where the price exceeded what the
+impression was worth.
+
+IN A FIRST-PRICE AUCTION, BIDDING YOUR TRUE VALUE EARNS EXACTLY ZERO - and that's arithmetic, not
+approximation: you pay what you bid, so you pay precisely what it was worth, every single time. And
+overbidding is ruinous rather than merely suboptimal: bidding 120 loses 8.16 per auction, because you
+pay the overbid on every win.
+
+That matters enormously for the ML design. Under second-price, the optimal bid IS your expected value,
+so the whole problem reduces to estimating it accurately - which is why CTR model CALIBRATION rather
+than ranking is the game. Under first-price, the optimal bid depends on what your COMPETITORS will bid,
+which you can't observe, so BID SHADING becomes its own prediction problem: model the winning-price
+distribution given the request and bid just above where you expect to win. The industry's move from
+second to first price around 2019 created that whole modelling problem from nothing.
+
+And the shading data is CENSORED, which is the subtle part - you observe the winning price only when
+you WIN, which is exactly when it was below your bid. So it's a survival-analysis problem wearing a
+regression problem's clothes.
+
+The second thing I'd want to say is about PACING, because everyone assumes it exists to stop
+overspending, and it doesn't - the budget cap already does that. I simulated a fifteen-hundred-pound
+daily budget where impression VALUE peaks in the evening when the audience is online. The unpaced
+campaign spent its entire budget BY 3AM. Same money, essentially the same impression count -
+eighteen hundred versus nineteen hundred - and ONE THIRD of the total value, because it bought the
+cheap overnight inventory and never saw the evening. PACING IS A QUALITY CONTROL, NOT A COST CONTROL.
+
+Though I'd add that flat pacing isn't optimal either. If evening impressions are worth three times
+morning ones you should deliberately buy more of them, so the better version paces against a FORECAST
+of the day's value distribution rather than against the clock. And pacing is really a feedback
+controller - you have a target trajectory and you adjust either the bid multiplier or the
+participation rate. Throttling the bid buys fewer, cheaper impressions; throttling participation buys
+an unbiased sample of fewer. Which you want depends on the campaign goal.
+
+Architecturally the hundred-millisecond deadline drives everything. Targeting filter, feature lookup -
+which is usually the bottleneck - CTR and conversion models, bid calculation, respond. Everything in
+memory or in a co-located store, because you cannot afford a network hop. GARBAGE COLLECTION PAUSES
+ARE A TOP-LEVEL CONCERN, because a two-hundred-millisecond pause loses every bid in that window. And
+you must be able to SHED LOAD - if you can't bid in time, don't bid, because a late bid is discarded
+silently and the compute was wasted.
+
+One thing I'd raise unprompted: INVALID TRAFFIC. A meaningful share of programmatic inventory is bots
+and spoofed domains, and a bidder without a filter is buying nothing, expensively - and its metrics
+look fine, because the fake traffic fakes clicks too.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  BID REQUEST from the exchange.  HARD DEADLINE ~100 ms INCLUDING NETWORK.│
+    │  A LATE BID IS DISCARDED SILENTLY - no error, you simply lose.           │
+    │  Volume: tens to hundreds of thousands of requests/sec for one bidder.   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (1) TARGETING FILTER  ~1 ms                                             │
+    │    geo, device, audience segment, brand safety, FREQUENCY CAP, budget    │
+    │    remaining. Cheap boolean ops on an index; thousands of campaigns ->   │
+    │    a handful.                                                            │
+    │    >> A CHEAP PRE-FILTER THAT NO-BIDS 95% OF TRAFFIC IS A COST CONTROL,  │
+    │       not a limitation. Compute cost per bid is a real line item.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (2) FEATURE LOOKUP  ~20-30 ms  <- USUALLY THE BOTTLENECK               │
+    │    user segments, campaign state, historical performance, context        │
+    │    >> THE USER-ID LOOKUP IS THE EXPENSIVE PART. This is why bidders      │
+    │       co-locate their key-value stores in the same rack. YOU CANNOT      │
+    │       AFFORD MORE THAN ONE NETWORK HOP.                                   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (3) PREDICTION  ~10 ms                                                  │
+    │    P(click) and P(convert | click) - shallow nets over embeddings        │
+    │    >> UNDER SECOND-PRICE, CALIBRATION IS THE WHOLE GAME, because the     │
+    │       optimal bid IS the expected value. See the CTR entry.              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (4) BID CALCULATION  ~1 ms                                              │
+    │    value = P(click) x P(convert|click) x conversion_value                │
+    │    bid   = SHADE(value, predicted win-price distribution)                │
+    │            x PACING_MULTIPLIER                                            │
+    │                                                                          │
+    │  MEASURED, 200,000 auctions, true value 100, four Uniform(0,150) rivals: │
+    │    auction        strategy          win rate    profit/auction           │
+    │    SECOND-price   bid 100 (true)       19.6%             3.929  <- best  │
+    │    SECOND-price   bid 80                8.0%             2.866           │
+    │    SECOND-price   bid 120              40.9%             1.647           │
+    │    FIRST-price    bid 100 (true)       19.7%             0.000  <- ZERO  │
+    │    FIRST-price    bid 80                8.1%             1.623  <- best  │
+    │    FIRST-price    bid 120              40.8%            -8.164  <- ruin  │
+    │                                                                          │
+    │  >> SECOND-PRICE IS TRUTHFUL: bid your value, and the problem reduces to │
+    │     ESTIMATING IT WELL.                                                   │
+    │  >> FIRST-PRICE IS NOT: bidding value earns EXACTLY ZERO, so SHADING IS  │
+    │     MANDATORY - and the optimal shade depends on competitor behaviour    │
+    │     you cannot observe. THE 2019 SHIFT TO FIRST-PRICE CREATED AN ENTIRE  │
+    │     NEW MODELLING PROBLEM.                                                │
+    │  >> THE SHADING DATA IS CENSORED: you learn the winning price only when  │
+    │     you WIN, which is exactly when it was below your bid. SURVIVAL       │
+    │     ANALYSIS, not plain regression.                                       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  PACING CONTROLLER  - A QUALITY CONTROL, NOT A COST CONTROL             │
+    │                                                                          │
+    │  MEASURED, GBP 1,500/day, impression value peaking at 8pm:               │
+    │    strategy    spend  impressions  TOTAL VALUE  value/imp  last hour     │
+    │    no pacing   1,500        1,849          555      0.300          3     │
+    │    paced       1,500        1,892        1,662      0.879         23     │
+    │  SAME BUDGET, SAME IMPRESSION COUNT, THREE TIMES THE VALUE.              │
+    │  The unpaced campaign spends out BY 3AM on cheap overnight inventory and │
+    │  never sees the evening, when its audience is online.                    │
+    │                                                                          │
+    │  >> FLAT PACING IS BETTER THAN NONE AND STILL NOT OPTIMAL. Pace against  │
+    │     a FORECAST OF VALUE BY HOUR, not against the clock.                  │
+    │  >> IT IS A FEEDBACK CONTROLLER. Throttle by BID MULTIPLIER (fewer,      │
+    │     cheaper impressions) or by PARTICIPATION RATE (an unbiased sample of │
+    │     fewer). Which one depends on the campaign goal.                       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  INFRASTRUCTURE CONSTRAINTS - what makes RTB distinctive                │
+    │    everything IN MEMORY or co-located; at most one network hop            │
+    │    GC PAUSES ARE A TOP-LEVEL CONCERN - a 200 ms pause loses every bid in │
+    │      that window. A reason RTB bidders are C++/Go/Rust.                  │
+    │    SHED LOAD: per-stage timeout budgets with a DEFAULT NO-BID. Computing │
+    │      a bid you cannot deliver is pure waste.                             │
+    │    INVALID TRAFFIC FILTER: bots, hidden ads, domain spoofing. A bidder   │
+    │      without one buys nothing expensively AND ITS METRICS LOOK FINE,     │
+    │      because the fake traffic fakes clicks too.                          │
+    │    LOG bids, wins, LOSSES, prices and features - the shading model       │
+    │      cannot be trained without them, and the log stream is itself a      │
+    │      large system at this volume.                                         │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+MEASUREMENT 1 - AUCTION TRUTHFULNESS. Bidder 0's true value is 100. Four competitors each draw a bid
+from Uniform(0, 150) independently. 200,000 auctions per row. In second price the winner pays the
+second-highest bid; in first price they pay their own.
+
+     auction type     strategy       win rate     mean profit per auction
+     SECOND-price     bid 100          19.6%                       3.929
+     SECOND-price     bid 80            8.0%                       2.866
+     SECOND-price     bid 120          40.9%                       1.647
+     SECOND-price     bid 60            2.6%                       1.324
+     FIRST-price      bid 100          19.7%                       0.000
+     FIRST-price      bid 80            8.1%                       1.623
+     FIRST-price      bid 120          40.8%                      -8.164
+     FIRST-price      bid 60            2.5%                       1.015
+
+    THE WIN-RATE COLUMNS MATCH ACROSS AUCTION TYPES (19.6 vs 19.7, 40.9 vs 40.8) because WINNING
+    DEPENDS ONLY ON YOUR BID BEING HIGHEST, and that is identical in both mechanisms. ONLY THE PRICE
+    DIFFERS - which is exactly why the same bid produces wildly different profits.
+
+    THE FIRST-PRICE "bid 100" ROW BEING EXACTLY 0.000 IS THE CLEANEST RESULT IN THE TABLE. It is not a
+    statistical estimate; it is definitional. Profit per win = value - price = 100 - 100 = 0, on every
+    single win.
+
+    THE -8.164 IS WORTH ARITHMETIC: bidding 120 wins 40.8% of the time and loses 20 on each win, so the
+    expected loss is 0.408 x 20 = 8.16. THE TABLE MATCHES THE HAND CALCULATION, which is how you know
+    the simulation is doing what it claims.
+
+MEASUREMENT 2 - PACING. £1,500 budget, 600 auctions per hour for 24 hours, prices Uniform(0.10, 1.50).
+Impression VALUE by hour is 0.3 + 1.7 x exp(-(h-20)^2 / 32), a bell curve peaking at 8pm.
+
+     strategy       spend     impressions     TOTAL VALUE     value/impression     last active hour
+     no pacing      1,500           1,849             555                0.300                    3
+     paced          1,500           1,892           1,662                0.879                   23
+
+     impressions by hour:
+     hour       0    2    4    6    8   10   12   14   16   18   20   22
+     unpaced  600  600    0    0    0    0    0    0    0    0    0    0
+     paced     83   82   80   80   74   80   75   74   75   85   78   79
+
+    THE UNPACED ROW BUYS 600 IMPRESSIONS IN HOUR 0 AND HOUR 2 AND NOTHING AFTER HOUR 3. It is not
+    behaving badly - it is behaving exactly as instructed, bidding on everything it can afford until it
+    cannot afford anything.
+
+    THE PACED ROW'S HOURLY COUNTS ARE NEARLY FLAT (74-85), which is what "spend proportionally to
+    elapsed time" produces. IT IS NOT THE OPTIMUM - a value-aware pacer would deliberately buy more in
+    hours 18-22 - but it captures 3x the value of no pacing for a one-line rule.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE COMPETITORS' Uniform(0, 150) DISTRIBUTION
+            straddles the true value of 100, which is what makes the auction interesting. If all rivals
+            bid below 100 you would win everything at any bid; if all bid above, nothing. THE OVERLAP IS
+            THE EXPERIMENT.
+    USING FOUR COMPETITORS
+            sets the win rate at truthful bidding to about 20%. MORE COMPETITORS WOULD LOWER EVERY WIN
+            RATE AND RAISE EVERY SECOND PRICE, shrinking profits across the board without changing which
+            strategy wins - the ORDERING of the rows is what generalises, not the magnitudes.
+    THE VALUE-BY-HOUR BELL CURVE PEAKING AT 8PM
+            is the entire pacing result. A FLAT VALUE CURVE WOULD MAKE PACING WORTHLESS, and that is
+            worth saying: pacing's benefit is exactly proportional to how much impression value varies
+            across the day.
+    PRICES BEING UNIFORM AND INDEPENDENT OF HOUR
+            is unrealistic - in practice the valuable evening inventory is also MORE EXPENSIVE, which
+            reduces pacing's measured advantage. SO THE 3x IS AN OVERSTATEMENT OF THE REAL EFFECT, and
+            the direction is what to carry away.
+    THE PACER BEING "spend <= budget x (hours elapsed / 24)"
+            is the simplest possible rule and it produced the flat hourly curve. A value-aware pacer
+            would produce a curve shaped like the value function, and would beat this.
+    WHAT IS NOT MEASURED
+            is bid shading against a learned win-price distribution, censoring, latency, or invalid
+            traffic. THOSE SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask which auction type, and know why it matters?
+    Can you explain second-price truthfulness and first-price shading?
+    Did you notice that the shading data is CENSORED?
+    Did you treat pacing as a quality control rather than a spend cap?
+    Did you design for TAIL latency and load shedding?
+    Did you raise invalid traffic?
+
+    THE AUCTION-MECHANISM POINT IS THE STRONGEST SIGNAL. A candidate who describes a CTR model and a
+    bid without mentioning first versus second price has described half the system.
+
+THE #1 MISTAKE: bidding true value in a first-price auction. Measured: exactly 0.000 profit per
+auction, by arithmetic.
+
+THE #2 MISTAKE: overbidding in a first-price auction. Measured: -8.164, matching the hand calculation
+0.408 x 20.
+
+THE #3 MISTAKE: shading in a second-price auction. Measured: it cuts profit from 3.929 to 2.866.
+
+THE #4 MISTAKE: no pacing. Measured: budget exhausted by 3am, one third of the total value for the same
+money and the same impression count.
+
+THE #5 MISTAKE: pacing flat when value is not flat. Better than nothing; pace against a value forecast.
+
+THE #6 MISTAKE: training the shading model on wins only, without treating the data as censored.
+
+THE #7 MISTAKE: ignoring CTR calibration. Under second-price the optimal bid IS the expected value, so
+miscalibration is systematic overpayment.
+
+THE #8 MISTAKE: optimising the mean latency. The p99 is what matters, because a late bid is worth zero
+and returns no error.
+
+THE #9 MISTAKE: no load shedding. Computing a bid you cannot deliver is pure waste at this volume.
+
+THE #10 MISTAKE: no invalid-traffic filter. You buy nothing expensively, and your metrics look fine
+because the fake traffic fakes clicks.
+
+ONE-SENTENCE TAKEAWAY: RTB is an economics problem inside a 100-millisecond latency budget - measured,
+bidding your true value is STRICTLY OPTIMAL in a second-price auction (3.929 per auction against 2.866
+and 1.647 for shading and overbidding) and earns EXACTLY ZERO in a first-price one, where overbidding
+costs -8.164, so the 2019 shift to first-price made bid shading its own censored-data prediction
+problem; and pacing exists not to cap spend but to protect quality, since measured, an unpaced campaign
+exhausts its budget by 3am on cheap overnight inventory and delivers a THIRD of the value for the same
+money and the same number of impressions.""",
+]
+
+_EX_P1AO["Design a Session-based Recommendation system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - recommend from what they have done in the last five minutes
+
+A session-based recommender predicts what a user will interact with next, using ONLY the current
+session - the sequence of items they have viewed, clicked or played since they arrived.
+
+IT EXISTS BECAUSE THE STANDARD RECOMMENDER ASSUMPTION BREAKS IN SEVERAL COMMON SETTINGS:
+
+    NO LOGIN. Most e-commerce traffic is anonymous. You have no user ID, no history, nothing but this
+    session.
+    INTENT CHANGES BETWEEN SESSIONS. Someone who bought hiking boots last month is shopping for a
+    birthday present today. THEIR LONG-TERM PROFILE IS ACTIVELY MISLEADING.
+    THE SESSION IS THE UNIT OF INTENT. A news session, a music session and a shopping session for one
+    specific thing are three different problems, and the long-term profile blurs them together.
+
+THE SHAPE OF THE PROBLEM: given a sequence of items so far, predict the next one. THE INPUT IS A
+SEQUENCE, AND WHETHER THE ORDER OF THAT SEQUENCE ACTUALLY CARRIES SIGNAL IS THE QUESTION SECTION 2
+MEASURES - because the answer turns out to depend entirely on the domain, and getting it wrong costs
+you real accuracy in both directions.
+
+THE CONSTRAINTS THAT MAKE IT DIFFERENT:
+
+    IT MUST RUN AT REQUEST TIME. Unlike similar-items, the answer depends on the whole session so far,
+    so it CANNOT be fully precomputed - though the last-item case can be.
+    SESSIONS ARE SHORT. Typically 3 to 10 interactions. THERE IS VERY LITTLE DATA PER PREDICTION.
+    IT IS PERPETUAL COLD START. Every session begins with nothing.
+
+TERMS AS THEY APPEAR:
+- SESSION: a bounded sequence of interactions, usually delimited by a 30-minute inactivity gap.
+- MARKOV MODEL: predicts the next item from the previous one only.
+- GRU4Rec / SASRec: the recurrent and self-attention architectures built for this problem.""",
+
+    """2. THE MEASUREMENT - does order actually matter? It depends, and the dependence is the finding
+
+I generated sessions from a controlled process where I could dial how much the ORDER carries signal,
+and compared four models on hit-rate@10 for next-item prediction. Four data regimes, 25,000 training
+sessions, 400 items.
+
+     data regime                          popularity     BAG of items     Markov on LAST item     recency-weighted
+     pure Markov, 5 successors                  6.0%            58.5%                  100.0%                97.9%
+     pure Markov, 25 successors                 3.5%            19.0%                   62.5%                57.8%
+     half Markov, half topic-bag                5.3%            17.6%                   31.3%                27.1%
+     PURE TOPIC-BAG (order irrelevant)          8.3%            35.8%                   27.3%                35.3%
+
+    READ THE LAST ROW. WHEN ORDER GENUINELY DOES NOT MATTER, THE ORDER-AWARE MODEL LOSES - 27.3%
+    against the bag's 35.8%. It is not merely no better; it is actively worse, because it conditions on
+    a single item when the useful signal is spread across the whole session.
+
+    READ THE SECOND ROW. When order IS the signal, the bag loses catastrophically - 19.0% against
+    62.5%. THE LAST ITEM ALONE BEATS THE ENTIRE SESSION TREATED AS AN UNORDERED SET, by more than
+    three to one.
+
+    SO "USE A SEQUENCE MODEL" IS NOT THE ANSWER. THE ANSWER IS: MEASURE WHETHER ORDER CARRIES SIGNAL IN
+    YOUR DATA, AND THE BAG-VERSUS-MARKOV COMPARISON IS THE CHEAPEST POSSIBLE WAY TO FIND OUT. It costs
+    an afternoon and it tells you whether the sequence architecture is worth building at all.
+
+    IN PRACTICE THE ANSWER VARIES BY DOMAIN, AND THE INTUITION IS AVAILABLE WITHOUT MEASURING: music
+    and video have strong sequential structure (you play an album in order, one video leads to the
+    next); e-commerce browsing is often closer to a bag (you compare five televisions in whatever order
+    the page presented them); news is somewhere between.
+
+THE HONEST CAVEAT ON THE FIRST ROW: THE 100.0% IS A TAUTOLOGY, NOT A RESULT. I generated that data from
+a first-order Markov chain with exactly 5 successors per item, so the true successor is always inside a
+top-10 list by construction. IT IS IN THE TABLE ONLY TO SHOW THE CEILING, and the second row - 25
+successors, so top-10 cannot contain them all - is the honest version of the same comparison.
+
+AND NOTICE THE RECENCY-WEIGHTED COLUMN. It is never the best and never the worst: it tracks the Markov
+model when order matters and the bag when it does not. IT IS THE ROBUST CHOICE WHEN YOU DO NOT KNOW
+WHICH REGIME YOU ARE IN, which is most of the time.""",
+
+    """3. THE MODELS - and why the simple ones are so competitive
+
+ITEM-KNN ON SESSION CO-OCCURRENCE. For the last item, return the items most often co-occurring with it
+in other sessions. Precomputable into a lookup table, so it serves in microseconds.
+
+    THIS IS THE "Markov on the last item" ROW ABOVE, AND IT IS THE BASELINE THAT MUST BE BEATEN. In
+    published benchmarks it is startlingly competitive with neural sequence models, and the papers
+    reporting that are worth knowing about, because it is a genuine and repeatedly-confirmed finding
+    rather than a curmudgeonly opinion.
+
+SESSION-KNN. Find the most SIMILAR past sessions - by set overlap of their items - and recommend what
+happened next in those. It uses the whole session rather than just the last item, and it needs a
+similarity search over sessions rather than a lookup.
+
+    MEASURED IN SPIRIT BY THE "BAG" COLUMN: it wins where the session is a topic and loses where the
+    order is the signal.
+
+MARKOV CHAINS AND VARIABLE-ORDER MARKOV. Explicit transition counts, optionally over the last two or
+three items. Interpretable, cheap, and it suffers from sparsity as the order rises - a second-order
+chain over 100,000 items has 10^10 possible states.
+
+GRU4Rec. A recurrent network over the session sequence, with a session-parallel mini-batch scheme and
+a ranking loss. THE FIRST NEURAL ARCHITECTURE BUILT SPECIFICALLY FOR THIS PROBLEM, and it is where the
+field started taking sessions seriously.
+
+SASRec AND BERT4Rec. Self-attention over the session. SASRec is causal (left to right); BERT4Rec is
+bidirectional and trained with masked-item prediction.
+
+    THE ADVANTAGE OF ATTENTION HERE IS SPECIFIC AND WORTH STATING: IT CAN LEARN WHICH EARLIER ITEMS IN
+    THE SESSION MATTER, rather than assuming recency decay. In a session where the user viewed three
+    unrelated things and then focused, attention can ignore the noise and a recurrent model cannot as
+    easily.
+
+WHAT TO ACTUALLY PROPOSE:
+
+    START WITH ITEM-KNN ON THE LAST ITEM. Precomputed, microsecond serving, and it is the benchmark.
+    RUN THE BAG-VERSUS-MARKOV COMPARISON to find out whether order carries signal in your data.
+    Measured, the answer flips the ranking of every model.
+    ADD RECENCY-WEIGHTED SCORING OVER THE PREFIX as the robust middle option - it tracked the better of
+    the two in every regime I tested.
+    GO NEURAL ONLY IF the sequence structure is real, the catalogue is large, and you have the traffic
+    to train on. AND MEASURE AGAINST THE KNN BASELINE HONESTLY, because it is a stronger opponent than
+    the literature's headline numbers suggest.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - ASSUMING ORDER MATTERS. Measured: on bag-structured data the last-item Markov model scored
+27.3% against the bag's 35.8%. A sequence model is worse than useless there - it discards the signal
+that exists.
+
+FAILURE 2 - ASSUMING ORDER DOES NOT MATTER. Measured: on sequence-structured data the bag scored 19.0%
+against Markov's 62.5%. Treating the session as a set throws away the entire signal.
+
+FAILURE 3 - NOT RUNNING THE COMPARISON. It costs an afternoon and it determines whether an expensive
+architecture is worth building.
+
+FAILURE 4 - A BAD SESSION DEFINITION. The 30-minute inactivity gap is a convention, not a fact. A user
+who leaves a tab open for two hours and comes back is one session by the clock and two by intent, and
+the boundary definition changes every number downstream.
+
+FAILURE 5 - IGNORING DWELL TIME AND ACTION TYPE. A 2-second view and a 3-minute view are not the same
+signal, and a view, an add-to-basket and a purchase are three different strengths of evidence. MOST
+SESSION MODELS TREAT THEM AS ONE EVENT TYPE, and weighting them is a cheap improvement.
+
+FAILURE 6 - REPEATED ITEMS. Users revisit the same item within a session constantly - comparing,
+returning to a tab. Whether to recommend an item they have already seen is a PRODUCT decision, and in
+music the answer is often yes while in e-commerce it is usually no.
+
+FAILURE 7 - IGNORING THE LONG-TERM PROFILE ENTIRELY WHEN IT EXISTS. For logged-in users, the best
+systems COMBINE session and history. The session gives current intent and the profile gives taste, and
+using only one throws away information.
+
+FAILURE 8 - NOT HANDLING THE FIRST INTERACTION. The session starts empty, so the first recommendation
+is a pure cold-start problem answered by popularity, context, referrer and landing page.
+
+FAILURE 9 - EVALUATING ON RANDOM SPLITS. Sessions must be split BY TIME, and the standard next-item
+protocol evaluates every prefix of every session - which is what I did - so a leak of future sessions
+into training inflates everything.
+
+FAILURE 10 - EVALUATING ONLY ON HIT RATE. It ignores position; use MRR or NDCG alongside, because a
+correct item at rank 10 is not worth the same as one at rank 1.
+
+FAILURE 11 - NEGLECTING THE POPULARITY BASELINE. Measured at 3.5-8.3% here, and in real catalogues it
+can be far higher. ANY MODEL MUST BEAT IT and many published comparisons quietly do not report it.""",
+
+    """5. THE ARCHITECTURE - and what can be precomputed
+
+THE KEY ARCHITECTURAL QUESTION IS HOW MUCH OF THE ANSWER DEPENDS ON THE WHOLE SESSION, because that
+decides what can be precomputed:
+
+    LAST-ITEM MODELS ARE FULLY PRECOMPUTABLE. Build a lookup table from item to top-50 successors
+    nightly, and serving is one key-value read. IDENTICAL ECONOMICS TO SIMILAR-ITEMS.
+    WHOLE-SESSION MODELS RUN AT REQUEST TIME. The session state lives in the client or in a short-lived
+    cache, and a model call happens per request.
+
+    THAT DIFFERENCE IS WORTH SEVERAL ORDERS OF MAGNITUDE IN SERVING COST, which is another reason the
+    bag-versus-Markov measurement matters before the architecture is chosen.
+
+THE SERVING PATH FOR A NEURAL SESSION MODEL:
+
+    session state (a short list of item IDs) held in a cache keyed by session ID
+    -> embed the items -> run the sequence model -> score candidates
+    -> the candidate set is usually retrieved first, exactly as in a recommender, because scoring the
+       whole catalogue per keystroke is not viable
+    -> re-rank for diversity and business rules
+
+    THE SESSION STATE IS TINY - a few dozen integers - so it can live in the request itself, in a
+    cookie, or in a cache with a 30-minute TTL. THAT IS AN UNUSUALLY EASY STATE PROBLEM and worth
+    saying, because it means the system scales horizontally with no sticky sessions.
+
+THE HYBRID THAT REAL SYSTEMS SHIP: combine a session signal with a long-term profile when one exists.
+
+    score = w_session x session_model(current session) + w_profile x profile_model(user history)
+
+    AND THE WEIGHT SHOULD DEPEND ON SESSION LENGTH. At the first interaction the profile is all you
+    have; by the tenth, the session dominates because it reflects current intent. A RAMP ON w_session
+    AS THE SESSION GROWS IS THE PRACTICAL ANSWER, and it is the same shape as the cold-start cascade.
+
+TRAINING. Sessions are cheap and abundant, and every prefix of every session is a training example - a
+session of 8 items yields 7 examples. THAT MULTIPLIES YOUR DATA SUBSTANTIALLY and it also means
+adjacent examples are highly correlated, so a naive random split leaks: PREFIXES OF THE SAME SESSION
+MUST NOT STRADDLE THE TRAIN/TEST BOUNDARY.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHY SESSION-BASED. Anonymous traffic, intent that changes between visits, or a domain
+where the session IS the unit of intent? The reason determines whether you need a hybrid.
+
+STEP 2 - DEFINE THE SESSION BOUNDARY EXPLICITLY and say the 30-minute gap is a convention that changes
+every number downstream.
+
+STEP 3 - RUN THE BAG-VERSUS-MARKOV COMPARISON BEFORE CHOOSING AN ARCHITECTURE. Measured: it flips the
+ranking of every model. On sequence data, bag 19.0% vs Markov 62.5%; on bag data, bag 35.8% vs Markov
+27.3%.
+
+STEP 4 - START FROM ITEM-KNN ON THE LAST ITEM. Precomputable, microsecond serving, and a genuinely
+strong benchmark that neural models frequently fail to beat convincingly.
+
+STEP 5 - ADD RECENCY-WEIGHTED SCORING OVER THE PREFIX as the robust middle. Measured, it tracked the
+better of bag and Markov in every regime.
+
+STEP 6 - WEIGHT THE INTERACTIONS. Dwell time and action type - a view, an add-to-basket and a purchase
+are three strengths of evidence, and most session models flatten them into one.
+
+STEP 7 - DECIDE THE REPEAT POLICY. Recommending an already-seen item is right in music and usually
+wrong in e-commerce.
+
+STEP 8 - HYBRIDISE WITH THE LONG-TERM PROFILE WHERE IT EXISTS, ramping the session weight up as the
+session grows.
+
+STEP 9 - HANDLE THE FIRST INTERACTION as a pure cold start: popularity, referrer, landing page,
+context.
+
+STEP 10 - SPLIT BY TIME, KEEP PREFIXES OF ONE SESSION ON ONE SIDE OF THE SPLIT, and report MRR or NDCG
+alongside hit rate - plus the popularity baseline, which many comparisons quietly omit.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Session-based recommendation exists because the standard recommender assumption breaks in a few common
+places. Most e-commerce traffic is anonymous, so there IS no user profile. And even when there is one,
+intent changes between sessions - someone who bought hiking boots last month is shopping for a birthday
+present today, and their long-term profile is actively misleading.
+
+The shape is: given the items in this session so far, predict the next one. And the question I'd want
+to settle before choosing any architecture is WHETHER THE ORDER ACTUALLY CARRIES SIGNAL, because I
+measured it and the answer completely flips which model wins.
+
+I generated sessions from a controlled process where I could dial how much of the structure was
+sequential versus topical, and compared four models on next-item hit rate at ten.
+
+On SEQUENCE-structured data, the bag-of-session-items model got 19 per cent and a first-order Markov
+model on the LAST ITEM ALONE got 62.5. The last item beats the entire session treated as an unordered
+set, by more than three to one.
+
+But on TOPIC-structured data - where I made order genuinely irrelevant - the bag got 35.8 per cent and
+the Markov model got 27.3. THE ORDER-AWARE MODEL IS ACTIVELY WORSE THERE, not merely no better, because
+it conditions on one item when the signal is spread across the whole session.
+
+So "use a sequence model" isn't the answer. The answer is: RUN THE BAG-VERSUS-MARKOV COMPARISON ON YOUR
+OWN DATA FIRST. It costs an afternoon and it tells you whether an expensive sequence architecture is
+worth building at all. And the intuition is available before you measure - music and video have strong
+sequential structure because you play things in order; e-commerce browsing is often closer to a bag,
+because you're comparing five televisions in whatever order the page showed them.
+
+One more from that table: a RECENCY-WEIGHTED score over the whole prefix - weight the last item most,
+decay backwards - was never the best and never the worst. It tracked the Markov model when order
+mattered and the bag when it didn't. That's the robust choice when you don't know which regime you're
+in, which is most of the time.
+
+For models I'd start with ITEM-KNN on the last item, because it's fully precomputable into a lookup
+table and serves in microseconds, and because in published benchmarks it's startlingly competitive with
+neural sequence models. That's a real, repeatedly-confirmed finding rather than an opinion. GRU4Rec and
+SASRec are the neural options, and attention's specific advantage is that it can LEARN which earlier
+items matter rather than assuming recency decay - useful when a user views three unrelated things and
+then focuses.
+
+Architecturally the important split is that last-item models are fully precomputable and whole-session
+models run at request time, which is orders of magnitude of serving cost - another reason to run the
+measurement first. The session state itself is tiny, a few dozen integers, so it lives in a cache with
+a thirty-minute TTL or in the request, and the system scales horizontally with no sticky sessions.
+
+And where a long-term profile DOES exist I'd hybridise, ramping the session weight up as the session
+grows: at the first interaction the profile is all you have, and by the tenth the session dominates
+because it reflects current intent.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  SESSION DEFINITION - a convention, not a fact                           │
+    │    the 30-minute inactivity gap is standard AND ARBITRARY. A user who    │
+    │    leaves a tab open for two hours is one session by the clock and two   │
+    │    by intent, and the boundary changes every number downstream.           │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STEP ZERO: DOES ORDER CARRY SIGNAL HERE?  <- RUN THIS BEFORE DESIGNING │
+    │                                                                          │
+    │  MEASURED, next-item hit rate @10, 25,000 sessions, 400 items:           │
+    │   data regime                  pop    BAG   Markov(last)  recency-wtd    │
+    │   pure Markov, 5 successors   6.0%  58.5%       100.0%*        97.9%     │
+    │   pure Markov, 25 successors  3.5%  19.0%        62.5%         57.8%     │
+    │   half Markov, half topic     5.3%  17.6%        31.3%         27.1%     │
+    │   PURE TOPIC-BAG              8.3%  35.8%        27.3%         35.3%     │
+    │   (*tautology: 5 successors always fit in a top-10 list. Row 2 is the    │
+    │    honest version of the same comparison.)                                │
+    │                                                                          │
+    │  >> ON SEQUENCE DATA THE LAST ITEM ALONE BEATS THE WHOLE SESSION AS A    │
+    │     BAG, 62.5% vs 19.0%.                                                  │
+    │  >> ON BAG DATA THE ORDER MODEL IS ACTIVELY WORSE, 27.3% vs 35.8%.       │
+    │  >> RECENCY-WEIGHTED TRACKS THE BETTER OF THE TWO IN EVERY REGIME. It is │
+    │     the robust choice when you do not know which you are in.             │
+    │  >> DOMAIN INTUITION: music and video are sequential; e-commerce         │
+    │     browsing is often a bag; news is between.                             │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+                     ┌───────────────┴────────────────┐
+    ┌────────────────▼──────────────┐  ┌──────────────▼───────────────────────┐
+    │  LAST-ITEM MODEL              │  │  WHOLE-SESSION MODEL                 │
+    │  FULLY PRECOMPUTABLE          │  │  RUNS AT REQUEST TIME                │
+    │   item -> top-50 successors   │  │   GRU4Rec (recurrent)                │
+    │   nightly batch -> KV store   │  │   SASRec (causal attention)          │
+    │   ONE LOOKUP, MICROSECONDS    │  │   BERT4Rec (bidirectional, masked)   │
+    │                               │  │                                      │
+    │  >> ITEM-KNN ON THE LAST ITEM │  │  ATTENTION'S SPECIFIC ADVANTAGE: it  │
+    │     IS THE BENCHMARK. In      │  │  can LEARN which earlier items       │
+    │     published comparisons it  │  │  matter rather than assuming recency │
+    │     is startlingly            │  │  decay - useful when a user views    │
+    │     competitive with neural   │  │  three unrelated things then focuses.│
+    │     sequence models.          │  │                                      │
+    └────────────────┬──────────────┘  └──────────────┬───────────────────────┘
+                     └───────────────┬────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SIGNAL WEIGHTING - cheap and usually skipped                            │
+    │    DWELL TIME: a 2-second view and a 3-minute view are different.        │
+    │    ACTION TYPE: view < add-to-basket < purchase are three strengths.     │
+    │    REPEAT POLICY: recommending an already-seen item is right in music,   │
+    │      usually wrong in e-commerce. A PRODUCT DECISION.                     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  HYBRID WITH THE LONG-TERM PROFILE, where one exists                     │
+    │    score = w_session x session_model + w_profile x profile_model         │
+    │    AND RAMP w_session AS THE SESSION GROWS: at interaction 1 the profile │
+    │    is all you have; by interaction 10 the session dominates, because it  │
+    │    reflects CURRENT intent. Same shape as the cold-start cascade.         │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SERVING                                                                 │
+    │    session state = a few dozen integers -> lives in the request, a       │
+    │      cookie, or a cache with a 30-min TTL. AN UNUSUALLY EASY STATE       │
+    │      PROBLEM: no sticky sessions, scales horizontally.                    │
+    │    retrieve candidates first (scoring the whole catalogue per            │
+    │      interaction is not viable), then score, then re-rank for diversity. │
+    │    FIRST INTERACTION = PURE COLD START: popularity, referrer, landing    │
+    │      page, geography.                                                     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  TRAINING AND EVALUATION                                                 │
+    │    EVERY PREFIX OF EVERY SESSION IS A TRAINING EXAMPLE - a session of 8  │
+    │      items yields 7. Multiplies your data, AND makes adjacent examples   │
+    │      highly correlated: PREFIXES OF ONE SESSION MUST NOT STRADDLE THE    │
+    │      TRAIN/TEST SPLIT.                                                    │
+    │    SPLIT BY TIME.                                                         │
+    │    REPORT MRR OR NDCG ALONGSIDE HIT RATE, and ALWAYS report the          │
+    │      POPULARITY BASELINE - measured at 3.5-8.3% here, and many published │
+    │      comparisons quietly omit it.                                         │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE GENERATOR: 400 items and 20 latent "topics" of 25 items each. Each session picks a topic and a
+starting item, then generates 3-9 more items. Each step draws from a first-order Markov transition with
+probability `mix`, and from the session's topic bag with probability `1 - mix`. TWO KNOBS:
+
+    `mix` = how much of the structure is SEQUENTIAL. 1.0 is pure order; 0.0 is pure bag.
+    `n_succ` = how many successors each item has in the transition table. Fewer means order is more
+    predictive.
+
+25,000 training sessions, 3,000 test sessions. Evaluation is the standard next-item protocol: for every
+prefix of every test session, does the true next item appear in the model's top 10?
+
+     data regime                          popularity     BAG of items     Markov on LAST item     recency-weighted
+     pure Markov, 5 successors                  6.0%            58.5%                  100.0%                97.9%
+     pure Markov, 25 successors                 3.5%            19.0%                   62.5%                57.8%
+     half Markov, half topic-bag                5.3%            17.6%                   31.3%                27.1%
+     PURE TOPIC-BAG (order irrelevant)          8.3%            35.8%                   27.3%                35.3%
+
+    THE 100.0% IN ROW 1 IS A CONSTRUCTION ARTEFACT AND I AM FLAGGING IT RATHER THAN QUOTING IT: with 5
+    successors per item, a top-10 list ALWAYS contains the true next item, so the model cannot fail.
+    ROW 2 - 25 successors, so top-10 cannot cover them - IS THE HONEST VERSION.
+
+    THE CROSSOVER BETWEEN ROWS 3 AND 4 IS THE FINDING. At mix = 0.5 the Markov model still wins (31.3
+    vs 17.6). At mix = 0.0 it loses (27.3 vs 35.8). SOMEWHERE BETWEEN THOSE TWO THE RANKING FLIPS, and
+    where your domain sits on that axis is an empirical question you can answer in an afternoon.
+
+    THE MARKOV MODEL SCORING 27.3% ON PURE BAG DATA IS NOT ZERO, and that is worth understanding: even
+    with no sequential structure, the last item still tells you which TOPIC the session is in, so
+    conditioning on it recovers topic information. IT IS JUST A LOSSIER WAY TO GET THERE THAN USING ALL
+    THE ITEMS.
+
+    THE POPULARITY BASELINE MOVING BETWEEN 3.5% AND 8.3% ACROSS REGIMES is itself informative: it rises
+    where sessions concentrate on fewer items. ANY REPORTED HIT RATE WITHOUT THIS COLUMN IS
+    UNINTERPRETABLE.
+
+THE LINE-BY-LINE MAPPING - which knob produced which conclusion:
+
+    `n_succ`, THE NUMBER OF SUCCESSORS PER ITEM
+            controls how much a top-10 list can capture. Going from 5 to 25 dropped the Markov model
+            from 100% to 62.5% WITHOUT CHANGING THE DATA'S STRUCTURE AT ALL - it changed only how much
+            of it a 10-item list can express. THAT IS A PROPERTY OF THE METRIC, NOT THE MODEL, and it
+            is why hit-rate@k is only comparable across models on the same data.
+    `mix`, THE SEQUENTIAL FRACTION
+            produced the crossover. It is the only knob that changes which model is CORRECT, as opposed
+            to which scores higher.
+    THE 20 TOPICS OF 25 ITEMS
+            give the bag model something real to find. WITHOUT TOPIC STRUCTURE the bag model would be
+            near popularity everywhere and the comparison would be trivial.
+    THE RECENCY WEIGHT OF 0.5^d
+            halves the contribution of each step further back. A GENTLER DECAY WOULD MOVE IT TOWARDS
+            THE BAG AND A STEEPER ONE TOWARDS PURE MARKOV - so that single parameter interpolates
+            between the two columns either side of it, which is exactly why it is the robust default.
+    EVALUATING EVERY PREFIX
+            is the standard protocol and it means early prefixes (1-2 items) and late ones (8 items)
+            are pooled. A BREAKDOWN BY PREFIX LENGTH WOULD SHOW THE MODELS DIVERGING MORE AT LONGER
+            PREFIXES, and I did not measure that.
+    WHAT IS NOT MEASURED
+            is any neural architecture, dwell time weighting, or the hybrid with a long-term profile.
+            THOSE SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you say WHY session-based - anonymous traffic, or intent that changes between visits?
+    Did you question whether order matters rather than assuming it?
+    Did you start from a precomputable last-item baseline?
+    Did you know that item-KNN is genuinely competitive with neural sequence models?
+    Did you handle the first interaction, and the hybrid with a long-term profile?
+    Did you report a popularity baseline?
+
+    QUESTIONING WHETHER ORDER MATTERS IS THE STRONGEST MOVE. Everyone reaches for a sequence model;
+    almost nobody asks whether the sequence carries signal.
+
+THE #1 MISTAKE: assuming order matters. Measured: on bag-structured data the order model scored 27.3%
+against the bag's 35.8% - actively worse, not merely no better.
+
+THE #2 MISTAKE: assuming it does not. Measured: on sequence data the bag scored 19.0% against Markov's
+62.5%.
+
+THE #3 MISTAKE: not running the comparison at all. It costs an afternoon and decides whether an
+expensive architecture is worth building.
+
+THE #4 MISTAKE: no popularity baseline. Measured between 3.5% and 8.3% here, and a hit rate without it
+is uninterpretable.
+
+THE #5 MISTAKE: an unexamined session boundary. The 30-minute gap is a convention that changes every
+downstream number.
+
+THE #6 MISTAKE: flattening dwell time and action type into one event. A view, an add-to-basket and a
+purchase are three strengths of evidence.
+
+THE #7 MISTAKE: no repeat policy. Right in music, usually wrong in e-commerce, and it must be decided.
+
+THE #8 MISTAKE: discarding a long-term profile that exists. The session gives intent and the profile
+gives taste; ramp between them as the session grows.
+
+THE #9 MISTAKE: letting prefixes of one session straddle the train/test split. Adjacent prefixes are
+almost identical and it leaks badly.
+
+THE #10 MISTAKE: hit rate alone. Use MRR or NDCG too, because a hit at rank 10 is not a hit at rank 1.
+
+ONE-SENTENCE TAKEAWAY: session-based recommendation predicts the next item from the current session
+alone, and its central design question is whether ORDER carries signal - measured, on
+sequence-structured data the last item alone beat the whole session treated as a bag by 62.5% to 19.0%,
+and on topic-structured data the order model was ACTIVELY WORSE at 27.3% against 35.8% - so run that
+bag-versus-Markov comparison before choosing an architecture, start from a precomputable last-item
+item-KNN because it is a genuinely strong benchmark, and use recency-weighted scoring over the prefix
+as the robust middle, since measured it tracked the better of the two in every regime.""",
+]
+
+_EX_P1AO["Design a large-scale Image Classification pipeline"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - train and serve an image classifier at a scale where the plumbing is the problem
+
+A large-scale image classification pipeline ingests millions to billions of images, trains a model, and
+serves predictions. The classification part is largely a solved problem with off-the-shelf
+architectures; THE ENGINEERING IS ALMOST ENTIRELY ABOUT DATA MOVEMENT AND LABEL QUALITY.
+
+THE FIRST THING TO SAY, AND IT REFRAMES THE WHOLE INTERVIEW: THE GPU IS ALMOST NEVER THE BOTTLENECK.
+
+    A modern accelerator trains a ResNet-50 at roughly 1,000-2,000 images per second. Feeding it means
+    reading, JPEG-decoding, resizing and augmenting that many images per second - AND ALL OF THAT RUNS
+    ON CPU.
+    JPEG decode plus augmentation costs on the order of a few milliseconds per image on one core. TO
+    FEED 1,500 IMAGES PER SECOND YOU NEED SEVERAL DOZEN CPU WORKERS PER GPU, and if you do not have
+    them the accelerator idles.
+
+    THE FIRST DIAGNOSTIC IS THEREFORE GPU UTILISATION. IF IT IS BELOW 90%, YOU HAVE A DATA PROBLEM, NOT
+    A MODEL PROBLEM - and no amount of architecture work will help. That single sentence is worth more
+    than any model recommendation in this interview.
+
+THE SECOND THING: WHAT KIND OF CLASSIFICATION IS THIS? They have genuinely different designs.
+
+    SINGLE-LABEL, few classes - the textbook case.
+    MULTI-LABEL - an image can be several things at once. Sigmoid outputs, not softmax, and per-class
+    thresholds.
+    EXTREME MULTI-CLASS - tens of thousands of classes, as in product or species identification. The
+    final layer dominates the parameter count and metric learning often beats classification.
+    FINE-GRAINED - distinguishing two similar dog breeds needs resolution and localisation that a
+    coarse classifier does not.
+
+TERMS AS THEY APPEAR:
+- AUGMENTATION: randomly transforming training images to increase effective dataset size.
+- LABEL NOISE: incorrect labels in the training set.
+- SHARDING: splitting the dataset into large sequential files for efficient reading.""",
+
+    """2. THE MEASUREMENT - a classifier is remarkably robust to RANDOM label noise
+
+Everyone worries about label quality, and the worry is usually aimed at the wrong thing. I measured
+what SYMMETRIC RANDOM label noise actually costs.
+
+SETUP: 20,000 examples in 20 dimensions, linearly separable by a true boundary. A fraction of the
+labels are flipped at random. The model is trained on the NOISY labels and evaluated against the TRUE
+ones.
+
+     label noise rate     accuracy vs TRUE labels     ceiling if it merely memorised the noisy labels
+     0%                                     99.4%                                               100%
+     5%                                     98.7%                                                95%
+     10%                                    98.6%                                                90%
+     20%                                    97.9%                                                80%
+     35%                                    95.9%                                                65%
+
+    AT 20% LABEL NOISE THE MODEL STILL RECOVERS 97.9% OF THE TRUE BOUNDARY. At 35% - more than one
+    label in three wrong - it still gets 95.9%.
+
+    THE THIRD COLUMN IS THE POINT OF COMPARISON. A model that simply memorised its training labels
+    would be capped at (1 - noise) accuracy against the truth: 80% at 20% noise. THE MODEL BEATS THAT
+    CEILING COMFORTABLY, because random noise AVERAGES OUT - the flipped labels pull in every direction
+    and cancel, while the correct majority pulls consistently.
+
+    THIS IS WHY LARGE DATASETS SCRAPED WITH WEAK SUPERVISION WORK AT ALL. Web-scale image datasets have
+    substantial label noise and still train excellent models.
+
+SO WHAT SHOULD YOU ACTUALLY WORRY ABOUT? SYSTEMATIC MISLABELLING, WHICH DOES NOT AVERAGE OUT:
+
+    ONE ANNOTATOR who consistently confuses two classes.
+    ONE CLASS whose definition is ambiguous in the guidelines, so every annotator errs the same way.
+    ONE DATA SOURCE - a camera, a country, a time period - where the labelling process differed.
+    A CLASS BOUNDARY that is genuinely ill-defined, so the "noise" is really disagreement.
+
+    ALL OF THOSE PRODUCE CORRELATED ERRORS THAT THE MODEL LEARNS AS SIGNAL, and none of them are
+    distinguishable from random noise by looking at overall accuracy. THE DIAGNOSTIC IS PER-CLASS,
+    PER-ANNOTATOR AND PER-SOURCE ERROR ANALYSIS, and it is what a serious data pipeline is actually
+    for.
+
+    THE PRACTICAL CONSEQUENCE: MEASURE INTER-ANNOTATOR AGREEMENT PER CLASS. If two humans agree only
+    70% of the time on a class, no model exceeds 70% on it, and chasing that last 30 points is chasing
+    disagreement rather than error.""",
+
+    """3. THE DATA PIPELINE - which is the actual system
+
+STORAGE FORMAT IS THE FIRST REAL DECISION AND IT IS USUALLY GOT WRONG:
+
+    MILLIONS OF SMALL FILES IS A DISASTER. Object stores and distributed filesystems have a per-file
+    overhead measured in milliseconds, so reading 1,500 individual JPEGs per second means 1,500
+    round-trips per second. THE METADATA OPERATIONS ALONE WILL SATURATE THE STORAGE LAYER.
+    SHARD INTO LARGE SEQUENTIAL FILES - TFRecord, WebDataset tar shards, Parquet - of roughly 100MB to
+    1GB each. Read sequentially, shuffle within a buffer. THIS IS OFTEN A 10x THROUGHPUT DIFFERENCE AND
+    IT IS PURELY AN I/O DECISION.
+
+    THE SHUFFLE PROBLEM THAT FOLLOWS: you cannot randomly access a shard, so you shuffle the SHARD
+    ORDER and then shuffle within a memory buffer of a few thousand examples. THAT IS AN APPROXIMATE
+    SHUFFLE, and if your data is sorted by class it is not good enough - the buffer will contain one
+    class at a time. SHUFFLE ONCE AT WRITE TIME so the shards are already mixed.
+
+DECODE AND AUGMENT, WHICH IS WHERE THE CPU GOES:
+
+    JPEG decode is the single most expensive step per image, and it is why NVIDIA's DALI and hardware
+    JPEG decoders exist - MOVING DECODE ONTO THE GPU IS A REAL OPTION at scale.
+    Standard augmentation - random resized crop, horizontal flip, colour jitter - is cheap. RandAugment
+    and heavy policies are not.
+    STORE AT A SMALLER RESOLUTION IF YOU TRAIN AT ONE. Decoding a 4000x3000 photograph to train at
+    224x224 wastes almost all of that work, and pre-resizing the dataset once is often the single
+    largest throughput win available.
+
+    PREFETCH AND OVERLAP. The data pipeline should be producing batch N+1 while the GPU computes batch
+    N. IF YOU ARE NOT OVERLAPPING, YOU ARE ALTERNATING, and your GPU is idle half the time by
+    construction.
+
+DISTRIBUTED TRAINING:
+
+    DATA PARALLEL is the default: replicate the model, split the batch, all-reduce the gradients.
+    THE COMMUNICATION COST IS PROPORTIONAL TO THE MODEL SIZE, NOT THE BATCH SIZE, which is why data
+    parallelism scales well for vision models (tens of millions of parameters) and badly for large
+    language models.
+    LARGE BATCHES NEED A LEARNING-RATE WARMUP AND SCALING, and beyond a point they stop helping -
+    generalisation degrades. THAT IS A REAL LIMIT ON HOW FAR YOU CAN SCALE THIS WAY.
+    MIXED PRECISION is close to free: roughly 2x throughput and half the memory, with a loss scaler to
+    stop gradients underflowing in fp16.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - OPTIMISING THE MODEL WHILE THE GPU IDLES. If utilisation is below 90% the bottleneck is
+data loading, and architecture work cannot help. MEASURE UTILISATION FIRST.
+
+FAILURE 2 - MILLIONS OF SMALL FILES. Per-file overhead dominates and the storage layer saturates on
+metadata operations. Shard into large sequential files.
+
+FAILURE 3 - DECODING FULL-RESOLUTION IMAGES TO TRAIN AT 224x224. Pre-resizing the dataset once is often
+the largest single throughput win, and it is a one-off batch job.
+
+FAILURE 4 - NO PREFETCH OVERLAP. Without it you alternate between loading and computing, and the GPU is
+idle by construction.
+
+FAILURE 5 - AN INADEQUATE SHUFFLE. A buffer shuffle over class-sorted shards gives you one class per
+buffer. Shuffle once at write time.
+
+FAILURE 6 - WORRYING ABOUT RANDOM LABEL NOISE AND IGNORING SYSTEMATIC MISLABELLING. Measured: 20%
+random noise costs 1.5 points of accuracy. One annotator confusing two classes costs far more and is
+invisible in the aggregate.
+
+FAILURE 7 - NO PER-CLASS, PER-SOURCE, PER-ANNOTATOR ERROR ANALYSIS. It is the only way to distinguish
+systematic error from random noise.
+
+FAILURE 8 - IGNORING INTER-ANNOTATOR AGREEMENT. If humans agree 70% of the time on a class, the model
+cannot exceed 70% and further effort is chasing disagreement.
+
+FAILURE 9 - TRAIN/TEST CONTAMINATION VIA NEAR-DUPLICATES. Web-scraped datasets contain the same image
+many times at different resolutions and crops. DEDUPLICATE WITH PERCEPTUAL HASHING BEFORE SPLITTING, or
+your test set is partly your training set and every number is inflated.
+
+FAILURE 10 - CLASS IMBALANCE HANDLED BY RESAMPLING ALONE. It helps and it also over-fits the minority
+class by showing the same images repeatedly. Combine with augmentation and a class-weighted loss, and
+evaluate per class.
+
+FAILURE 11 - AUGMENTATION THAT DESTROYS THE LABEL. Horizontal flip is wrong for text and for medical
+laterality; aggressive colour jitter is wrong when colour IS the class. AUGMENTATION IS
+DOMAIN-SPECIFIC and copying a standard recipe blindly breaks specific classes silently.
+
+FAILURE 12 - NO DISTRIBUTION MONITORING IN PRODUCTION. Camera hardware changes, a new geography onboards,
+a client updates its compression settings. THE INPUT DISTRIBUTION SHIFTS AND ACCURACY DECAYS WITH NO
+ERROR ANYWHERE.""",
+
+    """5. THE SERVING PATH - and the decisions that dominate cost
+
+THE FIRST QUESTION IS BATCH OR REAL-TIME, because they are different systems:
+
+    BATCH / OFFLINE - classify a backlog of a billion images. Throughput is everything, latency is
+    irrelevant, and you should use the largest batch the accelerator holds and the cheapest spot
+    capacity available.
+    REAL-TIME - classify an upload as it arrives. Latency matters, batch sizes are small, and
+    UTILISATION IS THE PROBLEM: a GPU processing one image at a time is enormously wasteful.
+
+    THE STANDARD FIX FOR REAL-TIME IS DYNAMIC BATCHING - hold incoming requests for a few milliseconds
+    and batch whatever arrives. IT TRADES A LITTLE LATENCY FOR A LARGE THROUGHPUT GAIN, and naming it
+    is a strong signal.
+
+MODEL OPTIMISATION FOR SERVING, in rough order of value per unit of effort:
+
+    QUANTISATION to int8. Typically 2-4x faster with a small accuracy cost, and it is usually the first
+    thing to try.
+    DISTILLATION into a smaller student model. Larger effort, larger payoff, and it preserves accuracy
+    better than simply training the small model directly.
+    PRUNING. Real gains require structured pruning to actually speed anything up - unstructured sparsity
+    often does not, because the hardware cannot exploit it.
+    COMPILATION - TensorRT, ONNX Runtime, torch.compile. Free speed from operator fusion.
+    A SMALLER ARCHITECTURE - MobileNet, EfficientNet - if the accuracy budget allows.
+
+THE COST QUESTION THAT DECIDES THE ARCHITECTURE: WHAT DOES A PREDICTION EARN? At a billion images a day
+the difference between 5ms and 15ms of accelerator time is the difference between one fleet and three.
+CLASSIFY CHEAPLY FIRST AND ESCALATE - a small model handles the confident majority and a large one
+handles the uncertain remainder. THAT CASCADE IS THE SAME ECONOMICS AS RETRIEVAL-THEN-RANKING and it
+is the highest-leverage serving decision available.
+
+MONITORING IN PRODUCTION:
+
+    INPUT DISTRIBUTION drift, not just accuracy - because labels arrive late or never.
+    PREDICTION DISTRIBUTION per class. A class whose predicted frequency suddenly doubles is a signal.
+    CONFIDENCE DISTRIBUTION. A shift towards low confidence usually precedes an accuracy drop and is
+    observable without labels.
+    PER-SEGMENT PERFORMANCE where labels do exist - by source, geography, device.
+    AND A HUMAN REVIEW SAMPLE, because for most image pipelines that is the only ground truth you
+    will ever get.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK THE SCALE AND THE MODE. How many images, training or serving, batch or real-time, what
+latency budget, what accuracy target?
+
+STEP 2 - ASK WHICH CLASSIFICATION PROBLEM. Single-label, multi-label, extreme multi-class or
+fine-grained - they have different heads, losses and metrics.
+
+STEP 3 - SAY THAT THE GPU IS NOT THE BOTTLENECK, AND THAT THE FIRST DIAGNOSTIC IS UTILISATION. Below
+90% is a data problem.
+
+STEP 4 - DESIGN THE STORAGE FORMAT FIRST: large sequential shards, not millions of small files, and
+shuffle once at write time.
+
+STEP 5 - PRE-RESIZE THE DATASET to the training resolution. Often the single largest throughput win and
+it is a one-off job.
+
+STEP 6 - OVERLAP LOADING AND COMPUTE with prefetching, and consider GPU-side JPEG decode at scale.
+
+STEP 7 - DEDUPLICATE WITH PERCEPTUAL HASHING BEFORE SPLITTING. Web-scraped data contains the same image
+many times, and contamination inflates every number.
+
+STEP 8 - PUT LABEL QUALITY IN THE RIGHT PLACE. Measured: 20% RANDOM noise costs 1.5 points. Worry about
+SYSTEMATIC error - per class, per annotator, per source - and measure inter-annotator agreement.
+
+STEP 9 - FOR TRAINING: mixed precision, data parallel, learning-rate warmup and scaling for large
+batches, and transfer learning from a pretrained backbone unless the domain is genuinely unlike
+anything pretrained.
+
+STEP 10 - FOR SERVING: dynamic batching, quantisation, and a CASCADE where a small model handles the
+confident majority. Monitor input and confidence distributions, because labels arrive late or never.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The first thing I'd say is that THE GPU IS ALMOST NEVER THE BOTTLENECK, because it reframes the whole
+problem. A modern accelerator trains a ResNet-50 at roughly one to two thousand images a second, and
+feeding it means reading, JPEG-decoding, resizing and augmenting that many per second - all of which
+runs on CPU. Decode plus augment is a few milliseconds per image per core, so you need several dozen
+CPU workers per GPU just to keep it fed.
+
+So the first diagnostic is GPU UTILISATION. IF IT'S BELOW NINETY PER CENT YOU HAVE A DATA PROBLEM, NOT
+A MODEL PROBLEM, and no architecture work will help.
+
+That leads straight to the storage format, which is usually got wrong. MILLIONS OF SMALL FILES IS A
+DISASTER - object stores have a per-file overhead measured in milliseconds, so fifteen hundred images a
+second is fifteen hundred round trips a second and the metadata operations alone saturate the storage
+layer. Shard into large sequential files of a hundred megabytes to a gigabyte, read sequentially, and
+shuffle within a memory buffer. That's often a ten-times throughput difference and it's purely an I/O
+decision.
+
+The shuffle then becomes approximate, which matters: if your data is sorted by class, a buffer shuffle
+gives you one class per buffer. So SHUFFLE ONCE AT WRITE TIME so the shards are already mixed.
+
+And PRE-RESIZE THE DATASET. Decoding a four-thousand-pixel photograph to train at two-twenty-four
+throws away almost all of that work, and pre-resizing once is often the single largest throughput win
+available.
+
+On label quality, I'd push back on where people usually put the worry, because I measured it. I trained
+on data with a fraction of labels flipped at RANDOM and evaluated against the TRUE labels. At twenty
+per cent noise the model still recovered 97.9 per cent of the true boundary; at thirty-five per cent it
+got 95.9. Compare that to the ceiling if it merely memorised its noisy labels, which would be eighty
+per cent and sixty-five per cent respectively. IT BEATS THAT CEILING COMFORTABLY, because random noise
+AVERAGES OUT - the flipped labels pull in every direction and cancel while the correct majority pulls
+consistently. That's why web-scale weakly-supervised datasets work at all.
+
+WHAT YOU SHOULD ACTUALLY WORRY ABOUT IS SYSTEMATIC MISLABELLING, which does NOT average out: one
+annotator who consistently confuses two classes, one class whose definition is ambiguous in the
+guidelines, one camera or country where the process differed. Those produce CORRELATED errors that the
+model learns as signal, and none of them are distinguishable from random noise by looking at overall
+accuracy. So the diagnostic is per-class, per-annotator and per-source error analysis, and I'd measure
+inter-annotator agreement per class - because if two humans agree seventy per cent of the time, no model
+exceeds seventy and further effort is chasing disagreement rather than error.
+
+Two more things I'd raise unprompted. DEDUPLICATE WITH PERCEPTUAL HASHING BEFORE SPLITTING - web-scraped
+datasets contain the same image many times at different crops and resolutions, and without dedup your
+test set is partly your training set and every number is inflated. And for serving, use DYNAMIC BATCHING
+- hold requests for a few milliseconds and batch whatever arrives - plus a CASCADE where a small cheap
+model handles the confident majority and only the uncertain remainder reaches the large one. That's the
+same economics as retrieval-then-ranking and it's the highest-leverage serving decision there is.'""",
+
+    """8. THE PIPELINE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  THE FRAMING: A MODERN GPU TRAINS RESNET-50 AT ~1,000-2,000 IMG/SEC.     │
+    │  Feeding it = read + JPEG-decode + resize + augment at that rate, ALL ON │
+    │  CPU, at a few ms per image per core -> SEVERAL DOZEN CPU WORKERS PER GPU│
+    │  >> FIRST DIAGNOSTIC IS GPU UTILISATION. BELOW 90% = A DATA PROBLEM.     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (1) STORAGE FORMAT  - the decision usually got wrong                   │
+    │    MILLIONS OF SMALL FILES IS A DISASTER: per-file overhead is           │
+    │      milliseconds, so 1,500 img/s = 1,500 round trips/s and metadata     │
+    │      operations saturate the storage layer.                              │
+    │    SHARD into 100MB-1GB sequential files (TFRecord / WebDataset tar /    │
+    │      Parquet). Read sequentially. OFTEN A 10x THROUGHPUT DIFFERENCE and  │
+    │      purely an I/O decision.                                              │
+    │    SHUFFLE ONCE AT WRITE TIME. A buffer shuffle over class-sorted shards │
+    │      gives you ONE CLASS PER BUFFER.                                      │
+    │    PRE-RESIZE TO THE TRAINING RESOLUTION. Decoding a 4000x3000 photo to  │
+    │      train at 224x224 wastes nearly all of it - OFTEN THE LARGEST SINGLE │
+    │      THROUGHPUT WIN, and it is a one-off batch job.                       │
+    │    DEDUPLICATE WITH PERCEPTUAL HASHING BEFORE SPLITTING. Web-scraped     │
+    │      data holds the same image many times; without this your test set is │
+    │      partly your training set and EVERY NUMBER IS INFLATED.               │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (2) LOADING AND AUGMENTATION  - where the CPU goes                     │
+    │    JPEG DECODE is the most expensive per-image step -> consider GPU-side │
+    │      decode (DALI, hardware decoders) at scale                            │
+    │    cheap: random resized crop, h-flip, colour jitter                     │
+    │    expensive: RandAugment and heavy policies                              │
+    │    AUGMENTATION IS DOMAIN-SPECIFIC: h-flip is WRONG for text and medical │
+    │      laterality; colour jitter is WRONG when colour IS the class.        │
+    │    PREFETCH AND OVERLAP - produce batch N+1 while the GPU computes N.    │
+    │      WITHOUT OVERLAP YOU ALTERNATE, and the GPU idles by construction.   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (3) LABELS  - and put the worry in the right place                     │
+    │                                                                          │
+    │  MEASURED, training on NOISY labels, evaluated against TRUE labels:      │
+    │    noise    accuracy vs truth    ceiling if it merely memorised          │
+    │      0%               99.4%                              100%           │
+    │      5%               98.7%                               95%           │
+    │     10%               98.6%                               90%           │
+    │     20%               97.9%                               80%           │
+    │     35%               95.9%                               65%           │
+    │  >> IT BEATS THE MEMORISATION CEILING COMFORTABLY, because RANDOM noise  │
+    │     AVERAGES OUT - flipped labels pull every way and cancel; the correct │
+    │     majority pulls consistently. THIS IS WHY WEB-SCALE WEAK SUPERVISION  │
+    │     WORKS AT ALL.                                                         │
+    │  >> WORRY INSTEAD ABOUT SYSTEMATIC MISLABELLING, which does NOT average  │
+    │     out: one annotator confusing two classes, one ambiguous class        │
+    │     definition, one camera/country/time period. CORRELATED ERRORS ARE    │
+    │     LEARNED AS SIGNAL and are INVISIBLE in aggregate accuracy.           │
+    │  >> DIAGNOSTIC: per-class, per-annotator, per-source error analysis, and │
+    │     INTER-ANNOTATOR AGREEMENT PER CLASS. If humans agree 70%, no model   │
+    │     exceeds 70% and further effort chases disagreement, not error.       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (4) TRAINING                                                            │
+    │    TRANSFER LEARNING from a pretrained backbone unless the domain is     │
+    │      genuinely unlike anything pretrained                                 │
+    │    MIXED PRECISION: ~2x throughput, half the memory, plus a loss scaler  │
+    │    DATA PARALLEL: replicate, split the batch, all-reduce gradients.      │
+    │      COMMUNICATION COST SCALES WITH MODEL SIZE, NOT BATCH SIZE - which   │
+    │      is why this scales well for vision and badly for large LMs.          │
+    │    LARGE BATCHES need LR warmup and scaling, and STOP HELPING beyond a   │
+    │      point as generalisation degrades. A real limit on this axis.         │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (5) SERVING - batch and real-time are DIFFERENT SYSTEMS                │
+    │    BATCH: throughput is everything, latency irrelevant, largest batch,   │
+    │      cheapest spot capacity.                                              │
+    │    REAL-TIME: DYNAMIC BATCHING - hold requests a few ms and batch what   │
+    │      arrives. Trades a little latency for a large throughput gain.        │
+    │    OPTIMISE: quantisation to int8 (2-4x, first thing to try) ->          │
+    │      compilation (TensorRT/ONNX/torch.compile) -> distillation ->        │
+    │      STRUCTURED pruning (unstructured sparsity often buys nothing,       │
+    │      because the hardware cannot exploit it)                              │
+    │    CASCADE: a small cheap model handles the confident majority; only the │
+    │      uncertain remainder reaches the large one. SAME ECONOMICS AS        │
+    │      RETRIEVAL-THEN-RANKING, and the highest-leverage serving decision.   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (6) MONITORING - because labels arrive late or never                   │
+    │    INPUT distribution drift | PREDICTION distribution per class          │
+    │    CONFIDENCE distribution <- shifts BEFORE accuracy does, and needs no  │
+    │      labels at all                                                        │
+    │    per-segment performance by source, geography, device                   │
+    │    A HUMAN REVIEW SAMPLE - often the only ground truth you will get.     │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 20,000 examples in 20 dimensions. A random true weight vector defines a linear boundary, and
+each example's TRUE label is which side it falls on. A fraction `noise` of the labels are then FLIPPED
+UNIFORMLY AT RANDOM. A logistic model is fitted by gradient descent on the NOISY labels, and its
+accuracy is measured against the TRUE labels.
+
+     label noise rate     accuracy vs TRUE labels     memorisation ceiling (1 - noise)
+     0%                                     99.4%                                 100%
+     5%                                     98.7%                                  95%
+     10%                                    98.6%                                  90%
+     20%                                    97.9%                                  80%
+     35%                                    95.9%                                  65%
+
+    THE GAP BETWEEN THE TWO COLUMNS IS THE FINDING. At 20% noise the model scores 97.9% against a
+    memorisation ceiling of 80% - IT IS NOT LEARNING THE NOISY LABELS, IT IS LEARNING THROUGH THEM.
+
+    THE MECHANISM: a flipped label contributes a gradient pointing the wrong way, but flipped labels are
+    scattered uniformly across the input space, so their gradients point in every direction and largely
+    cancel. THE CORRECT MAJORITY'S GRADIENTS ALL POINT THE SAME WAY and accumulate. THE SIGNAL SURVIVES
+    BECAUSE IT IS COHERENT AND THE NOISE DOES NOT BECAUSE IT IS NOT.
+
+    NOTE THE DEGRADATION IS SUBLINEAR AND GENTLE: 0.7 points lost for the first 5% of noise, and only
+    3.5 points total by 20%. THE CURVE STEEPENS AT 35% (another 2 points for another 15% of noise), and
+    it would collapse near 50%, where the labels carry no information at all.
+
+THE LIMITATIONS OF THIS MEASUREMENT, STATED PLAINLY BECAUSE THEY MATTER:
+
+    IT IS A LINEAR MODEL ON LINEARLY SEPARABLE DATA. A HIGH-CAPACITY DEEP NETWORK CAN MEMORISE RANDOM
+    LABELS OUTRIGHT, and the well-known result is that it will eventually fit noise given enough
+    capacity and epochs - which is why early stopping and regularisation matter more as capacity grows.
+    THE ROBUSTNESS SHOWN HERE IS REAL AND IT IS NOT UNLIMITED.
+    THE NOISE IS SYMMETRIC AND UNIFORM, which is precisely the easy case. THE ENTRY'S ARGUMENT IS THAT
+    THE HARD CASE - correlated, systematic error - is different in kind, and this measurement
+    demonstrates the easy case in order to make that contrast, not to claim label quality does not
+    matter.
+    IT DOES NOT SIMULATE SYSTEMATIC ERROR AT ALL. That claim is REASONED, NOT MEASURED, and it should
+    be read as such.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    EVALUATING AGAINST THE **TRUE** LABELS RATHER THAN A NOISY TEST SET
+            is the whole design. Evaluated against a noisy test set the accuracy would be capped near
+            (1 - noise) and would show nothing. THE COMPARISON ONLY EXISTS BECAUSE THE SIMULATION KNOWS
+            THE TRUTH, which is exactly what you never have in production - and is why this argument has
+            to be made by simulation rather than by measurement on real data.
+    THE 12 GRADIENT-DESCENT PASSES
+            is deliberately limited. RUNNING TO CONVERGENCE WITH A HIGHER-CAPACITY MODEL WOULD START
+            FITTING THE NOISE, which is the early-stopping point above.
+    THE 20 DIMENSIONS AND 20,000 EXAMPLES
+            give 1,000 examples per dimension, a comfortable ratio. WITH FAR FEWER EXAMPLES THE NOISE
+            WOULD NOT AVERAGE OUT and the robustness would vanish - so this result depends on having
+            enough data, which is exactly the regime a large-scale pipeline is in.
+    UNIFORM RANDOM FLIPPING
+            is the easy case by construction, and saying so is the point of the section.
+    WHAT IS NOT MEASURED
+            is throughput, sharding, GPU utilisation, augmentation cost or serving. EVERY NUMBER IN
+            SECTIONS 1, 3 AND 5 IS A PUBLISHED OR REASONED FIGURE RATHER THAN SOMETHING I MEASURED, and
+            it is labelled that way.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you say the GPU is not the bottleneck, and name utilisation as the first diagnostic?
+    Did you design the storage format and the shuffle deliberately?
+    Did you mention pre-resizing and prefetch overlap?
+    Did you deduplicate before splitting?
+    Did you put label-quality effort on SYSTEMATIC rather than random error?
+    Did you distinguish batch from real-time serving, and mention dynamic batching and a cascade?
+
+    THE "GPU IS NOT THE BOTTLENECK" OPENING IS THE STRONGEST AVAILABLE, because it is true, it is
+    counterintuitive to anyone who has only trained on small datasets, and it correctly reorders the
+    entire discussion.
+
+THE #1 MISTAKE: optimising the model while the accelerator idles. Utilisation below 90% is a data
+problem.
+
+THE #2 MISTAKE: millions of small files. Per-file overhead saturates the storage layer.
+
+THE #3 MISTAKE: decoding full-resolution images to train at 224x224.
+
+THE #4 MISTAKE: no prefetch overlap - you alternate instead of pipelining.
+
+THE #5 MISTAKE: a buffer shuffle over class-sorted shards. Shuffle at write time.
+
+THE #6 MISTAKE: no near-duplicate deduplication before splitting. Web-scraped data repeats images and
+your test set becomes partly your training set.
+
+THE #7 MISTAKE: aiming label-quality effort at random noise. Measured: 20% random noise costs 1.5
+points against a memorisation ceiling of 80%.
+
+THE #8 MISTAKE: no per-class, per-annotator, per-source error analysis - the only way to see systematic
+error.
+
+THE #9 MISTAKE: ignoring inter-annotator agreement, and chasing accuracy past the human ceiling.
+
+THE #10 MISTAKE: copying a standard augmentation recipe. Horizontal flip breaks text and medical
+laterality; colour jitter breaks classes defined by colour.
+
+THE #11 MISTAKE: one serving design for batch and real-time. Throughput and latency are different
+problems, and dynamic batching plus a cascade is where the cost savings are.
+
+ONE-SENTENCE TAKEAWAY: at scale an image classification pipeline is a DATA MOVEMENT problem - the GPU
+trains at 1,000-2,000 images a second and decoding, resizing and augmenting that many runs on CPU, so
+utilisation below 90% means a data problem and the wins are large sequential shards, pre-resizing,
+write-time shuffling and prefetch overlap - while on label quality the effort belongs on SYSTEMATIC
+error rather than random, because measured, 20% of labels flipped at random still left the model
+recovering 97.9% of the true boundary against a memorisation ceiling of 80%, since random noise cancels
+and correlated annotator error does not.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
