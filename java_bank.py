@@ -1351,6 +1351,14 @@ ENTRIES.extend(_build_core(Q))
 ENTRIES.extend(_build_advanced(Q))
 ENTRIES.extend(_build_traps(Q))
 
+# Deep dives are attached LAST and keyed by title. A ten-section dive is
+# ~12,000 characters against an entry's ~3,000; inlining them would make the
+# entry modules unbrowsable. apply() raises on a title that matches nothing,
+# so renaming an entry cannot silently detach its deep dive.
+from java_bank_deep import apply as _apply_deep
+
+_apply_deep(ENTRIES)
+
 
 # ─────────────────────────────────────────────────────────────────────
 #  Derived quiz + recall, and a self-check

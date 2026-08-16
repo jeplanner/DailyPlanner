@@ -118,3 +118,38 @@ def test_render_produces_something_readable():
     assert "IN PLAIN ENGLISH" in text
     assert "RECALL DRILL" in text
     assert len(text.splitlines()) > 20
+
+
+# ── deep dives ──────────────────────────────────────────────────────────
+import java_bank_deep
+
+
+def test_deep_dives_are_attached():
+    attached = {e["title"] for e in bank.ENTRIES if e["examples"]}
+    for title in java_bank_deep.DEEP:
+        assert title in attached, f"{title!r} declared a deep dive but has none attached"
+
+
+def test_deep_dive_titles_must_match_an_entry():
+    """A silent no-op here would mean renaming an entry quietly detaches its
+    deep dive, and nobody would notice until the card was opened."""
+    import pytest
+    with pytest.raises(KeyError):
+        java_bank_deep.apply([{"title": "no such entry", "examples": []}])
+
+
+def test_deep_dives_are_ten_numbered_sections():
+    for title, sections in java_bank_deep.DEEP.items():
+        assert len(sections) == 10, title
+        for i, sec in enumerate(sections, 1):
+            assert sec.lstrip().startswith(f"{i}."), (title, i)
+            assert len(sec) > 400, f"{title} section {i} is too thin to be a deep dive"
+
+
+def test_deep_dives_stay_out_of_the_list_payload():
+    """The thin-list split is the reason a 23,000-character deep dive can be
+    added without touching page-load weight."""
+    import routes.java_prep as jp
+    for row in jp._LIST:
+        assert "examples" not in row
+        assert "answer" not in row
