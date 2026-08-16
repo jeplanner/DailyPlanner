@@ -57,7 +57,13 @@ header{
   display:flex; align-items:baseline; gap:calc(var(--u) * 1.2);
   padding:0 calc(var(--u) * .3);
 }
-.date{font-size:calc(var(--u) * 2.2); font-weight:800; letter-spacing:-.02em}
+.date{font-size:calc(var(--u) * 2.2); font-weight:800; letter-spacing:-.02em;
+       color:inherit; text-decoration:none}
+.date:hover, .date:focus-visible{
+  text-decoration:underline; text-decoration-thickness:2px;
+  text-underline-offset:calc(var(--u) * .25);
+}
+.date:focus-visible{outline:2px solid var(--accent); outline-offset:3px}
 .clock{font-size:calc(var(--u) * 2.2); font-weight:800; font-variant-numeric:tabular-nums;
        color:var(--accent)}
 .counts{margin-left:auto; display:flex; gap:calc(var(--u) * 1.1);
@@ -161,7 +167,8 @@ li.done .txt{text-decoration:line-through}
 <div id="board">
 
   <header>
-    <div class="date">{{ date_label }}</div>
+    <a class="date" href="/summary?view=daily"
+       title="Back to Today's Plan  ·  ← → change day  ·  T today  ·  Esc exit">{{ date_label }}</a>
     {% if is_today %}<div class="clock" id="clock">--:--</div>{% endif %}
     <div class="counts">
       <span><b>{{ placed|length }}</b> events</span>
@@ -410,6 +417,7 @@ li.done .txt{text-decoration:line-through}
     if (e.key === "ArrowLeft")  location.search = updateParam("date", "{{ prev_date }}");
     if (e.key === "ArrowRight") location.search = updateParam("date", "{{ next_date }}");
     if (e.key === "t" || e.key === "T") location.search = "";
+    if (e.key === "Escape") location.href = "/summary?view=daily";
   });
   function updateParam(k, v) {
     var p = new URLSearchParams(location.search); p.set(k, v); return "?" + p.toString();
