@@ -29,6 +29,9 @@ from system_design_bank import (CATEGORIES as SD_CATEGORIES,
                                  ENTRIES as SD_ENTRIES)
 from ai_sde_bank import (CATEGORIES as AI_SDE_CATEGORIES,
                          ENTRIES as AI_SDE_ENTRIES)
+# Imported for the scheduler's bank registry only. java_bank is a plain
+# data module — it imports no routes, so this cannot cycle.
+import java_bank
 import ai_sde_recall
 from supabase_client import get, post, update
 from utils.user_tz import user_today
@@ -480,13 +483,50 @@ def ai_sde_entry(entry_id):
 # of what she planned to study, and the other two are views onto it.
 # ══════════════════════════════════════════════════════════════════════
 
-#: The project every scheduled topic lands in. Looked up by name — there
-#: is no id to store anywhere because the name IS the handle.
-AI_SDE_PROJECT_NAME = "AISDEPrep"
-AI_SDE_PROJECT_DESC = (
-    "AI/SDE interview prep. Topics scheduled onto a day from the "
-    "/ai-sde page land here."
-)
+#: The banks that can be scheduled onto a day, and the project each one
+#: lands in. Looked up by name — there is no project id stored anywhere,
+#: because the name IS the handle.
+#:
+#: Each bank names the list its entries come from, the FIELD that holds
+#: the topic's text (the behavioural bank calls it `q`, the other two
+#: `title`), and the prefix its ids carry. Keeping the three differences
+#: in a table beats three near-identical endpoints: the scheduling itself
+#: — get-or-create the project, write the task, the event, the bucket row,
+#: mirror to Google — is the same work whichever bank asked for it.
+PREP_BANKS = {
+    "ai_sde": {
+        "project": "AISDEPrep",
+        "desc": "AI/SDE interview prep. Topics scheduled from /ai-sde land here.",
+        "label": "AI/SDE prep",
+        "page": "/ai-sde",
+    },
+    "java": {
+        "project": "JavaPrep",
+        "desc": "Java core interview prep. Topics scheduled from /java land here.",
+        "label": "Java prep",
+        "page": "/java",
+    },
+    "behavioral": {
+        "project": "InterviewPrep",
+        "desc": "Behavioural / TPM interview prep. Questions scheduled from "
+                "/interview-prep land here.",
+        "label": "Interview prep",
+        "page": "/interview-prep",
+    },
+}
+
+#: bank key -> (entry list, the field holding the topic text, id prefix).
+#: A callable for the list so the module-level import order cannot matter.
+_BANK_SOURCES = {
+    "ai_sde":     (lambda: AI_SDE_ENTRIES,     "title", "ai"),
+    "java":       (lambda: java_bank.ENTRIES,  "title", "j"),
+    "behavioral": (lambda: QUESTIONS,          "q",     "q"),
+}
+
+# Kept as the old names because MIGRATION_AISDEPREP.sql seeds this one by
+# name and the tests assert on it.
+AI_SDE_PROJECT_NAME = PREP_BANKS["ai_sde"]["project"]
+AI_SDE_PROJECT_DESC = PREP_BANKS["ai_sde"]["desc"]
 
 AI_SDE_MIDNIGHT = "00:00"
 
@@ -575,8 +615,8 @@ def _ai_sde_end_time(start, minutes):
     return end.strftime("%H:%M")
 
 
-def _ensure_ai_sde_project(user_id):
-    """Return the AISDEPrep project id, creating it if it isn't there.
+def _ensure_prep_project(user_id, bank):
+    """Return the project id for this bank, creating it if it isn't there.
 
     Select-then-insert, and on an insert failure it selects again: the
     partial unique index from MIGRATION_AISDEPREP.sql turns a double-tap
@@ -585,10 +625,13 @@ def _ensure_ai_sde_project(user_id):
     genuinely cannot be resolved, and the caller reports that rather than
     scattering tasks into a project that doesn't exist.
     """
+    spec = PREP_BANKS[bank]
+    name = spec["project"]
+
     def _find():
         rows = get("projects", params={
             "user_id": f"eq.{user_id}",
-            "name": f"eq.{AI_SDE_PROJECT_NAME}",
+            "name": _pg_eq(name),
             "is_archived": "eq.false",
             "select": "project_id",
             "limit": "1",
@@ -602,62 +645,87 @@ def _ensure_ai_sde_project(user_id):
     try:
         created = post("projects", {
             "user_id": user_id,
-            "name": AI_SDE_PROJECT_NAME,
-            "description": AI_SDE_PROJECT_DESC,
+            "name": name,
+            "description": spec["desc"],
             "is_archived": False,
         }, prefer="return=representation")
         if created:
             return created[0]["project_id"]
     except Exception:
-        logger.warning("AISDEPrep project insert failed; re-selecting", exc_info=True)
+        logger.warning("%s project insert failed; re-selecting", name, exc_info=True)
 
     return _find()
 
 
-def _ai_sde_lookup(entry_id, title):
+def _ensure_ai_sde_project(user_id):
+    """Back-compat shim for the AI/SDE bank's own project."""
+    return _ensure_prep_project(user_id, "ai_sde")
+
+
+def _prep_lookup(bank, entry_id, title):
     """Resolve the topic being scheduled to (title, prep_minutes).
 
     The id is honoured when it still points at the same topic, but the
-    TITLE is what decides — ``ai{i}`` is the entry's index in the bank and
-    shifts whenever the bank changes, the same reason progress and recall
-    are keyed by title. A stale tab holding ``ai42`` must not schedule
-    whatever moved into slot 42 since it loaded.
+    TITLE is what decides — every one of these banks numbers its entries
+    by POSITION (``ai42``, ``j7``, ``q19``), and a position shifts the
+    moment an entry is added or deduped. It is the same reason progress
+    and recall are keyed by title. A stale tab holding ``ai42`` must not
+    schedule whatever moved into slot 42 since it loaded.
+
+    Returns (None, None) when neither the id nor the title resolves, and
+    the caller 404s rather than scheduling a guess.
     """
+    source, field, prefix = _BANK_SOURCES[bank]
+    entries = source()
     title = (title or "").strip()
+
     idx = -1
-    if entry_id and entry_id.startswith("ai"):
+    if entry_id and entry_id.startswith(prefix):
         try:
-            idx = int(entry_id[2:])
+            idx = int(entry_id[len(prefix):])
         except ValueError:
             idx = -1
 
-    if 0 <= idx < len(AI_SDE_ENTRIES):
-        e = AI_SDE_ENTRIES[idx]
-        if not title or e["title"] == title:
-            return e["title"], e.get("prep_minutes")
+    if 0 <= idx < len(entries):
+        e = entries[idx]
+        if not title or e[field] == title:
+            return e[field], e.get("prep_minutes")
 
     # Id was missing, out of range, or has drifted — fall back to the title.
-    for e in AI_SDE_ENTRIES:
-        if e["title"] == title:
-            return e["title"], e.get("prep_minutes")
+    for e in entries:
+        if e[field] == title:
+            return e[field], e.get("prep_minutes")
     return None, None
 
 
+def _ai_sde_lookup(entry_id, title):
+    """Back-compat shim for the AI/SDE bank."""
+    return _prep_lookup("ai_sde", entry_id, title)
+
+
+@interview_prep_bp.route("/api/prep/schedule", methods=["POST"])
 @interview_prep_bp.route("/api/ai-sde/schedule", methods=["POST"])
 @login_required
-def ai_sde_schedule():
-    """Put one topic on one day.
+def prep_schedule():
+    """Put one topic from one bank on one day.
 
-    Body: ``{id?, title?, plan_date, start_time?, duration_min?,
-    quick_bucket?}``. Either ``id`` or ``title`` identifies the topic;
-    ``plan_date`` is required; everything else has a default.
+    Body: ``{bank?, id?, title?, plan_date, start_time?, duration_min?,
+    quick_bucket?}``. ``bank`` is a key of PREP_BANKS and decides which
+    project the topic lands in; it defaults to ``ai_sde`` so the older
+    /api/ai-sde/schedule path keeps working for a page served from cache.
+    Either ``id`` or ``title`` identifies the topic; ``plan_date`` is
+    required; everything else has a default.
 
-    Idempotent per (topic, day): tapping Schedule twice for the same
+    Idempotent per (bank, topic, day): tapping Plan twice for the same
     topic on the same date reports what is already there instead of
     stacking a second copy of it in all three places.
     """
     user_id = session["user_id"]
     data = request.get_json(force=True) or {}
+
+    bank = (data.get("bank") or "ai_sde").strip()
+    if bank not in PREP_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
 
     plan_date = (data.get("plan_date") or "").strip()
     if not _AI_SDE_DATE_RE.match(plan_date):
@@ -667,7 +735,7 @@ def ai_sde_schedule():
     except ValueError:
         return jsonify({"error": "plan_date is not a real date"}), 400
 
-    title, prep_minutes = _ai_sde_lookup(data.get("id"), data.get("title"))
+    title, prep_minutes = _prep_lookup(bank, data.get("id"), data.get("title"))
     if not title:
         return jsonify({"error": "unknown topic"}), 404
 
@@ -675,9 +743,10 @@ def ai_sde_schedule():
     end_time = _ai_sde_end_time(start_time, data.get("duration_min") or prep_minutes)
     untimed = start_time == AI_SDE_MIDNIGHT and not (data.get("start_time") or "").strip()
 
-    project_id = _ensure_ai_sde_project(user_id)
+    spec = PREP_BANKS[bank]
+    project_id = _ensure_prep_project(user_id, bank)
     if not project_id:
-        return jsonify({"error": "could not open the AISDEPrep project"}), 500
+        return jsonify({"error": f"could not open the {spec['project']} project"}), 500
 
     # ── Already on this day? ────────────────────────────────────────
     existing = _get_optional("project_tasks", {
@@ -724,7 +793,7 @@ def ai_sde_schedule():
         "priority": "medium",
         "plan_date": plan_date,
         "due_date": plan_date,
-        "notes": "AI/SDE prep topic · scheduled from /ai-sde",
+        "notes": f"{spec['label']} topic · scheduled from {spec['page']}",
         "is_deleted": False,
     }
     if prep_minutes:
@@ -737,7 +806,7 @@ def ai_sde_schedule():
         if epic_id:
             task_payload["epic_id"] = epic_id
     except Exception:
-        logger.warning("AISDEPrep: default epic unresolved, filing task flat",
+        logger.warning("%s: default epic unresolved, filing task flat", spec["project"],
                        exc_info=True)
 
     task_rows = post("project_tasks", task_payload, prefer="return=representation")
@@ -755,7 +824,7 @@ def ai_sde_schedule():
             "start_time": start_time,
             "end_time": end_time,
             "title": title,
-            "description": "AI/SDE prep — open the topic at /ai-sde",
+            "description": f"{spec['label']} — open the topic at {spec['page']}",
             "priority": "medium",
             "reminder_minutes": 10,
             "is_deleted": False,
@@ -763,7 +832,7 @@ def ai_sde_schedule():
         event_row = (ev or [None])[0]
         event_id = (event_row or {}).get("id")
     except Exception:
-        logger.exception("AISDEPrep: calendar row failed for %r on %s", title, plan_date)
+        logger.exception("%s: calendar row failed for %r on %s", spec["project"], title, plan_date)
 
     # ── 2b. Mirror it to Google Calendar ────────────────────────────
     # Same shape as POST /api/v2/events: fire and forget on a daemon
@@ -782,7 +851,7 @@ def ai_sde_schedule():
             gcal_connected = bool(get("user_google_tokens",
                                       params={"user_id": f"eq.{user_id}"}) or [])
         except Exception:
-            logger.warning("AISDEPrep: could not check Google connection", exc_info=True)
+            logger.warning("%s: could not check Google connection", spec["project"], exc_info=True)
     if event_row and gcal_connected:
         def _mirror(row=event_row, uid=user_id):
             try:
@@ -795,14 +864,14 @@ def ai_sde_schedule():
                            params={"id": f"eq.{row['id']}", "user_id": f"eq.{uid}"},
                            json={"google_event_id": gid})
             except Exception:
-                logger.exception("AISDEPrep: Google mirror failed for %r", row.get("title"))
+                logger.exception("Google mirror failed for %r", row.get("title"))
         threading.Thread(target=_mirror, daemon=True).start()
 
     # ── 3. The Quick Bucket row ─────────────────────────────────────
     # Prefixed so a line in the bucket says where it came from; the
     # bucket is a flat list with no project column to say it otherwise.
     bucket_id = None
-    bucket_text = f"{AI_SDE_PROJECT_NAME} · {title}"[:500]
+    bucket_text = f"{spec['project']} · {title}"[:500]
     if data.get("quick_bucket", True):
         try:
             dupes = _get_optional("quick_bucket", {
@@ -835,7 +904,7 @@ def ai_sde_schedule():
                 }, prefer="return=representation")
                 bucket_id = (qb or [{}])[0].get("id")
         except Exception:
-            logger.exception("AISDEPrep: quick bucket row failed for %r", title)
+            logger.exception("%s: quick bucket row failed for %r", spec["project"], title)
 
     when = "12:00 AM (top of the day)" if untimed else start_time
     return jsonify({
@@ -849,6 +918,8 @@ def ai_sde_schedule():
         "start_time": start_time,
         "end_time": end_time,
         "untimed": untimed,
+        "bank": bank,
+        "project": spec["project"],
         # Kicked off, not confirmed — the mirror finishes after this
         # response, so the wording on the page has to stay honest about
         # that ("sending to Google", never "on Google").

@@ -12,10 +12,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Java — DailyPlanner</title>
+{# Needed by prep-scheduler.js: interview_prep_bp is not CSRF-exempt, so a
+   POST without this token is rejected before it reaches the endpoint. #}
+<meta name="csrf-token" content="{{ csrf_token() }}">
 {% include "_pwa_head.html" %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="{{ url_for('static', filename='js/prep-scheduler.js') }}"></script>
 <style>
   body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);
        margin:0;overflow-x:hidden}
@@ -188,7 +192,8 @@
         '<div class="q-head">' +
           '<input type="checkbox" ' + (done[e.title] ? "checked" : "") +
                  ' data-title="' + esc(e.title) + '" title="Mark studied">' +
-          '<span class="t">' + esc(e.title) + '</span>' + chips +
+          '<span class="t">' + esc(e.title) + '</span>' +
+          PrepScheduler.button("java", e.title, e.id) + chips +
         '</div>' +
         '<div class="q-body"><div class="empty">Loading…</div></div>' +
       '</div>';
@@ -264,6 +269,12 @@
     }
     return h;
   }
+
+  // The Plan button and its panel are owned by prep-scheduler.js, shared
+  // with /ai-sde and /interview-prep. It listens in the CAPTURE phase, so a
+  // press on Plan is handled and stopped before the card-toggle listener
+  // below ever sees it.
+  PrepScheduler.attach($("list"));
 
   // ── one delegated listener for the whole list ────────────────────────
   $("list").addEventListener("click", function (ev) {

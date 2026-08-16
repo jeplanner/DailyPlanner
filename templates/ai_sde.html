@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/prep-scheduler.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0;
          overflow-x: hidden; }
@@ -195,51 +196,6 @@
   html.dark .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
   .q-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-  /* ── Schedule this topic onto a day ──────────────────────────────
-     Hidden until the button is pressed, and it takes a whole row of its
-     own when it opens (flex-basis:100%) so the date and time fields never
-     have to share a line with the PDF and Schedule buttons on a phone. */
-  .sched { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-           margin-top: 6px; padding: 10px; border: 1px dashed var(--color-border);
-           border-radius: 10px; background: var(--color-bg); }
-  .sched[hidden] { display: none; }
-  .sched label { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
-                 color: var(--color-text-secondary); }
-  .sched input { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--color-border);
-                 border-radius: 8px; background: var(--color-surface); color: var(--color-text);
-                 min-width: 0; }
-  .sched .btn.primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
-  .sched-msg { flex-basis: 100%; font-size: 11.5px; color: var(--color-text-secondary); }
-  .sched-msg.ok  { color: #047857; font-weight: 700; }
-  .sched-msg.err { color: #b91c1c; font-weight: 700; }
-  html.dark .sched-msg.ok { color: #6ee7b7; } html.dark .sched-msg.err { color: #fca5a5; }
-  /* The 📅 in the card header — the one that lets her plan a week without
-     opening a single card. It follows the title, and since the title is
-     flex:1 that parks it at the right edge of every row: same x on every
-     card, so the eye finds it once.
-
-     Drawn as a FILLED button, not a bare glyph. The first version was a
-     transparent 📅 at opacity .55, which read as decoration sitting among
-     six coloured chips and was reported as too dull to see. Nothing else
-     in the header is a solid blue pill, so this is the one thing on the
-     row that looks pressable — which is the point, because it is the only
-     control here that does anything other than open the card. */
-  .q-sched-btn { flex: none; display: inline-flex; align-items: center; gap: 5px;
-                 font: inherit; font-size: 11.5px; font-weight: 800; line-height: 1;
-                 color: #fff; background: var(--color-primary);
-                 border: 1px solid var(--color-primary); border-radius: 999px;
-                 padding: 7px 11px; cursor: pointer; white-space: nowrap;
-                 box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-  .q-sched-btn:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
-  .q-sched-btn:active { transform: translateY(1px); }
-  .q-sched-btn:focus-visible { outline: 3px solid var(--color-primary-ring); outline-offset: 1px; }
-  /* Once the card is open the in-body scheduler is the obvious way in, so
-     the header button steps back rather than competing with it. */
-  .q-card.open .q-sched-btn { background: var(--color-surface); color: var(--color-primary);
-                              border-color: var(--color-border); box-shadow: none; }
-  /* Its phone rules live in the single @media block below, not in one of
-     their own — the page has exactly one mobile block by convention. */
-
   .empty { color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; text-align: center; }
   h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); margin: 22px 0 10px; }
 
@@ -273,11 +229,6 @@
     .ex .body { padding: 0 10px 10px 10px; }
     .sec > .secbody { padding: 0 9px 10px; }
     .sec > summary, .ex > summary { min-height: 42px; }   /* thumb-sized targets */
-    /* Each scheduler field on its own line — a date picker squeezed next
-       to a time picker on a 360px screen leaves neither one tappable. */
-    .sched label { flex-basis: 100%; }
-    .sched label input { flex: 1; }
-    .sched .btn { width: 100%; }
   }
   /* Same dark treatment when the OS is set to dark but no explicit
      .dark class is present. Without this, these panels keep their light
@@ -569,11 +520,7 @@
             {open: cls === "answer"})
       : "";
     return `
-      <div class="secbar">
-        <button type="button" class="btn sm" data-expand>Expand all</button>
-        <button class="btn sm" type="button" data-sched-open>📅 Schedule this</button>
-      </div>
-      ${schedulerHTML()}
+      <div class="secbar"><button type="button" class="btn sm" data-expand>Expand all</button></div>
       ${fld("plan","Prep time & priority",
             `${e.prep_label||""} to learn properly · stack rank #${e.rank} of ${BANK.total}`
             + (e.priority_label ? ` · ${e.priority_label} in its band` : "")
@@ -613,26 +560,6 @@
       <div class="q-actions"><a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a></div>
       ${quizHTML(e, b.quiz)}`;
   }
-
-  /* The scheduler panel. It sits at the TOP of the card body, not down in
-     the actions row beside the PDF link where it started — these cards
-     carry a ten-section deep dive and a dozen worked examples, so the
-     bottom of one is several screens of scrolling away. An action you
-     have to hunt for is an action she won't use.
-
-     The date defaults to today and the time is left blank on purpose:
-     blank is the common case, and it means midnight, which is the top of
-     that day on the grid. */
-  function schedulerHTML(){
-    return `
-      <div class="sched" hidden>
-        <label>Day <input type="date" class="sched-date" value="${todayISO()}"></label>
-        <label>Time <input type="time" class="sched-time"></label>
-        <button class="btn sm primary" type="button" data-sched-go>Put it on the calendar</button>
-        <span class="sched-msg">Leave the time blank and it sits at 12:00 AM, the top of that day. It lands in the AISDEPrep project, the calendar, and the Quick Bucket.</span>
-      </div>`;
-  }
-
 
   /* ── Recall quiz + spaced review ──────────────────────────────────────
      Re-reading a topic builds recognition; an interview demands recall. The
@@ -777,82 +704,6 @@
         body: JSON.stringify({title: title, studied: !!isStudied}),
       });
     } catch(_) { /* offline — the mirror keeps it until the next load */ }
-  }
-
-  /* ── Schedule a topic onto a day ────────────────────────────────────
-     Reading a topic and *planning* to read it are different acts, and
-     only the second one survives a busy week. This puts the topic where
-     the day is already being run from: the AISDEPrep project, the
-     calendar grid, and the Quick Bucket, in one request.
-
-     A blank time means midnight, and midnight is a position rather than
-     a missing value — the calendar grid starts at hour 0, so 00:00 draws
-     at the very top of the day, the way an all-day row does elsewhere.
-
-     LOCAL date, not toISOString(). toISOString() converts to UTC first,
-     so anywhere west of Greenwich it hands back yesterday for most of
-     the evening — the picker would open on the wrong day. */
-  function todayISO(){
-    const d = new Date();
-    const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
-  }
-
-  /* Show or hide one card's scheduler, keeping the in-body toggle's label
-     honest about which state it is in. Scrolled into view on open because
-     the header 📅 can be pressed while the panel is off-screen — a panel
-     that opened somewhere you cannot see reads as a dead button. */
-  function showScheduler(card, open){
-    const box = card.querySelector(".sched");
-    if (!box) return;
-    if (open) box.removeAttribute("hidden"); else box.setAttribute("hidden", "");
-    const toggle = card.querySelector("[data-sched-open]");
-    if (toggle) toggle.textContent = open ? "✕ Cancel" : "📅 Schedule this";
-    if (open) {
-      box.scrollIntoView({block: "nearest", behavior: "smooth"});
-      const day = box.querySelector(".sched-date");
-      if (day) day.focus();
-    }
-  }
-
-  async function scheduleTopic(card, box){
-    const id    = card.dataset.id;
-    const msg   = box.querySelector(".sched-msg");
-    const go    = box.querySelector("[data-sched-go]");
-    const day   = box.querySelector(".sched-date").value;
-    const time  = box.querySelector(".sched-time").value;
-    if (!day) { msg.className = "sched-msg err"; msg.textContent = "Pick a day first."; return; }
-
-    go.disabled = true;
-    msg.className = "sched-msg";
-    msg.textContent = "Adding…";
-    try {
-      const r = await fetch("/api/ai-sde/schedule", {
-        method: "POST", credentials: "same-origin",
-        headers: {"Content-Type": "application/json",
-                  "X-CSRFToken": (document.querySelector('meta[name=csrf-token]')||{}).content || ""},
-        // The title rides along with the id: "ai42" is the entry's INDEX
-        // in the bank, so a tab left open across a bank update would
-        // otherwise schedule whatever moved into slot 42. The server
-        // trusts the title and treats the id as a hint.
-        body: JSON.stringify({id: id, title: titleOf(id), plan_date: day, start_time: time}),
-      });
-      const out = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
-      msg.className = "sched-msg ok";
-      // "sending", not "sent": the Google mirror runs on a background
-      // thread that outlives this response, so claiming it is there
-      // would be a claim the server has not made.
-      msg.textContent = (out.status === "already-scheduled" ? "Already there — " : "Added — ")
-                      + (out.message || day)
-                      + (out.gcal_syncing ? " Sending it to Google Calendar too." : "");
-      if (window.showToast) showToast(out.message || "Scheduled", "success");
-    } catch (err) {
-      msg.className = "sched-msg err";
-      msg.textContent = "Could not schedule it: " + err.message;
-    } finally {
-      go.disabled = false;
-    }
   }
 
   const saveP = () => { saveLocal(); };
@@ -1001,7 +852,7 @@
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
-          <button class="q-sched-btn" type="button" data-sched-head title="Put this topic on a day" aria-label="Schedule this topic">📅<span class="lbl">Plan</span></button>
+          ${PrepScheduler.button("ai_sde", e.title, e.id)}
           <span class="q-chips">
             ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
             ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
@@ -1014,6 +865,12 @@
         <div class="q-body"></div>
       </div>`).join("") || '<div class="card"><div class="empty">No topics match.</div></div>';
   }
+
+  // The Plan button and its panel are owned by prep-scheduler.js, shared
+  // with /java and /interview-prep. It listens in the CAPTURE phase, so a
+  // press on Plan is handled and stopped before the card-toggle listener
+  // below ever sees it.
+  PrepScheduler.attach($("list"));
 
   $("list").addEventListener("click", (e) => {
     const card = e.target.closest(".q-card"); if(!card) return;
@@ -1048,47 +905,6 @@
       const opening = secs.some(d => !d.open);
       secs.forEach(d => { d.open = opening; });
       expand.textContent = opening ? "Collapse all" : "Expand all";
-      return;
-    }
-    // ── Schedule this topic onto a day ───────────────────────────────
-    // Every branch returns before the fall-through at the bottom, which
-    // would otherwise read a press on these buttons as a card toggle and
-    // fold the card shut mid-edit.
-    //
-    // The 📅 in the HEADER is the one that matters. Planning a week means
-    // scanning the list and dropping topics onto days — having to open a
-    // card first, on a page where opening a card fetches a ten-section
-    // deep dive, turns a minute of planning into ten.
-    const schedHead = e.target.closest("[data-sched-head]");
-    if (schedHead) {
-      card.classList.add("open");
-      // loadBody is a no-op once the body is in place, so this is safe to
-      // await either way — and awaiting is required, because on the first
-      // press the .sched box does not exist yet.
-      loadBody(card).then(() => showScheduler(card, true));
-      return;
-    }
-    const schedOpen = e.target.closest("[data-sched-open]");
-    if (schedOpen) {
-      showScheduler(card, card.querySelector(".sched").hasAttribute("hidden"));
-      return;
-    }
-    const schedGo = e.target.closest("[data-sched-go]");
-    if (schedGo) { scheduleTopic(card, schedGo.closest(".sched")); return; }
-    if (e.target.closest(".sched")) return;   // typing in the date/time fields
-    const grade = e.target.closest("[data-grade]");
-    if (grade) {
-      const qi = grade.closest(".qi");
-      const title = qi.closest("[data-quiz]").dataset.quiz;
-      const correct = grade.dataset.grade === "1";
-      const out = gradeItem(title, correct);
-      qi.classList.remove("graded-got", "graded-miss");
-      qi.classList.add(correct ? "graded-got" : "graded-miss");
-      qi.querySelector(".verdict").textContent = correct
-        ? `Back in ${out.days} day${out.days === 1 ? "" : "s"} · ${out.streak} in a row`
-        : "Back tomorrow. Seeing it again today would be re-reading, not recall.";
-      qi.querySelectorAll("[data-grade]").forEach(b => { b.disabled = true; });
-      refreshDue();
       return;
     }
     const tag = e.target.closest("[data-tag]");

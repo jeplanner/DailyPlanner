@@ -429,43 +429,104 @@ def test_it_needs_a_login(client):
 
 # ── the page ─────────────────────────────────────────────────────────
 
-def test_the_card_offers_the_button_and_defaults_to_no_time(auth_client):
-    html = auth_client.get("/ai-sde").get_data(as_text=True)
-    assert "data-sched-open" in html and "data-sched-go" in html
-    assert "/api/ai-sde/schedule" in html
-    assert 'class="sched-time"' in html
-    # The date field defaults to today computed LOCALLY — toISOString()
-    # would hand back yesterday all evening west of Greenwich.
-    assert "function todayISO" in html
-    assert "toISOString" not in html.split("function todayISO")[1][:400]
+
+def test_every_bank_page_offers_the_plan_button(auth_client):
+    """Three pages carry a bank of study topics and all three want the same
+    thing, so they share one implementation (static/js/prep-scheduler.js)
+    rather than three copies that drift the first time one is fixed.
+
+    Each page has to do three things and this checks all of them, because
+    missing any one leaves a button that renders and does nothing."""
+    for path, bank in (("/ai-sde", "ai_sde"),
+                       ("/java", "java"),
+                       ("/interview-prep", "behavioral")):
+        html = auth_client.get(path).get_data(as_text=True)
+        assert "js/prep-scheduler.js" in html, f"{path} does not load the module"
+        assert f'PrepScheduler.button("{bank}"' in html, f"{path} renders no Plan button"
+        assert "PrepScheduler.attach(" in html, f"{path} never wires the module"
+        # interview_prep_bp is NOT csrf-exempt, so a page without the token
+        # would render a button whose every press 400s.
+        assert 'name="csrf-token"' in html, f"{path} has no CSRF token to post with"
 
 
-def test_the_button_is_reachable_without_opening_a_card(auth_client):
-    """It shipped buried at the bottom of the card body, past a ten-section
-    deep dive and a dozen worked examples — several screens of scrolling
-    down, on a page where opening the card fetches all of that first. She
-    looked for it and did not find it.
-
-    Two fixes, both asserted here: a 📅 in the card HEADER, which renders
-    with the list and needs no card opened at all; and the panel moved to
-    the TOP of the body, above the prep-time line, rather than down beside
-    the PDF link."""
-    html = auth_client.get("/ai-sde").get_data(as_text=True)
-    assert "data-sched-head" in html, "no scheduler affordance in the card header"
-    # The header button sits in the same markup as the studied checkbox,
-    # which is what renders for every row of the list.
-    head = html.split('class="q-prac"')[1][:400]
-    assert "data-sched-head" in head, "the 📅 is not in the row header"
-    # It must LOOK pressable. A bare glyph at reduced opacity, sitting among
-    # six coloured chips, read as decoration — reported as "very dull",
-    # which for the page's only real control is a failure of the control.
+def test_the_shared_module_survives_the_host_pages_own_click_handler():
+    """Every one of the three pages has its own delegated click listener on
+    the same container, opening and closing cards — and the Plan button sits
+    inside the header that toggles them. Without the capture phase, whether
+    a press also folded the card shut would come down to which listener
+    happened to be registered first."""
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    assert "}, true);" in js, "the listener is not in the capture phase"
+    assert js.count("stopPropagation") >= 3, (
+        "the button, the submit and typing in the fields must all be stopped")
+    # LOCAL date. toISOString() converts to UTC first, so west of Greenwich
+    # the picker would open on yesterday for most of the evening. Comments
+    # are stripped first — the comment explaining the rule names the very
+    # call it forbids.
     import re
-    btn = re.search(r"\.q-sched-btn \{[^}]*\}", html).group(0)
-    assert "opacity" not in btn, "the button is dimmed again"
-    assert "background: var(--color-primary)" in btn, "the button has no fill"
-    assert ">Plan<" in html, "icon-only gives no clue what the button does"
-    # ...and inside the body, the panel comes before the prep-time section
-    # rather than after the follow-ups.
-    body = html.split("function bodyHTML")[1]
-    assert body.index("schedulerHTML()") < body.index('fld("plan"'), \
-        "the scheduler is buried below the card content again"
+    code = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+    code = re.sub(r"^\s*//.*$", "", code, flags=re.M)
+    assert "toISOString" not in code
+    assert "getFullYear" in code
+
+
+def test_the_plan_button_looks_like_a_button():
+    """A bare glyph at reduced opacity, on a row that already carries several
+    coloured chips, read as decoration — reported as "very dull", which for
+    the only real control on the row is a failure of the control."""
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    assert "opacity:.55" not in js and "opacity: .55" not in js
+    assert "background:var(--color-primary" in js, "the button has no fill"
+    assert "<span>Plan</span>" in js, "icon-only gives no clue what it does"
+
+
+def test_a_bank_the_registry_does_not_know_is_refused(auth_client, db):
+    r = auth_client.post("/api/prep/schedule",
+                         json={"bank": "nope", "title": TITLE,
+                               "plan_date": "2026-09-01"})
+    assert r.status_code == 400
+    assert db.inserted == []
+
+
+def test_each_bank_lands_in_its_own_project(auth_client, db):
+    """The whole point of the registry: a Java topic must not end up in the
+    AI/SDE syllabus."""
+    import java_bank
+    from interview_question_bank import QUESTIONS
+
+    cases = [
+        ("ai_sde", ip.AI_SDE_ENTRIES[3]["title"], "AISDEPrep"),
+        ("java", java_bank.ENTRIES[3]["title"], "JavaPrep"),
+        ("behavioral", QUESTIONS[3]["q"], "InterviewPrep"),
+    ]
+    for bank, title, project in cases:
+        fresh = FakeDB()
+        ip_get, ip_post = ip.get, ip.post
+        ip.get, ip.post = fresh.get, fresh.post
+        try:
+            out = auth_client.post("/api/prep/schedule",
+                                   json={"bank": bank, "title": title,
+                                         "plan_date": "2026-09-01"}).get_json()
+        finally:
+            ip.get, ip.post = ip_get, ip_post
+        assert out["status"] == "ok", (bank, out)
+        assert out["project"] == project, (bank, out)
+        assert fresh.only("projects")["name"] == project
+        assert fresh.only("project_tasks")["task_text"] == title
+        assert fresh.only("daily_events")["title"] == title
+        # The bucket line says which bank it came from — the bucket is a flat
+        # list with no project column to say it otherwise.
+        assert fresh.only("quick_bucket")["text"].startswith(project)
+
+
+def test_the_behavioural_bank_is_keyed_on_its_own_field():
+    """That bank calls the question text `q`, not `title`. Reading the wrong
+    field would resolve nothing and 404 every press."""
+    from interview_question_bank import QUESTIONS
+    q = QUESTIONS[7]
+    assert ip._prep_lookup("behavioral", "q7", None)[0] == q["q"]
+    assert ip._prep_lookup("behavioral", None, q["q"])[0] == q["q"]
+    # ...and the id prefixes are per-bank, so one bank's id is not another's.
+    import java_bank
+    assert ip._prep_lookup("java", "j2", None)[0] == java_bank.ENTRIES[2]["title"]
+    assert ip._prep_lookup("java", "ai2", None)[0] is None

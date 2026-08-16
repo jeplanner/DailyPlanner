@@ -1,8 +1,14 @@
 -- ============================================================
---  DailyPlanner — AISDEPrep project (AI/SDE topics onto the calendar)
+--  DailyPlanner — prep projects (study topics onto the calendar)
 --
---  Backs the "Schedule" button on /ai-sde: pick a topic, pick a day,
---  and it lands in three places at once —
+--  Backs the "Plan" button on the three study-bank pages — /ai-sde,
+--  /java and /interview-prep. Pick a topic, pick a day, and it lands in
+--  three places at once —
+--
+--  Each page has its OWN project (AISDEPrep / JavaPrep / InterviewPrep)
+--  so a Java topic never turns up in the AI/SDE syllabus. The file is
+--  named for the first of them because it has already been run under
+--  that name; re-running it adds the other two and nothing else.
 --
 --    * project_tasks  → the AISDEPrep project, so the whole syllabus
 --                       has one home and one progress view;
@@ -34,51 +40,69 @@
 --  Safe to re-run.
 -- ============================================================
 
--- ── 1. One active AISDEPrep per user ────────────────────────────────
+-- ── 1. One active project per user per prep bank ────────────────────
+-- Three study-bank pages schedule onto a day now — /ai-sde, /java and
+-- /interview-prep — and each drops its topics into its own project so a
+-- Java topic never lands in the AI/SDE syllabus. One index per name.
+--
 -- Wrapped rather than bare: if some environment already has two rows by
--- the same name, the index cannot be built, and that must not take the
+-- the same name, that index cannot be built, and that must not take the
 -- rest of this file down with it. The lazy get-or-create in the app
--- tolerates the index being absent — it selects before it inserts — so
+-- tolerates any of them being absent — it selects before it inserts — so
 -- a warning here is a warning, not a failure.
 do $$
+declare
+  p text;
 begin
-  begin
-    create unique index if not exists projects_one_aisdeprep_per_user
-      on projects (user_id)
-      where name = 'AISDEPrep' and is_archived = false;
-  exception when unique_violation then
-    raise notice 'projects_one_aisdeprep_per_user not created: a user already has more than one active AISDEPrep project. De-duplicate them and re-run.';
-  end;
+  foreach p in array array['AISDEPrep', 'JavaPrep', 'InterviewPrep']
+  loop
+    begin
+      execute format(
+        'create unique index if not exists projects_one_%s_per_user '
+        'on projects (user_id) where name = %L and is_archived = false',
+        lower(p), p);
+    exception when unique_violation then
+      raise notice '% index not created: a user already has more than one active % project. De-duplicate them and re-run.', p, p;
+    end;
+  end loop;
 end $$;
 
--- ── 2. Seed the project for everyone who already has projects ───────
--- Idempotent: the existence check means a re-run inserts nothing. Note
--- that this deliberately does NOT set is_default — that flag is the
--- Inbox slot (MIGRATION_DEFAULT_PROJECT.sql), one per user, and
--- AISDEPrep is a normal project that happens to have a known name.
+-- ── 2. Seed the projects for everyone who already has projects ──────
+-- Idempotent: the existence check means a re-run inserts nothing, which
+-- is what lets this file grow a bank without disturbing the ones already
+-- seeded. Note that this deliberately does NOT set is_default — that
+-- flag is the Inbox slot (MIGRATION_DEFAULT_PROJECT.sql), one per user,
+-- and these are normal projects that happen to have known names.
 do $$
 declare
   u text;
+  b record;
   seeded int := 0;
 begin
-  for u in
-    select distinct user_id from projects where user_id is not null
+  for b in
+    select * from (values
+      ('AISDEPrep',
+       'AI/SDE interview prep. Topics scheduled from /ai-sde land here.'),
+      ('JavaPrep',
+       'Java core interview prep. Topics scheduled from /java land here.'),
+      ('InterviewPrep',
+       'Behavioural / TPM interview prep. Questions scheduled from /interview-prep land here.')
+    ) as t(name, descr)
   loop
-    if not exists (
-      select 1 from projects
-       where user_id = u and name = 'AISDEPrep' and is_archived = false
-    ) then
-      insert into projects (user_id, name, description, is_archived)
-      values (
-        u,
-        'AISDEPrep',
-        'AI/SDE interview prep. Topics scheduled onto a day from the /ai-sde page land here.',
-        false
-      );
-      seeded := seeded + 1;
-    end if;
+    for u in
+      select distinct user_id from projects where user_id is not null
+    loop
+      if not exists (
+        select 1 from projects
+         where user_id = u and name = b.name and is_archived = false
+      ) then
+        insert into projects (user_id, name, description, is_archived)
+        values (u, b.name, b.descr, false);
+        seeded := seeded + 1;
+      end if;
+    end loop;
   end loop;
-  raise notice 'AISDEPrep seeded for % user(s)', seeded;
+  raise notice 'prep projects seeded: % row(s)', seeded;
 end $$;
 
 -- ── 3. Columns an older install may be missing ──────────────────────

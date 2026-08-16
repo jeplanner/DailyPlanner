@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="{{ url_for('static', filename='js/prep-scheduler.js') }}"></script>
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
@@ -659,6 +660,7 @@
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${practiced.has(q.id)?'checked':''} title="Mark practiced">
           <span class="q-text">${esc(q.q)}</span>
+          ${PrepScheduler.button("behavioral", q.q, q.id)}
           ${q.edited ? '<span class="q-edited">edited</span>' : ''}
           <span class="q-badge">${esc(qCatLabel[q.cat]||q.cat)}</span>
         </div>
@@ -696,6 +698,12 @@
     if (term) p.set("q", term);
     window.open("/interview-prep/behavioral/pdf" + (p.toString() ? "?"+p.toString() : ""), "_blank", "noopener");
   });
+
+  // The Plan button and its panel are owned by prep-scheduler.js, shared
+  // with /ai-sde and /java. It listens in the CAPTURE phase, so a press on
+  // Plan is handled and stopped before the card-toggle listener below ever
+  // sees it.
+  PrepScheduler.attach($("qbank-list"));
 
   $("qbank-list").addEventListener("click", async (e) => {
     const card = e.target.closest(".q-card"); if(!card) return;
