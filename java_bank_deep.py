@@ -13570,3 +13570,1039 @@ deliberately inverted by application servers (child-first, so a webapp's own lib
 bypassed downward by the thread context class loader, which is how a bootstrap class like
 `DriverManager` reaches an application-classpath driver at all.""",
 ]
+
+
+DEEP["Stack vs heap, and how a Java memory leak is even possible"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two memories with completely different rules
+
+THE STACK is per-thread scratch space for method calls. Every call pushes a FRAME holding that method's
+local variables and its working values; every return pops it. Reclamation is automatic and instant —
+the frame is gone the moment the method returns, with no bookkeeping and no collector involved.
+
+THE HEAP is one shared region where all objects live. It is shared by every thread, and nothing is
+reclaimed until the garbage collector decides nothing can reach it any more.
+
+    THE DIVISION IS SIMPLE ONCE STATED: EVERY OBJECT IS ON THE HEAP. EVERY LOCAL VARIABLE IS ON THE
+    STACK. And a local variable of a reference type holds a REFERENCE on the stack, pointing at an
+    object on the heap.
+
+    SO `int x = 5` inside a method puts the 5 on the stack. `Point p = new Point()` puts the OBJECT on
+    the heap and the reference to it on the stack. AND — this is the part people get wrong — `Point`'s
+    own `int x` field is on the HEAP, inside the object, not on the stack. WHETHER A PRIMITIVE IS ON
+    THE STACK DEPENDS ON WHETHER IT IS A LOCAL, NOT ON ITS TYPE.
+
+WHY THIS ENTRY EXISTS: because those two rules explain both of Java's memory failures, and they are
+completely different problems.
+
+    `StackOverflowError` — one thread's stack ran out of frames. Almost always runaway recursion. The
+    heap is untouched.
+    `OutOfMemoryError: Java heap space` — the heap is full of REACHABLE objects.
+
+    AND THE SECOND ONE IS WHY A LANGUAGE WITH GARBAGE COLLECTION STILL LEAKS. THE COLLECTOR FREES WHAT
+    IS UNREACHABLE, NOT WHAT IS UNUSED. It cannot tell that you are finished with an object; it can only
+    tell whether you can still GET to it. Keep a reference you have forgotten about and the object lives
+    forever, with the collector doing exactly its job.
+
+THE EVERYDAY VERSION: the stack is your desk — you take out what you need for the current task and it is
+cleared the moment you finish. The heap is the building's storage room, shared by everyone, where things
+are only removed when nobody anywhere has a note saying where they are. Forget you left a note in a
+drawer and that box stays forever, and the person clearing the room is behaving perfectly correctly.
+
+TERMS AS THEY APPEAR:
+- FRAME: one method call's slice of the stack — locals, operand stack, return address.
+- REACHABLE: there is a chain of references from a GC ROOT (a thread's stack, a static field, a JNI
+  reference) to the object.
+- OBSOLETE REFERENCE: a reference you still hold to something you will never use again. This is what a
+  Java memory leak IS.""",
+
+"""2. THE INTUITION — reachable is not the same as needed
+
+THE COLLECTOR'S QUESTION IS "CAN ANY RUNNING CODE STILL REACH THIS?" — never "will any code still USE
+this?" The second question is undecidable; the first is a graph traversal.
+
+    SO EVERY JAVA MEMORY LEAK HAS THE SAME SHAPE: A REFERENCE THAT OUTLIVES ITS USEFULNESS. Not a
+    missing `free`, not a double allocation — a chain from a GC root to something you are done with.
+
+    AND SINCE GC ROOTS ARE PRECISELY "thread stacks, static fields, JNI references", the leak sources
+    are predictable:
+
+    A `static` COLLECTION THAT ONLY GROWS. A static field is a root, so a cache with no eviction retains
+    everything ever put in it. THE MOST COMMON LEAK IN JAVA, and it is usually called a cache.
+    A LISTENER OR CALLBACK NEVER DEREGISTERED. The registry outlives the listener, and the listener
+    holds whatever it captured — often an entire enclosing object.
+    A `ThreadLocal` ON A POOLED THREAD. The thread is a root and it NEVER DIES, so the value is never
+    cleared. Classic in servlet containers and executors.
+    AN INNER CLASS INSTANCE HELD BY SOMETHING LONG-LIVED. It carries a hidden `this$0` to the enclosing
+    object.
+
+AND THE ONE FROM `Effective Java` THAT IS WORTH KNOWING BECAUSE IT LOOKS CORRECT:
+
+    public Object pop() {
+        if (size == 0) throw new EmptyStackException();
+        return elements[--size];          // ← the slot still holds the reference
+    }
+
+    The array slot at the old top still points at the popped object. `size` says the stack is shorter;
+    the ARRAY does not care. That object — and everything IT references — is reachable forever, or at
+    least until the slot is overwritten by a later push. THE FIX IS ONE LINE, `elements[size] = null;`,
+    and the reason it is worth knowing is that the leak is in code that looks obviously right.
+
+    THE PRINCIPLE GENERALISES: WHENEVER A CLASS MANAGES ITS OWN MEMORY, IT MUST NULL OUT OBSOLETE
+    REFERENCES. `ArrayList.remove` does exactly this internally.
+
+NOW THE STACK SIDE, WHICH HAS A DIFFERENT CHARACTER ENTIRELY:
+
+    Each thread gets its OWN stack, typically ~1 MB reserved (`-Xss`), which is roughly 10,000–20,000
+    frames of ordinary depth. When it runs out you get `StackOverflowError`.
+    THE CAUSE IS ALMOST ALWAYS RECURSION WITHOUT A BASE CASE, or recursion over data far deeper than
+    expected — a linked list of a million nodes traversed recursively, a deeply nested JSON document, a
+    cyclic object graph in a naive `toString`.
+    AND JAVA HAS NO TAIL-CALL OPTIMISATION. A tail-recursive method in Scheme or Scala runs in constant
+    stack; in Java it consumes a frame per call, exactly like any other call. THAT IS A REAL DESIGN
+    CONSTRAINT, not a detail: recursion depth in Java is bounded by memory, so any recursion over
+    user-supplied data is a potential denial of service. Convert it to iteration with an explicit stack.
+
+THE ONE PLACE THE CLEAN DIVISION BLURS: ESCAPE ANALYSIS. If the JIT can prove an object never escapes a
+compiled region, it can SCALAR REPLACE it — the object is never allocated at all and its fields become
+registers. So "objects are always on the heap" is true of the LANGUAGE and not always of the RUNTIME,
+which is why "avoid allocation" advice is often obsolete.""",
+
+"""3. THE MECHANISM — what a frame contains, what a root is, and where everything actually lives
+
+A STACK FRAME contains three things, and their sizes are FIXED AT COMPILE TIME:
+
+    THE LOCAL VARIABLE TABLE — slot 0 is `this` for an instance method, then the parameters, then the
+    locals. `long` and `double` take two slots.
+    THE OPERAND STACK — the working space for the bytecode. `iadd` pops two, pushes one.
+    A REFERENCE TO THE CONSTANT POOL, and the return address.
+
+    `max_locals` AND `max_stack` ARE IN THE CLASS FILE. The JVM knows exactly how big every frame will
+    be before the method runs, which is why frame allocation is a pointer bump and why the verifier can
+    prove the operand stack never underflows.
+
+WHERE EVERYTHING LIVES, precisely:
+
+    a local primitive             THE STACK, in the frame
+    a local reference             THE STACK — the reference itself
+    the object it points at       THE HEAP, always
+    an instance field, primitive  THE HEAP, inside the object — NOT the stack
+    an instance field, reference  THE HEAP, inside the object
+    a static field                the heap, reachable from the class
+    the array object              THE HEAP, even `int[]` — arrays are objects
+    the class's metadata          METASPACE, which is native memory, not the heap
+    a String literal              the string pool, which since Java 7 is in the heap
+
+    THE ROW PEOPLE GET WRONG IS THE FOURTH. `class Point { int x; }` — that `x` is on the heap. A
+    primitive is on the stack only when it is a LOCAL.
+
+GC ROOTS — the starting points for the reachability traversal, and therefore the complete list of places
+a leak can start:
+
+    every live thread's STACK (all locals in all frames);
+    STATIC fields of loaded classes;
+    JNI global references;
+    objects held by the JVM itself — the string pool, class objects, active monitors.
+
+    A LEAK IS A PATH FROM ONE OF THOSE TO SOMETHING YOU ARE DONE WITH. That is the entire definition,
+    and it is why a heap dump's DOMINATOR TREE is the right tool: it answers "what is retaining this",
+    which is exactly "which root, by which path".
+
+THE FIVE-LEVEL REFERENCE STRENGTH LADDER, since it is how you tell the collector about intent:
+
+    STRONG      an ordinary reference. Never collected while reachable.
+    SOFT        collected only when memory is tight. A memory-sensitive cache — though in practice a
+                bounded LRU cache behaves better and is easier to reason about.
+    WEAK        collected as soon as nothing STRONG points at the object. What `WeakHashMap` uses, and
+                the right tool for keying metadata by an object you do not own.
+    PHANTOM     for cleanup after collection, via a reference queue. `Cleaner` is built on this.
+    UNREACHABLE collected.
+
+    NOTE THE `WeakHashMap` TRAP: it holds keys weakly and VALUES STRONGLY. If a value references its own
+    key — directly or through a chain — the entry is immortal, and the class designed to prevent leaks
+    causes one.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `StackOverflowError` FROM UNBOUNDED RECURSION. The default ~1 MB stack gives roughly
+10,000–20,000 frames. The heap is untouched and raising `-Xmx` does nothing.
+
+CASE 2 — RECURSION OVER USER DATA. A deeply nested JSON document or a long linked list traversed
+recursively is a denial-of-service vector, because Java has no tail-call optimisation.
+
+CASE 3 — MUTUAL RECURSION BETWEEN `equals`, `hashCode` AND `toString` ON A CYCLIC OBJECT GRAPH. A
+`StackOverflowError` from code containing no visible loop or recursion.
+
+CASE 4 — RAISING `-Xss` TO "FIX" DEEP RECURSION. It multiplies across every thread — 1,000 threads at
+2 MB is 2 GB of reservation — and it delays the failure rather than removing it.
+
+CASE 5 — THE `static` CACHE WITH NO EVICTION. A static field is a GC root. Everything ever inserted is
+retained. Usually called a cache and usually never bounded.
+
+CASE 6 — THE UNREGISTERED LISTENER. The registry outlives the listener, which holds everything it
+captured.
+
+CASE 7 — `ThreadLocal` ON A POOLED THREAD. The thread never dies, so the value is never cleared. Always
+`remove()` in a `finally`.
+
+CASE 8 — THE OBSOLETE ARRAY SLOT. Decrementing a size without nulling the slot retains the popped
+object. Looks obviously correct.
+
+CASE 9 — A NON-STATIC INNER CLASS HANDED TO SOMETHING LONG-LIVED. The hidden `this$0` retains the whole
+enclosing object graph.
+
+CASE 10 — `WeakHashMap` WHOSE VALUES REFERENCE THEIR KEYS. Keys are weak, VALUES ARE STRONG, so the
+entry becomes immortal. The leak-prevention tool causing a leak.
+
+CASE 11 — `SoftReference` AS A CACHE STRATEGY. The collector decides when to clear them, so behaviour is
+unpredictable and it can clear everything under pressure and then refill. A bounded cache is more
+predictable.
+
+CASE 12 — ASSUMING SETTING A VARIABLE TO `null` HELPS. Inside a method it almost never does — the JIT
+already knows the variable is dead. It matters only for long-lived FIELDS and for array slots you
+manage yourself.
+
+CASE 13 — `System.gc()` TO "FREE" MEMORY. A hint, and under some collectors a full stop-the-world pause
+you did not want. It cannot free anything reachable, which is what a leak is.
+
+CASE 14 — A HEAP DUMP READ BY LOOKING FOR THE LARGEST OBJECT. The question is what RETAINS it. That is
+what the dominator tree answers.""",
+
+"""5. THE ALTERNATIVES — preventing leaks by construction
+
+BOUND EVERYTHING THAT ACCUMULATES. Caffeine or Guava with `maximumSize` and expiry for caches; a bounded
+`ArrayBlockingQueue` for work; a page size on every query. AN UNBOUNDED COLLECTION IS A MEMORY LEAK WITH
+A SCHEDULE, and this single rule prevents most real leaks.
+
+MAKE REGISTRATION SYMMETRIC. Whatever registers must unregister, ideally through try-with-resources or a
+lifecycle callback so the compiler or the framework enforces it rather than the reviewer.
+
+CLEAR `ThreadLocal`s IN A `finally`. Non-negotiable on any pooled thread.
+
+DECLARE NESTED CLASSES `static` UNLESS THEY NEED THE ENCLOSING INSTANCE. That removes the hidden
+`this$0` and the whole class of leak that comes with it.
+
+NULL OUT OBSOLETE REFERENCES WHEN YOU MANAGE YOUR OWN ARRAY. Only when you manage your own storage —
+inside an ordinary method it is noise.
+
+USE THE REFERENCE TYPES DELIBERATELY: `WeakReference` when you want to observe an object without keeping
+it alive; `WeakHashMap` for metadata keyed by an object you do not own — remembering that its values are
+strong. `Cleaner` for a native-resource backstop, never as the primary mechanism, and never `finalize()`,
+which is deprecated for removal.
+
+CONVERT RECURSION TO ITERATION for anything unbounded — an explicit `ArrayDeque` as your own stack. THE
+HEAP IS FAR LARGER THAN THE STACK AND GROWS, and this also removes the DoS vector from user-supplied
+depth.
+
+INCREASE `-Xss` ONLY FOR A GENUINELY DEEP ALGORITHM ON A SMALL NUMBER OF THREADS, and know that it
+multiplies by thread count.
+
+FOR VERY LARGE DATA, CONSIDER OFF-HEAP — `ByteBuffer.allocateDirect` or the Foreign Function & Memory
+API — so the collector never walks it. Right for huge caches and I/O buffers, wrong almost everywhere
+else, because you have reintroduced manual lifetime management.
+
+THE TOOLS, IN THE ORDER YOU SHOULD REACH FOR THEM:
+    `-Xlog:gc*` first — is old-gen occupancy after full GCs climbing? That answers leak-versus-capacity.
+    A heap dump plus Eclipse MAT's DOMINATOR TREE and LEAK SUSPECTS report — "what retains this".
+    JFR or async-profiler in allocation mode for CHURN rather than retention.
+    `jstack` for a `StackOverflowError` — the repeating frame pattern names the recursion immediately.
+
+WHAT TO SAY: "The collector frees what is UNREACHABLE, not what is unused — it cannot tell you are
+finished with an object, only whether you can still get to it. So every Java leak is a reference that
+outlived its usefulness, and since the roots are thread stacks, statics and JNI, the sources are
+predictable: unbounded static caches, un-deregistered listeners, ThreadLocals on pooled threads, and
+inner classes. Bounding every accumulating collection prevents most of them by construction."
+
+""",
+
+"""6. HOW TO FIND AND PREVENT A LEAK — numbered steps
+
+STEP 1 — SEPARATE THE TWO FAILURES FIRST. `StackOverflowError` is one thread's recursion; heap OOM is
+retention. They share nothing.
+
+STEP 2 — FOR A STACK OVERFLOW, READ THE STACK TRACE. The repeating frame pattern names the recursion in
+seconds. Look for a missing base case, or data deeper than you assumed.
+
+STEP 3 — CONVERT UNBOUNDED RECURSION TO ITERATION WITH AN EXPLICIT `ArrayDeque`. Java has no tail-call
+optimisation, so depth is bounded by memory and user-supplied depth is a DoS vector.
+
+STEP 4 — FOR A HEAP PROBLEM, CHECK OLD-GEN OCCUPANCY AFTER SUCCESSIVE FULL GCs. Climbing means a leak;
+a stable floor means capacity.
+
+STEP 5 — TAKE A HEAP DUMP AND OPEN THE DOMINATOR TREE. Ask what RETAINS the largest object, not what is
+largest.
+
+STEP 6 — TRACE THE PATH BACK TO A GC ROOT. It will end at a static field, a thread's stack, or a JNI
+reference — those are the only starting points there are.
+
+STEP 7 — CHECK THE FOUR USUAL SUSPECTS BY NAME: static collections, listener registries, `ThreadLocal`s
+on pooled threads, non-static inner classes held by something long-lived.
+
+STEP 8 — BOUND EVERY CACHE AND EVERY QUEUE. This one rule prevents most leaks before they exist.
+
+STEP 9 — MAKE EVERY `register` HAVE A MATCHING `unregister`, enforced by try-with-resources or a
+lifecycle hook.
+
+STEP 10 — `remove()` EVERY `ThreadLocal` IN A `finally`.
+
+STEP 11 — NULL OBSOLETE ARRAY SLOTS ONLY WHEN YOU MANAGE YOUR OWN STORAGE. Setting a local to null
+inside a method is noise; the JIT already knows.
+
+STEP 12 — DO NOT REACH FOR `System.gc()`. It cannot free anything reachable, and a leak is by definition
+reachable.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'The stack is per-thread scratch space for method calls: every call pushes a FRAME with that method's
+locals and working values, every return pops it, and reclamation is instant with no collector involved.
+The heap is one shared region where all objects live, and nothing is reclaimed until the GC decides
+nothing can reach it.
+
+The division: every OBJECT is on the heap, every LOCAL VARIABLE is on the stack, and a local of
+reference type holds a reference on the stack pointing at an object on the heap. The row people get
+wrong is instance FIELDS — `class Point { int x; }` puts that `x` on the HEAP, inside the object.
+Whether a primitive is on the stack depends on whether it's a local, not on its type.
+
+That gives two completely different failures. StackOverflowError is one thread's stack running out of
+frames — almost always runaway recursion, and the heap is untouched, so raising -Xmx does nothing.
+OutOfMemoryError heap space is the heap being full of REACHABLE objects.
+
+And the second one is why a garbage-collected language still leaks. THE COLLECTOR FREES WHAT IS
+UNREACHABLE, NOT WHAT IS UNUSED. It can't tell you're finished with an object — it can only tell whether
+you can still GET to it. That question is a graph traversal; the other one is undecidable.
+
+So every Java leak has the same shape: a reference that outlived its usefulness. And since the GC roots
+are exactly thread stacks, static fields and JNI references, the sources are predictable. A static
+collection that only grows — usually called a cache and usually unbounded, and it's the most common one.
+A listener never deregistered. A ThreadLocal on a POOLED thread, where the thread never dies so the
+value is never cleared. And a non-static inner class held by something long-lived, carrying its hidden
+this$0.
+
+The example I like is from Effective Java, because it looks obviously correct. A stack implemented over
+an array, where pop does `return elements[--size]`. The array slot at the old top still points at the
+popped object. Size says the stack is shorter; the ARRAY doesn't care. That object and everything it
+references is retained until the slot is overwritten. The fix is one line — null the slot — and the
+principle generalises: whenever a class manages its own memory, it has to null out obsolete references.
+ArrayList.remove does exactly this internally.
+
+On the stack side, the thing worth saying is that Java has NO TAIL-CALL OPTIMISATION. A tail-recursive
+method in Scala or Scheme runs in constant stack; in Java it consumes a frame per call like anything
+else. Which makes recursion depth bounded by memory — so any recursion over user-supplied data, a deeply
+nested JSON document say, is a potential denial of service. Convert it to iteration with an explicit
+ArrayDeque; the heap is far larger than the stack and it grows.
+
+One nuance: "objects are always on the heap" is true of the LANGUAGE, not always the runtime. If the JIT
+can prove an object never escapes, it scalar-replaces it — the object is never allocated and its fields
+become registers. Which is why a lot of "avoid allocation" advice is obsolete.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHERE THINGS ACTUALLY LIVE ──────────────────────────────────────
+    class Point { int x; Point next; }          // ← BOTH fields are on the HEAP,
+    //                                             inside the object
+    void m() {
+        int a = 5;                              // STACK — a local primitive
+        Point p = new Point();                  // the OBJECT is on the HEAP;
+        //                                         `p`, the REFERENCE, is on the stack
+        p.x = 7;                                // written into the HEAP object
+        int[] arr = new int[100];               // the ARRAY is on the heap — arrays
+        //                                         are objects, even int[]
+    }   // ← the frame pops. `a` and `p` vanish instantly, no collector involved.
+        //   The Point survives until nothing can reach it.
+
+    // ── STACK OVERFLOW: the heap is untouched ───────────────────────────
+    int depth(Node n) { return n == null ? 0 : 1 + depth(n.next); }
+    // ^ on a 1,000,000-node list: ~1 MB of stack gives ~10,000-20,000 frames →
+    //   StackOverflowError. Raising -Xmx does NOTHING; this is -Xss, and raising THAT
+    //   multiplies across every thread (1,000 threads × 2 MB = 2 GB reserved).
+    int depth(Node n) {                          // ← the fix: an explicit stack on the
+        int d = 0;                               //   HEAP, which is far larger and grows
+        for (Node c = n; c != null; c = c.next) d++;
+        return d;
+    }
+    // AND NOTE: Java has NO TAIL-CALL OPTIMISATION. The recursive version above IS
+    // tail-recursive and still consumes a frame per call. So recursion over
+    // user-supplied depth — nested JSON, for instance — is a DoS vector.
+
+    // ── THE LEAK THAT LOOKS OBVIOUSLY CORRECT ───────────────────────────
+    public Object pop() {
+        if (size == 0) throw new EmptyStackException();
+        return elements[--size];
+    //         ^^^^^^^^^^^^^^^^ THE SLOT STILL HOLDS THE REFERENCE. `size` says the
+    //   stack is shorter; the ARRAY does not care. The popped object — and everything
+    //   IT references — is reachable until that slot is overwritten by a later push.
+    }
+    public Object pop() {
+        if (size == 0) throw new EmptyStackException();
+        Object result = elements[--size];
+        elements[size] = null;                   // ← ONE LINE. Effective Java Item 7.
+        return result;
+    }
+    // The principle: WHENEVER A CLASS MANAGES ITS OWN MEMORY, NULL OUT OBSOLETE
+    // REFERENCES. ArrayList.remove does exactly this internally.
+
+    // ── THE FOUR CLASSIC LEAKS, EACH ROOTED SOMEWHERE ───────────────────
+    static final Map<String,Session> CACHE = new HashMap<>();  // ← a STATIC field is
+    //                                                            a GC ROOT. No
+    //                                                            eviction = retain all.
+    EventBus.register(this::onEvent);            // ← never deregistered; the registry
+    //                                              outlives you and holds `this`
+    static final ThreadLocal<Ctx> CTX = new ThreadLocal<>();
+    void handle() { CTX.set(new Ctx()); ... }    // ← on a POOLED thread that never
+    //                                              dies. Always remove() in a finally.
+    executor.submit(new Runnable() { public void run() { redraw(); } });
+    //              ^^^^^^^^^^^^^^ a non-static inner class, carrying a hidden this$0
+    //                             to the entire enclosing object
+
+    // ── THE LEAK-PREVENTION TOOL THAT LEAKS ─────────────────────────────
+    Map<Key,Value> m = new WeakHashMap<>();
+    m.put(key, valueThatReferencesItsOwnKey);
+    // ^ WeakHashMap holds KEYS weakly and VALUES STRONGLY. If the value can reach the
+    //   key, the key is strongly reachable, so the entry is IMMORTAL.
+
+    // ── WHAT DOES NOT HELP ──────────────────────────────────────────────
+    p = null;              // inside a method: almost always noise. The JIT already
+    //                        knows `p` is dead after its last use.
+    System.gc();           // a HINT, and it cannot free anything REACHABLE — which is
+    //                        exactly what a leak is.""",
+
+"""9. THE TRACE — one call, and one object that never dies
+
+TRACE 1 — WHAT A CALL DOES TO THE STACK. `main` calls `process(3)`, which calls `helper()`:
+
+    stack (grows downward)                     heap
+    ---------------------------------------------------------------------------------
+    [main]        args, cfg → ────────────────► Config@0x100
+    [process]     n=3, p   → ─────────────────► Point@0x200
+    [helper]      tmp=7, s → ─────────────────► String@0x300
+    ---------------------------------------------------------------------------------
+    helper returns  → its frame POPS. `tmp` and `s` are gone INSTANTLY. No collector
+                      ran. String@0x300 is now unreachable and will be collected
+                      whenever the GC next looks.
+    process returns → its frame pops. Point@0x200 becomes unreachable.
+    ---------------------------------------------------------------------------------
+    STACK RECLAMATION IS FREE AND IMMEDIATE; HEAP RECLAMATION IS DEFERRED AND COSTS A TRAVERSAL. Two
+    memories, two completely different reclamation models, and every difference in this entry follows
+    from that.
+
+TRACE 2 — THE SAME CALL, WITH ONE LINE ADDED.
+
+    void process(int n) {
+        Point p = new Point();
+        CACHE.put("last", p);          // ← CACHE is a static field
+    }
+    ---------------------------------------------------------------------------------
+    process returns  → the frame pops, `p` is gone from the stack
+    the GC runs      → is Point@0x200 reachable?
+                       CACHE (a STATIC FIELD — a GC ROOT) → HashMap → Point@0x200
+                       YES. RETAINED.
+    ---------------------------------------------------------------------------------
+    NOTHING IN `process` LOOKS WRONG. The local went out of scope exactly as expected. A reference was
+    handed to something rooted, and that is the entire mechanism of every Java leak.
+
+TRACE 3 — THE ARRAY SLOT, step by step. A stack holding three elements:
+
+    step                     size   elements[]                    reachable?
+    ---------------------------------------------------------------------------------
+    after 3 pushes           3      [A, B, C, null, ...]           A, B, C
+    pop() → returns C        2      [A, B, C, null, ...]           A, B, AND C
+                                        ^^^ THE SLOT STILL POINTS AT C
+    caller discards C        2      [A, B, C, null, ...]           A, B, and C —
+                                                                   because the ARRAY
+                                                                   still reaches it
+    push(D)                  3      [A, B, D, null, ...]           A, B, D. C is
+                                                                   finally free.
+    ---------------------------------------------------------------------------------
+    IF THE STACK NEVER GROWS BACK, C IS RETAINED FOREVER — along with everything C references, which for
+    a session object or a document might be megabytes. And a stack that peaked at 10,000 and now holds
+    10 retains 9,990 obsolete references.
+
+TRACE 4 — STACK OVERFLOW, and why the trace is the diagnosis:
+
+    Exception in thread "main" java.lang.StackOverflowError
+        at Parser.parseValue(Parser.java:88)
+        at Parser.parseObject(Parser.java:42)
+        at Parser.parseValue(Parser.java:91)
+        at Parser.parseObject(Parser.java:42)
+        ... repeated ~11,000 times
+    ---------------------------------------------------------------------------------
+    THE REPEATING PAIR NAMES THE RECURSION IMMEDIATELY. Two frames alternating means mutual recursion
+    between `parseValue` and `parseObject` — here, parsing a deeply nested JSON document. The heap is at
+    12%; `-Xmx` is irrelevant. The choices are a depth limit on the input, a bigger `-Xss` (which
+    multiplies by thread count and only delays it), or an iterative parser with an explicit `ArrayDeque`.
+
+    AND NOTE WHAT THIS MEANS SECURITY-WISE: if that JSON came from a request, an attacker chooses the
+    recursion depth. Because Java has no tail-call optimisation, there is no depth at which the runtime
+    saves you.
+
+WHAT PRODUCED WHAT:
+    FRAMES POPPING ON RETURN     produced trace 1's instant reclamation — and the absence of any leak
+                                 risk on the stack.
+    REACHABILITY FROM A ROOT     produced traces 2 and 3. Both are "a reference reached something
+                                 rooted", and neither line of code looks wrong.
+    NO TAIL-CALL OPTIMISATION    produced trace 4, and turned a parser into an availability risk.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Stack: per thread, ~1 MB reserved by default (`-Xss`), roughly 10,000–20,000 ordinary frames.
+    Frame allocation is a pointer bump; `max_locals` and `max_stack` are fixed in the class file.
+    Heap: shared, bounded by `-Xmx`, reclaimed by a traversal from GC roots.
+    GC roots: thread stacks, static fields, JNI references, and JVM-internal structures. That list is
+    the complete set of places a leak can start.
+    No tail-call optimisation: recursion depth is bounded by stack memory, always.
+    Escape analysis can eliminate an allocation entirely — so "always on the heap" is a language
+    statement, not a runtime guarantee.
+
+THE #1 MISTAKE: believing a garbage-collected language cannot leak. It frees the UNREACHABLE, not the
+unused.
+
+THE #2 MISTAKE: an unbounded static collection called a cache. A static field is a root; nothing in it
+is ever collectable.
+
+THE #3 MISTAKE: a listener never deregistered. Registration without matching removal is a leak by
+construction.
+
+THE #4 MISTAKE: a `ThreadLocal` on a pooled thread. The thread never dies, so nothing clears it.
+
+THE #5 MISTAKE: a non-static inner class handed to something long-lived. The hidden `this$0` retains the
+whole enclosing graph.
+
+THE #6 MISTAKE: not nulling obsolete array slots in a class that manages its own storage. The
+`Effective Java` stack, and it looks correct.
+
+THE #7 MISTAKE: raising `-Xmx` for a `StackOverflowError`. Wrong memory entirely — and raising `-Xss`
+multiplies across every thread.
+
+THE #8 MISTAKE: recursion over user-supplied depth. With no tail-call optimisation, that is a denial of
+service.
+
+THE #9 MISTAKE: `WeakHashMap` whose values can reach their keys. Values are held STRONGLY, so the entry
+is immortal.
+
+THE #10 MISTAKE: `SoftReference` as a cache policy. The collector decides, unpredictably. A bounded LRU
+cache is better behaved.
+
+THE #11 MISTAKE: setting locals to `null` for "hygiene". Noise inside a method; the JIT already knows.
+
+THE #12 MISTAKE: `System.gc()` to fix a leak. It cannot free anything reachable, and reachable is what a
+leak is.
+
+ONE-SENTENCE TAKEAWAY: the stack is per-thread frames reclaimed instantly on return, the heap is shared
+objects reclaimed only when UNREACHABLE — and that word is why Java leaks, because the collector cannot
+tell you are finished with an object, only whether some chain from a thread stack, a static field or a
+JNI reference can still get to it; every leak is therefore an OBSOLETE REFERENCE, which is why the
+sources are so predictable (unbounded static caches, un-deregistered listeners, `ThreadLocal`s on pooled
+threads, inner classes, and array slots a class forgot to null), and why the stack has no leaks at all
+but does have a hard ceiling — Java has no tail-call optimisation, so recursion depth is bounded by
+memory and any recursion over user-supplied data is an availability risk that should be an explicit
+`ArrayDeque` on the heap instead.""",
+]
+
+
+DEEP["switch — fall-through, strings, and the expression form"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the statement that keeps going, and the expression that does not
+
+The old `switch` has a behaviour nobody would design today: WHEN A CASE MATCHES, EXECUTION FALLS INTO
+EVERY CASE BELOW IT until it hits a `break`. Matching selects a STARTING POINT, not a block.
+
+    switch (day) {
+        case 1: print("Mon");     // ← day == 1 prints Mon, Tue AND Wed
+        case 2: print("Tue");
+        case 3: print("Wed"); break;
+    }
+
+    A MISSING `break` IS A SILENT LOGIC BUG. It compiles, it runs, and it does something plausible-
+    looking. This is inherited from C — where fall-through was genuinely useful for hand-optimised
+    jump tables — and Java kept it in 1995 for familiarity.
+
+JAVA 14 ADDED THE ARROW FORM, WHICH FIXES IT AND MORE:
+
+    switch (day) {
+        case 1 -> print("Mon");        // NO fall-through. Ever.
+        case 2, 3 -> print("Midweek"); // several labels, one arm
+    }
+
+    AND — the more important change — `switch` BECAME AN EXPRESSION that produces a value:
+
+        String name = switch (day) {
+            case 1, 7 -> "weekend";
+            default   -> "weekday";
+        };
+
+    An expression must produce a value on every path, so the compiler now CHECKS EXHAUSTIVENESS. Over
+    an enum or a sealed type, that means you cannot forget a case — and if you add a new constant, code
+    that does not handle it FAILS TO COMPILE.
+
+    THAT IS THE REAL UPGRADE. The old form could be wrong in two silent ways (a missing `break`, a
+    missing case); the new form makes both of them compile errors.
+
+THE EVERYDAY VERSION: the old switch is a set of instructions on one long page where "start at step 4"
+means you also do steps 5, 6 and 7 unless someone wrote STOP. The new one is a lookup table: find the
+row, do that row, done — and the table refuses to be printed with a row missing.
+
+TERMS AS THEY APPEAR:
+- FALL-THROUGH: continuing into the next case because there was no `break`.
+- ARROW LABEL: `case X ->`. No fall-through, in statements as well as expressions.
+- EXHAUSTIVE: every possible value is covered, checked by the compiler.
+- `yield`: returns a value from a multi-statement arm of a switch EXPRESSION.""",
+
+"""2. THE INTUITION — why `switch` exists at all, and why the types are so restricted
+
+A CHAIN OF `if`/`else if` COMPARES ONE VALUE AGAINST EACH CANDIDATE IN TURN — O(n) comparisons. `switch`
+exists because a compiler can often do better than that, and the bytecode reflects it directly:
+
+    `tableswitch`   used when the case values are DENSE (1, 2, 3, 4, 5). It is a JUMP TABLE: subtract
+                    the low value, index an array of offsets, jump. O(1), REGARDLESS OF HOW MANY CASES.
+    `lookupswitch`  used when the values are SPARSE (1, 100, 5000). Sorted key/offset pairs, searched
+                    binary — O(log n).
+
+    SO A DENSE `switch` OVER 200 CASES IS ONE INDEXED JUMP, while the equivalent if-else chain averages
+    100 comparisons. That is the whole reason the construct exists, and it is why javac will sometimes
+    emit a `tableswitch` with padding entries for a slightly sparse set — a jump table with gaps still
+    beats a search.
+
+AND THAT EXPLAINS THE TYPE RESTRICTIONS, WHICH OTHERWISE LOOK ARBITRARY:
+
+    ALLOWED: `byte`, `short`, `char`, `int` and their wrappers, `String`, `enum` — and, since Java 21,
+    any reference type with patterns.
+    NOT ALLOWED: `long`, `float`, `double`, `boolean`.
+
+    `long` IS THE INTERESTING OMISSION. It is excluded because both switch bytecodes index on an `int`
+    — a 64-bit jump table is not a thing. `float` and `double` are excluded because equality on them is
+    not what anyone wants (see `NaN`, and `0.1 + 0.2`). `boolean` is excluded because `if` already
+    exists.
+
+    THE STRING CASE IS A COMPILER TRICK, and it is worth knowing because it explains a NullPointerException
+    people find mysterious: a `String` switch compiles to TWO switches — first a `lookupswitch` on
+    `hashCode()`, then an `equals()` check to guard against hash collisions, mapping to an index, then a
+    second `tableswitch` on that index. WHICH MEANS SWITCHING ON A NULL STRING CALLS `hashCode()` ON
+    NULL. Hence: a `switch` on a null reference throws NPE, and always did.
+
+THE ENUM CASE IS ALSO SYNTHETIC. javac generates a hidden `$SwitchMap` array mapping each constant's
+ORDINAL to a small dense int, so an enum switch is a `tableswitch`. This indirection exists so that
+adding a constant to the enum does not silently shift the meaning of already-compiled code — the map is
+rebuilt per compilation unit.
+
+    BUT NOTE WHAT IT DOES NOT PROTECT YOU FROM: in the OLD statement form, adding a constant means the
+    switch silently does nothing for it. Only the EXPRESSION form, checked for exhaustiveness, turns
+    that into a compile error.""",
+
+"""3. THE MECHANISM — the four forms, and what `default` costs you
+
+THERE ARE FOUR COMBINATIONS, and knowing which one you are writing is most of the topic:
+
+    COLON STATEMENT      `case 1: ...; break;`      FALLS THROUGH. The legacy form.
+    ARROW STATEMENT      `case 1 -> ...;`           NO fall-through. Still a statement; not exhaustive.
+    COLON EXPRESSION     `case 1: yield x;`         Produces a value; `yield` instead of `break`.
+    ARROW EXPRESSION     `case 1 -> x;`             Produces a value. THE FORM TO PREFER.
+
+    THE ARROW FORM REMOVED FALL-THROUGH IN STATEMENTS TOO, which is often overlooked — you get the
+    safety without needing a value.
+
+`yield` VS `return`, since this trips people:
+    `yield x` produces the value of the SWITCH EXPRESSION.
+    `return x` returns from the ENCLOSING METHOD — and inside a switch EXPRESSION it is a compile error,
+    because an expression must produce a value where it sits.
+    In an arrow arm with a block body you need `yield`:
+        case 1 -> { var t = compute(); yield t * 2; }
+
+EXHAUSTIVENESS, WHICH IS THE WHOLE POINT OF THE EXPRESSION FORM:
+    A switch EXPRESSION must produce a value for every possible input.
+    Over an `enum` covering every constant, or over a `sealed` type covering every permitted subtype,
+    NO `default` IS NEEDED — the compiler can see the full set.
+    Over anything else — an `int`, a `String` — a `default` is required, because the set is open.
+
+AND THE ONE RULE THAT MATTERS MOST IN PRACTICE: DO NOT WRITE `default` IN AN EXHAUSTIVE ENUM OR SEALED
+SWITCH.
+
+    With no `default`, adding a constant BREAKS THE BUILD at every site that needs updating — which is
+    exactly what you want, and it is a guarantee virtual dispatch never gave you.
+    With a `default`, adding a constant compiles fine and silently falls into it. YOU HAVE TRADED A
+    COMPILE ERROR FOR A RUNTIME SURPRISE, in one word.
+    (The compiler still inserts a hidden default that throws `IncompatibleClassChangeError` if the enum
+    changes without recompilation — so the runtime is protected even though your code is not.)
+
+PATTERN MATCHING (JAVA 21) EXTENDS ALL OF THIS to any reference type:
+    TYPE PATTERNS        `case Circle c -> c.radius()`
+    RECORD PATTERNS      `case Circle(double r) -> r`      — deconstruction, and nestable
+    GUARDS               `case Integer i when i > 100 -> ...`
+    `case null`          previously impossible; without it a switch on a null reference still THROWS,
+                         which preserves the old behaviour and surprises people in new code.
+    ORDER NOW MATTERS: labels are tested in order, so a more general pattern before a more specific one
+    is a compile error — dominance checking, which the old form never needed.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — A MISSING `break` IN THE COLON FORM. Execution continues into every case below. Compiles,
+runs, and produces a plausible wrong answer.
+
+CASE 2 — INTENTIONAL FALL-THROUGH WITH NO COMMENT. Indistinguishable from a bug during review. If you
+mean it, say so — and prefer `case 1, 2, 3 ->` in the arrow form, which expresses grouping without
+fall-through.
+
+CASE 3 — `switch` ON A NULL `String` OR ENUM. Throws `NullPointerException`, because the compiled form
+calls `hashCode()` or `ordinal()` on it. Java 21 lets you write `case null`; without it the old
+behaviour is preserved.
+
+CASE 4 — SWITCHING ON A `long`. Not allowed, because both switch bytecodes index on an `int`. Neither
+are `float`, `double` or `boolean`.
+
+CASE 5 — ADDING AN ENUM CONSTANT WITH AN OLD-STYLE STATEMENT SWITCH. Nothing breaks; the new constant
+silently matches nothing. Only an exhaustive EXPRESSION turns this into a compile error.
+
+CASE 6 — WRITING `default` IN AN EXHAUSTIVE ENUM SWITCH. It compiles and discards the exhaustiveness
+guarantee. One word, and the whole benefit is gone.
+
+CASE 7 — A `String` SWITCH ASSUMED TO BE FAST. It is a hash lookup PLUS an `equals` call per candidate
+in the bucket, not a jump table. Fast, but not free, and case-sensitive.
+
+CASE 8 — VARIABLES DECLARED IN A COLON CASE. The whole switch body is ONE scope, so a variable declared
+in `case 1:` is visible (and possibly unassigned) in `case 2:`. Braces around each arm, or the arrow
+form, fixes it.
+
+CASE 9 — `return` INSIDE A SWITCH EXPRESSION. A compile error; use `yield`. `return` inside a switch
+STATEMENT is fine and returns from the method.
+
+CASE 10 — MIXING COLON AND ARROW LABELS IN ONE SWITCH. Not allowed. Pick one form.
+
+CASE 11 — `case` LABELS MUST BE COMPILE-TIME CONSTANTS in the classic form. A `static final` variable
+works; a plain variable does not.
+
+CASE 12 — PATTERN DOMINANCE. `case Object o` before `case String s` is a compile error, because the
+first can never let the second run. The old form never needed this rule.
+
+CASE 13 — A SWITCH EXPRESSION WITH AN ARM THAT ALWAYS THROWS. Legal, and it does not need to yield —
+throwing is a valid way to complete.
+
+CASE 14 — SPARSE `int` CASES. The compiler emits `lookupswitch` (binary search) rather than a jump
+table. Still good, and not the O(1) people assume.""",
+
+"""5. THE ALTERNATIVES — and when `switch` is the wrong shape entirely
+
+THE ARROW SWITCH EXPRESSION IS THE DEFAULT for anything selecting a value from a closed set. Prefer it
+over the colon form everywhere, even when you do not need a value, because it removes fall-through.
+
+A `Map` LOOKUP when the mapping is data rather than logic. `Map<String, Handler>` populated once beats a
+fifty-case switch: it is extensible without recompiling the switch, testable, and often clearer. USE A
+SWITCH FOR BRANCHING LOGIC AND A MAP FOR A LOOKUP TABLE — a switch whose arms all just return a constant
+was probably always a map.
+
+POLYMORPHISM when the behaviour genuinely belongs to the type and the set of types is OPEN. A switch on
+a type code is the classic smell; an abstract method removes it. THE TRADE IS THE EXPRESSION PROBLEM:
+virtual dispatch makes adding TYPES easy and adding OPERATIONS hard; a sealed type plus a switch makes
+adding OPERATIONS easy and adding types a compile error everywhere. Pick by which axis moves.
+
+ENUM WITH CONSTANT-SPECIFIC BODIES when the behaviour belongs to the constants:
+
+    enum Op { PLUS { int apply(int a, int b) { return a + b; } },
+              TIMES { int apply(int a, int b) { return a * b; } };
+              abstract int apply(int a, int b); }
+
+    IMPOSSIBLE TO FORGET A CASE — the compiler requires every constant to implement the abstract method.
+    Better than a switch when there is exactly one operation; worse when there are ten, because it puts
+    unrelated concerns inside the enum.
+
+SEALED INTERFACE + RECORDS + PATTERN SWITCH when the alternatives carry different DATA. This is the
+modern shape for algebraic data, and exhaustiveness is the payoff.
+
+A STRATEGY OBJECT or a rules engine when the branching is configuration rather than code.
+
+`if`/`else if` when there are two or three cases, or when the conditions are ranges or compound
+predicates rather than equality on one value. A switch on `true` with guards is a trick, not a
+readability win.
+
+WHAT NOT TO DO: a giant switch on a type code, or the same switch duplicated in five places. The second
+is the real signal — a switch repeated over the same set in several files is asking to become
+polymorphism or a sealed hierarchy.
+
+WHAT TO SAY: "The arrow expression form, always — it removes fall-through and, over an enum or sealed
+type, gives EXHAUSTIVENESS CHECKING, so adding a constant breaks the build instead of silently doing
+nothing. And I would deliberately omit `default` there, because that one word trades the compile error
+back for a runtime surprise."
+
+""",
+
+"""6. HOW TO WRITE SWITCHES WELL — numbered steps
+
+STEP 1 — USE THE ARROW FORM. `case X ->`. It removes fall-through in statements as well as expressions,
+so there is no reason to write the colon form in new code.
+
+STEP 2 — PREFER THE EXPRESSION FORM WHEN YOU ARE PRODUCING A VALUE. It forces every path to produce one,
+which is where the checking comes from.
+
+STEP 3 — OVER AN ENUM OR SEALED TYPE, OMIT `default`. That is what makes adding a constant a compile
+error at every site that needs attention.
+
+STEP 4 — GROUP LABELS WITH COMMAS, NOT FALL-THROUGH. `case SATURDAY, SUNDAY ->`.
+
+STEP 5 — USE `yield` FOR MULTI-STATEMENT ARMS. `return` inside a switch expression is a compile error.
+
+STEP 6 — HANDLE `null` EXPLICITLY where it is possible. Without `case null`, a switch on a null reference
+throws.
+
+STEP 7 — IF EVERY ARM JUST RETURNS A CONSTANT, USE A `Map`. That was a lookup table, not branching logic.
+
+STEP 8 — IF THE SAME SWITCH APPEARS IN SEVERAL PLACES OVER THE SAME SET, REACH FOR POLYMORPHISM OR A
+SEALED HIERARCHY. Duplication over one set is the signal.
+
+STEP 9 — IF YOU MUST USE THE COLON FORM, COMMENT EVERY INTENTIONAL FALL-THROUGH. Otherwise no reviewer
+can distinguish it from a bug.
+
+STEP 10 — BRACE EACH COLON ARM IF YOU DECLARE VARIABLES. The whole body is one scope otherwise.
+
+STEP 11 — ORDER PATTERNS FROM SPECIFIC TO GENERAL. A dominating pattern first is a compile error, and
+that check is helping you.
+
+STEP 12 — DO NOT SWITCH ON A `long`. It is not allowed, and the reason — both bytecodes index on an
+`int` — is worth knowing rather than working around blindly.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'The old switch has a behaviour nobody would design today: when a case matches, execution falls into
+every case BELOW it until it hits a break. Matching selects a STARTING POINT, not a block. So a missing
+break is a silent logic bug — it compiles, it runs, and it does something plausible. That's inherited
+from C, where fall-through was genuinely useful for hand-written jump tables, and Java kept it in 1995
+for familiarity.
+
+Java 14 added the arrow form, which removes fall-through — and importantly it does that in STATEMENTS
+too, not just expressions, so you get the safety without needing a value. And then switch became an
+EXPRESSION that produces a value. That's the real upgrade, because an expression has to produce a value
+on every path, which means the compiler CHECKS EXHAUSTIVENESS. Over an enum or a sealed type you can't
+forget a case, and adding a new constant makes code that doesn't handle it fail to compile. The old form
+could be wrong in two silent ways — missing break, missing case — and the new form turns both into
+compile errors.
+
+It's worth knowing why switch exists at all, because it explains the type restrictions. An if-else chain
+is O(n) comparisons. Switch compiles to one of two bytecodes: tableswitch, which is a real JUMP TABLE
+for dense values — subtract the low value, index an array, jump, O(1) regardless of case count — or
+lookupswitch for sparse values, which is a binary search. A dense switch over 200 cases is one indexed
+jump where the if-else chain averages 100 comparisons.
+
+And that explains the allowed types. You can switch on byte, short, char, int, their wrappers, String and
+enum. You CANNOT switch on long — because both bytecodes index on an int, and a 64-bit jump table isn't
+a thing. Not float or double either, because equality on them isn't what anyone wants. Not boolean,
+because if already exists.
+
+String switch is a compiler trick worth knowing, because it explains an NPE people find mysterious: it
+compiles to TWO switches — a lookupswitch on hashCode, then an equals check to guard against collisions,
+then a second switch on an index. Which means switching on a null String calls hashCode on null. That's
+why a switch on a null reference throws, and always did. Java 21 finally lets you write `case null`.
+
+The rule I'd emphasise most: over an enum or sealed type, DON'T write default. With no default, adding a
+constant breaks the build at every site that needs updating — which is exactly what you want. With a
+default it compiles fine and silently falls into it. One word, and you've traded a compile error for a
+runtime surprise.
+
+And one design point: if every arm just returns a constant, that was a lookup table, not branching
+logic — use a Map. And if the same switch over the same set appears in five files, that's the signal to
+reach for polymorphism or a sealed hierarchy instead.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── FALL-THROUGH: matching picks a STARTING POINT, not a block ──────
+    switch (day) {
+        case 1: print("Mon");        // day == 1 prints Mon, Tue AND Wed
+        case 2: print("Tue");        // ← no break, so execution CONTINUES here
+        case 3: print("Wed"); break;
+    }
+    // Compiles. Runs. Produces a plausible wrong answer. Inherited from C.
+
+    // ── THE ARROW FORM: no fall-through, IN STATEMENTS TOO ──────────────
+    switch (day) {
+        case 1 -> print("Mon");
+        case 2, 3 -> print("Midweek");   // ← grouping WITHOUT fall-through
+    }
+    // Often overlooked: you get the safety here without needing a value.
+
+    // ── THE EXPRESSION FORM: the compiler now checks you ────────────────
+    String kind = switch (day) {
+        case SATURDAY, SUNDAY -> "weekend";
+        case MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY -> "weekday";
+    };
+    // NO `default`. Every enum constant is covered, so the compiler is satisfied —
+    // AND if someone adds a constant, THIS LINE STOPS COMPILING. That is the point.
+
+    String kind = switch (day) {
+        case SATURDAY, SUNDAY -> "weekend";
+        default -> "weekday";            // ← ONE WORD, and the guarantee is gone.
+    };
+    // Adding a constant now compiles fine and silently falls into default. You traded
+    // a compile error for a runtime surprise.
+
+    // ── yield, NOT return ───────────────────────────────────────────────
+    int v = switch (code) {
+        case 1 -> 10;
+        case 2 -> { var t = compute(); yield t * 2; }   // ← block body needs yield
+    //                                  ^^^^^ `return` here is a COMPILE ERROR: an
+    //   expression must produce a value where it sits, not leave the method.
+        default -> 0;
+    };
+
+    // ── WHY THE ALLOWED TYPES ARE WHAT THEY ARE ─────────────────────────
+    // tableswitch : DENSE values → subtract the low value, index an array, JUMP. O(1)
+    //               regardless of how many cases.
+    // lookupswitch: SPARSE values → sorted key/offset pairs, binary search. O(log n).
+    //
+    // switch (someLong)    ✗ NOT ALLOWED — both bytecodes index on an INT. A 64-bit
+    //                        jump table is not a thing.
+    // switch (someDouble)  ✗ equality on doubles is not what anyone wants (see NaN)
+    // switch (someBoolean) ✗ `if` already exists
+
+    // ── THE NPE THAT LOOKS MYSTERIOUS ───────────────────────────────────
+    String s = null;
+    switch (s) { case "a" -> ...; default -> ...; }   // → NullPointerException
+    // A String switch compiles to TWO switches: a lookupswitch on hashCode(), an
+    // equals() check to guard against hash collisions, then a tableswitch on an index.
+    // SO IT CALLS hashCode() ON NULL. Same story for enums, via ordinal().
+    switch (s) { case null -> "none"; case "a" -> ...; default -> ...; }   // Java 21
+
+    // ── THE COLON-FORM SCOPE TRAP ───────────────────────────────────────
+    switch (x) {
+        case 1: int n = compute(); break;
+        case 2: print(n);          // ← n IS IN SCOPE HERE, and unassigned. The whole
+    }                              //   switch body is ONE scope. Brace each arm, or
+    //                                 use the arrow form.
+
+    // ── AND WHEN switch IS THE WRONG SHAPE ──────────────────────────────
+    String label = switch (code) {
+        case "A" -> "Alpha"; case "B" -> "Bravo"; /* ...48 more... */
+    };
+    static final Map<String,String> LABELS = Map.of("A","Alpha","B","Bravo", ...);
+    // ^ If every arm just returns a constant, IT WAS A LOOKUP TABLE, NOT BRANCHING
+    //   LOGIC. And the same switch repeated across five files is the signal to reach
+    //   for polymorphism or a sealed hierarchy instead.""",
+
+"""9. THE TRACE — the same decision, four ways, and what each catches
+
+THE SETUP: an enum `Status { NEW, ACTIVE, CLOSED }` and code that maps a status to a message. Then
+someone adds `ARCHIVED`.
+
+    FORM 1 — COLON STATEMENT, missing break
+    ---------------------------------------------------------------------------------
+    switch (s) {
+        case NEW:    msg = "new";
+        case ACTIVE: msg = "active"; break;
+        case CLOSED: msg = "closed"; break;
+    }
+    input NEW  → sets msg = "new", FALLS THROUGH, sets msg = "active", breaks
+               → msg is "active"
+    ---------------------------------------------------------------------------------
+    WRONG ANSWER, NO ERROR, NO WARNING. And it is one missing keyword on a line that reads correctly.
+
+    FORM 2 — COLON STATEMENT, correct breaks, then ARCHIVED is added
+    ---------------------------------------------------------------------------------
+    compile → SUCCEEDS. Nothing mentions ARCHIVED.
+    input ARCHIVED → no case matches, no default → the switch does NOTHING
+                   → msg keeps whatever it had before, or is null
+    ---------------------------------------------------------------------------------
+    THE SECOND SILENT FAILURE. The enum grew and the switch did not, and the build was perfectly happy.
+
+    FORM 3 — ARROW EXPRESSION WITH `default`, then ARCHIVED is added
+    ---------------------------------------------------------------------------------
+    msg = switch (s) { case NEW -> "new"; case ACTIVE -> "active";
+                       case CLOSED -> "closed"; default -> "unknown"; };
+    compile → SUCCEEDS.
+    input ARCHIVED → "unknown"
+    ---------------------------------------------------------------------------------
+    BETTER THAN FORM 2 — at least the value is defined — AND THE COMPILER STILL SAID NOTHING. You get a
+    plausible default in production instead of a build failure in CI. That is the trade `default` makes,
+    and it is why omitting it is a deliberate choice rather than an oversight.
+
+    FORM 4 — ARROW EXPRESSION, NO `default`, then ARCHIVED is added
+    ---------------------------------------------------------------------------------
+    msg = switch (s) { case NEW -> "new"; case ACTIVE -> "active";
+                       case CLOSED -> "closed"; };
+    compile → ERROR: the switch expression does not cover all possible input values
+    ---------------------------------------------------------------------------------
+    EVERY SITE THAT NEEDS ATTENTION IS LISTED, BEFORE ANYTHING SHIPS. Four forms, one enum change, and
+    only the fourth tells you.
+
+NOW THE BYTECODE TRACE, which explains the type restrictions:
+
+    case values        bytecode        how it dispatches            cost
+    ---------------------------------------------------------------------------------
+    1, 2, 3, 4, 5      tableswitch     index = value - 1;            O(1)
+                                       jump to offsets[index]
+    1, 100, 5000       lookupswitch    binary search over sorted     O(log n)
+                                       (key, offset) pairs
+    1, 2, 3, 9         tableswitch     a jump table WITH PADDING     O(1) — javac
+                                       for 4..8                     accepts some waste
+                                                                    to keep the table
+    equivalent if-else n/a             compare in turn               O(n), averaging
+                                                                    n/2
+    ---------------------------------------------------------------------------------
+    A DENSE SWITCH OVER 200 CASES IS ONE INDEXED JUMP. The if-else chain averages 100 comparisons. That
+    difference is the entire reason the construct exists — and it is why `long` is excluded, since both
+    bytecodes index on an `int`.
+
+AND THE STRING TRACE, which explains the NPE:
+
+    switch ("beta") { case "alpha" -> 1; case "beta" -> 2; default -> 0; }
+    step  what the compiled code does
+    ---------------------------------------------------------------------------------
+    1     lookupswitch on "beta".hashCode()      ← THE CALL THAT NPEs ON NULL
+    2     hash matched a bucket → call "beta".equals("beta")   ← guards against a hash
+                                                                 collision
+    3     set a synthetic index = 1
+    4     tableswitch on that index → the "beta" arm
+    ---------------------------------------------------------------------------------
+    TWO SWITCHES AND AN equals CALL. Fast, and not the single jump people assume — and step 1 is exactly
+    why `switch (nullString)` has always thrown.
+
+WHAT PRODUCED WHAT:
+    C HERITAGE               produced fall-through, and form 1.
+    STATEMENTS NOT NEEDING   produced form 2 — nothing required the switch to be complete.
+    A VALUE
+    EXPRESSIONS NEEDING      produced form 4's compile error. Exhaustiveness is a consequence of
+    A VALUE                  having to produce one.
+    int-INDEXED BYTECODES    produced the allowed-type list, including the absence of `long`.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `tableswitch`: O(1) — subtract, index, jump. Used for dense case values.
+    `lookupswitch`: O(log n) binary search. Used for sparse values.
+    An if-else chain: O(n), averaging n/2 comparisons.
+    A `String` switch: a hash lookup plus an `equals` call — two switches, not one jump.
+    An `enum` switch: a synthetic `$SwitchMap` from ordinal to a dense int, then `tableswitch`.
+    Allowed: byte, short, char, int and wrappers, String, enum, and (Java 21) any reference with
+    patterns. NOT long, float, double or boolean.
+
+THE #1 MISTAKE: a missing `break` in the colon form. Silent, plausible, and one keyword.
+
+THE #2 MISTAKE: writing `default` in an exhaustive enum or sealed switch. It compiles and destroys the
+guarantee that made the expression form worth using.
+
+THE #3 MISTAKE: adding an enum constant with old-style statement switches in the codebase. Nothing
+breaks and nothing happens for the new constant.
+
+THE #4 MISTAKE: `switch` on a possibly-null `String` or enum. It calls `hashCode()`/`ordinal()` and
+throws. `case null` since Java 21.
+
+THE #5 MISTAKE: `return` inside a switch expression. A compile error; use `yield`.
+
+THE #6 MISTAKE: declaring variables in a colon arm without braces. The whole body is one scope.
+
+THE #7 MISTAKE: intentional fall-through with no comment. Unreviewable. Use comma-separated labels
+instead.
+
+THE #8 MISTAKE: mixing colon and arrow labels in one switch. Not allowed.
+
+THE #9 MISTAKE: assuming every switch is a jump table. Sparse values give a binary search, and String
+gives a hash lookup plus `equals`.
+
+THE #10 MISTAKE: a fifty-case switch whose arms all return constants. That is a `Map`.
+
+THE #11 MISTAKE: the same switch over the same set duplicated across files. That is polymorphism or a
+sealed hierarchy asking to be written.
+
+THE #12 MISTAKE: ordering patterns general-to-specific. A dominating label first is a compile error, and
+that check is helping you.
+
+ONE-SENTENCE TAKEAWAY: the classic `switch` selects a STARTING POINT rather than a block, so a missing
+`break` falls into every case below it silently — while the arrow form removes fall-through (in
+statements as well as expressions) and the EXPRESSION form, by requiring a value on every path, gives
+the compiler exhaustiveness checking, which is why adding an enum constant breaks the build at every
+site that matters unless you write `default` and trade that compile error back for a runtime surprise;
+underneath, `switch` exists because dense cases compile to a `tableswitch` jump table that is O(1)
+regardless of case count, which is also why you cannot switch on a `long` (both bytecodes index on an
+`int`) and why switching on a null `String` throws — the compiled form calls `hashCode()` on it.""",
+]
