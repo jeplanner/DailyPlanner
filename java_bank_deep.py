@@ -19578,3 +19578,1541 @@ fast path hides that fact from almost everyone, `split(".")` returns an empty ar
 splits into characters — use `split(regex, -1)` for structured data, `Pattern.quote` when the delimiter
 is data, and a real CSV library for CSV.""",
 ]
+
+
+DEEP["char arithmetic, and the cast that compound assignment hides"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — a character that is really a number, and an assignment that casts
+
+    System.out.println('a' + 1);          // 98        ← not "b"
+    System.out.println((char)('a' + 1));  // b
+    System.out.println('a' + 'b');        // 195       ← not "ab"
+
+    `char` IS A NUMBER. Specifically an UNSIGNED 16-bit integer from 0 to 65,535, and `'a'` is simply a
+    readable way of writing 97. Arithmetic on it promotes to `int`, exactly like `byte` and `short`, so
+    the RESULT of any arithmetic is an `int` and prints as a number.
+
+    THAT IS HALF THE ENTRY. THE OTHER HALF IS WORSE, BECAUSE IT IS INVISIBLE:
+
+    char c = 'a';
+    c += 1;                               // 'b'. Fine.
+    c = c + 1;                            // ✗ DOES NOT COMPILE — int cannot be assigned to char
+
+    THE SAME OPERATION, WRITTEN TWO WAYS, AND ONE OF THEM COMPILES. Because COMPOUND ASSIGNMENT CONTAINS
+    AN IMPLICIT CAST. The specification says `E1 op= E2` means `E1 = (T)((E1) op (E2))` where `T` is
+    E1's type. `c += 1` is really `c = (char)(c + 1)`.
+
+    AND THAT HIDDEN CAST IS NOT LIMITED TO `char`:
+
+        int i = 5;  i *= 1.5;             // 7. Not 7.5. Not a compile error.
+        byte b = 127;  b += 1;            // -128. Silently.
+
+    A NARROWING CONVERSION THAT WOULD BE A COMPILE ERROR WRITTEN OUT IS INSERTED FOR YOU BY `+=`. It is
+    the only place in Java where a lossy conversion happens with no cast in the source.
+
+THE EVERYDAY VERSION: a letter that is secretly a serial number. Add one and you get a number, not the
+next letter — unless you explicitly ask for it back as a letter. And a shorthand form of "add" that
+quietly rounds the answer to fit the box, where the longhand form would have refused.
+
+TERMS AS THEY APPEAR:
+- BINARY NUMERIC PROMOTION: `byte`, `short` and `char` become `int` before any arithmetic.
+- COMPOUND ASSIGNMENT: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `>>>=`.
+- CODE UNIT: one 16-bit piece of UTF-16. A `char` is one of these — NOT necessarily one character.""",
+
+"""2. THE INTUITION — everything smaller than an int becomes an int
+
+JAVA HAS NO ARITHMETIC ON TYPES SMALLER THAN `int`. There are no bytecodes for adding two `byte`s or two
+`char`s; the JVM's arithmetic instructions operate on `int`, `long`, `float` and `double` only.
+
+    SO `byte`, `short` AND `char` ARE PROMOTED TO `int` BEFORE ANY OPERATION, and the result is an
+    `int`. That is why:
+
+    'a' + 1        is an int (98)
+    'a' + 'b'      is an int (195)
+    byte + byte    is an int
+    -'a'           is an int
+    'a' < 'b'      compares two ints — which is why character comparison works at all
+
+    AND IT IS WHY `System.out.println('a' + 1)` PRINTS 98: overload resolution picks `println(int)`,
+    because the expression's type is `int`. `println('a')` picks `println(char)` and prints `a`. The
+    method chosen follows the promoted type, not what you meant.
+
+    THE CONCATENATION VERSION IS THE SAME RULE WEARING A DISGUISE:
+        `"" + 'a' + 'b'`   → `"ab"`   (String + char = String, twice, left to right)
+        `'a' + 'b' + ""`   → `"195"`  (char + char = int FIRST, then int + String)
+    SAME TOKENS, DIFFERENT ORDER, DIFFERENT ANSWER — and left-to-right associativity is the whole
+    explanation.
+
+NOW THE COMPOUND-ASSIGNMENT RULE, WHICH IS THE PART WORTH REMEMBERING:
+
+    `E1 op= E2`  ≡  `E1 = (T)((E1) op (E2))`   where T is the type of E1.
+
+    THE CAST IS IN THE SPECIFICATION. It exists so that `byte b = 0; b += 1;` compiles — without it,
+    every compound assignment on a `byte`, `short` or `char` would require an explicit cast, which would
+    have made the operators nearly useless on those types in 1995.
+
+    THE PRICE IS THAT `+=` WILL NARROW SILENTLY WHERE `=` REFUSES:
+        `int i = 5; i = i * 1.5;`   ✗ compile error: double cannot be assigned to int
+        `int i = 5; i *= 1.5;`      ✓ compiles, and gives 7
+        `byte b = 127; b = b + 1;`  ✗ compile error
+        `byte b = 127; b += 1;`     ✓ compiles, and gives −128
+
+    SO THE TWO FORMS ARE NOT INTERCHANGEABLE, and the shorter one is the more dangerous. It is the ONE
+    place in Java where a lossy conversion happens without a cast appearing in the source.
+
+AND THE THIRD PIECE — `char` IS A UTF-16 CODE UNIT, NOT A CHARACTER:
+
+    A `char` holds 16 bits, so it covers U+0000 to U+FFFF. Everything above that — emoji, many CJK
+    extension characters, historic scripts, mathematical alphanumerics — is a SURROGATE PAIR: two
+    `char`s.
+    THEREFORE `"😀".length()` IS 2, `charAt(0)` RETURNS HALF A CHARACTER, and reversing a string by
+    swapping `char`s corrupts it. `codePoints()` and `codePointAt` are the correct level, and they
+    existed long before emoji made anyone care.""",
+
+"""3. THE MECHANISM — the promotion rules, and where the cast is inserted
+
+BINARY NUMERIC PROMOTION, in order:
+    if either operand is `double` → both to `double`
+    else if either is `float`     → both to `float`
+    else if either is `long`      → both to `long`
+    else                          → BOTH TO `int`
+
+    THAT LAST LINE IS THE ONE THAT MATTERS HERE. `byte`, `short` and `char` never survive an operation;
+    they are promoted and the result is at least an `int`.
+
+UNARY PROMOTION does the same for `+x`, `-x`, `~x` and the shift operands — which is why `-'a'` is an
+`int`, and why `byte b = -b;` does not compile.
+
+WHAT THE COMPILER EMITS FOR `c += 1` where `c` is a `char`:
+    iload  c          (already widened to int in the local slot)
+    iconst_1
+    iadd
+    i2c               ← THE INSERTED NARROWING. `int` to `char`.
+    istore c
+
+    `i2c`, `i2b`, `i2s` ARE REAL BYTECODES, and their presence is the cast the specification describes.
+    You can see them in `javap -c` — which is the quickest way to settle any argument about this.
+
+THE CONSTANT-EXPRESSION EXCEPTION, which is why some assignments compile and near-identical ones do not:
+
+    char c = 'a' + 1;      ✓ compiles. `'a' + 1` is a COMPILE-TIME CONSTANT (98) that FITS in a char,
+                             so an implicit narrowing conversion is permitted.
+    int x = 1;
+    char c = 'a' + x;      ✗ does not compile. `x` is not a constant, so the result is just an `int`.
+    final int x = 1;
+    char c = 'a' + x;      ✓ compiles again — a `final` local with a constant initialiser IS a constant.
+
+    ONE KEYWORD FLIPS IT, which is the same constant-expression rule that governs `String` interning and
+    the inlining of `static final` fields.
+
+DIGIT AND LETTER ARITHMETIC, which is what `char` maths is actually FOR:
+
+    `c - '0'`            converts a digit character to its value. Works because ASCII digits are
+                         contiguous — and so are they in Unicode for `0`-`9`.
+    `c - 'a'`            an index into the alphabet. Correct for ASCII letters ONLY.
+    `(char)('a' + i)`    the inverse.
+    `Character.isDigit(c)` is UNICODE-AWARE and returns true for Arabic-Indic and Devanagari digits too;
+    `c >= '0' && c <= '9'` is ASCII-only. THEY ARE NOT INTERCHANGEABLE, and which you want depends on
+    whether you are parsing a protocol or reading human text.
+    `Character.getNumericValue(c)` handles the Unicode cases; `c - '0'` does not.
+
+AND ONE MORE PROPERTY: `char` IS THE ONLY UNSIGNED TYPE IN JAVA. `byte` is signed −128..127, `short` is
+signed, `int` and `long` are signed. `char` is 0..65,535. Which makes it occasionally useful as an
+unsigned 16-bit number — and makes `(char) someNegativeInt` wrap to a large positive value rather than
+staying negative.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `System.out.println('a' + 1)` PRINTS 98. The expression is an `int`, so `println(int)` is
+chosen. Cast to `char` to print a letter.
+
+CASE 2 — `'a' + 'b'` IS 195, NOT `"ab"`. Both promote to `int`. `"" + 'a' + 'b'` is `"ab"`, because
+left-to-right associativity makes the first operation a String concatenation.
+
+CASE 3 — `byte b = 127; b += 1;` GIVES −128. The compound assignment inserted `(byte)`, and the value
+wrapped. No warning.
+
+CASE 4 — `int i = 5; i *= 1.5;` GIVES 7. The inserted `(int)` truncates. `i = i * 1.5` would be a
+compile error.
+
+CASE 5 — `char c = 'a' + 1;` COMPILES, `char c = 'a' + x;` DOES NOT. The first is a compile-time
+constant that fits; adding `final` to `x` makes the second compile too.
+
+CASE 6 — `"😀".length()` IS 2. A `char` is a UTF-16 CODE UNIT, and anything above U+FFFF is a surrogate
+pair.
+
+CASE 7 — `charAt(0)` ON A SURROGATE PAIR returns half a character, which renders as a replacement
+glyph and breaks any comparison.
+
+CASE 8 — REVERSING A STRING BY SWAPPING `char`s corrupts surrogate pairs. `StringBuilder.reverse()`
+handles them correctly; a hand-rolled loop does not.
+
+CASE 9 — `c >= '0' && c <= '9'` VERSUS `Character.isDigit(c)`. The second is Unicode-aware and returns
+true for Arabic-Indic digits. Choose deliberately.
+
+CASE 10 — `c - 'a'` ON NON-ASCII LETTERS. Meaningless outside the ASCII range, and silently produces a
+number.
+
+CASE 11 — `(char) someNegativeInt` WRAPS TO A LARGE POSITIVE. `char` is the only unsigned type in Java.
+
+CASE 12 — `char + char` OVERFLOWING NOTHING. The result is an `int`, so no overflow occurs — but
+assigning it back to a `char` with a compound operator wraps at 65,535.
+
+CASE 13 — `switch` ON A `char` IS FINE, but `case 97:` and `case 'a':` are the same case and cannot both
+appear.
+
+CASE 14 — `Character.toUpperCase(c)` FOR NON-ASCII. Some characters have no single-`char` uppercase form
+(German ß uppercases to "SS"), so the `String` version is the correct one for text.""",
+
+"""5. THE ALTERNATIVES — the right tool for each of the three problems
+
+FOR "I WANT THE NEXT LETTER" — cast explicitly: `(char)('a' + i)`. Short, correct, and the cast documents
+that a narrowing is happening.
+
+FOR "I WANT A DIGIT'S VALUE":
+    `c - '0'` for ASCII protocol data. Fast, and clear.
+    `Character.digit(c, 10)` or `Character.getNumericValue(c)` for anything Unicode, which returns −1
+    for non-digits rather than a nonsense number.
+    `Integer.parseInt(s)` for whole numbers — never build a number character by character when a parser
+    exists.
+
+FOR TEXT THAT MAY CONTAIN ANYTHING ABOVE U+FFFF:
+    `s.codePoints()` — an `IntStream` of real code points, and the correct level for iteration.
+    `s.codePointAt(i)`, `s.codePointCount(a, b)`, `s.offsetByCodePoints(i, n)`.
+    `StringBuilder.reverse()` rather than a hand-rolled swap, because it handles surrogate pairs.
+    AND EVEN CODE POINTS ARE NOT THE END OF IT: a "user-perceived character" is a GRAPHEME CLUSTER — an
+    emoji with a skin-tone modifier, or a letter with a combining accent, is several code points that
+    display as one. `java.text.BreakIterator.getCharacterInstance()` is the correct tool when what you
+    mean is "one thing the user sees".
+
+FOR COMPOUND ASSIGNMENT — WRITE THE LONG FORM WHEN THE TYPES DIFFER. `i = (int)(i * 1.5)` states the
+truncation; `i *= 1.5` hides it. If the cast is deliberate, make it visible; if it is not, the long form
+turns it into a compile error, which is what you wanted.
+
+FOR CHARACTER CLASSIFICATION — the `Character` static methods, which are Unicode-aware: `isDigit`,
+`isLetter`, `isLetterOrDigit`, `isWhitespace`, `isUpperCase`. Hand-rolled range checks are ASCII-only and
+that is sometimes right and usually not.
+
+FOR CASE CONVERSION ON TEXT — `String.toUpperCase(Locale)` rather than `Character.toUpperCase`, because
+some mappings are not one-to-one (ß → SS) and some are locale-dependent (the Turkish dotless ı).
+
+FOR BULK BYTE WORK — do not use `char` at all. `byte[]` with an explicit `Charset`. Using `char` as a
+byte container is a bug that works until the input is not ASCII.
+
+WHAT TO SAY: "`char` is an unsigned 16-bit number, so arithmetic promotes it to `int` and `'a' + 1` is
+98. The part that actually causes bugs is that compound assignment contains an IMPLICIT CAST — `c += 1`
+is `c = (char)(c + 1)`, which is why `byte b = 127; b += 1;` silently gives −128 and `i *= 1.5`
+truncates, while the written-out forms are compile errors. And a `char` is a UTF-16 code unit rather than
+a character, so anything above U+FFFF is a surrogate pair and `codePoints()` is the correct level."
+
+""",
+
+"""6. HOW TO WORK WITH char — numbered steps
+
+STEP 1 — REMEMBER ARITHMETIC ON `char` YIELDS AN `int`. If you want a character back, cast explicitly.
+
+STEP 2 — TREAT `+=` AS CONTAINING A CAST. `E1 op= E2` is `E1 = (T)((E1) op (E2))`, and that cast can
+narrow silently.
+
+STEP 3 — WHEN THE OPERAND TYPES DIFFER, WRITE THE LONG FORM. `i = (int)(i * 1.5)` if you mean it;
+`i = i * 1.5` if you want the compiler to object.
+
+STEP 4 — BE SUSPICIOUS OF `+=` ON `byte`, `short` AND `char`. Those are the types where wrapping is
+close by.
+
+STEP 5 — USE `codePoints()` FOR TEXT, `charAt` ONLY FOR ASCII PROTOCOL DATA. A `char` is a code unit.
+
+STEP 6 — USE `StringBuilder.reverse()` RATHER THAN SWAPPING `char`s. It handles surrogate pairs.
+
+STEP 7 — USE `BreakIterator` WHEN YOU MEAN "ONE THING THE USER SEES". Even a code point is not a
+grapheme cluster.
+
+STEP 8 — USE `Character.isDigit`/`isLetter` FOR HUMAN TEXT AND RANGE CHECKS FOR PROTOCOLS. Decide which
+you mean; they differ on Arabic-Indic digits and much else.
+
+STEP 9 — USE `String.toUpperCase(Locale.ROOT)` FOR TOKENS AND `toUpperCase(locale)` FOR TEXT. Some
+mappings are not one-to-one and some are locale-dependent.
+
+STEP 10 — NEVER USE `char` AS A BYTE CONTAINER. `byte[]` with an explicit `Charset`.
+
+STEP 11 — REMEMBER `char` IS UNSIGNED. Casting a negative `int` to `char` gives a large positive value.
+
+STEP 12 — RUN `javap -c` WHEN AN ASSIGNMENT SURPRISES YOU. The `i2c`, `i2b` and `i2s` instructions are
+the inserted casts, in plain sight.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`char` is a number — specifically an unsigned 16-bit integer from 0 to 65,535, and `'a'` is a readable
+way of writing 97. Java has no arithmetic on types smaller than `int`; there are no bytecodes for adding
+two chars. So byte, short and char are all PROMOTED to int before any operation, and the result is an
+int.
+
+That's why `System.out.println('a' + 1)` prints 98 rather than "b" — the expression's type is int, so
+overload resolution picks println(int). And why `'a' + 'b'` is 195. The concatenation version is the same
+rule in disguise: `"" + 'a' + 'b'` is "ab" because the first operation is String plus char, while
+`'a' + 'b' + ""` is "195" because the first operation is char plus char. Same tokens, different order,
+different answer, and left-to-right associativity explains all of it.
+
+But the half that actually causes bugs is compound assignment, because it contains an IMPLICIT CAST. The
+specification says `E1 op= E2` means `E1 = (T)((E1) op (E2))` where T is E1's type. So `c += 1` is really
+`c = (char)(c + 1)`.
+
+Which means these two are not interchangeable, and the shorter one is the dangerous one. `byte b = 127;
+b = b + 1;` is a compile error. `b += 1` compiles and gives you MINUS 128. `int i = 5; i = i * 1.5;` is a
+compile error. `i *= 1.5` compiles and gives 7. It's the one place in Java where a lossy conversion
+happens with no cast appearing in the source.
+
+The cast is in the spec deliberately — without it, every `+=` on a byte, short or char would need an
+explicit cast, which would have made the operators almost useless on those types. So it's a usability
+decision with a sharp edge, not an oversight. And you can see it directly: `javap -c` shows `i2c`, `i2b`
+and `i2s` instructions, which ARE the inserted cast.
+
+There's a related constant-expression rule worth knowing. `char c = 'a' + 1;` compiles, because that's a
+compile-time constant that fits in a char. `char c = 'a' + x;` doesn't, because x isn't constant. Add
+`final` to x and it compiles again — one keyword, same rule that governs String interning and the
+inlining of static final fields.
+
+And the third piece: a `char` is a UTF-16 CODE UNIT, not a character. It's 16 bits, so it covers up to
+U+FFFF, and everything above that — emoji, CJK extensions, historic scripts — is a surrogate PAIR. So
+`"😀".length()` is 2, charAt(0) gives you half a character, and reversing a string by swapping chars
+corrupts it. `codePoints()` is the correct level. And even a code point isn't a user-perceived character
+— an emoji with a skin-tone modifier is several code points displayed as one, which is what
+BreakIterator is for.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── char IS A NUMBER ────────────────────────────────────────────────
+    System.out.println('a');              // a      ← println(char)
+    System.out.println('a' + 1);          // 98     ← the expression is an INT, so
+    //                                                 println(int) is chosen
+    System.out.println((char)('a' + 1));  // b
+    System.out.println('a' + 'b');        // 195    ← both promote to int
+    System.out.println(-'a');             // -97    ← unary promotion too
+
+    // Java has NO arithmetic on types smaller than int. There are no bytecodes for
+    // adding two chars, so byte/short/char are PROMOTED and the result is an int.
+
+    // ── THE SAME RULE, WEARING A DISGUISE ───────────────────────────────
+    System.out.println("" + 'a' + 'b');   // "ab"   ← String+char first, twice
+    System.out.println('a' + 'b' + "");   // "195"  ← char+char = int FIRST
+    // Same tokens. Different order. Left-to-right associativity is the whole story.
+
+    // ── THE CAST THAT IS NOT IN THE SOURCE ──────────────────────────────
+    // JLS 15.26.2:   E1 op= E2   ≡   E1 = (T)((E1) op (E2))    where T is E1's type
+    char c = 'a';
+    c += 1;                   // ✓ 'b'    — really c = (char)(c + 1)
+    c = c + 1;                // ✗ COMPILE ERROR: int cannot be converted to char
+    //                             THE SAME OPERATION. One compiles.
+
+    byte b = 127;
+    b = b + 1;                // ✗ compile error
+    b += 1;                   // ✓ compiles → -128. SILENTLY.
+
+    int i = 5;
+    i = i * 1.5;              // ✗ compile error: double cannot be converted to int
+    i *= 1.5;                 // ✓ compiles → 7. The inserted (int) TRUNCATES.
+
+    // THE ONE PLACE IN JAVA WHERE A LOSSY CONVERSION HAPPENS WITH NO CAST IN SIGHT.
+    // The cast is in the spec so that `byte b = 0; b += 1;` compiles at all —
+    // a usability decision with a sharp edge, not an oversight.
+
+    // ── AND YOU CAN SEE IT ──────────────────────────────────────────────
+    // javap -c on `c += 1`:
+    //   iload_1        (the char sits in an int-sized local slot)
+    //   iconst_1
+    //   iadd
+    //   i2c            ← THE INSERTED NARROWING. i2b and i2s are the byte/short ones.
+    //   istore_1
+
+    // ── THE CONSTANT-EXPRESSION EXCEPTION ───────────────────────────────
+    char c1 = 'a' + 1;        // ✓ a COMPILE-TIME CONSTANT (98) that FITS in a char
+    int x = 1;
+    char c2 = 'a' + x;        // ✗ x is not constant → the result is just an int
+    final int y = 1;
+    char c3 = 'a' + y;        // ✓ a final local with a constant initialiser IS constant
+    // One keyword flips it — the same rule that governs String interning and the
+    // inlining of static final fields.
+
+    // ── WHAT char ARITHMETIC IS ACTUALLY FOR ────────────────────────────
+    int digit = c - '0';                    // digit character → value. ASCII.
+    char letter = (char)('a' + index);      // index → letter.  ASCII.
+    Character.digit(c, 10);                 // Unicode-aware; -1 for a non-digit
+    Character.isDigit(c);                   // TRUE for Arabic-Indic digits too
+    c >= '0' && c <= '9';                   // ASCII ONLY. Not interchangeable.
+
+    // ── char IS A CODE UNIT, NOT A CHARACTER ────────────────────────────
+    "😀".length();                          // 2  ← a SURROGATE PAIR
+    "😀".charAt(0);                         // half a character
+    "😀".codePointCount(0, 2);              // 1  ← the correct count
+    "😀".codePoints().count();              // 1
+    new StringBuilder(s).reverse();         // handles surrogate pairs correctly
+    // a hand-rolled char swap does NOT.
+    BreakIterator.getCharacterInstance();   // for "one thing the USER sees" — an
+    //                                         emoji with a skin-tone modifier is
+    //                                         several code points shown as one
+
+    // ── AND THE ONLY UNSIGNED TYPE IN JAVA ──────────────────────────────
+    (char) -1;                // 65535, not -1. char is 0..65535.
+    (byte) 200;               // -56.  byte is signed -128..127.""",
+
+"""9. THE TRACE — one increment, three types
+
+TRACE 1 — `x += 1` FOR THREE TYPES AT THEIR BOUNDARY:
+
+    type   start        x + 1 as an int   the inserted cast   stored     wrote a warning?
+    ---------------------------------------------------------------------------------
+    int    2147483647   2147483648        none needed         -2147483648   no
+                        (overflows int
+                        before the cast)
+    byte   127          128               (byte)128           -128          NO
+    char   65535        65536             (char)65536         0             NO
+    short  32767        32768             (short)32768        -32768        NO
+    ---------------------------------------------------------------------------------
+    ROWS 2, 3 AND 4 ARE THE COMPOUND-ASSIGNMENT CAST DOING ITS JOB. Written out as `b = b + 1` all three
+    are COMPILE ERRORS. Written with `+=` all three compile and wrap. Row 1 is ordinary integer overflow
+    and has nothing to do with the cast — it is included to show they are different mechanisms that
+    produce the same shape of surprise.
+
+TRACE 2 — `i *= 1.5` FOR `int i = 5`, step by step:
+
+    step  what happens                                       value / type
+    ---------------------------------------------------------------------------------
+    1     `i` is promoted for the multiplication              5 → 5.0 (double)
+    2     `5.0 * 1.5`                                         7.5 (double)
+    3     THE INSERTED CAST `(int)` runs                      7   ← TRUNCATES toward zero
+    4     stored back into `i`                                7
+    ---------------------------------------------------------------------------------
+    `i = i * 1.5` WOULD HAVE FAILED AT STEP 4 with "incompatible types: possible lossy conversion from
+    double to int". The compound form inserts exactly the cast the long form demands you write, which
+    means the compiler's protection is bypassed by using a shorter operator.
+
+TRACE 3 — WHY `println('a' + 1)` PRINTS A NUMBER:
+
+    expression        promoted type   overload chosen     output
+    ---------------------------------------------------------------------------------
+    'a'               char             println(char)       a
+    'a' + 1           INT              println(int)        98
+    (char)('a' + 1)   char             println(char)       b
+    'a' + 'b'         INT              println(int)        195
+    "" + 'a'          String           println(String)     a
+    'a' + "" + 'b'    String           println(String)     ab
+    'a' + 'b' + ""    String           println(String)     195
+    ---------------------------------------------------------------------------------
+    THE METHOD CHOSEN FOLLOWS THE PROMOTED TYPE, NOT THE INTENT. And the last two rows differ only in
+    where the empty string sits: put it first and each `char` is concatenated in turn; put it last and
+    the two `char`s are added as `int`s before the String ever enters.
+
+TRACE 4 — SURROGATE PAIRS, index by index, for `"a😀b"`:
+
+    index  charAt(i)                     what it is
+    ---------------------------------------------------------------------------------
+    0      'a'                            a whole character
+    1      the HIGH surrogate             half of the emoji, meaningless alone
+    2      the LOW surrogate              the other half, meaningless alone
+    3      'b'                            a whole character
+    ---------------------------------------------------------------------------------
+    length()          4      ← code UNITS
+    codePointCount()  3      ← code POINTS. The number a human would say.
+    ---------------------------------------------------------------------------------
+    A LOOP OVER `charAt` VISITS FOUR THINGS AND TWO OF THEM ARE MEANINGLESS ALONE. Swap indices 1 and 2
+    to "reverse" the string and the emoji becomes an invalid sequence that renders as replacement
+    glyphs. `StringBuilder.reverse()` knows about pairs and keeps them together; a hand-rolled swap does
+    not.
+
+    AND EVEN `codePointCount` IS NOT THE END: an emoji with a skin-tone modifier is TWO code points that
+    display as ONE thing, and a letter with a combining accent is two as well. "One thing the user sees"
+    is a GRAPHEME CLUSTER, and `BreakIterator` is the only correct tool for it.
+
+WHAT PRODUCED WHAT:
+    NO ARITHMETIC BELOW int      produced traces 1 and 3 — the promotion, and therefore the overload.
+    THE SPEC'S IMPLICIT CAST     produced traces 1 and 2's silent narrowing, and the asymmetry between
+                                 `x += y` and `x = x + y`.
+    UTF-16 AS THE ENCODING       produced trace 4, and the fact that `length()` has never been a count
+                                 of characters.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `char` is an UNSIGNED 16-bit integer, 0 to 65,535. The only unsigned type in Java.
+    `byte`, `short` and `char` are promoted to `int` before any arithmetic; there are no smaller
+    arithmetic bytecodes.
+    `E1 op= E2` is `E1 = (T)((E1) op (E2))` — the cast is in the specification, and appears as `i2c`,
+    `i2b` or `i2s` in the bytecode.
+    A compile-time constant that FITS may be assigned to a narrower type without a cast; a non-constant
+    may not, and `final` on a local with a constant initialiser makes it a constant.
+    A `char` is a UTF-16 CODE UNIT. Anything above U+FFFF is two of them.
+
+THE #1 MISTAKE: expecting `'a' + 1` to be a character. It is an `int`, and `println` picks `println(int)`.
+
+THE #2 MISTAKE: treating `x += y` and `x = x + y` as identical. The first contains a cast that can narrow
+silently.
+
+THE #3 MISTAKE: `byte b = 127; b += 1;` and being surprised by −128. The inserted `(byte)` wrapped it.
+
+THE #4 MISTAKE: `i *= 1.5` expecting a fractional result. The inserted `(int)` truncates.
+
+THE #5 MISTAKE: `"😀".length()` read as a character count. It counts code UNITS.
+
+THE #6 MISTAKE: iterating with `charAt` over text that may contain emoji or CJK extensions. Use
+`codePoints()`.
+
+THE #7 MISTAKE: reversing a string by swapping `char`s. It corrupts surrogate pairs;
+`StringBuilder.reverse()` does not.
+
+THE #8 MISTAKE: assuming a code point is a user-perceived character. Combining marks and skin-tone
+modifiers make it a grapheme cluster; use `BreakIterator`.
+
+THE #9 MISTAKE: `c >= '0' && c <= '9'` where `Character.isDigit` was meant, or the reverse. They differ
+on non-ASCII digits, and the right choice depends on protocol versus text.
+
+THE #10 MISTAKE: `Character.toUpperCase` for human text. Some mappings are not one-to-one (ß → SS) and
+some are locale-dependent.
+
+THE #11 MISTAKE: `(char)` on a negative `int` expecting a negative result. `char` is unsigned.
+
+THE #12 MISTAKE: using `char` as a byte container. `byte[]` with an explicit `Charset`.
+
+ONE-SENTENCE TAKEAWAY: `char` is an unsigned 16-bit NUMBER and Java has no arithmetic below `int`, so
+every operation promotes it and `'a' + 1` is the `int` 98 rather than `'b'` — while the half that
+actually causes bugs is that COMPOUND ASSIGNMENT CONTAINS AN IMPLICIT CAST (`E1 op= E2` is
+`E1 = (T)((E1) op (E2))`, visible as `i2c`/`i2b`/`i2s` in the bytecode), which is why `byte b = 127;
+b += 1;` silently gives −128 and `i *= 1.5` silently gives 7 while both written-out forms are compile
+errors — making `+=` the one place in Java where a lossy conversion happens with no cast in the source;
+and separately, a `char` is a UTF-16 CODE UNIT rather than a character, so anything above U+FFFF is a
+surrogate pair, `length()` has never counted characters, and `codePoints()` — or `BreakIterator` when you
+mean what the user sees — is the correct level.""",
+]
+
+
+DEEP["i = i++ — evaluation order, and why the increment vanishes"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — an increment that is thrown away
+
+    int i = 0;
+    i = i++;
+    System.out.println(i);        // 0
+
+    THE INCREMENT HAPPENED. `i` really did become 1, briefly. And then the assignment overwrote it with
+    the value the expression produced — which, for a POSTFIX increment, is the value from BEFORE the
+    increment. Zero.
+
+    THE ORDER IS: SAVE THE OLD VALUE (0), INCREMENT `i` TO 1, THEN STORE THE SAVED 0 BACK INTO `i`. The
+    increment is not skipped; it is undone.
+
+    `i = ++i;` GIVES 1, because the PREFIX form's value is the value AFTER the increment. Same
+    statement shape, opposite result, and the only difference is which value the expression yields.
+
+WHY THIS IS WORTH KNOWING RATHER THAN JUST AVOIDING — AND IT IS THE POINT OF THE WHOLE ENTRY: IN C AND
+C++, `i = i++` IS UNDEFINED BEHAVIOUR. The standard permits the compiler to do anything at all, and
+different compilers genuinely produce different answers. IN JAVA IT IS FULLY SPECIFIED. The language
+guarantees strict left-to-right evaluation, and `i = i++` leaves `i` at 0 on every JVM, every version,
+every platform, forever.
+
+    THAT IS A DELIBERATE DESIGN DECISION, and it is one of the clearest examples of Java trading a
+    little optimisation freedom for total determinism. Java also fixed the SIZES of the primitive types,
+    the behaviour of integer overflow, and the order of field initialisation for the same reason: "write
+    once, run anywhere" is a claim about SEMANTICS, and it collapses if expression evaluation order is
+    left to the implementation.
+
+    SO THE CORRECT ANSWER TO "WHAT DOES THIS PRINT" IS 0 — AND THE CORRECT ANSWER TO "SHOULD YOU WRITE
+    IT" IS NO. In Java the problem is not correctness; it is that no reader can be confident, so the
+    line costs everyone who reads it more than it saves.
+
+THE EVERYDAY VERSION: writing down your bank balance, then depositing a pound, then writing the number
+you wrote down back onto the account. The deposit happened. It was then overwritten by a stale reading.
+
+TERMS AS THEY APPEAR:
+- POSTFIX `i++`: the expression's VALUE is the old one; the increment is a side effect.
+- PREFIX `++i`: the expression's value is the new one.
+- SEQUENCE POINT / EVALUATION ORDER: when side effects become visible relative to other evaluation.""",
+
+"""2. THE INTUITION — assignment evaluates in three steps, and the middle one has side effects
+
+THE SPECIFICATION FOR AN ASSIGNMENT IS THREE ORDERED STEPS:
+
+    1. EVALUATE THE LEFT-HAND SIDE TO A VARIABLE — a storage location, NOT a value. For a simple name
+       that is trivial; for `arr[f()]` it means evaluating `arr` and `f()` NOW, before anything on the
+       right.
+    2. EVALUATE THE RIGHT-HAND SIDE TO A VALUE. Any side effects in it happen here.
+    3. STORE THAT VALUE INTO THAT VARIABLE.
+
+    STEP 3 HAPPENS LAST, UNCONDITIONALLY. Whatever step 2 did to `i` along the way is irrelevant,
+    because step 3 writes over it.
+
+    So for `i = i++`:
+        step 1 — the variable is `i`.
+        step 2 — evaluate `i++`: its VALUE is 0, and as a side effect `i` becomes 1.
+        step 3 — store 0 into `i`.
+    `i` IS 0. Not because the increment was skipped — because it was overwritten.
+
+AND `arr[i] = i++` IS THE SAME RULE PRODUCING A DIFFERENT SURPRISE:
+
+    step 1 evaluates `arr` and the INDEX `i` — which is still 0 — so the target is `arr[0]`.
+    step 2 evaluates `i++`: value 0, and `i` becomes 1.
+    step 3 stores 0 into `arr[0]`.
+    THE INDEX WAS FIXED BEFORE THE INCREMENT. People expect `arr[1]`.
+
+THE BROADER GUARANTEE, which is what makes all of this predictable: JAVA EVALUATES OPERANDS STRICTLY
+LEFT TO RIGHT. The specification says the left operand of a binary operator "appears to be fully
+evaluated before any part of the right-hand operand is evaluated". Same for argument lists, array
+indices, and the operands of `+`.
+
+    SO `i++ + ++i` WITH `i = 0` IS EXACTLY 0 + 2 = 2, on every JVM:
+        `i++` → value 0, i becomes 1
+        `++i` → i becomes 2, value 2
+        0 + 2 = 2
+
+    IN C THAT EXPRESSION IS UNDEFINED BEHAVIOUR. Not "implementation-defined" — UNDEFINED, meaning the
+    compiler may assume it never happens and optimise accordingly. Real compilers produce different
+    answers, and some produce nonsense.
+
+WHY JAVA CHOSE DETERMINISM: because "write once, run anywhere" is a claim about semantics, not just
+about bytecode portability. Fixed primitive sizes, wrapping (never undefined) integer overflow, defined
+field initialisation order and defined evaluation order are all the same decision. THE COST IS SOME
+OPTIMISATION FREEDOM — a compiler may not reorder observable side effects — AND JAVA PAID IT WILLINGLY,
+which is a genuinely interesting thing to be able to say about the language.
+
+THE ONE PLACE ORDER STOPS BEING ENOUGH: `i++` IS NOT ATOMIC. It is a read, an add, and a write — three
+operations. Two threads can interleave and lose an increment, and no amount of specified evaluation
+ORDER helps, because the problem is between threads rather than within an expression.""",
+
+"""3. THE MECHANISM — the bytecode makes it obvious
+
+`i = i++` COMPILES TO EXACTLY THIS, and reading it removes all mystery:
+
+    iload_1      push the current value of i          → stack: [0]
+    iinc 1, 1    increment local 1 BY 1, IN PLACE     → i is now 1, STACK UNCHANGED
+    istore_1     pop and store into i                 → i = 0
+
+    `iinc` IS THE KEY INSTRUCTION. It increments a local variable directly, WITHOUT touching the operand
+    stack. So the 0 pushed by `iload` is still sitting there when `istore` writes it back. THE
+    INCREMENT AND THE OVERWRITE ARE TWO SEPARATE INSTRUCTIONS AND THE SECOND WINS.
+
+    `i = ++i` compiles to `iinc 1,1` then `iload_1` then `istore_1` — increment FIRST, then read, then
+    store. Same three instructions, two of them swapped, and that is the entire difference between 0
+    and 1.
+
+    THE SIMPLE `i++;` AS A STATEMENT compiles to just `iinc 1, 1` — one instruction, no stack traffic
+    at all. Which is why `i++` and `++i` are identical in a `for` loop's update clause: the value is
+    discarded, so only the side effect remains, and the compiler emits the same thing.
+
+THE FULL ORDERING RULES, since they are what make everything else derivable:
+
+    ASSIGNMENT (JLS 15.26.1): left to a VARIABLE, then right to a VALUE, then store.
+    BINARY OPERATORS (JLS 15.7): the left operand is fully evaluated — including its side effects —
+    before any part of the right operand.
+    ARGUMENT LISTS: left to right, each fully, before the call.
+    ARRAY ACCESS: the array reference, then the index, then (for a store) the value.
+
+    THESE ARE GUARANTEES, NOT TENDENCIES. A JIT may reorder anything it likes as long as the observable
+    result is identical — the "as-if" rule — but it may never produce a different answer.
+
+COMPOUND ASSIGNMENT IS SUBTLY DIFFERENT AND WORTH SEPARATING:
+
+    `i += i++`  with `i = 0`  →  0
+
+    Because `E1 op= E2` saves the VALUE of E1 first, then evaluates E2, then combines. So: save 0,
+    evaluate `i++` (value 0, i becomes 1), add → 0, store 0. THE SAVED LEFT-HAND VALUE IS STALE by the
+    time the store happens, for the same reason as the simple case.
+
+AND `i++` UNDER CONCURRENCY, which is where "defined order" stops being the relevant guarantee:
+
+    `iload / iconst_1 / iadd / istore` — or `iinc` — is a READ-MODIFY-WRITE, and it is NOT ATOMIC. Two
+    threads each running `count++` a million times can end with far fewer than two million. `volatile`
+    does NOT fix it, because volatile guarantees visibility, not atomicity. `AtomicInteger.incrementAndGet`
+    or `LongAdder` do.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `i = i++` LEAVES `i` UNCHANGED. The increment happened and was overwritten by the saved old
+value.
+
+CASE 2 — `i = ++i` SETS `i` TO 1. The prefix form's value is the post-increment value, so the store
+writes the same thing the increment did.
+
+CASE 3 — `arr[i] = i++` WRITES TO `arr[0]`, not `arr[1]`. The index is evaluated in step 1, before the
+right-hand side runs.
+
+CASE 4 — `i++ + ++i` WITH `i = 0` IS 2. Left to right: 0, then i becomes 2, value 2.
+
+CASE 5 — `i += i++` LEAVES `i` AT 0. Compound assignment saves the left value BEFORE evaluating the
+right.
+
+CASE 6 — ASSUMING THIS IS UNDEFINED "LIKE IN C". In C it IS undefined behaviour; in Java it is fully
+specified and identical on every JVM. The confusion is common and the distinction is the interesting
+part.
+
+CASE 7 — `i++` USED AS AN ATOMIC COUNTER. It is a read-modify-write and is not atomic. Two threads lose
+increments.
+
+CASE 8 — `volatile int` USED TO FIX THAT. `volatile` gives visibility, not atomicity. `AtomicInteger` or
+`LongAdder`.
+
+CASE 9 — `i = i++` INSIDE A LOOP CONDITION. A classic infinite loop, because the counter never advances
+and nothing indicates why.
+
+CASE 10 — `f(i++, i++)` WITH `i = 0` PASSING 0 AND 1. Argument lists are left to right, fully, so this
+is defined — and unreadable.
+
+CASE 11 — `a[i++] = b[i]` READING `b[1]`. The left target's index is evaluated first, so the increment
+has already happened by the time `b[i]` is read.
+
+CASE 12 — `i++` ON A `byte`, `short` OR `char`. It contains the same implicit narrowing cast as `+=`, so
+`byte b = 127; b++;` silently gives −128.
+
+CASE 13 — `i++` IN A `for` UPDATE CLAUSE ARGUED ABOUT. `i++` and `++i` are IDENTICAL there; the value is
+discarded and both compile to `iinc`.
+
+CASE 14 — RELYING ON EVALUATION ORDER FOR CLARITY. It is guaranteed, and a reader still has to look it
+up. Guaranteed is not the same as readable.""",
+
+"""5. THE ALTERNATIVES — write the two statements
+
+SEPARATE THE SIDE EFFECT FROM THE VALUE. If you mean "use i, then increment it", write:
+
+    int old = i;
+    i++;
+    use(old);
+
+    TWO LINES, ZERO AMBIGUITY, and no reader has to recall a specification rule. THE COMPILED CODE IS
+    IDENTICAL — the JIT does not care, and neither does anyone reading it in three years.
+
+USE `i++` ONLY WHERE THE VALUE IS DISCARDED. A `for` loop's update clause, or a statement on its own.
+There, `i++` and `++i` are the same instruction, and the debate is empty.
+
+USE `++i` IN A COMPOUND EXPRESSION IF YOU MUST, since "the value after" is the more intuitive reading —
+but the better answer is not to have a compound expression.
+
+FOR AN INDEX YOU ARE ADVANCING, PREFER AN EXPLICIT LOOP VARIABLE OR AN ITERATOR. `list.get(i++)` inside a
+larger expression is exactly the shape that produces these puzzles; an enhanced `for` loop or a stream
+removes the counter entirely.
+
+FOR COUNTERS SHARED BETWEEN THREADS:
+    `AtomicInteger.incrementAndGet()` / `getAndIncrement()` — the names literally say which value you
+    get, which is the distinction `++i` versus `i++` was making badly.
+    `LongAdder` for high-contention metrics — it stripes across cells and beats `AtomicInteger` by a wide
+    margin when many threads increment.
+    NOT `volatile int i; i++;` — volatile gives VISIBILITY, not ATOMICITY, and this is one of the most
+    common concurrency mistakes there is.
+
+FOR ACCUMULATION IN A LOOP, PREFER A STREAM OR AN EXPLICIT ACCUMULATOR over index arithmetic.
+`IntStream.range(0, n)` and `stream.count()` remove the counter, and with it the question.
+
+AND A STYLE POSITION WORTH STATING: `i++` INSIDE A LARGER EXPRESSION IS BANNED BY MOST SERIOUS STYLE
+GUIDES — Google's Java style guide, MISRA C, and NASA's rules all forbid or restrict it — not because
+the semantics are unclear to the compiler, but because they are unclear to people. THAT IS THE RIGHT
+FRAMING FOR THIS WHOLE TOPIC IN JAVA: the language made it deterministic so it is not a correctness
+problem, and it remains a readability problem, which is the one that actually costs money.
+
+WHAT TO SAY: "`i = i++` leaves `i` unchanged — the increment happens and is then overwritten by the
+saved old value, because assignment evaluates the left to a variable, the right to a value, and stores
+LAST. And the interesting part is that Java SPECIFIES this: in C it is undefined behaviour, while in
+Java it is identical on every JVM, which is part of the same commitment as fixed primitive sizes and
+defined overflow. I would still never write it — deterministic is not the same as readable."
+
+""",
+
+"""6. HOW TO THINK ABOUT IT — numbered steps
+
+STEP 1 — REMEMBER ASSIGNMENT IS THREE STEPS: left to a VARIABLE, right to a VALUE, then STORE. The store
+is last and unconditional.
+
+STEP 2 — REMEMBER POSTFIX YIELDS THE OLD VALUE AND PREFIX YIELDS THE NEW ONE. That single difference
+explains `i = i++` versus `i = ++i`.
+
+STEP 3 — REMEMBER JAVA EVALUATES STRICTLY LEFT TO RIGHT, including array indices and argument lists.
+Everything else is derivable from that.
+
+STEP 4 — READ THE BYTECODE WHEN IN DOUBT. `javap -c` shows `iload`, `iinc`, `istore` and the answer is
+immediate.
+
+STEP 5 — SPLIT THE STATEMENT. `int old = i; i++;` compiles to the same thing and costs no reader
+anything.
+
+STEP 6 — USE `i++` ONLY WHERE ITS VALUE IS DISCARDED. In a `for` update clause it is identical to `++i`.
+
+STEP 7 — NEVER PUT AN INCREMENT INSIDE A LARGER EXPRESSION. Most serious style guides forbid it, on
+readability grounds rather than correctness.
+
+STEP 8 — DO NOT USE `i++` AS AN ATOMIC COUNTER. It is a read-modify-write.
+
+STEP 9 — DO NOT REACH FOR `volatile` TO FIX THAT. It gives visibility, not atomicity. `AtomicInteger` or
+`LongAdder`.
+
+STEP 10 — PREFER `incrementAndGet` / `getAndIncrement` WHEN IT MATTERS WHICH VALUE YOU GET. The names say
+it out loud.
+
+STEP 11 — REMEMBER `b++` ON A `byte`, `short` OR `char` CONTAINS A NARROWING CAST, exactly like `+=`.
+
+STEP 12 — WHEN YOU MEET THIS IN AN INTERVIEW, SAY BOTH THINGS: the answer is 0, AND in C the same
+expression is undefined behaviour. The contrast is the part worth knowing.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`int i = 0; i = i++;` leaves i at ZERO. And the important part is that the increment DID happen — i
+really became 1 briefly — and then the assignment overwrote it with the value the expression produced,
+which for a POSTFIX increment is the value from before the increment.
+
+So the order is: save the old value, 0. Increment i to 1. Store the saved 0 back into i. The increment
+isn't skipped, it's undone. And `i = ++i` gives 1, because the prefix form's value is the value AFTER the
+increment, so the store writes the same thing the increment did.
+
+The rule underneath is that assignment is three ordered steps. Evaluate the left-hand side to a
+VARIABLE — a storage location, not a value. Evaluate the right-hand side to a VALUE, and any side
+effects happen there. Then store. The store is last and unconditional, so whatever step two did to i
+along the way is irrelevant.
+
+That also explains a different surprise: `arr[i] = i++` writes to arr[ZERO], not arr[1]. Step one
+evaluates the array and the INDEX while i is still 0, so the target is fixed before the increment
+happens.
+
+But the thing I'd actually want to say about this is the contrast. In C and C++, `i = i++` is UNDEFINED
+BEHAVIOUR — the standard lets the compiler do anything, and real compilers produce different answers. In
+Java it's FULLY SPECIFIED. The language guarantees strict left-to-right evaluation, so `i++ + ++i` with
+i=0 is exactly 0 plus 2 on every JVM, every version, every platform.
+
+That's a deliberate design decision and one of the clearest examples of Java trading optimisation
+freedom for determinism. Fixed primitive sizes, defined integer overflow rather than undefined, defined
+field initialisation order — they're all the same decision, because "write once, run anywhere" is a
+claim about SEMANTICS, and it collapses if evaluation order is left to the implementation.
+
+The bytecode makes it obvious, incidentally. `i = i++` is iload, then IINC, then istore. And `iinc`
+increments the local variable directly WITHOUT touching the operand stack — so the 0 that iload pushed
+is still sitting there when istore writes it back. Two separate instructions, and the second wins. Swap
+the first two and you have `i = ++i`.
+
+One thing worth adding: `i++` is NOT atomic. It's a read, an add and a write, so two threads can lose
+increments — and no amount of specified evaluation order helps, because that problem is between threads
+rather than within an expression. And volatile doesn't fix it either; volatile gives visibility, not
+atomicity. That's AtomicInteger or LongAdder.
+
+So: the answer is 0, it's guaranteed, and I'd still never write it. In Java this isn't a correctness
+problem, it's a readability one — and that's the one that actually costs money.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE HEADLINE ────────────────────────────────────────────────────
+    int i = 0;
+    i = i++;
+    System.out.println(i);        // 0
+    // The increment HAPPENED. i really became 1. Then the assignment overwrote it
+    // with the value the expression produced — which for POSTFIX is the OLD value.
+
+    int j = 0;
+    j = ++j;
+    System.out.println(j);        // 1
+    // PREFIX yields the value AFTER, so the store writes what the increment wrote.
+
+    // ── THE BYTECODE MAKES IT OBVIOUS ───────────────────────────────────
+    // i = i++
+    //   iload_1     push i                    → stack [0]
+    //   iinc 1, 1   increment local 1 IN PLACE → i = 1, STACK UNTOUCHED
+    //   istore_1    pop and store              → i = 0
+    //               ^^^^^^^ the 0 iload pushed is STILL THERE. Two separate
+    //               instructions, and the second one wins.
+    //
+    // i = ++i
+    //   iinc 1, 1   increment FIRST            → i = 1
+    //   iload_1     push i                     → stack [1]
+    //   istore_1    store                      → i = 1
+    // SAME THREE INSTRUCTIONS, TWO OF THEM SWAPPED.
+    //
+    // i++;   as a statement
+    //   iinc 1, 1   ← ONE instruction. No stack traffic. Which is why `i++` and
+    //                 `++i` are IDENTICAL in a for loop's update clause.
+
+    // ── ASSIGNMENT IS THREE ORDERED STEPS ───────────────────────────────
+    // JLS 15.26.1:
+    //   1. evaluate the LEFT to a VARIABLE (a location, not a value)
+    //   2. evaluate the RIGHT to a VALUE   (side effects happen here)
+    //   3. STORE                            (last, unconditionally)
+    int[] arr = new int[3];
+    int k = 0;
+    arr[k] = k++;
+    // step 1: evaluate arr and the INDEX k → still 0 → the target is arr[0]
+    // step 2: evaluate k++ → value 0, and k becomes 1
+    // step 3: store 0 into arr[0]
+    // → arr = [0,0,0] and k = 1.  PEOPLE EXPECT arr[1].
+
+    // ── STRICT LEFT-TO-RIGHT, GUARANTEED ────────────────────────────────
+    int n = 0;
+    int r = n++ + ++n;
+    //      ^^^   value 0, n becomes 1
+    //            ^^^ n becomes 2, value 2
+    // r = 2, n = 2.  ON EVERY JVM, EVERY VERSION, EVERY PLATFORM.
+    //
+    // IN C AND C++ THIS SAME EXPRESSION IS **UNDEFINED BEHAVIOUR** — not
+    // implementation-defined, UNDEFINED. The compiler may assume it never happens.
+    // Java specifies it, which is the same decision as fixed primitive sizes and
+    // defined (wrapping) integer overflow: "write once, run anywhere" is a claim
+    // about SEMANTICS.
+
+    // ── COMPOUND ASSIGNMENT SAVES THE LEFT VALUE FIRST ──────────────────
+    int m = 0;
+    m += m++;
+    // save m (0) → evaluate m++ (value 0, m becomes 1) → add → 0 → store 0
+    System.out.println(m);        // 0
+
+    // ── AND WHERE ORDER STOPS BEING THE RELEVANT GUARANTEE ──────────────
+    count++;                      // iload / iconst_1 / iadd / istore — or iinc.
+    //                               A READ-MODIFY-WRITE. NOT ATOMIC.
+    // Two threads each doing this a million times end with FEWER than two million.
+    volatile int count;           // ✗ VISIBILITY, not ATOMICITY. Does not fix it.
+    AtomicInteger count;
+    count.incrementAndGet();      // ✓ and the NAME says which value you get
+    LongAdder count;              // ✓ better still under high contention
+
+    // ── THE FIX FOR ALL OF IT ───────────────────────────────────────────
+    int old = i;
+    i++;
+    use(old);
+    // TWO LINES. Identical compiled code. Zero specification lookups for the reader.""",
+
+"""9. THE TRACE — five expressions, all fully specified
+
+STARTING FROM `int i = 0` EACH TIME:
+
+    expression        step by step                                     result   i ends
+    ---------------------------------------------------------------------------------
+    i = i++           value 0; i→1; STORE 0                             —        0
+    i = ++i           i→1; value 1; STORE 1                             —        1
+    i = i++ + ++i     i++ → 0, i→1                                      2        2
+                      ++i → i→2, value 2
+                      0 + 2 = 2; STORE 2
+    i += i++          save 0; i++ → 0, i→1; 0+0 = 0; STORE 0            —        0
+    i++ + i++         first → 0, i→1; second → 1, i→2; 0+1 = 1          1        2
+    ---------------------------------------------------------------------------------
+    EVERY ROW IS GUARANTEED. Not "in practice", not "on HotSpot" — specified, and identical on every
+    JVM. In C, rows 1, 3, 4 and 5 are all undefined behaviour.
+
+TRACE 2 — THE THREE ASSIGNMENT STEPS, for `arr[k] = k++` with `k = 0`:
+
+    step  what the specification says                    what actually happens
+    ---------------------------------------------------------------------------------
+    1     evaluate the LEFT to a VARIABLE                 evaluate `arr` → the array
+                                                          evaluate `k`   → 0
+                                                          the target is arr[0]  ← FIXED
+    2     evaluate the RIGHT to a VALUE                   `k++` → value 0, k becomes 1
+    3     STORE                                           arr[0] = 0
+    ---------------------------------------------------------------------------------
+    THE TARGET WAS DECIDED IN STEP 1, BEFORE THE INCREMENT IN STEP 2. Which is why the write lands in
+    `arr[0]` and not `arr[1]`, and why "the left-hand side is evaluated to a LOCATION first" is the
+    sentence that makes the whole family of puzzles derivable rather than memorised.
+
+TRACE 3 — THE BYTECODE, side by side:
+
+    i = i++                        i = ++i
+    ---------------------------------------------------------------------------------
+    iload_1     stack [0]          iinc 1,1    i = 1
+    iinc 1,1    i = 1, stack [0]   iload_1     stack [1]
+    istore_1    i = 0              istore_1    i = 1
+    ---------------------------------------------------------------------------------
+    THE SAME THREE INSTRUCTIONS IN A DIFFERENT ORDER. `iinc` modifies a local variable directly and
+    never touches the operand stack — which is exactly why the stale 0 survives in the left column. One
+    look at `javap -c` settles any argument about this permanently.
+
+TRACE 4 — WHY THE C CONTRAST MATTERS, on the same source:
+
+    language   `i = i++` with i = 0            guarantee
+    ---------------------------------------------------------------------------------
+    Java       0                                SPECIFIED. Every JVM, every version.
+    C          0, or 1, or something else,      UNDEFINED BEHAVIOUR. The compiler may
+               or the compiler may assume        assume the expression never occurs and
+               the code is unreachable           optimise on that basis.
+    C++        the same, until C++17 tightened
+               some related cases
+    ---------------------------------------------------------------------------------
+    THIS IS THE PART WORTH SAYING OUT LOUD IN AN INTERVIEW. The question "what does `i = i++` print"
+    tests whether you know the value; the follow-up "why can you even answer that" tests whether you
+    know it is a language guarantee — and that guarantee is the same commitment that fixed the primitive
+    sizes and made integer overflow WRAP rather than be undefined.
+
+TRACE 5 — AND WHERE DETERMINISM RUNS OUT:
+
+    two threads, each executing `count++` one million times, starting from 0
+    ---------------------------------------------------------------------------------
+    expected                       2,000,000
+    typical actual                 somewhere between 1,000,000 and 2,000,000
+    why                            `count++` is READ, ADD, WRITE. Thread B can read
+                                   between A's read and A's write, and both then write
+                                   the same value. One increment is lost.
+    `volatile int count`           STILL WRONG. Volatile gives VISIBILITY, not
+                                   atomicity — each thread now sees fresh values and
+                                   still loses the interleaved update.
+    AtomicInteger.incrementAndGet  2,000,000. A single CAS loop.
+    ---------------------------------------------------------------------------------
+    EVALUATION ORDER IS A GUARANTEE ABOUT ONE THREAD'S EXPRESSION. It says nothing about two threads, and
+    conflating the two is the reason `volatile` gets misused for counters.
+
+WHAT PRODUCED WHAT:
+    THE THREE-STEP ASSIGNMENT   produced rows 1 and 4 of trace 1, and all of trace 2.
+    POSTFIX YIELDING THE OLD    produced the difference between rows 1 and 2.
+    VALUE
+    SPECIFIED LEFT-TO-RIGHT     produced rows 3 and 5, and produced the fact that trace 1 is a table at
+    ORDER                       all rather than a list of "it depends".
+    NON-ATOMIC READ-MODIFY-WRITE produced trace 5, which no ordering rule can help with.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Assignment: left to a VARIABLE, right to a VALUE, then STORE. The store is last.
+    Postfix `i++` yields the OLD value; prefix `++i` yields the NEW one. Both increment.
+    Java specifies STRICT LEFT-TO-RIGHT evaluation of operands, argument lists and array indices.
+    `i = i++` compiles to `iload / iinc / istore`; `iinc` never touches the operand stack.
+    `i++` as a statement is a single `iinc` — identical to `++i` there.
+    Compound assignment saves the left value BEFORE evaluating the right.
+    `i++` is a read-modify-write and is NOT atomic.
+
+THE #1 MISTAKE: expecting `i = i++` to increment. The increment happens and is overwritten.
+
+THE #2 MISTAKE: believing this is undefined "as in C". In C it is; in Java it is fully specified, and
+that contrast is the interesting half.
+
+THE #3 MISTAKE: expecting `arr[i] = i++` to write to `arr[1]`. The index is evaluated first.
+
+THE #4 MISTAKE: putting an increment inside a larger expression at all. Guaranteed is not readable, and
+most style guides forbid it.
+
+THE #5 MISTAKE: arguing about `i++` versus `++i` in a `for` update clause. They compile to the same
+instruction.
+
+THE #6 MISTAKE: using `i++` as a shared counter. Read-modify-write; increments are lost.
+
+THE #7 MISTAKE: adding `volatile` to fix that. Visibility, not atomicity — one of the commonest
+concurrency errors there is.
+
+THE #8 MISTAKE: forgetting `b++` on a `byte`, `short` or `char` contains a narrowing cast, so
+`byte b = 127; b++;` gives −128.
+
+THE #9 MISTAKE: `i += i++` expected to be 1. Compound assignment saves the left value first.
+
+THE #10 MISTAKE: `f(i++, i++)` as clever argument passing. Defined, and unreadable.
+
+THE #11 MISTAKE: assuming a JIT might reorder this. It may reorder anything whose observable result is
+unchanged, and never anything whose result differs.
+
+ONE-SENTENCE TAKEAWAY: `i = i++` leaves `i` unchanged because assignment evaluates the left side to a
+VARIABLE, the right side to a VALUE, and STORES LAST — so the postfix increment really does set `i` to 1
+and the store then overwrites it with the saved old 0, which `javap -c` shows as `iload / iinc / istore`
+where `iinc` never touches the stack the stale value is sitting on; the genuinely interesting part is
+that Java SPECIFIES all of this while C leaves it UNDEFINED, which is the same commitment that fixed the
+primitive sizes and made integer overflow wrap — and the practical answer is still to write the two
+statements separately, because in Java this was never a correctness problem and always a readability
+one, and because no amount of specified evaluation order makes `i++` atomic across threads.""",
+]
+
+
+DEEP["Integer division and % with negatives — Java truncates toward zero"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — division that rounds toward zero, and a remainder that can be negative
+
+    System.out.println(-7 / 2);     // -3     ← not -4
+    System.out.println(-7 % 2);     // -1     ← not 1
+    System.out.println( 7 / 2);     //  3
+    System.out.println( 7 % 2);     //  1
+
+    JAVA TRUNCATES TOWARD ZERO. `7/2` drops the .5 downward to 3 and `-7/2` drops the .5 UPWARD to −3 —
+    both move toward zero, which means the rounding DIRECTION flips depending on the sign. And the
+    remainder takes the sign of the DIVIDEND, so `-7 % 2` is −1.
+
+    THAT IS NOT WHAT MOST PEOPLE MEAN BY MODULO. In mathematics, and in Python, Ruby and Haskell,
+    `-7 mod 2` is 1 — the result is always non-negative for a positive divisor. Java's `%` is a
+    REMAINDER, not a modulus, and the two differ for exactly one case: a negative dividend.
+
+WHY IT IS THIS WAY, AND IT IS NOT ARBITRARY: the language guarantees the identity
+
+    (a / b) * b + (a % b)  ==  a
+
+    for all `a` and `b` (with `b` non-zero). Once you fix division as truncating toward zero, THAT
+    IDENTITY FORCES the remainder's sign. `-7/2` is −3, so `(-3)*2 = -6`, so the remainder must be −1 to
+    reach −7. THE SIGN OF `%` IS A CONSEQUENCE OF THE ROUNDING RULE, not an independent decision.
+
+WHERE IT ACTUALLY HURTS — and this is the reason the entry exists rather than being trivia:
+
+    int bucket = key.hashCode() % buckets.length;
+    buckets[bucket] ...                              // ArrayIndexOutOfBoundsException
+
+    `hashCode()` RETURNS A SIGNED `int` AND IS OFTEN NEGATIVE. So `bucket` is negative, and the array
+    access throws — intermittently, on whichever keys happen to hash negative, which is roughly half of
+    them. THE SAME SHAPE APPEARS IN circular buffers, ring indices, day-of-week arithmetic, and anything
+    that wraps.
+
+    THE FIX IS `Math.floorMod`, which gives the mathematical modulus. NOT `Math.abs`, which has its own
+    trap — see section 2.
+
+THE EVERYDAY VERSION: "how many complete floors have I gone up?" going up is obvious; going DOWN, half a
+floor could mean the floor below or back to where you started, and Java always chooses the one nearer to
+the ground floor — the direction changes with the direction of travel.
+
+TERMS AS THEY APPEAR:
+- TRUNCATION TOWARD ZERO: dropping the fractional part, whichever side of zero you are on.
+- FLOOR DIVISION: always rounding DOWN, toward negative infinity.
+- REMAINDER vs MODULUS: `%` gives a remainder (sign of the dividend); a modulus is non-negative for a
+  positive divisor.""",
+
+"""2. THE INTUITION — one rule, and everything else follows
+
+FIX THE DIVISION RULE AND THE REMAINDER IS DETERMINED. The identity `(a/b)*b + (a%b) == a` must hold, so:
+
+    a     b    a/b (toward zero)   (a/b)*b    a%b must be
+    ---------------------------------------------------------
+     7    2         3                6            1
+    -7    2        -3               -6           -1
+     7   -2        -3                6            1
+    -7   -2         3               -6           -1
+
+    READ THE LAST COLUMN: THE REMAINDER'S SIGN FOLLOWS THE DIVIDEND, always, and the DIVISOR's sign does
+    not affect it at all. That is derived, not memorised.
+
+FLOOR DIVISION MAKES THE OTHER CHOICE and produces the other family:
+
+    `Math.floorDiv(-7, 2)` is −4 — rounding toward negative infinity rather than toward zero.
+    `Math.floorMod(-7, 2)` is 1 — because `(-4)*2 = -8`, and the remainder must be +1 to reach −7.
+
+    SO THE SAME IDENTITY HOLDS FOR BOTH FAMILIES; they differ only in which way division rounds. THAT IS
+    THE WHOLE RELATIONSHIP, and it makes `floorDiv`/`floorMod` easy to remember as a pair rather than as
+    two unrelated helpers.
+
+WHY JAVA CHOSE TRUNCATION: because C did, and because it matches what most CPU division instructions do
+in hardware — x86's `idiv` truncates toward zero. In 1995, matching the hardware meant division was one
+instruction rather than an instruction plus a correction. PYTHON CHOSE FLOOR DIVISION because it is more
+useful mathematically, and pays a small cost for it. NEITHER IS WRONG; they optimised different things,
+and knowing that is better than remembering a table.
+
+NOW THE `Math.abs` TRAP, WHICH IS THE FIX PEOPLE REACH FOR AND SHOULD NOT:
+
+    `Math.abs(Integer.MIN_VALUE)` IS `Integer.MIN_VALUE`. Still negative.
+
+    Because the `int` range is asymmetric: −2,147,483,648 to +2,147,483,647. There is no positive
+    2,147,483,648, so negating the minimum overflows back to itself. `Math.abs` is documented to do this
+    and does not throw.
+
+    THEREFORE `Math.abs(hash) % n` IS STILL A BUG, roughly one time in four billion — which on a busy
+    system is not never, and which is impossible to reproduce when it happens. `Math.floorMod(hash, n)`
+    is correct for every input.
+
+AND ONE MORE OVERFLOW WORTH KNOWING BECAUSE IT IS THE ONLY ONE:
+
+    `Integer.MIN_VALUE / -1` OVERFLOWS to `Integer.MIN_VALUE`. It is THE ONLY DIVISION THAT OVERFLOWS,
+    for exactly the same reason `Math.abs` fails there. And `Integer.MIN_VALUE % -1` is 0, correctly.
+
+FINALLY, THE DIVISION-BY-ZERO ASYMMETRY, which catches people moving between types:
+
+    INTEGER division or remainder by zero THROWS `ArithmeticException: / by zero`.
+    FLOATING-POINT division by zero DOES NOT THROW — it gives `±Infinity`, and `0.0/0.0` gives `NaN`.
+    SO `a / b` IS SAFE OR FATAL DEPENDING ON THE TYPES, and converting an `int` calculation to `double`
+    silently converts a loud failure into a quiet `Infinity` that propagates.""",
+
+"""3. THE MECHANISM — the helpers, and the arithmetic that overflows
+
+THE FOUR OPERATIONS AND THEIR FLOOR COUNTERPARTS:
+
+    a / b               truncates toward zero
+    a % b               remainder; sign follows the DIVIDEND
+    Math.floorDiv(a,b)  rounds toward NEGATIVE INFINITY
+    Math.floorMod(a,b)  modulus; sign follows the DIVISOR — so non-negative for a positive divisor
+    Math.ceilDiv(a,b)   rounds toward POSITIVE INFINITY (Java 18+)
+
+    `floorMod` IS THE ONE TO REACH FOR ANY TIME A RESULT WILL BE USED AS AN INDEX. It is correct for
+    every input including `Integer.MIN_VALUE`, and it says what you mean.
+
+THE PLACES THIS ARITHMETIC BITES, in decreasing order of frequency:
+
+    HASH BUCKETS. `hashCode() % n` can be negative. This is why `HashMap` does not use `%` at all — it
+    uses `hash & (n - 1)` with a power-of-two table size, which is both faster and unsigned. AND THAT
+    CHOICE HIDES THE BUG: a power-of-two bucket count makes even `Math.abs(hash) % n` appear to work,
+    so the same code fails only when someone configures a non-power-of-two size.
+    RING BUFFERS AND CIRCULAR INDICES. `(head - 1) % capacity` goes negative the moment `head` is 0.
+    DAY-OF-WEEK AND CLOCK ARITHMETIC. `(dayIndex - 3) % 7` is negative for the first three days.
+    ALTERNATING OR STRIPING. `i % 2` for a signed `i` gives −1 as well as 0 and 1, so
+    `if (i % 2 == 1)` misses half the odd numbers.
+
+    THAT LAST ONE IS WORTH SPELLING OUT: `-3 % 2` IS −1, NOT 1. So an odd-number test written as
+    `n % 2 == 1` returns FALSE for every negative odd number. `n % 2 != 0` is correct.
+
+TWO OTHER INTEGER-ARITHMETIC HAZARDS THAT LIVE NEXT DOOR:
+
+    `(low + high) / 2` OVERFLOWS for large indices. This is the famous binary-search bug that sat in the
+    JDK — and in Programming Pearls — for two decades. `low + (high - low) / 2` or `(low + high) >>> 1`
+    are the fixes; the unsigned shift works because the sum's overflow lands in the sign bit, which
+    `>>>` then treats as data.
+    `1 / 2 * 100` IS 0. Integer division truncates BEFORE the multiplication, so a percentage computed
+    that way is always zero. `100 * 1 / 2` is 50 — REORDERING CHANGES THE ANSWER, and multiplying first
+    is the general fix.
+
+CEILING DIVISION, since it comes up constantly and the idiom is non-obvious:
+
+    for positive values: `(a + b - 1) / b`
+    for any values, Java 18+: `Math.ceilDiv(a, b)`
+    THE CLASSIC USE IS PAGE COUNTS: 101 items at 10 per page is 11 pages, and `101/10` is 10.
+
+THE `long` AND `double` VERSIONS: `%` is defined for `long` identically, and for `double` it also follows
+the dividend's sign — `-7.5 % 2` is −1.5. `Math.IEEEremainder` is a DIFFERENT operation that rounds to
+the nearest rather than truncating, and it is almost never what you want in application code.
+
+`BigInteger` HAS BOTH FAMILIES EXPLICITLY: `remainder` (sign of the dividend, matching `%`) and `mod`
+(always non-negative, and it THROWS if the modulus is not positive). The fact that it needed two methods
+is the clearest statement that these are genuinely two different operations.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `hashCode() % n` USED AS AN ARRAY INDEX. Negative for roughly half of all keys, so
+`ArrayIndexOutOfBoundsException` on some inputs and not others. `Math.floorMod`.
+
+CASE 2 — `Math.abs(hash) % n` AS THE FIX. Still wrong, because `Math.abs(Integer.MIN_VALUE)` is
+`Integer.MIN_VALUE`. About one in four billion, and unreproducible.
+
+CASE 3 — A POWER-OF-TWO BUCKET COUNT HIDING THE BUG. `hash & (n-1)` is unsigned and always in range, so
+the same code works until someone configures a non-power-of-two size.
+
+CASE 4 — `n % 2 == 1` AS AN ODD TEST. False for every NEGATIVE odd number, because `-3 % 2` is −1. Use
+`n % 2 != 0`.
+
+CASE 5 — `(head - 1) % capacity` IN A RING BUFFER. Negative as soon as `head` is 0.
+
+CASE 6 — `(dayIndex - offset) % 7`. Negative for the first `offset` days of the cycle.
+
+CASE 7 — `1 / 2 * 100` GIVING 0. Integer division truncates first. `100 * 1 / 2` is 50; multiply before
+dividing.
+
+CASE 8 — `(low + high) / 2` OVERFLOWING. The binary-search bug that lived in the JDK for two decades.
+`low + (high - low) / 2` or `(low + high) >>> 1`.
+
+CASE 9 — `Integer.MIN_VALUE / -1` OVERFLOWING to `Integer.MIN_VALUE`. The only division that overflows.
+
+CASE 10 — INTEGER DIVISION BY ZERO THROWING while floating-point division by zero does not. Converting
+an `int` calculation to `double` turns a loud failure into a silent `Infinity`.
+
+CASE 11 — `%` ON DOUBLES ASSUMED TO BE IEEE REMAINDER. `%` truncates; `Math.IEEEremainder` rounds to
+nearest. They differ.
+
+CASE 12 — CEILING DIVISION WRITTEN AS `(a / b) + 1`. Wrong when `b` divides `a` exactly.
+`(a + b - 1) / b`, or `Math.ceilDiv` on Java 18+.
+
+CASE 13 — MIXING SIGNED AND "UNSIGNED" INTENT. Java has no unsigned `int`; `Integer.divideUnsigned` and
+`remainderUnsigned` exist for when the bits are really unsigned.
+
+CASE 14 — ASSUMING `BigInteger.mod` AND `remainder` ARE THE SAME. `mod` is always non-negative and
+throws on a non-positive modulus; `remainder` matches `%`.""",
+
+"""5. THE ALTERNATIVES — the right helper for each intent
+
+`Math.floorMod(a, b)` WHENEVER THE RESULT IS AN INDEX OR A CYCLE POSITION. Non-negative for a positive
+divisor, correct for every input including `Integer.MIN_VALUE`, and it states the intent. THIS IS THE
+SINGLE MOST USEFUL METHOD IN THIS ENTRY.
+
+`Math.floorDiv(a, b)` when you want rounding toward negative infinity — bucketing timestamps into
+intervals, computing which page a negative offset falls on, tiling a coordinate space.
+
+`Math.ceilDiv(a, b)` (Java 18+) or `(a + b - 1) / b` for positive values, when you want page counts,
+batch counts, or "how many containers do I need".
+
+`Math.floorDiv` + `Math.floorMod` AS A PAIR. They satisfy the same identity as `/` and `%`, so mixing
+one from each family gives inconsistent results. Pick a family per calculation.
+
+`Integer.divideUnsigned` / `remainderUnsigned` / `compareUnsigned` / `toUnsignedLong` when the bits are
+genuinely unsigned — a hash, a checksum, a network field. Java has no unsigned `int` type, and these
+are how you work with one anyway.
+
+`Math.addExact`, `multiplyExact`, `subtractExact`, `toIntExact` when an overflow would be a correctness
+bug. They throw `ArithmeticException` instead of wrapping silently, which turns a data corruption into a
+stack trace.
+
+`low + (high - low) / 2` OR `(low + high) >>> 1` for midpoints. The second works because an overflowing
+sum puts its carry in the sign bit and `>>>` treats that bit as data rather than as a sign.
+
+`BigInteger` when the values may genuinely exceed `long`, and note it offers BOTH `mod` (non-negative,
+throws on a non-positive modulus) and `remainder` (matches `%`). THE FACT THAT IT NEEDS TWO METHODS IS
+THE CLEAREST EVIDENCE THAT THESE ARE TWO DIFFERENT OPERATIONS.
+
+`hash & (n - 1)` WITH A POWER-OF-TWO SIZE, if you control the table size. Faster than `%`, inherently
+non-negative, and what `HashMap` actually does — but it silently constrains `n`, and it hides sign bugs
+from anyone who later changes the size.
+
+FOR PERCENTAGES AND RATIOS, MULTIPLY BEFORE DIVIDING, or use `double` deliberately. `100 * a / b` rather
+than `a / b * 100`.
+
+WHAT TO SAY: "Java truncates toward ZERO, so `-7/2` is −3 rather than −4, and the identity
+`(a/b)*b + (a%b) == a` then FORCES the remainder to take the dividend's sign — so `-7 % 2` is −1. That
+makes `%` a remainder rather than a modulus, which is why `hashCode() % n` as an array index throws for
+about half of all keys. `Math.floorMod` is the fix, not `Math.abs`, because
+`Math.abs(Integer.MIN_VALUE)` is still negative."
+
+""",
+
+"""6. HOW TO GET IT RIGHT — numbered steps
+
+STEP 1 — REMEMBER TRUNCATION IS TOWARD ZERO, so the rounding DIRECTION flips with the sign.
+
+STEP 2 — REMEMBER `%` TAKES THE DIVIDEND'S SIGN. It is a remainder, not a modulus, and it is derived
+from the division rule via `(a/b)*b + (a%b) == a`.
+
+STEP 3 — USE `Math.floorMod` FOR ANY RESULT USED AS AN INDEX OR A CYCLE POSITION. Always.
+
+STEP 4 — DO NOT USE `Math.abs` TO FIX A NEGATIVE INDEX. `Math.abs(Integer.MIN_VALUE)` is negative, and
+it fails once in four billion, unreproducibly.
+
+STEP 5 — TEST ODDNESS WITH `n % 2 != 0`, NOT `== 1`. The second is false for every negative odd number.
+
+STEP 6 — MULTIPLY BEFORE DIVIDING FOR PERCENTAGES. `100 * a / b`, not `a / b * 100`.
+
+STEP 7 — USE `low + (high - low) / 2` OR `(low + high) >>> 1` FOR MIDPOINTS. The plain average
+overflows, and it did so in the JDK for twenty years.
+
+STEP 8 — USE `Math.ceilDiv` OR `(a + b - 1) / b` FOR PAGE AND BATCH COUNTS. `(a/b) + 1` is wrong when the
+division is exact.
+
+STEP 9 — PICK ONE FAMILY PER CALCULATION. `/` with `%`, or `floorDiv` with `floorMod`. Mixing them
+breaks the identity.
+
+STEP 10 — REMEMBER INTEGER DIVISION BY ZERO THROWS AND FLOATING-POINT DOES NOT. Converting to `double`
+turns a loud failure into a silent `Infinity`.
+
+STEP 11 — USE `Math.*Exact` WHERE OVERFLOW WOULD BE A CORRECTNESS BUG, and remember
+`Integer.MIN_VALUE / -1` is the one division that overflows.
+
+STEP 12 — USE `Integer.divideUnsigned` AND FRIENDS when the bits are genuinely unsigned. Java has no
+unsigned `int`, and pretending otherwise with `abs` does not work.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`-7 / 2` is −3, not −4, and `-7 % 2` is −1, not 1. Java truncates toward ZERO — so `7/2` drops the half
+downward to 3 and `-7/2` drops it UPWARD to −3. Both move toward zero, which means the rounding
+DIRECTION flips depending on the sign.
+
+And the remainder's sign isn't an independent decision — it's forced. The language guarantees the
+identity `(a/b)*b + (a%b) == a`. Once division truncates toward zero, `-7/2` is −3, so −3 times 2 is −6,
+so the remainder must be −1 to get back to −7. The sign of `%` follows the DIVIDEND, and the divisor's
+sign doesn't affect it at all. That's derived rather than memorised, which is much easier to keep.
+
+Which means Java's `%` is a REMAINDER, not a modulus. In maths, and in Python and Ruby and Haskell,
+`-7 mod 2` is 1 — non-negative for a positive divisor. The two differ for exactly one case: a negative
+dividend. Java went with truncation because C did, and because that's what CPU division instructions do
+in hardware — x86's idiv truncates toward zero, so in 1995 matching it meant one instruction instead of
+an instruction plus a correction. Python chose floor division because it's more useful mathematically
+and paid a small cost. Neither is wrong; they optimised different things.
+
+Where it actually hurts is `hashCode() % n` used as an array index. hashCode returns a SIGNED int and is
+often negative, so the index is negative and you get ArrayIndexOutOfBounds — intermittently, on whichever
+keys happen to hash negative, which is roughly half of them. Same shape in ring buffers, day-of-week
+arithmetic, anything that wraps.
+
+The fix is Math.floorMod, and specifically NOT Math.abs — because `Math.abs(Integer.MIN_VALUE)` is
+STILL Integer.MIN_VALUE. The int range is asymmetric, there's no positive 2147483648, so negating the
+minimum overflows back to itself. So `Math.abs(hash) % n` is still a bug about one time in four billion,
+which on a busy system isn't never and is impossible to reproduce when it happens.
+
+There's a related detail I like: HashMap doesn't use `%` at all. It uses `hash & (n-1)` with a
+power-of-two table size, which is faster and inherently non-negative. And that CHOICE HIDES THE BUG — a
+power-of-two bucket count makes even the abs version appear to work, so code fails only when someone
+configures a non-power-of-two size.
+
+Two neighbours worth mentioning. `n % 2 == 1` as an odd test is FALSE for every negative odd number,
+because `-3 % 2` is −1; use `!= 0`. And `(low + high) / 2` overflows for large indices — that's the
+famous binary search bug that sat in the JDK and in Programming Pearls for two decades. `low + (high -
+low) / 2`, or `(low + high) >>> 1`, which works because the overflow lands in the sign bit and the
+unsigned shift treats that bit as data.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE FOUR RESULTS ────────────────────────────────────────────────
+     7 / 2      //  3        7 % 2      //  1
+    -7 / 2      // -3   ←    -7 % 2     // -1   ←   not -4, and not +1
+     7 / -2     // -3        7 % -2     //  1   ←   the DIVISOR's sign is irrelevant
+    -7 / -2     //  3       -7 % -2     // -1
+    // TRUNCATION IS TOWARD ZERO, so the rounding DIRECTION flips with the sign.
+    // The remainder's sign follows the DIVIDEND, always.
+
+    // ── AND IT IS FORCED, NOT CHOSEN ────────────────────────────────────
+    // The language guarantees:   (a / b) * b + (a % b)  ==  a
+    //   -7 / 2 = -3   →   (-3) * 2 = -6   →   a % b must be -1 to reach -7
+    // Fix the DIVISION rule and the REMAINDER's sign is determined. Derived, not
+    // memorised.
+
+    // ── THE OTHER FAMILY ────────────────────────────────────────────────
+    Math.floorDiv(-7, 2)   // -4   ← rounds toward NEGATIVE INFINITY
+    Math.floorMod(-7, 2)   //  1   ← because (-4)*2 = -8, so +1 reaches -7
+    Math.ceilDiv(-7, 2)    // -3   ← Java 18+
+    // The SAME identity holds for both families. They differ only in which way
+    // division rounds — which is why floorDiv and floorMod are a PAIR, and why
+    // mixing one from each family breaks the identity.
+
+    // ── WHERE IT ACTUALLY HURTS ─────────────────────────────────────────
+    int bucket = key.hashCode() % buckets.length;
+    buckets[bucket] = value;
+    //      ^^^^^^ hashCode() returns a SIGNED int and is often negative.
+    // → ArrayIndexOutOfBoundsException, on roughly HALF of all keys, intermittently.
+    int bucket = Math.floorMod(key.hashCode(), buckets.length);   // ← correct
+
+    // ── THE FIX PEOPLE REACH FOR, WHICH IS ALSO WRONG ───────────────────
+    int bucket = Math.abs(key.hashCode()) % buckets.length;
+    //           ^^^^^^^^ Math.abs(Integer.MIN_VALUE) IS Integer.MIN_VALUE.
+    // The int range is ASYMMETRIC: -2147483648 .. +2147483647. There is no positive
+    // 2147483648, so negating the minimum overflows back to itself. Documented
+    // behaviour; it does not throw.
+    // → still a bug, about one time in four billion, and UNREPRODUCIBLE.
+
+    // ── AND THE THING THAT HIDES IT ─────────────────────────────────────
+    // HashMap does not use % at all:
+    index = (n - 1) & hash;        // ← a power-of-two table size. Faster, and
+    //                                inherently non-negative because the mask clears
+    //                                the sign bit.
+    // Which means a power-of-two bucket count makes even the abs version APPEAR to
+    // work — so the code fails only when someone configures a non-power-of-two size.
+
+    // ── THE ODD TEST THAT MISSES HALF THE ODD NUMBERS ───────────────────
+    if (n % 2 == 1) { ... }        // ✗ FALSE for every NEGATIVE odd number:
+    //                                  -3 % 2 is -1, not 1
+    if (n % 2 != 0) { ... }        // ✓
+
+    // ── THE BINARY-SEARCH BUG THAT LIVED FOR TWENTY YEARS ───────────────
+    int mid = (low + high) / 2;              // ✗ OVERFLOWS for large indices.
+    //                                          This was in the JDK, and in
+    //                                          Programming Pearls, for two decades.
+    int mid = low + (high - low) / 2;        // ✓
+    int mid = (low + high) >>> 1;            // ✓ the overflow lands in the SIGN BIT,
+    //                                          and >>> treats that bit as DATA
+
+    // ── TRUNCATION BEFORE MULTIPLICATION ────────────────────────────────
+    int pct = 1 / 2 * 100;         // 0   ← the division truncates FIRST
+    int pct = 100 * 1 / 2;         // 50  ← multiply before dividing
+
+    // ── CEILING DIVISION ────────────────────────────────────────────────
+    int pages = (items / perPage) + 1;       // ✗ wrong when it divides exactly
+    int pages = (items + perPage - 1) / perPage;   // ✓ for positive values
+    int pages = Math.ceilDiv(items, perPage);      // ✓ Java 18+
+
+    // ── TWO ASYMMETRIES ─────────────────────────────────────────────────
+    Integer.MIN_VALUE / -1;        // Integer.MIN_VALUE — THE ONLY division that
+    //                                overflows. (% -1 is 0, correctly.)
+    1 / 0;                         // ArithmeticException: / by zero
+    1.0 / 0.0;                     // Infinity — floating point does NOT throw.
+    // Converting an int calculation to double turns a loud failure into a silent
+    // Infinity that then propagates as NaN.""",
+
+"""9. THE TRACE — one hash function, one array, half the keys
+
+TRACE 1 — THE IDENTITY DOING THE FORCING:
+
+    a     b    a/b   (a/b)*b   a - (a/b)*b   so a%b is
+    ---------------------------------------------------------------------------------
+     7    2      3       6           1            1
+    -7    2     -3      -6          -1           -1     ← the dividend's sign
+     7   -2     -3       6           1            1     ← the DIVISOR's sign is
+    -7   -2      3      -6          -1           -1        irrelevant
+    ---------------------------------------------------------------------------------
+    NOBODY DECIDED "THE REMAINDER SHOULD FOLLOW THE DIVIDEND". It follows from truncating toward zero
+    plus the identity `(a/b)*b + (a%b) == a`. One rule, and the table is derivable rather than
+    memorisable.
+
+    THE SAME TABLE FOR THE FLOOR FAMILY:
+    -7    2     -4      -8           1            1     ← floorMod is non-negative
+     7   -2     -4       8          -1           -1     ← and follows the DIVISOR
+    ---------------------------------------------------------------------------------
+    SAME IDENTITY, DIFFERENT ROUNDING, OPPOSITE SIGN CONVENTION. Which is why `floorDiv` and `floorMod`
+    must be used as a pair.
+
+TRACE 2 — WHY THE BUCKET BUG IS INTERMITTENT:
+
+    key            hashCode()      % 16      result
+    ---------------------------------------------------------------------------------
+    "apple"        93029210         10       fine
+    "banana"      -1396355227       -11      ArrayIndexOutOfBoundsException
+    "cherry"       -1361128838      -6       ArrayIndexOutOfBoundsException
+    "date"         3076014          14       fine
+    ---------------------------------------------------------------------------------
+    `hashCode()` RETURNS A SIGNED `int`, AND ROUGHLY HALF OF ALL VALUES ARE NEGATIVE. So the failure
+    depends entirely on which keys the test data happened to contain. A unit test with four cheerful
+    strings can easily pick four positive hashes, and the bug ships.
+
+    (The specific hash values above are illustrative of the shape — the point is the SIGN distribution,
+    not the digits.)
+
+TRACE 3 — THE THREE "FIXES", COMPARED:
+
+    expression                                    -1396355227        Integer.MIN_VALUE
+    ---------------------------------------------------------------------------------
+    hash % 16                                      -11  ✗ throws       0   ✓ by luck
+    Math.abs(hash) % 16                             11  ✓              -2147483648 % 16
+                                                                       = 0 ✓ by luck...
+    Math.abs(hash) % 15                             ...                 abs gives
+                                                                       MIN_VALUE, and
+                                                                       MIN_VALUE % 15
+                                                                       is NEGATIVE  ✗
+    Math.floorMod(hash, 15)                         ...                 correct  ✓
+    ---------------------------------------------------------------------------------
+    ROW 3 IS THE POINT. `Math.abs(Integer.MIN_VALUE)` is `Integer.MIN_VALUE`, so the abs "fix" still
+    produces a negative index — and only for one input in four billion, and only when the divisor is not
+    a power of two. THAT COMBINATION IS WHY THIS BUG SURVIVES: it needs an unlucky hash AND a
+    non-power-of-two size, so it lies dormant until someone changes a configuration value.
+
+TRACE 4 — THE MIDPOINT OVERFLOW, with real numbers:
+
+    low = 1,500,000,000   high = 2,000,000,000
+    expression                      arithmetic                    result
+    ---------------------------------------------------------------------------------
+    (low + high) / 2                3,500,000,000 overflows int   -397,483,648
+                                    to -794,967,296, then /2      ← a NEGATIVE index
+    low + (high - low) / 2          1,500,000,000 + 250,000,000   1,750,000,000  ✓
+    (low + high) >>> 1              -794,967,296 as UNSIGNED
+                                    bits is 3,500,000,000; >>>1   1,750,000,000  ✓
+    ---------------------------------------------------------------------------------
+    THE THIRD ROW IS THE ELEGANT ONE. The sum genuinely overflowed and the carry landed in the sign bit
+    — and `>>>` shifts in a zero rather than replicating the sign, so it reads that bit as the value it
+    actually is. The bits were never wrong; only the SIGNED interpretation of them was.
+
+    THIS BUG WAS IN THE JDK'S OWN `Arrays.binarySearch` AND IN `Programming Pearls` FOR ABOUT TWENTY
+    YEARS, which is a useful reminder that "obviously correct" arithmetic is where these live.
+
+WHAT PRODUCED WHAT:
+    TRUNCATION TOWARD ZERO      produced trace 1's first block, and therefore the sign of `%`.
+    A SIGNED hashCode           produced trace 2's intermittency — the bug is data-dependent by
+                                construction.
+    AN ASYMMETRIC int RANGE     produced trace 3's row 3: there is no positive 2147483648, so `abs`
+                                cannot always return a positive number.
+    FIXED-WIDTH ARITHMETIC      produced trace 4, and the `>>>` fix that reinterprets rather than
+                                recomputes.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `/` truncates toward ZERO; `%` takes the sign of the DIVIDEND. Both follow from
+    `(a/b)*b + (a%b) == a`.
+    `Math.floorDiv` rounds toward NEGATIVE INFINITY; `Math.floorMod` takes the sign of the DIVISOR.
+    `Math.ceilDiv` rounds toward positive infinity (Java 18+).
+    `Math.abs(Integer.MIN_VALUE)` is `Integer.MIN_VALUE` — the range is asymmetric.
+    `Integer.MIN_VALUE / -1` is the ONLY division that overflows.
+    Integer division by zero THROWS; floating-point division by zero gives ±Infinity.
+    `HashMap` uses `hash & (n-1)` with a power-of-two size rather than `%`.
+
+THE #1 MISTAKE: `hashCode() % n` as an array index. Negative for about half of all keys.
+
+THE #2 MISTAKE: `Math.abs(hash) % n` as the fix. Still negative for `Integer.MIN_VALUE`.
+
+THE #3 MISTAKE: expecting `-7 % 2` to be 1. That is a modulus; `%` is a remainder.
+
+THE #4 MISTAKE: `n % 2 == 1` as an odd test. False for every negative odd number.
+
+THE #5 MISTAKE: `(low + high) / 2`. Overflows, and did so in the JDK for two decades.
+
+THE #6 MISTAKE: `a / b * 100` for a percentage. Truncates before multiplying; reorder it.
+
+THE #7 MISTAKE: `(a / b) + 1` for a page count. Wrong when the division is exact.
+
+THE #8 MISTAKE: mixing `/` with `floorMod`, or `floorDiv` with `%`. Use one family per calculation.
+
+THE #9 MISTAKE: assuming division by zero behaves the same for `int` and `double`. One throws; the other
+gives `Infinity` that propagates as `NaN`.
+
+THE #10 MISTAKE: forgetting `Integer.MIN_VALUE / -1` overflows. The only one.
+
+THE #11 MISTAKE: relying on a power-of-two bucket count to hide a sign bug. It works until someone
+changes the size.
+
+THE #12 MISTAKE: treating Java's `%` as broken. It matches C and the hardware; Python chose differently
+and paid for it. Both are deliberate.
+
+ONE-SENTENCE TAKEAWAY: Java truncates division TOWARD ZERO — matching C and the CPU's own instruction —
+so `-7/2` is −3 rather than −4, and the guaranteed identity `(a/b)*b + (a%b) == a` then FORCES the
+remainder to take the DIVIDEND's sign, making `%` a remainder rather than a modulus and `-7 % 2` equal to
+−1; the practical consequence is that `hashCode() % n` produces a negative array index for roughly half
+of all keys, that `Math.abs` does NOT fix it because `Math.abs(Integer.MIN_VALUE)` is still
+`Integer.MIN_VALUE` on an asymmetric range, and that a power-of-two bucket count HIDES both bugs until
+someone changes the size — so use `Math.floorMod` for anything that will be an index, keep `floorDiv`
+and `floorMod` together as a pair, test oddness with `!= 0`, and compute midpoints as
+`low + (high - low) / 2`.""",
+]
