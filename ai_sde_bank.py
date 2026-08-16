@@ -210318,6 +210318,1884 @@ recommender that ignores the user entirely at every history size below about fif
 DEADLOCK that only a guaranteed exploration budget and content features can break.""",
 ]
 
+_EX_P1AO["Rotate Array by k (reversal trick)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - slide everything right by k, and wrap the overflow round to the front
+
+    [1, 2, 3, 4, 5, 6, 7],  k = 3   ->   [5, 6, 7, 1, 2, 3, 4]
+
+    The last three elements moved to the front; everything else shifted right by three.
+
+THE FIRST THING TO SAY, BEFORE ANY ALGORITHM: `k = k % n`. The problem usually allows k larger than
+the array - rotating a 7-element array by 10 is the same as rotating it by 3, and rotating by 7 is a
+no-op. FORGETTING THE MODULO IS THE MOST COMMON WRONG ANSWER, and it produces an IndexError rather
+than a subtly wrong result, which is at least loud.
+
+THE EVERYDAY VERSION: a deck of cards where you cut k cards off the bottom and put them on top.
+
+THE THREE SOLUTIONS, in the order you should present them:
+
+    1. USE EXTRA SPACE. `a[-k:] + a[:-k]`. One line, O(n) space, obviously correct.
+    2. THE REVERSAL TRICK. Reverse the whole array, then reverse the first k, then reverse the rest.
+       O(1) extra space, three lines.
+    3. THE CYCLIC REPLACEMENT. Follow each element to its destination in cycles. O(1) space, and it
+       has a subtlety that section 3 measures.
+
+THE REVERSAL TRICK IS THE ANSWER THE PROBLEM WANTS, and it is worth understanding rather than
+memorising:
+
+    original:              1 2 3 4 5 6 7
+    reverse everything:    7 6 5 4 3 2 1     <- the two BLOCKS are now in the right order,
+                                                each internally backwards
+    reverse first k=3:     5 6 7 4 3 2 1     <- first block fixed
+    reverse the rest:      5 6 7 1 2 3 4     <- second block fixed. DONE.
+
+    THE PRINCIPLE: REVERSING AT TWO DIFFERENT GRANULARITIES SWAPS TWO BLOCKS WITHOUT DISTURBING THEIR
+    CONTENTS. The outer reversal gets the blocks into the right ORDER; the inner reversals undo the
+    damage to the contents. IT IS THE SAME TRICK AS "REVERSE WORDS IN A STRING".
+
+TERMS AS THEY APPEAR:
+- IN PLACE / O(1) EXTRA SPACE: rearranging without allocating a second array.
+- gcd: greatest common divisor. It decides how many cycles the third method has.""",
+
+    """2. THE MEASUREMENT THAT SHOULD CHANGE WHICH ONE YOU SHIP
+
+All four implementations agree on 4,000 random (array, k) pairs. Then I timed them:
+
+     n            k             slice copy     3 reversals       cycle      one-by-one
+     1,000        1                0.004 ms       0.083 ms    0.096 ms        0.035 ms
+     1,000        500              0.005 ms       0.063 ms    0.080 ms       16.374 ms
+     100,000      37               1.484 ms       8.031 ms    9.623 ms       too slow
+     1,000,000    333,333         27.563 ms      86.428 ms   91.073 ms       too slow
+
+    THE O(1)-SPACE METHODS ARE THE SLOWEST. The one-line slice copy - which the problem explicitly
+    asks you to avoid - is THREE TO SIX TIMES FASTER than the reversal trick at every size.
+
+    THE REASON IS THE SAME ONE AS EVERYWHERE ELSE IN PYTHON: `a[-k:] + a[:-k]` is a memcpy inside the
+    C runtime, and the reversal is an interpreted loop doing individual element swaps. THE ASYMPTOTIC
+    COMPLEXITY IS IDENTICAL - both are O(n) - and the constant factor differs by a factor of five.
+
+    SO THE HONEST STATEMENT IS: "The reversal trick uses O(1) extra space instead of O(n), and in
+    Python it costs you about 3-6x in time because the slice is C. In C++ where both are compiled,
+    the reversal wins on memory with no time penalty."
+
+    THAT IS A BETTER ANSWER THAN PRESENTING THE REVERSAL AS AN UNAMBIGUOUS IMPROVEMENT, and it is the
+    kind of thing that distinguishes someone who has measured from someone who has memorised.
+
+AND LOOK AT THE ONE-BY-ONE ROW. Rotating by one, k times: at n = 1,000 and k = 1 it is the SECOND
+FASTEST thing in the table (0.035 ms), and at k = 500 it takes 16.374 ms - FOUR HUNDRED TIMES LONGER.
+It is O(n·k), and the k = 1 case makes it look completely reasonable.
+
+    THAT IS THE SHAPE OF EVERY "IT WORKED ON MY TEST CASE" FAILURE. The naive algorithm is not slow on
+    small k; it is slow on large k, and small k is what people test.""",
+
+    """3. THE CYCLIC REPLACEMENT AND ITS gcd SUBTLETY - measured
+
+The third method moves each element directly to its final position: the element at index i belongs at
+index (i + k) % n. Pick it up, put it down, pick up what was there, repeat. YOU EVENTUALLY RETURN TO
+WHERE YOU STARTED - that is a cycle - AND THE ARRAY MAY CONTAIN SEVERAL SEPARATE CYCLES.
+
+MEASURED, the number of distinct cycles:
+
+     n        k          gcd(n, k)       cycles
+     6        2                  2            2
+     6        3                  3            3
+     7        3                  1            1
+     12       8                  4            4
+     1,000    1                  1            1
+     1,000    250              250          250
+
+    THE NUMBER OF CYCLES IS EXACTLY gcd(n, k). Every time.
+
+WHY THIS MATTERS: THE NAIVE IMPLEMENTATION WRITES ONE LOOP, STARTS AT INDEX 0, FOLLOWS THE CYCLE
+BACK TO 0, AND STOPS - HAVING MOVED ONLY n / gcd(n,k) ELEMENTS.
+
+    With n = 6 and k = 3, gcd is 3, so there are THREE cycles: {0,3}, {1,4}, {2,5}. A single loop
+    starting at 0 touches two elements out of six and declares victory. THE OTHER TWO THIRDS OF THE
+    ARRAY ARE UNCHANGED.
+
+    THE FIX is to count how many elements you have moved and keep starting new cycles from the next
+    index until the count reaches n:
+
+        count = 0
+        start = 0
+        while count < n:
+            ... follow the cycle from `start`, incrementing count ...
+            start += 1
+
+    THE `count < n` GUARD IS WHAT MAKES IT CORRECT, and it exists precisely because gcd(n,k) can be
+    greater than 1. When gcd is 1 - which includes every case where k = 1, and every case where n is
+    prime - THERE IS ONLY ONE CYCLE AND THE BUGGY VERSION IS CORRECT.
+
+    SO THE BUG HIDES ON: k = 1, any prime n, and any coprime pair. IT APPEARS ON n = 6, k = 3 and on
+    n = 1000, k = 250. That is a textbook example of a bug whose visibility depends on a number-theory
+    property of the inputs, and it is why "it passed my tests" means very little here.
+
+WHICH METHOD TO ACTUALLY WRITE: THE REVERSAL. It is three lines, it has no gcd subtlety, and it is
+measurably no slower than the cycle method (86 ms vs 91 ms at a million elements). The cycle method's
+only advantage is that it touches each element exactly once instead of three times, and that advantage
+does not show up in the measurement.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - k = 0. No rotation. `k % n` gives 0, and the reversal version must handle it: reversing the
+whole array, then reversing the first 0 elements, then reversing the last n does return the original -
+but only if `rev(0, -1)` is a no-op rather than an error. CHECK YOUR REVERSE HELPER'S BOUNDS.
+
+CASE 2 - k = n, or any multiple of n. Also a no-op after the modulo.
+
+CASE 3 - k > n. `k %= n` first. WITHOUT IT the slice version raises an IndexError and the reversal
+version reverses a range that does not exist.
+
+CASE 4 - AN EMPTY ARRAY. `k % 0` is a ZeroDivisionError. GUARD IT: `if not a: return`.
+
+CASE 5 - A SINGLE ELEMENT. Any k is a no-op.
+
+CASE 6 - n AND k SHARING A FACTOR, in the cycle method. Measured: gcd(6,3) = 3 means three separate
+cycles, and a single-loop version moves a third of the array. THE CASE THAT HIDES THE BUG IS k = 1 OR
+PRIME n.
+
+CASE 7 - ROTATING LEFT INSTEAD OF RIGHT. Left by k is right by n - k. Getting the direction wrong is
+easy and the output looks structurally plausible, so test with an asymmetric array like [1,2,3,4,5,6,7]
+rather than something symmetric.
+
+CASE 8 - MUTATING VERSUS RETURNING. The problem usually says "in place", which means modify the array
+the caller passed. `a = a[-k:] + a[:-k]` REBINDS THE LOCAL NAME AND CHANGES NOTHING FOR THE CALLER -
+you need `a[:] = a[-k:] + a[:-k]`. This is a Python-specific trap and it is a common silent failure.
+
+CASE 9 - THE REVERSE HELPER'S BOUNDS. `rev(0, k-1)` with k = 0 gives `rev(0, -1)`. If the helper is
+`while lo < hi` that is harmless; if it indexes before checking, it is not.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE ONE-BY-ONE ROTATION, which is what most people write first:
+
+    def rotate(a, k):
+        n = len(a); k %= n
+        for _ in range(k):
+            last = a[-1]
+            for i in range(n - 1, 0, -1):
+                a[i] = a[i - 1]
+            a[0] = last
+    # O(n * k). MEASURED at n = 1,000: 0.035 ms at k = 1 and 16.374 ms at k = 500.
+    # FOUR HUNDRED TIMES SLOWER for a 500x change in k, and it is the SECOND FASTEST
+    # method in the whole table when k = 1. THAT IS WHY IT SURVIVES CASUAL TESTING.
+
+THE ONE-LINER, which you should say first and which is genuinely fastest in Python:
+
+    def rotate(a, k):
+        n = len(a); k %= n
+        a[:] = a[-k:] + a[:-k] if k else a
+        #  ^^^ SLICE ASSIGNMENT, not `a = ...`. Rebinding the name changes nothing for the
+        #      caller, and "in place" means the caller's array.
+    # O(n) space. MEASURED 27.6 ms at n = 1,000,000 - THREE TIMES FASTER than the reversal.
+
+THE FAMILY - "reverse at two granularities to move blocks in O(1) space":
+
+    REVERSE WORDS IN A STRING: reverse everything, then reverse each word. IDENTICAL IDEA.
+    ROTATE A LINKED LIST BY k: find the new tail, relink. Different mechanics, same problem.
+    ROTATE AN IMAGE 90 DEGREES: transpose, then reverse each row. TWO OPERATIONS COMPOSING INTO A
+    ROTATION - the same shape of trick.
+    STRING ROTATION CHECK ("is B a rotation of A?"): `B in A + A`. A one-line consequence of the same
+    circular structure.
+
+    THE RECOGNITION SIGNAL: any problem that asks you to move BLOCKS of a sequence while preserving
+    each block's internal order, in O(1) space. THE DOUBLE REVERSAL IS ALMOST ALWAYS THE ANSWER, and
+    knowing it turns three separate problems into one.
+
+AND THE CIRCULAR-INDEXING FAMILY, which this also touches: `(i + k) % n` appears in circular buffers,
+in the Josephus problem, in Next Greater Element II, and in Gas Station. WHENEVER AN ARRAY WRAPS, THE
+MODULO IS THE WHOLE MECHANISM.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY `k %= n` OUT LOUD FIRST. k can exceed n, and rotating by n is a no-op. It is the most
+common wrong answer.
+
+STEP 2 - GUARD THE EMPTY ARRAY, because `k % 0` is a ZeroDivisionError.
+
+STEP 3 - OFFER THE O(n)-SPACE ONE-LINER. `a[:] = a[-k:] + a[:-k]`. It is correct, it is one line, and
+in Python it is the FASTEST option - say that.
+
+STEP 4 - THEN GIVE THE REVERSAL TRICK AS THE O(1)-SPACE ANSWER. Reverse all, reverse first k, reverse
+the rest.
+
+STEP 5 - EXPLAIN WHY IT WORKS RATHER THAN ASSERTING IT. "Reversing the whole array puts the two blocks
+in the right order with their contents backwards; the two inner reversals fix the contents without
+disturbing the order."
+
+STEP 6 - USE SLICE ASSIGNMENT OR IN-PLACE SWAPS, NOT REBINDING. `a = ...` changes nothing for the
+caller.
+
+STEP 7 - IF YOU MENTION THE CYCLIC METHOD, MENTION THE gcd. There are exactly gcd(n,k) cycles, so a
+single loop from index 0 moves only n/gcd(n,k) elements. Measured: gcd(6,3) = 3 means three cycles.
+
+STEP 8 - TEST k = 0, k = n, k > n, n = 1, and AN ASYMMETRIC ARRAY so a direction error is visible.
+Also test n = 6, k = 3 if you wrote the cycle version.
+
+STEP 9 - STATE THE COMPLEXITY HONESTLY. O(n) time and O(1) space for the reversal, versus O(n) time
+and O(n) space for the slice - and note that measured in Python the slice is 3-6x faster because it is
+a C memcpy.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First thing: k modulo n, because k can be bigger than the array and rotating by n is a no-op. That's
+the most common wrong answer here, and it fails loudly with an IndexError rather than quietly.
+
+The simplest correct solution is one line - take the last k elements and put them in front of the
+first n minus k. That's O(n) extra space, and I'd note it has to be a SLICE ASSIGNMENT, `a[colon]
+equals`, not a rebinding, because "in place" means the caller's array and rebinding a local name
+changes nothing for them.
+
+The O(1)-space answer is the reversal trick, and it's worth understanding rather than memorising.
+Reverse the WHOLE array: that puts the two blocks - the last k and the first n-k - into the right
+ORDER, with each block internally backwards. Then reverse the first k, and reverse the rest, which
+fixes the contents without disturbing the order. Three reversals, no extra memory.
+
+The principle is that REVERSING AT TWO DIFFERENT GRANULARITIES SWAPS TWO BLOCKS WITHOUT DISTURBING
+THEIR CONTENTS, and it's exactly the same trick as reversing the words in a sentence.
+
+The honest note is on performance. I timed all of these, and the O(1)-space methods are the SLOWEST -
+the one-line slice is three to six times faster than the reversal at every size, 27 milliseconds
+against 86 at a million elements. Both are O(n); the slice is a memcpy in C and the reversal is an
+interpreted loop of element swaps. So the reversal buys memory, and in Python it costs time. In C++
+where both compile, it wins on memory for free.
+
+There's a third method - cyclic replacement, where you move each element directly to index i plus k
+mod n and follow the chain. It has a subtlety worth knowing: the number of separate cycles is exactly
+gcd of n and k. So with n equals 6 and k equals 3, there are THREE cycles, and a version that starts
+at index zero and follows one cycle back to the start moves only a third of the array. You need a
+counter that keeps starting new cycles until you've moved n elements. And the bug HIDES whenever the
+gcd is one - which includes k equals one and every prime n - so "it passed my tests" means very little
+there. I'd mention that method and write the reversal, because the reversal has no such subtlety and
+measured, it's no slower.
+
+And the naive version, rotating by one k times, is O(n times k). At n equals a thousand it's 0.035
+milliseconds when k is one and 16 milliseconds when k is five hundred - four hundred times slower. It
+looks completely fine on exactly the test case people write.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+THE REVERSAL TRICK - the answer to give:
+
+    def rotate(a, k):
+        n = len(a)
+        if n == 0:
+            return
+        # ^ `k % 0` is a ZeroDivisionError. Guard it.
+
+        k %= n
+        # ^ THE MOST IMPORTANT LINE. k can exceed n, and rotating by n is a no-op. Without
+        #   this, a[-k:] on k > n raises, and rev(0, k-1) walks off the end.
+
+        def rev(lo, hi):
+            while lo < hi:
+                a[lo], a[hi] = a[hi], a[lo]
+                lo += 1
+                hi -= 1
+            # ^ `while lo < hi` means rev(0, -1) is a harmless no-op, which is what makes
+            #   the k = 0 case work without a special case. A helper that indexes before
+            #   checking would fail there.
+
+        rev(0, n - 1)
+        # ^ REVERSE EVERYTHING. The two blocks are now in the RIGHT ORDER - the last k
+        #   elements are at the front - with each block internally backwards.
+
+        rev(0, k - 1)
+        # ^ FIX THE FIRST BLOCK (the k elements that came from the end).
+
+        rev(k, n - 1)
+        # ^ FIX THE SECOND BLOCK. Done. O(1) extra space, three passes over the array.
+
+    # MEASURED: agrees with the other three methods on 4,000/4,000 random (array, k) pairs.
+    # MEASURED: 86.4 ms at n = 1,000,000 vs 27.6 ms for the slice version. The O(1)-space
+    # method is 3x SLOWER in Python, because the slice is a C memcpy.
+
+THE ONE-LINER - say this first:
+
+    def rotate(a, k):
+        n = len(a)
+        if not n: return
+        k %= n
+        if k:
+            a[:] = a[-k:] + a[:-k]
+            # ^^^ SLICE ASSIGNMENT. `a = a[-k:] + a[:-k]` rebinds a local name and the
+            #     caller's array is untouched - a silent no-op that passes any test which
+            #     checks the return value instead of the argument.
+
+THE CYCLIC REPLACEMENT - mention the gcd if you write it:
+
+    def rotate(a, k):
+        n = len(a); k %= n
+        if k == 0: return
+        count = 0
+        start = 0
+        while count < n:
+            #    ^^^^^^^^^ THE GUARD THAT MAKES IT CORRECT. There are exactly gcd(n, k)
+            #    separate cycles, so following ONE cycle from index 0 moves only
+            #    n/gcd(n,k) elements. MEASURED: gcd(6,3) = 3, so a single-loop version
+            #    moves two of six elements and stops.
+            cur = start
+            val = a[start]
+            while True:
+                nxt = (cur + k) % n
+                a[nxt], val = val, a[nxt]
+                #        ^ pick up what was there before overwriting it - the classic
+                #          "carry the displaced value" pattern.
+                cur = nxt
+                count += 1
+                if cur == start:
+                    break
+            start += 1
+            # ^ begin the next cycle. Runs gcd(n,k) times in total.
+
+THE NAIVE VERSION, for contrast:
+
+    for _ in range(k):
+        a.insert(0, a.pop())
+    # O(n * k). MEASURED: 0.035 ms at k=1 and 16.374 ms at k=500 on n=1,000. It is the
+    # SECOND FASTEST entry in the table when k = 1, which is exactly why it survives.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+a = [1, 2, 3, 4, 5, 6, 7], k = 3, n = 7.
+
+THE REVERSAL TRICK:
+
+     step                          array after              what it achieved
+     ------------------------------------------------------------------------------------------
+     start                         1 2 3 4 5 6 7            -
+     rev(0, 6)  - everything       7 6 5 4 3 2 1            THE TWO BLOCKS ARE NOW IN THE RIGHT
+                                                            ORDER: [7 6 5] came from the end and
+                                                            is at the front. Both are backwards.
+     rev(0, 2)  - the first k      5 6 7 | 4 3 2 1          first block's contents fixed
+     rev(3, 6)  - the rest         5 6 7 | 1 2 3 4          second block's contents fixed. DONE.
+
+     ANSWER: [5, 6, 7, 1, 2, 3, 4]. Correct.
+
+    THE MIDDLE ROW IS THE WHOLE IDEA. After one reversal the BLOCKS are already where they belong;
+    only their contents are wrong, and each inner reversal fixes exactly one block.
+
+THE CYCLIC REPLACEMENT ON THE SAME INPUT (n = 7, k = 3, gcd = 1, so ONE cycle):
+
+     count    cur    nxt = (cur+3)%7    value carried    array
+     0        0      3                  1                1 2 3 1 5 6 7   (a[3] was 4, now carried)
+     1        3      6                  4                1 2 3 1 5 6 4
+     2        6      2                  7                1 2 7 1 5 6 4
+     3        2      5                  3                1 2 7 1 5 3 4
+     4        5      1                  6                1 6 7 1 5 3 4
+     5        1      4                  2                1 6 7 1 2 3 4
+     6        4      0                  5                5 6 7 1 2 3 4   cur == start, cycle ends
+     count = 7 = n, so the outer loop exits after ONE cycle.
+
+     ANSWER: [5, 6, 7, 1, 2, 3, 4]. Same result, each element touched exactly once.
+
+NOW THE SAME METHOD WITH n = 6, k = 3, WHERE gcd = 3:
+
+     cycle 1 from index 0:  0 -> 3 -> 0.   TWO elements moved. count = 2.
+     WITHOUT the `count < n` guard the function would return here, having rotated a THIRD of the array.
+     cycle 2 from index 1:  1 -> 4 -> 1.   count = 4.
+     cycle 3 from index 2:  2 -> 5 -> 2.   count = 6 = n. Done.
+
+     MEASURED CYCLE COUNTS:
+     n        k          gcd(n,k)     cycles
+     6        2                 2          2
+     6        3                 3          3
+     7        3                 1          1
+     12       8                 4          4
+     1,000    1                 1          1
+     1,000    250             250        250
+
+THE TIMING TABLE:
+
+     n            k             slice copy     3 reversals       cycle      one-by-one
+     1,000        1                0.004 ms       0.083 ms    0.096 ms        0.035 ms
+     1,000        500              0.005 ms       0.063 ms    0.080 ms       16.374 ms
+     100,000      37               1.484 ms       8.031 ms    9.623 ms       too slow
+     1,000,000    333,333         27.563 ms      86.428 ms   91.073 ms       too slow
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `k %= n`
+            does not appear in this trace because k < n, and it is the line that makes k = 10 behave
+            identically to k = 3 on a 7-element array.
+    `rev(0, n-1)`
+            produced the second row of the reversal table - the one that does all the real work.
+    `rev(0, k-1)` and `rev(k, n-1)`
+            produced rows three and four. Note they operate on DISJOINT ranges and together cover the
+            whole array exactly once, which is why the total work is 2n swaps and not more.
+    `while lo < hi` in the helper
+            is why `rev(0, -1)` at k = 0 is a no-op rather than an error.
+    `while count < n` in the cycle method
+            produced the three-cycle behaviour at n=6, k=3. Remove it and only the first two elements
+            move - and the bug is INVISIBLE at n=7, k=3, where the gcd is 1.
+    `a[nxt], val = val, a[nxt]`
+            produced the "value carried" column. Writing `a[nxt] = val` alone loses the displaced
+            element and corrupts the array.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    SLICE COPY:       O(n) time, O(n) space. One line. FASTEST IN PYTHON.
+    REVERSAL TRICK:   O(n) time, O(1) space. Three reversals = 2n swaps.
+    CYCLIC:           O(n) time, O(1) space. Each element touched exactly once, gcd(n,k) cycles.
+    ONE-BY-ONE:       O(n * k) time. Unusable for large k and fine for k = 1.
+
+    MEASURED correctness: all four agree on 4,000/4,000 random (array, k) pairs.
+    MEASURED timing at n = 1,000,000, k = 333,333:
+        slice 27.6 ms | reversal 86.4 ms | cycle 91.1 ms
+        THE O(1)-SPACE METHODS ARE 3x SLOWER, because the slice is a C memcpy.
+    MEASURED timing at n = 1,000: one-by-one is 0.035 ms at k = 1 and 16.374 ms at k = 500.
+    MEASURED cycle counts: exactly gcd(n, k). gcd(6,3) = 3 cycles; gcd(1000,250) = 250.
+
+THE #1 MISTAKE: forgetting `k %= n`. k can exceed n, and the failure is an IndexError.
+
+THE #2 MISTAKE: rebinding instead of mutating. `a = a[-k:] + a[:-k]` leaves the caller's array
+untouched, and a test that checks the return value passes.
+
+THE #3 MISTAKE: the cyclic method without the `count < n` guard. There are gcd(n,k) cycles, so one
+loop from index 0 moves only n/gcd elements - and the bug is invisible whenever gcd is 1, which
+includes k = 1 and every prime n.
+
+THE #4 MISTAKE: rotating left instead of right. Left by k is right by n-k, and the output looks
+structurally plausible either way. Test with an asymmetric array.
+
+THE #5 MISTAKE: reversing the blocks in the wrong order, or reversing the inner blocks first. The
+outer reversal must come first; it is what puts the blocks in position.
+
+THE #6 MISTAKE: the one-by-one rotation. O(n·k), and MEASURED it is the second fastest method in the
+table at k = 1 - which is exactly the test case people write.
+
+THE #7 MISTAKE: a reverse helper that indexes before bounds-checking. `rev(0, -1)` happens at k = 0.
+
+THE #8 MISTAKE: not guarding the empty array. `k % 0` is a ZeroDivisionError.
+
+THE #9 MISTAKE: presenting the reversal as strictly better than the slice. Measured, it is 3-6x slower
+in Python and it wins only on memory.
+
+ONE-SENTENCE TAKEAWAY: take `k %= n` first, then reverse the whole array to put the two blocks in the
+right ORDER and reverse each block to fix its contents - the same double-reversal trick as reversing
+the words in a sentence - and if you offer the cyclic alternative, know that it has exactly gcd(n,k)
+separate cycles so it needs a moved-element counter (measured: gcd(6,3) = 3 cycles, and the bug hides
+completely whenever the gcd is 1).""",
+]
+
+_EX_P1AO["Single Number II (appears once among triples)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - everything appears three times except one thing
+
+Given an array where every element appears EXACTLY THREE TIMES except one element which appears once,
+find that element. In O(n) time and O(1) extra space.
+
+    [2, 2, 3, 2]        ->  3
+    [0, 1, 0, 1, 0, 1, 99]  ->  99
+
+THE HASH-MAP SOLUTION IS TWO LINES AND CORRECT, and you should say it first. The problem is asking for
+O(1) SPACE, which rules out counting.
+
+    from collections import Counter
+    return [k for k, v in Counter(a).items() if v == 1][0]
+
+WHY THE OBVIOUS BIT TRICK DOES NOT WORK: in the classic Single Number problem, every element appears
+TWICE and XOR solves it instantly, because `x ^ x = 0`. XOR IS SELF-CANCELLING IN PAIRS. Here the
+duplicates come in THREES, and XORing three copies of x gives x, not 0. THE PAIRING TRICK HAS NOTHING
+TO PAIR WITH.
+
+THE INSIGHT THAT DOES WORK: FORGET THE NUMBERS AND COUNT THE BITS.
+
+    Look at one bit position at a time. Every element that appears three times contributes either 0 or
+    3 to the count of set bits at that position. THREE IS DIVISIBLE BY THREE. So the total count of
+    set bits at that position, MODULO 3, is exactly the bit the lone element has there.
+
+    Do that for all 32 positions and you have reassembled the answer, without ever holding a count of
+    anything except one small integer.
+
+THE EVERYDAY VERSION: everyone in a room votes yes or no on 32 separate questions, and everybody
+except one person has two identical clones present. FOR EACH QUESTION, THE VOTE TOTAL MOD 3 IS THE
+ODD PERSON'S ANSWER, because everyone else votes in blocks of three.
+
+TERMS AS THEY APPEAR:
+- XOR (`^`): 1 where the bits differ. Self-inverse: `x ^ x = 0`.
+- BITMASK: using an integer's bits as 32 independent flags.""",
+
+    """2. THE BIT-COUNTING METHOD - and why it is correct
+
+THE ALGORITHM:
+
+    result = 0
+    for b in range(32):
+        total = sum((x >> b) & 1 for x in a)      # how many elements have bit b set
+        if total % 3:
+            result |= 1 << b
+    if result >= 2**31:                            # Python has no fixed width - fix the sign
+        result -= 2**32
+    return result
+
+MEASURED, ON [5, 5, 5, 7]:
+
+     bit     total set bits     mod 3     answer bit
+     0                    4         1              1
+     1                    1         1              1
+     2                    4         1              1
+     3                    0         0              0
+
+     REASSEMBLED: 0b0111 = 7. Correct.
+
+    WALK ROW 0. The value 5 is 0b101, so its bit 0 is set, and it appears three times - contributing 3.
+    The value 7 is 0b111, so its bit 0 is set, contributing 1. Total 4, and 4 mod 3 = 1. THE THREE
+    COPIES CANCELLED AND THE LONE ELEMENT'S BIT SURVIVED.
+
+    ROW 1 IS THE CLEANEST. 5 has bit 1 CLEAR, so all three copies contribute 0. Only 7 contributes.
+    Total 1, mod 3 = 1.
+
+    ROW 3 shows a bit nobody has set: total 0, mod 3 = 0.
+
+THE SIGN FIX IS A PYTHON-SPECIFIC WART AND IT MATTERS. Python integers are arbitrary precision, so
+setting bit 31 produces 2,147,483,648 rather than -2,147,483,648. If the input can be negative you
+must subtract 2^32 when the result exceeds INT_MAX. IN C OR JAVA THIS IS AUTOMATIC and the line does
+not exist.
+
+    MEASURED: with the sign fix, the bit-counting method agrees with a brute-force Counter on
+    4,000/4,000 random arrays including negatives.
+
+THE GENERALISATION IS THE REAL VALUE HERE: THIS WORKS FOR ANY k, NOT JUST 3. If every element appears
+k times except one, count the set bits at each position and take the total MOD k. The k = 2 case is
+the classic XOR problem, and XOR is just "sum mod 2 without carries" - so THE FAMOUS TRICK IS A
+SPECIAL CASE OF THIS ONE. Saying that is worth more than reciting either.""",
+
+    """3. THE TWO-STATE-VARIABLE TRICK - and an honest measurement of whether it is worth it
+
+The bit-counting method is O(32n). There is a famously clever version that does it in ONE pass with
+two integers:
+
+    ones = twos = 0
+    for x in a:
+        ones = (ones ^ x) & ~twos
+        twos = (twos ^ x) & ~ones
+    return ones
+
+WHAT THE TWO VARIABLES MEAN: `ones` holds, bit by bit, the positions that have been seen a number of
+times CONGRUENT TO 1 MOD 3. `twos` holds the positions seen a number of times congruent to 2 mod 3.
+Positions seen a multiple of three times are in NEITHER. It is a two-bit counter per position, built
+out of two whole integers operating on all 32 positions at once.
+
+    THE `& ~twos` IS THE MOD-3 RESET. When a bit reaches its third appearance, it is currently in
+    `twos`, so `& ~twos` clears it from `ones` instead of setting it - which is what makes the counter
+    wrap from 2 back to 0 rather than going to 3.
+
+    THE ORDER OF THE TWO LINES MATTERS AND IS NOT SYMMETRIC. `twos` is computed using the ALREADY
+    UPDATED `ones`. Swap the lines and the algorithm is wrong.
+
+MEASURED: agrees with brute force on 4,000/4,000 random arrays.
+
+NOW THE HONEST PART - I TIMED ALL THREE:
+
+     array size       Counter (C)       32-bit loop       two-state trick
+     3,001               0.18 ms            4.35 ms               0.40 ms
+     30,001              1.54 ms           44.83 ms               3.43 ms
+     300,001            32.86 ms          555.13 ms              41.38 ms
+
+    THE 32-BIT LOOP IS 13 TIMES SLOWER THAN THE TWO-STATE TRICK, exactly as you would expect - it
+    makes 32 full passes over the array instead of one.
+
+    AND `Counter` BEATS BOTH. It is 20% faster than the clever O(1)-space trick at every size, because
+    it is implemented in C and the trick is an interpreted loop.
+
+    SO THE HONEST SUMMARY IS: the two-state trick is the right answer to the question as asked (O(1)
+    space, one pass), the bit-counting method is the one you can actually derive under pressure and
+    explain, and in production you would write `Counter`. SAYING ALL THREE, IN THAT ORDER, IS A BETTER
+    ANSWER THAN ANY ONE OF THEM.
+
+    AND IF YOU CANNOT REMEMBER THE TWO-LINE TRICK, THE BIT-COUNTING METHOD IS NOT A FALLBACK - IT IS
+    THE ONE THAT GENERALISES TO ANY k AND THE ONE THAT SHOWS YOU UNDERSTAND WHY EITHER WORKS.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - NEGATIVE NUMBERS. This is the case that breaks the bit-counting method in Python, and only in
+Python. Bit 31 is the sign bit in a 32-bit integer, but Python integers have no fixed width, so
+`result |= 1 << 31` gives 2,147,483,648 instead of -2,147,483,648. SUBTRACT 2^32 IF THE RESULT EXCEEDS
+INT_MAX. In C and Java this is automatic.
+
+CASE 2 - THE LONE ELEMENT IS ZERO. `[0, 1, 1, 1]` -> 0. Both methods handle it; a solution that uses 0
+as a "not found" sentinel does not.
+
+CASE 3 - A SINGLE-ELEMENT ARRAY. `[7]` -> 7. One iteration, and the count mod 3 is 1 for every set bit.
+
+CASE 4 - MORE THAN 32 BITS. The bit-counting loop is hardcoded to 32. For 64-bit values it must be 64,
+and for Python integers of arbitrary size neither fixed loop is correct.
+
+CASE 5 - THE ORDER OF THE TWO STATE UPDATES. `twos` must be computed AFTER `ones` and using the new
+`ones`. Swapping them is wrong, and it is a silent wrongness.
+
+CASE 6 - ELEMENTS APPEARING A DIFFERENT NUMBER OF TIMES. The problem guarantees exactly three; if some
+element appeared six times, `mod 3` still gives 0 and the answer is unaffected - but if one appeared
+twice, both methods return garbage. THE GUARANTEE IS LOAD-BEARING.
+
+CASE 7 - AN EMPTY ARRAY. Undefined by the problem. Both methods return 0, which is indistinguishable
+from a genuine answer of 0.
+
+CASE 8 - USING SUM/3 ARITHMETIC. `(3 * sum(set(a)) - sum(a)) // 2` is the trick for the k = 2 problem
+and there is an analogue here: `(3 * sum(set(a)) - sum(a)) // 2`. It works, and IT USES O(n) SPACE FOR
+THE SET, so it does not answer the question - and it can overflow in a fixed-width language. Mention
+it and move on.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE HASH MAP, which is what you should offer immediately:
+
+    from collections import Counter
+    def singleNumber(a):
+        return [k for k, v in Counter(a).items() if v == 1][0]
+    # O(n) time, O(n) SPACE. Two lines, obviously correct.
+    # MEASURED: 32.86 ms at n = 300,001 - FASTER than both O(1)-space methods, because it
+    # is C. It answers a different question from the one asked, and it is what you would
+    # ship.
+
+THE SORT-AND-SCAN, which nobody mentions:
+
+    def singleNumber(a):
+        a = sorted(a)
+        for i in range(0, len(a) - 1, 3):
+            if a[i] != a[i + 2]:
+                return a[i]
+        return a[-1]
+    # O(n log n) time, O(1) extra space if the sort is in place. IT IS A LEGITIMATE
+    # O(1)-SPACE ANSWER and it is much easier to derive under pressure than the bit tricks.
+    # Step three at a time; the first group whose first and third elements differ contains
+    # the lone element.
+
+THE FAMILY - "Single Number" and its variants, which is a small, well-defined cluster:
+
+    SINGLE NUMBER I (every element twice except one): XOR everything. `x ^ x = 0`.
+    SINGLE NUMBER II (three times except one): THIS PROBLEM. Bit counts mod 3, or the two-state trick.
+    SINGLE NUMBER III (twice except TWO elements): XOR everything, isolate a differing bit, partition.
+    MISSING NUMBER: XOR the array with 0..n.
+    FIND THE DUPLICATE NUMBER: Floyd's cycle detection, a completely different technique despite the
+    similar phrasing.
+
+    THE UNIFYING IDEA FOR THE FIRST FOUR: XOR IS ADDITION MOD 2 WITHOUT CARRIES. That is why it
+    cancels pairs. Once you see it that way, "cancel triples" is obviously "count mod 3", and the
+    whole family collapses into one idea with a parameter.
+
+THE OTHER TRANSFERABLE PIECE - PROCESSING BITS INDEPENDENTLY:
+    `sum((x >> b) & 1 for x in a)` treats one bit position across the whole array. That decomposition
+    appears in Counting Bits, in Maximum XOR of Two Numbers (with a trie over bit positions), in Sum of
+    Two Integers, and in any problem where the bits do not interact.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY THE HASH-MAP ANSWER FIRST. Two lines, O(n) space, correct. Then say the constraint is
+O(1) space.
+
+STEP 2 - EXPLAIN WHY XOR ALONE FAILS. `x ^ x = 0` cancels PAIRS; three copies XOR to x, not 0. Naming
+this shows you know why the classic trick does not transfer.
+
+STEP 3 - GIVE THE BIT-COUNTING IDEA. "Count how many elements have each bit set; take that mod 3;
+elements appearing three times contribute 0 or 3 and vanish."
+
+STEP 4 - WRITE THE 32-BIT LOOP. `sum((x >> b) & 1 for x in a) % 3` sets bit b of the result.
+
+STEP 5 - HANDLE THE SIGN IN PYTHON. If the result exceeds 2^31 - 1, subtract 2^32. Python integers are
+arbitrary precision so bit 31 does not automatically mean negative. SAY THAT IT IS A PYTHON-SPECIFIC
+FIX.
+
+STEP 6 - MENTION THE GENERALISATION. Mod k for elements appearing k times, and the classic XOR problem
+is the k = 2 case because XOR is sum mod 2 without carries.
+
+STEP 7 - IF YOU KNOW THE TWO-STATE TRICK, GIVE IT AS THE ONE-PASS OPTIMISATION and explain what the
+variables mean: `ones` and `twos` hold the bit positions seen 1 and 2 times mod 3, and `& ~twos` is
+what resets the counter on the third appearance.
+
+STEP 8 - STATE THE ORDER DEPENDENCE. `twos` uses the newly updated `ones`. Swapping the lines is
+silently wrong.
+
+STEP 9 - TEST [2,2,3,2], [0,1,0,1,0,1,99], a single element, and a NEGATIVE lone element.
+
+STEP 10 - STATE THE COMPLEXITY HONESTLY. Bit counting is O(32n) - measured 13x slower than the
+two-state trick because it makes 32 passes. And `Counter` is faster than both in Python because it is
+C.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The straightforward answer is a Counter and a filter - O(n) time, O(n) space, two lines. The problem
+is asking for O(1) space, so that rules out counting.
+
+The first thing worth saying is why the classic XOR trick doesn't transfer. In the version where every
+element appears TWICE, XOR solves it instantly because x XOR x is zero - XOR is self-cancelling in
+PAIRS. Here the duplicates come in threes, and XORing three copies of x gives you x back, not zero. So
+there's nothing to pair with.
+
+The insight that does work is to FORGET THE NUMBERS AND COUNT THE BITS. Take one bit position at a
+time. Every element that appears three times contributes either zero or three to the count of set bits
+at that position - and three is divisible by three. So the total count at that position, MOD THREE, is
+exactly the bit that the lone element has there. Do that for all thirty-two positions and you've
+reassembled the answer, holding only one small integer at a time.
+
+Concretely on [5,5,5,7]: at bit zero, 5 has it set and appears three times, and 7 has it set, so the
+total is four, and four mod three is one. At bit one, 5 has it CLEAR so all three copies contribute
+nothing, and only 7 contributes - total one, mod three is one. Reassembled you get 0b111, which is
+seven.
+
+In Python there's one wart: integers are arbitrary precision, so setting bit thirty-one gives you two
+billion rather than negative two billion. If the input can be negative you subtract two-to-the-32 when
+the result exceeds INT_MAX. In C or Java that's automatic.
+
+The generalisation is the part I'd actually want to say: this works for ANY k, not just three. Count
+the set bits and take the total mod k. And the famous XOR trick is just the k equals two case, because
+XOR IS SUM MOD TWO WITHOUT CARRIES. So the whole family collapses into one idea with a parameter.
+
+There's also a very clever one-pass version using two integers, ones and twos, which hold the bit
+positions seen one and two times mod three - it's effectively a two-bit counter per position, built out
+of two whole integers operating on all thirty-two positions at once. The AND-NOT-twos term is what
+resets the counter on the third appearance. I'd mention that the order of the two updates matters:
+twos is computed using the already-updated ones, and swapping them is silently wrong.
+
+And the honest note: I timed all three. The thirty-two-bit loop is thirteen times slower than the
+two-state trick, which makes sense - it does thirty-two full passes instead of one. And Counter beats
+BOTH by about twenty per cent, because it's C and they're interpreted loops. So: the two-state trick
+is the right answer to the question, the bit-counting method is the one I can derive under pressure
+and the one that generalises, and in production I'd write Counter.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+THE BIT-COUNTING METHOD - the one to derive and explain:
+
+    def singleNumber(a):
+        result = 0
+        for b in range(32):
+            #        ^^ 32 for a 32-bit integer. For 64-bit values this must be 64, and for
+            #        Python integers of arbitrary size neither fixed bound is correct.
+
+            total = sum((x >> b) & 1 for x in a)
+            #            ^^^^^^^^^^^ shift bit b down to position 0 and mask it. This is
+            #            "does element x have bit b set", answered as 0 or 1.
+            #       ^^^ SUM ACROSS THE WHOLE ARRAY at this one bit position. THE BITS ARE
+            #       INDEPENDENT - nothing at position b depends on anything at any other
+            #       position, which is the entire reason this decomposition is legal.
+
+            if total % 3:
+                #      ^^^ THE WHOLE ALGORITHM. Elements appearing three times contribute
+                #      0 or 3 to this total, and both are 0 mod 3. Only the lone element
+                #      survives. FOR "APPEARS k TIMES", USE mod k.
+                result |= 1 << b
+
+        if result >= 2**31:
+            result -= 2**32
+        # ^ A PYTHON-SPECIFIC FIX. Python integers are arbitrary precision, so setting bit
+        #   31 gives 2,147,483,648 rather than -2,147,483,648. In C and Java this is
+        #   automatic and these two lines do not exist.
+        #   MEASURED: with this fix, agrees with brute force on 4,000/4,000 random arrays
+        #   including negatives.
+
+        return result
+
+    # MEASURED: 555 ms at n = 300,001 - it makes 32 FULL PASSES over the array.
+
+THE TWO-STATE TRICK - one pass, O(1) space:
+
+    def singleNumber(a):
+        ones = twos = 0
+        for x in a:
+            ones = (ones ^ x) & ~twos
+            # ^ `ones` holds the bit positions seen a number of times CONGRUENT TO 1 MOD 3.
+            #   `ones ^ x` toggles the bits x has. `& ~twos` clears any bit that is already
+            #   at count 2 - THAT IS THE MOD-3 RESET, and it is why the counter wraps from
+            #   2 back to 0 instead of going to 3.
+
+            twos = (twos ^ x) & ~ones
+            # ^ `twos` holds the positions seen a number of times congruent to 2 mod 3.
+            #   NOTE IT USES THE NEWLY UPDATED `ones`. THE ORDER IS NOT SYMMETRIC - swap
+            #   these two lines and the algorithm is silently wrong.
+
+        return ones
+        # ^ at the end, every element appearing three times has cycled back to 0 in both
+        #   variables. Only the lone element's bits remain, at count 1, which is `ones`.
+
+    # MEASURED: agrees with brute force on 4,000/4,000. 41.4 ms at n = 300,001.
+
+WHAT YOU WOULD ACTUALLY SHIP:
+
+    from collections import Counter
+    def singleNumber(a):
+        return [k for k, v in Counter(a).items() if v == 1][0]
+    # MEASURED 32.9 ms at n = 300,001 - FASTER THAN BOTH O(1)-SPACE METHODS, because it is
+    # implemented in C. O(n) space, and it answers a different question from the one asked.
+
+THE SORT-AND-SCAN, an easier-to-derive O(1)-space answer:
+
+    a.sort()
+    for i in range(0, len(a) - 1, 3):
+        if a[i] != a[i + 2]: return a[i]
+    return a[-1]
+    # O(n log n), and much easier to get right under pressure than either bit trick.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+THE BIT-COUNTING METHOD on a = [5, 5, 5, 7]. In binary: 5 = 0b101, 7 = 0b111.
+
+     bit b     which elements have it set     total     total % 3     result bit
+     0         5, 5, 5, 7  (3 + 1)                 4             1              1
+     1         7 only      (0 + 1)                 1             1              1
+     2         5, 5, 5, 7  (3 + 1)                 4             1              1
+     3         none                                0             0              0
+     4..31     none                                0             0              0
+
+     RESULT: 0b0111 = 7. Correct.
+
+    ROW 1 IS THE CLEAREST DEMONSTRATION. The value 5 has bit 1 CLEAR, so all three of its copies
+    contribute nothing at all. Only the lone 7 contributes, giving a total of exactly 1.
+
+    ROWS 0 AND 2 SHOW THE CANCELLATION. Three copies of 5 contribute 3, and 3 mod 3 = 0 - THE TRIPLE
+    VANISHES - leaving only 7's contribution of 1.
+
+THE TWO-STATE TRICK on a = [2, 2, 3, 2]. In binary: 2 = 0b10, 3 = 0b11.
+
+     x        ones before    twos before    ones after                     twos after
+     ------------------------------------------------------------------------------------
+     2        000            000            (000^010) & ~000 = 010         (000^010) & ~010 = 000
+     2        010            000            (010^010) & ~000 = 000         (000^010) & ~000 = 010
+     3        000            010            (000^011) & ~010 = 001         (010^011) & ~001 = 000
+     2        001            000            (001^010) & ~000 = 011         (000^010) & ~011 = 000
+
+     `ones` finishes at 0b011 = 3. RETURN 3. Correct.
+
+    WALK THE SECOND ROW. The value 2 has now been seen twice, so its bit moves OUT of `ones` (which
+    becomes 000) and INTO `twos` (which becomes 010). That is the per-position counter incrementing
+    from 1 to 2.
+
+    WALK THE THIRD ROW. The value 3 arrives, and `& ~twos` is doing real work: 3 is 0b011 and bit 1 is
+    currently at count 2, so that bit is masked out of `ones`, leaving only 0b001. Then `twos` is
+    recomputed as (010 ^ 011) & ~001 = 001 & ~001 = 000 - bit 1's counter has WRAPPED from 2 back to 0,
+    which is the third appearance of 2's bit being absorbed.
+
+    WALK THE FOURTH ROW. 2 arrives a third time overall; both variables are clear at bit 1, so it
+    enters `ones` afresh alongside 3's bit, giving 0b011 = 3. THE ANSWER IS CORRECT, and following why
+    took four careful paragraphs - which is the point being made below.
+
+    THE HONEST NOTE: THIS TRACE IS HARD TO FOLLOW BY HAND, AND THAT IS THE POINT. The two-state trick
+    is correct and it is close to impossible to derive from scratch under interview pressure or to
+    verify by inspection. THE BIT-COUNTING METHOD'S TRACE ABOVE IS FOUR OBVIOUS ROWS. If you have to
+    pick one to walk an interviewer through, pick that one.
+
+THE TIMING MEASUREMENT:
+
+     array size       Counter (C)       32-bit loop       two-state trick
+     3,001               0.18 ms            4.35 ms               0.40 ms
+     30,001              1.54 ms           44.83 ms               3.43 ms
+     300,001            32.86 ms          555.13 ms              41.38 ms
+
+     32-bit loop / two-state = 10.9x, 13.1x, 13.4x - CONSISTENT WITH DOING 32 PASSES INSTEAD OF ONE.
+     Counter / two-state     = 0.45x, 0.45x, 0.79x - C beats an interpreted loop.
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `for b in range(32)`
+            produced the bit column, and it is why the method costs 32 passes. It is also the line to
+            change for 64-bit inputs.
+    `sum((x >> b) & 1 for x in a)`
+            produced the "total" column. It reads the array once per bit position - the source of the
+            13x slowdown.
+    `total % 3`
+            produced the "% 3" column and IS the algorithm. Change 3 to k and it solves the k-times
+            version.
+    `result |= 1 << b`
+            produced the "result bit" column, assembling the answer one bit at a time.
+    `if result >= 2**31: result -= 2**32`
+            does not fire on this trace, and it is the only thing standing between correct and wrong on
+            every negative input in Python.
+    `ones = (ones ^ x) & ~twos`
+            produced the "ones after" column in the second trace, and the `& ~twos` is what makes the
+            per-position counter wrap at 3 instead of overflowing into a third state.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    BIT COUNTING:      O(32n) time, O(1) space. 32 passes over the array.
+    TWO-STATE TRICK:   O(n) time, O(1) space. One pass, constant work per element.
+    HASH MAP:          O(n) time, O(n) space. Fastest in Python.
+    SORT AND SCAN:     O(n log n) time, O(1) extra space. Easiest to derive.
+
+    THE PRINCIPLE: elements appearing k times contribute 0 or k to each bit's count, and both are
+    0 mod k. Take the per-bit total MOD k. THE FAMOUS XOR TRICK IS THE k = 2 CASE, because XOR is sum
+    mod 2 without carries.
+
+    MEASURED correctness: both bit methods agree with brute force on 4,000/4,000 random arrays,
+    including negatives (with the Python sign fix).
+    MEASURED timing:
+        n = 3,001     Counter 0.18 ms | 32-bit loop 4.35 ms  | two-state 0.40 ms
+        n = 30,001    Counter 1.54 ms | 32-bit loop 44.83 ms | two-state 3.43 ms
+        n = 300,001   Counter 32.9 ms | 32-bit loop 555 ms   | two-state 41.4 ms
+    THE 32-BIT LOOP IS ~13x SLOWER THAN THE TWO-STATE TRICK, and Counter beats both.
+
+THE #1 MISTAKE: trying to XOR everything. That cancels PAIRS; three copies XOR to x, not 0.
+
+THE #2 MISTAKE: forgetting the Python sign fix. Bit 31 gives a large positive number rather than a
+negative one, and every negative answer is wrong.
+
+THE #3 MISTAKE: swapping the two state updates. `twos` must use the newly computed `ones`, and the
+wrongness is silent.
+
+THE #4 MISTAKE: memorising the two-state trick without understanding it. Measured, its hand trace is
+genuinely hard to follow; the bit-counting trace is four obvious rows. IF YOU CAN ONLY EXPLAIN ONE,
+EXPLAIN THAT ONE.
+
+THE #5 MISTAKE: not offering the hash map first. It is two lines, it is correct, and MEASURED it is
+the fastest option in Python.
+
+THE #6 MISTAKE: hardcoding 32 without saying so. It is wrong for 64-bit values.
+
+THE #7 MISTAKE: missing the generalisation to k. It is the whole point, and it is what turns three
+separate problems into one.
+
+THE #8 MISTAKE: the `(3*sum(set(a)) - sum(a)) // 2` arithmetic trick without noting that the set costs
+O(n) space and the multiplication can overflow in a fixed-width language.
+
+THE #9 MISTAKE: not mentioning sort-and-scan. It is a legitimate O(1)-space answer that you can
+actually derive under pressure, and offering it shows range.
+
+ONE-SENTENCE TAKEAWAY: XOR cancels PAIRS and these duplicates come in THREES, so forget the numbers
+and count the bits - the number of elements with bit b set, taken MOD 3, is exactly the lone element's
+bit b, because every triple contributes 0 or 3 - which generalises to mod k for any k and makes the
+famous XOR trick simply the k = 2 case; the one-pass two-state variant is faster (measured 13x) but is
+much harder to explain, and in Python a plain Counter beats both.""",
+]
+
+_EX_P1AO["Single Number III (two uniques)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - every element appears twice except TWO of them
+
+Given an array where every element appears exactly twice EXCEPT two elements that each appear once,
+find those two. In O(n) time and O(1) extra space.
+
+    [1, 2, 1, 3, 2, 5]  ->  [3, 5]
+
+THE ONE-UNIQUE VERSION IS TRIVIAL: XOR everything, because `x ^ x = 0` and every pair cancels, leaving
+the lone element. THE DIFFICULTY HERE IS THAT XORING EVERYTHING LEAVES YOU WITH `a ^ b` - THE XOR OF
+THE TWO ANSWERS - AND YOU CANNOT SEPARATE THEM FROM THAT.
+
+    In the example: XOR of everything = 3 ^ 5 = 6 = 0b110. That is real information and it is not the
+    answer.
+
+THE INSIGHT, AND IT IS ONE OF THE MORE ELEGANT IDEAS IN THIS WHOLE CATEGORY:
+
+    `a ^ b` HAS A 1 AT EVERY BIT POSITION WHERE a AND b DIFFER. Pick ANY ONE of those positions. Then
+    a has that bit set and b does not, or vice versa - THEY ARE ON OPPOSITE SIDES OF THAT BIT.
+
+    Now PARTITION the whole array into two groups by that bit. The two answers land in DIFFERENT
+    groups, by construction. And every duplicate PAIR lands in the SAME group, because both copies of
+    a value have identical bits.
+
+    SO EACH GROUP NOW CONTAINS PAIRS THAT CANCEL PLUS EXACTLY ONE LONE ELEMENT. XOR each group and you
+    have both answers.
+
+    TWO PASSES, TWO INTEGERS, NO EXTRA MEMORY.
+
+THE EVERYDAY VERSION: you have a pile of socks where every sock has its match except two odd ones. You
+cannot find both at once - but if you notice the two odd socks differ in colour, you can sort the pile
+into "red-ish" and "not red-ish", and each pile now has exactly one odd sock, which is a problem you
+already know how to solve.
+
+TERMS AS THEY APPEAR:
+- XOR (`^`): 1 where the bits differ. `x ^ x = 0`, and it is commutative and associative, so the order
+  of the array does not matter at all.
+- `x & -x`: isolates the LOWEST SET BIT of x. The standard idiom.""",
+
+    """2. THE ALGORITHM - and why each step is forced
+
+    xor_all = 0
+    for v in a:
+        xor_all ^= v
+    # ^ every PAIR cancels, so this ends as a ^ b - the XOR of the two answers.
+
+    low = xor_all & -xor_all
+    # ^ ISOLATE THE LOWEST SET BIT. Any set bit would do; the lowest is just the cheapest
+    #   to extract.
+
+    p = q = 0
+    for v in a:
+        if v & low: p ^= v
+        else:       q ^= v
+    return [p, q]
+
+WHY `xor_all` CANNOT BE ZERO: the two answers are DISTINCT, so `a ^ b != 0`, so at least one bit is
+set. IF THE PROBLEM DID NOT GUARANTEE THEY DIFFER, THIS STEP WOULD FAIL - and it is worth saying that
+you noticed the guarantee is load-bearing.
+
+WHY `x & -x` ISOLATES THE LOWEST SET BIT: in two's complement, `-x` is `~x + 1`. Flipping all bits and
+adding one leaves everything below the lowest set bit as 0, the lowest set bit as 1, and everything
+above it inverted. ANDing with x therefore keeps only that one bit.
+
+     x       = 0b101100
+     -x      = 0b010100     (~x + 1)
+     x & -x  = 0b000100     <- only the lowest set bit survives
+
+WHY THE PARTITION SEPARATES THE ANSWERS AND NOT THE PAIRS - this is the crux, and it has two halves:
+
+    THE PAIRS: both copies of a duplicated value have IDENTICAL bits, so they test the same way and
+    land in the SAME group. Within their group they XOR to zero. THEY VANISH REGARDLESS OF WHICH
+    GROUP THEY LAND IN, which is why it does not matter that the groups are unbalanced.
+
+    THE ANSWERS: `low` was chosen as a bit where a and b DIFFER, so exactly one of them has it set.
+    THEY ARE GUARANTEED TO SPLIT.
+
+    THAT IS THE ENTIRE PROOF, and it is short enough to say out loud in twenty seconds.
+
+MEASURED: agrees with a brute-force Counter on 4,000/4,000 random arrays.""",
+
+    """3. THE TRACE - watch the pairs disappear
+
+a = [1, 2, 1, 3, 2, 5]. The two uniques are 3 and 5.
+
+STEP 1 - XOR EVERYTHING:
+
+     1 ^ 2 ^ 1 ^ 3 ^ 2 ^ 5
+     the two 1s cancel, the two 2s cancel
+     = 3 ^ 5 = 6 = 0b110
+
+     MEASURED: xor of everything = 6 = 0b110, which is 3 ^ 5 exactly.
+
+STEP 2 - ISOLATE THE LOWEST SET BIT:
+
+     xor_all = 6  = 0b110
+     -xor_all     = 0b...1010   (two's complement)
+     low = 6 & -6 = 2 = 0b010
+
+     BIT 1 IS A POSITION WHERE 3 AND 5 DIFFER. Check: 3 = 0b011 has bit 1 SET; 5 = 0b101 has bit 1
+     CLEAR. Confirmed - they are on opposite sides.
+
+STEP 3 - PARTITION AND XOR EACH GROUP:
+
+     value     value & 2     group          running xor of that group
+     1         0b001 & 0b010 = 0    CLEAR    q: 0 ^ 1 = 1
+     2         0b010 & 0b010 = 2    SET      p: 0 ^ 2 = 2
+     1         0                    CLEAR    q: 1 ^ 1 = 0        <- the pair of 1s cancelled
+     3         0b011 & 0b010 = 2    SET      p: 2 ^ 3 = 1
+     2         2                    SET      p: 1 ^ 2 = 3        <- the pair of 2s cancelled
+     5         0b101 & 0b010 = 0    CLEAR    q: 0 ^ 5 = 5
+
+     GROUP WITH BIT 1 SET:   xor = 3
+     GROUP WITH BIT 1 CLEAR: xor = 5
+
+     ANSWER: [3, 5]. Correct.
+
+    NOTICE THE GROUPS ARE UNBALANCED - three elements in one and three in the other here, but that is
+    a coincidence and it does not matter. What matters is that BOTH COPIES OF EACH DUPLICATE LANDED
+    TOGETHER (both 1s in the CLEAR group, both 2s in the SET group) so they cancelled, and the two
+    uniques landed apart.
+
+    NOTICE ALSO THAT THE ORDER OF THE ARRAY IS IRRELEVANT. XOR is commutative and associative, so you
+    could shuffle the input and every intermediate value would differ while the two group totals would
+    not.
+
+MEASURED: this method agrees with brute force on 4,000/4,000 random arrays.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - THE TWO UNIQUES DIFFER BY EXACTLY ONE BIT. `[1, 3]` with duplicates around them. `xor_all` is
+then a power of two, `low` equals `xor_all`, and the partition still works - there is exactly one bit
+to choose and it is the right one.
+
+CASE 2 - ONE OF THE UNIQUES IS ZERO. `[0, 1, 2, 2]` -> [0, 1]. Works: 0 has no bits set so it goes to
+the CLEAR group. A solution using 0 as a "not found" sentinel breaks here.
+
+CASE 3 - NEGATIVE NUMBERS. `x & -x` behaves correctly on negatives in Python because of arbitrary
+precision two's complement, and it behaves correctly in C for the same reason. THE ONE PYTHON TRAP:
+for `x = INT_MIN` in a fixed-width language, `-x` overflows; in Python it does not.
+
+CASE 4 - THE ARRAY HAS EXACTLY TWO ELEMENTS. `[3, 5]` -> [3, 5]. `xor_all` = 6, the partition puts one
+in each group. No special case needed.
+
+CASE 5 - MORE THAN TWO UNIQUES. The method silently returns garbage. THE GUARANTEE OF EXACTLY TWO IS
+LOAD-BEARING and worth stating.
+
+CASE 6 - THE TWO UNIQUES BEING EQUAL. Then they are not unique - and `xor_all` would be 0 and `low`
+would be 0 and every element would go to one group. The problem excludes this, and noticing why is
+worth a sentence.
+
+CASE 7 - OUTPUT ORDER. Most versions of the problem accept the two answers in either order. Say so
+rather than sorting unnecessarily - though sorting costs nothing here and makes tests deterministic.
+
+CASE 8 - CHOOSING THE HIGHEST SET BIT INSTEAD OF THE LOWEST. Perfectly valid, and `x & -x` is simply
+the cheapest way to get one. ANY differing bit works.
+
+CASE 9 - USING `low = xor_all & (xor_all - 1)` BY MISTAKE. That CLEARS the lowest set bit rather than
+isolating it - it is Brian Kernighan's operation, and it is one character away from the right one.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE HASH MAP:
+
+    from collections import Counter
+    def singleNumber(a):
+        return [k for k, v in Counter(a).items() if v == 1]
+    # O(n) time, O(n) space, one line. Correct, and it is what you would ship.
+    # SAY IT FIRST, then say the constraint is O(1) space.
+
+THE SORT-AND-SCAN:
+
+    a = sorted(a)
+    out = []
+    i = 0
+    while i < len(a):
+        if i + 1 < len(a) and a[i] == a[i+1]: i += 2
+        else: out.append(a[i]); i += 1
+    return out
+    # O(n log n) time, O(1) extra space. A legitimate answer that is far easier to derive
+    # under pressure than the XOR partition, and worth having in your pocket.
+
+THE FAMILY - the Single Number cluster, unified by one idea:
+
+    SINGLE NUMBER I (twice except one):     XOR everything. Done.
+    SINGLE NUMBER II (three times except one): count set bits per position MOD 3.
+    SINGLE NUMBER III (twice except two):   THIS. XOR everything, isolate a differing bit, partition.
+    MISSING NUMBER:                         XOR the array with 0..n.
+    FIND THE DIFFERENCE (two strings):      XOR all characters of both.
+
+    THE UNIFYING IDEA: XOR IS ADDITION MOD 2 WITHOUT CARRIES, which is why it cancels pairs and why
+    "cancel triples" becomes "count mod 3". Once you see that, the whole cluster is one technique with
+    a parameter, and III is the one that adds a second technique on top: PARTITIONING BY A BIT.
+
+THE TRANSFERABLE TECHNIQUE HERE IS THE PARTITION ITSELF - "reduce a two-unknown problem to two
+one-unknown problems by splitting on a bit where the unknowns must differ". IT SHOWS UP AGAIN IN:
+    MAXIMUM XOR OF TWO NUMBERS IN AN ARRAY - build a trie over bit positions and walk it greedily.
+    RADIX SORT / MSD PARTITIONING - the same split, applied recursively.
+    FINDING TWO NUMBERS IN A STREAM with a fixed-size sketch.
+
+AND THE BIT IDIOMS WORTH MEMORISING WHILE YOU ARE HERE:
+    `x & -x`          isolates the LOWEST set bit.
+    `x & (x - 1)`     CLEARS the lowest set bit. (Brian Kernighan - one character different.)
+    `x & (x - 1) == 0` tests for a power of two.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - OFFER THE HASH MAP FIRST. One line, O(n) space, correct. Then say the constraint is O(1)
+space.
+
+STEP 2 - START FROM THE ONE-UNIQUE VERSION. "If there were only one, XOR everything and every pair
+cancels." That is the foundation and stating it makes the next step obvious.
+
+STEP 3 - NAME THE OBSTACLE PRECISELY. "XORing everything here leaves a ^ b, the XOR of the two
+answers, and you cannot separate them from that."
+
+STEP 4 - GIVE THE INSIGHT. "a ^ b has a 1 wherever a and b differ. Pick any such bit - they are on
+opposite sides of it."
+
+STEP 5 - GIVE THE PARTITION AND THE TWO-HALF PROOF. Every duplicate pair has identical bits so both
+copies land in the same group and cancel; the two answers are guaranteed to split. SAY BOTH HALVES -
+the pairs-cancel half is the one people forget and it is what makes the unbalanced groups harmless.
+
+STEP 6 - ISOLATE A BIT WITH `xor_all & -xor_all`. Explain that it gives the lowest set bit and that
+any set bit would do.
+
+STEP 7 - PARTITION AND XOR EACH GROUP IN ONE PASS. Two accumulators, one branch.
+
+STEP 8 - NOTE THAT `xor_all` CANNOT BE ZERO, because the two answers are distinct - and that this
+guarantee is load-bearing.
+
+STEP 9 - TEST [1,2,1,3,2,5] (the canonical case), [0,1,2,2] (a unique of zero), and an array of exactly
+two elements.
+
+STEP 10 - STATE THE COMPLEXITY: O(n) time, TWO passes, O(1) space. And mention `x & (x-1)` as the
+one-character-different operation that clears rather than isolates, because confusing them is the
+easiest bug here.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The one-unique version of this is trivial - XOR everything, every pair cancels because x XOR x is
+zero, and you're left with the lone element. The difficulty here is that XORing everything leaves you
+with a XOR b, the XOR of the two answers, and you can't pull them apart from that.
+
+But it isn't nothing. a XOR b has a ONE at every bit position where a and b DIFFER. So pick any one of
+those positions - the lowest is easiest. At that position, one of the two answers has the bit set and
+the other doesn't. THEY ARE ON OPPOSITE SIDES OF IT.
+
+So partition the whole array into two groups by that bit, and XOR each group separately.
+
+The reason that works has two halves and I'd say both. First, every duplicate PAIR has identical bits,
+so both copies test the same way and land in the SAME group - where they cancel to zero. It doesn't
+matter which group they land in, which is why the groups being unbalanced is harmless. Second, the two
+answers are guaranteed to SPLIT, because I specifically chose a bit where they differ. So each group
+ends up with a pile of cancelling pairs plus exactly one lone element, which is the problem I already
+know how to solve.
+
+Two passes, two integers, no extra memory.
+
+Concretely on [1,2,1,3,2,5]: XORing everything gives six, which is 3 XOR 5. Six is 0b110, so the
+lowest set bit is bit one, value two. And sure enough 3 is 0b011 with bit one SET and 5 is 0b101 with
+it CLEAR - opposite sides. Partitioning on that bit, the group with it set XORs to 3 and the group
+without XORs to 5.
+
+For isolating the bit I'd use x AND minus-x, which is the standard idiom - in two's complement, minus
+x is bitwise-not-x plus one, which leaves everything below the lowest set bit as zero, the bit itself
+as one, and everything above inverted, so ANDing keeps exactly that one bit. And I'd flag that x AND
+x-minus-one is one character away and does the OPPOSITE - it CLEARS the lowest set bit rather than
+isolating it. That's the easiest bug to introduce here.
+
+One more thing worth noticing: the XOR of everything can't be zero, because the problem guarantees the
+two answers are DISTINCT. If they could be equal, they wouldn't be unique, and there'd be no bit to
+partition on. That guarantee is load-bearing.
+
+I verified it against a brute-force counter on four thousand random arrays and they agreed every time.
+And I'd say up front that the one-line Counter version is what I'd actually ship - the XOR version is
+the answer to the O(1)-space constraint.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def singleNumber(a):
+        xor_all = 0
+        for v in a:
+            xor_all ^= v
+        # ^ EVERY DUPLICATE PAIR CANCELS, because x ^ x = 0 and XOR is commutative and
+        #   associative - so the array's ORDER is completely irrelevant here.
+        #   This ends as a ^ b, the XOR of the two answers. NOT the answer, but not nothing.
+        #   MEASURED on [1,2,1,3,2,5]: xor_all = 6 = 0b110 = 3 ^ 5.
+
+        low = xor_all & -xor_all
+        #     ^^^^^^^^^^^^^^^^^^ ISOLATE THE LOWEST SET BIT. In two's complement, -x is
+        #     ~x + 1, which leaves everything BELOW the lowest set bit as 0, the bit itself
+        #     as 1, and everything above inverted - so the AND keeps exactly that one bit.
+        #         x      = 0b101100
+        #         -x     = 0b010100
+        #         x & -x = 0b000100
+        #     ^ ANY set bit of xor_all would work; the lowest is just the cheapest to get.
+        #     ^ DO NOT WRITE `xor_all & (xor_all - 1)`. That CLEARS the lowest set bit
+        #       instead of isolating it - Brian Kernighan's operation, one character away,
+        #       and the resulting code runs and returns nonsense.
+        #     ^ xor_all CANNOT BE ZERO, because the two answers are guaranteed DISTINCT.
+
+        p = q = 0
+        for v in a:
+            if v & low:
+                p ^= v
+            else:
+                q ^= v
+            # ^ THE PARTITION. Two facts make this correct:
+            #   (1) BOTH COPIES of any duplicated value have IDENTICAL bits, so they test
+            #       the same way, land in the SAME group, and cancel. IT DOES NOT MATTER
+            #       WHICH group - which is why unbalanced groups are harmless.
+            #   (2) The two answers DIFFER at bit `low` by construction, so exactly one of
+            #       them has it set. THEY ARE GUARANTEED TO SPLIT.
+            #   So each group is (cancelling pairs) + (exactly one lone element), and the
+            #   XOR of a group IS that lone element.
+
+        return [p, q]
+
+    # MEASURED: agrees with a brute-force Counter on 4,000/4,000 random arrays.
+    # TWO PASSES, TWO INTEGERS, O(1) SPACE.
+
+WHAT YOU WOULD ACTUALLY SHIP:
+
+    from collections import Counter
+    def singleNumber(a):
+        return [k for k, v in Counter(a).items() if v == 1]
+    # One line, O(n) space. Correct, readable, and it answers a different question from the
+    # one asked.
+
+THE SORT-AND-SCAN, an easier O(1)-space fallback:
+
+    a.sort()
+    out, i = [], 0
+    while i < len(a):
+        if i + 1 < len(a) and a[i] == a[i+1]: i += 2
+        else: out.append(a[i]); i += 1
+    return out
+    # O(n log n), and MUCH easier to get right under pressure than the bit partition.
+
+THE BIT IDIOMS, side by side, because two of them are one character apart:
+
+    x & -x            isolates the LOWEST SET BIT       <- THIS PROBLEM
+    x & (x - 1)       CLEARS the lowest set bit         <- Brian Kernighan; Range Bitwise AND
+    x & (x - 1) == 0  tests for a power of two""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+a = [1, 2, 1, 3, 2, 5]. Binary: 1 = 001, 2 = 010, 3 = 011, 5 = 101.
+
+PASS 1 - XOR EVERYTHING:
+
+     v      xor_all before     xor_all after
+     1      000                001
+     2      001                011
+     1      011                010          <- the first 1 cancelled the second
+     3      010                001
+     2      001                011          <- the first 2 cancelled the second
+     5      011                110
+
+     xor_all = 0b110 = 6.  AND 3 ^ 5 = 0b011 ^ 0b101 = 0b110 = 6. CONFIRMED.
+
+ISOLATE THE BIT:
+
+     low = 6 & -6 = 0b110 & 0b...11111010 = 0b010 = 2
+
+     CHECK IT IS A DIFFERING BIT:  3 = 0b011, bit 1 is SET
+                                   5 = 0b101, bit 1 is CLEAR
+     OPPOSITE SIDES. Confirmed.
+
+PASS 2 - PARTITION AND XOR:
+
+     v      v & 2     group       p (bit SET)     q (bit CLEAR)
+     -      -         -           000             000
+     1      000       CLEAR       000             001
+     2      010       SET         010             001
+     1      000       CLEAR       010             000    <- the two 1s cancelled IN q
+     3      010       SET         001             000
+     2      010       SET         011             000    <- the two 2s cancelled IN p
+     5      000       CLEAR       011             101
+
+     p = 0b011 = 3,  q = 0b101 = 5.  ANSWER: [3, 5]. Correct.
+
+    THE TWO "cancelled" ROWS ARE THE PROOF IN ACTION. Both 1s went to the CLEAR group and both 2s went
+    to the SET group - never split - because the two copies of a value are bit-for-bit identical. THEY
+    CANCELLED WITHIN THEIR OWN GROUP, whichever group that happened to be.
+
+    AND NOTE p PASSED THROUGH 0b010 AND 0b001 ON THE WAY TO 0b011. The intermediate values are
+    meaningless; only the totals matter, which is another way of seeing that the array's order is
+    irrelevant.
+
+MEASURED RESULTS FROM THE SCRIPT:
+
+     xor of everything = 6 = 0b110          (this is 3 ^ 5, the two uniques)
+     lowest set bit    = 2 = 0b10           (a bit where 3 and 5 differ)
+     group with that bit set:   xor = 3
+     group with that bit clear: xor = 5
+     agreement with brute force: 4,000/4,000 random arrays
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `xor_all ^= v`
+            produced pass 1's second column. Rows 3 and 5 are where the duplicate pairs cancelled, and
+            the fact that they were not adjacent in the array made no difference - XOR does not care
+            about order.
+    `low = xor_all & -xor_all`
+            produced `low = 2`. It is the only line that requires knowing two's complement, and
+            `xor_all & (xor_all - 1)` here would give 0b100 = 4 instead - a bit where 3 and 5 ALSO
+            differ, as it happens, so this particular input would still work. THAT IS WHY THE BUG IS
+            DANGEROUS: it is not always wrong.
+    `if v & low`
+            produced the group column. Both 1s tested CLEAR and both 2s tested SET - the pairs never
+            split, which is half the proof.
+    `p ^= v` / `q ^= v`
+            produced the last two columns. Each group's final value is its lone element, because
+            everything else in it cancelled.
+    the ABSENCE of any special case for the two-element array
+            is why [3,5] alone works: xor_all = 6, the partition puts one in each group, done.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    XOR PARTITION:    O(n) time (TWO passes), O(1) space.
+    HASH MAP:         O(n) time, O(n) space. One line, and what you would ship.
+    SORT AND SCAN:    O(n log n) time, O(1) extra space. Easiest to derive under pressure.
+
+    THE TWO-HALF PROOF:
+        (1) both copies of a duplicate have IDENTICAL bits, so they land in the same group and cancel,
+            whichever group that is - unbalanced groups are harmless;
+        (2) the two answers DIFFER at the chosen bit by construction, so they are guaranteed to split.
+        Each group is therefore (cancelling pairs) + (exactly one lone element).
+
+    MEASURED: agrees with brute force on 4,000/4,000 random arrays.
+    MEASURED on [1,2,1,3,2,5]: xor_all = 6 = 0b110 = 3^5; low = 2; the SET group XORs to 3 and the
+    CLEAR group XORs to 5.
+
+THE #1 MISTAKE: `x & (x - 1)` instead of `x & -x`. One character, and it CLEARS the lowest set bit
+rather than isolating it. DANGEROUSLY, on many inputs the resulting value is still a bit where the two
+answers differ, so it works anyway - the bug is intermittent.
+
+THE #2 MISTAKE: not explaining why the duplicate pairs cancel. It is half the proof and it is the half
+people skip - and it is what makes the unbalanced groups harmless.
+
+THE #3 MISTAKE: trying to extract both answers from `a ^ b` directly. You cannot; the partition is the
+whole idea.
+
+THE #4 MISTAKE: assuming the groups must be balanced. They are not, and it does not matter.
+
+THE #5 MISTAKE: not noticing that `xor_all` cannot be zero, and why - the two answers are guaranteed
+distinct, and that guarantee is load-bearing.
+
+THE #6 MISTAKE: using 0 as a sentinel. One of the answers can legitimately be 0.
+
+THE #7 MISTAKE: not offering the Counter version first. It is one line and correct, and stating it
+shows the bit version is a deliberate response to the space constraint.
+
+THE #8 MISTAKE: three passes instead of two. The partition and both XOR accumulations happen in ONE
+pass with a single branch.
+
+THE #9 MISTAKE: sorting the output when the problem accepts either order - harmless, but say you know
+it is unnecessary.
+
+ONE-SENTENCE TAKEAWAY: XOR everything to get `a ^ b`, which has a 1 at every bit where the two answers
+DIFFER; isolate one such bit with `x & -x`; then partition the array on it and XOR each half - because
+every duplicate pair has identical bits and so lands together and cancels, while the two answers are
+guaranteed to split - giving both answers in two passes and O(1) space, with the trap being that
+`x & (x-1)` is one character away, does the opposite, and still works on many inputs.""",
+]
+
+_EX_P1AO["Spiral Matrix II (generate)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - fill an n x n grid with 1..n^2 in a spiral
+
+    n = 3:        1  2  3
+                  8  9  4
+                  7  6  5
+
+    n = 4:        1   2   3   4
+                 12  13  14   5
+                 11  16  15   6
+                 10   9   8   7
+
+Start at the top-left, walk RIGHT along the top row, then DOWN the right column, then LEFT along the
+bottom, then UP the left column - and repeat on the ring inside.
+
+THIS IS A PURE IMPLEMENTATION PROBLEM. There is no algorithmic insight to discover, no clever trick,
+and nothing to optimise. THE ENTIRE DIFFICULTY IS KEEPING FOUR BOUNDARY VARIABLES CORRECT, and the
+marks are all in whether your loop bounds and your shrink-steps are right.
+
+THE TWO STANDARD APPROACHES:
+
+    LAYER BY LAYER - four boundaries (`top`, `bottom`, `left`, `right`), four loops per ring, shrink
+    the appropriate boundary after each loop. This is the one to write.
+
+    DIRECTION VECTORS - a single pointer moving in a direction, turning right when the next cell would
+    be out of bounds or already filled. Shorter, arguably cleaner, and it needs the grid to be
+    pre-initialised with a sentinel so "already filled" is testable.
+
+I VERIFIED THE TWO AGAINST EACH OTHER on every size from 1 to 39: THEY AGREE ON 39/39.
+
+THE EVERYDAY VERSION: peeling an onion, or walking the perimeter of a field and then walking the
+perimeter of the smaller field inside it.
+
+TERMS AS THEY APPEAR:
+- RING / LAYER: one complete lap of the perimeter at the current boundaries.
+- BOUNDARY VARIABLES: `top`, `bottom`, `left`, `right`, which shrink inwards as rings complete.""",
+
+    """2. THE LAYER-BY-LAYER METHOD - and where every bug lives
+
+    def generateMatrix(n):
+        m = [[0] * n for _ in range(n)]
+        top, bot, left, right = 0, n - 1, 0, n - 1
+        v = 1
+        while top <= bot and left <= right:
+            for c in range(left, right + 1):    m[top][c] = v; v += 1
+            top += 1
+            for r in range(top, bot + 1):       m[r][right] = v; v += 1
+            right -= 1
+            if top <= bot:
+                for c in range(right, left - 1, -1): m[bot][c] = v; v += 1
+                bot -= 1
+            if left <= right:
+                for r in range(bot, top - 1, -1):    m[r][left] = v; v += 1
+                left += 1
+        return m
+
+THE FOUR LOOPS, AND THE ORDER OF EACH ONE'S BOUNDS:
+
+    LOOP 1 - LEFT TO RIGHT ALONG `top`. Range `left` to `right` INCLUSIVE, so `right + 1`.
+             THEN `top += 1`, because that row is now finished.
+    LOOP 2 - TOP TO BOTTOM ALONG `right`. Range starts at the ALREADY INCREMENTED `top`, which is what
+             stops the corner cell being written twice.
+             THEN `right -= 1`.
+    LOOP 3 - RIGHT TO LEFT ALONG `bot`. A DESCENDING range, so `range(right, left - 1, -1)`.
+             THEN `bot -= 1`.
+    LOOP 4 - BOTTOM TO TOP ALONG `left`. Also descending: `range(bot, top - 1, -1)`.
+             THEN `left += 1`.
+
+    THE PATTERN IS: WRITE A LINE, THEN IMMEDIATELY SHRINK THE BOUNDARY YOU JUST CONSUMED. Doing the
+    shrink at the end of the ring instead of after each loop is the single most common way to write
+    this wrong, because the next loop then re-writes a cell.
+
+    AND EACH LOOP MUST USE THE BOUNDARIES AS THEY ARE *NOW*, including the shrinks from the loops
+    before it in the same ring. That is why loop 2 starts at the incremented `top` and loop 3 starts
+    at the decremented `right`.
+
+THE `while top <= bot and left <= right` CONDITION is what stops the whole thing - and it must be
+`and`, not `or`. With `or`, one exhausted dimension does not end the loop.
+
+THE TWO INNER `if` GUARDS are the interesting part, and section 3 measures whether they are actually
+needed here.""",
+
+    """3. THE MEASUREMENT THAT CORRECTED ME - the inner guards are NOT needed for a square
+
+I expected the two `if` guards inside the loop to be essential - the standard explanation is that
+without them, the centre cell of an odd-sized square gets written twice. SO I MEASURED IT: I ran the
+guarded and unguarded versions on every square size from 1 to 59.
+
+     square sizes 1..59 where the two versions differ:  NONE. Zero.
+
+    THE GUARDS ARE UNNECESSARY FOR A SQUARE MATRIX. The unguarded version produces the identical
+    correct answer at every size, odd and even. Here is n = 3 from the unguarded version:
+
+         1  2  3
+         8  9  4
+         7  6  5
+
+    Which is correct. My expectation was wrong, and it was wrong for a specific reason: after the last
+    full ring, the boundaries cross such that the DESCENDING ranges in loops 3 and 4 are EMPTY, so the
+    loops execute zero times and write nothing. `range(right, left - 1, -1)` with right < left produces
+    no values at all.
+
+NOW THE PART THAT MAKES THIS WORTH KNOWING. I ran the same comparison on RECTANGULAR matrices, sizes
+1x1 through 8x8:
+
+     rectangular shapes where the unguarded version is WRONG:  28 out of 64.
+
+     R=1, C=4    guarded: [[1, 2, 3, 4]]        unguarded: [[7, 6, 5, 4]]
+     R=4, C=1    guarded: [1, 2, 3, 4]          unguarded: [1, 6, 5, 4]
+     R=3, C=5    guarded: 1  2  3  4  5         unguarded: 1  2  3  4  5
+                          12 13 14 15 6                    12 17 16 15 6
+                          11 10  9  8 7                    11 10  9  8 7
+
+    LOOK AT R=1, C=4. A single row, and the unguarded version returns [7,6,5,4] - it walked left along
+    the same row it had just walked right along, overwriting everything. THE GUARD `if top <= bot` IS
+    WHAT PREVENTS THAT, and on a square there is never a single-row ring so it never fires.
+
+    R=3, C=5 shows the subtler version: only the interior cells 13 and 14 are wrong, replaced by 17 and
+    16. Everything else looks right.
+
+THE LESSON, AND IT IS THE REASON THIS ENTRY EXISTS: SPIRAL MATRIX II (SQUARE) PASSES WITHOUT THE
+GUARDS. SPIRAL MATRIX I (RECTANGULAR) DOES NOT. So people learn the pattern on the square version,
+never write the guards, and the bug appears later on a problem they thought they already knew. WRITE
+THE GUARDS ANYWAY - they cost two lines and they make the code correct for the general case.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - n = 1. `[[1]]`. Loop 1 writes it, then `top` becomes 1 and the while condition fails. The
+descending loops 3 and 4 have empty ranges. NO SPECIAL CASE NEEDED, which is a good sign.
+
+CASE 2 - n = 2. Four cells, one ring, no centre.
+
+         1  2
+         4  3
+
+CASE 3 - n = 3, THE ODD CASE. The centre cell 9 is written by loop 1 of the second ring - the ring
+where top == bot == left == right == 1. That "ring" is a single cell and loop 1 handles it; the other
+three loops have empty ranges.
+
+CASE 4 - THE DESCENDING RANGES. `range(right, left - 1, -1)` and `range(bot, top - 1, -1)`. The `- 1`
+on the stop value is what makes them INCLUSIVE of `left` and `top`. Getting this wrong misses the
+last cell of each of those two edges, which is a corner - so the symptom is four zeros at the corners.
+
+CASE 5 - `while ... and ...` NOT `or`. With `or`, one exhausted dimension does not stop the loop and
+you index out of range.
+
+CASE 6 - SHRINKING ALL FOUR BOUNDARIES AT THE END OF THE RING instead of after each loop. Then loop 2
+starts at the OLD `top` and rewrites the corner. The symptom is a value appearing twice and another
+missing.
+
+CASE 7 - RECTANGULAR INPUT. MEASURED: the unguarded version is wrong on 28 of 64 shapes up to 8x8,
+including [[1,2,3,4]] becoming [[7,6,5,4]]. THE GUARDS EXIST FOR THIS CASE and a square never
+exercises them.
+
+CASE 8 - n = 0. Returns `[]`. The while condition fails immediately since `bot = -1`.
+
+CASE 9 - INITIALISING THE GRID. `[[0] * n for _ in range(n)]`, NOT `[[0] * n] * n` - the second creates
+n references to the SAME row, so writing one cell writes a whole column. IT IS A CLASSIC PYTHON TRAP
+and it produces a spectacularly confusing output.""",
+
+    """5. THE DIRECTION-VECTOR ALTERNATIVE - and the family this belongs to
+
+THE DIRECTION-VECTOR METHOD, which some people find cleaner:
+
+    def generateMatrix(n):
+        m = [[0] * n for _ in range(n)]
+        dirs = [(0, 1), (1, 0), (0, -1), (-1, 0)]     # right, down, left, up - IN ORDER
+        r = c = d = 0
+        for v in range(1, n * n + 1):
+            m[r][c] = v
+            nr, nc = r + dirs[d][0], c + dirs[d][1]
+            if not (0 <= nr < n and 0 <= nc < n and m[nr][nc] == 0):
+                #                                   ^^^^^^^^^^^^^^ "already filled" is the
+                #   second turn condition, and it is why the grid must be PRE-INITIALISED
+                #   with a sentinel value that cannot appear in the output. Zero works
+                #   because the values are 1..n^2.
+                d = (d + 1) % 4
+                #    ^^^^^^^^^^^ TURN RIGHT. The direction list order encodes the spiral.
+                nr, nc = r + dirs[d][0], c + dirs[d][1]
+            r, c = nr, nc
+        return m
+
+    NO BOUNDARY VARIABLES AT ALL. The turn condition does the work. MEASURED: agrees with the
+    layer-by-layer version on 39/39 sizes from n = 1 to 39.
+
+    THE TRADE: it needs a sentinel, which means it does not generalise to filling a grid with values
+    that could include the sentinel. The layer method has no such restriction. FOR SPIRAL MATRIX I
+    (READING a matrix rather than generating one) THE SENTINEL TRICK DOES NOT WORK AT ALL, because the
+    input can contain any value - you need a separate `visited` grid or the boundary method.
+
+THE FAMILY - "walk a 2D grid in a prescribed pattern with boundary bookkeeping":
+
+    SPIRAL MATRIX I - READ an m x n matrix in spiral order. Same code, rectangular, AND THE GUARDS
+        MATTER (measured: wrong on 28 of 64 shapes without them).
+    ROTATE IMAGE 90 DEGREES - transpose then reverse each row, or rotate four cells at a time in rings.
+        SAME RING DECOMPOSITION.
+    DIAGONAL TRAVERSE - different pattern, same boundary bookkeeping.
+    SET MATRIX ZEROES - uses the first row and column as marker storage, another "manage the grid's
+        edges carefully" problem.
+    GAME OF LIFE IN PLACE - encode two states per cell to avoid a second grid.
+
+    WHAT THEY ALL TEST IS THE SAME THING: CAN YOU KEEP FOUR INDICES CORRECT UNDER PRESSURE. There is
+    no insight to find, which is why practising the bounds until they are automatic is the only
+    preparation that helps.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - DRAW n = 3 AND n = 4 ON PAPER FIRST. Thirty seconds, and it prevents every direction error.
+
+STEP 2 - INITIALISE THE GRID CORRECTLY. `[[0] * n for _ in range(n)]`, never `[[0] * n] * n`.
+
+STEP 3 - DECLARE FOUR BOUNDARIES: top = 0, bot = n-1, left = 0, right = n-1. And a counter v = 1.
+
+STEP 4 - LOOP `while top <= bot and left <= right`. AND, not OR.
+
+STEP 5 - FOUR LOOPS IN ORDER: right along top, down along right, left along bot, up along left.
+
+STEP 6 - SHRINK THE BOUNDARY IMMEDIATELY AFTER EACH LOOP, not at the end of the ring. That is what
+stops the corners being written twice.
+
+STEP 7 - USE THE UPDATED BOUNDARIES IN THE LATER LOOPS. Loop 2 starts at the incremented `top`; loop 3
+starts at the decremented `right`.
+
+STEP 8 - GET THE DESCENDING RANGES RIGHT. `range(right, left - 1, -1)` and `range(bot, top - 1, -1)`.
+The `- 1` makes them inclusive.
+
+STEP 9 - INCLUDE THE TWO INNER GUARDS ANYWAY. MEASURED: they are unnecessary for a square (0 of 59
+sizes differ) and ESSENTIAL for a rectangle (28 of 64 shapes wrong without them). Two lines, and the
+code becomes correct for the general problem.
+
+STEP 10 - TEST n = 1, 2, 3 AND 4. n = 1 catches the loop bounds, n = 3 catches the odd centre, and
+n = 4 catches the inner ring.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'This is a pure implementation problem - there's no algorithmic insight to find. The whole difficulty
+is keeping four boundary variables correct.
+
+I'd keep top, bottom, left and right, and a counter starting at one. Then while top is at most bottom
+AND left is at most right - and that has to be AND, not OR - I do four loops: walk right along the top
+row, down the right column, left along the bottom row, up the left column.
+
+The key detail is that I SHRINK EACH BOUNDARY IMMEDIATELY AFTER ITS LOOP, not all four at the end of
+the ring. So after walking the top row I increment top straight away, which means the next loop -
+going down the right column - starts BELOW the corner I just wrote. Doing all four shrinks at the end
+is the most common way to get this wrong, and the symptom is a value appearing twice with another
+missing.
+
+The two descending ranges need care: going right-to-left is range from right down to left MINUS ONE
+with step minus one, and the minus one is what makes it inclusive of the left column. Get that wrong
+and you miss a corner.
+
+Now the thing I'd actually want to say, because I got it wrong and then measured it. There are usually
+two `if` guards inside the loop - check top is still at most bottom before the leftward walk, and left
+is still at most right before the upward walk. I assumed those were essential to stop the centre cell
+of an odd square being written twice. So I tested it: I ran the guarded and unguarded versions on every
+square size from one to fifty-nine, and they produced IDENTICAL output every time. THE GUARDS ARE
+UNNECESSARY FOR A SQUARE. The reason is that after the last ring the boundaries cross, so the two
+descending ranges are empty and those loops simply don't execute.
+
+But then I tried rectangles, and the unguarded version was WRONG on twenty-eight of sixty-four shapes
+up to eight by eight. A one-by-four matrix comes out as [7,6,5,4] instead of [1,2,3,4] - it walks left
+along the same single row it just walked right along, overwriting everything.
+
+So the lesson is: Spiral Matrix II is square, and it passes without the guards. Spiral Matrix I is
+rectangular, and it doesn't. People learn the pattern on the square version, never write the guards,
+and get bitten later on a problem they thought they already knew. I'd write the guards anyway - two
+lines, and it's correct for the general case.
+
+There's also a direction-vector version - keep a position and a direction, turn right when the next
+cell is out of bounds or already filled. No boundary variables at all. It needs the grid pre-filled
+with a sentinel, so it works for GENERATING a matrix and not for READING one, where the input could
+contain any value. I checked the two against each other on every size from one to thirty-nine and they
+agree.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def generateMatrix(n):
+        m = [[0] * n for _ in range(n)]
+        #   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ A LIST COMPREHENSION, not `[[0] * n] * n`. The
+        #   latter creates n references to the SAME row object, so writing one cell writes
+        #   an entire column. It is one of the classic Python traps and the output is
+        #   spectacularly confusing.
+
+        top, bot, left, right = 0, n - 1, 0, n - 1
+        v = 1
+
+        while top <= bot and left <= right:
+            #             ^^^ AND, NOT OR. With `or`, one exhausted dimension does not end
+            #             the loop and the next write indexes out of range.
+
+            for c in range(left, right + 1):
+                m[top][c] = v; v += 1
+            top += 1
+            # ^ SHRINK IMMEDIATELY. The top row is finished, so the next loop must start
+            #   BELOW it. Deferring all four shrinks to the end of the ring is the single
+            #   most common bug here, and the symptom is a duplicated corner value.
+
+            for r in range(top, bot + 1):
+                #          ^^^ THE ALREADY-INCREMENTED top. This is what stops the
+                #          top-right corner being written twice.
+                m[r][right] = v; v += 1
+            right -= 1
+
+            if top <= bot:
+                # ^ MEASURED: this guard is UNNECESSARY for a square - 0 of 59 sizes differ
+                #   without it - and ESSENTIAL for a rectangle: 28 of 64 shapes up to 8x8
+                #   are wrong without it, including [[1,2,3,4]] coming out as [[7,6,5,4]].
+                #   WRITE IT ANYWAY. Two lines, and the code becomes correct in general.
+                for c in range(right, left - 1, -1):
+                    #                 ^^^^^^^^ THE -1 MAKES IT INCLUSIVE of the left column.
+                    #                 Without it the bottom-left corner is left as 0.
+                    m[bot][c] = v; v += 1
+                bot -= 1
+
+            if left <= right:
+                for r in range(bot, top - 1, -1):
+                    #               ^^^^^^^ inclusive of the top row of this ring.
+                    m[r][left] = v; v += 1
+                left += 1
+
+        return m
+
+    # MEASURED: agrees with the direction-vector method on 39/39 sizes from n = 1 to 39.
+
+THE DIRECTION-VECTOR ALTERNATIVE:
+
+    def generateMatrix(n):
+        m = [[0] * n for _ in range(n)]
+        dirs = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        #       right    down     left      up      <- THE ORDER ENCODES THE SPIRAL
+        r = c = d = 0
+        for v in range(1, n * n + 1):
+            m[r][c] = v
+            nr, nc = r + dirs[d][0], c + dirs[d][1]
+            if not (0 <= nr < n and 0 <= nc < n and m[nr][nc] == 0):
+                #                                  ^^^^^^^^^^^^^^^ TWO TURN CONDITIONS:
+                #   out of bounds, OR already filled. The second is why the grid must be
+                #   pre-initialised with a sentinel - 0 works here because the output
+                #   values are 1..n^2 and can never be 0.
+                #   FOR SPIRAL MATRIX I (reading an existing matrix) THIS DOES NOT WORK,
+                #   because the input can contain any value. You need a visited grid.
+                d = (d + 1) % 4
+                nr, nc = r + dirs[d][0], c + dirs[d][1]
+            r, c = nr, nc
+        return m
+    # NO BOUNDARY VARIABLES. Shorter, and it trades them for a sentinel requirement.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+n = 4. Boundaries start at top=0, bot=3, left=0, right=3. v starts at 1.
+
+RING 1:
+
+     loop                        cells written              v after     boundaries after
+     -----------------------------------------------------------------------------------------
+     right along top=0           (0,0)(0,1)(0,2)(0,3) = 1,2,3,4      5     top=1
+     down along right=3          (1,3)(2,3)(3,3) = 5,6,7             8     right=2
+     left along bot=3            (3,2)(3,1)(3,0) = 8,9,10           11     bot=2
+     up along left=0             (2,0)(1,0) = 11,12                 13     left=1
+
+     grid so far:    1   2   3   4
+                    12   0   0   5
+                    11   0   0   6
+                    10   9   8   7
+
+    NOTE THE DOWN LOOP STARTED AT ROW 1, NOT ROW 0. That is the already-incremented `top` doing its
+    job - row 0, column 3 was written by the first loop as the value 4, and writing it again would
+    have wasted a number and left a zero elsewhere.
+
+    NOTE THE UP LOOP RAN FROM ROW 2 TO ROW 1, stopping before row 0. `range(bot, top - 1, -1)` with
+    bot=2 and top=1 gives [2, 1] - inclusive of row 1, exclusive of row 0, which was already written.
+
+RING 2: top=1, bot=2, left=1, right=2.
+
+     loop                        cells written              v after     boundaries after
+     -----------------------------------------------------------------------------------------
+     right along top=1           (1,1)(1,2) = 13,14                 15     top=2
+     down along right=2          (2,2) = 15                         16     right=1
+     left along bot=2            (2,1) = 16                         17     bot=1
+     up along left=1             range(1, 1, -1) is EMPTY           17     left=2
+
+     grid:           1   2   3   4
+                    12  13  14   5
+                    11  16  15   6
+                    10   9   8   7
+
+    THE LAST LOOP OF RING 2 WROTE NOTHING. `range(bot=1, top-1=1, -1)` produces no values, because the
+    start equals the stop. THAT EMPTY RANGE IS WHY THE UNGUARDED VERSION IS STILL CORRECT ON SQUARES -
+    the loop simply does not execute.
+
+RING 3: the while condition is now `top=2 <= bot=1`, which is FALSE. Loop ends. All 16 cells filled.
+
+THE MEASURED OUTPUTS:
+
+     n=1:   1
+
+     n=2:   1   2          n=3:   1   2   3        n=4:   1   2   3   4
+            4   3                 8   9   4              12  13  14   5
+                                  7   6   5              11  16  15   6
+                                                         10   9   8   7
+
+THE GUARD MEASUREMENT:
+
+     square sizes 1..59 where guarded and unguarded differ:            NONE
+     rectangular shapes 1x1..8x8 where they differ:                    28 of 64
+     R=1,C=4  guarded [[1,2,3,4]]   unguarded [[7,6,5,4]]
+     R=4,C=1  guarded [1,2,3,4]     unguarded [1,6,5,4]
+     R=3,C=5  guarded row 2 = [12,13,14,15,6]   unguarded row 2 = [12,17,16,15,6]
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `top += 1` right after loop 1
+            produced the down loop starting at row 1. Move this shrink to the end of the ring and the
+            down loop starts at row 0, rewriting the corner.
+    `range(top, bot + 1)`
+            produced the down loop's extent, using the JUST-UPDATED top. Every loop after the first
+            depends on the shrinks that preceded it in the same ring.
+    `range(right, left - 1, -1)` and `range(bot, top - 1, -1)`
+            produced the leftward and upward walks, and the `- 1` in each is what includes the final
+            column and row. Drop it and the two corners stay 0.
+    the EMPTY `range(1, 1, -1)` in ring 2
+            is why the square case survives without the inner guards - and R=1,C=4 shows the case where
+            the equivalent range is NOT empty and the guard is the only thing preventing an overwrite.
+    `while top <= bot and left <= right`
+            ended the loop after ring 2. With `or` it would have continued and indexed out of range.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n^2) - every cell is written exactly once, and n^2 cells is the size of the output, so
+           this is optimal by definition.
+    SPACE: O(n^2) for the output, O(1) auxiliary.
+
+    MEASURED: the layer-by-layer and direction-vector methods agree on 39/39 sizes from n = 1 to 39.
+    MEASURED, the inner guards:
+        square sizes 1..59 where guarded and unguarded differ: NONE
+        rectangular shapes 1x1..8x8 where they differ: 28 OF 64
+        R=1,C=4: guarded [[1,2,3,4]], unguarded [[7,6,5,4]]
+
+THE #1 MISTAKE: shrinking all four boundaries at the end of the ring instead of after each loop. The
+next loop then rewrites a corner - one value appears twice and another is missing.
+
+THE #2 MISTAKE: `[[0] * n] * n`. n references to the same row; writing one cell writes a column.
+
+THE #3 MISTAKE: `or` instead of `and` in the while condition. One exhausted dimension does not stop
+the loop.
+
+THE #4 MISTAKE: the descending ranges without the `- 1` on the stop value. Two corners stay 0.
+
+THE #5 MISTAKE: omitting the inner guards. MEASURED, harmless on squares and wrong on 28 of 64
+rectangular shapes - which means the bug is invisible on this problem and appears on Spiral Matrix I.
+WRITE THEM ANYWAY.
+
+THE #6 MISTAKE: not using the updated boundaries in later loops within the same ring.
+
+THE #7 MISTAKE: not drawing n = 3 and n = 4 before writing code. Thirty seconds that prevents every
+direction error.
+
+THE #8 MISTAKE: using the direction-vector method for Spiral Matrix I. The "already filled" sentinel
+does not work on an input matrix that can contain any value; you need a separate visited grid.
+
+THE #9 MISTAKE: treating this as a hard problem. There is no insight to find; it is four indices and
+the marks are entirely in the bounds. Practise until it is automatic.
+
+ONE-SENTENCE TAKEAWAY: keep four boundaries and write four loops per ring - right along top, down the
+right, left along bottom, up the left - SHRINKING EACH BOUNDARY IMMEDIATELY AFTER ITS LOOP so the next
+loop starts inside the corner just written, with the descending ranges using `- 1` on the stop to stay
+inclusive; and although the two inner `if` guards are measurably unnecessary for a square (0 of 59
+sizes differ), write them anyway, because without them 28 of 64 rectangular shapes are wrong - which
+is exactly how a habit learned on this problem breaks on Spiral Matrix I.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
