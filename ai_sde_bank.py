@@ -238944,6 +238944,1232 @@ ONE-SENTENCE TAKEAWAY: ask of every feature and every split 'would I have known 
 time?', split before you touch anything else, put your transforms in a pipeline so the wrong order is
 impossible - and treat a surprisingly good score as a bug report.""",
 ]
+_EX_P1AO["BLEU"] = [
+    """1. THE GOAL - scoring a translation without a human reading it.
+
+You have a machine translation and one or more human translations of the same
+sentence. You want a NUMBER, automatically, so you can compare two systems
+overnight instead of hiring bilingual reviewers.
+
+BLEU's answer: count how much of the machine's output appears, WORD FOR WORD,
+in the human version - not just single words, but pairs, triples and
+quadruples of consecutive words. Overlapping single words says the vocabulary
+is right; overlapping four-word runs says the grammar and word order are too.
+
+Then penalise anything suspiciously short, because a system that outputs only
+the words it is confident about would otherwise score perfectly.
+
+WHY IT MATTERS FOR AN INTERVIEW: BLEU is the metric everyone cites and almost
+nobody can state the failure modes of. The measurements below are what a
+strong answer sounds like.""",
+
+    """2. THE INTUITION - what n-gram overlap can and cannot see.
+
+An n-gram is n consecutive words. "the cat sat" is a 3-gram.
+
+BLEU computes, for n = 1, 2, 3 and 4, what FRACTION of the candidate's n-grams
+appear in the reference - clipped so that repeating a word ten times cannot
+score ten times. Then it takes the GEOMETRIC MEAN of those four fractions, and
+multiplies by a brevity penalty.
+
+THE GEOMETRIC MEAN IS THE DESIGN DECISION THAT MATTERS. It multiplies the four
+precisions together and takes the fourth root, so IF ANY ONE OF THEM IS ZERO
+THE WHOLE SCORE IS ZERO. A candidate can share 92% of the reference's words
+and still score exactly 0.0000, because it shares no four-word run.
+
+That is deliberate - it is how BLEU notices word order at all - and it is also
+the source of its worst behaviour.
+
+WHAT IT CANNOT SEE, at all:
+ - MEANING. It compares surface strings. "did not sit" and "sat" differ by one
+   token and mean opposite things.
+ - SYNONYMS. "rug" for "mat" is scored exactly like a wrong word.
+ - WHETHER THE OUTPUT IS EVEN GRAMMATICAL beyond a 4-word window.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+N-GRAM - n consecutive words. Unigram = 1 word, bigram = 2, and so on.
+
+MODIFIED PRECISION - of the candidate's n-grams, what fraction appear in the
+reference, where each reference n-gram can only be matched as many times as it
+actually occurs. Without the clipping, the candidate "the the the the" would
+score 100% unigram precision against any reference containing "the".
+
+BREVITY PENALTY (BP) - if the candidate is SHORTER than the reference, multiply
+the score by exp(1 - refLen/candLen). Equal or longer, BP = 1. It exists
+because precision alone rewards saying less.
+
+GEOMETRIC MEAN - the fourth root of (p1 x p2 x p3 x p4). Zero if any factor is
+zero.
+
+CORPUS BLEU vs SENTENCE BLEU - the real metric sums counts across the WHOLE
+test set before dividing, which is far more stable. Sentence-level BLEU, which
+is what the worked examples below use, is noisy and is mostly a teaching tool.
+
+SMOOTHING - adding a small constant to zero n-gram counts so a single sentence
+does not collapse to zero. Every practical implementation does some version of
+this, and different choices give different numbers for the same output.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - measured, not asserted.
+
+One reference sentence:
+
+    the cat sat on the mat in the warm sunny room
+
+Seven candidates, scored with a plain BLEU-4 implementation (clipping, no
+smoothing, one reference):
+
+  case                        BLEU      p1    p2    p3    p4     BP
+  -------------------------------------------------------------------
+  identical                 1.0000    1.00  1.00  1.00  1.00   1.000
+  synonym swap (rug/mat)    0.7017    0.91  0.80  0.67  0.50   1.000
+  reordered, same meaning   0.8133    1.00  0.90  0.78  0.62   1.000
+  MEANING INVERTED          0.6115    0.77  0.67  0.55  0.50   1.000
+  word salad, same words    0.0000    0.92  0.09  0.00  0.00   1.000
+  short but fully correct   0.4346    1.00  1.00  1.00  1.00   0.435
+  fluent paraphrase         0.0000    0.27  0.00  0.00  0.00   1.000
+
+READ ROWS 4 AND 7 TOGETHER. "the cat DID NOT SIT on the mat in the warm sunny
+room" - which asserts the OPPOSITE of the reference - scores 0.6115. "a feline
+rested upon the rug in a bright warm chamber" - a correct, fluent, human-quality
+paraphrase - scores 0.0000.
+
+BLEU RANKS A SENTENCE THAT MEANS THE OPPOSITE INFINITELY ABOVE ONE THAT MEANS
+THE SAME THING. That is not a subtle bias; it is the metric doing exactly what
+it was designed to do, applied to a case it was never designed for.
+
+Row 6 is the other half: "the cat sat on the mat" has PERFECT precision at all
+four n-gram lengths. Every single thing it says is right. It scores 0.4346, and
+all of the loss is the brevity penalty of 0.435.
+
+Row 5 is the geometric mean biting: 92% of the words are correct, and because
+no 3-gram or 4-gram survives the shuffle, the score is exactly zero.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: count matching words. Fails immediately - "the the the the the" scores
+perfectly against almost any English sentence.
+
+UPGRADE 1, CLIPPING: cap each n-gram's credit at how many times it appears in
+the reference. Kills the repetition attack.
+
+UPGRADE 2, HIGHER-ORDER N-GRAMS: unigrams alone say nothing about order. Adding
+2-, 3- and 4-grams makes word order count. This is where BLEU's ability to
+distinguish row 3 (0.8133) from row 5 (0.0000) comes from - same words, and the
+reordering that preserves meaning keeps most of its bigrams while the shuffle
+keeps almost none.
+
+UPGRADE 3, BREVITY PENALTY: without it, row 6 would score 1.0000 and every
+system would learn to emit three-word answers.
+
+UPGRADE 4, MULTIPLE REFERENCES: with four human translations instead of one,
+the synonym problem shrinks a great deal, because "rug" is probably in one of
+them. THIS IS THE SINGLE BIGGEST PRACTICAL IMPROVEMENT and it is the one most
+teams skip, because references are expensive.
+
+UPGRADE 5, SMOOTHING: so a single sentence with no 4-gram match does not report
+zero.
+
+WHAT NONE OF THE UPGRADES FIX: meaning. Rows 4 and 7 are unchanged by all of
+them.""",
+
+    """6. HOW IT WORKS - the computation, step by step.
+
+STEP 1 - tokenise both the candidate and every reference. Tokenisation choices
+change the number; this is why BLEU scores are only comparable within one
+tool's convention.
+
+STEP 2 - for n = 1..4, count the candidate's n-grams.
+
+STEP 3 - for each n-gram, find the MAXIMUM count across all references, and
+credit min(candidateCount, thatMaximum). Sum, divide by the candidate's total
+n-gram count. That is p_n.
+
+STEP 4 - geometric mean: exp( (log p1 + log p2 + log p3 + log p4) / 4 ). If any
+p_n is zero, the score is zero (or smoothing kicks in).
+
+STEP 5 - brevity penalty: pick the reference length closest to the candidate's.
+If candidate is longer, BP = 1. Otherwise BP = exp(1 - refLen/candLen).
+
+STEP 6 - BLEU = BP x geometricMean. Report as 0-1 or x100.
+
+FOR A CORPUS: do steps 2 and 3 summed over EVERY sentence before dividing, and
+compute the brevity penalty from total lengths. Corpus BLEU is not the average
+of sentence BLEUs, and the difference is large.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine marking a translation exam without speaking the language. You have one
+model answer. You cannot judge meaning, so you do the only thing you can: you
+check how much of the student's text matches the model answer word for word.
+
+Single words tell you they knew the vocabulary. Runs of four consecutive words
+tell you they probably knew the grammar too, because getting four words in a
+row right by accident is unlikely.
+
+You multiply those four scores together, so a student who gets the words right
+but the order completely wrong scores zero - which is the point.
+
+Then you notice students gaming it by writing only the three words they are
+sure of, and getting full marks. So you add a rule: anything shorter than the
+model answer gets scaled down.
+
+The system works, in the sense that a better translator scores higher on
+average across a thousand sentences. And it is blind in a specific way: a
+student who writes a perfect answer in different words gets zero, and a student
+who writes the model answer with the word "not" inserted gets 61%.
+
+You would never accept that from a human marker. You accept it from BLEU
+because it is free and it correlates well enough IN AGGREGATE.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def bleu(cand, refs, maxn=4):
+        c = cand.split()
+        rs = [r.split() for r in refs]
+        precisions = []
+        for n in range(1, maxn + 1):
+            cg = ngrams(c, n)                       # the candidate's n-grams
+            counts = tally(cg)                      # how many of each
+            maxref = {}                             # the CLIPPING table:
+            for r in rs:                            #   for each n-gram, the most
+                for g, v in tally(ngrams(r, n)).items():   # times ANY single
+                    maxref[g] = max(maxref.get(g, 0), v)   # reference uses it
+            clipped = sum(min(v, maxref.get(g, 0))
+                          for g, v in counts.items())
+            precisions.append(clipped / len(cg))
+
+        if any(p == 0 for p in precisions):
+            geo = 0.0                               # THE ZERO TRAP, in one line
+        else:
+            geo = exp(sum(log(p) for p in precisions) / maxn)
+
+        clen = len(c)
+        rlen = closest_length(rs, clen)
+        bp = 1.0 if clen > rlen else exp(1 - rlen / clen)
+        return bp * geo
+
+LINE BY LINE:
+ - `maxref` is the clipping table, and it is why "the the the the" cannot win.
+   Note it takes the MAXIMUM across references, not the sum - so extra
+   references make the metric more generous, never less.
+ - `if any(p == 0 ... ) geo = 0.0` is the single line that produced two of the
+   seven measured zeros. It is not smoothing's absence being sloppy; it is the
+   geometric mean's definition.
+ - `bp` uses the reference length CLOSEST to the candidate, not the shortest or
+   the average, so adding a short reference can lower a long candidate's
+   penalty. Implementations differ here, which is one reason two tools report
+   different BLEU for identical output.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Candidate: "the cat sat on the mat"   (6 tokens)
+Reference: "the cat sat on the mat in the warm sunny room"   (11 tokens)
+
+UNIGRAMS: the candidate has 6, all present in the reference. "the" appears
+twice in the candidate and three times in the reference, so both are credited.
+  p1 = 6/6 = 1.00
+
+BIGRAMS: 5 of them - "the cat", "cat sat", "sat on", "on the", "the mat" - all
+present.  p2 = 5/5 = 1.00
+
+TRIGRAMS: 4, all present.  p3 = 4/4 = 1.00
+4-GRAMS:  3, all present.  p4 = 3/3 = 1.00
+
+GEOMETRIC MEAN = exp( (0+0+0+0)/4 ) = 1.0000. A perfect score so far, and
+correctly so - every single thing the candidate says is right.
+
+BREVITY PENALTY: candLen 6 < refLen 11.
+  BP = exp(1 - 11/6) = exp(-0.8333) = 0.4346
+
+BLEU = 1.0000 x 0.4346 = 0.4346
+
+SO A SENTENCE WITH NOTHING WRONG IN IT SCORES 43%, AND ALL OF THE LOSS IS THE
+LENGTH RULE. That is BLEU declaring, correctly by its own lights, that a
+translation which drops half the source is a bad translation - and it has no
+way to distinguish that from a translation that legitimately compresses.
+
+NOW THE INVERTED ONE, for contrast:
+Candidate: "the cat did not sit on the mat in the warm sunny room" (13 tokens)
+  p1 = 0.77   p2 = 0.67   p3 = 0.55   p4 = 0.50
+  geometric mean = 0.6115, BP = 1.000 (it is LONGER than the reference)
+  BLEU = 0.6115
+
+The insertion of "did not" and the change "sat" -> "sit" cost it about a third
+of its n-grams. It kept the other two thirds, and BLEU has no mechanism that
+could ever notice the negation.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COST: trivial. Counting n-grams is linear in the text. BLEU is free compared to
+generating the translation, which is exactly why it won.
+
+WHAT IT IS GOOD FOR: comparing two versions of the SAME system on the SAME test
+set with the SAME tokenisation, over thousands of sentences, where the
+difference is large. There it correlates usefully with human judgement.
+
+WHAT IT IS NOT GOOD FOR: comparing across papers, across languages, across
+tokenisers, on a handful of sentences, or on anything where a correct answer
+can be phrased differently - which is every generation task that is not
+translation.
+
+THE #1 MISTAKE: reporting a BLEU number as if it were a quality measurement
+rather than a similarity measurement. A model at 34.2 BLEU is not "34.2% good".
+It is more similar to these particular references than a model at 31.8, under
+this particular tokenisation.
+
+THE #2 MISTAKE: sentence-level BLEU. It is noisy and full of zeros. Use corpus
+BLEU, and use sacreBLEU so the tokenisation is stated rather than assumed.
+
+THE #3 MISTAKE: one reference. Multiple references are the single biggest
+improvement available, and the measured synonym penalty (0.7017 for one swapped
+word) mostly disappears with four.
+
+WHAT TO USE INSTEAD, OR AS WELL: chrF for morphologically rich languages, BERTScore
+or COMET for semantic similarity, and human evaluation for anything you are
+about to ship. Modern MT papers report several, because none of them is
+sufficient alone.
+
+THE TAKEAWAY: BLEU measures SURFACE OVERLAP with reference text, using a
+geometric mean of n-gram precisions that is zero if any order fails, times a
+brevity penalty - which is why a fully correct short answer measured 0.4346, a
+fluent paraphrase measured 0.0000, and a sentence asserting the OPPOSITE
+meaning measured 0.6115; it is a cheap aggregate proxy that works between
+versions of one system and tells you almost nothing about a single sentence.""",
+]
+
+_EX_P1AO["F-beta score"] = [
+    """1. THE GOAL - one number when precision and recall disagree.
+
+PRECISION - of the things you flagged, what fraction were real.
+RECALL - of the real things, what fraction did you flag.
+
+They trade off. Flag everything and recall is 100% and precision is terrible.
+Flag only the certainties and precision is 100% and recall is terrible. So a
+single model gives you two numbers that move in opposite directions, and you
+cannot rank two models by "better" without deciding which one you care about.
+
+F-beta is that decision, written down. It is a weighted harmonic mean, and the
+parameter beta says HOW MANY TIMES MORE YOU CARE ABOUT RECALL THAN PRECISION.
+
+  beta = 1   they matter equally. This is the F1 score.
+  beta = 2   recall matters twice as much. Use when a miss is expensive -
+             cancer screening, fraud, safety.
+  beta = 0.5 precision matters twice as much. Use when a false alarm is
+             expensive - auto-blocking accounts, sending a costly intervention.
+
+THE PARAMETER IS A BUSINESS DECISION MASQUERADING AS A HYPERPARAMETER, and the
+measured sweep below is what it actually buys you.""",
+
+    """2. THE INTUITION - why a HARMONIC mean, and what beta really moves.
+
+    F_beta = (1 + beta^2) x precision x recall / (beta^2 x precision + recall)
+
+WHY HARMONIC AND NOT ARITHMETIC: the arithmetic mean of precision 1.00 and
+recall 0.00 is 0.50 - a model that finds NOTHING would score half marks. The
+harmonic mean of the same pair is 0.00. A harmonic mean is dragged down by its
+smallest input, which is exactly the behaviour you want from a metric meant to
+stop you ignoring one axis.
+
+WHAT beta DOES: it is not a slider between two scores, it is a weight in the
+denominator. At beta = 2, precision is multiplied by 4 in the denominator, so a
+precision drop hurts a quarter as much as a recall drop.
+
+A USEFUL EXACT FACT: at the point where the F_beta-optimal threshold sits,
+recall is weighted beta^2 times precision. So "beta = 2" literally means "I
+would trade one point of precision for four points of recall" - beta SQUARED,
+not beta. People routinely get this wrong and set beta = 2 meaning 2x.
+
+AND THE PART THAT SURPRISED ME WHEN I MEASURED IT: on a fixed set of models,
+changing beta often does NOT change which model wins. Section 4 has the numbers.
+What beta reliably moves is the THRESHOLD you pick within one model.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TP, FP, FN - true positives (flagged and real), false positives (flagged and
+not real), false negatives (real and missed).
+
+PRECISION = TP / (TP + FP). "When I say yes, how often am I right."
+RECALL = TP / (TP + FN). "Of everything I should have caught, how much did I."
+
+Note that neither uses TRUE NEGATIVES. That is why precision and recall are the
+right pair for rare events: correctly ignoring 19,600 uninteresting rows is not
+an achievement, and accuracy would give you credit for it.
+
+THRESHOLD - most classifiers output a score, not a label. The threshold turns
+one into the other, and it is the dial that trades precision for recall. THE
+MODEL DOES NOT CHANGE WHEN YOU MOVE IT; only the operating point does.
+
+OPERATING POINT - a specific (precision, recall) pair, produced by a specific
+threshold. This is the thing you actually ship.
+
+F1 - F_beta with beta = 1. The harmonic mean of precision and recall.
+
+MACRO / MICRO / WEIGHTED F1 - for multiclass. Macro averages per-class F1
+equally (so a rare class counts as much as a common one); micro pools all the
+counts first (so it is dominated by the common class); weighted averages by
+class size. THEY CAN DISAGREE SHARPLY on imbalanced data, and reporting "F1"
+without saying which is a common ambiguity.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - measured, including a negative result.
+
+FIRST, THREE FIXED MODELS, each with a different bias:
+
+  model             TP   FP   FN   prec    rec     F0.5      F1       F2
+  ---------------------------------------------------------------------------
+  high precision    20    2   80  0.909  0.200   0.5319   0.3279   0.2370
+  balanced          60   40   40  0.600  0.600   0.6000   0.6000   0.6000
+  high recall       95  300    5  0.241  0.950   0.2827   0.3838   0.5975
+
+  winner at beta=0.5: balanced > high precision > high recall
+  winner at beta=1.0: balanced > high recall > high precision
+  winner at beta=2.0: balanced > high recall > high precision
+
+I EXPECTED beta TO CHANGE THE WINNER. IT DID NOT. The balanced model wins under
+all three, because it is not badly beaten on either axis and the extremes are
+very badly beaten on one. What beta changed was the ORDER OF THE LOSERS: at
+beta 0.5 the high-precision model is second, at beta 2 the high-recall model is
+second - and at beta 2 they are nearly tied with the winner (0.5975 vs 0.6000).
+
+THAT IS THE HONEST LESSON: beta is a tiebreaker among comparable models, not a
+way to rescue a model that has collapsed on the other axis.
+
+SECOND, AND THIS IS WHERE beta EARNS ITS KEEP - one model, sweeping the
+threshold. 20,000 rows, 2% positive, overlapping score distributions:
+
+  thr     TP     FP    FN   prec    rec     F0.5      F1       F2
+  ---------------------------------------------------------------------------
+  0.55   250   3581   157  0.065  0.614   0.0795   0.1180   0.2290
+  0.65   170   1369   237  0.110  0.418   0.1295   0.1747   0.2684   <- best F2
+  0.75    91    407   316  0.183  0.224   0.1897   0.2011   0.2140   <- best F1
+  0.85    41     77   366  0.347  0.101   0.2332   0.1562   0.1174   <- best F0.5
+
+  beta=0.5 -> threshold 0.85, precision 0.347, recall 0.101
+  beta=1.0 -> threshold 0.75, precision 0.183, recall 0.224
+  beta=2.0 -> threshold 0.65, precision 0.110, recall 0.418
+
+THE SAME MODEL, THE SAME DATA, AND THE CHOICE OF beta MOVES RECALL FROM 10% TO
+42% AND PRECISION FROM 35% TO 11%. That is a completely different product.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: accuracy. On the measured data - 2% positives - a model that predicts
+"no" for every row is 98% accurate and finds nothing. Accuracy is useless the
+moment classes are imbalanced, and imbalance is the normal case for anything
+worth detecting.
+
+UPGRADE 1: report precision and recall separately. Honest, and it does not rank
+models, which is what you needed.
+
+UPGRADE 2: F1. Ranks them, and asserts equal weighting - which is a claim about
+your business that is usually false and almost never stated.
+
+UPGRADE 3: F-beta with beta chosen from the actual cost. If a missed fraud
+costs 400 pounds and a false alarm costs 5 pounds of review time, the ratio is
+80:1 and beta = sqrt(80) is about 9. WRITE THE COSTS DOWN AND DERIVE beta -
+it is a two-line calculation and it converts an argument into arithmetic.
+
+UPGRADE 4: skip F-beta entirely and optimise EXPECTED COST directly.
+  cost = FP x costPerFalseAlarm + FN x costPerMiss
+This is strictly better when you know the costs, because it does not compress
+two numbers into one at all. F-beta is what you use when you cannot get the
+costs but can get a ratio.
+
+UPGRADE 5: report the whole curve. Precision-recall AUC summarises every
+threshold at once and is the right headline for a rare-event model; ROC-AUC is
+misleadingly flattering on heavy imbalance because it credits true negatives.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - establish the base rate. 2% in the measurement above. If you skip this
+you will misread every number that follows.
+
+STEP 2 - write down the cost of a false positive and the cost of a false
+negative, in the same unit. Money, minutes, complaints - anything comparable.
+
+STEP 3 - beta = sqrt(costOfMiss / costOfFalseAlarm). Note the SQUARE ROOT: beta
+squared is the weight, so a 4:1 cost ratio is beta = 2, not beta = 4.
+
+STEP 4 - sweep the threshold across the full range and tabulate TP, FP, FN,
+precision, recall and F_beta at each. The table is the deliverable, not the
+single best number.
+
+STEP 5 - pick the threshold that maximises F_beta, then LOOK AT ITS OPERATING
+POINT. In the measurement, the F0.5-optimal threshold has recall 0.101 - if
+nobody is willing to miss 90% of the positives, the metric chose something the
+business will reject, and the beta was wrong.
+
+STEP 6 - report the operating point, not the F score. "Precision 18%, recall
+22% at threshold 0.75" is actionable. "F1 = 0.20" is not.
+
+STEP 7 - choose the threshold on validation data and re-measure on test. A
+threshold tuned on the test set is a fitted parameter and the number is
+optimistic.
+
+STEP 8 - re-derive it when the base rate moves. Precision depends on prevalence;
+recall does not. A model unchanged for a year will silently lose precision as
+the positive rate falls.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A security guard checks bags. Two ways to be wrong: wave through something
+dangerous, or stop a hundred harmless people.
+
+If you judge the guard on how often they were right when they stopped someone,
+the best strategy is to stop nobody. If you judge on how much danger they
+caught, the best strategy is to stop everyone. Either single number can be
+gamed by doing something obviously stupid.
+
+So you combine them - but not by averaging, because averaging lets a guard who
+stops nobody score half marks on the "never wrong when stopping" half. You
+combine them in a way where being terrible at either one drags the whole score
+down.
+
+Then someone points out that at an airport, waving through a weapon is far
+worse than annoying a traveller, while at a supermarket door the reverse is
+true. So you add a dial saying how many times worse a miss is than a false
+alarm.
+
+Turning that dial does not usually change which guard you hire - a competent
+guard beats a fanatic and a rubber-stamp under any setting. What it changes is
+how strict you tell your chosen guard to be. In the measured data, moving the
+dial took the same guard from stopping 10% of the real threats to stopping 42%,
+and from being right a third of the time to being right one time in nine.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def fbeta(tp, fp, fn, beta):
+        if tp == 0:
+            return 0.0                       # both precision and recall are 0
+        p = tp / (tp + fp)
+        r = tp / (tp + fn)
+        b2 = beta * beta                     # THE WEIGHT IS beta SQUARED
+        return (1 + b2) * p * r / (b2 * p + r)
+
+    def sweep(scored, betas):
+        rows = []
+        for thr in thresholds:
+            tp = count(s >= thr and y for s, y in scored)
+            fp = count(s >= thr and not y for s, y in scored)
+            fn = count(s <  thr and y for s, y in scored)
+            rows.append((thr, tp, fp, fn,
+                         *[fbeta(tp, fp, fn, b) for b in betas]))
+        return rows
+
+LINE BY LINE:
+ - `if tp == 0: return 0.0` - not a defensive nicety. Without it you divide by
+   zero at every threshold above the highest positive score, which is exactly
+   where a strict model lives.
+ - `b2 = beta * beta` - the single most misunderstood line. beta = 2 weights
+   recall FOUR times, not twice. The stated intent and the arithmetic differ by
+   a square, and people set beta from the cost ratio directly and get a metric
+   twice as aggressive as they meant.
+ - `b2 * p + r` in the denominator - precision carries the weight there, which
+   is why a LARGER beta makes precision matter LESS. The asymmetry is easy to
+   read backwards.
+ - `sweep` returns a TABLE. The single best number is the last thing you should
+   extract from it, because the operating point is the decision.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Take the threshold-0.75 row from the measurement: TP 91, FP 407, FN 316.
+
+  precision = 91 / (91 + 407) = 91/498  = 0.1827
+  recall    = 91 / (91 + 316) = 91/407  = 0.2236
+
+F1 (beta = 1, b2 = 1):
+  (1+1) x 0.1827 x 0.2236 / (1 x 0.1827 + 0.2236)
+  = 2 x 0.04085 / 0.4063
+  = 0.08170 / 0.4063 = 0.2011
+
+F2 (beta = 2, b2 = 4):
+  (1+4) x 0.1827 x 0.2236 / (4 x 0.1827 + 0.2236)
+  = 5 x 0.04085 / (0.7308 + 0.2236)
+  = 0.20425 / 0.9544 = 0.2140
+
+F0.5 (beta = 0.5, b2 = 0.25):
+  (1.25) x 0.04085 / (0.25 x 0.1827 + 0.2236)
+  = 0.05106 / (0.04568 + 0.2236)
+  = 0.05106 / 0.2693 = 0.1896
+
+NOW COMPARE AGAINST THE 0.65 ROW: TP 170, FP 1369, FN 237, precision 0.110,
+recall 0.418.
+  F1   = 0.1747  (WORSE than 0.2011)
+  F2   = 0.2684  (BETTER than 0.2140)
+
+So F1 prefers threshold 0.75 and F2 prefers 0.65, and the disagreement is not
+marginal - it is 22% recall versus 42% recall. Doubling recall for half the
+precision is either the right call or a disaster, and the metric cannot tell
+you which. THE COST NUMBERS TELL YOU, AND beta IS ONLY THE MESSENGER.
+
+Note also that every F score here is between 0.15 and 0.27. On a 2% base rate
+with heavily overlapping scores, the best achievable F1 is 0.20 - the model is
+weak, and no threshold rescues it. A low F1 can mean a bad threshold or a bad
+model, and only the sweep distinguishes them.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COST: free. It is arithmetic on three counters. The expense is producing the
+labelled data those counters need, and choosing the threshold honestly.
+
+THE #1 MISTAKE: reporting F1 by default and calling that neutral. Equal
+weighting is a claim, and for fraud, disease screening, safety and moderation
+it is the wrong one. F1 is a choice that pretends not to be.
+
+THE #2 MISTAKE: beta versus beta squared. beta = 2 weights recall FOUR times.
+Derive it as sqrt(costRatio).
+
+THE #3 MISTAKE: reporting the F score instead of the operating point. In the
+measurement, "F0.5 = 0.2332" concealed a recall of 10.1% - a model that misses
+nine out of ten positives, chosen by the metric and rejected by anyone who
+looked.
+
+THE #4 MISTAKE: tuning the threshold on the test set. That is a fitted
+parameter; do it on validation.
+
+THE #5 MISTAKE: using accuracy alongside it on imbalanced data. At 2%
+positives, "98% accurate" is what predicting nothing scores.
+
+THE #6 MISTAKE: assuming beta changes which MODEL wins. Measured: it did not -
+the balanced model won at 0.5, 1 and 2. What it changed was the threshold
+WITHIN a model, and there the effect was enormous.
+
+THE TAKEAWAY: F-beta is the harmonic mean of precision and recall with recall
+weighted beta SQUARED, so it refuses to reward a model that has collapsed on
+either axis - but the measured sweep showed it mainly moves the THRESHOLD
+rather than the model choice, taking the same classifier from 10% recall at
+35% precision to 42% recall at 11% precision; derive beta from the cost ratio,
+report the operating point rather than the score, and optimise expected cost
+directly if you actually know the costs.""",
+]
+
+_EX_P1AO["Early stopping"] = [
+    """1. THE GOAL - stop training before the model starts memorising.
+
+Train a model long enough and two things happen. Training loss keeps falling,
+because the model keeps fitting the training data better. Validation loss falls
+for a while, bottoms out, and then RISES - because the model has started
+learning quirks of the training set that do not generalise.
+
+Early stopping is: watch validation loss, and stop when it stops improving.
+
+That is the whole idea, and it is one of the cheapest and most effective forms
+of regularisation there is - no extra parameters to tune in the model, no
+architecture change, no added compute. It COSTS compute rather than spending it.
+
+THE ONLY REAL DESIGN DECISION IS PATIENCE: how many epochs of no improvement
+you tolerate before deciding the rise is real rather than noise. The measured
+sweep below shows that this decision matters far more than people assume, and
+in a direction most people get backwards.""",
+
+    """2. THE INTUITION - why you keep the checkpoint, not the moment.
+
+The naive reading is "stop as soon as validation loss goes up". That is wrong,
+and the measurement shows why: validation loss is NOISY. On the measured run,
+it goes up at epoch 17 and then falls for another ten epochs to a new best at
+epoch 27. Stopping at the first uptick threw away a 21% improvement that was
+still coming.
+
+So you need PATIENCE - wait n epochs of no new best before giving up.
+
+AND THE SECOND HALF, WHICH IS WHAT MAKES PATIENCE CHEAP: YOU RESTORE THE BEST
+CHECKPOINT, NOT THE LAST ONE. If you keep the weights from the best epoch, then
+training past the optimum costs you compute and NOTHING ELSE. The extra epochs
+are wasted time, not damage.
+
+THAT ASYMMETRY IS THE WHOLE STRATEGY. Stopping too early is unrecoverable -
+you never saw the better model. Stopping too late is merely expensive. So
+patience should be set generously, and the measured table below quantifies
+exactly how generously.
+
+WHY OVERFITTING SHOWS UP AS A RISING VALIDATION CURVE: early in training the
+model learns the signal that is common to all the data. Later, having exhausted
+that, the only way to reduce training loss further is to fit the noise specific
+to the training examples - and noise specific to the training set actively
+HURTS on unseen data.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EPOCH - one full pass over the training data.
+
+VALIDATION SET - data held out from training, used to decide when to stop. It
+is NOT the test set. The moment you use it to make a decision, it is part of
+your fitting process, and the number you get from it is optimistic.
+
+PATIENCE - how many consecutive epochs without a new best you tolerate before
+stopping. Patience 0 means stop at the first non-improvement.
+
+MIN_DELTA - how much better counts as better. Without it, an improvement of
+0.00001 resets the counter and you never stop.
+
+RESTORE BEST WEIGHTS - after stopping, load the checkpoint from the best epoch
+rather than keeping the final one. WITHOUT THIS, EARLY STOPPING IS NOT EARLY
+STOPPING; it is just a training budget.
+
+MONITORED METRIC - usually validation loss, sometimes validation accuracy or a
+business metric. Loss is smoother and stops earlier; accuracy is what you care
+about and is noisier. Choosing accuracy usually needs more patience.
+
+OVERFITTING - fitting patterns that exist in the training sample but not in the
+population.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - measured, and the direction is surprising.
+
+A 60-epoch run on a curve that genuinely starts overfitting around epoch 18,
+with realistic noise on the validation measurements:
+
+  true best epoch (full hindsight): 27, validation loss 0.1201
+  final epoch 60:                       validation loss 0.2445  (+103.6%)
+
+So training to completion doubles the loss. Early stopping is clearly worth
+doing. Now the patience sweep:
+
+  patience   stops at   val loss there   vs best    epochs run
+  ---------------------------------------------------------------
+     0          17          0.1515        +26.2%       17
+     1          18          0.1515        +26.2%       18
+     2          30          0.1201         +0.0%       30
+     3          31          0.1201         +0.0%       31
+     5          33          0.1201         +0.0%       33
+    10          38          0.1201         +0.0%       38
+    20          48          0.1201         +0.0%       48
+
+READ ROW 1. PATIENCE 0 SAVED 13 EPOCHS AND COST 26% OF THE MODEL'S QUALITY.
+That is a terrible trade, and it is exactly what "stop when validation loss
+goes up" does.
+
+READ ROWS 3 TO 7. EVERY PATIENCE FROM 2 UPWARDS FOUND THE IDENTICAL BEST MODEL.
+Patience 2 got the same 0.1201 as patience 20, in 18 fewer epochs.
+
+I EXPECTED A GRADUAL TRADE-OFF - more patience, better model, more compute. THE
+MEASUREMENT SHOWS A CLIFF INSTEAD: below the noise scale you lose badly, above
+it you gain nothing but spend more. The job of patience is to clear the NOISE,
+not to search harder, and once it is comfortably above the noise scale the
+extra epochs are pure cost.
+
+The corollary is uncomfortable for the usual advice: "use a large patience to be
+safe" is not free - patience 20 ran 60% more epochs than patience 2 for an
+identical result.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: train for a fixed number of epochs chosen by guessing. Sometimes it stops
+before the optimum, sometimes long after. On the measured run, a fixed 60 epochs
+costs 103.6%.
+
+UPGRADE 1: stop at the first rise. Measured cost: 26.2%. Better than 103.6% and
+still bad, because it mistakes noise for a trend.
+
+UPGRADE 2: patience. Measured: any value from 2 upwards found the true optimum.
+The right value is "comfortably larger than the noise scale of your validation
+curve", which you can read off a single plotted run.
+
+UPGRADE 3: RESTORE THE BEST CHECKPOINT. This is what makes over-patience
+harmless. If you keep the final weights instead, patience 20 would have
+delivered a model 20 epochs past the optimum.
+
+UPGRADE 4: min_delta, so a 0.00001 improvement does not reset the counter and
+prevent stopping forever.
+
+UPGRADE 5: combine with a learning-rate schedule - reduce-on-plateau first, then
+stop. A model that has stopped improving at one learning rate often improves
+again at a smaller one, and stopping first would have missed it. THIS IS THE
+MOST COMMON REASON A PATIENCE THAT LOOKED FINE WAS TOO SMALL.
+
+UPGRADE 6: after choosing the stopping epoch on validation, some teams retrain
+on train+validation for that many epochs. It uses all the data, and it assumes
+the optimal epoch count transfers - which it approximately does when the
+validation set is small.""",
+
+    """6. HOW IT WORKS - the loop, step by step.
+
+STEP 1 - split off a validation set. Not the test set. Stratify it if the
+classes are imbalanced, and make it big enough that its loss is not pure noise -
+a 200-row validation set produces a curve you cannot read.
+
+STEP 2 - after every epoch, compute the monitored metric on validation.
+
+STEP 3 - if it improved by more than min_delta, record a new best, save the
+weights, and reset the counter to zero.
+
+STEP 4 - otherwise increment the counter.
+
+STEP 5 - if the counter exceeds patience, stop.
+
+STEP 6 - RESTORE THE SAVED BEST WEIGHTS. Not the final ones.
+
+STEP 7 - report on the TEST set, which has been untouched throughout. The
+validation loss at the chosen epoch is optimistic because the epoch was chosen
+to minimise it.
+
+STEP 8 - plot the two curves. A run where validation never rises means you were
+underfitting and should train longer or increase capacity; a run where it rises
+at epoch 3 means your learning rate or your regularisation is wrong. THE PLOT
+DIAGNOSES MORE THAN THE STOPPING RULE DOES.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are revising for an exam using a book of past papers. At first, every hour
+of revision helps: you learn the material, and you would do better on any paper.
+
+After a while you have learned all the material there is, and the only thing
+left to learn is THIS BOOK - which questions appear, in what order, the typos.
+That knowledge does not help on the real exam. It might hurt, because you start
+pattern-matching the book instead of thinking.
+
+So you take a mock exam from a DIFFERENT source every hour, to check whether you
+are still improving at the real thing. When the mock scores stop improving, you
+stop revising.
+
+But mock scores wobble. One bad mock does not mean you have peaked - in the
+measured run, the score dipped at hour 17 and then improved for another ten
+hours to a genuinely better level. Someone who stopped at the first dip finished
+26% worse than they could have.
+
+And crucially, you keep your best mock result and its revision notes. So
+revising an extra few hours after your peak costs you an evening and nothing
+else. Stopping early costs you the grade.
+
+Which is why the rule is: be patient, and keep the best checkpoint - not stop
+at the first sign of trouble.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    best = float("inf")
+    best_weights = None
+    bad_epochs = 0
+
+    for epoch in range(max_epochs):
+        train_one_epoch()
+        v = evaluate(validation_set)
+
+        if v < best - min_delta:              # a REAL improvement
+            best = v
+            best_weights = snapshot()         # <- the line that makes patience free
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
+            if bad_epochs > patience:
+                break
+
+    restore(best_weights)                     # <- NOT the final weights
+
+LINE BY LINE:
+ - `v < best - min_delta` - the min_delta is subtracted from `best`, not added
+   to `v`. Get it backwards and you require the loss to get WORSE to count as
+   improvement.
+ - `best_weights = snapshot()` - the single most important line. Without it,
+   over-patience actively degrades the model, and the measured "patience 20 is
+   as good as patience 2" result would not hold.
+ - `bad_epochs = 0` on improvement, not on every epoch - patience counts
+   CONSECUTIVE non-improvements, so a single good epoch resets the whole clock.
+ - `if bad_epochs > patience` - strictly greater. Patience 0 therefore stops on
+   the FIRST non-improvement, which is the row that measured +26.2%.
+ - `restore(best_weights)` after the loop, unconditionally - including when the
+   loop ended by exhausting max_epochs, where it is easy to forget.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Validation losses from the measured run, epochs 14 to 31 (rounded):
+
+  ep 14: 0.1927   ep 20: 0.1510   ep 26: 0.1219
+  ep 15: 0.1660   ep 21: 0.1412   ep 27: 0.1201  <- the true best
+  ep 16: 0.1515   ep 22: 0.1361   ep 28: 0.1405
+  ep 17: 0.1736   ep 23: 0.1410   ep 29: 0.1278
+  ep 18: 0.1613   ep 24: 0.1521   ep 30: 0.1425
+  ep 19: 0.1458   ep 25: 0.1310   ep 31: 0.1455
+
+PATIENCE 0, traced:
+  ep 16 -> 0.1515, a new best. counter = 0.
+  ep 17 -> 0.1736, worse. counter = 1. 1 > 0, so STOP.
+  Restore epoch 16. Final validation loss 0.1515.
+  THE MODEL AT EPOCH 27 WAS 21% BETTER AND WAS NEVER SEEN.
+
+PATIENCE 2, traced:
+  ep 17 worse -> counter 1.  ep 18 worse -> counter 2.  2 > 2 is false, continue.
+  ep 19 -> 0.1458, a NEW BEST. counter resets to 0.
+  ep 20 worse -> 1.  ep 21 -> 0.1412 NEW BEST, reset.  ep 22 -> 0.1361, best again.
+  ep 23 worse -> 1.  ep 24 worse -> 2.  2 > 2 false - ONE EPOCH FROM STOPPING.
+  ep 25 -> 0.1310, a NEW BEST. reset.  ep 26 -> 0.1219.  ep 27 -> 0.1201, the best.
+  ep 28 worse -> 1.  ep 29 worse -> 2.  ep 30 worse -> 3.  3 > 2, STOP.
+  Restore epoch 27. Final validation loss 0.1201.
+
+  NOTE EPOCH 24. The counter reached 2 and one more bad epoch would have stopped
+  the run at 0.1361 - 13% worse than the eventual best. Patience 2 survived by a
+  single epoch on this seed, which is a fair argument for 3 or 5 over 2 even
+  though the measured table shows them tying.
+
+THE ENTIRE DIFFERENCE IS EPOCHS 17 AND 18. Two noisy epochs, in the middle of a
+run that had another ten epochs of genuine improvement left. Patience 0 read two
+data points as a trend; patience 2 waited for a third and the third never came,
+because the improvement resumed.
+
+PATIENCE 20, traced: identical to patience 2 up to epoch 27, then it runs to
+epoch 48 before the counter reaches 21. Same restored weights, 18 more epochs of
+compute, identical result. A LARGE PATIENCE BOUGHT NOTHING HERE, and on a run
+that takes a day per epoch that is 18 days.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COST: one validation pass per epoch, plus a checkpoint write when the model
+improves. Both are small next to training. It is the cheapest regularisation
+available and it SAVES compute rather than spending it.
+
+THE #1 MISTAKE: not restoring the best weights. Without that line you have a
+stopping rule, not early stopping, and every epoch of patience is damage rather
+than mere expense.
+
+THE #2 MISTAKE: patience 0 or 1. Measured cost: 26.2% worse loss to save 13
+epochs. Validation loss is noisy and two consecutive bad epochs is not a trend.
+
+THE #3 MISTAKE: assuming a bigger patience is safer at no cost. Measured:
+patience 20 gave an identical model to patience 2 and ran 60% more epochs.
+
+THE #4 MISTAKE: using the test set as the validation set. The chosen epoch is
+fitted to whatever you monitor, so that number is optimistic and no longer an
+estimate of generalisation.
+
+THE #5 MISTAKE: a validation set too small to read. A few hundred rows gives a
+curve dominated by noise, and then no patience value works.
+
+THE #6 MISTAKE: stopping before trying a learning-rate reduction. A plateau at
+one learning rate is frequently not a plateau at a smaller one - reduce first,
+stop second.
+
+THE #7 MISTAKE: no min_delta. Improvements of 1e-7 reset the counter forever and
+the run never stops.
+
+THE TAKEAWAY: early stopping watches validation loss and keeps the BEST
+checkpoint rather than the last - which makes stopping late merely expensive and
+stopping early unrecoverable, an asymmetry the measurements make concrete:
+training to completion cost +103.6%, patience 0 cost +26.2% to save 13 epochs,
+and every patience from 2 to 20 found the identical optimum, so patience needs
+only to clear the noise scale of your validation curve and buys nothing beyond
+that.""",
+]
+
+_EX_P1AO["Exploding gradient"] = [
+    """1. THE GOAL - understanding why deep training blows up, and why it is the same
+bug as vanishing.
+
+When you train a deep network, the error signal travels backwards from the
+output to the early layers, and at every step it gets MULTIPLIED by something.
+Multiply fifty numbers together and one of three things happens: if they average
+above 1, the product races to infinity; if below 1, it collapses to zero; and
+only if they sit almost exactly at 1 does anything useful survive.
+
+EXPLODING GRADIENT is the first case. The update to your weights becomes
+enormous, the weights jump to a wild place, the loss becomes NaN, and training is
+over. It usually happens suddenly - one batch is fine and the next is ruined.
+
+VANISHING GRADIENT is the second case, and it is the SAME MECHANISM with a
+factor below 1. It is quieter and worse: nothing crashes, the early layers
+simply stop learning, and you conclude the architecture is bad.
+
+THE INTERVIEW POINT: these are not two problems. They are one multiplication
+chain with two ways to go wrong, and the measurements below show how narrow the
+survivable band is.""",
+
+    """2. THE INTUITION - compounding, and how fast it bites.
+
+Backpropagation through a deep or recurrent network multiplies a factor per
+layer or per timestep. Over a 50-step chain:
+
+  per-step factor   after 10 steps   after 25 steps   after 50 steps
+  ------------------------------------------------------------------
+      0.50            0.0009766        2.98e-08        8.882e-16
+      0.90            0.3487           0.07179         0.005154
+      0.99            0.9044           0.7778          0.605
+      1.00            1                1               1
+      1.01            1.105            1.282           1.645
+      1.10            2.594           10.83          117.4
+      1.50           57.67             2.525e+04       6.376e+08
+
+READ THE 0.90 ROW. Nine tenths per step is not a dramatic number - it is the
+kind of value you would look at and call "roughly one". After 50 steps the
+gradient is 0.5% of what it started as. THE EARLY LAYERS RECEIVE ESSENTIALLY
+NOTHING and stop learning, and nothing has crashed.
+
+READ THE 1.10 ROW. One point one per step, equally undramatic, gives 117 after
+50 steps. Multiply your learning rate by 117 and see what happens to the loss.
+
+READ THE 0.99 AND 1.01 ROWS. These are the survivable ones - 0.605 and 1.645
+after 50 steps. THE USABLE BAND IS ROUGHLY ONE PERCENT WIDE, and it narrows as
+the network gets deeper. That is why deep networks needed architectural help
+rather than better tuning.
+
+A SECOND MEASUREMENT, on a noisier RNN-style chain where the per-step factor
+fluctuates:
+  well-scaled (mean 1.00): final gradient 0.3513, max along the way 1.286,
+                           steps above 5.0: none
+  slightly hot (mean 1.06): final gradient 6.846, max 6.846, steps above 5.0: 7
+
+A SIX PERCENT CHANGE IN THE AVERAGE PER-STEP FACTOR MOVED THE FINAL GRADIENT BY
+A FACTOR OF NINETEEN. That is the whole phenomenon: nothing about the per-step
+behaviour looks wrong, and the product is unrecognisable.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GRADIENT - how much the loss would change if you nudged a particular weight. It
+is what you subtract (times the learning rate) to improve the model.
+
+BACKPROPAGATION - computing those gradients by applying the chain rule from the
+output backwards. The chain rule is a PRODUCT, which is the entire source of
+this problem.
+
+EXPLODING GRADIENT - the product grows without bound, so weight updates are
+huge, the weights leave the useful region, and the loss becomes NaN or infinity.
+
+VANISHING GRADIENT - the product shrinks toward zero, so early layers receive
+almost no update and effectively stop training.
+
+GRADIENT CLIPPING - if the gradient's magnitude exceeds a threshold, rescale it
+down to that threshold, keeping its DIRECTION. The standard fix for exploding.
+
+CLIP BY NORM vs CLIP BY VALUE - by norm rescales the whole gradient vector and
+preserves direction; by value clamps each component independently and CHANGES
+the direction. By norm is almost always what you want.
+
+RESIDUAL / SKIP CONNECTION - adding a layer's input to its output, so the
+gradient has a path that multiplies by 1. This is why very deep networks became
+trainable.
+
+NaN - "not a number". Once one appears in the weights it propagates through
+every subsequent operation, so the whole model is dead, not just one layer.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE SUDDENNESS. Training looks completely healthy - loss 2.31, 2.28, 2.25 - and
+then one batch produces 2.24, 8.7e14, NaN, NaN, NaN. There is no gradual
+degradation to notice, because exponential growth spends most of its time
+looking small. In the measured chain at factor 1.10, the gradient is 2.6 after
+10 steps and 117 after 50; if you were watching at step 10 you would have seen
+nothing worth reacting to.
+
+THE ASYMMETRY IN VISIBILITY. Exploding announces itself with NaN. Vanishing does
+not announce itself at all - the loss just plateaus higher than it should, and
+the natural conclusion is "this architecture is not good enough for this task".
+The measured 0.90 row loses 99.5% of the signal over 50 steps with no error of
+any kind. THE QUIET FAILURE IS THE EXPENSIVE ONE.
+
+THE MISDIAGNOSIS. NaN loss has several causes and only one of them is exploding
+gradients: division by zero, log of zero, a bad learning rate, corrupt input
+data, and mixed-precision overflow all produce the same symptom. Reaching for
+clipping first fixes it sometimes and hides the real cause the rest of the time.
+
+CLIPPING AS A CURE RATHER THAN A SEATBELT. Clipping stops training from dying;
+it does not make the model learn well. If clipping fires on most batches, the
+optimiser is no longer following the gradient - it is following a fixed-length
+step in the gradient's direction, which is a different algorithm. MONITOR HOW
+OFTEN IT FIRES: in the measured hot chain, 7 of 50 steps exceeded the threshold.
+Occasionally is a seatbelt. Constantly is a symptom.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: lower the learning rate until it stops crashing. It works, and it trains
+everything slowly to fix a problem that is concentrated in a few batches.
+
+UPGRADE 1, GRADIENT CLIPPING BY NORM: cap the gradient's magnitude, keep its
+direction. One line, and it is the standard answer for RNNs and transformers.
+Typical thresholds are 1.0 or 5.0, and the right value is read off a histogram
+of your actual gradient norms rather than copied.
+
+UPGRADE 2, BETTER INITIALISATION: Xavier/Glorot and He initialisation choose the
+initial weight scale so that the per-step factor starts near 1 rather than
+drifting. This is aiming directly at the 0.99-to-1.01 band from the measurement,
+and it is why initialisation stopped being an afterthought.
+
+UPGRADE 3, NORMALISATION LAYERS: batch norm, layer norm, RMS norm. They rescale
+activations at every layer, which keeps the multiplication factors near 1
+throughout training rather than only at the start.
+
+UPGRADE 4, RESIDUAL CONNECTIONS: `y = x + f(x)` gives the gradient an additive
+path whose factor is exactly 1. THIS IS THE STRUCTURAL FIX, and it is why
+networks went from tens of layers to hundreds.
+
+UPGRADE 5, GATED RECURRENT UNITS: LSTM and GRU exist precisely to give recurrent
+networks a path where the factor is near 1 over long sequences. The 0.90 row is
+what a plain RNN does over 50 timesteps.
+
+UPGRADE 6, FOR VANISHING SPECIFICALLY: ReLU-family activations instead of
+sigmoid/tanh, whose derivative is at most 0.25 - which puts you on the 0.50 row
+before you have done anything else.""",
+
+    """6. HOW TO DIAGNOSE AND FIX IT - numbered steps.
+
+STEP 1 - LOG THE GRADIENT NORM EVERY STEP. Not the loss - the gradient norm. It
+is one number, it costs nothing, and it turns "training died" into "the norm was
+climbing for 300 steps". Almost nobody does this and it is the single most
+useful instrument here.
+
+STEP 2 - WHEN NaN APPEARS, FIND THE FIRST BAD STEP, not the first NaN loss. NaN
+propagates, so by the time the loss shows it the weights have been dead for a
+while.
+
+STEP 3 - RULE OUT THE OTHER NaN CAUSES FIRST: log(0), division by zero, a
+corrupt batch, a learning rate typo, fp16 overflow. Clipping will mask all of
+these.
+
+STEP 4 - ADD CLIPPING BY NORM, threshold chosen from a histogram of observed
+norms - somewhere above the bulk and below the outliers.
+
+STEP 5 - MONITOR THE CLIP RATE. Firing on a few percent of batches is a working
+seatbelt. Firing on most batches means you are no longer doing gradient descent.
+
+STEP 6 - IF IT FIRES CONSTANTLY, FIX THE CAUSE: initialisation, normalisation
+layers, learning rate, or architecture.
+
+STEP 7 - FOR VANISHING, CHECK PER-LAYER GRADIENT NORMS. If the first layer's
+norm is orders of magnitude below the last layer's, that is the diagnosis, and
+no amount of training longer will help.
+
+STEP 8 - PREFER THE STRUCTURAL FIXES. Residual connections and normalisation
+address the cause; clipping addresses the symptom. Use both.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A message is passed back along a line of fifty people, and each person is
+allowed to adjust the volume slightly before passing it on.
+
+If each person makes it 10% louder, the fiftieth person is shouting at 117 times
+the original volume. Nobody did anything unreasonable; ten percent is nothing.
+The compounding did it.
+
+If each person makes it 10% quieter, the fiftieth person hears half a percent of
+the message. Again nobody did anything unreasonable, and this time nobody
+notices anything is wrong at all - the message just does not arrive, and the
+people at the end conclude they were never given useful instructions.
+
+Only if everyone keeps the volume within about one percent of unchanged does the
+message survive fifty hops recognisably. That is a very narrow requirement to
+place on fifty independent people.
+
+Three fixes follow naturally. Put a volume limiter at the end so nobody gets
+deafened - that is clipping, and it stops the disaster without solving the
+compounding. Train everyone to start at the right volume - that is
+initialisation. Or give the message a second route that skips the adjustments
+entirely and arrives unchanged - that is a residual connection, and it is why it
+was the change that let networks get genuinely deep.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # the diagnosis, which almost nobody logs
+    total = 0.0
+    for p in parameters:
+        total += (p.grad ** 2).sum()
+    norm = sqrt(total)                       # ONE number, per step, free
+
+    log(step, loss, norm)                    # <- this line is the whole fix
+                                             #    for "training died mysteriously"
+
+    # the seatbelt
+    MAX_NORM = 1.0
+    if norm > MAX_NORM:
+        scale = MAX_NORM / (norm + 1e-6)
+        for p in parameters:
+            p.grad *= scale                  # SAME DIRECTION, shorter step
+        clip_count += 1
+
+    if step % 100 == 0:
+        log("clip rate", clip_count / 100)   # <- and this one is the diagnosis
+        clip_count = 0
+
+LINE BY LINE:
+ - `norm` is the global norm across ALL parameters, not per-tensor. Clipping
+   per-tensor changes the relative sizes of different layers' updates, which is
+   a different and usually worse algorithm.
+ - `scale = MAX_NORM / (norm + 1e-6)` - the epsilon is not decoration. A batch
+   that produces an exactly-zero gradient would otherwise divide by zero and
+   inject NaN into a routine whose whole job is preventing NaN.
+ - `p.grad *= scale` uniformly - this is CLIP BY NORM. Clipping each component
+   to a range instead (clip by value) rotates the gradient vector, so you take a
+   step in a direction that is not downhill.
+ - `clip rate` - the number that distinguishes a seatbelt from a symptom. In the
+   measured hot chain, 7 of 50 steps exceeded the threshold; if that were 45 of
+   50, the optimiser would effectively be taking fixed-length steps.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+A 50-step chain where the per-step multiplier is drawn around a mean, seed
+fixed so the two runs see the same noise:
+
+RUN A - mean factor 1.00 ("well scaled")
+  final gradient magnitude: 0.3513
+  largest value seen along the chain: 1.286
+  steps where it exceeded 5.0: 0
+
+RUN B - mean factor 1.06 ("slightly too large")
+  final gradient magnitude: 6.846
+  largest value seen: 6.846
+  steps where it exceeded 5.0: 7
+
+THE ONLY DIFFERENCE IS 1.00 vs 1.06 PER STEP. The final magnitudes differ by
+19.5x, and run B spent 7 of its 50 steps above a clipping threshold of 5.
+
+Now the deterministic version, which shows where the survivable band is:
+
+  after 50 steps at 0.90 -> 0.005154     (0.5% of the signal survives)
+  after 50 steps at 0.99 -> 0.605        (usable)
+  after 50 steps at 1.00 -> 1.000        (ideal)
+  after 50 steps at 1.01 -> 1.645        (usable)
+  after 50 steps at 1.10 -> 117.4        (117x the learning rate)
+
+BETWEEN 0.99 AND 1.01 THE GRADIENT STAYS WITHIN A FACTOR OF THREE OF ITSELF.
+Outside that, it is a factor of 200 in one direction or a factor of 117 in the
+other. THE ACCEPTABLE BAND IS ABOUT ONE PERCENT WIDE AT DEPTH 50, and it gets
+narrower as depth grows - at depth 100, 1.01 gives 2.7 and 1.10 gives 13,780.
+
+WHY RESIDUAL CONNECTIONS ARE THE STRUCTURAL ANSWER: `y = x + f(x)` means the
+gradient reaching x is (1 + f'(x)) rather than f'(x). The 1 is an additive path
+whose factor is exactly 1, so the product cannot collapse to zero no matter how
+small f' becomes. You are no longer asking fifty layers to each land inside a
+one-percent band; you are giving the signal a route that bypasses the
+multiplication entirely.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COST OF CLIPPING: one pass over the gradients to compute a norm, and one to
+scale. Negligible against the backward pass itself.
+
+COST OF NOT DIAGNOSING: a training run that dies at hour nine, restarted with a
+lower learning rate, dying again at hour eleven. Logging the gradient norm turns
+that into a five-minute answer.
+
+THE #1 MISTAKE: reaching for clipping before ruling out the other causes of NaN.
+log(0), division by zero, a corrupt batch and fp16 overflow all look identical
+from the loss curve, and clipping masks every one of them.
+
+THE #2 MISTAKE: not logging the gradient norm. It is one number per step, it
+costs nothing, and without it "training exploded" is unfalsifiable.
+
+THE #3 MISTAKE: treating clipping as a fix rather than a seatbelt. If it fires
+on most batches you are taking fixed-length steps in the gradient's direction,
+which is a different optimiser and usually a worse one.
+
+THE #4 MISTAKE: clipping by value instead of by norm. Per-component clamping
+rotates the gradient, so the step is no longer downhill.
+
+THE #5 MISTAKE: forgetting the epsilon in the scale computation - a zero-norm
+batch then injects NaN from inside the NaN-prevention code.
+
+THE #6 MISTAKE: treating vanishing as a separate topic. It is the same product
+with a factor below 1, it is far more common, and it fails silently - the
+measured 0.90 row destroys 99.5% of the signal without raising anything.
+
+THE #7 MISTAKE: sigmoid or tanh activations deep in a network. Their derivative
+peaks at 0.25, which puts you on the 0.50 row before you have chosen anything
+else.
+
+THE TAKEAWAY: backpropagation MULTIPLIES a factor per layer, so a chain of 50
+turns 1.10 into 117 and 0.90 into 0.005 - one problem with two failure
+directions, of which the quiet one is more expensive; the survivable band
+measured about one percent wide at depth 50 and narrows with depth, which is why
+the real answers are structural (residual connections give the gradient an
+additive path with factor exactly 1, plus normalisation and sane
+initialisation), while gradient clipping by norm is a seatbelt whose FIRING RATE
+is the number worth monitoring.""",
+]
+
 
 # NOTE: Class Imbalance and Ensembles already had example blocks in earlier
 # _EX_* dicts, so their ten-section sets were spliced in there rather than
