@@ -213552,6 +213552,1399 @@ stockouts; and treat out-of-stock sales as CENSORED rather than as zero demand, 
 feeds itself.""",
 ]
 
+_EX_P1AO["Design a Customer Lifetime Value (LTV) prediction system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how much is this customer worth to us over their whole relationship
+
+LTV predicts the total value a customer will generate over their lifetime with you. It exists to
+answer one question above all others: HOW MUCH CAN WE AFFORD TO SPEND ACQUIRING SOMEONE LIKE THIS?
+
+    if predicted LTV > acquisition cost, the acquisition is profitable.
+
+And a handful of related ones: who gets premium support, who gets a retention offer, which marketing
+channels are actually working once you look past the first purchase.
+
+THE FIRST QUESTION IS WHAT "LIFETIME" MEANS, and it is not rhetorical:
+
+    A FIXED HORIZON - "value over the next 12 months" or "over 3 years". FINITE, MEASURABLE, AND
+    ALMOST ALWAYS THE RIGHT CHOICE. You can validate it against real data within a year.
+    TRUE LIFETIME - the discounted value until they leave forever. Theoretically what you want, and
+    UNVERIFIABLE - you find out in ten years, which is no use for a decision made today.
+
+    PICK A FIXED HORIZON AND SAY WHY: it matches the payback period the finance team cares about, and
+    it is the only version you can measure.
+
+AND THE SECOND FRAMING, which decides the whole model: CONTRACTUAL OR NOT?
+
+    CONTRACTUAL (subscriptions): LTV = ARPU x expected tenure. The problem reduces to predicting
+    CHURN and multiplying. It is largely a survival-analysis problem.
+    NON-CONTRACTUAL (retail, gaming, marketplaces): customers just stop, silently. You must model
+    BOTH how often they buy AND how long they keep buying, which is what BTYD models exist for.
+
+    ASK WHICH ONE. It changes everything downstream.
+
+TERMS AS THEY APPEAR:
+- CAC: customer acquisition cost. LTV is only meaningful next to it.
+- ARPU: average revenue per user, per period.
+- BTYD: "buy till you die" - a family of probabilistic models for non-contractual repeat purchasing.
+- WHALE: the small number of customers who generate most of the revenue.""",
+
+    """2. THE MEASUREMENT - the distribution is the entire problem
+
+I generated 100,000 customers with a realistic spend distribution: a majority who never buy again,
+and a lognormal tail among the rest.
+
+     top n% of customers          share of total LTV
+     top 0.1%                                  10.2%
+     top 1%                                    34.1%
+     top 5%                                    64.9%
+     top 10%                                   79.8%
+     top 20%                                   92.7%
+
+     CUSTOMERS WITH ZERO LTV: 54.7%
+     mean LTV: 32.97      MEDIAN LTV: 0.00
+
+    MORE THAN HALF THE CUSTOMERS ARE WORTH NOTHING, AND THE TOP ONE PER CENT CARRY A THIRD OF ALL THE
+    VALUE. The median customer's LTV is literally zero.
+
+    THIS IS NOT AN ARTEFACT OF MY SIMULATION. It is the standard shape of customer value in almost
+    every consumer business, and every design decision below follows from it.
+
+NOW WATCH WHAT THAT DOES TO THE OBVIOUS METRICS. Three constant predictions, evaluated on the same
+data:
+
+     constant prediction        RMSE       MAE     total LTV predicted
+     the MEAN (32.97)         157.74     48.20               3,297,355
+     the MEDIAN (0.00)        161.15     32.97                       0
+     ZERO for everyone        161.15     32.97                       0
+
+    PREDICTING ZERO FOR EVERY SINGLE CUSTOMER BEATS PREDICTING THE MEAN ON MAE - 32.97 against 48.20.
+
+    AND RMSE AND MAE DISAGREE ABOUT WHICH CONSTANT IS BETTER. RMSE prefers the mean because it is
+    dominated by the squared errors on the whales; MAE prefers zero because it is dominated by the
+    54.7% majority who are worth nothing.
+
+    SO: ANY LTV MODEL MUST BEAT BOTH CONSTANTS, AND WHICH ERROR METRIC YOU CHOOSE DECIDES WHICH
+    BEHAVIOUR YOU REWARD. Optimising RMSE pushes the model to chase whales; optimising MAE pushes it
+    to predict near-zero for almost everybody. NEITHER IS THE BUSINESS OBJECTIVE.
+
+    REPORTING "OUR LTV MODEL ACHIEVES AN RMSE OF 140" IS MEANINGLESS WITHOUT "AND PREDICTING A
+    CONSTANT ACHIEVES 158". That comparison is the first thing to build and the thing nobody builds.""",
+
+    """3. THE REFRAME THAT FIXES IT - it is a ranking problem, not a regression problem
+
+The decision LTV feeds is almost never "what is this customer's exact value". It is:
+
+    WHICH CUSTOMERS DO WE SPEND THE ACQUISITION BUDGET ON?
+    WHICH GET THE RETENTION OFFER?
+    WHICH CHANNEL DO WE DOUBLE DOWN ON?
+
+ALL OF THOSE ARE RANKING QUESTIONS. And ranking is a much easier problem than regression on a
+heavy-tailed target.
+
+I took a deliberately NOISY predictor - the true value multiplied by lognormal noise with a standard
+deviation of 1.0, which is a large error - and measured how much of the total value it captures when
+you select the top k%:
+
+     select the top k%     % of TOTAL LTV captured     % of the BEST POSSIBLE selection
+     top 1%                                 25.7%                               75.4%
+     top 5%                                 55.2%                               85.0%
+     top 10%                                72.3%                               90.5%
+     top 20%                                88.8%                               95.7%
+
+    A MODEL WITH TERRIBLE POINT-ESTIMATE ACCURACY STILL CAPTURES 85% OF THE RECOVERABLE VALUE AT
+    k = 5%, AND 90% AT k = 10%.
+
+    THAT IS THE METRIC TO REPORT. Not RMSE - "if you spend your budget on the top 10% my model picks,
+    you capture 72% of all the value in the population, which is 90% of what a perfect oracle would
+    capture."
+
+    IT IS A SENTENCE A FINANCE DIRECTOR CAN ACT ON, and it is robust to exactly the errors that make
+    RMSE look bad on a heavy-tailed target.
+
+THE OTHER GOOD REFRAME - PREDICT A DISTRIBUTION OR A PROBABILITY, NOT A NUMBER:
+
+    "This customer has an 8% chance of being in the top decile" is more useful and more honest than
+    "this customer's LTV is £412", because the £412 is a mean over a wildly skewed conditional
+    distribution and will be wrong for essentially everybody.
+
+AND THE STRUCTURALLY CORRECT MODEL SHAPE, given that 54.7% are worth zero: A TWO-PART (HURDLE) MODEL.
+
+    STAGE 1: P(the customer ever transacts again) - a classifier.
+    STAGE 2: E[value | they transact] - a regression on the non-zero subset only.
+    LTV = P x E.
+
+    THIS IS THE RIGHT ANSWER FOR ANY ZERO-INFLATED TARGET and naming it is a strong signal. A single
+    regression trained on a target that is zero half the time spends all its capacity learning to
+    predict zero.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - A SINGLE REGRESSION ON A ZERO-INFLATED, HEAVY-TAILED TARGET. Measured: 54.7% zeros, top
+1% holding 34% of value. The model learns to predict near-zero and the whales - the only customers who
+matter - are systematically under-predicted.
+
+FAILURE 2 - REPORTING RMSE OR MAE WITHOUT A CONSTANT BASELINE. Measured: predicting zero for everyone
+beats predicting the mean on MAE, and the two metrics disagree about which is better.
+
+FAILURE 3 - SURVIVORSHIP BIAS IN THE TRAINING SET. If you train on customers with 3 years of history,
+you have excluded everyone who left in year one - which is most of them, and exactly the population
+you need to identify at acquisition time.
+
+FAILURE 4 - PREDICTING LTV AT THE WRONG MOMENT. The decision is usually made AT ACQUISITION, when you
+know almost nothing - a channel, a device, a first order. A model that needs 90 days of behaviour is
+answering a different, easier question. BUILD BOTH: a thin day-zero model for bidding, and a richer
+model that refines as behaviour accrues.
+
+FAILURE 5 - IGNORING THE TIME VALUE OF MONEY. £1,000 over five years is not £1,000 today. Discount it,
+and note that this is why finance usually asks for a payback period rather than a raw LTV.
+
+FAILURE 6 - LTV WITHOUT CAC. LTV alone is a vanity number. The decision is the RATIO, and the standard
+target is LTV:CAC of about 3:1 with a payback period inside 12 months.
+
+FAILURE 7 - USING REVENUE INSTEAD OF MARGIN. A customer who generates £1,000 of revenue on
+low-margin goods with a high return rate may be worth less than one generating £300 on high-margin
+goods. USE CONTRIBUTION MARGIN, and subtract returns, support cost and payment fees.
+
+FAILURE 8 - THE SELF-FULFILLING PROPHECY. You predict low LTV, so you spend nothing on that customer,
+so they generate low LTV, so the model is confirmed. IT IS THE SAME FEEDBACK LOOP AS EVERY OTHER
+TARGETING SYSTEM and it needs the same fix: a randomised holdout that receives normal treatment
+regardless of score.
+
+FAILURE 9 - IGNORING COHORT AND SEASONALITY EFFECTS. Customers acquired in a Black Friday promotion
+behave completely differently from organic ones. COHORT IS A FEATURE, and pooling cohorts hides a
+channel that is buying worthless customers cheaply.
+
+FAILURE 10 - NOT SEGMENTING THE EVALUATION. Overall accuracy dominated by the worthless majority tells
+you nothing about performance on the top decile, which is the only part anyone acts on.""",
+
+    """5. THE MODELS - and why the old statistical ones still win
+
+THE BASELINE THAT MUST BE BEATEN: HISTORICAL AVERAGE BY SEGMENT. Average LTV by acquisition channel x
+first-order value x country. It takes an afternoon, it is what the business already believes, and it is
+frequently within a few points of a tuned model. STATE ITS NUMBER.
+
+RFM SEGMENTATION - Recency, Frequency, Monetary value. Bucket customers on three axes and use the
+historical average per bucket. Decades old, still used everywhere, entirely interpretable, and a
+genuinely strong baseline.
+
+BTYD PROBABILISTIC MODELS - BG/NBD for transaction frequency plus GAMMA-GAMMA for spend per
+transaction. THE CLASSICAL ANSWER FOR NON-CONTRACTUAL BUSINESSES, and naming them is a real signal.
+
+    WHY THEY ARE GOOD: they model the actual generative process - a customer transacts at some
+    individual rate until they silently become inactive - so they handle CENSORING correctly and give
+    you P(still alive) as a by-product. They need very little data per customer and they extrapolate
+    sensibly.
+    WHY THEY ARE LIMITED: they use only transaction timing and value. No demographics, no channel, no
+    product mix, no behavioural signals.
+
+TWO-PART / HURDLE MODELS. Classifier for "will they transact again" x regressor for "how much given
+they do". THE RIGHT SHAPE FOR A TARGET THAT IS 54.7% ZEROS, and it lets each stage use the metric that
+suits it.
+
+GRADIENT-BOOSTED TREES ON TABULAR FEATURES, ideally as the two stages above. Handles rich features,
+handles missing values, interpretable enough to explain to finance. TRAIN THE REGRESSION STAGE ON
+log(value) BECAUSE THE TARGET IS LOGNORMAL - and remember to correct for the retransformation bias when
+you exponentiate back, or you systematically under-predict.
+
+SEQUENCE MODELS on the raw transaction stream. Genuinely better when you have long, rich histories and
+enough customers. NOT A VERSION ONE, and a much harder failure to debug.
+
+WHAT TO PROPOSE: RFM or segment averages as the baseline with its number stated; a two-part GBDT as
+version one, evaluated on DECILE LIFT rather than RMSE; BTYD if the business is non-contractual and the
+data is thin. AND SAY THAT THE HARD PART IS NOT THE MODEL.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHAT DECISION THIS FEEDS. Acquisition bidding, retention targeting, or support tiering?
+Each needs a different horizon and a different moment of prediction.
+
+STEP 2 - FIX A FINITE HORIZON AND SAY WHY. 12 or 24 months, matched to the finance team's payback
+period, because it is the only version you can validate.
+
+STEP 3 - ASK CONTRACTUAL OR NON-CONTRACTUAL. Contractual reduces to churn x ARPU; non-contractual
+needs BTYD or a two-part model.
+
+STEP 4 - USE CONTRIBUTION MARGIN, NOT REVENUE, and discount future cash flows.
+
+STEP 5 - SHOW THE VALUE DISTRIBUTION BEFORE PROPOSING A MODEL. Measured: 54.7% zeros, top 1% holding
+34% of value, median exactly zero. EVERY SUBSEQUENT DECISION FOLLOWS FROM THIS PICTURE.
+
+STEP 6 - PROPOSE A TWO-PART MODEL because the target is zero-inflated: P(transacts again) x
+E[value | transacts].
+
+STEP 7 - REFRAME THE METRIC AS RANKING. Measured: a deliberately noisy predictor still captures 90.5%
+of the achievable value in its top decile. REPORT DECILE LIFT AND CUMULATIVE VALUE CAPTURED, not RMSE.
+
+STEP 8 - STATE THE CONSTANT BASELINES. Measured: predicting zero beats predicting the mean on MAE, and
+the two metrics disagree.
+
+STEP 9 - BUILD TWO MODELS, NOT ONE: a day-zero model for acquisition bidding using only what is known
+at signup, and a behavioural model that refines as data accrues.
+
+STEP 10 - PAIR IT WITH CAC AND A RANDOMISED HOLDOUT. LTV alone is a vanity metric; the decision is the
+ratio. And without a holdout that receives normal treatment regardless of score, the low-LTV prediction
+becomes self-fulfilling.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd fix what "lifetime" means - I'd use a finite horizon, twelve or twenty-four months, matched
+to whatever payback period finance cares about, because a true-lifetime number is unverifiable until
+it's ten years too late to be useful. And I'd ask whether the business is contractual or not, because
+in a subscription LTV reduces to churn times ARPU, and in retail customers just silently stop and you
+have to model both how often they buy and how long they keep buying.
+
+Then, before proposing any model, I'd show the distribution - because it dictates everything. I
+simulated a hundred thousand customers with a realistic shape: FIFTY-FIVE PER CENT HAVE ZERO LTV, the
+top one per cent carry thirty-four per cent of all the value, and the MEDIAN CUSTOMER IS WORTH EXACTLY
+ZERO.
+
+That immediately breaks the obvious metrics. I tested three constant predictions, and PREDICTING ZERO
+FOR EVERY SINGLE CUSTOMER BEATS PREDICTING THE MEAN ON MAE - 33 against 48. And RMSE and MAE DISAGREE
+about which constant is better, because RMSE is dominated by the whales and MAE by the worthless
+majority. So optimising RMSE pushes the model to chase whales and optimising MAE pushes it to predict
+near-zero for everyone, and neither is the business objective. Any LTV model has to beat both
+constants, and reporting an RMSE without them beside it is meaningless.
+
+The reframe that fixes this is that IT ISN'T A REGRESSION PROBLEM, IT'S A RANKING PROBLEM. The decision
+is always "who do we spend the acquisition budget on" or "who gets the retention offer" - those are
+rankings. And ranking is a much easier problem on a heavy-tailed target. I took a deliberately awful
+predictor - true value times lognormal noise with standard deviation one - and it still captured
+seventy-two per cent of all the value in its top decile, which is NINETY PER CENT of what a perfect
+oracle would capture. That's the sentence to give a finance director: "spend on the top ten per cent my
+model picks and you get ninety per cent of the recoverable value."
+
+Structurally, given that half the target is zero, I'd use a TWO-PART model: a classifier for "will they
+ever transact again", and a regression for "how much, given they do" trained only on the non-zero
+subset. Multiply the two. A single regression on a target that's zero half the time spends all its
+capacity learning to predict zero. And I'd train the regression stage on LOG value, because the target
+is lognormal - remembering the retransformation correction when you exponentiate back, or you
+systematically under-predict.
+
+For the model family: I'd state an RFM or segment-average baseline and its number first, because it
+takes an afternoon and is often close. For a non-contractual business I'd name BG/NBD plus gamma-gamma,
+because those model the actual generative process and handle censoring properly. Then a two-part
+gradient-boosted model as version one.
+
+Two last things. I'd build TWO models - a thin day-zero one using only what's known at signup, because
+that's when the acquisition bid is actually made, and a richer one that refines as behaviour accrues.
+And I'd insist LTV is always reported next to CAC, with a randomised holdout - otherwise the low-LTV
+prediction becomes self-fulfilling: you predict low, you spend nothing, they're worth nothing, the
+model is confirmed.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  DEFINE THE TARGET BEFORE ANYTHING ELSE                                  │
+    │   HORIZON:   12 or 24 months. FINITE and VALIDATABLE. Not "lifetime".    │
+    │   VALUE:     CONTRIBUTION MARGIN, not revenue. Subtract returns, support │
+    │              cost, payment fees. Discount future cash flows.             │
+    │   MOMENT:    at acquisition? at day 30? BOTH - see below.                │
+    │   BUSINESS:  contractual (churn x ARPU) or non-contractual (BTYD)?       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LOOK AT THE DISTRIBUTION FIRST. MEASURED:                               │
+    │     54.7% of customers have ZERO LTV                                     │
+    │     top 1% hold 34.1% | top 5% hold 64.9% | top 10% hold 79.8%           │
+    │     mean 32.97, MEDIAN 0.00                                              │
+    │   >> ZERO-INFLATED AND HEAVY-TAILED. Every choice below follows.         │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+                     ┌───────────────┴────────────────┐
+    ┌────────────────▼───────────────┐  ┌─────────────▼──────────────────────┐
+    │  MODEL A - DAY ZERO            │  │  MODEL B - BEHAVIOURAL             │
+    │  for ACQUISITION BIDDING       │  │  for retention and support tiering │
+    │                                │  │                                    │
+    │  FEATURES: channel, campaign,  │  │  FEATURES: RFM, category mix,      │
+    │   device, geo, referrer, first │  │   basket size trend, engagement,   │
+    │   order value, product mix     │  │   support contacts, returns rate   │
+    │                                │  │                                    │
+    │  >> THIS IS THE HARD ONE, and  │  │  >> Easier and less valuable: by   │
+    │     the one that matters, be-  │  │     the time you have 90 days of   │
+    │     cause the bid is placed    │  │     behaviour the acquisition      │
+    │     before any behaviour       │  │     decision is long gone.         │
+    │     exists.                    │  │                                    │
+    └────────────────┬───────────────┘  └─────────────┬──────────────────────┘
+                     └───────────────┬────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  BOTH USE A TWO-PART (HURDLE) STRUCTURE, because 54.7% are zeros         │
+    │                                                                          │
+    │     STAGE 1  P(ever transacts again)        <- a CLASSIFIER              │
+    │     STAGE 2  E[value | transacts]           <- a REGRESSION on the        │
+    │                                                NON-ZERO SUBSET ONLY,     │
+    │                                                trained on LOG value      │
+    │                                                (the target is lognormal) │
+    │     LTV = STAGE1 x STAGE2                                                │
+    │                                                                          │
+    │  >> A single regression on a half-zero target spends all its capacity    │
+    │     learning to predict zero.                                            │
+    │  >> WATCH THE RETRANSFORMATION BIAS when exponentiating log predictions  │
+    │     back - naive exp() systematically UNDER-predicts the mean.           │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  EVALUATION - RANKING, NOT REGRESSION                                    │
+    │                                                                          │
+    │   PRIMARY: DECILE LIFT and CUMULATIVE VALUE CAPTURED at top k%           │
+    │     MEASURED with a deliberately noisy predictor:                        │
+    │       top  1% -> 25.7% of all value, 75.4% of the achievable             │
+    │       top  5% -> 55.2% of all value, 85.0% of the achievable             │
+    │       top 10% -> 72.3% of all value, 90.5% of the achievable             │
+    │   SECONDARY: calibration - does predicted total match realised total?    │
+    │   BASELINES THAT MUST BE STATED: segment average, RFM bucket average,    │
+    │     and the two constants (mean and zero).                               │
+    │     MEASURED: predicting ZERO beats predicting the MEAN on MAE.          │
+    │   SEGMENT THE EVALUATION - overall accuracy is dominated by the          │
+    │     worthless majority and says nothing about the top decile.            │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  ACTION - AND ALWAYS NEXT TO CAC                                         │
+    │   LTV alone is a vanity metric. The decision is the RATIO, target ~3:1   │
+    │   with payback inside 12 months.                                         │
+    │   RANDOMISED HOLDOUT that receives normal treatment regardless of score, │
+    │   or the low-LTV prediction becomes SELF-FULFILLING.                     │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+THE SETUP: 100,000 simulated customers. 55% never purchase again (LTV exactly 0); the rest draw from
+exp(Normal(3.0, 1.6)), a lognormal with a long right tail.
+
+THE DISTRIBUTION:
+
+     top n% of customers          share of total LTV
+     top 0.1%                                  10.2%
+     top 1%                                    34.1%
+     top 5%                                    64.9%
+     top 10%                                   79.8%
+     top 20%                                   92.7%
+     top 50%                                  100.0%
+
+     zero-LTV customers: 54.7%
+     mean 32.97, median 0.00, total 3,297,355
+
+    THE "TOP 50% = 100%" ROW IS THE ONE TO SIT WITH. THE BOTTOM HALF OF THE CUSTOMER BASE CONTRIBUTES
+    NOTHING AT ALL.
+
+THE CONSTANT BASELINES:
+
+     constant prediction        RMSE       MAE     total LTV predicted
+     the MEAN (32.97)         157.74     48.20               3,297,355
+     the MEDIAN (0.00)        161.15     32.97                       0
+     ZERO for everyone        161.15     32.97                       0
+
+    THE MEDIAN AND ZERO ROWS ARE IDENTICAL BECAUSE THE MEDIAN IS ZERO. That is not a bug in the table;
+    it is the point.
+
+    ON RMSE the mean wins by 3.4 (157.74 vs 161.15). ON MAE zero wins by 15.2 (32.97 vs 48.20). THE
+    TWO METRICS RANK THE TWO CONSTANTS IN OPPOSITE ORDERS, and a model tuned on either will inherit
+    that metric's bias.
+
+    NOTE ALSO THE THIRD COLUMN. Predicting the mean gets the TOTAL exactly right - it is calibrated in
+    aggregate and useless per customer. Predicting zero gets every individual roughly right and the
+    total catastrophically wrong. NEITHER IS ACCEPTABLE, WHICH IS WHY THE METRIC HAS TO CHANGE RATHER
+    THAN THE CONSTANT.
+
+THE RANKING REFRAME - a predictor equal to the true value times exp(Normal(0, 1.0)), which is a very
+noisy predictor:
+
+     select the top k%     % of TOTAL LTV captured     % of the BEST POSSIBLE selection
+     top 1%                                 25.7%                               75.4%
+     top 5%                                 55.2%                               85.0%
+     top 10%                                72.3%                               90.5%
+     top 20%                                88.8%                               95.7%
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE 55% ZERO-INFLATION
+            produced the median of zero and therefore the MAE result. It is what makes the two-part
+            model structurally correct rather than merely a nice idea.
+    THE LOGNORMAL sd OF 1.6
+            produced the tail concentration - top 1% holding 34%. A THINNER TAIL WOULD WEAKEN EVERY
+            CONCLUSION HERE, and real consumer businesses generally have FATTER tails than this, so
+            the effect is understated rather than exaggerated.
+    ADDING MULTIPLICATIVE lognormal NOISE WITH sd 1.0 to build the "noisy predictor"
+            is deliberately severe - it means a customer's prediction is routinely off by a factor of
+            e. THAT IT STILL CAPTURES 90.5% OF ACHIEVABLE VALUE IN THE TOP DECILE is the whole
+            argument for ranking metrics, and using a gentler noise would have made the point less
+            convincingly.
+    EVALUATING "% OF THE BEST POSSIBLE SELECTION" RATHER THAN JUST "% OF TOTAL"
+            is what makes the numbers interpretable. 25.7% of total value from the top 1% sounds
+            mediocre until you see that a perfect oracle only gets 34.1% from the same slice.
+    WHAT IS NOT MEASURED
+            is any of the causal or operational claims - the self-fulfilling loop, CAC ratios,
+            survivorship bias. THOSE ARE REASONED, NOT MEASURED, and it is worth being explicit about
+            which claims here carry numbers.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you fix a finite horizon and justify it?
+    Did you ask contractual vs non-contractual?
+    Did you LOOK AT THE DISTRIBUTION before proposing a model?
+    Did you recognise the zero-inflation and propose a two-part structure?
+    Did you reframe the metric from regression to RANKING?
+    Did you state baselines, including the trivial constants?
+    Did you connect LTV to CAC?
+
+    THE DISTRIBUTION-FIRST MOVE IS THE STRONGEST SIGNAL AVAILABLE HERE. Everybody proposes a
+    regression; almost nobody starts by asking what the target looks like.
+
+THE #1 MISTAKE: a single regression on a zero-inflated heavy-tailed target. Measured: 54.7% zeros and
+a median of exactly zero. The model learns to predict near-zero and under-predicts the whales, who are
+the only customers the decision is about.
+
+THE #2 MISTAKE: reporting RMSE or MAE without the trivial baselines. Measured: zero beats the mean on
+MAE, and the two metrics rank the constants in opposite orders.
+
+THE #3 MISTAKE: not reframing as ranking. Measured: a predictor that is routinely off by a factor of e
+still captures 90.5% of achievable value in its top decile.
+
+THE #4 MISTAKE: revenue instead of contribution margin, and no discounting.
+
+THE #5 MISTAKE: predicting at the wrong moment. The acquisition bid happens on day zero; a model
+needing 90 days of behaviour answers an easier and less useful question.
+
+THE #6 MISTAKE: survivorship bias. Training on customers with three years of history excludes everyone
+who left in year one - which is most of them.
+
+THE #7 MISTAKE: LTV without CAC. LTV alone is a vanity metric; the decision is the ratio.
+
+THE #8 MISTAKE: no randomised holdout. Predict low, spend nothing, get nothing, model confirmed.
+
+THE #9 MISTAKE: ignoring cohort effects. Black Friday customers are not organic customers, and pooling
+them hides a channel buying worthless customers cheaply.
+
+THE #10 MISTAKE: exponentiating log predictions naively. The retransformation bias makes it
+systematically under-predict the mean of a lognormal.
+
+ONE-SENTENCE TAKEAWAY: LTV is decided by the target's SHAPE - measured, 54.7% of customers are worth
+exactly zero and the top 1% carry 34% of the value, so the median customer's LTV is zero, predicting
+zero for everybody beats predicting the mean on MAE, and RMSE and MAE rank those two constants in
+OPPOSITE orders - which means the right design is a two-part model (P(transacts) x E[value|transacts])
+evaluated as a RANKING problem, because a predictor routinely wrong by a factor of e still captures
+90.5% of the achievable value in its top decile, and that is the number a finance director can act on.""",
+]
+
+_EX_P1AO["Design a Dynamic Pricing system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - set the price, per item, per moment, to maximise something
+
+DYNAMIC PRICING adjusts prices over time and across customers or contexts, to maximise revenue,
+profit, or some other objective - subject to constraints you have to be very explicit about.
+
+    RIDE-HAILING SURGE - price rises with demand to balance supply.
+    AIRLINES AND HOTELS - price rises as the departure or check-in date approaches and inventory
+    depletes. PERISHABLE INVENTORY: an empty seat at take-off is worth exactly zero.
+    E-COMMERCE - price tracks competitors, stock levels and demand.
+    ADS AND MARKETPLACES - auctions, which are a distinct and better-studied problem.
+
+THE CENTRAL QUANTITY IS PRICE ELASTICITY: if I raise the price by 1%, how much does demand fall?
+
+    elasticity e, where quantity q = A x price^(-e)
+    e > 1  -> ELASTIC. Raising the price reduces total revenue.
+    e < 1  -> INELASTIC. Raising the price increases total revenue.
+
+    EVERYTHING IN THE DESIGN HANGS ON ESTIMATING e - AND SECTION 2 IS ABOUT WHY YOU ALMOST CERTAINLY
+    CANNOT ESTIMATE IT FROM THE DATA YOU HAVE.
+
+AND THE THING TO SAY BEFORE ANY MODELLING, because it is what separates this from a pure optimisation
+problem: PRICING IS THE MOST CONSTRAINED ML PROBLEM ON THIS LIST.
+
+    LEGAL: price discrimination on protected characteristics is illegal in most jurisdictions. Some
+    kinds of algorithmic price coordination are illegal even without communication between firms.
+    FAIRNESS AND TRUST: charging two customers different prices for the same item is a front-page
+    story when it is discovered, and it is always discovered.
+    OPERATIONAL: price changes may need to propagate to physical labels, printed catalogues, partner
+    feeds.
+
+    A CANDIDATE WHO OPTIMISES REVENUE WITHOUT MENTIONING ANY OF THIS HAS FAILED THE QUESTION, however
+    good the model is.
+
+TERMS AS THEY APPEAR:
+- ELASTICITY: the percentage change in demand per percentage change in price.
+- CONFOUNDER: something that moves both the price and the demand, and so corrupts naive estimates.
+- INSTRUMENT: a variable that shifts price but not demand directly - the econometric escape route.""",
+
+    """2. THE MEASUREMENT - you cannot learn elasticity from your own logs
+
+This is the single most important thing in this entry, and it is the thing that sinks most real
+pricing projects.
+
+I simulated a market with a TRUE price elasticity of -1.80. Demand also varies with season. And -
+crucially, and exactly as in every real business - THE PRICING TEAM RAISES PRICES IN HIGH SEASON.
+
+Then I estimated the elasticity two ways from the resulting log data:
+
+     TRUE price elasticity                                     -1.80
+     estimated from observational logs (naive)                 +0.30
+     estimated CONTROLLING for the season confounder           -1.61
+
+    THE NAIVE ESTIMATE IS +0.30. IT HAS THE WRONG SIGN.
+
+    The logs say, quite truthfully, "on days when the price was higher, we sold more". They say it
+    because the pricing team raised prices exactly when demand was strong. THE CORRELATION IS REAL AND
+    THE CAUSAL CLAIM IS BACKWARDS.
+
+    A MODEL TRAINED ON THAT DATA RECOMMENDS RAISING PRICES FOREVER, and every price rise appears to
+    confirm it - because the confound keeps operating.
+
+    THAT IS NOT A SUBTLE STATISTICAL FAILURE. IT IS A SYSTEM THAT CONFIDENTLY DESTROYS THE BUSINESS
+    WHILE ITS OFFLINE METRICS IMPROVE.
+
+THE FIX IS EXPERIMENTATION, NOT MODELLING. I re-ran the same simulation while adding deliberate random
+noise to the price:
+
+     price randomisation (sd in log price)     estimated elasticity     error vs truth
+     0.00                                                    +0.48               2.28
+     0.05                                                    +0.31               2.11
+     0.15                                                    -0.56               1.24
+     0.35                                                    -1.37               0.43
+
+    THE ESTIMATE IMPROVES MONOTONICALLY WITH THE AMOUNT OF DELIBERATE RANDOMISATION, and only at
+    substantial randomisation does it approach the truth - because randomisation is what breaks the
+    correlation between price and the confounder.
+
+    SO THE DESIGN CONTAINS A LINE ITEM THAT IS NOT A MODEL: A PRICE EXPERIMENTATION BUDGET. You must
+    deliberately set some prices non-optimally, accept the short-term revenue loss, and treat it as
+    the cost of knowing anything at all.
+
+    THE ALTERNATIVE - controlling for the confounder - works when you can identify and measure it
+    (-1.61 against a truth of -1.80 in my run) AND IT ONLY WORKS FOR CONFOUNDERS YOU THOUGHT OF. The
+    ones you did not think of are exactly the ones that hurt you.""",
+
+    """3. THE DESIGN CONSEQUENCES - what a pricing system actually contains
+
+GIVEN THAT ELASTICITY MUST BE LEARNED EXPERIMENTALLY, the architecture is not "a model that outputs a
+price". It is:
+
+    1. AN EXPERIMENTATION LAYER that deliberately randomises price, within guardrails.
+    2. AN ELASTICITY ESTIMATOR that consumes experimental data, per segment.
+    3. AN OPTIMISER that chooses a price given elasticity, inventory, cost and constraints.
+    4. A CONSTRAINT LAYER that can veto anything, for legal, fairness or operational reasons.
+    5. MONITORING on the business metric, not on model accuracy.
+
+THE OPTIMISER IS THE EASY PART AND IT IS WHERE PEOPLE SPEND THE INTERVIEW. Given an elasticity and a
+cost, the profit-maximising price has a closed form. THE HARD PARTS ARE 1, 2 AND 4.
+
+SEGMENT, DO NOT PERSONALISE. This is the most important design decision after experimentation:
+
+    PRICE BY PRODUCT, TIME, LOCATION, CHANNEL AND INVENTORY LEVEL - all defensible, all explicable,
+    all legal.
+    DO NOT PRICE BY INDIVIDUAL CUSTOMER. It is a reputational catastrophe when discovered, it is
+    illegal if it correlates with a protected characteristic - AND IT WILL, because postcode proxies
+    for ethnicity and device type proxies for income - and it is very hard to defend to a regulator.
+
+    "I'D PRICE BY SEGMENT AND CONTEXT, NOT BY PERSON" IS A SENTENCE WORTH SAYING EXPLICITLY. It shows
+    you know where the line is.
+
+THE GUARDRAILS THAT MUST EXIST, and they are the part that keeps the system out of the newspaper:
+
+    FLOOR AND CEILING per product, usually as a band around a reference price.
+    MAXIMUM CHANGE PER PERIOD - a price that moves 40% in an hour destroys trust even if it is
+    optimal.
+    NEVER BELOW COST, unless a loss-leader is a deliberate, separately approved decision.
+    NO PRICE DIFFERENCE BASED ON ANY PROTECTED CHARACTERISTIC OR ITS PROXIES.
+    A KILL SWITCH that reverts every price to a known-good baseline, tested regularly.
+    A HUMAN APPROVAL PATH for anything outside the band.
+
+AND THE COMPETITIVE AND COORDINATION PROBLEM, which is genuinely subtle: if your algorithm and your
+competitor's algorithm both react to each other's prices, they can converge on supra-competitive prices
+WITHOUT ANY COMMUNICATION BETWEEN THE FIRMS. Regulators have taken an active interest in this, and it
+is a real legal exposure rather than a theoretical one. MENTIONING IT IS A STRONG SIGNAL.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - LEARNING ELASTICITY FROM OBSERVATIONAL DATA. Measured: the naive estimate had the WRONG
+SIGN, +0.30 against a truth of -1.80, because the pricing team raised prices in high season. The
+resulting system recommends raising prices forever and every rise appears to confirm it.
+
+FAILURE 2 - NO EXPERIMENTATION BUDGET. Measured: the estimate improves monotonically with deliberate
+price randomisation and is useless without it. THE BUDGET IS A LINE ITEM, NOT AN OPTIONAL EXTRA.
+
+FAILURE 3 - THE FEEDBACK LOOP. Your prices generate the data that trains the next model, so the model
+learns about the price range you already explore and knows nothing outside it. Without randomisation
+the explored range narrows over time and the system becomes progressively more confident about
+progressively less.
+
+FAILURE 4 - PERSONALISED PRICING. Illegal where it correlates with protected characteristics, and it
+will - postcode proxies for ethnicity, device type for income. And a front-page story regardless.
+
+FAILURE 5 - NO GUARDRAILS. A bug that sets a price to zero, or to a thousand times the correct value,
+must be impossible rather than unlikely. FLOORS, CEILINGS, MAXIMUM CHANGE RATES AND A KILL SWITCH.
+
+FAILURE 6 - IGNORING CROSS-PRICE EFFECTS. Raising the price of one item shifts demand to substitutes
+and away from complements. OPTIMISING EACH ITEM INDEPENDENTLY CAN REDUCE TOTAL PROFIT while every
+individual item's model reports success.
+
+FAILURE 7 - OPTIMISING SHORT-TERM REVENUE. Surge pricing during an emergency maximises today's revenue
+and costs you customers permanently. The objective should include a retention or trust term, or at
+minimum be constrained by one.
+
+FAILURE 8 - IGNORING INVENTORY. For perishable inventory - a seat, a hotel room, fresh food - the
+optimal price depends on remaining stock AND remaining time. An unsold seat at departure is worth
+exactly zero, which is a very different optimisation from a durable good.
+
+FAILURE 9 - ALGORITHMIC COLLUSION. Two pricing algorithms reacting to each other can reach
+supra-competitive equilibria with no communication. It is a live regulatory concern.
+
+FAILURE 10 - MEASURING MODEL ACCURACY INSTEAD OF BUSINESS OUTCOME. The elasticity estimate's error is
+not the objective; profit is. And the only honest way to measure it is a randomised holdout of regions
+or products priced by the old policy.""",
+
+    """5. THE APPROACHES - and what each actually requires
+
+RULE-BASED PRICING. "Match the lowest competitor plus 2%", "discount 20% when stock exceeds 90 days of
+cover", "surge by 1.5x when demand/supply exceeds 2".
+    FULLY EXPLICABLE, INSTANTLY AUDITABLE, AND IT IS WHAT MOST REAL SYSTEMS ACTUALLY RUN. It should be
+    your version one and your permanent fallback.
+    LIMIT: the coefficients are guesses, and nobody knows whether 1.5x is right.
+
+ELASTICITY ESTIMATION PLUS CLOSED-FORM OPTIMISATION. Estimate e per segment from EXPERIMENTAL data,
+then set the profit-maximising price analytically.
+    REQUIRES: the experimentation budget from section 2. Without it, measured, you get the wrong sign.
+
+CAUSAL INFERENCE ON OBSERVATIONAL DATA - controlling for confounders, difference-in-differences,
+instrumental variables, regression discontinuity.
+    MEASURED: controlling for the known confounder recovered -1.61 against a truth of -1.80, which is
+    usable. IT ONLY WORKS FOR CONFOUNDERS YOU IDENTIFIED, and the dangerous ones are the others.
+    THE CLASSIC INSTRUMENT in pricing is a COST SHOCK - a change in input cost shifts your price
+    without directly shifting demand. Naming that is a real signal.
+
+MULTI-ARMED BANDITS OVER A PRICE GRID. Treat each price point as an arm and explore adaptively.
+    ELEGANT, AND IT BUILDS THE EXPERIMENTATION IN BY CONSTRUCTION rather than bolting it on.
+    LIMIT: it assumes a stationary reward, and demand is seasonal - so it needs contextual or
+    non-stationary variants, and it explores in production on real customers.
+
+REINFORCEMENT LEARNING for the full sequential problem, where today's price affects tomorrow's demand
+and inventory.
+    THEORETICALLY CORRECT FOR PERISHABLE INVENTORY and rarely the right practical answer: sample
+    inefficiency, the simulator gap, and the fact that its exploration happens on real revenue.
+    NAME IT, EXPLAIN WHY YOU WOULD NOT START THERE.
+
+WHAT TO PROPOSE: RULES AS VERSION ONE AND AS THE FALLBACK. An experimentation layer from day one. A
+segment-level elasticity model feeding a constrained optimiser. Bandits for the exploration policy if
+the volume supports it. AND A CONSTRAINT LAYER THAT CAN VETO ANY OF IT.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHAT IS BEING MAXIMISED AND OVER WHAT HORIZON. Revenue, profit, market share, or
+utilisation? Today or this year? Short-term revenue maximisation is how you get surge pricing during
+an emergency.
+
+STEP 2 - RAISE THE LEGAL AND FAIRNESS CONSTRAINTS IMMEDIATELY, before any modelling. Protected
+characteristics and their proxies, coordination risk, disclosure obligations.
+
+STEP 3 - SAY "SEGMENT, NOT PERSONALISE" EXPLICITLY. Price by product, time, location, channel and
+inventory - never by individual.
+
+STEP 4 - IDENTIFY ELASTICITY AS THE CENTRAL QUANTITY, then immediately say you cannot estimate it from
+your own logs. Measured: the naive estimate had the wrong sign, +0.30 against -1.80.
+
+STEP 5 - PUT AN EXPERIMENTATION BUDGET IN THE DESIGN AS A LINE ITEM. Deliberate price randomisation
+within guardrails, accepted as the cost of knowing anything. Measured: the estimate improves
+monotonically with randomisation.
+
+STEP 6 - MENTION THE OBSERVATIONAL FALLBACK AND ITS LIMIT. Controlling for known confounders recovered
+-1.61; it only works for confounders you thought of, and a cost shock is the classic instrument.
+
+STEP 7 - SPECIFY THE GUARDRAILS CONCRETELY: floor, ceiling, maximum change per period, never below
+cost, no protected-characteristic proxies, a tested kill switch, a human approval path.
+
+STEP 8 - RAISE CROSS-PRICE EFFECTS. Optimising each item independently can reduce total profit while
+every individual model reports success.
+
+STEP 9 - HANDLE INVENTORY EXPLICITLY IF IT IS PERISHABLE. The optimal price depends on remaining stock
+and remaining time, and an unsold seat at departure is worth zero.
+
+STEP 10 - MEASURE THE BUSINESS OUTCOME, NOT MODEL ACCURACY, with a randomised holdout of regions or
+products still priced by the old policy. And say you would ship rules first.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I'd start with two things before any modelling. What exactly are we maximising and over what horizon
+- revenue, profit, utilisation, today or this year - because short-term revenue maximisation is how you
+end up surge pricing during an emergency and losing customers permanently. And the LEGAL AND FAIRNESS
+constraints, because pricing is the most constrained problem of this kind: price discrimination on
+protected characteristics is illegal in most jurisdictions, and algorithmic price coordination can be
+illegal even without any communication between firms.
+
+Related to that, I'd say explicitly: SEGMENT, DON'T PERSONALISE. Price by product, time, location,
+channel and inventory level - all defensible and explicable. Not by individual customer, because it's a
+front-page story when it's discovered, and it WILL correlate with protected characteristics whether you
+intend it to or not - postcode proxies for ethnicity, device type proxies for income.
+
+The central quantity is price ELASTICITY - if I raise price one per cent, how much does demand fall.
+And the thing I'd most want to say is that YOU ALMOST CERTAINLY CANNOT ESTIMATE IT FROM YOUR OWN LOGS.
+
+I simulated this. True elasticity minus one point eight. Demand varies with season, and - exactly as in
+every real business - the pricing team raises prices in high season. Estimating elasticity naively from
+the resulting logs gives PLUS ZERO POINT THREE. THE WRONG SIGN. The logs truthfully say "on days when
+the price was higher, we sold more", because price and demand were both driven by the season. A model
+trained on that recommends RAISING PRICES FOREVER, and every price rise appears to confirm it, because
+the confound keeps operating. That's not a subtle statistical failure - it's a system that confidently
+destroys the business while its offline metrics improve.
+
+The fix is experimentation, not modelling. I re-ran it adding deliberate random noise to the price, and
+the estimate improved monotonically with the amount of randomisation - from plus 0.48 at no
+randomisation to minus 1.37 at substantial randomisation, against a truth of minus 1.8. Randomisation
+is what breaks the correlation with the confounder.
+
+So the design contains a line item that isn't a model: A PRICE EXPERIMENTATION BUDGET. You deliberately
+set some prices non-optimally and accept the short-term revenue loss as the cost of knowing anything at
+all. Controlling for confounders is the fallback - it got me to minus 1.61, which is usable - but it
+only works for the confounders you thought of, and the dangerous ones are the others. The classic
+instrument in pricing is a COST SHOCK, since input costs shift your price without directly shifting
+demand.
+
+Architecturally: an experimentation layer that randomises within guardrails, an elasticity estimator per
+segment consuming experimental data, an optimiser - which is the EASY part and has a closed form - and
+then a CONSTRAINT LAYER that can veto anything. Floors and ceilings, a maximum change per period because
+a price that moves forty per cent in an hour destroys trust even if it's optimal, never below cost, and a
+kill switch that's actually been tested.
+
+Two things I'd raise unprompted. CROSS-PRICE EFFECTS - raising one item's price shifts demand to
+substitutes, so optimising each item independently can reduce TOTAL profit while every individual model
+reports success. And ALGORITHMIC COLLUSION - two pricing algorithms reacting to each other can converge
+on supra-competitive prices with no communication at all, which regulators are actively interested in.
+
+And I'd ship rules first. "Match the lowest competitor plus two per cent" is explicable, auditable,
+and it's what most real systems actually run.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  OBJECTIVE AND CONSTRAINTS - agreed BEFORE any modelling                 │
+    │   maximise WHAT over WHAT horizon? revenue / profit / utilisation        │
+    │   LEGAL: no protected characteristics OR THEIR PROXIES (postcode         │
+    │     proxies for ethnicity; device type for income). Coordination risk.   │
+    │   TRUST: same item, same moment, same price for everyone in a segment.   │
+    │   >> SEGMENT, DO NOT PERSONALISE.                                        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (1) EXPERIMENTATION LAYER  - THE PART THAT MAKES EVERYTHING ELSE WORK   │
+    │                                                                          │
+    │   deliberately randomise price within the guardrail band, on a slice of  │
+    │   traffic / stores / SKUs. ACCEPT THE SHORT-TERM REVENUE LOSS.           │
+    │                                                                          │
+    │   MEASURED, estimated elasticity vs true -1.80:                          │
+    │     no randomisation          -> +0.48   WRONG SIGN                      │
+    │     sd 0.05 in log price      -> +0.31   still wrong sign                │
+    │     sd 0.15                   -> -0.56                                   │
+    │     sd 0.35                   -> -1.37                                   │
+    │   >> WITHOUT THIS LAYER THE WHOLE SYSTEM IS CONFIDENTLY BACKWARDS.       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (2) ELASTICITY ESTIMATION, PER SEGMENT                                  │
+    │   log q = a + e log p + controls   (seasonality, competitor price,       │
+    │                                     stock, day of week, promotions)      │
+    │   PREFER experimental variation. Fall back to causal inference on        │
+    │   observational data - diff-in-diff, instrumental variables, regression  │
+    │   discontinuity - and know its limit.                                    │
+    │   MEASURED: controlling for the KNOWN confounder recovered -1.61 vs a    │
+    │   truth of -1.80. IT ONLY WORKS FOR CONFOUNDERS YOU THOUGHT OF.          │
+    │   CLASSIC INSTRUMENT: a COST SHOCK - it shifts price without directly    │
+    │   shifting demand.                                                       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (3) OPTIMISER  - THE EASY PART, and where candidates overspend time     │
+    │   given elasticity e and marginal cost c, the profit-maximising price    │
+    │   has a CLOSED FORM. Add inventory and time-to-expiry terms for          │
+    │   perishable goods: an unsold seat at departure is worth EXACTLY ZERO.   │
+    │   CROSS-PRICE EFFECTS: optimise the BASKET, not each item alone -        │
+    │   independent optimisation can cut total profit while every item's model │
+    │   reports success.                                                       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (4) CONSTRAINT LAYER  - CAN VETO ANYTHING ABOVE                         │
+    │   floor and ceiling per product (a band around a reference price)        │
+    │   MAX CHANGE PER PERIOD - a 40% move in an hour destroys trust even if   │
+    │     it is optimal                                                        │
+    │   never below cost, unless a loss-leader is separately approved          │
+    │   no protected-characteristic proxies                                    │
+    │   KILL SWITCH to a known-good baseline, TESTED REGULARLY                 │
+    │   human approval path for anything outside the band                      │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (5) MONITORING - ON THE BUSINESS OUTCOME, NOT MODEL ACCURACY            │
+    │   RANDOMISED HOLDOUT of regions or SKUs still priced by the OLD policy.  │
+    │     It is the only honest measurement, and it doubles as the fallback.   │
+    │   watch: margin, volume, competitor response, complaint rate, and the    │
+    │     WIDTH OF THE PRICE RANGE YOU HAVE ACTUALLY EXPLORED - if it narrows, │
+    │     the system is becoming confident about less and less.                │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SIMULATION: 3,000 days. True demand is q = 200 x season x price^(-1.80) x noise, where season is a
+sinusoid between 0.5 and 1.5. THE PRICING POLICY sets price = 10 x (0.7 + 0.6 x season) x noise - THAT
+IS, IT RAISES PRICES IN HIGH SEASON, which is what every real pricing team does and which is precisely
+the confound.
+
+ESTIMATING elasticity by regressing log(quantity) on log(price):
+
+     estimator                                             result     error vs truth (-1.80)
+     naive: log q on log p only                             +0.30                       2.10
+     controlled: log q on log p AND season                  -1.61                       0.19
+
+    THE NAIVE ESTIMATE IS POSITIVE. It says demand RISES with price. And it is not a small error - it
+    is on the wrong side of zero, which means an optimiser fed this number raises prices without limit.
+
+    THE CONTROLLED ESTIMATE IS GOOD - within 0.19 of the truth - AND IT REQUIRED ME TO KNOW THAT SEASON
+    WAS THE CONFOUNDER AND TO HAVE MEASURED IT. In the simulation I built the confounder, so of course
+    I knew. IN A REAL BUSINESS THE CONFOUNDERS YOU KNOW ABOUT ARE ALREADY IN THE MODEL, AND THE ONES
+    THAT HURT YOU ARE THE OTHERS.
+
+THE RANDOMISATION SWEEP - re-running the whole simulation with deliberate log-normal noise of varying
+size added to the price, and estimating naively each time:
+
+     price randomisation (sd in log price)     estimated elasticity     error vs truth
+     0.00                                                    +0.48               2.28
+     0.05                                                    +0.31               2.11
+     0.15                                                    -0.56               1.24
+     0.35                                                    -1.37               0.43
+
+    MONOTONE IMPROVEMENT. And note that even sd = 0.35 - which is a substantial, visible amount of
+    price randomisation - has not fully recovered the truth. THE EXPERIMENTATION BUDGET HAS TO BE REAL,
+    not token.
+
+THE LINE-BY-LINE MAPPING - which modelling choice produced which number:
+
+    THE PRICING POLICY `p = 10 x (0.7 + 0.6 x season)`
+            produced the entire confound and therefore the +0.30. REMOVE THE SEASON TERM FROM THE
+            POLICY - i.e. price randomly - and the naive estimate becomes correct. THE BUG IS IN THE
+            POLICY THAT GENERATED THE DATA, NOT IN THE ESTIMATOR.
+    THE DEMAND EQUATION'S `season` MULTIPLIER
+            is the other half. A confounder must move BOTH price and demand; either alone is harmless.
+            That is the definition, and this simulation is the smallest possible example of it.
+    ADDING `season` AS A REGRESSOR
+            produced -1.61. It works because I knew the confounder's exact functional form. A real
+            control would be a proxy - a month dummy, a holiday flag - and would recover less.
+    THE `sd` PARAMETER ON THE PRICE NOISE
+            produced the sweep. It is doing exactly one thing: DECORRELATING PRICE FROM SEASON. At
+            sd = 0 the correlation is total; at sd = 0.35 it is partially broken. THAT DECORRELATION
+            IS THE ONLY MECHANISM AT WORK, and it is why randomisation is not a statistical nicety but
+            the whole game.
+    THE LOG-LOG FUNCTIONAL FORM
+            assumes constant elasticity, which real demand curves do not have. THAT IS A LIMIT OF THIS
+            MEASUREMENT and worth stating: the sign error it demonstrates is robust, but the specific
+            numbers depend on the form assumed.
+    WHAT IS NOT MEASURED
+            is cross-price effects, inventory dynamics, competitor response or collusion. THOSE
+            SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask what is maximised and over what horizon?
+    Did you raise legal and fairness constraints BEFORE modelling?
+    Did you say segment-not-personalise explicitly?
+    Did you identify elasticity as the central quantity - AND say you cannot estimate it from your own
+        logs?
+    Did you put an experimentation budget in the design?
+    Did you specify guardrails concretely, including a kill switch?
+    Did you raise cross-price effects or collusion unprompted?
+
+    THE CAUSALITY POINT IS THE ONE THAT DISTINGUISHES A SENIOR ANSWER. Everyone can describe an
+    optimiser; almost nobody says the input to it cannot be learned from the data they have.
+
+THE #1 MISTAKE: estimating elasticity from observational logs. MEASURED: the naive estimate had the
+WRONG SIGN, +0.30 against a truth of -1.80, and the resulting system raises prices forever while its
+metrics appear to confirm it.
+
+THE #2 MISTAKE: no experimentation budget. MEASURED: the estimate improves monotonically with
+deliberate randomisation and is unusable without it.
+
+THE #3 MISTAKE: personalised pricing. Illegal where it correlates with protected characteristics - and
+it will, through proxies - and a reputational catastrophe regardless.
+
+THE #4 MISTAKE: no guardrails or kill switch. A pricing bug is a direct, immediate revenue and trust
+event.
+
+THE #5 MISTAKE: optimising each item independently. Cross-price effects mean total profit can fall
+while every individual model reports success.
+
+THE #6 MISTAKE: ignoring inventory and perishability. An unsold seat at departure is worth exactly
+zero, which is a completely different optimisation from a durable good.
+
+THE #7 MISTAKE: short-horizon revenue maximisation. It produces surge pricing during emergencies and
+permanent customer loss.
+
+THE #8 MISTAKE: not mentioning algorithmic collusion. Two reactive pricing algorithms can reach
+supra-competitive equilibria with no communication, and regulators are actively interested.
+
+THE #9 MISTAKE: measuring model accuracy rather than business outcome. The only honest measurement is a
+randomised holdout still priced by the old policy - which doubles as the fallback.
+
+THE #10 MISTAKE: not proposing rules first. "Match the lowest competitor plus 2%" is explicable,
+auditable, and what most real systems actually run.
+
+ONE-SENTENCE TAKEAWAY: dynamic pricing turns on PRICE ELASTICITY, and you cannot learn it from your own
+logs - measured, a naive estimate on data generated by a sensible pricing policy came out at +0.30
+against a true value of -1.80, THE WRONG SIGN, because the team raised prices in high season - so the
+design's central line item is a deliberate PRICE EXPERIMENTATION BUDGET (the estimate improved
+monotonically with randomisation), wrapped in a constraint layer that segments rather than
+personalises, caps the rate of change, and has a tested kill switch.""",
+]
+
+_EX_P1AO["Design a Near-Duplicate Detection system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - find the things that are almost the same, without comparing everything
+
+NEAR-DUPLICATE DETECTION finds pairs of items that are similar but not identical: a re-uploaded article
+with the headline changed, a product listing copied by another seller, a scraped page, a plagiarised
+essay, a re-shared image with a caption added.
+
+EXACT duplicates are trivial - hash them and compare the hashes. NEAR duplicates are hard for one
+reason: SIMILARITY IS NOT TRANSITIVE AND CANNOT BE HASHED DIRECTLY. Two documents 95% identical have
+completely different SHA-256 hashes.
+
+THE COMBINATORIAL PROBLEM IS THE WHOLE PROBLEM. Comparing every pair is O(n^2):
+
+     1,000 documents        ->              499,500 comparisons
+     3,300 documents        ->            5,443,350 comparisons
+     1,000,000 documents    ->      499,999,500,000 comparisons
+     100,000,000 documents  ->    5,000,000,000,000,000 comparisons
+
+    AT A MILLION DOCUMENTS, PAIRWISE COMPARISON IS ALREADY 500 BILLION OPERATIONS. At a hundred
+    million it is five quadrillion. NO AMOUNT OF ENGINEERING MAKES THAT WORK.
+
+    SO THE ENTIRE DESIGN IS ABOUT NOT DOING MOST OF THE COMPARISONS - generating a small set of
+    CANDIDATE pairs that probably match, and only comparing those.
+
+THE TWO-PART ANSWER, and it is the same shape as retrieval-then-ranking in a recommender:
+
+    1. MINHASH - turn each document into a short signature such that the probability two signatures
+       agree at a position EQUALS their Jaccard similarity.
+    2. LSH (locality-sensitive hashing) - bucket the signatures so that similar items collide and
+       dissimilar ones do not, then only compare within buckets.
+
+TERMS AS THEY APPEAR:
+- SHINGLE: a contiguous run of k words or characters. A document becomes a SET of shingles.
+- JACCARD SIMILARITY: |A ∩ B| / |A ∪ B|. The standard set-similarity measure.
+- SIGNATURE: a short fixed-length summary of a set, here 128 numbers.
+- BAND: a slice of the signature. LSH hashes bands, not whole signatures.""",
+
+    """2. HOW MINHASH WORKS - the one property that makes everything else follow
+
+SHINGLE THE DOCUMENT. Turn the text into a SET of overlapping k-grams:
+
+    "the quick brown fox jumps"  with k = 3 words
+    -> {("the","quick","brown"), ("quick","brown","fox"), ("brown","fox","jumps")}
+
+    NOW SIMILARITY IS A SET QUESTION, and JACCARD - the size of the intersection over the size of the
+    union - is the natural measure. TWO NEAR-IDENTICAL DOCUMENTS SHARE ALMOST ALL THEIR SHINGLES.
+
+    THE CHOICE OF k MATTERS: too small and every document shares shingles by chance; too large and a
+    single word change destroys many of them. 3 words or 5-9 characters are the usual settings.
+
+MINHASH IS THE TRICK. Pick a random hash function h. Compute h(x) for every shingle x in the document,
+and keep only the MINIMUM.
+
+    THE PROPERTY:  P(minhash_h(A) == minhash_h(B)) = Jaccard(A, B)
+
+    WHY: consider the union of A and B, and ask which element hashes to the smallest value overall.
+    That element is equally likely to be any element of the union. THE TWO MINHASHES AGREE EXACTLY WHEN
+    THAT ELEMENT IS IN THE INTERSECTION - and the probability of that is |A∩B| / |A∪B|, which IS the
+    Jaccard similarity.
+
+    THAT ONE-LINE PROOF IS WORTH BEING ABLE TO GIVE. It is the entire justification for the technique
+    and it takes twenty seconds.
+
+REPEAT WITH 128 DIFFERENT HASH FUNCTIONS and you get a 128-number SIGNATURE per document. Now:
+
+    the FRACTION of signature positions where two documents agree ESTIMATES their Jaccard similarity.
+
+    A 10,000-shingle document is compressed to 128 numbers, and comparing two signatures is 128
+    integer comparisons instead of a set intersection.
+
+    THAT IS ALREADY A LARGE WIN - AND IT IS NOT ENOUGH, because you still have to compare every PAIR of
+    signatures, and O(n^2) with a smaller constant is still O(n^2). LSH is what removes the quadratic
+    term, and section 3 measures it.""",
+
+    """3. THE MEASUREMENT - LSH turns 5.4 million comparisons into 213
+
+I built a corpus of 3,300 documents over a 4,000-word vocabulary, using 3-word shingles, and injected
+300 near-duplicate pairs by perturbing 1-12 words of an existing document.
+
+    BACKGROUND JACCARD between random unrelated documents: MEAN 0.0005. The signal is well separated
+    from the noise, which is what makes the task well posed.
+    OF THE 300 INJECTED PAIRS, 120 ended up with a true Jaccard of at least 0.70 - the target.
+
+LSH SPLITS THE 128-NUMBER SIGNATURE INTO b BANDS OF r ROWS (b x r = 128), HASHES EACH BAND, AND CALLS
+TWO DOCUMENTS CANDIDATES IF THEY COLLIDE IN ANY BAND.
+
+     bands x rows     S-curve 50% point     candidate pairs     recall of the 120     ms
+     64 x 2                        0.12                 272                 97.5%    400.3
+     32 x 4                        0.42                 213                 86.7%    212.8
+     16 x 8                        0.71                 213                 86.7%     73.2
+     8 x 16                        0.88                 176                 85.0%     53.9
+     4 x 32                        0.96                 109                 59.2%     24.4
+
+     BRUTE FORCE WOULD BE 5,443,350 PAIRWISE COMPARISONS.
+
+    THE 16x8 ROW IS THE HEADLINE. IT PRODUCES 213 CANDIDATE PAIRS INSTEAD OF 5,443,350 - A REDUCTION OF
+    MORE THAN 25,000x - WHILE RETAINING 86.7% OF THE TRUE NEAR-DUPLICATES.
+
+    AND IT IS NOT A COINCIDENCE THAT 16x8 IS THE RIGHT SETTING FOR A 0.70 THRESHOLD. The probability
+    that two documents with Jaccard s collide in at least one band is:
+
+        P(candidate) = 1 - (1 - s^r)^b
+
+    WHICH IS AN S-CURVE, and its 50% point sits at approximately (1/b)^(1/r). MEASURED against the
+    formula:
+
+        64 bands x  2 rows -> 50% at Jaccard 0.12   (catches almost everything; most candidates junk)
+        32 bands x  4 rows -> 50% at Jaccard 0.42
+        16 bands x  8 rows -> 50% at Jaccard 0.71   <- MATCHES THE 0.70 TARGET ALMOST EXACTLY
+         8 bands x 16 rows -> 50% at Jaccard 0.88
+         4 bands x 32 rows -> 50% at Jaccard 0.96   (misses 41% of true pairs)
+
+    SO YOU DO NOT TUNE b AND r BY TRIAL AND ERROR. YOU CHOOSE THEM FROM YOUR SIMILARITY THRESHOLD USING
+    THE FORMULA. That is the thing to say, and it is what turns LSH from a black box into a design
+    decision with a knob you understand.
+
+NOTE THE HONEST PART OF THE TABLE: 64x2 achieves 97.5% recall but takes 400 ms against 73 ms for 16x8,
+because more bands means more hashing and more bucket collisions. THE TIME COLUMN IS THE COST OF
+RECALL, and where you sit on it is a throughput decision.""",
+
+    """4. THE EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - THE WRONG SHINGLE SIZE. Too small (k=1, i.e. bag of words) and unrelated documents share
+shingles constantly, so everything looks similar. Too large and one word changed destroys many
+shingles, so real near-duplicates fall below threshold. MEASURED HERE with k=3 words, background
+Jaccard was 0.0005 - well separated - and that separation is what makes the task solvable at all.
+
+FAILURE 2 - VERY SHORT DOCUMENTS. A 5-word document has 3 shingles at k=3. Jaccard on tiny sets is
+extremely noisy, and minhash on 3 elements is worse. HANDLE SHORT ITEMS SEPARATELY - exact match,
+edit distance, or a smaller k.
+
+FAILURE 3 - THE HOT BUCKET. If a common boilerplate band value appears in a million documents, that
+bucket generates a trillion candidate pairs on its own and the system stops. CAP BUCKET SIZE AND DROP
+OVERSIZED BUCKETS - in my measurement I skipped any bucket with more than 100 members, and that cap is
+load-bearing rather than cosmetic.
+
+FAILURE 4 - CHOOSING b AND r BY GUESSWORK. Measured: the 50% point moves from Jaccard 0.12 to 0.96
+across the four settings. USE (1/b)^(1/r) AND YOUR THRESHOLD.
+
+FAILURE 5 - NOT VERIFYING THE CANDIDATES. LSH produces CANDIDATES, not answers. You must compute the
+true similarity on each candidate pair - which is cheap, because there are 213 of them and not 5.4
+million. SKIPPING VERIFICATION MEANS SHIPPING THE FALSE POSITIVES.
+
+FAILURE 6 - TRANSITIVITY. A is similar to B, B is similar to C, and A is NOT similar to C. If you are
+CLUSTERING duplicates rather than finding pairs, you need a policy - connected components will chain
+unrelated things together across a long enough path.
+
+FAILURE 7 - ADVERSARIAL EVASION. Plagiarists and spammers deliberately perturb text to defeat this.
+Synonym substitution, word reordering, invisible characters, homoglyphs. NORMALISE AGGRESSIVELY -
+lowercase, strip punctuation, collapse whitespace, map homoglyphs - before shingling.
+
+FAILURE 8 - THE WRONG SIMILARITY MEASURE ENTIRELY. Jaccard on shingles finds LEXICAL overlap. It will
+not find a paraphrase, a translation, or the same story written independently. IF THE REQUIREMENT IS
+SEMANTIC SIMILARITY, MINHASH IS THE WRONG TOOL and you want embeddings with ANN search.
+
+FAILURE 9 - INCREMENTAL UPDATES. A batch job over the whole corpus is a different system from "is this
+new document a duplicate of anything we have". THE SECOND IS USUALLY WHAT IS ACTUALLY WANTED and it is
+easier: hash the new document's bands and look up the existing buckets.
+
+FAILURE 10 - IGNORING WHICH COPY IS THE ORIGINAL. Detecting a duplicate pair does not tell you which
+one to keep. TIMESTAMP, AUTHORITY AND ORIGINALITY SIGNALS ARE A SEPARATE PROBLEM and usually the one
+the business actually cares about.""",
+
+    """5. THE ALTERNATIVES - and when each is right
+
+EXACT HASHING (MD5/SHA of the normalised content). Free, perfect for exact duplicates, and it should
+ALWAYS be the first stage. A surprising fraction of "near" duplicates are exact after normalisation.
+
+SIMHASH. An alternative to MinHash that produces a single 64-bit fingerprint where similar documents
+have a small HAMMING DISTANCE. Google used it for web crawl deduplication.
+    ADVANTAGE: one compact fingerprint per document, and near-duplicate search becomes "find
+    fingerprints within 3 bits", which has efficient index structures.
+    VS MINHASH: SimHash approximates COSINE similarity on weighted features; MinHash approximates
+    JACCARD on sets. CHOOSE BY WHICH SIMILARITY YOU ACTUALLY MEAN.
+
+PERCEPTUAL HASHING for images and video - pHash, dHash, PhotoDNA. Robust to resizing, recompression and
+minor crops. THE RIGHT TOOL FOR MEDIA, and MinHash on pixels is not.
+
+EMBEDDINGS PLUS APPROXIMATE NEAREST NEIGHBOUR SEARCH. Encode each item with a sentence or image model
+and search the vector space with HNSW or IVF.
+    THIS IS THE ANSWER IF YOU NEED SEMANTIC SIMILARITY - paraphrases, translations, the same story in
+    different words. MinHash cannot see any of those.
+    COST: a model to run, embeddings to store and refresh, an index to maintain. And it will match
+    things that are ABOUT the same topic without being copies, which may or may not be what you want.
+
+SUFFIX AUTOMATA / SEQUENCE ALIGNMENT. Exact, precise about WHERE the overlap is, and far too slow for
+corpus-scale work. USE IT AS A VERIFICATION STEP on candidate pairs, where it is affordable.
+
+WHAT TO PROPOSE, AND IT IS A CASCADE ORDERED BY COST:
+    normalise -> exact hash (free) -> MinHash + LSH to generate candidates (cheap) -> exact Jaccard or
+    alignment on the candidates only (affordable because there are hundreds, not millions) ->
+    embeddings/ANN as a SEPARATE path if semantic duplicates are in scope.
+
+    THAT CASCADE IS THE SAME SHAPE AS RETRIEVAL-THEN-RANKING IN A RECOMMENDER AND AS THE MODERATION
+    PIPELINE: a cheap over-generous stage that must not miss anything, then an expensive precise stage
+    that only sees a small set. NAMING THAT COMMON STRUCTURE IS WORTH DOING.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHAT "DUPLICATE" MEANS HERE. Byte-identical, lexically near-identical, or semantically
+equivalent? MINHASH ANSWERS THE MIDDLE ONE ONLY, and a paraphrase requires a completely different tool.
+
+STEP 2 - ASK FOR THE SCALE AND THE MODE. n documents, and is this a one-off batch over the corpus or an
+online "is this new item a duplicate" check? The second is easier and is usually what is wanted.
+
+STEP 3 - COMPUTE THE PAIRWISE COST OUT LOUD. At a million documents that is 500 billion comparisons.
+THAT NUMBER IS THE MOTIVATION FOR EVERYTHING THAT FOLLOWS.
+
+STEP 4 - NORMALISE FIRST, THEN EXACT-HASH. Lowercase, strip punctuation, collapse whitespace, map
+homoglyphs. A surprising fraction of near-duplicates become exact.
+
+STEP 5 - SHINGLE, AND JUSTIFY k. 3 words or 5-9 characters. Too small and everything collides; too
+large and one edit destroys the match.
+
+STEP 6 - EXPLAIN MINHASH'S ONE PROPERTY: P(minhashes agree) = Jaccard, because the minimum over the
+union is equally likely to be any element, and the two agree exactly when it lies in the intersection.
+
+STEP 7 - CHOOSE b AND r FROM THE THRESHOLD USING (1/b)^(1/r), NOT BY TRIAL AND ERROR. Measured: 16
+bands x 8 rows gives a 50% point at Jaccard 0.71, which matches a 0.70 target.
+
+STEP 8 - CAP BUCKET SIZE. A boilerplate band value shared by a million documents generates a trillion
+candidate pairs on its own.
+
+STEP 9 - VERIFY EVERY CANDIDATE EXACTLY. Measured: 213 candidates instead of 5,443,350, so exact
+verification is affordable. LSH PRODUCES CANDIDATES, NOT ANSWERS.
+
+STEP 10 - DECIDE WHAT HAPPENS TO A DETECTED DUPLICATE. Which copy is the original? That is a
+timestamp-and-authority question, it is separate from detection, and it is usually what the business
+actually cares about.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd pin down what "duplicate" means, because there are three different problems. Byte-identical
+is trivial - hash it. LEXICALLY near-identical - a re-upload with the headline changed - is what
+MinHash and LSH solve. SEMANTICALLY equivalent - a paraphrase or a translation - is a completely
+different tool, embeddings and nearest-neighbour search, and MinHash cannot see it at all.
+
+Assuming the middle one, the whole difficulty is combinatorial. Comparing every pair is O(n squared) -
+at a million documents that's five hundred BILLION comparisons, and at a hundred million it's five
+quadrillion. No amount of engineering makes that work, so the entire design is about NOT doing most of
+the comparisons.
+
+Two pieces. First, MINHASH. You shingle the document into overlapping three-word groups so it becomes a
+SET, and then the natural similarity is Jaccard - intersection over union. MinHash is: pick a random
+hash function, hash every shingle, keep the MINIMUM. The property that makes it work is that the
+probability two documents' minhashes AGREE is exactly their Jaccard similarity. The proof is one line -
+look at the union of the two sets and ask which element hashes smallest; it's equally likely to be any
+element of the union, and the two minhashes agree exactly when that element is in the intersection,
+which is intersection-over-union by definition. Do that with 128 hash functions and you've compressed a
+ten-thousand-shingle document into 128 numbers.
+
+But that's still O(n squared) with a smaller constant. The second piece, LSH, removes the quadratic
+term. You split the 128-number signature into BANDS - say sixteen bands of eight rows - hash each band,
+and call two documents candidates if they collide in ANY band. Similar documents collide often;
+dissimilar ones almost never do.
+
+I measured this. Thirty-three hundred documents, so five point four million pairwise comparisons for
+brute force. Sixteen bands of eight rows produced TWO HUNDRED AND THIRTEEN CANDIDATE PAIRS - a
+reduction of more than twenty-five thousand times - while retaining 86.7 per cent of the true
+near-duplicates.
+
+And the parameter choice isn't guesswork. The probability of collision is one minus one-minus-s-to-the-r
+all to the b, which is an S-curve whose fifty per cent point sits at roughly one-over-b to the power
+one-over-r. I checked it against the measurement: sixteen by eight puts the fifty per cent point at
+Jaccard 0.71, which is why it matches a 0.70 target almost exactly. Sixty-four bands of two rows puts
+it at 0.12 and catches 97.5 per cent - at five times the runtime. Four bands of thirty-two puts it at
+0.96 and misses forty-one per cent. So you pick b and r FROM your threshold, and that's what makes LSH
+a design decision rather than a black box.
+
+Three operational things. CAP THE BUCKET SIZE - a boilerplate band value shared by a million documents
+generates a trillion candidate pairs on its own, and in my measurement I dropped any bucket over a
+hundred members. VERIFY EVERY CANDIDATE exactly, because LSH gives you candidates and not answers -
+and with two hundred and thirteen of them that's cheap. And decide which copy is the ORIGINAL, which is
+a timestamp and authority question, separate from detection, and usually what the business actually
+cares about.'""",
+
+    """8. THE PIPELINE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  n documents. BRUTE FORCE IS n(n-1)/2 COMPARISONS:                       │
+    │     3,300         ->             5,443,350                               │
+    │     1,000,000     ->       499,999,500,000                               │
+    │     100,000,000   -> 5,000,000,000,000,000                               │
+    │  >> THIS NUMBER IS THE ENTIRE MOTIVATION.                                │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 1  NORMALISE                                          ~free      │
+    │    lowercase, strip punctuation, collapse whitespace, map HOMOGLYPHS,    │
+    │    strip invisible characters. Adversaries perturb text deliberately.    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 2  EXACT HASH (SHA of the normalised text)            ~free      │
+    │    A surprising fraction of "near" duplicates are EXACT after            │
+    │    normalisation. ALWAYS DO THIS FIRST.                                  │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 3  SHINGLE -> a SET of k-grams                        cheap      │
+    │    k = 3 words, or 5-9 characters.                                       │
+    │    TOO SMALL: unrelated documents collide constantly.                    │
+    │    TOO LARGE: one changed word destroys many shingles.                   │
+    │    MEASURED at k=3 words over a 4,000-word vocabulary: background        │
+    │    Jaccard between unrelated documents was 0.0005 - well separated, and  │
+    │    that separation is what makes the task solvable.                      │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 4  MINHASH -> a 128-number signature                  cheap      │
+    │    for each of 128 random hash functions h:  sig[i] = min h(shingle)     │
+    │                                                                          │
+    │    THE PROPERTY:  P(minhash_h(A) == minhash_h(B)) = Jaccard(A,B)         │
+    │    THE PROOF: over the union A∪B, the element hashing smallest is        │
+    │    equally likely to be any element. The two minhashes agree EXACTLY     │
+    │    when that element lies in A∩B - probability |A∩B|/|A∪B|.              │
+    │                                                                          │
+    │    A 10,000-shingle document becomes 128 integers.                       │
+    │    STILL O(n^2) TO COMPARE ALL PAIRS. Stage 5 is what fixes that.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 5  LSH - split the signature into b BANDS of r ROWS               │
+    │    hash each band; two docs are CANDIDATES if they collide in ANY band   │
+    │                                                                          │
+    │    P(candidate) = 1 - (1 - s^r)^b     <- an S-CURVE in similarity s      │
+    │    50% point at approximately (1/b)^(1/r)                                │
+    │    >> CHOOSE b AND r FROM YOUR THRESHOLD. NOT BY TRIAL AND ERROR.        │
+    │                                                                          │
+    │    MEASURED, target Jaccard >= 0.70, 3,300 docs, 120 true pairs:         │
+    │      b x r     50% at    candidates    recall     ms                     │
+    │      64 x  2     0.12           272     97.5%   400.3                    │
+    │      32 x  4     0.42           213     86.7%   212.8                    │
+    │      16 x  8     0.71           213     86.7%    73.2   <- MATCHES 0.70  │
+    │       8 x 16     0.88           176     85.0%    53.9                    │
+    │       4 x 32     0.96           109     59.2%    24.4                    │
+    │                                                                          │
+    │    213 CANDIDATES vs 5,443,350 BRUTE-FORCE COMPARISONS = 25,000x         │
+    │                                                                          │
+    │    >> CAP BUCKET SIZE. A boilerplate band value in a million documents   │
+    │       yields a trillion candidate pairs by itself. I dropped buckets     │
+    │       over 100 members, and that cap is load-bearing.                    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 6  VERIFY EACH CANDIDATE EXACTLY                   affordable    │
+    │    compute the true Jaccard, or run sequence alignment to find WHERE     │
+    │    the overlap is. Cheap because there are hundreds, not millions.       │
+    │    >> LSH PRODUCES CANDIDATES, NOT ANSWERS.                              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 7  DECIDE WHAT TO DO - a SEPARATE problem                        │
+    │    which copy is the ORIGINAL? timestamp, domain authority, first-seen.  │
+    │    cluster or pair? similarity is NOT TRANSITIVE - connected components  │
+    │    will chain unrelated documents together over a long enough path.      │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE CORPUS: 3,300 documents of 80 tokens each, drawn from a 4,000-word vocabulary, shingled into 3-word
+groups. 300 near-duplicate pairs injected by copying a document and perturbing 1-12 of its words.
+
+     background Jaccard between random unrelated documents: MEAN 0.0005
+     injected pairs with true Jaccard >= 0.50:  260
+     injected pairs with true Jaccard >= 0.70:  120     <- THE TARGET
+     injected pairs with true Jaccard >= 0.80:   62
+
+    THE BACKGROUND OF 0.0005 IS WHAT MAKES THIS SOLVABLE. With a 10-word vocabulary instead of 4,000,
+    unrelated documents share most of their shingles by chance and no threshold separates signal from
+    noise. THE SHINGLE SIZE AND VOCABULARY RICHNESS TOGETHER DETERMINE WHETHER THE PROBLEM IS WELL
+    POSED AT ALL, before any algorithm is chosen.
+
+LSH WITH A 128-NUMBER SIGNATURE, targeting the 120 pairs at Jaccard >= 0.70:
+
+     bands x rows     S-curve 50% point     candidate pairs     recall     ms
+     64 x 2                        0.12                 272      97.5%    400.3
+     32 x 4                        0.42                 213      86.7%    212.8
+     16 x 8                        0.71                 213      86.7%     73.2
+     8 x 16                        0.88                 176      85.0%     53.9
+     4 x 32                        0.96                 109      59.2%     24.4
+
+     BRUTE FORCE: 5,443,350 pairwise comparisons.
+     16 x 8: 213 candidate pairs. A REDUCTION OF 25,556x.
+
+THE SHAPE TO NOTICE: recall falls slowly from 97.5% to 85.0% across the first four rows and then COLLAPSES
+to 59.2% at 4x32. That is the S-curve's 50% point (0.96) climbing past the target threshold (0.70) - once
+the curve's midpoint is above what you are looking for, you lose the pairs you came for.
+
+AND THE COST COLUMN RUNS THE OTHER WAY: 400 ms at 64x2 against 24 ms at 4x32, because more bands means
+more hashing passes and more bucket collisions to enumerate. 16x8 SITS AT THE KNEE - the same recall as
+32x4 at a third of the time.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which number:
+
+    THE 4,000-WORD VOCABULARY WITH 3-WORD SHINGLES
+            produced the 0.0005 background. An earlier version of this experiment used a 10-word
+            vocabulary, and the background similarity was high enough that LSH could not discriminate
+            at all - recall around 45% at every setting. THE CORPUS'S STATISTICS, NOT THE ALGORITHM,
+            DECIDED WHETHER IT WORKED, which is why section 6 puts "justify k" before any parameter
+            tuning.
+    PERTURBING 1-12 WORDS OUT OF 80
+            produced the spread of true Jaccards, which is why only 120 of the 300 injected pairs
+            cleared 0.70. THAT SPREAD IS DELIBERATE - a corpus where every injected pair sits at 0.95
+            would make every LSH setting look excellent.
+    b x r = 128 IN EVERY ROW
+            holds the signature length constant, so the table isolates the BANDING choice rather than
+            confounding it with signature length. More bands necessarily means fewer rows per band.
+    THE `if len(bucket) > 100: continue` CAP
+            does not appear as a column and is what stopped the whole thing from degenerating. WITHOUT
+            IT a single oversized bucket contributes O(size^2) pairs and dominates everything.
+    MEASURING RECALL AGAINST A TRUTH SET DEFINED BY EXACT JACCARD
+            is what makes the recall column meaningful. NOTE THAT PRECISION IS NOT MEASURED HERE - the
+            candidate counts include false positives, and the design handles them with the exact
+            verification stage rather than by tuning LSH tighter.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask which KIND of duplicate - exact, lexical, or semantic?
+    Did you compute the pairwise cost and use it as the motivation?
+    Can you state and justify the MinHash property in one line?
+    Do you know that b and r are chosen FROM the threshold via (1/b)^(1/r)?
+    Did you cap bucket size?
+    Did you verify candidates exactly?
+    Did you separate DETECTION from deciding which copy is the original?
+
+    THE (1/b)^(1/r) POINT IS THE STRONGEST SINGLE SIGNAL. It is the difference between having used LSH
+    and having read about it.
+
+THE #1 MISTAKE: not recognising the combinatorial problem. At a million documents, pairwise comparison
+is 500 billion operations, and that number is the whole reason the technique exists.
+
+THE #2 MISTAKE: using MinHash for SEMANTIC similarity. It finds lexical overlap only. Paraphrases,
+translations and independently-written accounts of the same event are invisible to it; that needs
+embeddings and ANN search.
+
+THE #3 MISTAKE: tuning b and r by trial and error. Measured: the S-curve's 50% point moves from Jaccard
+0.12 to 0.96 across four settings, and the formula predicts it.
+
+THE #4 MISTAKE: not capping bucket size. One boilerplate band value in a million documents yields a
+trillion candidate pairs on its own.
+
+THE #5 MISTAKE: treating LSH output as answers. It produces CANDIDATES. Measured: 213 of them, which
+makes exact verification trivially affordable.
+
+THE #6 MISTAKE: a bad shingle size. Measured: with a small vocabulary the background Jaccard swamps the
+signal and no setting works. The corpus statistics decide whether the problem is well posed.
+
+THE #7 MISTAKE: assuming transitivity. A~B and B~C does not give A~C, and connected-component
+clustering will chain unrelated documents together.
+
+THE #8 MISTAKE: skipping normalisation and exact hashing. Both are free and a real fraction of near
+duplicates are exact once normalised.
+
+THE #9 MISTAKE: ignoring adversaries. Homoglyphs, invisible characters and synonym substitution are
+deliberate attacks on exactly this pipeline.
+
+THE #10 MISTAKE: stopping at detection. Which copy is the original is a timestamp-and-authority
+question, it is separate, and it is usually what the business actually wants.
+
+ONE-SENTENCE TAKEAWAY: near-duplicate detection is a combinatorial problem - 500 billion pairwise
+comparisons at a million documents - solved by MinHash (whose signatures agree with probability exactly
+equal to the Jaccard similarity) followed by LSH banding, which measured took 5,443,350 brute-force
+comparisons down to 213 candidate pairs at 86.7% recall, a 25,000x reduction - and the parameters are
+not guessed but derived, since b bands of r rows puts the detection S-curve's midpoint at (1/b)^(1/r),
+which is why 16x8 gives 0.71 and matches a 0.70 threshold almost exactly.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
