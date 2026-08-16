@@ -10407,3 +10407,1077 @@ and why a million numbers cost 4 MB contiguous as an `int[]` and about 20 MB sca
 `List<Integer>` — five times the memory in a shape that turns a prefetched sequential scan into a
 dependent cache miss per element.""",
 ]
+
+
+DEEP["Static nested vs inner class — and the memory leak the inner one causes"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — one keyword, and a hidden reference
+
+You can declare a class inside another class. If you write `static` in front of it, you get a STATIC
+NESTED CLASS. If you leave `static` off, you get an INNER CLASS. They look nearly identical in source
+and they are fundamentally different objects.
+
+    A STATIC NESTED CLASS IS JUST A TOP-LEVEL CLASS THAT LIVES IN ANOTHER CLASS'S NAMESPACE. It knows
+    nothing about any instance of the outer class. You create one with `new Outer.Nested()`, and it has
+    no more connection to an `Outer` object than any unrelated class would.
+
+    AN INNER CLASS SECRETLY HOLDS A REFERENCE TO THE OUTER INSTANCE THAT CREATED IT. The compiler adds
+    a hidden field — conventionally named `this$0` — and a hidden constructor parameter to pass it in.
+    That is how `inner.someOuterMethod()` works without you writing anything: it is really
+    `this$0.someOuterMethod()`.
+
+    ONE KEYWORD ADDS A REFERENCE TO ANOTHER OBJECT, AND THE SOURCE CODE DOES NOT SHOW IT.
+
+    AND THAT REFERENCE IS THE MEMORY LEAK. As long as ANYTHING holds your inner-class instance, the
+    entire outer object — and everything IT references — cannot be collected. Hand a short-lived inner
+    class to a long-lived registry, executor or timer, and you have pinned an object graph you never
+    meant to keep.
+
+THE EVERYDAY VERSION: two kinds of note in a filing cabinet. One is a standalone note that happens to be
+filed under "Projects". The other is a sticky note attached to a specific 200-page dossier — pick up
+the sticky note and the whole dossier comes with it, because it is stuck to it. If someone pins that
+sticky note to a noticeboard for a year, the dossier hangs there too.
+
+TERMS AS THEY APPEAR:
+- ENCLOSING INSTANCE: the outer object an inner class instance belongs to.
+- `this$0`: the compiler-generated field holding it. Visible in a heap dump; invisible in source.
+- LOCAL CLASS: a class declared inside a method.
+- ANONYMOUS CLASS: a class declared and instantiated in one expression — `new Runnable() { ... }`.""",
+
+"""2. THE INTUITION — four kinds of nested class, and one rule
+
+JAVA HAS FOUR, and they differ in exactly one dimension: WHAT DOES EACH ONE CAPTURE?
+
+    STATIC NESTED    captures NOTHING. `static class Node { ... }`
+    INNER            captures the ENCLOSING INSTANCE. `class Node { ... }`
+    LOCAL            captures the enclosing instance (if in an instance context) AND the effectively
+                     final local variables it uses.
+    ANONYMOUS        the same as local, declared and instantiated in one expression.
+
+    THE RULE THAT FOLLOWS IS EFFECTIVE JAVA ITEM 24, AND IT IS ABOUT AS UNAMBIGUOUS AS ADVICE GETS:
+    IF A MEMBER CLASS DOES NOT NEED ACCESS TO AN ENCLOSING INSTANCE, ALWAYS DECLARE IT `static`.
+
+    Because a non-static one costs a reference field per instance, costs the memory of everything
+    reachable through it, and prevents the outer object from ever being collected while any inner
+    instance is alive. YOU PAY ALL THREE FOR A CAPABILITY YOU ARE NOT USING.
+
+THE JDK FOLLOWS ITS OWN ADVICE, AND THE PAIR OF CHOICES IT MADE IS THE BEST ILLUSTRATION OF THE TEST.
+`HashMap.Node`, `HashMap.TreeNode`, `ConcurrentHashMap.Node` and `AbstractMap.SimpleEntry` are all
+`static`, because a map entry does not need to know which map it came from — and a `HashMap` with a
+million entries would otherwise carry a million redundant back-pointers to the same object. But
+`ArrayList.Itr` is deliberately INNER, because an iterator genuinely must see the list's `modCount` and
+`elementData`, and there is one of it at a time.
+
+    THAT IS THE TEST TO APPLY: DOES AN INSTANCE OF THIS CLASS GENUINELY NEED TO REACH BACK? An iterator
+    does. A node does not. A builder does not. A comparator does not.
+
+WHY LOCAL VARIABLES MUST BE "EFFECTIVELY FINAL" — the reason is mechanical, not stylistic:
+
+    Java does NOT close over the variable; it COPIES THE VALUE into a synthetic field of the inner
+    class instance. So the inner class and the method now hold two separate copies. If the method
+    changed its copy afterwards, the two would silently diverge and nobody could say which one was
+    "the" value.
+
+    OTHER LANGUAGES CHOSE DIFFERENTLY. JavaScript closures capture the VARIABLE, so a loop that creates
+    closures over `i` famously gives every closure the final value. Java's copy-by-value semantics make
+    that class of bug impossible — at the cost of forbidding mutation, which is why the workaround is a
+    one-element array or an `AtomicInteger`.
+
+LAMBDAS ARE NOT INNER CLASSES, AND THE DIFFERENCE IS WORTH KNOWING:
+
+    Inside an anonymous class, `this` refers to THE ANONYMOUS INSTANCE. Inside a lambda, `this` refers
+    to the ENCLOSING instance — lambdas do not introduce a new scope for `this`, `super` or names.
+    A NON-CAPTURING LAMBDA IS INSTANTIATED ONCE and reused; an anonymous class allocates a new object
+    every time the expression is evaluated.
+    But a lambda that DOES reference an instance member captures `this` just as firmly, so it leaks
+    exactly the same way. LAMBDAS ARE NOT A CURE FOR THIS LEAK — they just make it easier to miss.""",
+
+"""3. THE MECHANISM — what the compiler generates, and where the leak shows up
+
+WHAT `javac` ACTUALLY EMITS for an inner class:
+
+    class Outer$Inner {
+        final Outer this$0;                        // ← the hidden field
+        Outer$Inner(Outer outer) { this$0 = outer; }  // ← the hidden parameter
+        void doThing() { this$0.outerMethod(); }   // ← how "implicit" access works
+    }
+
+    Writing `new Inner()` inside an instance method compiles to `new Outer$Inner(this)`. From OUTSIDE
+    the outer class you must write the strange-looking `outer.new Inner()`, because an enclosing
+    instance is REQUIRED and there is nowhere else to get one. THAT SYNTAX IS THE LANGUAGE TELLING YOU
+    THE DEPENDENCY EXISTS.
+
+    A static nested class compiles to `Outer$Nested` with no extra field and no extra parameter.
+
+WHERE THE COST LANDS:
+    MEMORY PER INSTANCE: one reference — 4 bytes with compressed pointers. Trivial on its own, and
+    material when there are millions (which is precisely why `HashMap.Node` is static).
+    RETAINED MEMORY: unbounded. The inner instance keeps the outer object alive, and the outer object
+    keeps alive everything IT references. A 4-byte field can retain 200 MB.
+    SERIALIZATION: serializing an inner class instance drags the outer object in too — and if the outer
+    class is not `Serializable`, you get `NotSerializableException` naming a class you never tried to
+    serialize.
+
+THE LEAK PATTERN, IN ITS THREE COMMONEST FORMS:
+
+    A LISTENER OR CALLBACK. `registry.add(new Listener() { ... })` inside an instance method captures
+    the enclosing object. The registry lives for the life of the application. So does the enclosing
+    object.
+    A `Runnable` OR `TimerTask` HANDED TO AN EXECUTOR. If the task is scheduled at a fixed rate, the
+    executor holds it forever.
+    A `Thread` SUBCLASS OR A NON-STATIC `Handler`. The canonical Android bug: an inner `Handler`
+    holding an `Activity`, keeping an entire screen's view hierarchy and bitmaps alive across rotations.
+    THIS IS THE SINGLE MOST COMMON MEMORY LEAK IN THE HISTORY OF ANDROID, and it is one missing
+    `static`.
+
+HOW YOU SEE IT: in a heap dump, open the DOMINATOR TREE and look at what retains the outer object. The
+path will read `... → Outer$1 → this$0 → Outer`. THE `this$0` EDGE IN A RETENTION PATH IS THE
+DIAGNOSIS — once you have seen it once, you recognise it instantly.
+
+NESTMATES (Java 11, JEP 181), for completeness: nested classes have always been able to touch each
+other's `private` members, but the JVM had no concept of nesting, so `javac` generated SYNTHETIC
+package-private bridge methods (`access$000`) to make it work. Java 11 gave the class file `NestHost`
+and `NestMembers` attributes, so the JVM enforces it directly and the synthetic accessors disappeared.
+This is why old decompiled code is full of `access$000` calls and modern code is not.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — A NON-STATIC LISTENER REGISTERED WITH A LONG-LIVED REGISTRY. The enclosing object and its
+entire graph live for the application's lifetime. The most common instance of this bug class.
+
+CASE 2 — AN INNER `Runnable` SUBMITTED TO A SCHEDULED EXECUTOR. Held until the schedule is cancelled,
+which is usually never.
+
+CASE 3 — AN INNER CLASS RETURNED FROM A FACTORY. The caller has no idea they are holding the factory
+too, and neither does the review.
+
+CASE 4 — SERIALIZING AN INNER CLASS. The outer instance is serialized as well, or you get
+`NotSerializableException` naming a class you never mentioned.
+
+CASE 5 — MILLIONS OF INNER-CLASS INSTANCES. One redundant reference each. This is exactly why
+`HashMap.Node` is `static` and why the JDK is careful about it everywhere.
+
+CASE 6 — `outer.new Inner()` FROM OUTSIDE. The syntax is unfamiliar enough that people conclude the API
+is broken. It is the language insisting an enclosing instance exists.
+
+CASE 7 — `this` INSIDE AN ANONYMOUS CLASS MEANING THE ANONYMOUS INSTANCE. To reach the outer one you
+need `Outer.this`. Inside a LAMBDA, `this` already means the outer instance — the two read identically
+and mean different things.
+
+CASE 8 — A LAMBDA THAT CAPTURES `this`. `() -> this.field` or, more subtly, `() -> field` and
+`this::method` — all capture the enclosing instance and leak exactly like an inner class. LAMBDAS ARE
+NOT A FIX.
+
+CASE 9 — CAPTURING A LOCAL AND EXPECTING TO MUTATE IT. Captured locals are COPIED, so they must be
+effectively final. The array-of-one workaround works and signals that the design wants a different
+shape.
+
+CASE 10 — A NESTED CLASS THAT NEEDS ITS OWN STATIC FIELDS. Before Java 16, a non-static inner class
+could not declare `static` members other than constants at all — a genuine source of "why won't this
+compile".
+
+CASE 11 — REFLECTION AND FRAMEWORKS. An inner class has no no-argument constructor from the JVM's point
+of view; its constructor takes the enclosing instance. Frameworks that instantiate reflectively
+(Jackson, JPA, JUnit parameter resolvers) fail on inner classes and work on static nested ones.
+
+CASE 12 — ANONYMOUS CLASSES IN A LOOP. Each evaluation allocates a new object. A NON-CAPTURING lambda in
+the same position is instantiated once and reused.
+
+CASE 13 — DEBUGGING NAMES. `Outer$1`, `Outer$2` in stack traces and heap dumps tell you nothing about
+which anonymous class it is. A named static nested class costs nothing and is greppable.""",
+
+"""5. THE ALTERNATIVES — what to use instead of an inner class
+
+`static` NESTED, ALMOST ALWAYS. The default for any helper type that belongs to a class conceptually
+but does not need to reach back: `Builder`, `Node`, `Entry`, `Config`, a `Comparator`, a result holder.
+ADD THE KEYWORD UNLESS YOU CAN NAME WHAT THE INSTANCE NEEDS FROM THE OUTER OBJECT.
+
+PASS WHAT YOU NEED EXPLICITLY. If the nested class needs three fields from the outer object, take them
+as constructor parameters. Now the dependency is visible, testable in isolation, and it retains three
+fields rather than an entire object graph.
+
+A `record` FOR DATA CARRIERS. `record Point(int x, int y) { }` nested inside a class is implicitly
+static, gives you `equals`/`hashCode`/`toString`, and cannot accidentally capture anything.
+
+A LAMBDA OR METHOD REFERENCE for a single-method callback — but ONLY IF IT DOES NOT CAPTURE `this`. A
+lambda referencing no instance state compiles to a static method, is instantiated once, and retains
+nothing. One that touches an instance field leaks identically to an inner class.
+
+A WEAK REFERENCE, when a callback genuinely must be able to reach a long-lived owner:
+`WeakReference<Activity>` inside a STATIC nested class is the standard Android fix — the callback can
+still find its owner while the owner is alive, and does not prevent it from dying.
+
+EXPLICIT DEREGISTRATION. The real fix for listener leaks is usually not weak references but symmetry:
+whatever registered must unregister, in a `close()` or a lifecycle callback. try-with-resources makes
+that structural.
+
+A TOP-LEVEL CLASS. If a nested class is more than a screenful, or is used by more than its enclosing
+class, it should probably not be nested at all. Nesting is for types that are an implementation detail
+of exactly one class.
+
+NESTED ENUMS, INTERFACES AND RECORDS ARE IMPLICITLY `static` — you cannot make them inner even by
+accident, which is a hint about which default the language designers came to prefer.
+
+WHAT TO SAY: "`static` on every nested class unless the instance genuinely needs the enclosing one — an
+iterator does, a node or a builder does not. The non-static version adds a hidden `this$0` field, so
+handing one to a listener registry or a scheduled executor pins the entire enclosing object graph, and
+in a heap dump you see it as a `this$0` edge in the retention path. And a lambda that touches an
+instance field captures `this` just as firmly, so it is not a cure."
+
+""",
+
+"""6. HOW TO DECIDE AND HOW TO DIAGNOSE — numbered steps
+
+STEP 1 — ASK: DOES AN INSTANCE OF THIS CLASS NEED TO REACH THE OUTER OBJECT? If you cannot name what it
+needs, write `static`.
+
+STEP 2 — DEFAULT TO `static` AND REMOVE IT ONLY WHEN THE COMPILER FORCES YOU. The error will name the
+member you are reaching for, which is exactly the justification you were asked for in step 1.
+
+STEP 3 — IF IT NEEDS TWO OR THREE VALUES, PASS THEM IN. Constructor parameters make the dependency
+visible and retain three fields instead of a whole graph.
+
+STEP 4 — NEVER HAND A NON-STATIC NESTED INSTANCE TO SOMETHING LONGER-LIVED THAN THE OUTER OBJECT.
+Registries, executors, timers, caches, static collections.
+
+STEP 5 — TREAT A CAPTURING LAMBDA THE SAME WAY. `() -> field` and `this::method` capture `this`.
+
+STEP 6 — MAKE REGISTRATION SYMMETRIC. Whatever adds a listener must remove it, ideally via
+try-with-resources or an explicit lifecycle hook.
+
+STEP 7 — USE A STATIC NESTED CLASS PLUS A `WeakReference` when a callback must reach a long-lived owner
+it should not keep alive.
+
+STEP 8 — PREFER A NAMED STATIC NESTED CLASS OVER AN ANONYMOUS ONE for anything non-trivial. `Outer$1` in
+a stack trace tells you nothing.
+
+STEP 9 — USE A `record` FOR NESTED DATA CARRIERS. Implicitly static, with value semantics for free.
+
+STEP 10 — IF A FRAMEWORK CANNOT INSTANTIATE YOUR NESTED CLASS, CHECK FOR THE MISSING `static`. An inner
+class has no no-arg constructor as far as reflection is concerned.
+
+STEP 11 — WHEN DIAGNOSING A LEAK, OPEN THE DOMINATOR TREE AND LOOK FOR A `this$0` EDGE. It is the
+single most recognisable retention path in Java.
+
+STEP 12 — IF THE NESTED CLASS IS LONGER THAN A SCREEN OR USED ELSEWHERE, PROMOTE IT TO TOP LEVEL.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'A static nested class is just a top-level class living in another class's namespace. It knows nothing
+about any instance of the outer class. An inner class — the same declaration with `static` left off —
+secretly holds a reference to the outer instance that created it. The compiler adds a hidden field,
+conventionally called this$0, and a hidden constructor parameter to pass it in. That's how calling an
+outer method from inside works without writing anything: it's really this$0.outerMethod().
+
+So one keyword adds a reference to another object, and the source doesn't show it.
+
+And that reference is the memory leak. As long as anything holds your inner-class instance, the entire
+outer object — and everything IT references — can't be collected. Hand a short-lived inner class to a
+listener registry, an executor or a timer, and you've pinned an object graph you never meant to keep.
+The canonical case is Android: a non-static Handler holding an Activity keeps an entire screen's view
+hierarchy and bitmaps alive across rotations. That's probably the most common memory leak in the
+history of the platform, and it's one missing `static`.
+
+The rule I'd state is Effective Java Item 24, and it's about as unambiguous as advice gets: if a member
+class doesn't need access to an enclosing instance, ALWAYS declare it static. Because otherwise you pay
+a reference field per instance, you pay the retained memory of everything reachable through it, and you
+prevent collection — all for a capability you're not using.
+
+The JDK follows its own advice, and that's the best evidence for the test to apply. HashMap.Node,
+TreeNode, ConcurrentHashMap.Node, AbstractMap.SimpleEntry — all static, because a map entry doesn't need
+to know which map it came from, and a million-entry HashMap would otherwise carry a million redundant
+back-pointers. But ArrayList's iterator IS an inner class, deliberately, because an iterator genuinely
+must see the list's modCount and elementData. So the test is: does an instance need to reach back? An
+iterator does. A node, a builder, a comparator doesn't.
+
+Two related things worth knowing. Captured LOCAL variables must be effectively final for a mechanical
+reason, not a stylistic one: Java doesn't close over the variable, it COPIES the value into a synthetic
+field. So the method and the inner class hold two separate copies, and if the method changed its copy
+they'd silently diverge. JavaScript captures the variable instead, which is why the classic loop-closure
+bug exists there and can't here.
+
+And lambdas are not a cure. Inside an anonymous class, `this` means the anonymous instance; inside a
+lambda it means the ENCLOSING instance, because lambdas don't introduce a new scope for `this`. A
+non-capturing lambda is instantiated once and retains nothing. But a lambda that touches an instance
+field — even just `() -> field`, or a `this::method` reference — captures `this` just as firmly and
+leaks identically. It's just easier to miss.
+
+When I'm diagnosing one, I take a heap dump and read the dominator tree looking for a this$0 edge in the
+retention path. Once you've seen that once you recognise it instantly.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── ONE KEYWORD, TWO DIFFERENT OBJECTS ──────────────────────────────
+    class Outer {
+        private int value = 42;
+        static class Nested { void f() { /* cannot see `value` */ } }
+        class Inner       { void f() { System.out.println(value); } }
+    //  ^ no `static`                                   ^^^^^ this compiles to
+    //                                                  this$0.value
+    }
+    new Outer.Nested();                // fine — no enclosing instance needed
+    new Outer().new Inner();           // ← the strange syntax IS the language telling
+    //                                    you an enclosing instance is REQUIRED
+
+    // ── WHAT javac ACTUALLY GENERATES ───────────────────────────────────
+    class Outer$Inner {
+        final Outer this$0;                          // ← THE HIDDEN FIELD
+        Outer$Inner(Outer outer) { this$0 = outer; } // ← THE HIDDEN PARAMETER
+        void f() { System.out.println(this$0.value); }
+    }
+    // 4 bytes with compressed pointers. Trivial per instance. UNBOUNDED in what it
+    // RETAINS — that 4-byte field can hold 200 MB alive.
+
+    // ── THE LEAK ────────────────────────────────────────────────────────
+    class Screen {                          // holds 50 MB of cached view state
+        void start() {
+            EventBus.register(new Listener() {       // ← ANONYMOUS = INNER
+                public void onEvent(Event e) { redraw(); }
+    //                                          ^^^^^^ an instance method, so this$0
+    //          is captured. The EventBus is static and lives forever. THEREFORE SO
+    //          DOES THIS Screen AND ITS 50 MB.
+            });
+        }
+    }
+    class Screen {                                    // ← the fix
+        static class Handler implements Listener {    // ← STATIC: no this$0 at all
+            private final WeakReference<Screen> ref;
+            Handler(Screen s) { this.ref = new WeakReference<>(s); }
+            public void onEvent(Event e) {
+                Screen s = ref.get();                 // may be null — and that is
+                if (s != null) s.redraw();            // exactly the point
+            }
+        }
+    }
+
+    // ── LAMBDAS ARE NOT A CURE ──────────────────────────────────────────
+    executor.submit(() -> System.out.println("hi"));   // captures NOTHING. Compiled
+    //                                                    to a static method,
+    //                                                    instantiated ONCE, reused.
+    executor.submit(() -> redraw());                   // ← CAPTURES `this`. Leaks
+    executor.submit(this::redraw);                     // ← CAPTURES `this`. Leaks
+    executor.submit(() -> System.out.println(field));  // ← CAPTURES `this`. Leaks
+    //   All three read as "just a lambda". Two of them pin the enclosing object.
+
+    // ── `this` MEANS DIFFERENT THINGS ───────────────────────────────────
+    new Runnable() { public void run() {
+        System.out.println(this);          // ← the ANONYMOUS instance
+        System.out.println(Outer.this);    // ← the enclosing one
+    }};
+    Runnable r = () -> System.out.println(this);   // ← the ENCLOSING instance.
+    //   Lambdas do not introduce a new scope for `this`, `super` or names.
+
+    // ── WHY CAPTURED LOCALS MUST BE EFFECTIVELY FINAL ───────────────────
+    void f() {
+        int count = 0;
+        Runnable r = () -> System.out.println(count);   // ✓ effectively final
+        count++;                                        // ✗ NOW IT DOES NOT COMPILE
+    //  ^ Java COPIES the value into a synthetic field. The method and the lambda
+    //    would hold two separate copies and diverge silently. (JavaScript captures
+    //    the VARIABLE instead — which is why its loop-closure bug exists and Java's
+    //    cannot.)
+        int[] box = {0};
+        Runnable r2 = () -> box[0]++;      // the workaround: the ARRAY reference is
+    }                                      // final; its contents are not.
+
+    // ── AND WHAT THE JDK ITSELF DOES ────────────────────────────────────
+    static class Node<K,V> { ... }         // HashMap.Node — STATIC. A million entries
+    //                                        would otherwise carry a million
+    //                                        redundant back-pointers to the map.
+    private class Itr implements Iterator  // ArrayList.Itr — INNER, deliberately: an
+    //                                        iterator genuinely needs modCount and
+    //                                        elementData. THAT is the test.""",
+
+"""9. THE TRACE — one missing keyword, followed through a heap dump
+
+THE SETUP: a `Screen` object holding 50 MB of cached bitmaps registers a listener at startup and is then
+discarded. This repeats every time the user navigates.
+
+    WITH AN ANONYMOUS (INNER) LISTENER
+    step  what happens                                   what is reachable
+    ---------------------------------------------------------------------------------
+    1     new Screen() — 50 MB of state                   Screen, from a local
+    2     EventBus.register(new Listener(){...})          the listener is now in a
+          → compiles to new Screen$1(this)                STATIC list
+    3     the user navigates away; every local             Screen has NO local
+          reference to Screen is dropped                   references left
+    4     GC runs                                          EventBus (static, a ROOT)
+                                                           → listener list
+                                                           → Screen$1
+                                                           → this$0
+                                                           → SCREEN. STILL ALIVE.
+    5     repeat 20 times                                  1 GB retained, 20 dead
+                                                           Screens, OutOfMemoryError
+    ---------------------------------------------------------------------------------
+    EVERY STEP IS CORRECT. The GC is doing exactly its job: `Screen` is REACHABLE. Nothing in the source
+    of step 2 mentions `Screen` at all — the reference was added by the compiler.
+
+    THE HEAP DUMP, dominator tree:
+        EventBus                        retained: 1,048 MB
+          └─ ArrayList                  retained: 1,048 MB
+             └─ Screen$1                retained:    52 MB
+                └─ this$0 → Screen      retained:    52 MB   ← THE DIAGNOSIS
+                   └─ Bitmap[]          retained:    50 MB
+    ---------------------------------------------------------------------------------
+    THE `this$0` EDGE IS THE WHOLE ANSWER, and it appears in no source file. Once you have seen this
+    shape once you recognise it in seconds; until then it is baffling, because the retained object
+    appears in a path that mentions a class you never wrote.
+
+    WITH A STATIC NESTED LISTENER HOLDING A WeakReference
+    step  what happens                                   what is reachable
+    ---------------------------------------------------------------------------------
+    1-3   identical                                       —
+    4     GC runs                                          EventBus → list → Handler
+                                                           → WeakReference → (weak)
+                                                           SCREEN IS COLLECTED
+    5     the next event arrives; ref.get() is null;       the Handler itself is a few
+          the handler does nothing and can deregister      bytes and can be cleaned up
+    ---------------------------------------------------------------------------------
+    50 MB freed per navigation. Same registry, same lifetime, same event flow.
+
+NOW THE LAMBDA TRACE, which is the version people believe is safe:
+
+    expression                          captures            allocated
+    ---------------------------------------------------------------------------------
+    () -> System.out.println("hi")      NOTHING              ONCE, then reused —
+                                                             compiled to a static
+                                                             method, and the metafactory
+                                                             caches the instance
+    () -> System.out.println(x)         x (a local COPY)     per evaluation
+    where x is an effectively final local
+    () -> redraw()                      `this`               per evaluation, AND PINS
+                                                             THE ENCLOSING OBJECT
+    this::redraw                        `this`               same as above
+    () -> field                         `this`               same as above — reading a
+                                                             field is really this.field
+    ---------------------------------------------------------------------------------
+    ROWS 3, 4 AND 5 LEAK EXACTLY LIKE AN INNER CLASS, and all five read as "just a lambda". Row 5 is the
+    subtlest: there is no `this` written anywhere in it.
+
+AND THE PER-INSTANCE COST, at scale:
+
+    structure                                     extra memory
+    ---------------------------------------------------------------------------------
+    HashMap with 1,000,000 entries, Node STATIC    0
+    the same with Node as an INNER class           1,000,000 × 4 bytes = 4 MB of
+                                                   back-pointers, every one of them
+                                                   pointing at the SAME map
+    ---------------------------------------------------------------------------------
+    Which is why `HashMap.Node` is static and `ArrayList.Itr` is not: there is one iterator at a time
+    and it genuinely needs the list, while there are a million nodes and not one of them needs anything.
+
+WHAT PRODUCED WHAT:
+    THE HIDDEN this$0 FIELD    produced the retention path, the OutOfMemoryError, and the 4 MB.
+    REACHABILITY, NOT USE      produced "the GC is correct at every step" — see the GC entry.
+    LEXICAL `this` IN LAMBDAS  produced rows 3–5 of the lambda table, and therefore produced the belief
+                               that lambdas fixed this.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Static nested: no extra field, no extra constructor parameter, instantiable with `new Outer.Nested()`.
+    Inner: one reference field (`this$0`, 4 bytes compressed) and a hidden constructor parameter;
+    instantiable only as `outer.new Inner()`.
+    RETAINED memory from that 4-byte field: unbounded — everything the outer object reaches.
+    Non-capturing lambda: compiled to a static method, instantiated once, retains nothing.
+    Capturing lambda or anonymous class: a new object per evaluation.
+    Nested enums, interfaces and records are IMPLICITLY static.
+    Java 11 nestmates removed the synthetic `access$000` bridge methods javac used to generate.
+
+THE #1 MISTAKE: omitting `static` on a nested class that does not need the enclosing instance. Effective
+Java Item 24, and the fix is one keyword.
+
+THE #2 MISTAKE: handing a non-static nested instance to a longer-lived owner — a registry, an executor,
+a timer, a static collection. The enclosing object graph is now pinned.
+
+THE #3 MISTAKE: believing a lambda cannot leak. `() -> field` and `this::method` capture `this` exactly
+as firmly as an anonymous class.
+
+THE #4 MISTAKE: assuming `this` inside an anonymous class is the outer object. It is the anonymous
+instance; you need `Outer.this`. Inside a lambda it IS the outer object — the same word, two meanings.
+
+THE #5 MISTAKE: expecting to mutate a captured local. Java copies the value, so it must be effectively
+final. The one-element array works and signals a design that wants a different shape.
+
+THE #6 MISTAKE: serializing an inner class. The outer instance goes too, or you get
+`NotSerializableException` naming a class you never mentioned.
+
+THE #7 MISTAKE: an inner class where a framework will instantiate reflectively. There is no no-arg
+constructor; the real one takes the enclosing instance.
+
+THE #8 MISTAKE: millions of inner-class instances. One redundant pointer each, all pointing at the same
+object.
+
+THE #9 MISTAKE: anonymous classes for anything non-trivial. `Outer$1` in a stack trace or heap dump is
+unidentifiable; a named static nested class is greppable and costs nothing.
+
+THE #10 MISTAKE: relying on weak references instead of deregistering. The real fix for a listener leak
+is symmetry — whatever registered must unregister.
+
+THE #11 MISTAKE: keeping a large nested class nested. If it exceeds a screen or is used elsewhere, it
+is a top-level class.
+
+ONE-SENTENCE TAKEAWAY: leaving `static` off a nested class makes the compiler add a hidden `this$0`
+field holding the enclosing instance — which is how implicit access to the outer object works, and which
+means any longer-lived thing holding that inner instance (a listener registry, a scheduled executor, a
+static collection) keeps the ENTIRE outer object graph alive, with the GC behaving perfectly correctly
+because reachable is not the same as needed; declare every nested class `static` unless you can name
+what the instance needs from its enclosing one (an iterator can, a `HashMap.Node` cannot, which is
+exactly how the JDK declares each), remember that a lambda touching any instance member — even bare
+`field` — captures `this` just as firmly, and when diagnosing a leak look for the `this$0` edge in the
+dominator tree, because it is the most recognisable retention path in Java and it appears in no source
+file.""",
+]
+
+
+DEEP["var, records, sealed, text blocks — what Java 10-21 actually changed"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — Java spent a decade deleting ceremony
+
+Java 8 (2014) was the last release most people learned properly. Java 11, 17 and 21 are the long-term
+releases since, and the changes fall into two groups: ONE that removes typing, and THREE that together
+add a genuinely new way to model data.
+
+    `var` (JAVA 10) — write `var map = new HashMap<String, List<Integer>>()` instead of saying the type
+    twice. IT IS NOT DYNAMIC TYPING. The type is fixed at compile time and is exactly what it would
+    have been; you just did not have to write it.
+
+    `record` (JAVA 16) — `record Point(int x, int y) { }` gives you a constructor, accessors, `equals`,
+    `hashCode` and `toString`, all correct, in one line. It replaces the sixty-line data class that
+    everyone generated with an IDE and then never maintained.
+
+    `sealed` (JAVA 17) — `sealed interface Shape permits Circle, Square` declares a CLOSED set of
+    subtypes. The compiler now knows every possible implementation.
+
+    PATTERN MATCHING FOR `switch` (JAVA 21) — switch on the TYPE, destructure the record's components
+    inline, and the compiler checks EXHAUSTIVENESS.
+
+    THOSE LAST THREE ARE ONE FEATURE. Sealed types say what the alternatives are; records say what each
+    alternative carries; pattern matching takes them apart and forces you to handle every case. Together
+    they are ALGEBRAIC DATA TYPES, which functional languages have had for forty years, and they let you
+    model "this is one of exactly these shapes" with the compiler enforcing it.
+
+    TEXT BLOCKS (JAVA 15) are a smaller thing: multi-line string literals with the incidental
+    indentation removed, so embedded SQL and JSON stop being a wall of `\\n` and escaped quotes.
+
+THE EVERYDAY VERSION: `var` is not repeating "chocolate cake" on both the order slip and the box.
+Records are a pre-printed form instead of writing the same six fields by hand every time. Sealed types
+plus pattern matching are a checklist where the form itself tells you which boxes exist — and refuses to
+be filed until every one is ticked.
+
+TERMS AS THEY APPEAR:
+- TYPE INFERENCE: the compiler working out a type you did not write.
+- EXHAUSTIVE: covering every possible case, checked by the compiler.
+- DECONSTRUCTION PATTERN: pulling a record's components out as part of a match.""",
+
+"""2. THE INTUITION — why these four, and why now
+
+`var` — THE POINT IS NOT BREVITY, IT IS THE SIGNAL-TO-NOISE RATIO ON THE LEFT-HAND SIDE.
+
+    Map<String, List<Order>> ordersByCustomer = new HashMap<String, List<Order>>();
+
+    The type is written twice and neither copy is where your eye goes. `var` deletes the copy that adds
+    nothing. THE RULE THAT MAKES IT SAFE: use `var` when the RIGHT-HAND SIDE ALREADY TELLS YOU THE TYPE.
+    `var list = new ArrayList<String>()` is obvious; `var result = process(input)` is not, and there
+    `var` costs the reader something.
+
+    IT IS STATICALLY TYPED. `var x = "hello"` makes `x` a `String` forever; `x = 5` is a compile error.
+    It is confined to LOCAL variables with an initialiser, for-loop variables and try-with-resources —
+    never fields, parameters or return types, because those are API surface and inference there would
+    make a caller's contract depend on a method body.
+
+`record` — THE POINT IS THAT THE COMPILER CAN NOW SEE THE STATE.
+
+    A hand-written data class is sixty lines in which the fields, the constructor, the accessors,
+    `equals`, `hashCode` and `toString` all say the same thing, and any of them can drift out of sync.
+    ADD A FIELD AND FORGET TO ADD IT TO `equals` AND YOU HAVE A SILENT BUG that a `HashSet` will
+    eventually reveal.
+
+    A record declares the state ONCE, in the header, and everything else is derived. It is a
+    "transparent carrier for its data" — the language's phrase — and transparency is what lets pattern
+    matching deconstruct it later. THAT IS WHY RECORDS AND PATTERN MATCHING ARRIVED TOGETHER.
+
+`sealed` — THE POINT IS EXHAUSTIVENESS, WHICH POLYMORPHISM NEVER GAVE YOU.
+
+    Traditional advice says put behaviour in the subclasses and use dynamic dispatch. That works when
+    the behaviour belongs to the type. It fails when you need to add an OPERATION over a fixed set of
+    types you do not control the shape of, or when the operation belongs to another module — the classic
+    "expression problem". The alternative was a chain of `instanceof`, which nothing checks.
+
+    A sealed hierarchy lets the compiler know the full list, so a `switch` over it can be checked for
+    completeness. ADD A NEW SUBTYPE AND EVERY INCOMPLETE SWITCH IN THE CODEBASE FAILS TO COMPILE. That
+    is a guarantee virtual dispatch cannot offer, and it is the whole reason to reach for this instead
+    of an abstract method.
+
+TEXT BLOCKS — THE POINT IS THE INDENTATION ALGORITHM, NOT THE TRIPLE QUOTES. Java computes the minimum
+indentation across all non-blank lines AND the closing delimiter, and strips exactly that much. So the
+literal stays aligned with your code and the string contains no leading spaces. MOVING THE CLOSING
+DELIMITER CHANGES THE CONTENT, which is the one thing to remember.""",
+
+"""3. THE MECHANISM — what each one actually compiles to
+
+`var`: PURE COMPILE-TIME. The class file contains the inferred type; there is no runtime component and
+no reflection difference. Two subtleties:
+
+    IT INFERS THE MOST SPECIFIC TYPE, INCLUDING TYPES YOU CANNOT WRITE. `var x = new Object() { int n =
+    1; };` gives `x` an anonymous class type, so `x.n` compiles — something impossible to declare
+    explicitly. Likewise it can infer intersection types.
+    IT NEEDS AN INITIALISER AND CANNOT BE `null`. `var x;` and `var x = null;` do not compile.
+    `var list = new ArrayList<>()` infers `ArrayList<Object>`, because there is nothing to infer from —
+    the diamond and `var` cancel each other out.
+
+`record Point(int x, int y) { }` EXPANDS TO roughly:
+
+    final class Point extends java.lang.Record {
+        private final int x, y;
+        Point(int x, int y) { this.x = x; this.y = y; }   // the CANONICAL constructor
+        public int x() { return x; }                       // x(), NOT getX()
+        public int y() { return y; }
+        public boolean equals(Object o) { ... component-wise ... }
+        public int hashCode()           { ... component-wise ... }
+        public String toString()        { "Point[x=1, y=2]" }
+    }
+
+    IMPLICITLY `final`, extends `Record` so it cannot extend anything else, and CAN implement
+    interfaces. The generated members are all overridable if you want different behaviour.
+
+    THE COMPACT CONSTRUCTOR is the piece worth knowing:
+        record Range(int lo, int hi) {
+            Range {                                        // no parameter list, no assignment
+                if (lo > hi) throw new IllegalArgumentException();
+                hi = Math.min(hi, MAX);                    // you may REASSIGN the parameter
+            }                                              // the field assignment is implicit
+        }
+    Validation and normalisation live here, and the field assignments happen after your code runs.
+
+    WHAT RECORDS DO NOT GIVE YOU: DEFENSIVE COPIES. `record Team(String name, List<Player> players)` is
+    SHALLOWLY immutable — the reference cannot change, the list's contents can. If you want deep
+    immutability, copy in the compact constructor and copy out of the accessor.
+
+`sealed`: the class file gets a `PermittedSubclasses` attribute, and the JVM enforces it at load time —
+this is not just a compiler check. Every permitted subtype must itself be declared `final`, `sealed`, or
+explicitly `non-sealed` (the only hyphenated keyword in Java), which forces the author to make a
+deliberate decision about whether the hierarchy stays closed. Permitted subtypes must be in the same
+module, or the same package for the unnamed module.
+
+PATTERN MATCHING FOR `switch` (Java 21) brings four things together:
+
+    TYPE PATTERNS         case Circle c -> c.radius()
+    RECORD PATTERNS       case Circle(double r) -> r          ← deconstruction, nestable
+    GUARDS                case Circle c when c.radius() > 10 -> ...
+    NULL HANDLING         `case null` is now writable; without it, a switch on a reference still throws
+                          NullPointerException, preserving the old behaviour.
+    EXHAUSTIVENESS        over a sealed type, no `default` is needed — and omitting `default` is
+                          BETTER, because adding a subtype then breaks the build instead of silently
+                          falling through.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `var list = new ArrayList<>();` INFERS `ArrayList<Object>`. The diamond has nothing to infer
+from and `var` has nothing to give it. Write one of the two types.
+
+CASE 2 — `var x = null;` AND `var x;` DO NOT COMPILE. There is nothing to infer.
+
+CASE 3 — `var` HIDING THE TYPE. `var r = svc.process(x)` tells the reader nothing. Use it when the
+right-hand side is a constructor or an obvious factory, not when it is an arbitrary call.
+
+CASE 4 — `var` INFERRING A NARROWER TYPE THAN YOU WANTED. `var list = new ArrayList<String>()` gives
+`ArrayList`, not `List`, so a later reassignment to a `LinkedList` fails to compile.
+
+CASE 5 — A RECORD HOLDING A MUTABLE COLLECTION. Shallowly immutable only. Copy in the compact
+constructor and on the way out if you need real immutability.
+
+CASE 6 — RECORD ACCESSORS ARE `x()`, NOT `getX()`. Frameworks expecting JavaBean conventions may not
+bind. Jackson supports records; older reflection-based tools may not.
+
+CASE 7 — A RECORD WITH AN ARRAY COMPONENT. `equals` and `hashCode` use the ARRAY's identity semantics,
+so two records with equal array contents are not equal. Override both, or use a `List`.
+
+CASE 8 — RECORDS CANNOT EXTEND A CLASS. They already extend `Record`. If a shared supertype is needed
+it must be an interface — which is exactly why sealed INTERFACES are the usual pairing.
+
+CASE 9 — A SEALED TYPE'S PERMITTED SUBTYPES MUST BE IN THE SAME MODULE OR PACKAGE. You cannot seal
+across a library boundary, and that is deliberate.
+
+CASE 10 — FORGETTING `final`, `sealed` OR `non-sealed` ON A PERMITTED SUBTYPE. A compile error, and a
+useful one: it forces a decision about whether the hierarchy stays closed.
+
+CASE 11 — ADDING `default` TO AN EXHAUSTIVE SWITCH OVER A SEALED TYPE. It compiles, and it THROWS AWAY
+THE ENTIRE BENEFIT: adding a subtype now falls silently into `default` instead of breaking the build.
+
+CASE 12 — `switch` ON A REFERENCE THAT IS NULL. Still throws `NullPointerException` unless you write
+`case null`. Preserved for compatibility, and surprising in new code.
+
+CASE 13 — TEXT BLOCK INDENTATION DECIDED BY THE CLOSING DELIMITER. Its position counts in the minimum,
+so moving the closing delimiter left or right changes the string's content.
+
+CASE 14 — TEXT BLOCKS STRIP TRAILING SPACES on every line. Use a backslash-s escape to keep one, and a
+trailing backslash to join two lines without a newline between them.""",
+
+"""5. THE ALTERNATIVES — what these replaced, and what they did not
+
+`var` REPLACED nothing functionally — it is pure ergonomics. THE ALTERNATIVE IS WRITING THE TYPE, and
+that remains right whenever the type is not obvious from the right-hand side. Lombok's `val` did this
+first; `var` made it a language feature with no annotation processor.
+
+`record` REPLACED:
+    THE IDE-GENERATED DATA CLASS — sixty lines that drift out of sync the moment a field is added.
+    LOMBOK `@Data` / `@Value` — an annotation processor rewriting your class, with the IDE and build
+    tooling needing to know about it. Records are a language feature, so nothing extra is required.
+    THIRD-PARTY TUPLES — `Pair` and `Triple` from Apache Commons and friends. A LOCAL RECORD inside a
+    method now expresses "a name and a count, just for this stream pipeline" with real field names,
+    which a `Pair` never could.
+
+    WHAT RECORDS DO NOT REPLACE: entities with identity and a lifecycle (a JPA `@Entity` needs a
+    no-arg constructor and mutable fields), classes with behaviour and invariants beyond validation,
+    and anything needing inheritance.
+
+`sealed` + PATTERN MATCHING REPLACED:
+    A CHAIN OF `instanceof` WITH CASTS — verbose, and nothing checks that you covered everything.
+    THE VISITOR PATTERN — the traditional answer for double dispatch over a closed hierarchy, and a
+    lot of machinery: an `accept` method on every type, a visitor interface, and a new visitor class
+    per operation. Sealed types plus pattern matching give the same exhaustiveness with none of it.
+    AN ENUM WITH A `switch`, when the alternatives carry different DATA rather than being simple
+    constants.
+
+    WHAT THEY DO NOT REPLACE: ordinary polymorphism. If the behaviour belongs to the type and the set is
+    OPEN — plugins, extensions, third-party implementations — an interface with an abstract method is
+    still right. USE SEALED TYPES WHEN THE SET IS GENUINELY CLOSED AND THE OPERATIONS KEEP GROWING; use
+    virtual dispatch when the set keeps growing and the operations are fixed. That trade-off has a name:
+    the expression problem.
+
+TEXT BLOCKS REPLACED string concatenation with `\\n`, and external `.sql` resource files loaded for
+readability rather than for reuse.
+
+WHAT STILL IS NOT THERE, and is worth naming: no operator overloading, no named or default parameters
+(so the builder pattern survives), no non-nullable types (`Optional` is a library, not a type system
+feature), and NO VALUE TYPES YET — Project Valhalla, which would let a record be flattened inline with
+no header and no indirection, is still in progress.
+
+WHAT TO SAY: "`var` where the right-hand side already states the type. Records for any data carrier —
+they replace the sixty-line class and the Lombok dependency both. And sealed interfaces plus records plus
+pattern matching when I have a closed set of alternatives, because that is the only way to get
+EXHAUSTIVENESS CHECKING: add a subtype and every incomplete switch fails to compile, which virtual
+dispatch never gave me."
+
+""",
+
+"""6. HOW TO ADOPT THEM — numbered steps
+
+STEP 1 — USE `var` WHEN THE RIGHT-HAND SIDE NAMES THE TYPE. Constructors and obvious factories, yes.
+Arbitrary method calls, no.
+
+STEP 2 — DO NOT COMBINE `var` WITH THE DIAMOND. `var list = new ArrayList<>()` infers
+`ArrayList<Object>`.
+
+STEP 3 — MAKE EVERY DATA CARRIER A RECORD. DTOs, value objects, map keys, method return tuples, events.
+
+STEP 4 — PUT VALIDATION IN THE COMPACT CONSTRUCTOR. It runs before the fields are assigned and you may
+reassign the parameters to normalise.
+
+STEP 5 — DEFENSIVELY COPY MUTABLE COMPONENTS, in AND out. A record is only shallowly immutable, and the
+language will not do this for you.
+
+STEP 6 — NEVER PUT AN ARRAY IN A RECORD without overriding `equals` and `hashCode`. Array identity
+semantics silently break value equality.
+
+STEP 7 — USE A LOCAL RECORD INSIDE A METHOD instead of a `Pair`. Real field names, zero API surface.
+
+STEP 8 — SEAL A HIERARCHY WHEN THE SET OF SUBTYPES IS GENUINELY CLOSED and you expect to add operations
+over it.
+
+STEP 9 — DO NOT WRITE `default` IN A SWITCH OVER A SEALED TYPE. Omitting it is what makes adding a
+subtype a compile error rather than a silent fallthrough.
+
+STEP 10 — HANDLE `case null` EXPLICITLY where null is possible. Otherwise the switch throws, preserving
+pre-21 behaviour.
+
+STEP 11 — USE RECORD DECONSTRUCTION PATTERNS rather than calling accessors inside the case body. It
+reads as the shape of the data.
+
+STEP 12 — WATCH THE CLOSING DELIMITER OF A TEXT BLOCK. Its indentation participates in the strip, so
+moving it changes the string.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Java 8 is the last release most people learned properly, and since then the big ones are 11, 17 and 21.
+The changes split into one thing that removes typing and three that together add a genuinely new way to
+model data.
+
+`var` is local variable type inference. Write `var map = new HashMap<String, List<Order>>()` instead of
+saying the type twice. It is NOT dynamic typing — the type is fixed at compile time and is exactly what
+it would have been; `var x = "hello"` makes x a String forever and `x = 5` is a compile error. It's
+confined to locals with an initialiser, for-loop variables and try-with-resources — never fields,
+parameters or return types, because those are API surface and inference there would make a caller's
+contract depend on a method body. My rule is: use it when the RIGHT-hand side already tells you the
+type. `var list = new ArrayList<String>()` is obvious; `var result = process(input)` costs the reader
+something.
+
+Records give you the constructor, accessors, equals, hashCode and toString from a one-line header. The
+real argument for them isn't brevity — it's that a hand-written data class says the same thing six times
+and any of them can drift. Add a field, forget to add it to equals, and you have a silent bug a HashSet
+will eventually reveal. A record declares the state ONCE and derives everything else. The language calls
+it a "transparent carrier for its data", and that transparency is exactly what lets pattern matching
+deconstruct it later — which is why records and patterns arrived together.
+
+The thing I'd emphasise is that sealed types, records and pattern matching are ONE feature. Sealed types
+say what the alternatives ARE, records say what each alternative CARRIES, and pattern matching takes
+them apart and forces you to handle every case. Together they're algebraic data types, which functional
+languages have had for forty years.
+
+And the payoff is EXHAUSTIVENESS, which polymorphism never gave you. Traditional advice is put behaviour
+in the subclasses and use dynamic dispatch — that works when the behaviour belongs to the type. It fails
+when you need to add an OPERATION over a fixed set of shapes, and then the alternative was a chain of
+instanceof that nothing checks. With a sealed hierarchy the compiler knows the full list, so a switch
+can be checked for completeness: add a new subtype and every incomplete switch in the codebase fails to
+compile.
+
+Which gives one rule I'd state carefully: DON'T write `default` in a switch over a sealed type. It
+compiles, and it throws away the entire benefit — adding a subtype then falls silently into default
+instead of breaking the build.
+
+Two practical cautions on records. They're only SHALLOWLY immutable, so a record holding a List has a
+list whose contents anyone can change; copy in the compact constructor and out of the accessor if you
+need real immutability. And an array component makes equals use array IDENTITY, so two records with
+identical contents aren't equal — that one bites silently.
+
+Text blocks are smaller: multi-line literals where Java computes the minimum indentation across all
+non-blank lines AND the closing delimiter, and strips that much. The thing to remember is that moving
+the closing delimiter changes the string's content.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── var: inference, not dynamic typing ──────────────────────────────
+    var map = new HashMap<String, List<Order>>();   // the type is written ONCE
+    var x = "hello";
+    // x = 5;                          ✗ COMPILE ERROR — x is a String, permanently
+    // var y;                          ✗ nothing to infer from
+    // var z = null;                   ✗ same
+    var list = new ArrayList<>();      // ← infers ArrayList<OBJECT>. The diamond has
+    //                                    nothing to infer from and var has nothing
+    //                                    to give it. Write one of the two types.
+    var o = new Object() { int n = 1; };
+    System.out.println(o.n);           // ← compiles! var inferred the ANONYMOUS CLASS
+    //                                    type, which you cannot write down yourself.
+
+    // ── record: state declared once, everything else derived ────────────
+    record Point(int x, int y) { }
+    // expands to a FINAL class extending java.lang.Record, with:
+    //   Point(int x, int y)          the CANONICAL constructor
+    //   int x()  int y()             accessors — x(), NOT getX()
+    //   equals / hashCode            COMPONENT-WISE
+    //   toString                     "Point[x=1, y=2]"
+
+    record Range(int lo, int hi) {
+        Range {                        // ← THE COMPACT CONSTRUCTOR: no parameter list
+            if (lo > hi) throw new IllegalArgumentException(lo + " > " + hi);
+            hi = Math.min(hi, MAX);    // you may REASSIGN a parameter to normalise
+        }                              // the field assignments happen AFTER this runs
+    }
+
+    // ── THE TWO RECORD TRAPS ────────────────────────────────────────────
+    record Team(String name, List<Player> players) { }
+    var t = new Team("A", myList);
+    myList.add(newPlayer);             // ← THE RECORD JUST CHANGED. Records are only
+    //                                    SHALLOWLY immutable: the reference is final,
+    //                                    the contents are not.
+    record Team(String name, List<Player> players) {
+        Team { players = List.copyOf(players); }    // ← copy IN
+    }
+
+    record Key(byte[] bytes) { }
+    new Key(new byte[]{1}).equals(new Key(new byte[]{1}));   // FALSE
+    //   equals uses the ARRAY's identity semantics. Use a List, or override both.
+
+    // ── sealed + records + patterns: ONE feature ────────────────────────
+    sealed interface Shape permits Circle, Square, Triangle { }
+    record Circle(double radius)              implements Shape { }
+    record Square(double side)                implements Shape { }
+    record Triangle(double base, double h)    implements Shape { }
+    // Every permitted subtype must be final, sealed, or non-sealed — which forces a
+    // deliberate decision. Records are implicitly final, so they satisfy it for free.
+
+    double area(Shape s) {
+        return switch (s) {
+            case Circle(double r)         -> Math.PI * r * r;
+    //           ^^^^^^^^^^^^^^^^ a RECORD DECONSTRUCTION PATTERN — the component is
+    //           bound as part of the match. Nestable.
+            case Square(double side)      -> side * side;
+            case Triangle(double b, double h) when b > 0 -> 0.5 * b * h;
+    //                                        ^^^^ a GUARD
+            case Triangle t               -> 0;
+        };
+    //  NO `default`. The compiler knows the full list, so it CHECKS EXHAUSTIVENESS.
+    //  Add `record Hexagon(...) implements Shape` and THIS METHOD STOPS COMPILING —
+    //  which is the entire point, and something virtual dispatch never gave you.
+    }
+
+    // ── THE ONE LINE THAT THROWS THE BENEFIT AWAY ───────────────────────
+    switch (s) {
+        case Circle c -> ...;
+        default       -> 0;            // ← compiles, and now adding a subtype falls
+    }                                  //   SILENTLY into default instead of breaking
+    //                                     the build. Do not write this.
+
+    // ── null in a switch ────────────────────────────────────────────────
+    switch (s) {
+        case null     -> "nothing";    // ← Java 21 lets you write this
+        case Circle c -> "round";
+        default       -> "other";
+    }
+    // WITHOUT `case null`, a switch on a reference STILL throws NullPointerException —
+    // preserved from before, and surprising in new code.
+
+    // ── text blocks: the indentation algorithm is the feature ───────────
+    //   String sql = <TQ>                    ← <TQ> is three double-quote chars
+    //           SELECT id, name
+    //           FROM users
+    //           WHERE active = true
+    //           <TQ>;
+    //
+    // Java takes the MINIMUM indentation across all non-blank lines AND the closing
+    // delimiter, and strips exactly that much from every line. So the literal stays
+    // aligned with your code and the string contains no leading spaces.
+    //
+    // MOVING THE CLOSING DELIMITER CHANGES THE STRING: put it flush left and nothing
+    // is stripped, so every line keeps its 10 spaces of indentation.
+    //
+    // Trailing spaces are stripped from every line: use a backslash-s escape to keep
+    // one, and a trailing backslash to join two lines with no newline between them.""",
+
+"""9. THE TRACE — the same model, before and after
+
+THE PROBLEM: represent a shape, compute its area, and add a `describe` operation later.
+
+    BEFORE — ABSTRACT CLASS AND VIRTUAL DISPATCH
+    ---------------------------------------------------------------------------------
+    abstract class Shape { abstract double area(); }
+    class Circle extends Shape { ... 40 lines: fields, constructor, getters,
+                                  equals, hashCode, toString ... }
+    ×3 subtypes                                            ≈ 130 lines
+    adding `describe()`                                    edit ALL FOUR classes
+    forgetting one subtype                                 IMPOSSIBLE — abstract
+                                                            method, compile error ✓
+    an operation that belongs elsewhere (rendering,        cannot be added without
+    serialisation, pricing)                                 touching every class
+    ---------------------------------------------------------------------------------
+    VIRTUAL DISPATCH IS EXCELLENT AT ADDING TYPES and poor at adding operations. Every new operation
+    edits every class, and operations that belong to another module cannot live here at all.
+
+    BEFORE — instanceof CHAINS, the usual workaround
+    ---------------------------------------------------------------------------------
+    if (s instanceof Circle) { Circle c = (Circle) s; ... }
+    else if (s instanceof Square) { ... }
+    adding a subtype                                       NOTHING BREAKS. The chain
+                                                            silently falls through to
+                                                            the else, forever.
+    ---------------------------------------------------------------------------------
+    THIS IS THE FAILURE MODE THE FEATURE EXISTS TO REMOVE.
+
+    AFTER — SEALED + RECORDS + PATTERNS
+    ---------------------------------------------------------------------------------
+    sealed interface Shape permits Circle, Square, Triangle { }
+    record Circle(double radius) implements Shape { }
+    ×3 subtypes                                            4 lines total
+    equals / hashCode / toString                           generated, component-wise,
+                                                            and cannot drift
+    adding `describe()`                                    ONE new method, anywhere,
+                                                            even in another class
+    adding a subtype                                       EVERY incomplete switch in
+                                                            the codebase FAILS TO
+                                                            COMPILE ✓
+    ---------------------------------------------------------------------------------
+    130 LINES TO 4, and — more importantly — the compile-time guarantee moved. Before, forgetting a
+    TYPE was impossible and forgetting an OPERATION site was easy. Now both are checked.
+
+NOW TRACE WHAT ADDING `Hexagon` DOES, in each design:
+
+    design                        what the compiler says
+    ---------------------------------------------------------------------------------
+    abstract class + virtual      "Hexagon is not abstract and does not override
+                                   area()" — you are told exactly once, at the class.
+    instanceof chain              NOTHING. Every chain silently returns its else
+                                   branch. The bug ships.
+    sealed + exhaustive switch    every switch over Shape that does not handle Hexagon
+                                   fails to compile, listing each one. You are told
+                                   about EVERY SITE.
+    sealed + switch with default  NOTHING. `default` swallowed it. Identical to the
+                                   instanceof chain — which is why that one line
+                                   matters so much.
+    ---------------------------------------------------------------------------------
+    ROWS 3 AND 4 DIFFER BY ONE `default` CLAUSE and produce opposite outcomes: a complete list of every
+    place needing attention, or silence.
+
+AND THE `var` TRACE — what is actually inferred:
+
+    written                                      inferred type
+    ---------------------------------------------------------------------------------
+    var s = "hi"                                 String
+    var list = new ArrayList<String>()           ArrayList<String>   ← not List
+    var list = new ArrayList<>()                 ArrayList<Object>   ← the trap
+    var o = new Object() { int n = 1; }          an ANONYMOUS class type — so `o.n`
+                                                 compiles, and no explicit declaration
+                                                 could have expressed it
+    var i = 1                                    int (not Integer)
+    var d = 1.0                                  double
+    ---------------------------------------------------------------------------------
+    ROW 2 IS THE ONE THAT SURPRISES: `var` infers the CONCRETE type, so a later reassignment to a
+    `LinkedList` will not compile. That is usually fine for a local and occasionally not what you meant.
+
+WHAT PRODUCED WHAT:
+    SEALING              produced the compiler knowing the full list — and therefore everything else.
+    RECORDS' TRANSPARENCY produced deconstruction patterns, which is why the two features shipped
+                         together.
+    OMITTING `default`   produced the build failure that makes the guarantee real.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `var`: compile-time only. No runtime cost, no reflection difference, no bytecode difference.
+    `record`: a `final` class extending `java.lang.Record`. Component-wise `equals`/`hashCode`,
+    accessors named `x()`. Shallowly immutable.
+    `sealed`: a `PermittedSubclasses` class-file attribute, enforced by the JVM at load time, not only
+    by the compiler. Permitted subtypes must be `final`, `sealed` or `non-sealed`, in the same module
+    or package.
+    Pattern-matching `switch`: type patterns, record deconstruction, `when` guards, `case null`, and
+    EXHAUSTIVENESS over sealed types with no `default`.
+    Text blocks: minimum indentation across non-blank lines AND the closing delimiter is stripped;
+    trailing spaces removed.
+
+THE #1 MISTAKE: writing `default` in a switch over a sealed type. It compiles and it discards the
+exhaustiveness guarantee that was the entire reason to seal.
+
+THE #2 MISTAKE: `var list = new ArrayList<>()`. Infers `ArrayList<Object>`.
+
+THE #3 MISTAKE: `var` where the right-hand side is an arbitrary method call. The reader now has to go
+and look.
+
+THE #4 MISTAKE: assuming a record is deeply immutable. A mutable component is mutable; copy in and out.
+
+THE #5 MISTAKE: an array component in a record. `equals` uses array identity, so equal contents are not
+equal records.
+
+THE #6 MISTAKE: expecting `getX()` on a record. The accessor is `x()`, which some JavaBean-based tooling
+does not bind.
+
+THE #7 MISTAKE: reaching for a record where an entity belongs. JPA needs a no-arg constructor and
+mutable fields; a record has neither.
+
+THE #8 MISTAKE: sealing an OPEN set. If third parties should be able to implement it, an ordinary
+interface is right — sealing is for closed sets where operations keep growing.
+
+THE #9 MISTAKE: forgetting `case null`. A switch on a reference still throws
+`NullPointerException` without it.
+
+THE #10 MISTAKE: moving a text block's closing delimiter without realising it changes the string. Its
+indentation participates in the strip.
+
+THE #11 MISTAKE: treating these as four unrelated conveniences. Records, sealed types and pattern
+matching are ONE feature, and using records without sealing loses most of the point.
+
+ONE-SENTENCE TAKEAWAY: `var` is compile-time inference for locals only and belongs where the right-hand
+side already names the type, while records, sealed types and pattern matching are a SINGLE feature —
+sealed types declare what the alternatives are, records declare what each carries (transparently, which
+is precisely what makes deconstruction patterns possible), and `switch` takes them apart with the
+compiler checking EXHAUSTIVENESS, so adding a subtype breaks the build at every site that needs
+attention instead of silently falling through an `instanceof` chain; that guarantee is the thing virtual
+dispatch never offered, it is destroyed by a single `default` clause, and the two cautions that bite
+silently are that records are only shallowly immutable and that an array component makes `equals` use
+identity.""",
+]
