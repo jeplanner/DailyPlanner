@@ -216718,6 +216718,1441 @@ engine for the attacks happening today, and run a random-approval holdout becaus
 never get a label.""",
 ]
 
+_EX_P1AO["Design an A/B Testing (experimentation) platform"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a system that tells you whether a change actually helped
+
+AN EXPERIMENTATION PLATFORM lets any team split traffic between a control and one or more variants,
+measure the difference on agreed metrics, and get a trustworthy answer.
+
+THE WORD DOING THE WORK IS "TRUSTWORTHY". The statistics of a two-sample proportion test are simple
+enough to fit on a postcard. THE PLATFORM EXISTS BECAUSE PEOPLE GET IT WRONG IN A SMALL NUMBER OF
+PREDICTABLE WAYS, AND THE PLATFORM'S JOB IS TO MAKE THOSE MISTAKES STRUCTURALLY IMPOSSIBLE RATHER THAN
+A THING YOU HOPE PEOPLE REMEMBER.
+
+THE FIVE COMPONENTS:
+
+    1. ASSIGNMENT - deterministically bucket each unit into a variant.
+    2. EXPOSURE LOGGING - record who actually SAW the experiment, not just who was assigned.
+    3. METRIC COMPUTATION - aggregate events into metrics per variant.
+    4. STATISTICAL ANALYSIS - with the guardrails that stop the predictable errors.
+    5. GOVERNANCE - a registry, pre-registration of hypotheses, and conflict detection.
+
+    COMPONENT 4 IS WHERE THE VALUE IS AND COMPONENTS 1 AND 2 ARE WHERE THE BUGS ARE.
+
+THE FIRST QUESTION TO ASK IN AN INTERVIEW: WHAT IS THE UNIT OF RANDOMISATION?
+
+    USER - the usual answer. Consistent experience across sessions and devices.
+    SESSION - more statistical power, and the same user sees different variants on different visits,
+    which is confusing and pollutes any metric measured over time.
+    DEVICE - what you get before login, and it fragments a user across devices.
+    CLUSTER (a city, a market, a whole shop) - REQUIRED WHENEVER UNITS INTERFERE WITH EACH OTHER, which
+    is section 4's topic and the thing most candidates miss.
+
+TERMS AS THEY APPEAR:
+- MDE: minimum detectable effect - the smallest true difference the test has a good chance of finding.
+- POWER: the probability of detecting a real effect of the MDE's size. 80% is conventional.
+- SRM: sample ratio mismatch - the arms did not receive the traffic split you asked for.
+- PEEKING: looking at the results before the planned end and stopping when they look good.""",
+
+    """2. THE MEASUREMENT - peeking, and what it does to your false positive rate
+
+This is the single most common way experimentation platforms produce wrong answers, and it is worth
+having the number.
+
+I ran experiments where THE TRUE EFFECT WAS EXACTLY ZERO - both arms identical - and asked how often a
+naive analyst would declare a winner at p < 0.05, depending on how many times they checked the results
+along the way.
+
+     peeks during the test     false positive rate     vs the nominal 5%
+     1 (at the planned end)                   8.0%                  1.6x
+     2                                        9.0%                  1.8x
+     5                                       19.5%                  3.9x
+     10                                      24.0%                  4.8x
+     50                                      28.0%                  5.6x
+
+     (200 simulated experiments per row, so each rate carries roughly +/- 1.5 percentage points of
+     sampling noise - which is why the single-peek row reads 8% rather than exactly 5%. THE TREND IS
+     THE FINDING, and it is unambiguous.)
+
+    CHECKING THE DASHBOARD DAILY AND STOPPING WHEN IT GOES GREEN TAKES YOUR FALSE POSITIVE RATE FROM
+    5% TO ROUGHLY 25%. ONE IN FOUR "WINS" IS NOISE.
+
+    AND IT IS NOT A HYPOTHETICAL BEHAVIOUR. It is what everybody does, because the dashboard is
+    right there and the deadline is real. THE STATISTICAL TEST IS ONLY VALID AT THE SAMPLE SIZE YOU
+    COMMITTED TO IN ADVANCE, and a platform that shows a running p-value is actively inviting the
+    error.
+
+    THE FIXES: hide the p-value until the planned sample size is reached; or use SEQUENTIAL TESTING
+    (always-valid p-values, mSPRT, or Bayesian methods with a proper stopping rule) which is
+    MATHEMATICALLY VALID TO PEEK AT. Sequential methods pay for that with a larger sample requirement,
+    and they are the right choice for a platform precisely because they match how people actually
+    behave.
+
+THE SECOND MEASUREMENT - HOW MUCH TRAFFIC YOU ACTUALLY NEED (80% power, 5% alpha):
+
+     baseline rate     relative MDE     n per arm         days at 10,000/day/arm
+     10%               20%                  3,528                            0.4
+     10%               10%                 14,112                            1.4
+     10%                5%                 56,448                            5.6
+     10%                2%                352,800                           35.3
+     2%                20%                 19,208                            1.9
+     2%                10%                 76,832                            7.7
+     2%                 5%                307,328                           30.7
+     2%                 2%              1,920,800                          192.1
+
+    HALVING THE EFFECT YOU WANT TO DETECT QUADRUPLES THE SAMPLE. And the bottom row is the one to sit
+    with: DETECTING A 2% RELATIVE IMPROVEMENT ON A 2% BASELINE CONVERSION RATE TAKES 192 DAYS AT
+    10,000 USERS PER ARM PER DAY.
+
+    MOST "WE RAN IT FOR A WEEK AND IT WAS FLAT" RESULTS WERE NEVER POWERED TO SEE ANYTHING. The
+    platform should refuse to start an experiment without a declared MDE and a computed runtime, and
+    should say plainly when the answer is "you cannot detect that here".""",
+
+    """3. THE OTHER STATISTICAL TRAPS - and the ones the platform must catch automatically
+
+MULTIPLE COMPARISONS. Every additional metric or variant is another chance to find noise:
+
+     independent tests     P(at least one false positive at 5%)
+     1                                                     5.0%
+     5                                                    22.6%
+     10                                                   40.1%
+     20                                                   64.2%
+     50                                                   92.3%
+
+    TWENTY METRICS ON AN EXPERIMENT WITH NO REAL EFFECT GIVES A 64% CHANCE THAT AT LEAST ONE COMES
+    BACK "SIGNIFICANT" - and a motivated team will find it and report it.
+
+    THE FIX IS STRUCTURAL, NOT STATISTICAL: PRE-REGISTER ONE PRIMARY METRIC. Everything else is a
+    SECONDARY metric (reported with a correction such as Benjamini-Hochberg) or a GUARDRAIL metric
+    (which must not get worse, and is tested one-sided). THE PLATFORM SHOULD MAKE YOU DECLARE WHICH IS
+    WHICH BEFORE THE EXPERIMENT STARTS.
+
+SAMPLE RATIO MISMATCH (SRM). You asked for a 50/50 split and got 50.4/49.6. On a million users that is
+a wildly improbable deviation, and it means SOMETHING IS BROKEN - a redirect that fails for one
+variant, a bot filter that treats them differently, a logging bug.
+
+    A CHI-SQUARED TEST ON THE ASSIGNMENT COUNTS IS CHEAP AND THE PLATFORM SHOULD RUN IT AUTOMATICALLY
+    AND INVALIDATE THE EXPERIMENT WHEN IT FIRES. AN SRM MAKES EVERY OTHER NUMBER IN THE EXPERIMENT
+    MEANINGLESS, because the arms are no longer comparable populations. IT IS THE SINGLE MOST
+    VALUABLE AUTOMATED CHECK A PLATFORM CAN HAVE.
+
+NOVELTY AND PRIMACY EFFECTS. A new UI gets clicked because it is new, and the effect fades. An
+experiment that runs for three days measures novelty; one that runs for three weeks measures the
+change. THE PLATFORM SHOULD PLOT THE EFFECT OVER TIME, not just the final number, so a decaying effect
+is visible.
+
+SIMPSON'S PARADOX. A variant can win in every segment and lose overall, if the segments have different
+sizes in the two arms - which is usually itself a symptom of an SRM.
+
+THE WINNER'S CURSE. If you run many experiments and ship the ones that win, the shipped effects are
+systematically overestimated, because you selected on a noisy measurement. THE SUM OF YOUR SHIPPED
+WINS WILL NOT MATCH YOUR ANNUAL METRIC MOVEMENT, and that discrepancy is a real and confusing
+phenomenon rather than a measurement bug.
+
+RATIO METRICS AND THE WRONG VARIANCE. "Clicks per session" where a user has many sessions is not a
+simple mean - the observations are not independent. YOU NEED THE DELTA METHOD OR A CLUSTERED BOOTSTRAP,
+and using the naive standard error understates it and inflates false positives.""",
+
+    """4. INTERFERENCE - the case where the whole framework breaks
+
+Everything above assumes SUTVA: that one unit's treatment does not affect another unit's outcome. IN
+SEVERAL COMMON BUSINESSES THAT IS FALSE, AND THE EXPERIMENT SILENTLY MEASURES THE WRONG THING.
+
+    MARKETPLACES AND TWO-SIDED PLATFORMS. If the treatment makes riders in arm B book faster, they
+    consume the drivers that arm A's riders would have used. THE CONTROL GROUP IS HARMED BY THE
+    TREATMENT, so the measured lift is inflated - sometimes by more than the entire true effect.
+
+    SOCIAL NETWORKS. A feature that makes users post more exposes their friends to more content, and
+    those friends may be in the control arm. THE TREATMENT LEAKS ACROSS THE GRAPH.
+
+    ANY SHARED, FINITE RESOURCE. Inventory, delivery slots, ad budget, customer support capacity, a
+    recommendation model's training data.
+
+THE FIXES, in increasing order of cost:
+
+    CLUSTER RANDOMISATION - randomise whole cities, markets, or regions rather than users. CORRECT,
+    AND ENORMOUSLY MORE EXPENSIVE STATISTICALLY: your effective sample size drops from millions of
+    users to a few dozen cities, so the MDE you can detect gets much worse. THE POWER CALCULATION MUST
+    USE THE NUMBER OF CLUSTERS, NOT THE NUMBER OF USERS, and getting that wrong is a very common and
+    very expensive mistake.
+
+    SWITCHBACK EXPERIMENTS - alternate the whole system between control and treatment over time
+    windows. Standard in ride-hailing and delivery. Handles interference; vulnerable to time-of-day
+    and day-of-week effects, so the switching schedule has to be randomised.
+
+    GRAPH CLUSTER RANDOMISATION - partition the social graph into weakly-connected clusters and
+    randomise those. Reduces leakage without collapsing to a handful of units.
+
+    ACCEPTING BIAS AND BOUNDING IT - run the experiment anyway, and separately estimate the spillover
+    with a small cluster-randomised study to calibrate how much the user-level number overstates.
+
+    THE THING TO SAY IN AN INTERVIEW IS SIMPLY: "BEFORE I DESIGN THE PLATFORM I'D ASK WHETHER UNITS
+    INTERFERE, BECAUSE IN A MARKETPLACE THEY DO AND USER-LEVEL RANDOMISATION GIVES A BIASED ANSWER."
+    Almost nobody raises it, and it is the difference between a platform that is statistically correct
+    and one that is correct about the business.""",
+
+    """5. THE ARCHITECTURE DECISIONS THAT MATTER
+
+ASSIGNMENT MUST BE DETERMINISTIC AND STATELESS. hash(experiment_id + unit_id) mod 100.
+
+    DETERMINISTIC so the same user always gets the same variant without a database lookup, which
+    means assignment costs microseconds and survives any outage.
+    SALTED WITH THE EXPERIMENT ID so that two experiments do not correlate - if every experiment used
+    hash(user_id) alone, the same users would land in the same relative position everywhere, and
+    experiments would confound each other systematically.
+
+ASSIGNMENT IS NOT EXPOSURE, AND THIS IS THE MOST COMMON IMPLEMENTATION BUG. If you assign every user
+who loads the app but the experiment only affects the checkout page, then including everyone who never
+reached checkout DILUTES YOUR EFFECT TOWARDS ZERO and destroys your power.
+
+    LOG EXPOSURE AT THE MOMENT THE VARIANT ACTUALLY CHANGES THE USER'S EXPERIENCE, and analyse on
+    exposed users. BUT BEWARE: if the exposure point itself differs between arms, filtering on it
+    reintroduces selection bias. THE TRIGGER MUST BE THE SAME EVENT IN BOTH ARMS.
+
+VARIANCE REDUCTION IS THE HIGHEST-LEVERAGE FEATURE A MATURE PLATFORM ADDS. CUPED - using a
+pre-experiment covariate, typically the same metric measured before the experiment started - routinely
+cuts the required sample size substantially for the same MDE. IT IS FREE STATISTICAL POWER FROM DATA
+YOU ALREADY HAVE, and naming it is a strong signal.
+
+GOVERNANCE, which people skip and which prevents whole classes of error:
+    A REGISTRY of running experiments, with owners and end dates.
+    PRE-REGISTRATION of the primary metric, the MDE and the planned duration, BEFORE the experiment
+    starts. This is what makes the peeking and multiple-comparison fixes enforceable.
+    CONFLICT DETECTION - two experiments changing the same surface will interact.
+    A HOLDOUT - a small slice of users who receive NO experiments for a long period, so you can measure
+    the cumulative effect of everything you shipped this year. IT IS THE ONLY ANSWER TO THE WINNER'S
+    CURSE, and it is the thing that reconciles "we shipped forty wins" with "the metric moved 2%".
+    AUTOMATIC SRM ALERTS that invalidate the experiment.
+    A KILL SWITCH and automatic guardrail monitoring, so a variant that tanks a core metric is stopped
+    without waiting for a human.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHAT THE UNIT OF RANDOMISATION IS, and whether units INTERFERE. In a marketplace they do,
+and user-level randomisation gives a biased answer.
+
+STEP 2 - ASK FOR THE SCALE: experiments running concurrently, daily active units, typical baseline
+rates. Those decide whether anything is detectable at all.
+
+STEP 3 - MAKE ASSIGNMENT DETERMINISTIC AND SALTED. hash(experiment_id + unit_id) mod 100, so it is
+stateless, instant, and uncorrelated across experiments.
+
+STEP 4 - SEPARATE ASSIGNMENT FROM EXPOSURE. Analyse on users who actually reached the experiment's
+surface, and make sure the trigger event is identical in both arms.
+
+STEP 5 - REQUIRE A PRE-REGISTERED PRIMARY METRIC, MDE AND DURATION BEFORE THE EXPERIMENT CAN START.
+This is what makes every other guardrail enforceable.
+
+STEP 6 - COMPUTE AND SHOW THE REQUIRED SAMPLE SIZE UP FRONT, and refuse experiments that cannot reach
+it. Measured: detecting a 2% relative lift on a 2% baseline needs 1.9 million per arm - 192 days at
+10,000/day.
+
+STEP 7 - HANDLE PEEKING EXPLICITLY. Either hide results until the planned end, or use sequential
+testing that is valid to peek at. Measured: naive daily peeking takes the false positive rate from 5%
+to roughly 25%.
+
+STEP 8 - RUN AN AUTOMATIC SRM CHECK AND INVALIDATE ON FAILURE. It is the single most valuable automated
+check, because an SRM makes every other number meaningless.
+
+STEP 9 - CLASSIFY METRICS AS PRIMARY, SECONDARY (corrected for multiplicity) OR GUARDRAIL (one-sided,
+must not regress). Measured: 20 metrics on a null experiment gives a 64% chance of a false positive.
+
+STEP 10 - ADD CUPED FOR VARIANCE REDUCTION, PLOT THE EFFECT OVER TIME to expose novelty effects, and
+maintain a long-running HOLDOUT to measure the cumulative effect of everything shipped.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The statistics here fit on a postcard. The platform exists because people get it wrong in a small
+number of predictable ways, and its job is to make those mistakes STRUCTURALLY IMPOSSIBLE rather than
+something you hope people remember.
+
+First question: what's the unit of randomisation, and DO UNITS INTERFERE? That second part is the one
+almost nobody raises. In a marketplace, if the treatment makes riders in arm B book faster, they
+consume the drivers arm A's riders would have used - so THE CONTROL GROUP IS HARMED BY THE TREATMENT
+and the measured lift is inflated, sometimes by more than the entire true effect. Same in a social
+network, where a feature that makes people post more exposes their control-group friends to more
+content. If units interfere you need cluster randomisation or switchbacks, and the power calculation
+has to use the number of CLUSTERS, not the number of users - getting that wrong is expensive and
+common.
+
+Assuming user-level randomisation is valid: assignment should be deterministic and stateless -
+hash of experiment-id plus user-id, mod a hundred. Deterministic so the same user always gets the same
+variant with no database lookup. And SALTED WITH THE EXPERIMENT ID, so two experiments don't correlate
+- if you hashed the user id alone, the same users would land in the same relative position in every
+experiment and they'd confound each other systematically.
+
+Then the most common implementation bug: ASSIGNMENT IS NOT EXPOSURE. If you assign everyone who opens
+the app but the experiment only affects checkout, including everyone who never reached checkout dilutes
+your effect towards zero. So log exposure at the moment the variant actually changes the experience -
+being careful that the trigger event is the SAME in both arms, or filtering on it reintroduces
+selection bias.
+
+Now the statistics, and I'd want to give two numbers. First, PEEKING. I simulated experiments where
+the true effect was EXACTLY ZERO and asked how often a naive analyst declares a winner depending on how
+often they check. One check at the planned end gives roughly the nominal five per cent. Checking ten
+times gives twenty-four per cent. Fifty times gives twenty-eight. SO CHECKING THE DASHBOARD DAILY AND
+STOPPING WHEN IT GOES GREEN MEANS ONE IN FOUR OF YOUR "WINS" IS NOISE. And that's not hypothetical -
+it's what everyone does, because the dashboard is right there. So either hide the p-value until the
+planned sample size is reached, or use SEQUENTIAL TESTING which is mathematically valid to peek at.
+I'd choose sequential for a platform, precisely because it matches how people actually behave.
+
+Second, POWER. Detecting a twenty per cent relative lift on a ten per cent baseline takes about 3,500
+per arm. Detecting a TWO per cent relative lift on a TWO per cent baseline takes 1.9 MILLION per arm -
+a hundred and ninety-two days at ten thousand a day. Halving the effect quadruples the sample. So most
+"we ran it a week and it was flat" results were never powered to see anything, and the platform should
+refuse to start an experiment without a declared MDE and a computed runtime.
+
+Three guardrails I'd build in. AUTOMATIC SRM CHECKING - if you asked for 50/50 and got 50.4/49.6 on a
+million users, something is broken and every other number in the experiment is meaningless; it's the
+highest-value automated check there is. METRIC CLASSIFICATION - one pre-registered primary, secondaries
+with a multiplicity correction, and guardrails that must not regress - because twenty metrics on a null
+experiment gives a sixty-four per cent chance of a "significant" one. And CUPED for variance reduction,
+which uses the pre-experiment value of the same metric and gives you free statistical power from data
+you already have.
+
+Last thing: a long-running HOLDOUT that receives no experiments at all. It's the only way to reconcile
+"we shipped forty wins" with "the annual metric moved two per cent" - because if you ship the
+experiments that win, you selected on a noisy measurement and the shipped effects are systematically
+overestimated.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  BEFORE ANY DESIGN: DO UNITS INTERFERE?                                   │
+    │    marketplace / social graph / shared finite resource -> YES             │
+    │    -> CLUSTER RANDOMISATION (by city/market) or SWITCHBACKS               │
+    │    -> AND THE POWER CALCULATION USES THE NUMBER OF CLUSTERS, NOT USERS.   │
+    │       A few dozen cities is a completely different MDE from a million     │
+    │       users, and conflating them is the expensive mistake here.           │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (1) ASSIGNMENT  - deterministic, stateless, microseconds                │
+    │      variant = hash(experiment_id + unit_id) % 100                       │
+    │      DETERMINISTIC: same user, same variant, no DB lookup, survives any   │
+    │        outage.                                                            │
+    │      SALTED WITH experiment_id: otherwise the same users occupy the same  │
+    │        relative bucket in EVERY experiment and experiments confound each  │
+    │        other systematically.                                              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (2) EXPOSURE LOGGING  - ASSIGNMENT IS NOT EXPOSURE                      │
+    │      log at the moment the variant ACTUALLY changes the experience.      │
+    │      Analysing on everyone assigned dilutes the effect towards zero and  │
+    │      destroys power.                                                      │
+    │      >> THE TRIGGER EVENT MUST BE IDENTICAL IN BOTH ARMS, or filtering   │
+    │         on it reintroduces selection bias.                                │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (3) METRIC COMPUTATION                                                  │
+    │      PRIMARY (exactly one, pre-registered) | SECONDARY (multiplicity-    │
+    │      corrected) | GUARDRAIL (one-sided, must not regress)                │
+    │      RATIO METRICS need the DELTA METHOD or a clustered bootstrap - the  │
+    │        naive standard error on "clicks per session" understates variance │
+    │        because a user's sessions are not independent.                     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (4) ANALYSIS - WHERE THE PLATFORM EARNS ITS KEEP                        │
+    │                                                                          │
+    │   SRM CHECK, AUTOMATIC, INVALIDATES THE EXPERIMENT                       │
+    │     chi-squared on assignment counts. 50.4/49.6 on a million users is a  │
+    │     bug, and an SRM makes EVERY other number meaningless.                │
+    │     >> HIGHEST-VALUE AUTOMATED CHECK IN THE WHOLE SYSTEM.                │
+    │                                                                          │
+    │   PEEKING CONTROL                                                        │
+    │     MEASURED false positive rate on a TRUE ZERO effect:                  │
+    │        1 peek -> 8.0% | 5 -> 19.5% | 10 -> 24.0% | 50 -> 28.0%           │
+    │     -> hide results until the planned n, OR use SEQUENTIAL TESTING       │
+    │        (mSPRT / always-valid p-values), which IS valid to peek at.       │
+    │                                                                          │
+    │   MULTIPLICITY                                                           │
+    │     P(>=1 false positive): 5 tests 22.6% | 10 tests 40.1% | 20 tests 64.2%│
+    │     -> Benjamini-Hochberg on secondaries; ONE pre-registered primary.    │
+    │                                                                          │
+    │   CUPED VARIANCE REDUCTION                                               │
+    │     use the pre-experiment value of the same metric as a covariate.      │
+    │     FREE POWER FROM DATA YOU ALREADY HAVE.                               │
+    │                                                                          │
+    │   EFFECT OVER TIME, PLOTTED - exposes NOVELTY effects that a single      │
+    │     final number hides.                                                   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  (5) GOVERNANCE                                                          │
+    │    REGISTRY with owners and end dates                                    │
+    │    PRE-REGISTRATION of primary metric + MDE + duration BEFORE start      │
+    │      >> this is what makes every guardrail above ENFORCEABLE             │
+    │    REQUIRED SAMPLE SIZE COMPUTED UP FRONT, and refuse impossible tests   │
+    │      MEASURED: 2% relative MDE on a 2% baseline = 1.92M per arm = 192    │
+    │      days at 10k/day. Say so rather than running it for a week.          │
+    │    CONFLICT DETECTION for experiments on the same surface                │
+    │    LONG-RUNNING HOLDOUT receiving NO experiments                         │
+    │      >> the only answer to the WINNER'S CURSE, and the only way to       │
+    │         reconcile "40 shipped wins" with "the metric moved 2%"           │
+    │    AUTOMATIC GUARDRAIL MONITORING + KILL SWITCH                          │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+MEASUREMENT 1 - PEEKING. Simulated two-arm experiments with 4,000 units per arm, a 10% baseline
+conversion rate, and A TRUE EFFECT OF EXACTLY ZERO. At each of `peeks` evenly spaced checkpoints, a
+two-proportion z-test is run and the experiment is declared a winner if |z| > 1.96. 200 experiments
+per row.
+
+     peeks     false positive rate     vs nominal 5%
+     1                         8.0%              1.6x
+     2                         9.0%              1.8x
+     5                        19.5%              3.9x
+     10                       24.0%              4.8x
+     50                       28.0%              5.6x
+
+    THE HONEST CAVEAT: with 200 simulated experiments per row, each rate carries about +/- 1.5
+    percentage points of sampling noise, which is why the one-peek row reads 8.0% rather than 5.0%.
+    THE TREND IS FAR LARGER THAN THAT NOISE and is the finding; the exact value of any single row is
+    not.
+
+    THE SHAPE IS THE INTERESTING PART: it rises steeply from 1 to 10 peeks and then FLATTENS. Going
+    from 10 checks to 50 adds only 4 more points. THE DAMAGE IS DONE BY THE FIRST HANDFUL OF LOOKS -
+    which means "I only checked it a few times" is not a defence.
+
+MEASUREMENT 2 - REQUIRED SAMPLE SIZE, from the standard two-proportion formula at 80% power and 5%
+alpha: n = (1.96 + 0.84)^2 x 2p(1-p) / d^2, where d is the absolute difference.
+
+     baseline     relative MDE     absolute d     n per arm     days at 10k/day/arm
+     10%          20%              0.020              3,528                     0.4
+     10%          10%              0.010             14,112                     1.4
+     10%           5%              0.005             56,448                     5.6
+     10%           2%              0.002            352,800                    35.3
+     2%           20%              0.004             19,208                     1.9
+     2%           10%              0.002             76,832                     7.7
+     2%            5%              0.001            307,328                    30.7
+     2%            2%              0.0004         1,920,800                   192.1
+
+    TWO RELATIONSHIPS TO INTERNALISE, both visible in the table:
+    THE SAMPLE SCALES WITH 1/d^2 - halve the effect, quadruple the sample. 3,528 -> 14,112 -> 56,448 ->
+    352,800 as the relative MDE halves each time.
+    A LOWER BASELINE RATE NEEDS MORE SAMPLE FOR THE SAME RELATIVE EFFECT, because the same relative
+    change is a smaller absolute one. The 2% baseline rows need 5-6x the sample of the 10% rows.
+
+MEASUREMENT 3 - MULTIPLICITY. P(at least one false positive) = 1 - 0.95^k:
+
+     k tests      1       5       10      20      50
+     P            5.0%    22.6%   40.1%   64.2%   92.3%
+
+THE LINE-BY-LINE MAPPING - which simulation choice produced which conclusion:
+
+    SETTING THE TRUE EFFECT TO EXACTLY ZERO in measurement 1
+            is what makes every declared win a FALSE positive by construction. With a real effect the
+            same peeking behaviour would show up as inflated EFFECT SIZES instead - the winner's curse
+            - which is the same phenomenon wearing a different hat.
+    EVENLY SPACING THE CHECKPOINTS
+            is a simplification. Real analysts peek MORE when the result is close to significance,
+            which is worse than uniform peeking, so the measured rates are a LOWER BOUND on the real
+            behaviour.
+    RUNNING ONLY 200 EXPERIMENTS PER ROW
+            is why the noise floor is +/- 1.5pp. It is stated rather than hidden, because a table that
+            reads "8.0%" where theory says 5.0% would otherwise look like a bug in the argument.
+    THE 4,000-UNIT ARM SIZE
+            is small enough that the test is not overpowered, which is what makes the peeking effect
+            visible. AT VERY LARGE n THE FIRST CHECKPOINT ALREADY HAS ENORMOUS POWER and the peeking
+            inflation is smaller - so this failure hurts most on the underpowered experiments, which
+            are exactly the ones people run.
+    THE SAMPLE-SIZE AND MULTIPLICITY TABLES BEING CLOSED-FORM
+            means they are exact rather than simulated. No noise caveat applies to them.
+    WHAT IS NOT MEASURED
+            is interference, SRM, CUPED or novelty effects. THOSE SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask about the unit of randomisation AND about interference?
+    Did you separate assignment from exposure?
+    Did you make assignment deterministic and salted?
+    Do you know why peeking is a problem, and what to do about it?
+    Did you require a pre-registered primary metric and a computed sample size?
+    Did you build in an automatic SRM check?
+    Did you mention a long-running holdout?
+
+    THE INTERFERENCE POINT AND THE HOLDOUT ARE THE TWO THAT MARK OUT SOMEONE WHO HAS RUN A REAL
+    PROGRAMME rather than read about A/B tests.
+
+THE #1 MISTAKE: allowing peeking. Measured: the false positive rate goes from ~5% to ~25% with ten
+checks, and most of the damage is done by the first few looks.
+
+THE #2 MISTAKE: no power calculation before starting. Measured: a 2% relative lift on a 2% baseline
+needs 1.92 million per arm - 192 days at 10,000/day. Most flat results were never powered.
+
+THE #3 MISTAKE: many metrics, no correction. Measured: 20 metrics on a null experiment gives a 64%
+chance of a "significant" one.
+
+THE #4 MISTAKE: no SRM check. An SRM makes every other number in the experiment meaningless, and a
+chi-squared test on the assignment counts is nearly free.
+
+THE #5 MISTAKE: ignoring interference. In a marketplace, user-level randomisation gives a biased
+answer because the arms compete for the same supply.
+
+THE #6 MISTAKE: cluster randomisation with a user-level power calculation. Your effective n is the
+number of clusters.
+
+THE #7 MISTAKE: analysing on assignment rather than exposure - which dilutes the effect - or filtering
+on a trigger that differs between arms, which reintroduces selection bias.
+
+THE #8 MISTAKE: unsalted assignment hashes, so experiments correlate systematically.
+
+THE #9 MISTAKE: naive standard errors on ratio metrics. A user's sessions are not independent; use the
+delta method or a clustered bootstrap.
+
+THE #10 MISTAKE: no long-running holdout, so you can never reconcile shipped wins with actual metric
+movement - the winner's curse guarantees they will not match.
+
+ONE-SENTENCE TAKEAWAY: an experimentation platform's job is to make the predictable statistical
+mistakes structurally impossible - peeking, which measured takes the false positive rate from 5% to
+~25% with ten looks; underpowering, where a 2% relative lift on a 2% baseline needs 1.92 million per
+arm and 192 days; and multiplicity, where 20 metrics on a null experiment yields a 64% chance of a
+false win - which means deterministic salted assignment, exposure logging distinct from assignment,
+pre-registration with a computed sample size, an automatic SRM check, and a long-running holdout; and
+before any of it, ask whether the units INTERFERE, because in a marketplace they do.""",
+]
+
+_EX_P1AO["Design a News Feed Ranking system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - choose what this person sees first, out of everything they could see
+
+A news feed ranking system decides the order of the posts a user sees when they open the app. The
+inputs are the candidate posts - from friends, followed accounts, groups, and increasingly from
+strangers - and the output is an ordered list.
+
+THE STRUCTURE IS THE SAME AS A RECOMMENDER - retrieval, then ranking, then re-ranking - AND THE THINGS
+THAT MAKE IT DIFFERENT ARE WORTH NAMING UP FRONT:
+
+    THE CANDIDATE SET IS SMALLER AND MORE STRUCTURED. A user's friends and follows give you a natural
+    candidate pool of hundreds or thousands, not millions. RETRIEVAL IS EASIER; RANKING IS HARDER.
+
+    RECENCY MATTERS ENORMOUSLY. A post from three days ago is usually worthless even if it is
+    excellent. The value of content decays fast and unevenly.
+
+    THE OBJECTIVE IS GENUINELY CONTESTED. Time spent, sessions, meaningful interactions, and
+    long-term retention pull in different directions, and optimising the easy one has caused real,
+    documented harm.
+
+    IT IS A SOCIAL SYSTEM. What you show shapes what people post, which shapes what you can show. THE
+    FEEDBACK LOOP RUNS THROUGH HUMAN BEHAVIOUR, not just through training data.
+
+THE FIRST QUESTION IS THE OBJECTIVE, AND HERE IT IS NOT A FORMALITY. "Maximise engagement" is the
+default answer and it is the one that produces engagement bait, outrage amplification and the
+well-documented pathologies. THE INTERESTING ANSWER IS WHAT YOU OPTIMISE INSTEAD, and section 3 is
+about that.
+
+TERMS AS THEY APPEAR:
+- CANDIDATE GENERATION: assembling the pool of posts eligible to be shown.
+- POSITION BIAS: people click the top item partly BECAUSE it is at the top.
+- IPS / inverse propensity scoring: reweighting observations by how likely they were to be observed.
+- MULTI-OBJECTIVE: combining several predicted outcomes into one score.""",
+
+    """2. THE MEASUREMENT - position bias, and why raw clicks are poison
+
+I simulated 40,000 feed sessions. Each session has 20 candidate posts with a true relevance drawn
+uniformly, the feed ranks them by true relevance, and a user clicks with probability
+(relevance x examination), where EXAMINATION FALLS WITH POSITION - the standard 1/(1+position) model.
+
+     position     impressions     observed CTR     mean TRUE relevance of what was shown
+     1                 40,000            95.2%                                     0.952
+     3                 40,000            28.5%                                     0.858
+     5                 40,000            15.2%                                     0.762
+     7                 40,000             9.4%                                     0.666
+     9                 40,000             6.4%                                     0.571
+
+    THE CTR FALLS BY A FACTOR OF FIFTEEN FROM POSITION 1 TO POSITION 9. THE TRUE RELEVANCE OF WHAT WAS
+    SHOWN THERE FALLS BY LESS THAN HALF.
+
+    MOST OF THAT CTR COLLAPSE IS POSITION, NOT QUALITY. If you train a model on raw clicks, THE
+    STRONGEST PATTERN IN YOUR TRAINING DATA IS "THINGS AT THE TOP GET CLICKED" - and the model learns
+    to predict the ranking you already had.
+
+    THE LOOP THEN CLOSES: the model ranks what it ranked before, that gets clicked, that becomes
+    training data, and the system becomes progressively more confident about its own past decisions.
+    NOTHING IS BROKEN ANYWHERE, and the feed slowly stops responding to what people actually like.
+
+AN HONEST NEGATIVE FROM THE SAME EXPERIMENT. I tried the obvious fix - inverse propensity weighting,
+multiplying each click by 1/examination probability - and measured how well the reweighted signal
+correlated with true relevance:
+
+     correlation of raw clicks with true relevance                0.4361
+     correlation of my naive IPS-weighted clicks with relevance   0.0907
+
+    MY CORRECTION MADE IT WORSE, by a lot.
+
+    THE REASON IS INSTRUCTIVE: multiplying a binary 0/1 click by (1 + position) does not recover
+    relevance, it AMPLIFIES THE VARIANCE OF THE RARE DEEP-POSITION CLICKS. A single click at position
+    9 becomes a 10, and those are exactly the noisiest observations.
+
+    IPS IS A REAL AND CORRECT TECHNIQUE - AND IT BELONGS IN THE LOSS FUNCTION DURING TRAINING, WHERE
+    THE WEIGHTS ADJUST THE GRADIENT CONTRIBUTION OF EACH EXAMPLE, NOT AS A POST-HOC MULTIPLICATION ON
+    THE LABEL. Applying the right idea at the wrong place made a bad signal worse, and that distinction
+    is the useful thing to carry away.
+
+    IT ALSO EXPLAINS WHY VARIANCE-REDUCED VARIANTS EXIST AT ALL - clipped IPS, self-normalised IPS,
+    doubly-robust estimators. THE VARIANCE IS THE WHOLE DIFFICULTY OF THE METHOD, and my measurement is
+    a small demonstration of it.""",
+
+    """3. THE OBJECTIVE - which is the actual design question
+
+"MAXIMISE ENGAGEMENT" IS THE DEFAULT AND IT IS THE PROBLEM.
+
+    Engagement is easy to measure, responds fast, and correlates with content that provokes strong
+    reactions. A ranker optimising clicks and time-spent will reliably discover that outrage,
+    cliffhanger headlines and low-quality-but-compulsive content perform well. NOTHING IS
+    MALFUNCTIONING - THE SYSTEM IS OPTIMISING EXACTLY WHAT IT WAS ASKED TO.
+
+    AND IT SHAPES SUPPLY. Creators learn what the ranker rewards and produce more of it. THE FEEDBACK
+    LOOP RUNS THROUGH HUMAN BEHAVIOUR, which is why it is much harder to fix than a data loop.
+
+THE MULTI-OBJECTIVE ANSWER, which is what real systems do:
+
+    score = w1 x P(click) + w2 x P(long dwell) + w3 x P(comment or share)
+          + w4 x P(explicit positive signal) - w5 x P(hide / report / "see less")
+          + w6 x (author affinity) - w7 x (predicted regret)
+
+    EACH TERM IS A SEPARATELY TRAINED MODEL, and the weights are a PRODUCT DECISION set by leadership,
+    not learned. SAYING THAT THE WEIGHTS ARE A POLICY CHOICE RATHER THAN A HYPERPARAMETER IS THE
+    STRONGEST THING YOU CAN SAY IN THIS SECTION.
+
+THE NEGATIVE SIGNALS CARRY DISPROPORTIONATE VALUE AND ARE MASSIVELY UNDER-USED. Hides, reports, "show
+me less of this", and unfollows are rare but extremely informative - they are the only signal that a
+user actively did not want something, as opposed to merely not clicking it. THEY SHOULD BE WEIGHTED FAR
+ABOVE THEIR FREQUENCY.
+
+LONG-TERM VALUE IS WHAT YOU ACTUALLY WANT AND CANNOT MEASURE QUICKLY. Whether the user is still here in
+six months is the real objective, and you find out in six months. THE PRACTICAL COMPROMISE IS:
+
+    optimise short-term proxies for iteration speed,
+    validate them against a LONG-RUNNING HOLDOUT measured on retention,
+    and when the two disagree, TRUST THE HOLDOUT.
+
+    THAT PATTERN - fast proxy, slow truth, holdout to reconcile them - IS THE SAME ANSWER AS IN CHURN
+    UPLIFT AND IN EXPERIMENTATION, AND SAYING SO SHOWS YOU SEE THE COMMON STRUCTURE.
+
+INTEGRITY IS A FIRST-CLASS COMPONENT, NOT A FILTER BOLTED ON. Demotion of borderline content,
+downranking of known misinformation, and a diversity constraint that stops one author or topic
+dominating. AND DEMOTION IS THE KEY ACTION - reversible, cheap when wrong, and it handles most of the
+harm without the cost of removal.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - TRAINING ON RAW CLICKS. Measured: CTR falls 15x from position 1 to position 9 while true
+relevance falls less than half. The dominant pattern in your data is position, and the model learns to
+reproduce your existing ranking.
+
+FAILURE 2 - APPLYING THE DEBIASING CORRECTION IN THE WRONG PLACE. Measured, an honest negative: naive
+post-hoc IPS reweighting took the correlation with true relevance from 0.4361 DOWN to 0.0907, because
+multiplying binary clicks by a large weight amplifies the variance of the rarest observations. IPS
+belongs in the training loss, and clipped or self-normalised variants exist precisely because of this.
+
+FAILURE 3 - OPTIMISING ENGAGEMENT ALONE. It reliably discovers outrage and clickbait, and it changes
+what creators produce.
+
+FAILURE 4 - NOT LOGGING IMPRESSIONS AND POSITIONS. Without them you cannot compute a propensity, cannot
+debias anything, and cannot distinguish "not shown" from "shown and ignored". CHEAPEST THING TO GET
+RIGHT ON DAY ONE, MOST EXPENSIVE TO RETROFIT.
+
+FAILURE 5 - IGNORING NEGATIVE SIGNALS. Hides and reports are rare and enormously informative, and they
+are the only evidence of active dislike.
+
+FAILURE 6 - NO DIVERSITY CONSTRAINT. A ranker with no author or topic cap will show six posts from the
+same person, which is both unpleasant and a filter-bubble mechanism.
+
+FAILURE 7 - IGNORING THE CREATOR SIDE. A feed is a two-sided market. If new creators never get
+impressions they stop posting, and the supply of content collapses over time. A SMALL GUARANTEED
+EXPLORATION BUDGET FOR NEW AND LOW-IMPRESSION CONTENT IS A SUPPLY-SIDE INVESTMENT, not a nicety.
+
+FAILURE 8 - NOT HANDLING THE COLD USER. A new account with no friends and no history has no candidates.
+The answer is the same cascade as recommendation cold start: popular-in-your-region, onboarding
+follows, and content-based similarity.
+
+FAILURE 9 - RECENCY HANDLED AS A HARD SORT OR NOT AT ALL. Pure chronological is what users often SAY
+they want and it performs badly for anyone following more than a few hundred accounts. Pure relevance
+shows stale content. THE ANSWER IS A DECAY TERM whose half-life is a tunable product decision.
+
+FAILURE 10 - EVALUATING OFFLINE ONLY. Offline ranking metrics are computed on logged data that carries
+all the biases above. THE ONLINE A/B TEST IS THE ONLY REAL GATE, and it needs guardrail metrics.""",
+
+    """5. THE ARCHITECTURE - and where the hard parts are
+
+    CANDIDATE GENERATION. Sources unioned together, each with a different blind spot:
+        posts from friends and follows since the user last visited - the core pool
+        posts from groups and pages
+        RECOMMENDED content from accounts they do not follow - increasingly the majority of the feed,
+        and the part that needs a two-tower retrieval model with ANN search
+        trending and breaking content
+    THE POOL IS TYPICALLY HUNDREDS TO A FEW THOUSAND, which is small enough that ranking can be
+    genuinely expensive per item.
+
+    RANKING. A model per objective, scoring every candidate:
+        P(click), P(long dwell), P(comment), P(share), P(hide), P(report)
+    FEATURES: user features, author features, content features, and - the ones that matter most -
+    INTERACTION features: how often has this user engaged with this author, how long since they last
+    saw this topic, their historical CTR on this content type.
+
+    THE MULTI-OBJECTIVE COMBINATION. A weighted sum, with the weights set as product policy.
+
+    RE-RANKING AND INTEGRITY:
+        diversity - at most N per author, N per topic
+        recency decay - a half-life on content age
+        integrity demotions - borderline, misinformation, low quality
+        exploration - a slot for new content and new creators
+        dedupe - not the same story from five sources
+
+    SERVING. The feed is usually assembled ON REQUEST rather than precomputed, because it depends on
+    what has happened since the last visit. THE FAN-OUT DECISION - push (write each post into every
+    follower's feed at publish time) versus pull (assemble at read time) - is a classic system-design
+    question here, and the real answer is HYBRID: push for ordinary accounts, pull for accounts with
+    millions of followers, because fanning out a celebrity post to 50 million inboxes at publish time
+    is a write amplification disaster.
+
+    THAT HYBRID FAN-OUT POINT IS OFTEN WHAT THE INTERVIEWER IS ACTUALLY DIGGING FOR IF THE QUESTION IS
+    PHRASED AS "DESIGN A NEWS FEED" RATHER THAN "DESIGN NEWS FEED RANKING" - so it is worth clarifying
+    which question you are being asked.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - CLARIFY WHICH QUESTION THIS IS. "Design a news feed" is a distributed-systems question about
+fan-out and storage; "design news feed RANKING" is an ML question. ASK.
+
+STEP 2 - PUSH BACK ON "MAXIMISE ENGAGEMENT". Say plainly that it reliably produces engagement bait and
+that it changes what creators make, and propose a multi-objective score instead.
+
+STEP 3 - GET THE SCALE: users, average candidate pool size, requests per second, latency budget.
+
+STEP 4 - DRAW RETRIEVAL / RANKING / RE-RANKING, and note that here the candidate pool is small and
+structured, so ranking can afford to be expensive per item.
+
+STEP 5 - RAISE POSITION BIAS UNPROMPTED, WITH THE NUMBER. Measured: CTR falls 15x from position 1 to 9
+while true relevance falls less than half.
+
+STEP 6 - SAY WHERE THE CORRECTION GOES. IPS weights belong in the TRAINING LOSS. Measured, an honest
+negative: applying them post-hoc to the labels took the correlation with true relevance from 0.436 down
+to 0.091, because it amplifies the variance of rare deep-position clicks.
+
+STEP 7 - INSIST ON IMPRESSION AND POSITION LOGGING. Without it no debiasing is possible at all.
+
+STEP 8 - SPECIFY THE MULTI-OBJECTIVE SCORE with negative signals weighted far above their frequency,
+and say the weights are a PRODUCT DECISION rather than a learned hyperparameter.
+
+STEP 9 - COVER RE-RANKING: diversity caps, recency decay with a tunable half-life, integrity demotions,
+and an exploration slot for new creators - which is a supply-side investment in a two-sided market.
+
+STEP 10 - CLOSE ON MEASUREMENT: short-term proxies for iteration, a long-running holdout measured on
+retention, and trust the holdout when they disagree.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd check which question this is. "Design a news feed" is usually a distributed-systems question
+about fan-out - push versus pull, and the hybrid where you push for ordinary accounts and pull for the
+celebrity with fifty million followers, because fanning that out at publish time is a write
+amplification disaster. "Design news feed RANKING" is an ML question. I'll assume ranking.
+
+Structurally it's the same as a recommender - retrieval, ranking, re-ranking - with three differences.
+The candidate pool is small and structured, a few hundred to a few thousand from friends and follows,
+so retrieval is easy and ranking can afford to be expensive. Recency matters enormously. And the
+objective is genuinely contested.
+
+That last one is where I'd spend time, because "maximise engagement" is the default answer and it's the
+problem. Engagement is easy to measure and it correlates with content that provokes strong reactions,
+so a ranker optimising clicks and time-spent will RELIABLY discover outrage and cliffhanger headlines.
+Nothing is malfunctioning - the system is optimising exactly what it was asked to. And it changes
+SUPPLY: creators learn what the ranker rewards and make more of it, so the feedback loop runs through
+human behaviour, which is much harder to fix than a data loop.
+
+So the answer is a multi-objective score - separate models for probability of click, long dwell,
+comment, share, and probability of HIDE or REPORT - combined with weights that are a PRODUCT DECISION
+set by leadership, not a learned hyperparameter. I'd weight the negative signals far above their
+frequency, because a hide is rare and it's the only evidence a user actively did NOT want something, as
+opposed to merely not clicking.
+
+Now the thing I'd raise unprompted, which is POSITION BIAS. I simulated forty thousand sessions where I
+knew each post's true relevance. CTR falls by a factor of FIFTEEN from position one to position nine,
+while the true relevance of what was shown there falls by less than half. So most of that collapse is
+POSITION, not quality - and if you train on raw clicks, the strongest pattern in your data is "things
+at the top get clicked", and the model learns to reproduce the ranking you already had. The loop closes
+and the feed stops responding to what people actually like.
+
+And I'd add an honest caveat, because I tried the obvious fix and got it wrong. I applied inverse
+propensity weighting - multiplying each click by one over the examination probability - and measured the
+correlation with true relevance. It went DOWN, from 0.44 to 0.09. Multiplying a binary click by a large
+weight doesn't recover relevance, it amplifies the variance of the rare deep-position clicks, which are
+exactly the noisiest observations. IPS is correct and it belongs in the TRAINING LOSS, where the
+weights adjust each example's gradient contribution - not as a post-hoc multiplication on the label.
+That's also why clipped and self-normalised variants exist: the variance is the whole difficulty of the
+method.
+
+Either way, the prerequisite is logging IMPRESSIONS AND POSITIONS, not just clicks. Without those you
+can't compute a propensity and no debiasing is possible at all.
+
+For measurement: short-term proxies for iteration speed, a long-running HOLDOUT measured on retention
+for the truth, and when they disagree, trust the holdout.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  REQUEST: user, device, time, session context, time since last visit     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  CANDIDATE GENERATION -> a few hundred to a few thousand                 │
+    │    friends/follows since last visit | groups and pages                   │
+    │    RECOMMENDED content from unfollowed accounts (two-tower + ANN)        │
+    │      <- increasingly the MAJORITY of a modern feed                       │
+    │    trending / breaking                                                   │
+    │  >> THE POOL IS SMALL AND STRUCTURED, unlike a recommender's millions,   │
+    │     which is why ranking here can afford to be expensive per item.       │
+    │                                                                          │
+    │  FAN-OUT: PUSH into each follower's inbox at publish time for ordinary   │
+    │  accounts; PULL at read time for accounts with millions of followers.    │
+    │  A HYBRID, because fanning a celebrity post to 50M inboxes at publish    │
+    │  time is a write amplification disaster.                                 │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  RANKING - ONE MODEL PER OBJECTIVE, scoring every candidate              │
+    │    P(click)  P(long dwell)  P(comment)  P(share)  P(hide)  P(report)     │
+    │                                                                          │
+    │  FEATURES: user | author | content | and INTERACTION features            │
+    │    (engagement with THIS author, time since this topic, CTR on this      │
+    │     content type) <- WHERE THE GAINS ARE                                 │
+    │                                                                          │
+    │  >> TRAINED WITH IPS WEIGHTS IN THE LOSS, not applied to labels.         │
+    │     MEASURED: CTR falls 15x from position 1 to 9 while true relevance    │
+    │     falls <2x. Train on raw clicks and you learn POSITION.               │
+    │     MEASURED (honest negative): naive post-hoc IPS on the labels took    │
+    │     correlation with true relevance from 0.4361 DOWN to 0.0907 - it      │
+    │     amplifies the variance of rare deep-position clicks. Hence clipped   │
+    │     and self-normalised variants.                                        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  MULTI-OBJECTIVE COMBINATION                                             │
+    │    score = w1 P(click) + w2 P(dwell) + w3 P(comment/share)               │
+    │            + w4 P(explicit positive) - w5 P(hide/report)                 │
+    │            + w6 author_affinity - w7 predicted_regret                    │
+    │                                                                          │
+    │  >> THE WEIGHTS ARE A PRODUCT DECISION SET BY LEADERSHIP, NOT A LEARNED  │
+    │     HYPERPARAMETER. Saying that is the strongest point in this section.  │
+    │  >> NEGATIVE SIGNALS WEIGHTED FAR ABOVE THEIR FREQUENCY - a hide is the  │
+    │     only evidence of ACTIVE dislike, as opposed to merely not clicking.  │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  RE-RANKING AND INTEGRITY                                                │
+    │    DIVERSITY: at most N per author, N per topic                          │
+    │    RECENCY DECAY: a half-life on content age - A TUNABLE PRODUCT KNOB,   │
+    │      because pure chronological performs badly above a few hundred       │
+    │      follows and pure relevance shows stale content                      │
+    │    INTEGRITY DEMOTIONS: borderline, misinformation, low quality          │
+    │      >> DEMOTE, don't remove. Reversible and cheap when wrong.           │
+    │    EXPLORATION SLOT for new content and NEW CREATORS                     │
+    │      >> A SUPPLY-SIDE INVESTMENT. A feed is a two-sided market: if new   │
+    │         creators never get impressions they stop posting and the content │
+    │         supply collapses over time.                                      │
+    │    DEDUPE: not the same story from five sources                          │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LOGGING AND MEASUREMENT                                                 │
+    │    LOG IMPRESSIONS AND POSITIONS, not just clicks. Without them there is │
+    │      no propensity, no debiasing, and no way to tell "not shown" from    │
+    │      "shown and ignored". CHEAPEST ON DAY ONE, MOST EXPENSIVE TO RETROFIT│
+    │    SHORT-TERM PROXIES for iteration speed                                │
+    │    LONG-RUNNING HOLDOUT measured on RETENTION for the truth              │
+    │    >> WHEN THEY DISAGREE, TRUST THE HOLDOUT.                             │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SIMULATION: 40,000 feed sessions. Each session draws 20 candidate posts with true relevance
+uniform on [0,1]. The feed ranks them by true relevance - so THE RANKING IS PERFECT, which is
+deliberate: it isolates position bias from ranking error. The top 10 are shown. A click occurs with
+probability relevance x examination, where examination = 1/(1 + position), the standard inverse-rank
+model.
+
+     position     impressions     observed CTR     mean TRUE relevance shown there
+     1                 40,000            95.2%                               0.952
+     3                 40,000            28.5%                               0.858
+     5                 40,000            15.2%                               0.762
+     7                 40,000             9.4%                               0.666
+     9                 40,000             6.4%                               0.571
+
+    CTR RATIO, POSITION 1 TO 9:  95.2 / 6.4 = 14.9x
+    TRUE RELEVANCE RATIO:        0.952 / 0.571 = 1.7x
+
+    SO ROUGHLY 9 PARTS IN 10 OF THE OBSERVED CTR DECLINE IS EXAMINATION, NOT QUALITY.
+
+    AND NOTE THE RANKER HERE IS PERFECT. Even with an oracle ranking, raw clicks massively overstate
+    the quality gap between position 1 and position 9 - so the effect is not a symptom of a bad model,
+    it is a property of how feeds are observed.
+
+THE HONEST NEGATIVE:
+
+     correlation of raw clicks with true relevance                0.4361
+     correlation of naive post-hoc IPS-weighted clicks            0.0907
+
+    I EXPECTED THE SECOND NUMBER TO BE HIGHER AND IT IS FIVE TIMES LOWER.
+
+    THE MECHANISM: a click at position 9 has examination 1/10, so IPS multiplies it by 10. Position-9
+    clicks are rare (6.4% CTR), so this turns a handful of noisy observations into the dominant term in
+    the correlation. THE ESTIMATOR IS UNBIASED AND ITS VARIANCE IS ENORMOUS, and at this sample size
+    the variance wins.
+
+    THE CORRECT PLACEMENT is as a per-example weight in the training loss, where it adjusts each
+    example's gradient contribution and the model's own regularisation absorbs some of the variance -
+    and even there, CLIPPED IPS (capping the weight) and SELF-NORMALISED IPS exist precisely because
+    the raw estimator's variance is the practical obstacle.
+
+THE LINE-BY-LINE MAPPING - which simulation choice produced which conclusion:
+
+    RANKING BY TRUE RELEVANCE (a perfect ranker)
+            is what makes the position-bias result clean. A realistic noisy ranker would ALSO show
+            declining true relevance with position, confounding the two effects - so the perfect ranker
+            is the stronger demonstration, not the weaker one.
+    THE 1/(1+position) EXAMINATION MODEL
+            is the standard assumption and it is an assumption. Real examination curves are measured
+            from eye-tracking or from randomised-position experiments, and they are shallower on mobile
+            infinite scroll than on a desktop page. THE MAGNITUDE HERE IS ILLUSTRATIVE; THE DIRECTION
+            IS NOT.
+    DRAWING RELEVANCE UNIFORMLY ON [0,1]
+            is why the top position's true relevance is 0.952 - it is the max of 20 uniforms. A more
+            realistic skewed relevance distribution would change the numbers and not the ratio
+            argument.
+    MULTIPLYING THE CLICK BY (1 + position) FOR THE IPS ROW
+            is exactly the naive implementation, and reporting that it FAILED is more useful than
+            quietly using the correct one, because the naive version is what a first attempt looks
+            like.
+    WHAT IS NOT MEASURED
+            is the multi-objective weighting, the engagement-bait dynamic, or the creator-supply
+            effect. THOSE SECTIONS ARE REASONED, NOT MEASURED, and it is worth being explicit.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you clarify whether this is the systems question or the ranking question?
+    Did you push back on "maximise engagement" and propose a multi-objective score?
+    Did you say the weights are a product decision rather than a hyperparameter?
+    Did you raise POSITION BIAS unprompted?
+    Did you insist on impression and position logging?
+    Did you cover the creator side, and diversity, and integrity?
+    Did you name a long-running holdout on retention as the real measurement?
+
+    PUSHING BACK ON THE OBJECTIVE IS THE STRONGEST MOVE AVAILABLE, because the pathologies of
+    engagement optimisation are well documented and a candidate who does not mention them looks like
+    they have not thought about the product at all.
+
+THE #1 MISTAKE: training on raw clicks. Measured: CTR falls 15x across positions while true relevance
+falls 1.7x, so the model learns position and reproduces its own past ranking.
+
+THE #2 MISTAKE: applying the debiasing correction in the wrong place. Measured honest negative: naive
+post-hoc IPS took the correlation with true relevance from 0.4361 to 0.0907. IPS belongs in the
+training loss, and clipped/self-normalised variants exist because of exactly this variance.
+
+THE #3 MISTAKE: optimising engagement alone, and not saying why that is dangerous.
+
+THE #4 MISTAKE: not logging impressions and positions. It makes every debiasing technique impossible.
+
+THE #5 MISTAKE: ignoring hides and reports. Rare, and the only evidence of active dislike.
+
+THE #6 MISTAKE: no diversity or dedupe layer.
+
+THE #7 MISTAKE: ignoring the creator side. Without exploration for new creators the content supply
+decays, and a feed is a two-sided market.
+
+THE #8 MISTAKE: pure chronological or pure relevance. A recency decay with a tunable half-life is the
+answer, and the half-life is a product decision.
+
+THE #9 MISTAKE: no cold-start path for a user with no friends and no history.
+
+THE #10 MISTAKE: trusting offline ranking metrics, which are computed on logged data carrying all the
+biases above. The online test with guardrails is the gate, and the retention holdout is the truth.
+
+ONE-SENTENCE TAKEAWAY: news feed ranking is a multi-objective problem whose two hard parts are the
+OBJECTIVE - "maximise engagement" reliably produces outrage and clickbait and changes what creators
+make, so you combine several models with weights set as product policy and weight hides and reports far
+above their frequency - and POSITION BIAS, where measured CTR fell 15x from position 1 to 9 while true
+relevance fell only 1.7x, so raw clicks teach the model to reproduce its own ranking; and the fix is
+IPS weights inside the TRAINING LOSS, not applied to the labels, which I verified by getting it wrong
+and watching the correlation with true relevance fall from 0.44 to 0.09.""",
+]
+
+_EX_P1AO["Design a Trending / Hot-content ranking system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - what is hot right now, not what is popular overall
+
+A trending system surfaces content that is getting attention RIGHT NOW. It is a different problem from
+"most popular", and the difference is the whole design:
+
+    MOST POPULAR is a cumulative measure. It rewards things that have been around long enough to
+    accumulate votes, so the list barely changes and new content can never break in.
+
+    TRENDING is a measure of RATE and RECENCY. A post with 200 votes in its first hour is more
+    interesting than one with 20,000 votes over three days.
+
+THE THREE THINGS A SCORING FUNCTION HAS TO BALANCE, and every reasonable design is a different
+compromise between them:
+
+    VOLUME - how much attention has this got?
+    RATE - how fast is that attention arriving?
+    CONFIDENCE - how sure are we, given how few observations there are?
+
+    THE THIRD ONE IS THE ONE PEOPLE FORGET, AND SECTION 2 MEASURES WHAT FORGETTING IT COSTS. An item
+    with one upvote from two views has a 50% approval rate, and that number means nothing.
+
+THE OTHER HALF OF THE PROBLEM IS THAT TRENDING IS A HIGH-VALUE TARGET FOR MANIPULATION. Getting onto a
+trending list is worth money and influence, so people will coordinate to game it - and unlike most
+ranking systems, THE ATTACK IS CHEAP because the list is short and the threshold is low. AN
+ANTI-MANIPULATION LAYER IS NOT OPTIONAL HERE.
+
+TERMS AS THEY APPEAR:
+- GRAVITY: a decay term that divides the score by a power of the item's age.
+- WILSON SCORE LOWER BOUND: the lower end of a confidence interval on the true positive rate.
+- Z-SCORE / ANOMALY APPROACH: how many standard deviations above its own normal rate is this item?""",
+
+    """2. THE MEASUREMENT - four scoring functions, and what each one actually selects for
+
+I generated 4,000 items, each with a HIDDEN TRUE QUALITY (the probability a viewer votes for it), an
+age, and a view count spanning from 2 to over a million - so 22% of items had fewer than 50 views.
+Votes were then simulated from the true rate. THE QUESTION IS WHICH SCORING FUNCTION PICKS THE ITEMS
+THAT ARE GENUINELY GOOD.
+
+     scoring function                mean TRUE quality of top 5     mean views     mean age
+     raw vote count                                      16.5%        264,417        21.4 h
+     raw rate (votes / views)                            16.6%              5         5.0 h
+     Wilson lower bound                                  32.3%          8,208        16.4 h
+     HN gravity: votes/(age+2)^1.8                       13.2%        204,675         7.8 h
+     Wilson x gravity                                    24.6%            595         1.6 h
+
+    READ THE "RAW RATE" ROW. Its top 5 items had a MEAN OF FIVE VIEWS. The best-scoring item had 2
+    votes from 3 views - a 66.7% approval rate - and a TRUE quality of 9.3%. THE RAW RATE IS PURE
+    NOISE at small sample sizes, and small sample sizes are the overwhelming majority of any catalogue.
+
+    READ THE "WILSON" ROW. Its top 5 have a mean true quality of 32.3% - DOUBLE what raw vote count
+    achieves. Wilson asks "what rate am I CONFIDENT this item has", which penalises small samples
+    automatically, and it picks genuinely good items.
+
+    READ THE "GRAVITY" ROW. It picks the FRESHEST items - mean age 7.8 hours against 21.4 for raw count
+    - and the WORST quality, 13.2%. THAT IS NOT A BUG. Hacker News-style gravity is raw vote count with
+    a recency tilt; it optimises for freshness and inherits raw count's indifference to quality.
+
+    READ THE LAST ROW. Wilson x gravity gets 24.6% true quality at a mean age of 1.6 HOURS and 595
+    views. It gives up some quality against pure Wilson and buys an enormous amount of freshness - and
+    it surfaces items with hundreds of views rather than hundreds of thousands, which means NEW THINGS
+    CAN ACTUALLY BREAK IN.
+
+    EACH FUNCTION IS OPTIMISING SOMETHING DIFFERENT AND ALL FOUR ARE "CORRECT". The design question is
+    which trade you want, and the table is what lets you answer it rather than guess.
+
+THE PRACTICAL CONCLUSION: RAW COUNTS AND RAW RATES ARE BOTH WRONG, IN OPPOSITE DIRECTIONS. Count
+favours the old and large; rate favours the tiny and random. YOU NEED A CONFIDENCE-AWARE RATE AND AN
+EXPLICIT AGE DECAY, AND THE TWO ARE SEPARATE KNOBS.""",
+
+    """3. THE SCORING FUNCTIONS, EXPLAINED
+
+HACKER NEWS GRAVITY:
+
+    score = (votes - 1) / (age_hours + 2)^1.8
+
+    THE +2 stops brand-new items dividing by something near zero. THE EXPONENT 1.8 controls how fast
+    things fall off - higher means a faster-moving list. IT IS SIMPLE, EXPLICABLE AND TUNABLE, and
+    measured, it is essentially raw count with a recency tilt: it picked the freshest items and the
+    lowest-quality ones.
+
+REDDIT'S "HOT" - a logarithmic version:
+
+    score = log10(max(|ups - downs|, 1)) x sign(ups - downs) + seconds_since_epoch / 45000
+
+    THE LOG MEANS THE FIRST 10 VOTES MATTER AS MUCH AS THE NEXT 100, which is a deliberate choice that
+    lets new items climb fast and then stabilises them. The additive time term means NEWER IS ALWAYS
+    BETTER at equal votes, and the 45000 is a tunable half-life in seconds.
+
+WILSON SCORE LOWER BOUND - the confidence-aware rate:
+
+    the lower end of a 95% confidence interval on the true positive rate given `pos` positives out of
+    `n` observations.
+
+    WHAT IT DOES INTUITIVELY: an item with 1 vote from 2 views has an observed rate of 50% and a Wilson
+    lower bound near 3%, because with two observations you know essentially nothing. An item with 500
+    votes from 1,500 views has an observed rate of 33% and a Wilson lower bound near 31%, because you
+    are now confident.
+
+    MEASURED: it selects items whose TRUE quality averages 32.3%, double what raw vote count achieves.
+    IT IS THE RIGHT ANSWER FOR "WHAT IS GOOD" AND IT HAS NO RECENCY TERM AT ALL - which is why the
+    measured mean age of its picks is 16.4 hours.
+
+THE Z-SCORE / ANOMALY APPROACH - the one that best matches what "trending" means:
+
+    z = (current_rate - that_item's_own_baseline_rate) / that_item's_own_standard_deviation
+
+    THIS IS THE ONLY FORMULATION THAT CAPTURES "UNUSUAL FOR THIS ITEM". A hashtag that always gets
+    1,000 mentions an hour and now gets 1,100 is not trending; one that usually gets 5 and now gets 500
+    is. IT REQUIRES A PER-ENTITY BASELINE, which is real infrastructure, and it is what distinguishes a
+    genuine trend-detection system from a popularity list with a decay term.
+
+    IT ALSO HANDLES SEASONALITY IF THE BASELINE IS TIME-OF-DAY AWARE - "unusual for a Tuesday at 3am"
+    is different from "unusual overall".
+
+WHAT TO ACTUALLY PROPOSE: A COMBINATION, WITH THE KNOBS SEPARATED. A confidence-aware quality term
+(Wilson), times an explicit age decay (gravity), optionally gated by a z-score against the item's own
+baseline. MEASURED, Wilson x gravity gave 24.6% true quality at 1.6 hours of age - which is the trade a
+trending list actually wants.""",
+
+    """4. THE MANIPULATION PROBLEM - which is half the design
+
+TRENDING LISTS ARE SHORT, VISIBLE AND VALUABLE, WHICH MAKES THEM THE CHEAPEST HIGH-VALUE TARGET IN A
+CONTENT SYSTEM. And unlike search ranking, where you must outrank millions of pages, getting onto a
+trending list can take a few hundred coordinated actions.
+
+THE ATTACKS, and each has a specific countermeasure:
+
+    VOTE BRIGADING - a coordinated group upvoting in a short window.
+    COUNTER: weight votes by ACCOUNT AGE, ACCOUNT REPUTATION and HISTORICAL BEHAVIOUR. A vote from a
+    three-day-old account with no other activity should count for almost nothing.
+
+    SOCKPUPPETS AND BOT NETWORKS - many fake accounts.
+    COUNTER: DEDUPLICATE BY THE UNDERLYING ENTITY, not the account. IP, device fingerprint, payment
+    method, signup cohort. AND GRAPH ANALYSIS - accounts that always vote together are one actor.
+
+    RATE MANIPULATION - a small number of accounts generating many views to game a rate-based score.
+    COUNTER: COUNT UNIQUE ACTORS, NOT EVENTS. This single change defeats a large class of attacks and
+    it is the highest-value one to name.
+
+    EARLY-VOTE GAMING - exploiting that early votes matter most in log-scaled or gravity scores.
+    COUNTER: a minimum threshold before an item is eligible at all, and a delay before it can appear.
+
+    KEYWORD SQUATTING AND HASHTAG HIJACKING - attaching to an existing trend.
+    COUNTER: cluster by TOPIC rather than by exact string, and detect sudden semantic drift within a
+    trend.
+
+THE STRUCTURAL DEFENCES THAT MATTER MOST:
+
+    UNIQUE ACTORS, NOT EVENT COUNTS. The single highest-value rule.
+    A MINIMUM VOLUME THRESHOLD before eligibility. Measured, the raw-rate scorer's top item had THREE
+    VIEWS - a floor of, say, 500 unique actors eliminates that entire failure class outright.
+    A DELAY of minutes to hours between an item qualifying and appearing, so anomaly detection has time
+    to run.
+    HUMAN REVIEW OF THE TOP N. Trending lists are short - reviewing the top 20 is genuinely feasible,
+    and most large platforms do it.
+    AN AUDIT LOG of why each item was included, because you will be asked.
+
+AND THE EDITORIAL QUESTION THAT IS NOT A TECHNICAL ONE: SHOULD ALL TRENDS BE SHOWN? A trending list is
+an amplifier, and amplifying a developing hoax or a harassment campaign causes real harm. Most
+platforms apply a safety filter and some apply human editorial judgement, AND BOTH CHOICES ARE
+CRITICISED - which is worth acknowledging rather than pretending there is a clean answer.""",
+
+    """5. THE ARCHITECTURE - and why it is a streaming problem
+
+TRENDING IS FUNDAMENTALLY A STREAMING AGGREGATION PROBLEM, and that is the main way it differs
+architecturally from the other ranking systems:
+
+    EVENTS (views, votes, shares, mentions) arrive continuously
+    -> WINDOWED AGGREGATION per item, over several windows: 5 minutes, 1 hour, 24 hours
+    -> SCORE each candidate
+    -> FILTER for safety and manipulation
+    -> PUBLISH a short list, cached hard because everyone sees the same one
+
+THE MULTIPLE WINDOWS MATTER. A 5-minute window catches breaking news and is extremely noisy; a 24-hour
+window is stable and slow. REAL SYSTEMS COMPUTE SEVERAL AND COMBINE THEM, because "trending" means
+different things for a breaking news event and for a slow-building cultural moment.
+
+THE COUNTING PROBLEM AT SCALE. Counting UNIQUE ACTORS per item per window, for millions of items, is
+expensive in memory.
+    HYPERLOGLOG gives approximate distinct counts in a few kilobytes per item with a couple of per
+    cent error - AND APPROXIMATE IS FINE HERE, because the score is a ranking signal rather than an
+    accounting figure.
+    COUNT-MIN SKETCH for approximate frequencies with the same trade.
+    NAMING THESE IS A STRONG SIGNAL, because it shows you know the counting is the bottleneck rather
+    than the scoring.
+
+THE PER-ENTITY BASELINE, needed for the z-score approach, is the expensive part: you must store each
+item's or topic's NORMAL rate, ideally by time of day. THAT IS WHAT SEPARATES A REAL TREND DETECTOR
+FROM A POPULARITY LIST, and it is why most systems ship the popularity list first.
+
+CACHING. Everyone sees the same trending list, so it is the most cacheable thing in the entire product.
+Compute it every minute or two centrally and serve it from the edge. THE READ PATH SHOULD NEVER TOUCH
+THE SCORING SYSTEM.
+
+PERSONALISATION AND LOCALISATION. "Trending in your country", "trending in tech". THIS MULTIPLIES THE
+NUMBER OF LISTS YOU MUST COMPUTE AND CACHE, and it is a real cost decision rather than a free feature -
+a hundred locales times ten categories is a thousand lists recomputed every minute.
+
+FRESHNESS VS STABILITY. A list that changes every 30 seconds is unusable; one that changes hourly
+misses breaking news. HYSTERESIS - requiring a meaningful score gap before an item displaces another -
+is the standard fix and it is worth naming.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - DISTINGUISH TRENDING FROM POPULAR EXPLICITLY. Popular is cumulative and barely changes;
+trending is about rate and recency.
+
+STEP 2 - ASK WHAT THE LIST IS FOR AND HOW LONG IT IS. A 10-item homepage module and a full trending
+page have different tolerances for noise and different manipulation exposure.
+
+STEP 3 - NAME THE THREE THINGS TO BALANCE: volume, rate, and CONFIDENCE. The third is the one people
+forget.
+
+STEP 4 - RULE OUT RAW COUNT AND RAW RATE WITH THE MEASUREMENT. Measured: raw count picks items
+averaging 21.4 hours old; raw rate picks items with a mean of FIVE VIEWS and true quality no better
+than raw count.
+
+STEP 5 - PROPOSE A CONFIDENCE-AWARE QUALITY TERM. Measured: Wilson's top 5 had a mean true quality of
+32.3%, double raw count's 16.5%.
+
+STEP 6 - MULTIPLY BY AN EXPLICIT AGE DECAY, AS A SEPARATE KNOB. Measured: Wilson x gravity gave 24.6%
+true quality at a mean age of 1.6 hours and 595 views - so new things can break in.
+
+STEP 7 - MENTION THE Z-SCORE AGAINST A PER-ITEM BASELINE as the formulation that actually means
+"trending", and say it needs real infrastructure - which is why the popularity list ships first.
+
+STEP 8 - COUNT UNIQUE ACTORS, NOT EVENTS, and set a minimum volume threshold. Measured: raw rate's top
+item had three views; a floor eliminates that entire class outright.
+
+STEP 9 - DESCRIBE THE STREAMING PIPELINE with multiple windows, and name HyperLogLog for approximate
+distinct counts because the counting is the bottleneck, not the scoring.
+
+STEP 10 - COVER MANIPULATION AND SAFETY: reputation-weighted votes, graph analysis of co-voting
+accounts, a publication delay, human review of the top N, an audit log - and acknowledge that whether
+to show every trend is an editorial question with no clean answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd separate trending from POPULAR, because they're different problems. Popular is cumulative -
+it rewards things that have been around long enough to accumulate votes, so the list barely changes and
+nothing new can break in. Trending is about RATE and RECENCY.
+
+There are three things to balance: volume, rate, and CONFIDENCE. The third one is what people forget,
+and I measured what forgetting it costs.
+
+I generated four thousand items where I knew each one's hidden true quality, with view counts spanning
+from two to over a million, and compared four scoring functions on the mean TRUE quality of their top
+five.
+
+Raw vote count picked items averaging twenty-one hours old with a quarter of a million views - it
+rewards age and size. Raw RATE was worse in the opposite direction: its top five had a MEAN OF FIVE
+VIEWS. The winning item had two votes from three views, a sixty-seven per cent approval rate, and a
+true quality of nine per cent. It's pure noise, and small samples are the overwhelming majority of any
+catalogue.
+
+The Wilson score lower bound - the low end of a confidence interval on the true rate - picked items
+whose true quality averaged THIRTY-TWO per cent, DOUBLE what raw count achieved. It asks "what rate am I
+CONFIDENT this has", so small samples are penalised automatically.
+
+Hacker News gravity - votes over age-plus-two to the one-point-eight - picked the FRESHEST items,
+averaging under eight hours, and the WORST quality at thirteen per cent. That's not a bug: gravity is
+essentially raw count with a recency tilt, so it inherits raw count's indifference to quality.
+
+And Wilson TIMES gravity gave twenty-five per cent true quality at a mean age of one point six HOURS
+and under six hundred views - which is exactly what a trending list wants. It gives up some quality
+against pure Wilson and buys an enormous amount of freshness, and it surfaces items with hundreds of
+views rather than hundreds of thousands, so new things can actually break in.
+
+The formulation that best MEANS "trending" is a z-score against the item's OWN baseline - a hashtag
+that always gets a thousand mentions an hour and now gets eleven hundred isn't trending; one that
+usually gets five and now gets five hundred is. That needs a per-entity baseline, ideally time-of-day
+aware, which is real infrastructure - and it's why most systems ship the popularity-with-decay version
+first.
+
+Architecturally it's a STREAMING problem: events arrive continuously, windowed aggregation per item
+over several windows because a five-minute window catches breaking news and a twenty-four-hour window
+is stable, then score, filter, and publish one short list that everyone sees - so it's the most
+cacheable thing in the product. The bottleneck is the COUNTING, not the scoring: counting unique actors
+per item per window across millions of items is expensive, and HyperLogLog gives you approximate
+distinct counts in a few kilobytes each, which is fine because this is a ranking signal and not an
+accounting figure.
+
+And half the design is anti-manipulation, because a trending list is short, visible and valuable, and
+getting onto it might take only a few hundred coordinated actions. The single highest-value rule is
+COUNT UNIQUE ACTORS, NOT EVENTS. Then: weight votes by account age and reputation, deduplicate by
+device and IP rather than account, graph-analyse accounts that always vote together, set a minimum
+volume floor - which alone eliminates the three-view failure entirely - and delay publication by a few
+minutes so anomaly detection can run. Trending lists are short enough that human review of the top
+twenty is genuinely feasible, and most large platforms do it.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  EVENT STREAM: views, votes, shares, comments, mentions - continuous     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  WINDOWED AGGREGATION per item - SEVERAL WINDOWS AT ONCE                 │
+    │     5 min   -> catches BREAKING news, very noisy                         │
+    │     1 hour  -> the working window for most lists                         │
+    │     24 hour -> stable, slow, good as a baseline                          │
+    │  >> "TRENDING" MEANS DIFFERENT THINGS for a breaking event and a slow    │
+    │     cultural moment, which is why real systems compute several.          │
+    │                                                                          │
+    │  COUNT UNIQUE ACTORS, NOT EVENTS. <- THE SINGLE HIGHEST-VALUE RULE.      │
+    │    It defeats a large class of manipulation on its own.                  │
+    │  THE COUNTING IS THE BOTTLENECK, NOT THE SCORING:                        │
+    │    HYPERLOGLOG - approximate distinct counts, a few KB per item, ~2%     │
+    │      error. APPROXIMATE IS FINE - this is a ranking signal, not an       │
+    │      accounting figure.                                                  │
+    │    COUNT-MIN SKETCH - approximate frequencies, same trade.               │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  ELIGIBILITY GATE                                                        │
+    │    MINIMUM UNIQUE ACTORS (e.g. 500) before an item can be scored at all  │
+    │    >> MEASURED: the raw-rate scorer's top item had THREE VIEWS. A floor  │
+    │       eliminates that entire failure class outright, for free.           │
+    │    minimum age (so nothing appears in its first 60 seconds)              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SCORING - TWO SEPARATE KNOBS, and keep them separate                    │
+    │                                                                          │
+    │    QUALITY (confidence-aware):  WILSON LOWER BOUND on votes/views        │
+    │    RECENCY (explicit decay):    / (age_hours + 2)^gamma                  │
+    │    optionally GATED BY:         z-score vs THIS ITEM'S OWN baseline      │
+    │                                 <- the only formulation that really      │
+    │                                    means "unusual for this item";        │
+    │                                    needs a per-entity, time-of-day-aware │
+    │                                    baseline, i.e. real infrastructure    │
+    │                                                                          │
+    │  MEASURED, mean TRUE quality of each scorer's top 5 (4,000 items):       │
+    │    raw vote count              16.5%   264,417 views   21.4 h old        │
+    │    raw rate (votes/views)      16.6%         5 views    5.0 h old        │
+    │    WILSON lower bound          32.3%     8,208 views   16.4 h old        │
+    │    HN gravity                  13.2%   204,675 views    7.8 h old        │
+    │    WILSON x GRAVITY            24.6%       595 views    1.6 h old        │
+    │  >> RAW COUNT AND RAW RATE ARE BOTH WRONG IN OPPOSITE DIRECTIONS.        │
+    │     Wilson x gravity trades a little quality for a lot of freshness and  │
+    │     surfaces items with HUNDREDS of views - so new things break in.      │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  ANTI-MANIPULATION - HALF THE DESIGN                                     │
+    │    reputation-weight votes by ACCOUNT AGE and history                    │
+    │    dedupe by DEVICE / IP / payment method, not by account                │
+    │    GRAPH ANALYSIS: accounts that always vote together are one actor      │
+    │    PUBLICATION DELAY of minutes, so anomaly detection can run            │
+    │    cluster by TOPIC not exact string, to catch hashtag hijacking         │
+    │    >> A trending list is SHORT, VISIBLE AND VALUABLE, and getting on it  │
+    │       may take only a few hundred coordinated actions. Cheapest          │
+    │       high-value target in a content system.                             │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SAFETY AND EDITORIAL                                                    │
+    │    a trending list is an AMPLIFIER. Amplifying a developing hoax or a    │
+    │    harassment campaign causes real harm.                                  │
+    │    HUMAN REVIEW OF THE TOP N is genuinely feasible - the list is short - │
+    │    and most large platforms do it. AN AUDIT LOG of why each item was     │
+    │    included, because you WILL be asked.                                   │
+    │    >> WHETHER TO SHOW EVERY TREND IS AN EDITORIAL QUESTION WITH NO CLEAN │
+    │       ANSWER, and both choices get criticised. Say so.                   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  PUBLISH AND CACHE                                                       │
+    │    EVERYONE SEES THE SAME LIST -> the most cacheable object in the       │
+    │    product. Compute centrally every minute or two; serve from the edge;  │
+    │    the read path never touches the scoring system.                       │
+    │    HYSTERESIS: require a meaningful score gap before one item displaces  │
+    │    another, or the list churns every 30 seconds and is unusable.         │
+    │    LOCALISATION MULTIPLIES COST: 100 locales x 10 categories = 1,000     │
+    │    lists recomputed every minute. A real decision, not a free feature.   │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 4,000 items. Each has a HIDDEN TRUE VOTE RATE drawn from Beta(1.2, 20) - so most items are
+poor and a few are good - an age drawn from an exponential with mean 18 hours, and a view count drawn
+from a lognormal scaled by age, giving a range from 2 to 1,071,701 views. 22% of items have fewer than
+50 views. Votes are then SIMULATED from the true rate, so the observed rate is a noisy estimate of it.
+
+     scoring function                mean TRUE quality of top 5     mean views     mean age
+     raw vote count                                      16.5%        264,417        21.4 h
+     raw rate (votes / views)                            16.6%              5         5.0 h
+     Wilson lower bound                                  32.3%          8,208        16.4 h
+     HN gravity: votes/(age+2)^1.8                       13.2%        204,675         7.8 h
+     Wilson x gravity                                    24.6%            595         1.6 h
+
+THE INDIVIDUAL ITEMS ARE WHERE THE ARGUMENT LIVES:
+
+     RAW RATE's top pick:      2 votes from 3 views = 66.7% observed, TRUE rate 9.3%
+     RAW RATE's third pick:    1 vote from 2 views  = 50.0% observed, TRUE rate 16.6%
+     WILSON's top pick:      523 votes from 1,579 views = 33.1% observed, TRUE rate 32.3%
+     WILSON's second pick:   253 votes from 744 views   = 34.0% observed, TRUE rate 35.3%
+
+    THE WILSON PICKS' OBSERVED RATES ARE ALMOST EXACTLY THEIR TRUE RATES - 33.1 vs 32.3, 34.0 vs 35.3.
+    THAT IS THE WHOLE POINT: with hundreds of observations the estimate is trustworthy, and Wilson only
+    promotes items where it is.
+
+    THE RAW-RATE PICKS' OBSERVED RATES ARE OFF BY A FACTOR OF SEVEN AND THREE. With two or three
+    observations there is no information at all, and the observed rate is essentially a coin flip that
+    came up favourable.
+
+INTERESTING DETAIL IN THE WILSON ROW: its top 5 includes an item with 8 votes from 15 views and one
+with 19 from 45. WILSON DOES NOT REQUIRE LARGE SAMPLES, it requires the evidence to be strong enough
+for the rate claimed - 8 from 15 at a 53% observed rate still clears a high confidence bound. That is
+the correct behaviour and it is why a separate minimum-volume gate is still worth having for
+manipulation reasons, independent of the statistics.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE Beta(1.2, 20) TRUE-QUALITY PRIOR
+            makes most items poor, so a scorer that picks at random lands near the prior mean of about
+            5.7%. EVERY SCORER BEATS RANDOM; the interesting comparison is between them, and the
+            Wilson-vs-count gap of 16 percentage points is the headline.
+    THE LOGNORMAL VIEW COUNT SPANNING 2 TO OVER A MILLION
+            is what makes the raw-rate failure visible. A corpus where every item had thousands of
+            views would show Wilson and raw rate agreeing - AND AN EARLIER VERSION OF THIS EXPERIMENT
+            DID EXACTLY THAT, with Wilson and raw rate producing identical top-5 lists, because the
+            generator never produced low-view items. THE VIEW-COUNT DISTRIBUTION, NOT THE SCORER,
+            DECIDED WHETHER THE COMPARISON WAS INFORMATIVE.
+    SCALING VIEWS BY min(age, 48)
+            couples age and volume, which is realistic - older items have had more time to accumulate
+            views - and is exactly why raw vote count's picks average 21.4 hours old.
+    THE gamma = 0.8 EXPONENT IN "Wilson x gravity" (rather than 1.8)
+            is gentler than HN's, because Wilson's output is a rate in [0,1] rather than an unbounded
+            count, so it needs less aggressive decay to stay balanced. THE EXPONENT IS A TUNING KNOB
+            AND THE MEASURED TRADE-OFF IS WHAT LETS YOU SET IT.
+    WHAT IS NOT MEASURED
+            is manipulation resistance, the z-score baseline approach, or any streaming cost. THOSE
+            SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you distinguish trending from popular?
+    Did you name CONFIDENCE as the third thing to balance, alongside volume and rate?
+    Do you know why raw rate fails, concretely?
+    Did you keep quality and recency as SEPARATE knobs?
+    Did you recognise it as a streaming aggregation problem, with counting as the bottleneck?
+    Did you spend real time on MANIPULATION?
+    Did you mention "count unique actors, not events"?
+
+    THE MANIPULATION SECTION IS WHERE CANDIDATES DIVERGE MOST. A trending list is the cheapest
+    high-value target in a content product, and a design without an anti-abuse layer is not a design.
+
+THE #1 MISTAKE: ranking by raw rate. Measured: its top 5 averaged FIVE VIEWS, and its top item's
+observed rate of 66.7% came from a true rate of 9.3%.
+
+THE #2 MISTAKE: ranking by raw count. Measured: it picks items averaging 21.4 hours old with a quarter
+of a million views, so nothing new ever breaks in.
+
+THE #3 MISTAKE: no confidence term. Measured: Wilson's top 5 had double the true quality of raw
+count's.
+
+THE #4 MISTAKE: assuming gravity solves quality. Measured: HN-style gravity picked the FRESHEST items
+and the LOWEST-quality ones, because it is raw count with a recency tilt.
+
+THE #5 MISTAKE: counting events instead of unique actors. It is the single highest-value
+anti-manipulation rule.
+
+THE #6 MISTAKE: no minimum volume threshold. It eliminates the three-view failure class outright.
+
+THE #7 MISTAKE: no publication delay or human review. The list is short enough that reviewing the top
+20 is feasible, and most large platforms do it.
+
+THE #8 MISTAKE: no hysteresis. A list that churns every 30 seconds is unusable.
+
+THE #9 MISTAKE: exact counting at scale. HyperLogLog gives approximate distinct counts in kilobytes,
+and approximate is fine for a ranking signal.
+
+THE #10 MISTAKE: treating "should we show every trend" as a technical question. It is editorial, both
+answers get criticised, and saying so is better than pretending.
+
+ONE-SENTENCE TAKEAWAY: trending balances volume, rate and CONFIDENCE, and measured across 4,000 items
+with known true quality, raw vote count picks things 21 hours old with 264,000 views while raw rate
+picks things with a mean of FIVE views whose observed 67% rate came from a true rate of 9% - so the
+answer is a confidence-aware quality term (Wilson's top picks had DOUBLE raw count's true quality)
+multiplied by an explicit age decay as a SEPARATE knob (Wilson x gravity: 24.6% quality at 1.6 hours
+and 595 views), computed as a streaming aggregation where the bottleneck is counting UNIQUE ACTORS
+rather than events, with anti-manipulation as half the design.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
