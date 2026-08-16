@@ -229235,6 +229235,1406 @@ before choosing between them, ask what a false alarm costs and what a miss costs
 always check whether your accuracy is beating the majority-class baseline.""",
 ]
 
+_EX_P1AO["Amortized analysis"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the average cost per operation over a whole sequence, not the worst single one
+
+AMORTIZED ANALYSIS asks: if I perform n operations, what is the TOTAL cost divided by n? It exists
+because some data structures have operations that are usually cheap and occasionally expensive, and
+quoting the expensive case as "the" cost is misleading.
+
+THE CANONICAL EXAMPLE IS APPENDING TO A DYNAMIC ARRAY - a Python list, a C++ vector, a Java ArrayList:
+
+    usually: write into the next free slot. O(1).
+    occasionally: the array is full, so allocate a bigger one and COPY EVERYTHING. O(n).
+
+    THE WORST-CASE COST OF ONE APPEND IS O(n). THE AMORTIZED COST IS O(1). Both statements are true and
+    the second is the useful one, because you never do one append - you do n of them.
+
+THE THREE WAYS TO PROVE AN AMORTIZED BOUND, and you should be able to name them:
+
+    THE AGGREGATE METHOD - add up the total cost of n operations and divide by n. THE SIMPLEST, and it
+    is what section 2 measures.
+    THE ACCOUNTING METHOD - charge each cheap operation a little extra and store the surplus as credit;
+    show the credit always covers the expensive ones. "Each append pays 3 units: 1 to write, 2 saved to
+    pay for the future copy of itself and one older element."
+    THE POTENTIAL METHOD - define a potential function of the structure's state; the amortized cost is
+    the actual cost plus the change in potential. THE MOST GENERAL, and the one that generalises to
+    splay trees and Fibonacci heaps.
+
+TERMS AS THEY APPEAR:
+- AMORTIZED: averaged over a worst-case SEQUENCE. Not probabilistic.
+- AVERAGE-CASE: averaged over a distribution of INPUTS. A different thing - section 3 is about that.
+- GEOMETRIC GROWTH: multiplying the capacity by a constant factor when resizing.""",
+
+    """2. THE MEASUREMENT - why the growth FACTOR is what makes it O(1)
+
+I instrumented a dynamic array to count every element copy while appending 1,000,000 items, varying
+the growth factor.
+
+     growth factor     resizes     total element copies     copies per append     wasted capacity
+     1.1                   135               10,170,704                 10.17                1.7%
+     1.5                    34                2,099,753                  2.10                5.0%
+     2.0                    20                1,048,575                  1.05                4.9%
+     3.0                    13                  797,161                  0.80               59.4%
+
+    THE COPIES-PER-APPEND COLUMN IS CONSTANT WITH RESPECT TO n AND DEPENDS ONLY ON THE FACTOR. That is
+    the entire content of "amortized O(1)".
+
+    AND THE CONSTANT HAS A CLOSED FORM: 1 / (factor - 1).
+        factor 2.0 -> 1/(1.0) = 1.00, measured 1.05
+        factor 1.5 -> 1/(0.5) = 2.00, measured 2.10
+        factor 1.1 -> 1/(0.1) = 10.0, measured 10.17
+        factor 3.0 -> 1/(2.0) = 0.50, measured 0.80 (higher because the last resize overshoots)
+
+    THE PROOF IS A GEOMETRIC SERIES. The copies performed are n/f + n/f^2 + n/f^3 + ... which sums to
+    n/(f-1). BOUNDED, AND INDEPENDENT OF n. THAT SUM IS THE WHOLE ARGUMENT and it fits in one line.
+
+THE TRADE-OFF IS MEMORY, AND THE LAST ROW MAKES IT CONCRETE. Growing by 3x costs only 0.8 copies per
+append and WASTES 59.4% OF THE ALLOCATED MEMORY. Growing by 2x costs 1.05 copies and wastes 4.9% at
+this particular n.
+
+    THAT IS WHY REAL IMPLEMENTATIONS DIFFER: CPython's list grows by roughly 1.125x, C++ std::vector
+    typically doubles, and some allocators use 1.5x specifically because a 1.5x sequence can REUSE
+    previously freed blocks (the sum of all previous allocations eventually exceeds the next request,
+    which is not true for doubling). THE CHOICE IS AN ENGINEERING JUDGEMENT ABOUT MEMORY VERSUS TIME,
+    not a theoretical one.
+
+NOW THE FAILURE MODE, WHICH IS WHAT MAKES THE FACTOR THE POINT RATHER THAN A DETAIL. Growing by a fixed
+NUMBER of slots instead of a factor:
+
+     n              total copies         copies per append
+     10,000              495,100                      49.5
+     100,000          49,951,000                     499.5
+     1,000,000     4,999,510,000                   4,999.5
+
+    THE COST PER APPEND GROWS LINEARLY WITH n. It is O(n^2) in total, and the per-operation cost is not
+    amortized O(1) at all - it is O(n/step). A TENFOLD INCREASE IN n IS A TENFOLD INCREASE IN THE COST
+    OF EVERY SINGLE APPEND.
+
+    GEOMETRIC GROWTH IS NOT AN OPTIMISATION. IT IS THE DIFFERENCE BETWEEN LINEAR AND QUADRATIC.""",
+
+    """3. THE MEASUREMENT THAT MATTERS IN PRODUCTION - amortized is not average
+
+This is the distinction people get wrong, and it has real operational consequences.
+
+I traced the cost of each individual append while adding 1,024 items to a doubling array:
+
+     total cost across 1,024 appends:            2,047 units
+     mean cost per append:                        2.00 units
+     WORST SINGLE APPEND:                          513 units
+     the expensive appends occur at positions:     2, 3, 5, 9, 17, 33, 65, 129, 257, 513
+
+    THE MEAN IS 2 AND ONE OPERATION COST 513. AMORTIZED O(1) DOES NOT MEAN EVERY OPERATION IS CHEAP -
+    it means the TOTAL over any sequence is O(n).
+
+    THE EXPENSIVE POSITIONS ARE PRECISELY 2^k + 1, which is a nice sanity check that the structure is
+    behaving as designed, and it also tells you something useful: THE EXPENSIVE OPERATIONS GET RARER
+    AND MORE EXPENSIVE AS THE ARRAY GROWS. There are only ten of them in a thousand appends, and the
+    last one costs half the array.
+
+WHY THAT MATTERS OPERATIONALLY, and this is the part worth saying in an interview:
+
+    AMORTIZED BOUNDS ARE THE RIGHT ANALYSIS FOR THROUGHPUT AND THE WRONG ONE FOR TAIL LATENCY. If you
+    are serving requests with a p99.9 target, a single append that copies half a gigabyte is a
+    latency spike no amortized bound will save you from.
+    THAT IS EXACTLY WHY REAL-TIME AND LOW-LATENCY SYSTEMS PRE-SIZE THEIR BUFFERS - `reserve(n)` in
+    C++, sizing a slice's capacity up front in Go. IT DOES NOT REDUCE THE TOTAL WORK; IT MOVES IT OUT
+    OF THE HOT PATH.
+    THE SAME REASONING APPLIES TO GARBAGE COLLECTION, TO HASH TABLE REHASHING, AND TO LOG-STRUCTURED
+    STORAGE COMPACTION. All three are amortized-cheap and tail-latency-expensive, and all three have
+    the same mitigation: do the work incrementally, or do it ahead of time.
+
+AND THE VOCABULARY DISTINCTION, which is worth stating precisely:
+
+    AMORTIZED cost is a WORST-CASE guarantee over a SEQUENCE. No probability is involved. A doubling
+    array's amortized O(1) holds for every possible sequence of appends.
+    AVERAGE-CASE cost is an expectation over a DISTRIBUTION OF INPUTS. Quicksort is average-case
+    O(n log n) and worst-case O(n^2), and an adversary who knows your pivot rule can force the worst
+    case every time.
+    EXPECTED cost involves the algorithm's own randomness. Randomised quicksort is O(n log n) in
+    expectation regardless of the input, because the adversary cannot predict the coin flips.
+
+    THOSE THREE ARE ROUTINELY CONFLATED AND THEY MEAN GENUINELY DIFFERENT THINGS.""",
+
+    """4. THE OTHER CLASSIC EXAMPLES
+
+HASH TABLE INSERTION. Usually O(1); when the load factor is exceeded, rehash everything, O(n). SAME
+GEOMETRIC ARGUMENT, same amortized O(1), same tail-latency spike. AND THE SAME MITIGATION: incremental
+rehashing, where each insert moves a few old entries, spreading the cost.
+
+TWO-STACK QUEUE. Implement a queue with an input stack and an output stack; when the output stack is
+empty, move everything across. ANY SINGLE DEQUEUE CAN COST O(n) AND EACH ELEMENT IS MOVED EXACTLY ONCE
+ACROSS ITS LIFETIME, SO THE AMORTIZED COST IS O(1). It is the cleanest possible illustration of the
+accounting method: charge the move to the enqueue that put the element there.
+
+THE MONOTONIC STACK. Each element is pushed at most once and popped at most once, so a loop with a
+nested while is still O(n) total. THIS IS EXACTLY THE ARGUMENT THAT MAKES NEXT GREATER ELEMENT AND
+LARGEST RECTANGLE IN A HISTOGRAM LINEAR, and it is amortized analysis by the aggregate method whether
+or not anyone calls it that.
+
+INCREMENTING A BINARY COUNTER. Adding 1 sometimes flips one bit and sometimes flips many. Over n
+increments the total bit flips are at most 2n, so the amortized cost is O(1) - because bit k flips only
+every 2^k increments, and n/1 + n/2 + n/4 + ... = 2n. ANOTHER GEOMETRIC SERIES.
+
+UNION-FIND WITH PATH COMPRESSION. Amortized nearly O(1) - specifically O(alpha(n)), the inverse
+Ackermann function, which is at most 4 for any n you will ever encounter. THE ANALYSIS IS GENUINELY
+HARD and the result is worth knowing as a fact.
+
+SPLAY TREES AND FIBONACCI HEAPS. Individual operations can be O(n) and O(n) respectively; the amortized
+bounds are O(log n) and O(1) for decrease-key. THESE ARE WHERE THE POTENTIAL METHOD EARNS ITS KEEP,
+because no aggregate argument is available.
+
+    THE FIBONACCI HEAP IS ALSO THE STANDARD CAUTIONARY TALE: its amortized bounds are excellent and its
+    CONSTANT FACTORS ARE SO BAD THAT A BINARY HEAP USUALLY WINS IN PRACTICE. AMORTIZED O(1) WITH A
+    HUGE CONSTANT IS NOT FAST, and that is the same lesson as every other measurement in this bank.""",
+
+    """5. THE FAILURE MODES AND MISCONCEPTIONS
+
+MISCONCEPTION 1 - "AMORTIZED MEANS AVERAGE". It does not. Amortized is a worst-case guarantee over a
+sequence with no probability involved; average-case is an expectation over inputs. A doubling array's
+bound holds for every sequence; quicksort's average case does not.
+
+MISCONCEPTION 2 - "AMORTIZED O(1) MEANS EVERY OPERATION IS FAST". Measured: mean 2.00, worst 513, in a
+sequence of 1,024 appends.
+
+MISCONCEPTION 3 - IGNORING THE TAIL LATENCY CONSEQUENCE. Amortized analysis is the right tool for
+throughput and the wrong one for p99.9. Pre-size the buffer.
+
+FAILURE 4 - ADDITIVE GROWTH. Measured: 4,999.5 copies per append at n = 1,000,000 and rising linearly.
+It is O(n^2) total and it is a genuinely common bug in hand-rolled buffers.
+
+FAILURE 5 - ASSUMING THE AMORTIZED BOUND SURVIVES DELETION. If a structure shrinks the moment it drops
+below half full, an alternating insert/delete sequence at the boundary triggers a resize EVERY TIME and
+the amortized bound collapses to O(n) per operation. THE STANDARD FIX IS HYSTERESIS: grow at full,
+shrink only at one QUARTER full. THAT ASYMMETRY IS DELIBERATE and it is a good thing to be able to
+explain.
+
+FAILURE 6 - APPLYING AN AMORTIZED BOUND TO A SINGLE OPERATION IN A LATENCY BUDGET. "Append is O(1)" is
+true and useless when you have 5 milliseconds and the append might copy a gigabyte.
+
+FAILURE 7 - FORGETTING THAT THE BOUND IS PER STRUCTURE, NOT PER PROGRAM. Amortized costs do not compose
+naively: if an expensive operation on structure A triggers an expensive operation on structure B, the
+credits do not automatically cover it.
+
+FAILURE 8 - CONFUSING AMORTIZED WITH "ON AVERAGE IT IS FINE". An adversary choosing the sequence cannot
+break an amortized bound - that is the point of it - but they CAN break an average-case bound, and
+knowing which one you have matters for anything adversarial.
+
+FAILURE 9 - CHASING A BETTER AMORTIZED BOUND WITH A WORSE CONSTANT. The Fibonacci heap is the standard
+example: asymptotically superior, practically usually slower than a binary heap.""",
+
+    """6. HOW TO USE IT - numbered steps
+
+STEP 1 - IDENTIFY WHETHER THE OPERATION HAS A RARE EXPENSIVE CASE. If every operation costs the same,
+amortized analysis has nothing to say.
+
+STEP 2 - COUNT THE TOTAL WORK ACROSS n OPERATIONS, not the worst single one. That is the aggregate
+method and it is usually enough.
+
+STEP 3 - LOOK FOR A GEOMETRIC SERIES. n/f + n/f^2 + ... = n/(f-1). Measured: the copies per append are
+exactly 1/(factor-1), 1.05 at factor 2 and 10.17 at factor 1.1.
+
+STEP 4 - IF THE AGGREGATE COUNT IS AWKWARD, USE THE ACCOUNTING METHOD. Charge cheap operations extra
+and show the credit covers the expensive ones. The two-stack queue is the clearest case.
+
+STEP 5 - FOR ANYTHING WITH COMPLEX STATE, USE THE POTENTIAL METHOD. It is how splay trees and Fibonacci
+heaps are analysed.
+
+STEP 6 - STATE THE MEMORY TRADE-OFF. Measured: factor 3 costs 0.8 copies per append and wastes 59.4% of
+the allocation; factor 2 costs 1.05 and wastes 4.9%.
+
+STEP 7 - CHECK THAT DELETION DOES NOT BREAK IT. Shrinking at half-full makes an alternating sequence
+O(n) per operation; shrink at a quarter instead.
+
+STEP 8 - SAY EXPLICITLY WHETHER YOU MEAN AMORTIZED, AVERAGE-CASE OR EXPECTED. They are three different
+guarantees and interviewers listen for the distinction.
+
+STEP 9 - RAISE THE TAIL-LATENCY CONSEQUENCE UNPROMPTED. Measured: mean 2.00 and worst 513 in the same
+sequence, which is why low-latency systems pre-size buffers.
+
+STEP 10 - REMEMBER THE CONSTANT FACTOR. An amortized bound with a terrible constant loses in practice,
+and the Fibonacci heap is the standing example.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Amortized analysis asks what n operations cost in TOTAL, divided by n - rather than what the worst
+single operation costs. It exists because some structures have operations that are usually cheap and
+occasionally expensive, and quoting the expensive case is misleading.
+
+The classic case is appending to a dynamic array. Usually you write into the next free slot, which is
+O(1). Occasionally the array is full, so you allocate a bigger one and copy everything, which is O(n).
+The worst-case single append is O(n) and the AMORTIZED cost is O(1), and the second is the useful
+statement because you never do one append.
+
+I measured why. Appending a million items to a doubling array performs 1.05 element copies per append.
+At a growth factor of 1.5 it is 2.10, and at 1.1 it is 10.17. THE COST PER APPEND IS CONSTANT IN n AND
+DEPENDS ONLY ON THE FACTOR - specifically it is one over factor-minus-one, and the measurements match
+that closed form. The proof is a geometric series: the copies are n over f plus n over f-squared and so
+on, which sums to n over f-minus-one. Bounded, independent of n, one line.
+
+The trade-off is memory, and the numbers make it concrete: growing by 3x costs only 0.8 copies per
+append and WASTES nearly sixty per cent of the allocated memory, while 2x costs 1.05 and wastes about
+five. That's why real implementations differ - CPython grows by about 1.125x, C++ vectors typically
+double, and some allocators use 1.5x specifically because a 1.5x sequence can REUSE previously freed
+blocks, which doubling can't.
+
+The failure mode is what makes the FACTOR the point rather than a detail. If you grow by a fixed NUMBER
+of slots instead, I measured 49.5 copies per append at ten thousand items, 499.5 at a hundred thousand,
+and 4,999.5 at a million. The per-append cost grows linearly with n. GEOMETRIC GROWTH ISN'T AN
+OPTIMISATION - IT'S THE DIFFERENCE BETWEEN LINEAR AND QUADRATIC.
+
+The thing I'd most want to add is the distinction people get wrong. I traced every individual append
+while adding 1,024 items: the mean was 2.00 units and ONE APPEND COST 513. AMORTIZED O(1) DOESN'T MEAN
+EVERY OPERATION IS CHEAP - it means the total over any sequence is O(n). The expensive ones happened at
+positions 2, 3, 5, 9, 17 and so on - exactly two-to-the-k plus one - and they get rarer AND more
+expensive as the array grows.
+
+Which matters operationally: amortized bounds are the right analysis for THROUGHPUT and the wrong one
+for TAIL LATENCY. If you have a p99.9 target, one append copying half a gigabyte is a spike no
+amortized bound saves you from. That's exactly why low-latency systems pre-size their buffers - it
+doesn't reduce the total work, it moves it out of the hot path. Same reasoning applies to hash table
+rehashing and to log-structured storage compaction.
+
+And I'd be precise about vocabulary, because three things get conflated. AMORTIZED is a worst-case
+guarantee over a SEQUENCE, with no probability involved. AVERAGE-CASE is an expectation over a
+distribution of INPUTS, and an adversary can break it. EXPECTED involves the algorithm's own
+randomness, which an adversary can't predict. Randomised quicksort is expected O(n log n); plain
+quicksort is average-case O(n log n) and an adversary who knows your pivot rule forces n-squared.'""",
+
+    """8. THE THREE METHODS, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  (1) THE AGGREGATE METHOD - simplest, and usually enough                 │
+    │                                                                          │
+    │    Total cost of n appends to a doubling array:                          │
+    │      copies = n/2 + n/4 + n/8 + ... < n                                  │
+    │      writes = n                                                          │
+    │      total  < 2n   ->  AMORTIZED O(1)                                    │
+    │                                                                          │
+    │    GENERALISED: with growth factor f the copies are                      │
+    │      n/f + n/f^2 + n/f^3 + ... = n/(f-1)                                 │
+    │    MEASURED at n = 1,000,000:                                            │
+    │      factor  resizes   total copies   copies/append   1/(f-1)   wasted   │
+    │      1.1         135     10,170,704          10.17     10.00      1.7%   │
+    │      1.5          34      2,099,753           2.10      2.00      5.0%   │
+    │      2.0          20      1,048,575           1.05      1.00      4.9%   │
+    │      3.0          13        797,161           0.80      0.50     59.4%   │
+    │    >> THE MEASUREMENT MATCHES THE CLOSED FORM, and the last column is    │
+    │       the price: a bigger factor buys time with memory.                   │
+    │                                                                          │
+    │    ADDITIVE GROWTH (grow by a fixed 100 slots) - THE FAILURE:            │
+    │      n = 10,000      ->        495,100 copies  ->    49.5 per append     │
+    │      n = 100,000     ->     49,951,000 copies  ->   499.5 per append     │
+    │      n = 1,000,000   ->  4,999,510,000 copies  -> 4,999.5 per append     │
+    │    >> O(n^2) TOTAL. GEOMETRIC GROWTH IS THE DIFFERENCE BETWEEN LINEAR    │
+    │       AND QUADRATIC, not an optimisation.                                 │
+    └──────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  (2) THE ACCOUNTING METHOD - charge cheap ops extra, bank the credit     │
+    │                                                                          │
+    │    "Each append pays 3 units: 1 to write itself, 1 saved to copy itself  │
+    │     later, 1 saved to copy one older element that has no credit left."   │
+    │    Show the bank never goes negative -> amortized cost is 3 = O(1).      │
+    │                                                                          │
+    │    CLEANEST EXAMPLE - THE TWO-STACK QUEUE:                               │
+    │      enqueue -> push onto stack IN                                       │
+    │      dequeue -> if OUT is empty, pour all of IN into OUT, then pop       │
+    │      A SINGLE DEQUEUE CAN COST O(n). But EACH ELEMENT MOVES ACROSS       │
+    │      EXACTLY ONCE IN ITS LIFETIME, so charge the move to the ENQUEUE     │
+    │      that put it there -> AMORTIZED O(1).                                │
+    └──────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  (3) THE POTENTIAL METHOD - most general                                │
+    │                                                                          │
+    │    amortized cost = actual cost + (potential after - potential before)   │
+    │    Choose a potential function of the STRUCTURE'S STATE that is high     │
+    │    when an expensive operation is imminent.                              │
+    │    For the dynamic array: Phi = 2n - capacity. A resize drops Phi        │
+    │    sharply, paying for the copy.                                          │
+    │    >> THIS IS WHERE SPLAY TREES AND FIBONACCI HEAPS ARE ANALYSED, because│
+    │       no aggregate count is available for them.                           │
+    └──────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  AND THE VOCABULARY, WHICH IS ROUTINELY CONFLATED                        │
+    │    AMORTIZED     worst case over a SEQUENCE. No probability. An          │
+    │                  adversary CANNOT break it.                               │
+    │    AVERAGE-CASE  expectation over a DISTRIBUTION OF INPUTS. An adversary │
+    │                  CAN break it (quicksort's O(n^2)).                       │
+    │    EXPECTED      over the ALGORITHM'S OWN randomness. The adversary      │
+    │                  cannot predict the coin flips (randomised quicksort).    │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+MEASUREMENT 1 - GROWTH FACTOR. A dynamic array instrumented to count every element copy, appending
+1,000,000 items.
+
+     growth factor     resizes     total element copies     copies per append     predicted 1/(f-1)
+     1.1                   135               10,170,704                 10.17                 10.00
+     1.5                    34                2,099,753                  2.10                  2.00
+     2.0                    20                1,048,575                  1.05                  1.00
+     3.0                    13                  797,161                  0.80                  0.50
+
+    THE MEASURED VALUES SIT SLIGHTLY ABOVE THE CLOSED FORM IN EVERY ROW, and the reason is worth
+    understanding: the series n/f + n/f^2 + ... assumes the array grew from nothing to exactly n. In
+    practice the LAST resize overshoots - it allocates capacity for more than n - so a little extra
+    copying has already been paid for. THE GAP IS LARGEST AT FACTOR 3 (0.80 measured against 0.50
+    predicted) BECAUSE THE OVERSHOOT IS LARGEST THERE, which is the same fact as the 59.4% wasted
+    capacity in the next column. THE TWO ANOMALIES ARE ONE ANOMALY.
+
+    THE RESIZE COUNT IS log_f(n): log2(10^6) = 20, and the measurement says 20. log1.1(10^6) = 145, and
+    the measurement says 135, the difference being the initial capacity of 1.
+
+MEASUREMENT 2 - ADDITIVE GROWTH, step 100:
+
+     n              total copies         copies per append
+     10,000              495,100                      49.5
+     100,000          49,951,000                     499.5
+     1,000,000     4,999,510,000                   4,999.5
+
+    THE COPIES-PER-APPEND IS EXACTLY n / (2 x step): 10,000/200 = 50, 1,000,000/200 = 5,000. The
+    measurement matches to within the initial-capacity correction. IT IS THE ARITHMETIC SERIES
+    100 + 200 + 300 + ... rather than a geometric one, and an arithmetic series in n is quadratic.
+
+MEASUREMENT 3 - PER-OPERATION COSTS, 1,024 appends to a doubling array:
+
+     total cost                    2,047 units
+     mean per append                2.00 units
+     WORST single append              513 units
+     expensive positions            2, 3, 5, 9, 17, 33, 65, 129, 257, 513
+
+    THE EXPENSIVE POSITIONS ARE EXACTLY 2^k + 1. THE TOTAL OF 2,047 IS EXACTLY 2n - 1, which is the
+    aggregate bound realised precisely rather than approximately - 1,024 writes plus 1,023 copies.
+
+    THE WORST COST OF 513 IS n/2 + 1, occurring at the last resize. IN A REAL ARRAY OF A BILLION
+    ELEMENTS THAT SINGLE OPERATION COPIES HALF A BILLION ELEMENTS.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which number:
+
+    STARTING CAPACITY OF 1
+            is why every measured copies-per-append exceeds the closed form slightly. Starting at a
+            larger capacity would tighten the match and would not change the asymptotics.
+    `cap = max(cap+1, int(cap*factor))`
+            is what stops factor 1.1 stalling at small capacities where int(1*1.1) == 1. WITHOUT THAT
+            GUARD the array never grows, which is a genuine bug in hand-rolled implementations at small
+            factors.
+    COUNTING ELEMENT COPIES RATHER THAN TIMING
+            makes the result implementation-independent. A timing measurement would be dominated by
+            memory allocator behaviour and cache effects, and would obscure the arithmetic - which is
+            the thing the entry is about.
+    THE ADDITIVE STEP OF 100
+            sets the constant, not the shape. Any fixed step gives O(n^2); a bigger step only moves the
+            crossover.
+    MEASURING AT 1,024 FOR THE PER-OPERATION TRACE
+            was chosen so the expensive positions land on clean powers of two and the total is exactly
+            2n-1, making the aggregate bound visible by inspection rather than approximately.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Can you state the geometric-series argument in one line?
+    Do you know the difference between amortized, average-case and expected?
+    Do you know that amortized O(1) permits an individual O(n) operation?
+    Can you name the three proof methods?
+    Do you know the memory trade-off in the growth factor?
+    Can you connect it to tail latency?
+
+    THE TAIL-LATENCY CONNECTION IS THE STRONGEST SIGNAL, because it shows you have used the analysis
+    rather than only learned it.
+
+THE #1 MISTAKE: saying amortized means average. It is a worst-case guarantee over a sequence with no
+probability involved, and an adversary cannot break it.
+
+THE #2 MISTAKE: believing amortized O(1) means every operation is fast. Measured: mean 2.00, worst 513,
+same sequence.
+
+THE #3 MISTAKE: additive growth. Measured: 4,999.5 copies per append at n = 1,000,000, growing linearly.
+O(n^2) total.
+
+THE #4 MISTAKE: ignoring the memory cost of the growth factor. Measured: factor 3 wastes 59.4% of the
+allocation.
+
+THE #5 MISTAKE: shrinking at half-full. An alternating insert/delete sequence at the boundary resizes
+every time and the bound collapses. Shrink at a quarter - the asymmetry is deliberate.
+
+THE #6 MISTAKE: applying an amortized bound inside a latency budget. "Append is O(1)" is true and
+useless when one append copies a gigabyte.
+
+THE #7 MISTAKE: assuming amortized bounds compose. They do not automatically; credits are per
+structure.
+
+THE #8 MISTAKE: chasing an asymptotically better bound with a worse constant. The Fibonacci heap is the
+standing example - excellent amortized bounds, usually slower than a binary heap in practice.
+
+THE #9 MISTAKE: not recognising amortized analysis when you are already doing it. "Each element is
+pushed once and popped once" in a monotonic stack IS the aggregate method.
+
+ONE-SENTENCE TAKEAWAY: amortized analysis bounds the TOTAL cost of a sequence rather than the worst
+single operation, and for a dynamic array the whole proof is a geometric series giving exactly
+1/(factor-1) copies per append - measured at 1.05 for doubling, 2.10 for 1.5x and 10.17 for 1.1x,
+against 4,999.5 and rising for ADDITIVE growth, which is quadratic - while the thing to remember in
+production is that amortized O(1) still permits one operation costing 513 units out of a 1,024-append
+sequence whose mean was 2.00, which is why low-latency systems pre-size their buffers.""",
+]
+
+_EX_P1AO["Beam search"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - keep the k best partial answers instead of just one
+
+BEAM SEARCH is a decoding strategy for sequence generation. At each step you have a set of partial
+sequences; you extend every one of them by every possible next token, score all the results, and KEEP
+ONLY THE BEST k. Then repeat.
+
+    k = 1 is GREEDY DECODING - take the single most likely token at each step and never reconsider.
+    k = infinity is EXHAUSTIVE SEARCH - and the space is V^L, so for a 50,000-token vocabulary and a
+    20-token output that is 10^94 sequences. NOT AVAILABLE.
+
+    BEAM SEARCH IS THE MIDDLE. It is a HEURISTIC, and it has no optimality guarantee.
+
+WHY GREEDY IS NOT ENOUGH: the highest-probability token now may lead to a dead end later. "The" is a
+more likely first word than "Two", and "Two children played" may be a far more likely SENTENCE than
+anything starting with "The". GREEDY COMMITS AT STEP ONE AND CANNOT UNDO IT.
+
+WHY THE SCORE IS A SUM OF LOG PROBABILITIES: multiplying probabilities across 20 tokens underflows to
+zero in floating point almost immediately. LOG TURNS THE PRODUCT INTO A SUM, which is numerically
+stable and additively decomposable - so a partial sequence's score is just the running total. THAT
+DECOMPOSABILITY IS WHAT MAKES BEAM SEARCH POSSIBLE AT ALL.
+
+THE COST: k times the work of greedy. Each step scores k x V candidates instead of V, and the memory
+holds k sequences plus k copies of the model's state (the KV cache, in a transformer). BEAM SEARCH IS
+LINEAR IN k IN BOTH TIME AND MEMORY, and that memory cost is why production LLM serving often uses
+sampling instead.
+
+TERMS AS THEY APPEAR:
+- BEAM WIDTH k: how many partial sequences are kept.
+- LENGTH NORMALISATION: dividing the score by a function of length, to stop short outputs winning.
+- EOS: the end-of-sequence token.""",
+
+    """2. THE MEASUREMENT - and a wider beam is NOT guaranteed to be better
+
+I built a toy language model over 60 tokens and searched for the best 12-token sequence, where the
+EXACT optimum is computable by dynamic programming (Viterbi) for comparison.
+
+     EXACT best log-probability: -32.1033
+
+     beam width     best log-prob found     gap to exact     candidates scored
+     1                          -32.7512           0.6479                   720
+     2                          -33.0720           0.9687                 1,440
+     4                          -32.3880           0.2847                 2,880
+     8                          -32.3770           0.2737                 5,760
+     16                         -32.1898           0.0865                11,520
+     32                         -32.1898           0.0865                23,040
+     64                         -32.1033           0.0000                46,080
+
+    LOOK AT THE SECOND ROW. BEAM WIDTH 2 FOUND A WORSE SEQUENCE THAN GREEDY. -33.07 against -32.75.
+
+    THAT IS NOT A BUG AND IT IS NOT NOISE. IT IS A REAL PROPERTY OF BEAM SEARCH: THE OBJECTIVE IS NOT
+    MONOTONE IN THE BEAM WIDTH.
+
+    THE MECHANISM: the beam is pruned by PREFIX score, and the prefix that leads to the best complete
+    sequence is not necessarily among the best prefixes at every intermediate step. With k = 1 the
+    greedy path happened to survive; with k = 2 the beam filled with two prefixes that both scored
+    better at some step and both led somewhere worse. ADDING A SLOT CHANGED WHICH PREFIXES WERE KEPT,
+    AND NOT ALWAYS FOR THE BETTER.
+
+    THIS IS WORTH KNOWING BECAUSE THE FOLK BELIEF IS THE OPPOSITE. "Increase the beam width to improve
+    quality" is stated constantly, and it is a strong TENDENCY rather than a guarantee.
+
+THE REST OF THE TABLE IS THE EXPECTED SHAPE: the gap closes quickly and then plateaus. Widths 16 and 32
+find the same sequence; only 64 reaches the exact optimum, at 64 times greedy's compute.
+
+    THE PRACTICAL READING: MOST OF THE BENEFIT ARRIVES BY WIDTH 4 TO 8, and beyond that you are paying
+    linearly for diminishing returns. That matches production practice - machine translation typically
+    uses 4 to 10, and going much wider is known to sometimes make translations WORSE, which is the same
+    non-monotonicity as row 2 appearing at scale.
+
+    THAT LAST POINT IS THE ONE TO SAY IN AN INTERVIEW: in neural machine translation, very large beams
+    are measurably worse on quality metrics, and the standard explanation is that they find
+    high-probability sequences the model likes and humans do not - usually short, generic ones. THE
+    SEARCH GETS BETTER AT OPTIMISING AN OBJECTIVE THAT WAS NEVER QUITE THE RIGHT ONE.""",
+
+    """3. THE LENGTH BIAS - and why every real implementation corrects for it
+
+The score of a sequence is a SUM OF LOG PROBABILITIES, and every log probability is NEGATIVE. So every
+additional token makes the score worse, mechanically, regardless of how good the token is.
+
+    BEAM SEARCH THEREFORE SYSTEMATICALLY PREFERS SHORT SEQUENCES. It is not a subtle bias; it is
+    arithmetic.
+
+I measured it by allowing an end-of-sequence token and comparing raw scoring against length-normalised
+scoring, dividing by length^alpha:
+
+     alpha     chosen output length     raw log-probability
+     0.0                          5                -13.5378
+     0.5                          5                -13.5378
+     0.7                          5                -13.5378
+     1.0                          8                -21.5603
+
+    AT alpha = 1.0 THE SEARCH SELECTS A SEQUENCE THREE TOKENS LONGER whose raw log-probability is 8
+    units WORSE - because dividing by the length makes the longer sequence's PER-TOKEN average better.
+
+    ALPHA IS A DIAL BETWEEN TWO FAILURES. At alpha = 0 you get truncated, prematurely-terminated
+    outputs. At alpha = 1 you get rambling ones, because a long sequence of mediocre tokens can beat a
+    short sequence of excellent ones. THE STANDARD SETTING IN MACHINE TRANSLATION IS 0.6 TO 0.7, and
+    it is tuned on a validation set rather than derived.
+
+    THE GOOGLE NMT FORM, worth knowing by name: lp(Y) = ((5 + |Y|) / 6)^alpha, which is smoother than
+    plain |Y|^alpha at short lengths.
+
+THE OTHER SIDE OF THE SAME COIN - COVERAGE. In translation, beam search can also DROP CONTENT, because
+omitting a difficult clause raises the average per-token probability. THE FIX IS A COVERAGE PENALTY
+that rewards attending to every source token, and it is a separate term added to the score.
+
+    BOTH CORRECTIONS EXIST FOR THE SAME REASON: THE MODEL'S LIKELIHOOD IS NOT THE THING YOU ACTUALLY
+    WANT, AND SEARCHING IT HARDER MAKES THE MISMATCH MORE VISIBLE. That sentence is the deepest point
+    in this entry and it generalises well beyond decoding.
+
+AND THE STOPPING RULE MATTERS TOO. Once a beam emits EOS it is complete and set aside; the search
+continues with the remaining beams. YOU STOP WHEN k SEQUENCES HAVE FINISHED, OR WHEN NO UNFINISHED BEAM
+CAN POSSIBLY BEAT THE BEST FINISHED ONE. Stopping at the first EOS is a common bug and it throws away
+better completions that were one step from finishing.""",
+
+    """4. WHEN NOT TO USE BEAM SEARCH
+
+BEAM SEARCH IS THE WRONG TOOL FOR OPEN-ENDED GENERATION, and this is the most important practical point
+in the entry.
+
+    FOR TASKS WITH A SINGLE CORRECT-ISH ANSWER - translation, summarisation, speech recognition,
+    constrained code generation - beam search is right. You want the most likely output and there is
+    roughly one.
+    FOR OPEN-ENDED TEXT - dialogue, story writing, brainstorming - BEAM SEARCH PRODUCES BLAND,
+    REPETITIVE, GENERIC OUTPUT. The highest-probability continuation of almost anything is a safe
+    cliche, and searching harder finds MORE of it.
+
+    THE ALTERNATIVES ARE SAMPLING METHODS: temperature sampling, TOP-K sampling (sample from the k most
+    likely tokens), and TOP-P / NUCLEUS sampling (sample from the smallest set whose cumulative
+    probability exceeds p). NUCLEUS SAMPLING IS THE DEFAULT FOR MODERN LLM CHAT, and the reason is
+    exactly the above: you do not want the most likely response, you want a good one.
+
+    SAYING "I'D USE BEAM SEARCH FOR TRANSLATION AND NUCLEUS SAMPLING FOR OPEN-ENDED GENERATION, BECAUSE
+    THE MOST LIKELY OUTPUT IS NOT THE BEST ONE" IS THE STRONGEST SINGLE SENTENCE AVAILABLE HERE.
+
+THE REPETITION PROBLEM. Beam search loops - "I don't know I don't know I don't know" - because a
+repeated phrase is high-probability once started. THE FIXES ARE HEURISTIC: an n-gram repetition block
+(never emit a 3-gram twice), or a repetition penalty on already-emitted tokens. THEY ARE PATCHES ON A
+SEARCH THAT IS OPTIMISING THE WRONG OBJECTIVE.
+
+THE MEMORY COST IN PRODUCTION SERVING. Each beam needs its own KV cache, so a beam of 8 uses 8x the
+attention memory of greedy decoding. AT SERVING SCALE THAT DIRECTLY REDUCES HOW MANY CONCURRENT
+REQUESTS FIT ON A GPU, which is a real cost and another reason chat systems sample.
+
+DIVERSE BEAM SEARCH exists for when you want several DIFFERENT good outputs rather than k near-identical
+ones - standard beam search's k results are often trivial variants of each other. It partitions the beam
+into groups and penalises similarity between groups.
+
+CONSTRAINED BEAM SEARCH forces certain tokens or phrases to appear, which is genuinely useful for
+terminology-controlled translation and for structured output.""",
+
+    """5. THE ALGORITHM - and the implementation details that bite
+
+THE CORE LOOP:
+
+    beams = [(empty sequence, score 0.0)]
+    repeat until done:
+        candidates = []
+        for (seq, score) in beams:
+            if seq ends with EOS: move it to `finished`; continue
+            for each token v in vocabulary:
+                candidates.append((seq + [v], score + log P(v | seq)))
+        beams = the k highest-scoring candidates
+    return the best of `finished` by the length-normalised score
+
+THE DETAILS THAT ARE ACTUALLY HARD:
+
+    THE TOP-k SELECTION IS OVER k x V CANDIDATES. For k = 8 and V = 50,000 that is 400,000 scores per
+    step. YOU DO NOT SORT THEM - you take the top k of each beam's V (a partial sort), then the top k
+    of those k^2, which is far cheaper. IT IS THE SAME "DO NOT SORT WHEN YOU ONLY NEED THE TOP k"
+    OBSERVATION AS EVERYWHERE ELSE.
+
+    THE KV CACHE MUST BE REORDERED EVERY STEP. When beam 3's continuation displaces beam 1, the
+    transformer's cached keys and values must follow. THIS GATHER OPERATION IS A REAL COST AND A REAL
+    SOURCE OF BUGS, and it is the main implementation difficulty in a production decoder.
+
+    BATCHING MULTIPLE REQUESTS WITH DIFFERENT BEAM WIDTHS is awkward, which is another reason serving
+    systems standardise on sampling.
+
+    FINISHED BEAMS MUST BE HELD, NOT RETURNED IMMEDIATELY. Stopping at the first EOS is a common bug.
+    The correct rule is to stop when you have k finished sequences, or when the best unfinished beam
+    cannot beat the best finished one even in the most optimistic case.
+
+    NUMERICAL DETAIL: scores are log-probabilities, so they are negative and they only decrease.
+    Comparing them is fine; do not exponentiate to compare, because that underflows.
+
+COMPLEXITY:
+    TIME: O(k x V x L) model evaluations' worth of scoring, versus O(V x L) for greedy. LINEAR IN k.
+    MEMORY: O(k x L) for the sequences, plus O(k x cache size) for the model state. LINEAR IN k, and
+    the cache term is what dominates in a transformer.
+    MEASURED candidate counts in my experiment: 720 at k = 1 up to 46,080 at k = 64, exactly k x V x L.""",
+
+    """6. HOW TO USE IT - numbered steps
+
+STEP 1 - ASK WHETHER THE TASK HAS ONE RIGHT ANSWER. Translation and speech recognition: beam search.
+Open-ended chat or story writing: sample instead, because the most likely output is bland.
+
+STEP 2 - SCORE IN LOG SPACE. Products of probabilities underflow, sums do not, and additivity is what
+lets a partial sequence carry a running score.
+
+STEP 3 - PICK A MODEST BEAM WIDTH. Measured: most of the gain arrived by width 4-8, and widths 16 and
+32 found the identical sequence. Machine translation typically uses 4-10.
+
+STEP 4 - DO NOT ASSUME WIDER IS BETTER. Measured: beam 2 found a WORSE sequence than greedy, because
+the beam prunes by prefix score and the best prefix does not always lead to the best completion.
+
+STEP 5 - APPLY LENGTH NORMALISATION. Measured: without it the search picked a 5-token output; at
+alpha = 1.0 it picked an 8-token one. Divide by length^alpha with alpha around 0.6-0.7, tuned on a
+validation set.
+
+STEP 6 - USE A COVERAGE PENALTY IF THE TASK HAS SOURCE CONTENT TO PRESERVE, because omitting a hard
+clause raises the average per-token probability.
+
+STEP 7 - GET THE STOPPING RULE RIGHT. Hold finished beams aside and stop when k are finished or no
+unfinished beam can beat the best finished one. Stopping at the first EOS is a common bug.
+
+STEP 8 - IMPLEMENT THE TOP-k SELECTION AS A TWO-STAGE PARTIAL SORT over k x V candidates, not a full
+sort.
+
+STEP 9 - REORDER THE KV CACHE EVERY STEP, and budget for it - it is the main implementation cost and
+the main source of bugs.
+
+STEP 10 - ADD REPETITION BLOCKING IF YOU SEE LOOPS, and recognise it as a patch on an objective
+mismatch rather than a fix.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Beam search keeps the k best partial sequences instead of just one. At each step you extend every beam
+by every possible token, score all k-times-vocabulary candidates, and keep the best k. Width one is
+greedy decoding; infinite width is exhaustive search, which for a fifty-thousand-token vocabulary and a
+twenty-token output is ten-to-the-ninety-four sequences. Beam search is the middle, and it's a
+HEURISTIC with no optimality guarantee.
+
+You score in LOG space, because multiplying twenty probabilities underflows to zero almost immediately -
+and the log turns the product into a SUM, which is additively decomposable, so a partial sequence
+carries a running total. That decomposability is what makes the algorithm possible at all.
+
+The thing I'd most want to say is something I measured and didn't expect. I built a toy model where I
+could compute the EXACT optimum by dynamic programming, and swept the beam width. Greedy found a
+sequence at log-prob minus 32.75. BEAM WIDTH TWO FOUND A WORSE ONE, at minus 33.07.
+
+That's not a bug or noise - it's a real property. THE OBJECTIVE IS NOT MONOTONE IN THE BEAM WIDTH,
+because the beam is pruned by PREFIX score, and the prefix leading to the best complete sequence isn't
+necessarily among the best prefixes at every intermediate step. Adding a slot changed which prefixes
+survived, and not for the better. The folk belief is that widening the beam improves quality, and it's
+a strong tendency rather than a guarantee.
+
+The rest of the sweep was the expected shape - the gap closed fast and plateaued, widths sixteen and
+thirty-two found the identical sequence, and only sixty-four reached the exact optimum at sixty-four
+times greedy's compute. So most of the benefit arrives by width four to eight, which matches production
+practice.
+
+And that connects to something known at scale: in neural machine translation, VERY LARGE BEAMS ARE
+MEASURABLY WORSE on quality metrics. The standard explanation is that better search finds
+high-probability sequences the model likes and humans don't - usually short and generic. THE SEARCH
+GETS BETTER AT OPTIMISING AN OBJECTIVE THAT WAS NEVER QUITE RIGHT.
+
+Second thing: the LENGTH BIAS, which is pure arithmetic. Every log probability is negative, so every
+extra token makes the score worse regardless of quality, and beam search systematically prefers SHORT
+outputs. I measured it - without normalisation it picked a five-token output; dividing by length to the
+power one it picked an eight-token one whose raw score was eight units worse. Alpha is a dial between
+two failures: at zero you get truncated outputs, at one you get rambling ones. Machine translation uses
+about 0.6 to 0.7, tuned on validation.
+
+The most useful practical point is WHEN NOT TO USE IT. For tasks with roughly one right answer -
+translation, speech recognition, constrained code generation - beam search is correct. For OPEN-ENDED
+generation it produces bland, repetitive, generic text, because the highest-probability continuation of
+almost anything is a safe cliché and searching harder finds more of it. That's why modern chat systems
+use nucleus sampling instead: YOU DON'T WANT THE MOST LIKELY RESPONSE, YOU WANT A GOOD ONE.
+
+And in production there's a memory cost worth naming - each beam needs its own KV cache, so a beam of
+eight uses eight times the attention memory of greedy, which directly reduces how many concurrent
+requests fit on a GPU.'""",
+
+    """8. THE ALGORITHM, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  beams = [([], 0.0)]                                                     │
+    │  finished = []                                                            │
+    │  repeat:                                                                  │
+    │    candidates = []                                                        │
+    │    for (seq, score) in beams:                                             │
+    │      for v in vocabulary:                                                 │
+    │        candidates.append((seq + [v], score + log P(v | seq)))             │
+    │        # ^ LOG SPACE. A product of 20 probabilities underflows to 0.      │
+    │        #   The SUM is stable AND additively decomposable, which is what   │
+    │        #   lets a partial sequence carry a running score at all.          │
+    │    beams = top-k of candidates                                            │
+    │    move any beam ending in EOS into `finished`                            │
+    │  return best of `finished` by the LENGTH-NORMALISED score                 │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ BEAM WIDTH: MEASURED AGAINST THE EXACT OPTIMUM ────────────────────────┐
+    │  toy LM, 60 tokens, length 12. EXACT best (Viterbi) = -32.1033           │
+    │    width   best found   gap    candidates scored                         │
+    │        1     -32.7512  0.6479            720                             │
+    │        2     -33.0720  0.9687          1,440   <- WORSE THAN GREEDY      │
+    │        4     -32.3880  0.2847          2,880                             │
+    │        8     -32.3770  0.2737          5,760                             │
+    │       16     -32.1898  0.0865         11,520                             │
+    │       32     -32.1898  0.0865         23,040   <- identical to width 16  │
+    │       64     -32.1033  0.0000         46,080   <- reaches the optimum    │
+    │                                                                          │
+    │  >> THE OBJECTIVE IS NOT MONOTONE IN k. The beam prunes by PREFIX score, │
+    │     and the prefix leading to the best COMPLETE sequence need not be     │
+    │     among the best prefixes at every step. Adding a slot changed which   │
+    │     prefixes survived, and not for the better.                            │
+    │  >> AT SCALE THE SAME EFFECT IS KNOWN: very large beams make NMT quality │
+    │     WORSE, because better search finds high-probability outputs the      │
+    │     model likes and humans do not. THE SEARCH IMPROVES; THE OBJECTIVE    │
+    │     WAS NEVER QUITE RIGHT.                                                │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ LENGTH NORMALISATION: PURE ARITHMETIC ─────────────────────────────────┐
+    │  every log-probability is NEGATIVE, so EVERY EXTRA TOKEN LOWERS THE      │
+    │  SCORE regardless of quality -> beam search prefers SHORT outputs.       │
+    │                                                                          │
+    │  MEASURED, score divided by length^alpha:                                │
+    │    alpha   chosen length   raw log-prob                                  │
+    │      0.0               5       -13.5378                                  │
+    │      0.5               5       -13.5378                                  │
+    │      0.7               5       -13.5378                                  │
+    │      1.0               8       -21.5603   <- 3 tokens longer, raw score  │
+    │                                              8 units WORSE               │
+    │  >> ALPHA IS A DIAL BETWEEN TWO FAILURES: 0 gives truncated output, 1    │
+    │     gives rambling. MT uses ~0.6-0.7, TUNED not derived.                 │
+    │  >> GOOGLE NMT FORM: lp(Y) = ((5 + |Y|)/6)^alpha, smoother at short len. │
+    │  >> COVERAGE PENALTY is the same idea for the opposite failure: dropping │
+    │     a hard clause RAISES the average per-token probability.               │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ WHEN NOT TO USE IT ────────────────────────────────────────────────────┐
+    │  ONE RIGHT ANSWER (translation, ASR, constrained code) -> BEAM SEARCH    │
+    │  OPEN-ENDED (chat, stories, brainstorming)             -> SAMPLE         │
+    │    temperature | top-k | TOP-P / NUCLEUS (the modern default)            │
+    │  >> THE HIGHEST-PROBABILITY CONTINUATION OF ALMOST ANYTHING IS A SAFE    │
+    │     CLICHE, AND SEARCHING HARDER FINDS MORE OF IT.                       │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ IMPLEMENTATION DETAILS THAT BITE ──────────────────────────────────────┐
+    │  TOP-k OVER k x V CANDIDATES (8 x 50,000 = 400,000 per step): take the   │
+    │    top k of each beam's V, then the top k of those k^2. DO NOT SORT.     │
+    │  REORDER THE KV CACHE EVERY STEP when beams displace each other. THE     │
+    │    MAIN IMPLEMENTATION COST AND THE MAIN SOURCE OF BUGS.                 │
+    │  MEMORY: k separate KV caches. A beam of 8 uses 8x greedy's attention    │
+    │    memory, which directly cuts concurrent requests per GPU.              │
+    │  STOPPING: hold finished beams aside; stop when k are finished OR no     │
+    │    unfinished beam can beat the best finished one. STOPPING AT THE FIRST │
+    │    EOS IS A COMMON BUG.                                                   │
+    │  REPETITION: block repeated n-grams, or penalise emitted tokens. A PATCH │
+    │    ON AN OBJECTIVE MISMATCH, not a fix.                                   │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: a toy "language model" over a 60-token vocabulary. The transition log-probabilities are
+drawn from a cubed uniform (giving a realistically peaked distribution) and normalised per row. The
+task is to find the highest-scoring 12-token sequence starting from token 0. THE EXACT OPTIMUM IS
+COMPUTED BY VITERBI DYNAMIC PROGRAMMING, which is tractable here because the model is first-order -
+and that is the only reason a ground truth is available at all.
+
+     EXACT best log-probability: -32.1033
+
+     beam width     best log-prob found     gap to exact     candidates scored
+     1                          -32.7512           0.6479                   720
+     2                          -33.0720           0.9687                 1,440
+     4                          -32.3880           0.2847                 2,880
+     8                          -32.3770           0.2737                 5,760
+     16                         -32.1898           0.0865                11,520
+     32                         -32.1898           0.0865                23,040
+     64                         -32.1033           0.0000                46,080
+
+    THE CANDIDATE COUNT IS EXACTLY k x V x L = k x 60 x 12 = 720k, which confirms the cost is linear in
+    the beam width and nothing is being skipped.
+
+    THE k = 2 ANOMALY IS THE FINDING AND IT IS WORTH BEING PRECISE ABOUT WHY IT IS LEGITIMATE. Beam
+    search at width 1 keeps the single best prefix at every step. At width 2 it keeps the best TWO. The
+    width-1 path is therefore ALWAYS among the width-2 beam's candidates at step 1 - but not
+    necessarily at step 2, because after extending both width-2 beams and taking the top 2 of 120
+    candidates, the greedy path can be displaced by two continuations of the OTHER beam. ONCE
+    DISPLACED IT IS GONE. That is exactly what happened.
+
+    SO THE GUARANTEE BEAM SEARCH GIVES IS WEAKER THAN PEOPLE ASSUME: a wider beam explores more, and it
+    does NOT contain the narrower beam's result as a subset.
+
+    THE PLATEAU AT 16 AND 32 finding the identical sequence is the more typical behaviour, and it is
+    what justifies modest widths in production.
+
+MEASUREMENT 2 - LENGTH BIAS. The same model with token 0 treated as EOS, beam width 8, maximum length
+14, scoring completed sequences by raw log-probability divided by length^alpha.
+
+     alpha     chosen output length     raw log-probability
+     0.0                          5                -13.5378
+     0.5                          5                -13.5378
+     0.7                          5                -13.5378
+     1.0                          8                -21.5603
+
+    THE SELECTION IS FLAT UNTIL alpha = 1.0 AND THEN JUMPS. That is a property of this small model -
+    with only a handful of completed candidates the normalisation has to cross a discrete threshold
+    before the ranking changes. ON A REAL MODEL WITH THOUSANDS OF COMPLETIONS THE LENGTH RESPONDS
+    SMOOTHLY TO ALPHA, and the flat region here is an artefact of scale rather than a finding.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE FIRST-ORDER MARKOV MODEL
+            is what makes an EXACT optimum computable by Viterbi. WITH A REAL TRANSFORMER NO GROUND
+            TRUTH EXISTS, so the "gap to exact" column could not be produced at all - which is precisely
+            why this demonstration needs a toy model.
+    DRAWING LOG-PROBS FROM A CUBED UNIFORM
+            gives a peaked distribution where a few tokens dominate. A FLATTER DISTRIBUTION WOULD MAKE
+            GREEDY MUCH WORSE and beam search look better; a more peaked one would make greedy nearly
+            optimal. THE MAGNITUDE OF EVERY GAP DEPENDS ON THIS, and only the k=2 non-monotonicity is
+            structural rather than parametric.
+    THE 12-TOKEN LENGTH
+            is short enough for Viterbi and long enough for prefix decisions to matter. At length 2
+            greedy would be near-optimal by construction.
+    TREATING TOKEN 0 AS EOS in the second experiment
+            is a crude device and it produces the discrete jump described above. A REAL EOS
+            DISTRIBUTION WOULD GIVE A SMOOTH LENGTH RESPONSE, and I am flagging that rather than
+            presenting the flat region as meaningful.
+    WHAT IS NOT MEASURED
+            is the NMT large-beam degradation, nucleus sampling, KV cache cost, or repetition. THOSE
+            ARE REASONED OR CITED FROM THE LITERATURE, NOT MEASURED HERE.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Can you state the algorithm precisely, including why the score is in log space?
+    Do you know it is a heuristic with no optimality guarantee?
+    Do you know about the length bias and its correction?
+    Do you know WHEN NOT to use it - the open-ended generation case?
+    Do you know the memory cost of k KV caches in production serving?
+
+    THE "WHEN NOT TO USE IT" POINT IS THE STRONGEST SIGNAL, because it shows you know what the
+    algorithm is optimising and why that is sometimes the wrong thing.
+
+THE #1 MISTAKE: assuming a wider beam is always better. Measured: width 2 found a worse sequence than
+greedy, because the beam prunes by prefix score and a displaced prefix is gone permanently.
+
+THE #2 MISTAKE: no length normalisation. Every log-probability is negative, so short outputs win
+mechanically. Measured: alpha = 1.0 selected a sequence three tokens longer.
+
+THE #3 MISTAKE: using beam search for open-ended generation. It produces bland, generic, repetitive
+text, and nucleus sampling is the modern default for exactly that reason.
+
+THE #4 MISTAKE: multiplying probabilities instead of summing logs. It underflows to zero within a dozen
+tokens.
+
+THE #5 MISTAKE: stopping at the first EOS. Hold finished beams aside and stop when k are finished or no
+unfinished beam can beat the best.
+
+THE #6 MISTAKE: fully sorting k x V candidates. Take the top k of each beam, then the top k of those.
+
+THE #7 MISTAKE: forgetting to reorder the KV cache. It is the main implementation cost and the main
+source of bugs.
+
+THE #8 MISTAKE: ignoring the serving memory cost. k beams need k caches, which directly cuts concurrent
+requests per GPU.
+
+THE #9 MISTAKE: treating repetition blocking as a fix rather than a patch. It is compensating for the
+objective being wrong.
+
+THE #10 MISTAKE: expecting the k results to be diverse. They are usually near-identical variants; that
+is what diverse beam search exists for.
+
+ONE-SENTENCE TAKEAWAY: beam search keeps the k best partial sequences scored by summed log-probabilities
+and is a HEURISTIC with no optimality guarantee - measured against an exact Viterbi optimum, width 2
+found a WORSE sequence than greedy because the beam prunes by prefix score and a displaced prefix never
+returns, most of the gain arrived by width 4-8, and without length normalisation the search
+systematically prefers short outputs because every extra token adds a negative log-probability - and the
+most useful thing to know is when NOT to use it, because for open-ended generation the highest-
+probability continuation is a safe cliché and searching harder just finds more of it.""",
+]
+
+_EX_P1AO["Calibration (Platt / isotonic)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - make the number 0.7 actually mean "70% of these happen"
+
+A model is CALIBRATED if, among all the cases where it predicts 0.7, about 70% turn out positive.
+
+    CALIBRATION AND DISCRIMINATION ARE DIFFERENT PROPERTIES AND THEY ARE INDEPENDENT.
+    DISCRIMINATION (measured by AUC) asks: does the model RANK positives above negatives?
+    CALIBRATION asks: are the predicted PROBABILITIES numerically correct?
+
+    A MODEL CAN RANK PERFECTLY AND BE COMPLETELY MISCALIBRATED. Multiply every prediction by three and
+    the AUC does not move at all, because AUC depends only on order.
+
+WHY IT MATTERS - AND IT ONLY MATTERS WHEN THE NUMBER IS USED AS A NUMBER:
+
+    IF YOU MULTIPLY IT BY MONEY. An ad auction computes bid x P(click); a miscalibrated model
+    systematically overbids or underbids on everything.
+    IF YOU THRESHOLD IT AGAINST A COST. "Decline if P(fraud) x amount > cost of a false decline"
+    requires the probability to be real.
+    IF YOU COMBINE IT WITH ANOTHER MODEL. Averaging or multiplying two models' outputs is meaningless
+    if they are on different scales.
+    IF A HUMAN READS IT. A doctor told "30% chance of malignancy" is making a decision with that
+    number.
+
+    IF YOU ONLY EVER RANK - show the top 10 items - CALIBRATION IS IRRELEVANT. Saying that is worth as
+    much as knowing how to fix it, because it stops you spending effort where it buys nothing.
+
+TERMS AS THEY APPEAR:
+- RELIABILITY DIAGRAM: predicted probability bucketed on the x-axis, observed frequency on the y-axis.
+  A calibrated model lies on the diagonal.
+- PROPER SCORING RULE: a metric minimised only by the true probability. Log loss and Brier score are
+  proper; accuracy and AUC are not.
+- MONOTONE TRANSFORM: a function that preserves order. Both calibrators are one.""",
+
+    """2. THE MEASUREMENT - what recalibration buys, and what it leaves untouched
+
+I built a model that RANKS well and is badly over-confident - predictions equal to the true probability
+raised to the power 0.4, which preserves order exactly and inflates every value. 40,000 examples, base
+rate 28.0%. The calibrator was fitted on half the data and evaluated on the other half.
+
+     model                       AUC        log loss       Brier     mean prediction     actual rate
+     raw (over-confident)     0.7182         0.73463     0.26814               0.579           0.280
+     Platt-scaled             0.7182         0.53044     0.17705               0.288           0.280
+     isotonic                 0.7177         0.53256     0.17721               0.287           0.280
+
+    THE AUC IS UNCHANGED. That is not a coincidence - BOTH CALIBRATORS ARE MONOTONE TRANSFORMS, and a
+    monotone transform cannot change any ranking. CALIBRATION IS FREE IN DISCRIMINATION TERMS.
+
+    THE LOG LOSS FALLS BY 28% AND THE BRIER SCORE BY 34%. And the mean prediction goes from 0.579
+    against an actual rate of 0.280 - MORE THAN DOUBLE - to 0.288, which is right.
+
+    THE ISOTONIC AUC IS VERY SLIGHTLY LOWER (0.7177 vs 0.7182) AND THAT IS INSTRUCTIVE. Isotonic
+    regression produces a STEP function, so many distinct raw scores map to the SAME calibrated value.
+    Those ties break ranking information. IT IS A TINY COST AND IT IS REAL, and it is a reason to
+    prefer Platt when the downstream use is partly ranking.
+
+THE RELIABILITY DIAGRAM OF THE RAW MODEL SHOWS THE SHAPE OF THE PROBLEM:
+
+     predicted bucket     n          mean predicted     actual rate
+     0.0 - 0.2               93               0.166           0.022
+     0.2 - 0.4            2,254               0.334           0.070
+     0.4 - 0.6            8,453               0.512           0.191
+     0.6 - 0.8            8,082               0.686           0.384
+     0.8 - 1.0            1,118               0.841           0.645
+
+    EVERY BUCKET OVER-PREDICTS, AND THE ABSOLUTE ERROR IS LARGEST IN THE MIDDLE - 0.512 predicted
+    against 0.191 actual. THAT IS THE DIAGNOSTIC YOU SHOULD PRODUCE BEFORE CHOOSING A CALIBRATOR,
+    because the SHAPE of the miscalibration decides which one can fix it.
+
+    A UNIFORMLY-SHIFTED, SIGMOID-SHAPED DISTORTION LIKE THIS ONE IS EXACTLY WHAT PLATT SCALING IS
+    DESIGNED FOR, which is why the two methods tie here. A NON-MONOTONE OR OSCILLATING DISTORTION WOULD
+    DEFEAT PLATT AND ISOTONIC WOULD WIN, and section 3 is about that distinction.""",
+
+    """3. THE TWO METHODS - and how to choose between them
+
+PLATT SCALING. Fit a one-dimensional logistic regression on the model's output:
+
+    calibrated = sigmoid(a x logit(raw) + b)
+
+    TWO PARAMETERS, a and b. Fitted by maximum likelihood on a held-out calibration set.
+
+    STRENGTHS: extremely robust with little data - a few hundred examples is enough, because you are
+    fitting two numbers. It produces a smooth, strictly monotone output, so it preserves ranking
+    exactly. IT IS THE DEFAULT WHEN THE CALIBRATION SET IS SMALL.
+    WEAKNESS: IT CAN ONLY APPLY A SIGMOID-SHAPED CORRECTION. If the miscalibration has a different
+    shape - flat in the middle and steep at the ends, or oscillating - Platt cannot represent it and
+    will leave residual error that no amount of data fixes. IT IS PARAMETRIC, AND THAT IS BOTH ITS
+    STRENGTH AND ITS CEILING.
+
+ISOTONIC REGRESSION. Fit the best NON-DECREASING step function mapping raw scores to probabilities,
+using the pool-adjacent-violators algorithm.
+
+    STRENGTHS: non-parametric, so it can represent ANY monotone distortion. Strictly more flexible than
+    Platt.
+    WEAKNESSES, and there are two that matter:
+        IT OVERFITS ON SMALL CALIBRATION SETS. With a few hundred examples it will fit noise into the
+        step function, and the standard guidance is that it needs on the order of a thousand or more.
+        IT PRODUCES TIES. Many raw scores map to one calibrated value, which measurably (if slightly)
+        reduces AUC - 0.7177 against 0.7182 in my measurement - and which makes the output take only a
+        small number of distinct values.
+
+THE CHOICE, STATED SIMPLY:
+    SMALL CALIBRATION SET, OR THE DISTORTION LOOKS SIGMOID-SHAPED -> PLATT.
+    LARGE CALIBRATION SET AND AN ODDLY-SHAPED DISTORTION -> ISOTONIC.
+    IF IN DOUBT, FIT BOTH AND COMPARE LOG LOSS ON A THIRD SPLIT. It costs nothing.
+
+TWO MORE OPTIONS WORTH NAMING:
+    BETA CALIBRATION - a three-parameter family that is more flexible than Platt and still parametric,
+    and it handles the case where the model is well-calibrated at one end and not the other.
+    TEMPERATURE SCALING - divide the logits by a single learned scalar T before the softmax. ONE
+    PARAMETER, IT CANNOT CHANGE THE ARGMAX AT ALL, and it is the standard method for neural network
+    classifiers, where modern deep networks are known to be systematically over-confident. Naming
+    temperature scaling and the over-confidence result is a strong signal in any deep-learning context.
+
+THE PROCEDURAL RULE THAT MATTERS MOST: FIT THE CALIBRATOR ON DATA THE MODEL DID NOT TRAIN ON. Calibrating
+on the training set gives a calibrator fitted to over-confident in-sample predictions, and it will make
+production calibration WORSE. A separate held-out split, or cross-validated calibration.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - CALIBRATING ON THE TRAINING SET. The model's in-sample predictions are over-confident in a
+way its out-of-sample ones are not, so the calibrator learns the wrong correction and makes production
+worse. USE A HELD-OUT SPLIT.
+
+FAILURE 2 - ISOTONIC ON A SMALL CALIBRATION SET. It is non-parametric and it will fit noise into a step
+function. Below roughly a thousand examples, prefer Platt.
+
+FAILURE 3 - EXPECTING CALIBRATION TO IMPROVE RANKING. Measured: AUC 0.7182 before and after. Both
+methods are monotone transforms and cannot change any ordering.
+
+FAILURE 4 - IGNORING THE SLIGHT AUC LOSS FROM ISOTONIC. Measured: 0.7177 against 0.7182, caused by ties
+in the step function. Small, real, and relevant if the output is also used for ranking.
+
+FAILURE 5 - CALIBRATING GLOBALLY WHEN THE MISCALIBRATION IS PER-SEGMENT. A model can be perfectly
+calibrated overall while over-predicting for one country and under-predicting for another, and the
+aggregate reliability diagram looks fine. CHECK CALIBRATION PER SEGMENT.
+
+FAILURE 6 - CALIBRATING ONCE AND NEVER AGAIN. CALIBRATION DRIFTS FASTER THAN RANKING DOES as the input
+distribution shifts, which is exactly why it should be a separately refitted stage rather than baked
+into the model.
+
+FAILURE 7 - USING ACCURACY OR AUC TO MEASURE CALIBRATION. Neither is a proper scoring rule. Use LOG
+LOSS or BRIER SCORE, and look at the reliability diagram.
+
+FAILURE 8 - CALIBRATING AFTER CLASS REBALANCING WITHOUT CORRECTING FOR IT. If you downsampled negatives
+by a factor w, apply p/(p + (1-p)/w) BEFORE any other calibration, or the calibrator has to undo the
+sampling and the modelling distortion at once.
+
+FAILURE 9 - ASSUMING A WELL-CALIBRATED MODEL IS A GOOD MODEL. A model that always predicts the base rate
+is PERFECTLY CALIBRATED and useless - its AUC is 0.5. CALIBRATION IS NECESSARY AND NOT SUFFICIENT, and
+that is why you report both.
+
+FAILURE 10 - SPENDING EFFORT ON CALIBRATION WHEN YOU ONLY EVER RANK. If the output is used to sort a
+list and nothing else, calibration buys nothing.
+
+FAILURE 11 - IGNORING THAT MODERN NEURAL NETWORKS ARE SYSTEMATICALLY OVER-CONFIDENT. It is a documented
+property that got worse as networks got larger, and temperature scaling is the standard one-parameter
+fix.""",
+
+    """5. HOW TO MEASURE IT PROPERLY
+
+THE RELIABILITY DIAGRAM IS THE PRIMARY DIAGNOSTIC. Bucket the predictions, plot mean predicted against
+observed frequency, and look for the diagonal. Measured for my over-confident model:
+
+     bucket          n          mean predicted     actual rate     gap
+     0.0 - 0.2         93               0.166           0.022     +0.144
+     0.2 - 0.4      2,254               0.334           0.070     +0.264
+     0.4 - 0.6      8,453               0.512           0.191     +0.321
+     0.6 - 0.8      8,082               0.686           0.384     +0.302
+     0.8 - 1.0      1,118               0.841           0.645     +0.196
+
+    THE GAP COLUMN PEAKS IN THE MIDDLE, which is the signature of a power-law distortion and is exactly
+    what a sigmoid correction handles well.
+
+    ALWAYS PLOT THE BUCKET COUNTS ALONGSIDE. The 0.0-0.2 bucket has 93 examples and the 0.4-0.6 bucket
+    has 8,453; a reliability diagram without counts makes a wild estimate from 93 points look as solid
+    as one from 8,453, and that is how people conclude their model is badly calibrated at the extremes
+    when it is merely unmeasured there.
+
+EXPECTED CALIBRATION ERROR (ECE) is the standard summary: the weighted average of |predicted - actual|
+across buckets.
+
+    IT IS USEFUL AND IT HAS A REAL FLAW WORTH KNOWING: IT DEPENDS ON THE BUCKETING. Change the number
+    of bins and the number changes; use equal-width bins on a skewed prediction distribution and most
+    bins are nearly empty. ADAPTIVE (EQUAL-COUNT) BINNING IS THE BETTER DEFAULT, and reporting the bin
+    scheme alongside the number is basic hygiene.
+
+PROPER SCORING RULES are what you should optimise:
+    LOG LOSS penalises confident mistakes very heavily - a confident wrong prediction approaches
+    infinite loss. Use it when confident errors are expensive.
+    BRIER SCORE is the mean squared error of the probability. Bounded, gentler on confident mistakes,
+    and it decomposes neatly into calibration plus refinement terms.
+    MEASURED: raw 0.73463 / 0.26814, Platt 0.53044 / 0.17705, isotonic 0.53256 / 0.17721.
+
+    BOTH ARE PROPER, MEANING THEY ARE MINIMISED ONLY BY THE TRUE PROBABILITY. ACCURACY AND AUC ARE NOT
+    PROPER AND CANNOT DETECT MISCALIBRATION AT ALL.
+
+AND CHECK IT PER SEGMENT. A model calibrated in aggregate can be badly miscalibrated within every
+subgroup, with the errors cancelling. Break it down by whatever segments the decision cares about -
+geography, device, customer tier, class.""",
+
+    """6. HOW TO DO IT - numbered steps
+
+STEP 1 - ASK WHETHER THE NUMBER IS USED AS A NUMBER. If you only rank, calibration buys nothing and you
+should say so.
+
+STEP 2 - PRODUCE A RELIABILITY DIAGRAM WITH BUCKET COUNTS. It is the primary diagnostic and the counts
+stop you over-reading sparse extremes.
+
+STEP 3 - HOLD OUT A CALIBRATION SET THE MODEL DID NOT TRAIN ON. Calibrating on training data learns the
+wrong correction.
+
+STEP 4 - LOOK AT THE SHAPE OF THE DISTORTION. Sigmoid-shaped and monotone favours Platt; oddly shaped
+favours isotonic.
+
+STEP 5 - IF THE CALIBRATION SET IS SMALL, USE PLATT. Two parameters, robust on a few hundred examples.
+
+STEP 6 - IF IT IS LARGE AND THE DISTORTION IS ODD, USE ISOTONIC - and accept the ties. Measured: AUC
+0.7177 against Platt's 0.7182.
+
+STEP 7 - FOR A NEURAL CLASSIFIER, TRY TEMPERATURE SCALING FIRST. One parameter, cannot change the
+argmax, and modern networks are systematically over-confident.
+
+STEP 8 - MEASURE WITH LOG LOSS AND BRIER, NOT ACCURACY OR AUC. Measured: log loss fell 28% and Brier
+34% while AUC did not move at all.
+
+STEP 9 - CHECK CALIBRATION PER SEGMENT, because aggregate calibration can hide offsetting subgroup
+errors.
+
+STEP 10 - REFIT IT REGULARLY AND KEEP IT SEPARATE FROM THE MODEL, because calibration drifts faster than
+ranking does.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A model is calibrated if, among all the cases where it predicts 0.7, about seventy per cent turn out
+positive. And the key thing is that CALIBRATION AND DISCRIMINATION ARE INDEPENDENT PROPERTIES. AUC asks
+whether the model RANKS positives above negatives; calibration asks whether the numbers are actually
+right. Multiply every prediction by three and the AUC doesn't move at all, because AUC depends only on
+order.
+
+So the first question I'd ask is whether the number is used AS A NUMBER. If you multiply it by money -
+an ad auction computing bid times click probability - or threshold it against a cost, or combine it with
+another model, or show it to a human, calibration matters enormously. IF YOU ONLY EVER RANK, IT BUYS
+NOTHING, and saying that is worth as much as knowing how to fix it.
+
+I measured what recalibration actually does. I took a model that ranks well and is badly over-confident,
+fitted a calibrator on half the data and evaluated on the other half. THE AUC WAS 0.7182 BEFORE AND
+0.7182 AFTER - unchanged, because both calibrators are MONOTONE TRANSFORMS and a monotone transform
+can't change any ranking. But log loss fell twenty-eight per cent and Brier score thirty-four, and the
+mean prediction went from 0.579 against an actual rate of 0.280 - more than double - to 0.288.
+
+So calibration is free in discrimination terms and it fixes the numbers.
+
+The two methods are Platt and isotonic. PLATT SCALING fits a one-dimensional logistic regression on the
+model's output - two parameters. It's extremely robust with little data because you're only fitting two
+numbers, it's smooth and strictly monotone so it preserves ranking exactly, and its weakness is that it
+can only apply a SIGMOID-shaped correction. If the distortion has a different shape, Platt can't
+represent it and more data won't help.
+
+ISOTONIC REGRESSION fits the best non-decreasing step function, so it can represent ANY monotone
+distortion. Its weaknesses are that it OVERFITS on small calibration sets - it needs on the order of a
+thousand examples - and it produces TIES, because many raw scores map to one calibrated value. I saw
+that in the measurement: isotonic's AUC came out at 0.7177 against Platt's 0.7182, and that tiny gap is
+exactly the ties breaking ranking information. It's small and it's real, and it's a reason to prefer
+Platt if the output is also used for ranking.
+
+So: small calibration set or sigmoid-shaped distortion, use Platt. Large set and an odd distortion, use
+isotonic. If in doubt fit both and compare log loss on a third split - it costs nothing.
+
+For a neural classifier I'd try TEMPERATURE SCALING first - divide the logits by a single learned
+scalar. One parameter, it CANNOT change the argmax at all, and it's the standard fix because modern deep
+networks are systematically over-confident in a way that got worse as they got larger.
+
+Three procedural things. FIT THE CALIBRATOR ON DATA THE MODEL DIDN'T TRAIN ON, because in-sample
+predictions are over-confident in a way out-of-sample ones aren't, and calibrating on training data
+learns the wrong correction. CHECK IT PER SEGMENT, because a model can be perfectly calibrated overall
+while over-predicting for one country and under-predicting for another with the errors cancelling. And
+REFIT IT REGULARLY as a SEPARATE STAGE, because calibration drifts faster than ranking does.
+
+One last thing worth saying: A MODEL THAT ALWAYS PREDICTS THE BASE RATE IS PERFECTLY CALIBRATED AND
+USELESS - its AUC is 0.5. Calibration is necessary and not sufficient, which is why you report both.'""",
+
+    """8. THE METHODS, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  CALIBRATION vs DISCRIMINATION - INDEPENDENT PROPERTIES                  │
+    │    DISCRIMINATION (AUC): does it RANK positives above negatives?         │
+    │    CALIBRATION: are the NUMBERS right?                                    │
+    │    >> MULTIPLY EVERY PREDICTION BY 3 AND AUC DOES NOT MOVE.              │
+    │    >> A MODEL PREDICTING THE BASE RATE FOR EVERYONE IS PERFECTLY         │
+    │       CALIBRATED AND USELESS (AUC 0.5). NECESSARY, NOT SUFFICIENT.       │
+    │                                                                          │
+    │  IT ONLY MATTERS WHEN THE NUMBER IS USED AS A NUMBER:                    │
+    │    multiplied by money (bid x P(click)) | thresholded against a cost |   │
+    │    combined with another model | read by a human                          │
+    │  IF YOU ONLY RANK, IT BUYS NOTHING. Say so.                              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  DIAGNOSE FIRST: THE RELIABILITY DIAGRAM (with COUNTS)                   │
+    │  MEASURED, over-confident model, 20,000 held-out examples:               │
+    │    bucket        n      mean predicted   actual rate    gap              │
+    │    0.0-0.2      93               0.166         0.022  +0.144            │
+    │    0.2-0.4   2,254               0.334         0.070  +0.264            │
+    │    0.4-0.6   8,453               0.512         0.191  +0.321            │
+    │    0.6-0.8   8,082               0.686         0.384  +0.302            │
+    │    0.8-1.0   1,118               0.841         0.645  +0.196            │
+    │  >> THE GAP PEAKS IN THE MIDDLE - the signature of a power-law           │
+    │     distortion, and exactly what a sigmoid correction handles well.       │
+    │  >> ALWAYS SHOW THE COUNTS. 93 points vs 8,453 - without them a wild     │
+    │     estimate at the extremes looks as solid as a firm one in the middle. │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+                     ┌───────────────┴────────────────┐
+    ┌────────────────▼──────────────┐  ┌──────────────▼───────────────────────┐
+    │  PLATT SCALING                │  │  ISOTONIC REGRESSION                 │
+    │  sigmoid(a x logit(raw) + b)  │  │  best NON-DECREASING step function   │
+    │  TWO PARAMETERS               │  │  (pool adjacent violators)           │
+    │                               │  │  NON-PARAMETRIC                      │
+    │  + robust on a few HUNDRED    │  │  + can represent ANY monotone        │
+    │    examples                   │  │    distortion                        │
+    │  + smooth, STRICTLY monotone  │  │  - OVERFITS below ~1,000 examples    │
+    │    -> preserves ranking       │  │  - PRODUCES TIES -> measurably       │
+    │    EXACTLY                    │  │    (slightly) lowers AUC             │
+    │  - can ONLY apply a SIGMOID   │  │                                      │
+    │    correction. A differently- │  │                                      │
+    │    shaped distortion leaves   │  │                                      │
+    │    residual error that MORE   │  │                                      │
+    │    DATA CANNOT FIX.           │  │                                      │
+    └────────────────┬──────────────┘  └──────────────┬───────────────────────┘
+                     └───────────────┬────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  MEASURED, 40,000 examples, base rate 28.0%, fitted on half:             │
+    │    model                  AUC    log loss     Brier   mean pred  actual  │
+    │    raw (over-confident) 0.7182   0.73463   0.26814      0.579    0.280   │
+    │    Platt-scaled         0.7182   0.53044   0.17705      0.288    0.280   │
+    │    isotonic             0.7177   0.53256   0.17721      0.287    0.280   │
+    │                                                                          │
+    │  >> AUC UNCHANGED (both are monotone transforms). Log loss -28%,         │
+    │     Brier -34%. Mean prediction fixed from 0.579 to 0.288.               │
+    │  >> ISOTONIC'S 0.7177 vs 0.7182 IS THE TIES BREAKING RANKING INFO.       │
+    │     Tiny, real, and a reason to prefer Platt if you also rank.            │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  ALSO WORTH NAMING                                                       │
+    │    TEMPERATURE SCALING: divide logits by one learned scalar T. ONE       │
+    │      parameter, CANNOT change the argmax, and it is the standard fix for │
+    │      neural classifiers - which are SYSTEMATICALLY OVER-CONFIDENT, and   │
+    │      got more so as they got larger.                                      │
+    │    BETA CALIBRATION: 3 parameters, more flexible than Platt, still       │
+    │      parametric. Handles "calibrated at one end, not the other".          │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  PROCEDURE - the three rules that matter most                            │
+    │    1. FIT ON DATA THE MODEL DID NOT TRAIN ON. In-sample predictions are  │
+    │       over-confident in a way out-of-sample ones are not, so calibrating │
+    │       on training data learns the WRONG correction.                       │
+    │    2. CHECK PER SEGMENT. Aggregate calibration hides offsetting subgroup │
+    │       errors - over-predicting one country, under-predicting another.     │
+    │    3. KEEP IT A SEPARATE, REFITTABLE STAGE. Calibration drifts FASTER    │
+    │       than ranking does, so you want to fix it without retraining.        │
+    │    MEASURE WITH LOG LOSS AND BRIER (proper scoring rules). ACCURACY AND  │
+    │      AUC ARE NOT PROPER AND CANNOT DETECT MISCALIBRATION AT ALL.          │
+    │    ECE depends on the BINNING - use equal-COUNT bins and report the      │
+    │      scheme alongside the number.                                         │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 40,000 examples. Each has a true probability drawn from Beta(2, 5), giving a right-skewed
+distribution with a mean around 0.28, and the outcome is sampled from it. The "model" outputs
+p^0.4 - A STRICTLY MONOTONE TRANSFORM OF THE TRUE PROBABILITY, so it ranks PERFECTLY in expectation and
+is systematically over-confident. The first 20,000 examples fit the calibrator; the second 20,000
+evaluate it.
+
+     model                       AUC        log loss       Brier     mean prediction     actual rate
+     raw (over-confident)     0.7182         0.73463     0.26814               0.579           0.280
+     Platt-scaled             0.7182         0.53044     0.17705               0.288           0.280
+     isotonic                 0.7177         0.53256     0.17721               0.287           0.280
+
+    THE AUC OF 0.7182 RATHER THAN 1.0 IS WORTH EXPLAINING, because the model "ranks perfectly". It
+    ranks the TRUE PROBABILITIES perfectly, and the OUTCOMES are sampled from those probabilities - so
+    an example with p = 0.9 can still come out negative. THE CEILING ON AUC HERE IS SET BY THE
+    IRREDUCIBLE NOISE IN THE LABELS, not by the model. That distinction - between ranking the
+    probabilities and ranking the outcomes - is one people trip over constantly.
+
+    THE PLATT AND ISOTONIC RESULTS ARE NEARLY IDENTICAL (log loss 0.53044 vs 0.53256), and that is
+    EXPECTED FOR THIS DISTORTION: p^0.4 is smooth and monotone, and its inverse is well approximated by
+    a sigmoid in logit space. THE MEASUREMENT DOES NOT DISCRIMINATE BETWEEN THE TWO METHODS, and saying
+    so is more honest than implying it does - what it demonstrates is that BOTH work and that NEITHER
+    touches the AUC.
+
+    TO SEPARATE THEM YOU WOULD NEED A DISTORTION PLATT CANNOT REPRESENT - flat in the middle and steep
+    at both ends, say - AND A SMALL CALIBRATION SET TO EXPOSE ISOTONIC'S OVERFITTING. I DID NOT RUN
+    THAT, and the guidance in section 3 about when to prefer each is therefore REASONED FROM THEIR
+    FUNCTIONAL FORMS RATHER THAN MEASURED.
+
+THE RELIABILITY TABLE:
+
+     bucket          n          mean predicted     actual rate     gap
+     0.0 - 0.2         93               0.166           0.022     +0.144
+     0.2 - 0.4      2,254               0.334           0.070     +0.264
+     0.4 - 0.6      8,453               0.512           0.191     +0.321
+     0.6 - 0.8      8,082               0.686           0.384     +0.302
+     0.8 - 1.0      1,118               0.841           0.645     +0.196
+
+    THE COUNTS ARE AS INFORMATIVE AS THE GAPS. The 0.0-0.2 bucket holds 93 of 20,000 examples, so its
+    actual rate of 0.022 is estimated from 93 points and carries a standard error of about 1.5
+    percentage points. IT IS A REAL ESTIMATE AND IT IS FAR NOISIER THAN THE MIDDLE ROWS, and a
+    reliability diagram without counts invites exactly the wrong conclusion.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    USING p^0.4 AS THE "MODEL"
+            makes it EXACTLY monotone in the truth, which is what isolates calibration from
+            discrimination. A REALISTIC MODEL WOULD ALSO HAVE RANKING ERROR, and the two effects would
+            be confounded - so the artificiality is the point.
+    THE Beta(2,5) PRIOR
+            gives a base rate of 0.28 and a broad spread of true probabilities. A NARROW PRIOR WOULD
+            MAKE EVERY BUCKET NEARLY EMPTY EXCEPT ONE and the reliability diagram uninformative.
+    SPLITTING 50/50 FOR CALIBRATION AND EVALUATION
+            gives isotonic 20,000 points to fit on, which is far above its overfitting threshold. THAT
+            IS WHY IT DID NOT OVERFIT HERE, and it is exactly why the small-set warning in section 3 is
+            reasoned rather than demonstrated.
+    THE ISOTONIC IMPLEMENTATION BEING POOL-ADJACENT-VIOLATORS WITH A STEP LOOKUP
+            is what produces the ties, and therefore the 0.7177. A tie-breaking interpolation between
+            steps would recover most of that 0.0005, and it is a real technique.
+    EVALUATING BRIER ALONGSIDE LOG LOSS
+            shows they agree here (both improve ~30%). THEY DISAGREE WHEN A MODEL MAKES CONFIDENT
+            MISTAKES, because log loss is unbounded and Brier is not - so reporting both is cheap
+            insurance.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Do you know calibration and discrimination are independent?
+    Can you say WHEN calibration matters and when it does not?
+    Do you know both methods and how to choose between them?
+    Do you know to fit the calibrator on held-out data?
+    Do you know which metrics detect miscalibration and which cannot?
+    Did you mention temperature scaling for neural networks?
+
+    KNOWING THAT CALIBRATION IS IRRELEVANT IF YOU ONLY RANK IS A STRONG SIGNAL, because it shows you
+    are choosing where to spend effort rather than applying a technique reflexively.
+
+THE #1 MISTAKE: calibrating on the training set. In-sample predictions are over-confident in a way
+out-of-sample ones are not, so the correction learned is wrong.
+
+THE #2 MISTAKE: using AUC or accuracy to detect miscalibration. Measured: AUC 0.7182 before and after
+recalibration that cut log loss by 28%. Neither is a proper scoring rule.
+
+THE #3 MISTAKE: isotonic on a small calibration set. Non-parametric methods fit noise; below roughly a
+thousand examples prefer Platt.
+
+THE #4 MISTAKE: expecting Platt to fix a non-sigmoid distortion. It has two parameters and more data
+does not help.
+
+THE #5 MISTAKE: ignoring isotonic's ties. Measured: AUC 0.7177 against 0.7182, caused by many raw scores
+mapping to one value.
+
+THE #6 MISTAKE: calibrating globally when the error is per-segment. Aggregate calibration hides
+offsetting subgroup errors.
+
+THE #7 MISTAKE: calibrating once. Calibration drifts faster than ranking, so keep it a separate,
+refittable stage.
+
+THE #8 MISTAKE: a reliability diagram without bucket counts. Measured: 93 points in one bucket and
+8,453 in another, and the diagram alone makes them look equally reliable.
+
+THE #9 MISTAKE: reporting ECE without the binning scheme. It depends on the bins; use equal-count bins.
+
+THE #10 MISTAKE: forgetting to undo negative downsampling first. Apply p/(p + (1-p)/w) before any other
+calibration, or the calibrator has to undo two distortions at once.
+
+THE #11 MISTAKE: thinking a calibrated model is a good model. Always predicting the base rate is
+perfectly calibrated and has AUC 0.5.
+
+ONE-SENTENCE TAKEAWAY: calibration asks whether a predicted 0.7 means 70% and is INDEPENDENT of ranking
+- measured, Platt scaling and isotonic regression left AUC at 0.7182 unchanged (both are monotone
+transforms) while cutting log loss 28% and Brier 34% and fixing a mean prediction of 0.579 against an
+actual rate of 0.280 - so use Platt when the calibration set is small or the distortion is sigmoid-
+shaped, isotonic when it is large and oddly shaped (accepting the tie-induced 0.7177 vs 0.7182), fit it
+on data the model never saw, check it per segment, and remember it only matters when the number is used
+AS a number rather than as a sort key.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
