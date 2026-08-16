@@ -10,16 +10,21 @@
 --    * quick_bucket   → the one-liner list, so it is in front of her
 --                       without opening the calendar at all.
 --
---  NO SCHEMA CHANGE IS REQUIRED. Every column the feature writes
---  (project_tasks.plan_date / start_time / notes, daily_events.*,
---  quick_bucket.*) already exists. This file exists for two reasons:
+--  No NEW schema is invented here — every column the feature writes is
+--  one MIGRATION_ALL_TABLES.sql already declares. What this file does:
 --
 --    1. the starter row — an AISDEPrep project for each existing user,
 --       so the project is there before the first click rather than
 --       appearing out of nowhere on it;
 --    2. the guard index — at most one active AISDEPrep per user, so a
 --       double-tap on a slow connection cannot end up creating two
---       projects with the same name.
+--       projects with the same name;
+--    3. catches up any project_tasks column an older install missed.
+--       This is not hypothetical: the first run of this file failed with
+--         ERROR: 42703: column "is_deleted" does not exist
+--       because that install predates the line in ALL_TABLES that adds
+--       it. Every `add column if not exists` below is a no-op on an
+--       install that already has the column.
 --
 --  The app also creates the project lazily (routes/interview_prep.py,
 --  _ensure_ai_sde_project) so a new user, or an environment where this
@@ -76,7 +81,24 @@ begin
   raise notice 'AISDEPrep seeded for % user(s)', seeded;
 end $$;
 
--- ── 3. Read paths this feature leans on ─────────────────────────────
+-- ── 3. Columns an older install may be missing ──────────────────────
+-- All four are declared in MIGRATION_ALL_TABLES.sql; an install older
+-- than those lines never got them. is_deleted is the one that actually
+-- bit (the index below and the scheduler's "is it already on this day?"
+-- lookup both filter on it), and plan_date / start_time are what put the
+-- task on a day at all — so they are caught here too rather than waiting
+-- to fail on the first tap.
+alter table project_tasks
+  add column if not exists is_deleted boolean default false,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists plan_date  date,
+  add column if not exists start_time text;
+
+-- Backfill, so the partial index below actually covers the existing rows
+-- rather than silently skipping every one where the new column is NULL.
+update project_tasks set is_deleted = false where is_deleted is null;
+
+-- ── 4. Read paths this feature leans on ─────────────────────────────
 -- The scheduler checks "is this topic already on this day?" before it
 -- inserts, so the same tap twice is a no-op instead of a duplicate.
 -- That check is (project_id, plan_date) on project_tasks.

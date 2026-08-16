@@ -765,7 +765,12 @@
       const out = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
       msg.className = "sched-msg ok";
-      msg.textContent = (out.status === "already-scheduled" ? "Already there — " : "Added — ") + (out.message || day);
+      // "sending", not "sent": the Google mirror runs on a background
+      // thread that outlives this response, so claiming it is there
+      // would be a claim the server has not made.
+      msg.textContent = (out.status === "already-scheduled" ? "Already there — " : "Added — ")
+                      + (out.message || day)
+                      + (out.gcal_syncing ? " Sending it to Google Calendar too." : "");
       if (window.showToast) showToast(out.message || "Scheduled", "success");
     } catch (err) {
       msg.className = "sched-msg err";

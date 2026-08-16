@@ -16,6 +16,7 @@ decisions rather than mechanics:
     transaction means a retried tap must be safe to make.
 """
 import json
+import types
 
 import pytest
 
@@ -92,6 +93,28 @@ def db(monkeypatch):
 
 
 TITLE = "Precision vs Recall (and the 95%-accuracy trap)"
+
+
+def _catch_threads(monkeypatch):
+    """Collect the daemon threads the Google mirror spawns so a test can
+    join them instead of sleeping.
+
+    Swaps the module's `threading` NAME for a shim rather than setting
+    `threading.Thread` — `ip.threading` *is* the stdlib module, so
+    patching through it reaches every other user of threads in the
+    process. It did: flask-limiter's expiry timer broke and every request
+    500'd before reaching the endpoint under test.
+    """
+    import threading as real
+    caught = []
+
+    def spawn(*a, **kw):
+        t = real.Thread(*a, **kw)
+        caught.append(t)
+        return t
+
+    monkeypatch.setattr(ip, "threading", types.SimpleNamespace(Thread=spawn))
+    return caught
 
 
 def _post(client, **body):
@@ -277,6 +300,104 @@ def test_the_task_survives_a_failing_calendar_write(auth_client, db, monkeypatch
     assert out["event_id"] is None
     assert db.count("project_tasks") == 1
     assert db.count("quick_bucket") == 1
+
+
+def test_a_missing_column_does_not_500_the_request(auth_client, db, monkeypatch):
+    """project_tasks.is_deleted is in MIGRATION_ALL_TABLES.sql, but an older
+    install never got the line — which is exactly what happened here. post()
+    and update() already strip an unknown column and retry; get() does not,
+    so a filter on it raises 400 and the whole request dies. The lookup has
+    to survive an un-migrated database, because refusing to schedule
+    anything until a migration is run is worse than a wider lookup."""
+    real_get = db.get
+
+    def strict(table, params=None):
+        if table == "project_tasks" and "is_deleted" in (params or {}):
+            raise RuntimeError('column "is_deleted" does not exist')
+        return real_get(table, params)
+
+    monkeypatch.setattr(ip, "get", strict)
+    out = _post(auth_client, title=TITLE).get_json()
+    assert out["status"] == "ok"
+    assert db.count("project_tasks") == 1
+
+    # ...and the dedupe still works without the column, because dropping it
+    # only WIDENS the match. A no-op is the safe direction to fail in.
+    again = _post(auth_client, title=TITLE).get_json()
+    assert again["status"] == "already-scheduled"
+    assert db.count("project_tasks") == 1
+
+
+def test_the_lookup_reraises_when_the_column_is_not_the_problem(db, monkeypatch):
+    """Retrying without the optional filter must not swallow a real outage
+    into a silent empty result — that would look like 'not scheduled yet'
+    and quietly duplicate every row."""
+    def dead(table, params=None):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(ip, "get", dead)
+    with pytest.raises(RuntimeError):
+        ip._get_optional("project_tasks", {"user_id": "eq.x"}, optional={"is_deleted"})
+
+
+def test_no_google_mirror_when_google_is_not_connected(auth_client, db):
+    """user_google_tokens is empty in the fake, so nothing should fire."""
+    out = _post(auth_client, title=TITLE).get_json()
+    assert out["gcal_syncing"] is False
+
+
+def test_the_google_mirror_fires_once_and_stamps_the_row(auth_client, db, monkeypatch):
+    db.tables["user_google_tokens"] = [{"user_id": "test-user-id", "token": "x"}]
+
+    calls, stamped = [], []
+    monkeypatch.setattr(ip, "update",
+                        lambda table, params, json: stamped.append((table, json)))
+
+    import services.events_calendar_service as ecs
+
+    def fake_create(uid, row):
+        calls.append((uid, row["title"], row["start_time"]))
+        return "gcal-abc"
+
+    monkeypatch.setattr(ecs, "sync_create", fake_create)
+    threads = _catch_threads(monkeypatch)
+
+    out = _post(auth_client, title=TITLE).get_json()
+    assert out["gcal_syncing"] is True
+    for t in threads:
+        t.join(timeout=5)
+
+    assert calls == [("test-user-id", TITLE, "00:00")], "the mirror must fire exactly once"
+    assert stamped and stamped[0][0] == "daily_events"
+    assert stamped[0][1] == {"google_event_id": "gcal-abc"}
+
+
+def test_the_quick_bucket_row_does_not_mirror_as_well(auth_client, db, monkeypatch):
+    """quick_bucket has its OWN Google sync. If this endpoint let both fire
+    the topic would land on the real calendar twice."""
+    db.tables["user_google_tokens"] = [{"user_id": "test-user-id", "token": "x"}]
+    import services.quick_bucket_calendar_service as qbcs
+    fired = []
+    for name in ("sync_create", "sync_upsert", "sync_item"):
+        if hasattr(qbcs, name):
+            monkeypatch.setattr(qbcs, name, lambda *a, **k: fired.append(name))
+    _post(auth_client, title=TITLE)
+    assert fired == []
+
+
+def test_a_failing_google_mirror_does_not_fail_the_request(auth_client, db, monkeypatch):
+    db.tables["user_google_tokens"] = [{"user_id": "test-user-id", "token": "x"}]
+    import services.events_calendar_service as ecs
+    monkeypatch.setattr(ecs, "sync_create",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("google down")))
+    threads = _catch_threads(monkeypatch)
+
+    out = _post(auth_client, title=TITLE).get_json()
+    assert out["status"] == "ok"
+    for t in threads:
+        t.join(timeout=5)
+    # The in-app calendar row is the one that matters and it survived.
+    assert db.count("daily_events") == 1
 
 
 def test_it_needs_a_login(client):

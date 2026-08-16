@@ -12,6 +12,7 @@ Soft-delete only (deleted_at).
 """
 import logging
 import re
+import threading
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
@@ -514,6 +515,33 @@ def _pg_eq(value):
     return 'eq."' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _get_optional(table, params, optional):
+    """``get()`` that survives a filter column the install doesn't have yet.
+
+    ``post()`` and ``update()`` already strip a column Supabase reports as
+    missing and retry; ``get()`` does not, so a filter on a column added by
+    a migration that hasn't been run raises 400 and the whole request
+    500s. That is exactly what happened here: ``project_tasks.is_deleted``
+    is in MIGRATION_ALL_TABLES.sql but an older install never got the
+    line, and the dedupe lookup filters on it.
+
+    Retries once with `optional` keys dropped. Dropping them widens the
+    result — a soft-deleted row would come back — and for the two callers
+    here that is the safe direction: it makes "already scheduled" more
+    likely, and the failure mode of that is a no-op instead of a
+    duplicate.
+    """
+    try:
+        return get(table, params=params) or []
+    except Exception:
+        trimmed = {k: v for k, v in params.items() if k not in optional}
+        if trimmed == params:
+            raise
+        logger.warning("%s: retrying lookup without %s — run MIGRATION_AISDEPREP.sql",
+                       table, ", ".join(sorted(optional)))
+        return get(table, params=trimmed) or []
+
+
 def _ai_sde_clean_time(raw):
     """``"9:05"`` → ``"09:05"``; empty or unparseable → midnight.
 
@@ -652,7 +680,7 @@ def ai_sde_schedule():
         return jsonify({"error": "could not open the AISDEPrep project"}), 500
 
     # ── Already on this day? ────────────────────────────────────────
-    existing = get("project_tasks", params={
+    existing = _get_optional("project_tasks", {
         "user_id": f"eq.{user_id}",
         "project_id": f"eq.{project_id}",
         "plan_date": f"eq.{plan_date}",
@@ -660,7 +688,7 @@ def ai_sde_schedule():
         "is_deleted": "eq.false",
         "select": "task_id,start_time",
         "limit": "1",
-    }) or []
+    }, optional={"is_deleted"})
     if existing:
         return jsonify({
             "status": "already-scheduled",
@@ -704,7 +732,7 @@ def ai_sde_schedule():
     # Written straight to daily_events, not through POST /api/v2/events —
     # see the block comment above for why the conflict check would reject
     # the second topic stacked at midnight.
-    event_id = None
+    event_id, event_row = None, None
     try:
         ev = post("daily_events", {
             "user_id": user_id,
@@ -717,9 +745,43 @@ def ai_sde_schedule():
             "reminder_minutes": 10,
             "is_deleted": False,
         }, prefer="return=representation")
-        event_id = (ev or [{}])[0].get("id")
+        event_row = (ev or [None])[0]
+        event_id = (event_row or {}).get("id")
     except Exception:
         logger.exception("AISDEPrep: calendar row failed for %r on %s", title, plan_date)
+
+    # ── 2b. Mirror it to Google Calendar ────────────────────────────
+    # Same shape as POST /api/v2/events: fire and forget on a daemon
+    # thread, then stamp the returned google_event_id back onto the row.
+    # The reason it runs off the request is that a Google round trip is
+    # a second or more, and she is standing in front of a card waiting
+    # for it to say "added" — the in-app calendar is already correct by
+    # the time this starts, so the mirror is allowed to be late.
+    #
+    # NOT mirrored from the Quick Bucket row as well. quick_bucket has
+    # its own Google sync, and letting both fire would put the same
+    # topic on the real calendar twice.
+    gcal_connected = False
+    if event_row:
+        try:
+            gcal_connected = bool(get("user_google_tokens",
+                                      params={"user_id": f"eq.{user_id}"}) or [])
+        except Exception:
+            logger.warning("AISDEPrep: could not check Google connection", exc_info=True)
+    if event_row and gcal_connected:
+        def _mirror(row=event_row, uid=user_id):
+            try:
+                # Imported here rather than at module scope so a broken or
+                # absent Google client library cannot stop /ai-sde loading.
+                from services import events_calendar_service as events_cal
+                gid = events_cal.sync_create(uid, row)
+                if gid:
+                    update("daily_events",
+                           params={"id": f"eq.{row['id']}", "user_id": f"eq.{uid}"},
+                           json={"google_event_id": gid})
+            except Exception:
+                logger.exception("AISDEPrep: Google mirror failed for %r", row.get("title"))
+        threading.Thread(target=_mirror, daemon=True).start()
 
     # ── 3. The Quick Bucket row ─────────────────────────────────────
     # Prefixed so a line in the bucket says where it came from; the
@@ -728,14 +790,14 @@ def ai_sde_schedule():
     bucket_text = f"{AI_SDE_PROJECT_NAME} · {title}"[:500]
     if data.get("quick_bucket", True):
         try:
-            dupes = get("quick_bucket", params={
+            dupes = _get_optional("quick_bucket", {
                 "user_id": f"eq.{user_id}",
                 "text": _pg_eq(bucket_text),
                 "is_deleted": "eq.false",
                 "is_done": "eq.false",
                 "select": "id",
                 "limit": "1",
-            }) or []
+            }, optional={"is_deleted", "is_done"})
             if dupes:
                 bucket_id = dupes[0]["id"]
             else:
@@ -772,6 +834,10 @@ def ai_sde_schedule():
         "start_time": start_time,
         "end_time": end_time,
         "untimed": untimed,
+        # Kicked off, not confirmed — the mirror finishes after this
+        # response, so the wording on the page has to stay honest about
+        # that ("sending to Google", never "on Google").
+        "gcal_syncing": bool(gcal_connected and event_row),
         "message": f"On the calendar for {plan_date} at {when}.",
     })
 
