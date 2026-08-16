@@ -241519,6 +241519,685 @@ cycles make the alternative non-terminating, and BFS's "shortest" means fewest
 HOPS, which on a weighted graph measured wrong for 79.2% of nodes at an average
 of 641.6% overpayment.""",
 ]
+_EX_P1AO["Contrastive learning"] = [
+    """1. THE GOAL - learning what things MEAN without anyone labelling them.
+
+Supervised learning needs labels, and labels are expensive. Contrastive learning
+sidesteps that with a trick: take one item, make TWO DIFFERENT VIEWS of it - crop
+an image two ways, take a caption and its picture, take a question and its
+answer - and train the model so that the two views of the SAME thing end up close
+together in the embedding space, while views of DIFFERENT things end up far apart.
+
+Nobody had to say what the item IS. The supervision comes from the pairing, which
+you get for free from the data's structure.
+
+WHAT YOU GET OUT IS AN EMBEDDING SPACE where distance means similarity. That is
+what powers semantic search, recommendations, RAG retrieval, duplicate detection,
+and zero-shot classification - all of them are "embed the query, embed the
+candidates, take the nearest".
+
+THE TWO KNOBS EVERYONE TUNES ARE TEMPERATURE AND BATCH SIZE, and the measurements
+below show that one of them does something quite different from what people
+usually describe.""",
+
+    """2. THE INTUITION - pull together, push apart, and the third thing that matters.
+
+The loss is called InfoNCE, and in words it is: of all the candidates in this
+batch, the model should assign the highest similarity to the correct partner. It
+is a classification problem where the classes are "which of these N items is my
+match", and the labels come from the pairing.
+
+  loss = -log( exp(sim(a, p+) / T) / sum over all p of exp(sim(a, p) / T) )
+
+The numerator pulls the true pair together. The denominator pushes everything
+else apart. The other items in the batch ARE the negatives - which is why batch
+size matters so much and why contrastive training is memory-hungry.
+
+TEMPERATURE, T, is where the surprise is. Measured on a fixed batch of 64 pairs:
+
+  temp    loss     top-1 accuracy
+  ---------------------------------
+  0.01    0.0000       1.000
+  0.05    0.0128       1.000
+  0.07    0.0411       1.000
+  0.20    1.0880       1.000
+  1.00    3.4181       1.000
+  2.00    3.7831       1.000
+
+THE ACCURACY IS IDENTICAL AT EVERY TEMPERATURE. It has to be: argmax of sim/T is
+argmax of sim, so temperature cannot change which item is ranked first. What it
+changes is the LOSS, by two orders of magnitude, and therefore the GRADIENTS.
+
+SO TEMPERATURE IS A GRADIENT-SHAPING KNOB, NOT A RANKING KNOB. A low temperature
+sharpens the softmax so that the hardest negative dominates the gradient - the
+model spends its effort on near-misses. A high temperature spreads the gradient
+across all negatives, including the easy ones. That is a real and important
+difference in what gets LEARNED, and it is not "the model becomes more
+confident", which is how it is usually described.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ANCHOR - the item you are embedding. POSITIVE - a different view of the same
+item, which should be nearby. NEGATIVE - a view of a different item, which should
+be far away.
+
+VIEW / AUGMENTATION - a transformation that changes the surface and preserves the
+meaning. Crop and colour-jitter for images; the caption for a photo; a
+back-translation for text. THE CHOICE OF VIEWS IS THE MODEL'S ENTIRE DEFINITION
+OF "SAME", so it is the most consequential design decision here.
+
+IN-BATCH NEGATIVES - using the other items in the batch as negatives, which is
+free. Batch size therefore equals the number of negatives, plus one.
+
+HARD NEGATIVE - a negative that is genuinely similar to the anchor. These carry
+almost all the learning signal, and section 4 measures what happens when the
+negatives stop being easy.
+
+TEMPERATURE (T) - divides the similarities before the softmax. Typical values
+0.05 to 0.1.
+
+InfoNCE / NT-Xent - the standard loss above. Different papers, same idea.
+
+COLLAPSE - the degenerate solution where the model maps everything to the same
+vector. Positives are then perfectly close, and so is everything else. The
+negatives in the denominator are what prevent it.
+
+COSINE SIMILARITY - the dot product of unit-normalised vectors. Ranges from -1 to
+1, and it is what "close" means in almost every contrastive setup.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - easy negatives make everything look solved.
+
+Measured with 32-dimensional embeddings, batch 64, view noise 0.8, temperature
+0.07 - first with negatives drawn independently at random:
+
+  negatives                  loss     top-1   pos sim   neg sim   margin
+  ------------------------------------------------------------------------
+  random (near-orthogonal)  0.0270    1.000    0.7839   -0.0003   0.7842
+
+Perfect accuracy, and it means very little. In 32 dimensions two random unit
+vectors are almost exactly orthogonal, so the mean negative similarity is
+-0.0003. THE NEGATIVES ARE NOT COMPETING AT ALL - the model only has to beat
+noise.
+
+Now draw all items from ONE cluster, so the negatives are genuinely related -
+which is what real data looks like, where every negative is also a sentence, also
+a product, also a face:
+
+  clustered, spread 3.0     0.0026    1.000    0.9665    0.0575   0.9090
+  clustered, spread 1.5     0.0610    1.000    0.9168    0.2948   0.6220
+  clustered, spread 1.0     0.2833    1.000    0.8609    0.3758   0.4852
+  clustered, spread 0.7     1.3135    0.906    0.8090    0.5134   0.2956
+  clustered, spread 0.5     2.7044    0.453    0.8355    0.6913   0.1442
+
+ACCURACY COLLAPSED FROM 1.000 TO 0.453 WITHOUT THE POSITIVE PAIRS GETTING ANY
+WORSE - positive similarity stayed at 0.81 to 0.97 throughout. What changed was
+the NEGATIVES climbing from -0.0003 to 0.6913.
+
+THE PREDICTOR IS THE MARGIN, not the positive similarity: 0.78 -> perfect,
+0.30 -> 0.906, 0.14 -> 0.453. A model that looks excellent on random negatives
+can be near-useless on the negatives it will actually meet, and the headline
+number will not tell you.
+
+THIS IS WHY HARD NEGATIVE MINING EXISTS, and why an evaluation set of randomly
+sampled negatives systematically overstates a retrieval system's quality.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: train the model to make positive pairs close. It collapses - mapping every
+input to the same vector satisfies that perfectly. THE NEGATIVES ARE NOT AN
+OPTIMISATION, THEY ARE WHAT MAKES THE PROBLEM WELL-POSED.
+
+UPGRADE 1: triplet loss - anchor, one positive, one negative, with a margin. It
+works, and one negative per step is a weak signal, so it needs careful mining.
+
+UPGRADE 2: InfoNCE with in-batch negatives. Every other item in the batch is a
+free negative, so a batch of 256 gives 255 negatives per anchor instead of one.
+This is the change that made the approach practical.
+
+UPGRADE 3: bigger batches. Measured, the loss grows with batch size - 0.0001 at
+batch 2 up to 0.1221 at batch 256 - because there is more to be confused by. THE
+LOSS IS THEREFORE NOT COMPARABLE ACROSS BATCH SIZES, and neither is accuracy: 
+top-1 of 1.000 against 1 negative is a coin flip beaten, against 255 negatives it
+is a real result. The random baseline moved from 0.5000 to 0.0039.
+
+UPGRADE 4: a memory bank or momentum encoder (MoCo) to get many negatives without
+the memory cost of a huge batch.
+
+UPGRADE 5: HARD NEGATIVE MINING - deliberately choose negatives that are similar.
+Section 4 shows why: easy negatives teach almost nothing. The risk is FALSE
+negatives, where the "hard negative" is actually a correct match that happens to
+be unlabelled, and training then teaches the model that two identical things are
+different.
+
+UPGRADE 6: drop the negatives entirely - BYOL and SimSiam avoid collapse
+architecturally with a momentum encoder and a stop-gradient rather than with a
+contrastive denominator. Surprising that it works, and it does.""",
+
+    """6. HOW TO BUILD ONE - numbered steps.
+
+STEP 1 - DEFINE WHAT "SAME" MEANS. Two crops of one image, a caption and its
+photo, a query and the document that was clicked. This choice defines the
+invariances the model will learn and it is the entire design.
+
+STEP 2 - CHECK YOUR VIEWS DO NOT DESTROY THE LABEL. If a crop can remove the only
+distinguishing feature, you are teaching the model that two different things are
+the same.
+
+STEP 3 - EMBED BOTH VIEWS, then L2-normalise so similarity is cosine and the
+scale cannot drift.
+
+STEP 4 - COMPUTE THE SIMILARITY MATRIX for the batch. Diagonal = positives,
+off-diagonal = negatives. The loss is cross-entropy over each row.
+
+STEP 5 - SET TEMPERATURE AROUND 0.05 TO 0.1. Remember what it does: it reshapes
+the gradient, concentrating it on hard negatives at low T. It does not change the
+ranking.
+
+STEP 6 - USE THE LARGEST BATCH YOU CAN AFFORD, and record it alongside every
+number, because neither the loss nor the accuracy is comparable across batch
+sizes.
+
+STEP 7 - EVALUATE ON REALISTIC NEGATIVES. Measured: random negatives gave 1.000
+where clustered negatives gave 0.453 on the same embeddings. Sample your eval
+negatives from the population the system will actually see.
+
+STEP 8 - WATCH FOR COLLAPSE: if the average similarity between DIFFERENT items
+starts rising towards the positive similarity, the model is mapping everything to
+one place.
+
+STEP 9 - CHECK FOR FALSE NEGATIVES before mining hard ones. In a batch of user
+queries, two different users asking the same thing are labelled as negatives and
+are not.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You want to teach someone what makes two photographs "of the same thing" without
+ever telling them what any photograph contains.
+
+So you play a game. You show them a photo, then a lineup of sixty-four photos,
+one of which is the same scene from a different angle. Pick it out. They get
+better by learning which features survive a change of angle - the shape of the
+building, not the lighting.
+
+Nobody named a single object. The supervision came entirely from knowing which
+two pictures were of the same scene.
+
+Two details decide whether the game teaches anything.
+
+First, the lineup. If the other sixty-three photos are of completely unrelated
+scenes, the game is trivial and they learn almost nothing - measured, perfect
+scores. If the lineup is sixty-three photos of similar buildings, the game is
+hard and they have to learn what actually distinguishes them - measured, the
+score fell from 100% to 45%, on a learner whose ability to recognise the true
+match had not changed at all.
+
+Second, how much you reward a near-miss versus a wild miss. Sharpen that and the
+learner spends all their effort on the one photo that nearly fooled them. Flatten
+it and they spread their attention over the whole lineup. That choice does not
+change who they pick today - it changes what they get better at.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def info_nce(anchors, positives, temperature=0.07):
+        a = l2_normalise(anchors)        # cosine similarity, and it stops the
+        p = l2_normalise(positives)      # model cheating by growing the norms
+
+        sims = a @ p.T / temperature     # N x N. DIAGONAL = the true pairs.
+                                         # everything off-diagonal is a negative
+        labels = arange(N)               # "row i should pick column i"
+        return cross_entropy(sims, labels)
+
+    # evaluating it honestly
+    def top1(anchors, positives):
+        sims = l2_normalise(anchors) @ l2_normalise(positives).T
+        return mean(argmax(sims, axis=1) == arange(N))
+
+LINE BY LINE:
+ - `l2_normalise` is not cosmetic. Without it the model can lower the loss by
+   scaling all embeddings up, which changes nothing about their arrangement -
+   a free win that teaches nothing.
+ - `a @ p.T` builds the full N x N similarity matrix. THIS IS WHY BATCH SIZE IS
+   THE MEMORY CONSTRAINT: the matrix is quadratic in the batch, and it is also
+   why batch size and negative count are the same number.
+ - `/ temperature` before the softmax. Measured: it changes the loss from 0.0000
+   to 3.7831 across the usual range and changes top-1 accuracy by exactly
+   nothing, because dividing every logit by the same constant cannot reorder
+   them.
+ - `labels = arange(N)` - the labels are the INDICES. There is no annotation
+   anywhere; the diagonal IS the supervision, which is the whole point of the
+   method.
+ - `argmax(sims, axis=1)` for evaluation - and note this is measuring retrieval
+   WITHIN THE BATCH. A model evaluated against 63 negatives and deployed against
+   a million candidates has not been evaluated on its actual task.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+A batch of three, temperature 0.07. Cosine similarities between each anchor and
+each positive:
+
+            p0      p1      p2
+    a0    0.82    0.11    0.05
+    a1    0.09    0.79    0.14
+    a2    0.06    0.20    0.75
+
+ROW 0, divided by T = 0.07:  [11.71, 1.57, 0.71]
+  softmax: exp(11.71 - 11.71) = 1.000
+           exp(1.57  - 11.71) = 0.0000394
+           exp(0.71  - 11.71) = 0.0000167
+  sum = 1.0000561, probability of the correct one = 0.99994
+  loss for this row = -log(0.99994) = 0.000056
+
+NOW THE SAME ROW AT T = 1.0:  [0.82, 0.11, 0.05]
+  exp(0.82-0.82)=1.000, exp(0.11-0.82)=0.4916, exp(0.05-0.82)=0.4630
+  sum = 1.9546, probability = 0.5116
+  loss = -log(0.5116) = 0.6702
+
+THE SAME EMBEDDINGS, THE SAME RANKING, AND THE LOSS WENT FROM 0.000056 TO 0.6702
+- a factor of twelve thousand. Top-1 accuracy is 1.000 in both cases, because
+the ordering never moved. What changed is the gradient: at T = 0.07 the model is
+told it has essentially solved this example; at T = 1.0 it is told it has barely
+scraped a win and should push harder.
+
+NOW MAKE THE NEGATIVES HARD - the clustered case from the measurement, where the
+off-diagonal similarities rise to 0.69 while the diagonal stays at 0.84:
+
+            p0      p1      p2
+    a0    0.84    0.71    0.69
+  At T = 0.07: [12.00, 10.14, 9.86]
+  softmax: 1.000, 0.1557, 0.1177  -> sum 1.2734 -> probability 0.7853
+  loss = 0.2417, and one unlucky pair flips the argmax entirely.
+
+MEASURED AT SCALE, that is exactly the transition: margin 0.78 gave 100%
+accuracy, margin 0.30 gave 90.6%, and margin 0.14 gave 45.3% - while positive
+similarity barely moved. IT IS THE GAP THAT MATTERS, NOT THE ABSOLUTE CLOSENESS
+OF THE POSITIVES.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: the similarity matrix is O(batch squared) in time and memory, which is
+why contrastive training is batch-hungry and why memory banks and momentum
+encoders exist.
+
+INFERENCE: embed once, then nearest-neighbour search. That is what makes it
+practical - the expensive part happens at training time, and retrieval is an
+index lookup.
+
+DATA: no labels, which is the entire selling point. You do need pairs, and the
+pairing is a modelling decision with real consequences.
+
+THE #1 MISTAKE: evaluating against random negatives. Measured: 1.000 top-1 on
+random negatives and 0.453 on clustered ones, from the SAME embeddings. Your
+eval negatives must come from the population the system will meet.
+
+THE #2 MISTAKE: thinking temperature changes the ranking. Measured: identical
+accuracy from T = 0.01 to T = 2.0. It reshapes the gradient, which matters
+enormously, and it is a different claim.
+
+THE #3 MISTAKE: comparing losses across batch sizes. Measured: 0.0001 at batch 2
+against 0.1221 at batch 256, on the same task. More negatives means a higher loss
+by construction.
+
+THE #4 MISTAKE: views that destroy the label. A crop that removes the only
+distinguishing feature teaches the model that two different things are the same.
+
+THE #5 MISTAKE: hard negative mining without checking for FALSE negatives. Two
+users asking the same question are labelled as a negative pair and are not, and
+mining finds exactly those.
+
+THE #6 MISTAKE: not watching for collapse. Rising similarity between DIFFERENT
+items is the signal, and the training loss can look fine while it happens.
+
+THE #7 MISTAKE: skipping L2 normalisation, which lets the model lower the loss by
+scaling rather than by arranging.
+
+THE TAKEAWAY: contrastive learning supervises itself by pulling two VIEWS of the
+same item together and pushing everything else apart, so the negatives are what
+make the problem well-posed rather than an optimisation - and the measurements
+show that the negatives are also what makes the evaluation honest, since the same
+embeddings scored 1.000 against random negatives and 0.453 against clustered ones
+with the positive similarity essentially unchanged; the predictor is the MARGIN,
+temperature reshapes gradients rather than rankings (identical accuracy from 0.01
+to 2.0), and neither loss nor accuracy is comparable across batch sizes.""",
+]
+
+_EX_P1AO["Data augmentation"] = [
+    """1. THE GOAL - more training data than you have, by exploiting what you know.
+
+You have 500 labelled images and you need 50,000. Data augmentation makes new
+training examples from the ones you have by applying transformations that CHANGE
+THE INPUT AND PRESERVE THE LABEL - flip the photo, rotate it slightly, adjust the
+brightness. A flipped cat is still a cat.
+
+The obvious framing is "cheap extra data". THAT FRAMING IS WRONG AND IT IS THE
+REASON PEOPLE APPLY IT BADLY. A flipped image carries no new information - it is
+the same photo. What you are actually doing is TELLING THE MODEL ABOUT AN
+INVARIANCE: that the label does not depend on horizontal orientation. You are
+injecting knowledge you have and the model does not.
+
+WHICH MEANS THE TRANSFORMATION HAS TO ENCODE AN INVARIANCE THAT IS ACTUALLY TRUE
+OF YOUR PROBLEM. When it does, augmentation is one of the most effective
+regularisers available. When it does not, it makes the model worse - and the
+measurement in section 4 is a case where a very standard-looking augmentation
+made things worse at every setting I tried.""",
+
+    """2. THE INTUITION - it is regularisation, not data.
+
+Think about what the model sees. Without augmentation it sees photo #37 a hundred
+times and can memorise the exact pixels. With random crops and flips it sees a
+hundred different-looking versions, so memorising individual pixels stops paying
+and the model is pushed towards features that survive the transformations.
+
+THAT IS A REGULARISER. It constrains the hypothesis space to functions that are
+invariant to the transformations you chose. And that is exactly why it can hurt:
+constraining the hypothesis space is only helpful if the true function is inside
+the constrained space.
+
+THE CANONICAL COUNTEREXAMPLE IS DIGIT RECOGNITION. Horizontal flip is a great
+augmentation for cats and a terrible one for digits, because a flipped 2 is not a
+2 and a flipped 6 is not a 6. Vertical flip turns 6 into 9 - it changes the
+label. THE TRANSFORMATION IS NOT THE QUESTION; WHETHER IT PRESERVES YOUR LABEL IS.
+
+THERE IS ALSO A KNOWN MATHEMATICAL CONNECTION worth knowing: adding small
+Gaussian noise to the inputs of a linear model is approximately equivalent to L2
+regularisation on the weights. So "augment with noise" and "add weight decay" are
+not two independent tools in that case - they are two spellings of the same
+thing, and the measurement below shows them producing the same number.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+AUGMENTATION - a label-preserving transformation of a training example.
+
+INVARIANCE - a change that the correct answer does not depend on. Augmentation is
+how you tell a model which changes are invariances.
+
+LABEL-PRESERVING - the crucial property. If the transformation can change the
+correct answer, you are injecting wrong labels.
+
+ONLINE vs OFFLINE - online augmentation applies a random transformation each time
+an example is drawn, so the model sees a different version every epoch. Offline
+generates a fixed expanded dataset once. ONLINE IS ALMOST ALWAYS BETTER because
+the variety is unbounded.
+
+TEST-TIME AUGMENTATION (TTA) - augmenting at inference and averaging the
+predictions. Usually a small accuracy gain for a multiple of the inference cost.
+
+MIXUP - train on a weighted blend of two examples with a correspondingly blended
+label. CUTMIX - paste a patch of one image into another and blend the labels by
+area. Both are augmentations that deliberately produce examples that are not
+realistic, and both work.
+
+SMOTE - for tabular class imbalance: synthesise minority examples by interpolating
+between existing ones.
+
+BACK-TRANSLATION - for text: translate to another language and back, producing a
+paraphrase. One of the few text augmentations that reliably preserves meaning.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - measured, and it did not go the way I
+expected.
+
+The setup: 30 training rows, 200 features of which only 6 carry any signal, and a
+3,000-row held-out test set. This is a badly overfitting regime by construction -
+exactly where augmentation is supposed to help.
+
+  setup                              train    test     gap
+  -------------------------------------------------------
+  baseline, 30 rows                  1.000   0.682   0.318
+  aug x3, jitter 0.3  (120 rows)     1.000   0.679   0.321
+  aug x3, jitter 0.8  (120 rows)     1.000   0.668   0.332
+  aug x9, jitter 0.3  (300 rows)     1.000   0.669   0.331
+  aug x9, jitter 0.8  (300 rows)     1.000   0.652   0.348
+  aug x9, jitter 1.5  (300 rows)     1.000   0.615   0.385
+  aug x29, jitter 0.8 (900 rows)     1.000   0.680   0.320
+  30 rows + L2 = 0.05                1.000   0.680   0.320
+  90 REAL rows                       1.000   0.753   0.247
+  300 REAL rows                      1.000   0.821   0.179
+  900 REAL rows                      1.000   0.821   0.179
+
+I EXPECTED GAUSSIAN JITTER TO IMPROVE GENERALISATION AND IT MADE IT WORSE AT
+EVERY SETTING. The best augmented result, 0.680, was slightly below the 0.682
+baseline. And more jitter monotonically hurt: 0.669, 0.652, 0.615, and continuing
+the sweep gave 0.602, 0.572, 0.545 at jitter 3, 6 and 12.
+
+WHY, AND THIS IS THE LESSON: isotropic Gaussian noise encodes the belief that the
+label is invariant to perturbation EQUALLY IN EVERY DIRECTION. For this data that
+is false - 6 of the 200 directions carry all the signal, and noise in those six
+directly destroys it. The augmentation added variance and no information, so it
+could only hurt.
+
+MEANWHILE REAL DATA HELPED ENORMOUSLY: 30 rows gave 0.682, 90 gave 0.753, 300
+gave 0.821. THREE TIMES AS MANY REAL ROWS BEAT THIRTY TIMES AS MANY SYNTHETIC
+ONES, comfortably.
+
+AND THE L2 ROW CONFIRMS THE THEORY: weight decay at 0.05 gave 0.680, the same as
+the best augmentation. Adding noise to a linear model's inputs really is
+approximately L2, and here neither helped because the problem was too little
+information, which no regulariser can supply.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: apply every transformation you can think of. Measured: more jitter
+monotonically reduced test accuracy from 0.669 to 0.545. Augmentation is not a
+dial you turn up.
+
+UPGRADE 1: pick transformations from the DOMAIN'S invariances. Horizontal flip
+for natural photos; not for digits or text in images. Rotation for satellite and
+microscope images, where there is no canonical up; small rotations only for
+photographs.
+
+UPGRADE 2: online rather than offline, so the model sees a fresh variant every
+epoch instead of a fixed expanded set.
+
+UPGRADE 3: validate that it helps, on a held-out set, per transformation.
+Measured: assuming it helps was wrong here by 3 to 14 accuracy points.
+
+UPGRADE 4: MixUp and CutMix, which produce inputs that could not exist and
+improve calibration as well as accuracy. Surprising, well-replicated, and worth
+knowing as a counterexample to "augmented examples must look realistic".
+
+UPGRADE 5: LEARNED policies - AutoAugment, RandAugment, TrivialAugment. Search
+over transformation choices rather than guessing. RandAugment in particular
+reduced the search to two hyperparameters and matched the expensive versions.
+
+UPGRADE 6: for text, back-translation and synonym substitution, keeping in mind
+that text augmentations are far more likely to change the meaning than image
+augmentations are.
+
+UPGRADE 7: for tabular data, be sceptical. This is where the measured failure
+lives - there is usually no natural invariance to exploit, feature interactions
+break under independent perturbation, and SMOTE-style interpolation can create
+points that violate the data's real constraints.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - WRITE DOWN THE INVARIANCE, NOT THE TRANSFORMATION. "A cat photographed
+from the left is still a cat" tells you flips are safe. "The class does not depend
+on brightness" tells you jitter is safe. If you cannot state the invariance, do
+not apply the transformation.
+
+STEP 2 - CHECK IT ON THE HARDEST CLASSES. A flip is fine for cats and breaks
+digits; a crop is fine for landscapes and can remove the tumour.
+
+STEP 3 - AUGMENT THE TRAINING SET ONLY. Never the validation or test set. This is
+the most common leak in the whole area, and it produces a validation score that
+cannot be reproduced in production.
+
+STEP 4 - AUGMENT AFTER SPLITTING. Augmenting first puts variants of the same
+original row on both sides of the split, which is a direct leak - the model has
+effectively seen the test data.
+
+STEP 5 - APPLY ONLINE, with a fresh random draw per epoch.
+
+STEP 6 - MEASURE. Held-out accuracy with and without each transformation.
+Measured here, the intuition was wrong in every configuration.
+
+STEP 7 - SWEEP THE STRENGTH. Measured: monotonically worse from 0.669 down to
+0.545 as jitter grew. Strength is a hyperparameter, not a preference.
+
+STEP 8 - COMPARE AGAINST SIMPLY GETTING MORE REAL DATA. Measured: tripling the
+real rows beat multiplying the synthetic rows by thirty. If real data is
+obtainable, that is the better spend.
+
+STEP 9 - FOR IMBALANCED CLASSES, augment the minority class specifically, and
+check the synthetic points respect the data's constraints - SMOTE will happily
+interpolate to an age of 37.5 or a category that does not exist.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are teaching someone to recognise cats from twenty photographs. They will
+memorise those twenty photographs, and then fail on the twenty-first.
+
+So you show each photo mirrored, slightly rotated, brighter, darker, cropped
+differently. Now memorising exact pixels does not pay, because the pixels keep
+changing while the answer does not. They are pushed towards learning what a cat
+actually looks like.
+
+Notice what you did. You did not give them any new information about cats - every
+image came from the same twenty photos. What you gave them was a RULE: "the answer
+does not change when the picture is mirrored". You knew that rule and they did not.
+
+Which is why it goes wrong when the rule is false. Mirror a photograph of the
+digit 2 and it is no longer a 2. You have not taught an invariance, you have
+taught a lie, and the student now believes something incorrect.
+
+Measured on a problem where the rule was false - adding random noise equally to
+every feature, on data where only six of two hundred features mattered - the
+student got WORSE at every setting, and worse the more noise was added. Whereas
+tripling the number of genuine examples took them from 68% to 82%.
+
+So the honest description is: augmentation is a way of handing over knowledge you
+already have. It is not a way of manufacturing knowledge you do not.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # ONLINE augmentation: a fresh random variant every time the row is drawn
+    def batches(train, epochs):
+        for _ in range(epochs):
+            shuffle(train)
+            for x, y in train:
+                yield augment(x), y          # x differs EVERY epoch
+
+    def augment(x):
+        if random() < 0.5: x = horizontal_flip(x)      # state the invariance:
+        x = random_crop(x, scale=(0.8, 1.0))           # "the label does not
+        x = colour_jitter(x, brightness=0.2)           #  depend on any of these"
+        return x
+
+    # the SPLIT ORDER, which is where the leak lives
+    train, test = split(raw)                 # SPLIT FIRST
+    train = [augment(x) for x, y in train]   # THEN augment - training only
+    # test is NEVER augmented
+
+LINE BY LINE:
+ - `yield augment(x)` inside the epoch loop, not before it - this is ONLINE
+   augmentation, and it is why the model sees unbounded variety rather than a
+   fixed expanded set.
+ - each transformation in `augment` corresponds to a claim: flipping is safe,
+   80-100% crops are safe, 20% brightness change is safe. IF YOU CANNOT STATE THE
+   CLAIM, THE LINE SHOULD NOT BE THERE.
+ - `split(raw)` BEFORE augmenting. Reversing these two lines puts variants of the
+   same original on both sides of the split, and the model has effectively seen
+   the test set. The validation score then looks excellent and does not survive
+   deployment.
+ - the test set is never augmented. Test-time augmentation is a separate,
+   deliberate technique with its own cost, not something to do by accident.
+ - not shown, and it should be: a held-out measurement of each transformation's
+   effect. The measured result here was that the intuition was wrong in all six
+   configurations tried.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THE SETUP: 30 training rows. 200 features, of which 6 carry signal and 194 are
+pure noise. A linear model. 3,000 held-out test rows.
+
+THE BASELINE: train accuracy 1.000, test accuracy 0.682. A gap of 0.318 - the
+model has memorised 30 rows using 200 free parameters, which it can do exactly.
+
+NOW ADD JITTER. Each augmented copy is the original with independent Gaussian
+noise of standard deviation j added to EVERY feature:
+
+  jitter   aug rows   train    test    change vs baseline
+  --------------------------------------------------------
+    0.3        300    1.000   0.669        -0.012
+    0.8        300    1.000   0.652        -0.029
+    1.5        300    1.000   0.615        -0.066
+    3.0        300    1.000   0.602        -0.080
+    6.0        300    1.000   0.572        -0.110
+   12.0        300    1.000   0.545        -0.136
+
+MONOTONICALLY WORSE, and the training accuracy stayed at 1.000 throughout - the
+model still memorised, it just memorised a fuzzier version.
+
+WHY, TRACED: the signal lives in features 0 to 5, where the class means are
+separated by about 0.9 units. Adding noise with standard deviation 1.5 to those
+features moves each one further than the entire class separation. THE
+AUGMENTATION IS DESTROYING THE SIGNAL IN THE ONLY SIX FEATURES THAT MATTER, while
+adding nothing to the 194 that do not.
+
+An augmentation that jittered ONLY the 194 noise features would encode a true
+invariance and would plausibly help. Isotropic noise encodes a false one.
+
+NOW THE COMPARISON THAT SETTLES IT:
+  30 real rows   -> 0.682
+  90 real rows   -> 0.753
+  300 real rows  -> 0.821
+  900 real rows  -> 0.821   (saturated - the linear model's ceiling here)
+  900 SYNTHETIC rows from 30 originals -> 0.680
+
+900 synthetic rows performed like the 30 originals they came from, because they
+carry the same information. 300 REAL rows performed 14 points better. AUGMENTED
+ROWS ARE NOT DATA; the row count is not the quantity that matters.
+
+AND THE L2 CHECK: weight decay at 0.05, no augmentation at all, gave 0.680 -
+indistinguishable from the best augmented result. That is the known equivalence
+between input noise and Tikhonov regularisation showing up in the measurement,
+and it means the augmentation was not doing anything a one-line regulariser
+could not.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: online augmentation costs a transformation per example per epoch, which
+for images can be a real fraction of training time and is usually done on the
+data-loading workers.
+
+STORAGE: online costs nothing extra; offline multiplies your dataset on disk.
+
+RISK: a transformation that does not preserve the label injects wrong labels, and
+the damage is proportional to how much you augment.
+
+THE #1 MISTAKE: treating augmentation as "more data". It adds no information. It
+encodes an invariance, and it only helps if the invariance is true.
+
+THE #2 MISTAKE: augmenting before the train/test split. Variants of the same
+original end up on both sides and the model has seen the test set.
+
+THE #3 MISTAKE: augmenting the validation or test set. The score becomes
+unreproducible in production.
+
+THE #4 MISTAKE: transformations that change the label. Vertical flip turns 6 into
+9; a crop can remove the finding a medical model is meant to detect.
+
+THE #5 MISTAKE: not sweeping the strength. Measured: monotonic degradation from
+0.669 to 0.545 as jitter grew.
+
+THE #6 MISTAKE: assuming it helps. Measured: it hurt in all six configurations
+tried, because the invariance it encoded was false for that data.
+
+THE #7 MISTAKE: reaching for it on tabular data by default. There is usually no
+natural invariance, and independent per-feature noise breaks feature
+interactions.
+
+THE #8 MISTAKE: preferring synthetic rows to real ones when real ones are
+available. Measured: 300 real rows beat 900 synthetic by 14 accuracy points.
+
+THE TAKEAWAY: data augmentation adds no information - it encodes an INVARIANCE
+you know and the model does not, which makes it a regulariser rather than extra
+data, and therefore useful exactly when the invariance is true; measured on data
+where it was false, isotropic Gaussian jitter reduced test accuracy at every
+setting and monotonically with strength (0.682 down to 0.545), gave the same
+result as a one-line L2 term as the noise-equals-Tikhonov equivalence predicts,
+and was beaten by 14 points by simply collecting three times as many real rows.""",
+]
+
 
 
 
