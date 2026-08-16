@@ -4522,3 +4522,953 @@ accuracy with no signal at all, and that money — being a COUNT of exact units 
 — belongs in a `long` of minor units or a BigDecimal built from a String and compared with `compareTo`,
 never in a double.""",
 ]
+
+
+DEEP["ExecutorService — the four ways a thread pool bites you"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — why nobody writes `new Thread()` anymore
+
+Creating a thread is a system call. The OS allocates a stack, registers a scheduling entity, and hands
+it back. It costs on the order of a hundred microseconds and about a megabyte of reserved address
+space. Do it per request and two things happen: you pay that cost on every request, and — far worse —
+NOTHING BOUNDS HOW MANY EXIST. A traffic spike creates ten thousand threads, the machine spends all its
+time context-switching, and the failure looks like the machine died rather than like you were busy.
+
+    AN ExecutorService IS A FIXED CREW PLUS A QUEUE. You hand it tasks; a bounded set of threads takes
+    them one at a time; and when they are all busy, the work WAITS instead of spawning more workers.
+
+    THE QUEUE IS THE POINT, NOT THE THREADS. Reusing threads saves creation cost, which is nice. But
+    the reason a pool exists is that it gives you a place to put excess work and a decision about what
+    to do when that place is full. THAT DECISION IS YOUR OVERLOAD BEHAVIOUR, and most outages involving
+    thread pools are really outages of that decision being made by default.
+
+THE EVERYDAY VERSION: a coffee shop with four baristas. When fifty people arrive, you do not hire
+forty-six baristas — you form a queue. And the interesting design question is not how fast the baristas
+work; it is what happens when the queue reaches the door. Do you let it grow into the street? Turn
+people away? Ask the person at the till to make their own coffee? EVERY ONE OF THOSE IS A CONFIGURED
+POLICY, and picking none means picking one by accident.
+
+TERMS AS THEY APPEAR:
+- CORE POOL SIZE: threads kept alive even when idle.
+- MAXIMUM POOL SIZE: the ceiling — but see section 2, because it does not mean what you think.
+- WORK QUEUE: where tasks wait.
+- REJECTION POLICY: what happens when the queue is full AND the pool is at maximum.
+- `execute` vs `submit`: the difference decides whether your exceptions are visible or invisible.""",
+
+"""2. THE INTUITION — the sizing rule that surprises everyone
+
+`ThreadPoolExecutor` HAS SEVEN CONSTRUCTOR PARAMETERS, and the interaction between three of them is the
+thing to actually understand:
+
+    corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory, rejectionHandler
+
+THE ALGORITHM WHEN A TASK ARRIVES, in this exact order:
+
+    1. FEWER THAN corePoolSize THREADS?  → create a new thread. Even if others are idle.
+    2. OTHERWISE, TRY TO QUEUE IT.        → if the queue accepts it, done.
+    3. QUEUE FULL?                        → create a thread, up to maximumPoolSize.
+    4. AT MAXIMUM TOO?                    → REJECT, via the rejection policy.
+
+    NOW READ STEP 2 AND STEP 3 TOGETHER. THREADS BEYOND THE CORE ARE ONLY CREATED WHEN THE QUEUE IS
+    FULL. Which means:
+
+    WITH AN UNBOUNDED QUEUE, maximumPoolSize IS NEVER REACHED. Never. The queue never fills, so step 3
+    never happens, so the pool never grows past core. You can set maximum to a thousand and it is
+    decoration.
+
+    THIS IS EXACTLY WHAT `Executors.newFixedThreadPool(n)` DOES. It uses a `LinkedBlockingQueue` with
+    no capacity limit. So under sustained overload the pool does not grow, does not reject, and does
+    not fail — IT QUEUES, FOREVER, until the heap is gone. The OutOfMemoryError names the queue, and
+    the actual cause was that the system had no way to say "no".
+
+    AND `Executors.newCachedThreadPool()` FAILS THE OPPOSITE WAY: a `SynchronousQueue`, which has zero
+    capacity, so step 2 always fails and step 3 always fires — with a maximum of `Integer.MAX_VALUE`.
+    Unbounded THREADS instead of an unbounded queue.
+
+    BOTH CONVENIENCE FACTORIES ARE UNBOUNDED IN ONE DIRECTION. That is why serious codebases construct
+    `ThreadPoolExecutor` explicitly, and why Google's Java style guide bans the `Executors` factories
+    outright.
+
+HOW MANY THREADS, then? Two regimes, and confusing them is the second most common mistake:
+
+    CPU-BOUND WORK: threads ≈ number of cores. More threads do not create more cores; they add context
+    switching and cache pressure to the same amount of work.
+    I/O-BOUND WORK: threads ≈ cores × (1 + waitTime/computeTime). A task that waits 90% of the time
+    supports about ten threads per core. THE RATIO IS THE THING TO MEASURE, and it is usually easier to
+    measure than people expect: it is just the fraction of time the thread is not runnable.
+
+AND THE REJECTION POLICY IS YOUR BACKPRESSURE DESIGN:
+
+    AbortPolicy (default)  throws RejectedExecutionException. Honest, and requires the caller to cope.
+    CallerRunsPolicy       THE CALLING THREAD RUNS THE TASK ITSELF. Which means the producer stops
+                           producing while it does so. This is elegant: overload automatically slows
+                           the source, with no signalling protocol at all.
+    DiscardPolicy          silently drops. Right for metrics samples, catastrophic for orders.
+    DiscardOldestPolicy    drops the oldest queued task. Right for "latest value wins" feeds.""",
+
+"""3. THE MECHANISM — execute vs submit, shutdown, and the scheduled trap
+
+THE EXCEPTION DIFFERENCE, which is the single most under-known thing here:
+
+    execute(Runnable)          an uncaught exception KILLS THE THREAD, the pool quietly replaces it,
+                               and the exception goes to the thread's UncaughtExceptionHandler — which
+                               by default prints to stderr. VISIBLE, if anyone is reading stderr.
+    submit(Runnable|Callable)  the exception is CAUGHT AND STORED IN THE Future. Nothing is printed.
+                               Nothing is logged. The thread survives. IF YOU NEVER CALL `get()`, THE
+                               EXCEPTION SIMPLY DOES NOT EXIST as far as your system is concerned.
+
+    THAT IS WHY WORK "SILENTLY STOPS HAPPENING". Everyone writes `submit`, nobody keeps the Future, and
+    every failure is swallowed by design. THE FIX IS A try/catch AROUND THE WHOLE TASK BODY, or a
+    subclass overriding `afterExecute`, or `CompletableFuture` with `whenComplete`.
+
+SHUTDOWN, and the three methods that get confused:
+
+    shutdown()               stop accepting new tasks; finish everything already submitted. Returns
+                             IMMEDIATELY — it does not wait.
+    shutdownNow()            stop accepting, INTERRUPT running threads, and RETURN the queued tasks
+                             that never started. Interruption only works if the task checks for it.
+    awaitTermination(t, u)   the actual wait. Returns false on timeout.
+    THE CORRECT SEQUENCE IS ALL THREE: shutdown, await, and if that times out, shutdownNow and await
+    again.
+
+    AND THE DEFAULT THREADS ARE NON-DAEMON, so a pool you forget to shut down KEEPS THE JVM ALIVE. The
+    program finishes `main` and simply does not exit. On Java 19+, `ExecutorService` is `AutoCloseable`,
+    so try-with-resources does the whole dance for you.
+
+THE SCHEDULED-EXECUTOR TRAP, which deserves its own paragraph because it is silent and total:
+
+    IF A TASK SUBMITTED TO `scheduleAtFixedRate` THROWS, THE SCHEDULE IS CANCELLED. Not skipped — 
+    CANCELLED. It never runs again, for the life of the process, and nothing is logged. A health check,
+    a cache refresh, a metrics flush: one transient exception at 3am and the job is dead until the next
+    deploy. ALWAYS WRAP A SCHEDULED TASK BODY IN try/catch(Throwable).
+
+    `scheduleAtFixedRate` vs `scheduleWithFixedDelay`: the first measures from START to start, so if a
+    run takes longer than the period, runs bunch up back to back. The second measures from END to
+    start, so there is always a real gap. FOR ANYTHING THAT TALKS TO A STRUGGLING DOWNSTREAM SERVICE,
+    fixed DELAY is the safer default.
+
+THREAD FACTORY. Default thread names are `pool-1-thread-3`, which tells you nothing in a thread dump at
+2am. A three-line factory that names threads after their purpose is the cheapest observability
+improvement available in Java.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `newFixedThreadPool` UNDER SUSTAINED OVERLOAD. Unbounded queue, so it never rejects; the heap
+fills with queued Runnables and the OOM names the queue rather than the cause.
+
+CASE 2 — `newCachedThreadPool` UNDER SUSTAINED OVERLOAD. Unbounded threads. Same outcome by the
+opposite route.
+
+CASE 3 — MAXIMUM POOL SIZE THAT DOES NOTHING. Any unbounded queue makes it unreachable. People set it,
+watch it never be used, and conclude the pool is broken.
+
+CASE 4 — `submit` WITH AN IGNORED FUTURE. Every exception silently captured. The task stops working and
+nothing anywhere records it.
+
+CASE 5 — A THROWING TASK ON `scheduleAtFixedRate`. The schedule is cancelled permanently and silently.
+
+CASE 6 — FORGETTING TO SHUT DOWN. Non-daemon threads keep the JVM alive; the process hangs after `main`
+returns with no error at all.
+
+CASE 7 — THREAD-POOL DEADLOCK. A task submits another task to the SAME bounded pool and blocks on its
+`Future.get()`. With a single-threaded pool this deadlocks on the first try, guaranteed. With a
+ten-thread pool it deadlocks under load, which is worse because it passes testing.
+
+CASE 8 — BLOCKING WORK ON THE COMMON ForkJoinPool. Parallel streams and no-executor `CompletableFuture`
+calls share `ForkJoinPool.commonPool()`, sized to cores minus one. One blocking call there stalls
+unrelated code across the whole JVM.
+
+CASE 9 — ThreadLocal LEAKS IN A POOLED THREAD. The thread never dies, so the value is never cleared,
+and it holds whatever it references forever. Always `remove()` in a finally.
+
+CASE 10 — INTERRUPTION SWALLOWED. `catch (InterruptedException e) { }` destroys the interrupt flag, so
+`shutdownNow` cannot stop the task. Either rethrow, or restore with
+`Thread.currentThread().interrupt()`.
+
+CASE 11 — `invokeAll` BLOCKS UNTIL EVERY TASK COMPLETES, including the slow one. There is a timeout
+overload and it is nearly always the one you want.
+
+CASE 12 — DEFAULT THREAD NAMES. `pool-2-thread-7` in a thread dump identifies nothing.
+
+CASE 13 — ONE POOL FOR EVERYTHING. Slow database calls and fast cache lookups sharing a pool means the
+slow work starves the fast work. Separate pools are BULKHEADS, and they are how you stop one dependency
+from taking down every endpoint.""",
+
+"""5. THE ALTERNATIVES — and which pool for which job
+
+CONSTRUCT `ThreadPoolExecutor` DIRECTLY. The recommended default, because it forces you to state the
+queue bound and the rejection policy — which are the two decisions that matter and the two the
+convenience factories make for you badly:
+
+    new ThreadPoolExecutor(8, 8, 0L, MILLISECONDS,
+        new ArrayBlockingQueue<>(1000),          // BOUNDED. This is the whole point.
+        namedFactory("http-worker"),
+        new ThreadPoolExecutor.CallerRunsPolicy())
+
+`Executors` FACTORIES — know what each really is:
+    newFixedThreadPool(n)          fixed threads, UNBOUNDED queue
+    newCachedThreadPool()          UNBOUNDED threads, zero-capacity queue, 60s idle timeout
+    newSingleThreadExecutor()      one thread, unbounded queue — genuinely useful for serialising
+                                   access to something non-thread-safe
+    newScheduledThreadPool(n)      timers, with the cancel-on-throw trap above
+    newWorkStealingPool()          a ForkJoinPool. Good for recursive divide-and-conquer, not for
+                                   independent blocking I/O
+    newVirtualThreadPerTaskExecutor()  Java 21. Not a pool at all — see below.
+
+VIRTUAL THREADS (Java 21) for I/O-BOUND work. They change the answer to this whole topic: threads
+become cheap, so you stop pooling. BUT THE POOL WAS ALSO YOUR RATE LIMITER — that `ArrayBlockingQueue`
+of 1000 and those 8 threads were bounding how much load reached your database. Replace them with
+unbounded virtual threads and you must add a `Semaphore` explicitly, or the limit simply disappears.
+
+`CompletableFuture` FOR COMPOSITION — chaining, combining, timeouts, error recovery. ALWAYS PASS AN
+EXECUTOR; the no-executor overloads use the common pool.
+
+FORKJOINPOOL for recursive splitting, where work-stealing genuinely helps. Not for independent blocking
+tasks.
+
+A MESSAGE QUEUE — Kafka, SQS, RabbitMQ — when the work must survive a restart. An in-memory queue is a
+thread pool's queue; a broker's queue is durable, observable, and rate-limitable from outside the
+process. THE MOMENT "we lost the queued work when the pod restarted" MATTERS, you wanted a broker.
+
+A SEMAPHORE, when what you actually need is a CONCURRENCY LIMIT rather than a set of threads. Often
+clearer than a pool, and it composes with virtual threads.
+
+WHAT TO SAY: "I would construct ThreadPoolExecutor explicitly with a bounded queue and CallerRunsPolicy
+so overload becomes backpressure rather than an OOM, size it from the wait-to-compute ratio, name the
+threads, and use separate pools as bulkheads so a slow dependency cannot starve a fast one."
+
+""",
+
+"""6. HOW TO CONFIGURE A POOL — numbered steps
+
+STEP 1 — CLASSIFY THE WORK. CPU-bound or I/O-bound? The sizing rules are completely different and
+everything else follows from this.
+
+STEP 2 — SIZE IT. CPU-bound: about the core count. I/O-bound: cores × (1 + wait/compute). Measure the
+ratio rather than guessing it.
+
+STEP 3 — BOUND THE QUEUE. Always. An unbounded queue converts overload into an OutOfMemoryError, and it
+removes maximumPoolSize from the design at the same time.
+
+STEP 4 — CHOOSE THE REJECTION POLICY DELIBERATELY. `CallerRunsPolicy` for natural backpressure,
+`AbortPolicy` when the caller can shed load properly, `DiscardOldest` for latest-value-wins feeds.
+
+STEP 5 — NAME THE THREADS. A three-line ThreadFactory, and every future thread dump becomes readable.
+
+STEP 6 — WRAP EVERY TASK BODY IN try/catch(Throwable). Especially scheduled tasks, where an exception
+cancels the schedule forever.
+
+STEP 7 — DO NOT IGNORE FUTURES FROM `submit`. Either handle them, or use `execute`, or use
+`CompletableFuture` with `whenComplete`.
+
+STEP 8 — SHUT DOWN PROPERLY: `shutdown`, `awaitTermination`, then `shutdownNow` and await again. Or
+try-with-resources on Java 19+.
+
+STEP 9 — USE SEPARATE POOLS AS BULKHEADS. One per downstream dependency, so a slow one cannot starve
+the rest.
+
+STEP 10 — NEVER BLOCK ON A TASK IN THE SAME BOUNDED POOL. That is the thread-pool deadlock, and it
+passes testing before it fails in production.
+
+STEP 11 — CLEAR ThreadLocals IN A FINALLY. Pooled threads never die, so nothing else will.
+
+STEP 12 — MONITOR QUEUE DEPTH, ACTIVE COUNT AND REJECTION COUNT. `ThreadPoolExecutor` exposes all
+three. Queue depth trending upward is the earliest warning you will get, and it arrives long before
+latency moves.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Creating a thread is a syscall — about a megabyte of reserved stack and a hundred microseconds. Doing
+it per request costs that every time, and worse, nothing bounds how many exist. A spike creates ten
+thousand threads and the machine spends all its time context-switching, so the failure looks like the
+box died rather than like you were busy.
+
+A pool is a fixed crew plus a queue. But I'd say the QUEUE is the point, not the threads. Reusing
+threads saves creation cost, which is nice. The reason a pool exists is that it gives you somewhere to
+put excess work and a decision about what to do when that place is full — and that decision IS your
+overload behaviour. Most thread-pool outages are really that decision being made by default.
+
+The thing that surprises everyone is the sizing algorithm. When a task arrives: under core size, make
+a thread. Otherwise try to QUEUE it. Only if the queue is FULL do you create threads up to the maximum.
+Read those together and it follows that with an unbounded queue, maximumPoolSize is never reached. Ever.
+You can set it to a thousand and it's decoration.
+
+Which is exactly what newFixedThreadPool does — a LinkedBlockingQueue with no capacity. So under
+sustained overload it doesn't grow, doesn't reject, doesn't fail. It queues until the heap is gone, and
+the OOM names the queue while the actual cause was that the system had no way to say no. And
+newCachedThreadPool fails the opposite way: a zero-capacity SynchronousQueue with a maximum of
+Integer.MAX_VALUE, so unbounded THREADS instead of an unbounded queue. Both convenience factories are
+unbounded in one direction, which is why I'd construct ThreadPoolExecutor explicitly.
+
+For sizing: CPU-bound is roughly the core count — more threads don't create more cores. I/O-bound is
+cores times one plus the wait-to-compute ratio, so a task waiting 90% of the time supports about ten
+threads per core.
+
+And the rejection policy is where the backpressure design lives. CallerRunsPolicy is the elegant one:
+the CALLING thread runs the task itself, so the producer stops producing while it does. Overload
+automatically slows the source with no signalling protocol at all.
+
+Two things I'd flag that bite people constantly. First, submit versus execute: submit CAPTURES the
+exception in the Future. Nothing is printed, nothing is logged, and if you never call get() the
+exception effectively doesn't exist. That's why work "silently stops happening" — everyone writes
+submit and nobody keeps the Future.
+
+Second, scheduleAtFixedRate: if the task throws, the schedule is CANCELLED. Not skipped — cancelled
+permanently, silently, for the life of the process. One transient exception at 3am and your cache
+refresh is dead until the next deploy. Always wrap a scheduled body in catch Throwable.
+
+Then: bound the queue, name the threads so a thread dump is readable, use separate pools as bulkheads
+so a slow dependency can't starve a fast one, and never block on a Future from the same bounded pool —
+that one deadlocks under load after passing every test.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHY maximumPoolSize IS OFTEN DECORATION ─────────────────────────
+    new ThreadPoolExecutor(2, 100, 60L, SECONDS, new LinkedBlockingQueue<>());
+    //                        ^^^ NEVER REACHED. The queue is unbounded, so it always
+    //   accepts, so the "queue is full" branch that creates threads 3..100 never runs.
+    //   This is a 2-thread pool with a 100 written on it.
+
+    Executors.newFixedThreadPool(8);
+    // ^ EXACTLY THE ABOVE. LinkedBlockingQueue with no capacity. Under sustained
+    //   overload: no growth, no rejection, no failure — it queues until the heap is
+    //   gone, and the OOM stack trace names the queue rather than the cause.
+
+    Executors.newCachedThreadPool();
+    // ^ SynchronousQueue (capacity ZERO) + maximumPoolSize = Integer.MAX_VALUE.
+    //   Every task fails to queue, so every task creates a thread. Unbounded THREADS.
+
+    // ── THE POOL YOU SHOULD ACTUALLY WRITE ──────────────────────────────
+    var pool = new ThreadPoolExecutor(
+        8, 8,                              // core == max: predictable
+        0L, TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(1000),    // ← BOUNDED. The single most important line.
+        r -> { var t = new Thread(r, "http-worker"); t.setDaemon(true); return t; },
+    //       ^^^^^^^^^^^^^^^^^^^^^^^^^ named threads. Three lines, and every future
+    //       thread dump becomes readable at 2am.
+        new ThreadPoolExecutor.CallerRunsPolicy());
+    //      ^^^^^^^^^^^^^^^^^ THE CALLER RUNS IT. So the producer stops producing while
+    //      it does. Overload throttles the source automatically — backpressure with no
+    //      signalling protocol.
+
+    // ── THE EXCEPTION THAT DOES NOT EXIST ───────────────────────────────
+    pool.submit(() -> { throw new IllegalStateException("boom"); });
+    //   ^^^^^^ CAUGHT AND STORED IN THE Future. Nothing printed, nothing logged, the
+    //   thread survives. If nobody calls get(), this failure never happened.
+    pool.execute(() -> { throw new IllegalStateException("boom"); });
+    //   ^^^^^^^ goes to the thread's UncaughtExceptionHandler → stderr. VISIBLE.
+    pool.submit(() -> { try { work(); } catch (Throwable t) { log.error("task", t); } });
+    //                  ^^^ the actual fix: catch inside the task, always.
+
+    // ── THE SCHEDULE THAT DIES SILENTLY ─────────────────────────────────
+    sched.scheduleAtFixedRate(this::refreshCache, 0, 1, MINUTES);
+    // ^ ONE exception → the schedule is CANCELLED. Permanently. Silently. The cache
+    //   is stale until the next deploy and no log line marks the moment it stopped.
+    sched.scheduleAtFixedRate(() -> {
+        try { refreshCache(); } catch (Throwable t) { log.error("refresh", t); }
+    }, 0, 1, MINUTES);                      // ← mandatory, not defensive
+
+    // ── THE DEADLOCK THAT PASSES TESTING ────────────────────────────────
+    var single = Executors.newSingleThreadExecutor();
+    single.submit(() -> {
+        var inner = single.submit(() -> 42);
+        return inner.get();          // ← the only thread is BLOCKED waiting for a task
+    });                              //   that needs the only thread. Deadlock, always.
+    // With 10 threads this deadlocks only under load — which is worse, because it ships.
+
+    // ── SHUTTING DOWN CORRECTLY ─────────────────────────────────────────
+    pool.shutdown();                                   // stop accepting; returns at once
+    if (!pool.awaitTermination(30, SECONDS)) {         // the actual wait
+        pool.shutdownNow();                            // interrupt the stragglers
+        pool.awaitTermination(10, SECONDS);
+    }
+    // Java 19+: try (var pool = Executors.newFixedThreadPool(8)) { ... }  does all of it.
+    // Forget this and NON-DAEMON threads keep the JVM alive: main returns, nothing exits.""",
+
+"""9. THE TRACE — one pool, four load levels
+
+CONFIGURATION: core 4, max 8, `ArrayBlockingQueue(10)`, `CallerRunsPolicy`. Watch what each arriving
+task does:
+
+    task#  threads  queue  what happens                                  which rule fired
+    ------------------------------------------------------------------------------------------
+    1–4    0→4      0      a NEW THREAD each time — even though thread 1  rule 1: below core,
+                           may already be idle                            always create
+    5–14   4        0→10   QUEUED. No new threads, even though 4 more     rule 2: queue first
+                           are permitted.                                 ← THE SURPRISING ONE
+    15–18  4→8      10     queue is full → create threads 5..8            rule 3: only now
+    19+    8        10     at max AND queue full → REJECTION POLICY →     rule 4
+                           THE CALLING THREAD RUNS THE TASK ITSELF
+
+    LOOK AT ROWS 5–14 AGAIN. Four threads are working, four more are ALLOWED, and ten tasks are sitting
+    in a queue waiting. That is not a bug; it is the documented order. And it is why people report
+    "my pool won't scale up" — it will, but only after the queue fills.
+
+NOW REPLACE THE BOUNDED QUEUE WITH AN UNBOUNDED ONE — `newFixedThreadPool(4)`:
+
+    task#      threads  queue      what happens
+    ------------------------------------------------------------------------------------------
+    1–4        0→4      0          create up to core
+    5–1,000    4        →996       queued
+    5–100,000  4        →99,996    STILL QUEUED. maximumPoolSize is unreachable.
+    ...        4        growing    the heap fills with Runnables and their captured state
+    eventually —        —          OutOfMemoryError, with a stack trace pointing at the queue
+
+    NO REJECTION EVER HAPPENED. The system had no mechanism to say "no", so it said "yes" until it
+    died. The pool behaved exactly as configured.
+
+AND THE `CallerRunsPolicy` VERSION, which is the interesting one:
+
+    time  producer thread                    pool                  effective rate
+    ------------------------------------------------------------------------------------------
+    t0    submitting 1000/sec                8 busy, queue 10      1000/sec accepted
+    t1    submit REJECTED → CALLER RUNS IT   8 busy, queue 10      producer is now BUSY
+    t2    producer still executing the task  8 busy, draining      producer submits NOTHING
+    t3    producer finishes, submits again   queue has space       accepted
+    ------------------------------------------------------------------------------------------
+    THE PRODUCER THROTTLED ITSELF. No signal was sent, no rate limiter was configured, no exception was
+    thrown. The system simply cannot outrun itself, because the thing generating work is the thing that
+    absorbs the overflow. That is why this policy is worth knowing by name.
+
+AND THE FAILURE THAT LOOKS LIKE NOTHING AT ALL:
+
+    scheduleAtFixedRate(refresh, 0, 1, MINUTES)
+    t=0min    runs, ok
+    t=1min    runs, ok
+    t=2min    THROWS — a transient network blip
+    t=3min    ... nothing
+    t=4min    ... nothing
+    forever   ... nothing. No log line. No metric. The Future is cancelled and no one holds it.
+
+    THE ONLY SYMPTOM IS DATA GETTING OLDER. Which is why the try/catch inside a scheduled task is not
+    defensive programming; it is the difference between a job that exists and one that does not.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Thread creation: ~100 μs and ~1 MB reserved stack. Pool submission: sub-microsecond.
+    Task arrival order: below core → CREATE; else → QUEUE; queue full → create up to max; else → REJECT.
+    Unbounded queue ⇒ maximumPoolSize is unreachable, by construction.
+    CPU-bound sizing ≈ cores. I/O-bound ≈ cores × (1 + wait/compute).
+    `newFixedThreadPool`: unbounded QUEUE. `newCachedThreadPool`: unbounded THREADS.
+    `submit` stores exceptions in the Future; `execute` routes them to the uncaught handler.
+    A throwing `scheduleAtFixedRate` task cancels its schedule permanently.
+
+THE #1 MISTAKE: an unbounded queue. Overload becomes an OutOfMemoryError instead of backpressure, and
+maximumPoolSize silently stops meaning anything.
+
+THE #2 MISTAKE: `submit` with an ignored Future. Every exception invisible; work stops and nothing
+records it.
+
+THE #3 MISTAKE: not wrapping scheduled tasks in try/catch. One throw cancels the schedule forever.
+
+THE #4 MISTAKE: expecting maximumPoolSize to be reached with a `LinkedBlockingQueue`. It cannot be.
+
+THE #5 MISTAKE: `newCachedThreadPool` for untrusted or bursty load. Unbounded thread creation.
+
+THE #6 MISTAKE: blocking on a Future from the same bounded pool. Deadlock — guaranteed on a
+single-thread pool, load-dependent on a larger one, which is worse because it ships.
+
+THE #7 MISTAKE: forgetting to shut down. Non-daemon threads keep the JVM alive after `main` returns.
+
+THE #8 MISTAKE: swallowing `InterruptedException`. Destroys the flag, so `shutdownNow` cannot stop the
+task. Rethrow, or restore the flag.
+
+THE #9 MISTAKE: default thread names. `pool-2-thread-7` identifies nothing in a thread dump.
+
+THE #10 MISTAKE: ThreadLocals never removed. Pooled threads never die, so the values never go.
+
+THE #11 MISTAKE: one pool for every kind of work. Slow calls starve fast ones; separate pools are
+bulkheads.
+
+THE #12 MISTAKE: blocking on `ForkJoinPool.commonPool()` via parallel streams or executor-less
+`CompletableFuture`. It is shared by the entire JVM.
+
+ONE-SENTENCE TAKEAWAY: a thread pool's threads are the boring half — the QUEUE and the REJECTION POLICY
+are the design, because tasks only create threads beyond the core once the queue is FULL, which makes
+`maximumPoolSize` unreachable behind an unbounded queue and turns `newFixedThreadPool` into a system
+that queues until the heap is gone rather than ever saying no; construct `ThreadPoolExecutor` yourself
+with a bounded queue and `CallerRunsPolicy` so overload throttles the producer, size from the
+wait-to-compute ratio, name the threads, catch `Throwable` inside every task — especially scheduled
+ones, where a single throw cancels the schedule permanently and silently — and never block on a Future
+from the pool you are running in.""",
+]
+
+
+DEEP["Deadlock — the four conditions, and the one-line fix"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two threads, each waiting for the other
+
+Two threads need the same two locks. Thread A takes lock 1 and reaches for lock 2. Thread B, at the
+same moment, holds lock 2 and reaches for lock 1. Neither will release what it holds until it gets what
+it wants, and neither will ever get what it wants.
+
+    THEY WAIT FOREVER. Not slowly — FOREVER. No exception, no timeout, no log line. The threads simply
+    stop existing as far as your monitoring is concerned: CPU usage falls, memory sits still, and
+    requests hang until the load balancer times them out.
+
+    THE SYMPTOM IS SILENCE. Which is why deadlock is disproportionately painful for its frequency: a
+    crash tells you where it happened, a slow query shows up in a profile, but a deadlock produces an
+    application that looks healthy on every dashboard except the one nobody is watching.
+
+    AND IT IS NOT A RACE CONDITION. That distinction matters. A race is non-deterministic in its
+    OUTCOME — sometimes right, sometimes wrong. A deadlock is fully deterministic: given that exact
+    interleaving, it happens 100% of the time. It is the INTERLEAVING that is rare. So it survives
+    testing, survives staging, and appears at peak traffic — because peak traffic is simply more
+    attempts at the rare ordering.
+
+THE EVERYDAY VERSION: a narrow corridor, two people carrying a table each. One is halfway through
+holding the left rail; the other is halfway through holding the right. Each needs the other's rail to
+continue and neither will put theirs down. They will stand there indefinitely, and both are behaving
+perfectly reasonably.
+
+TERMS AS THEY APPEAR:
+- LOCK / MONITOR: the thing only one thread may hold at a time.
+- LOCK ORDERING: the discipline of always acquiring locks in the same global order.
+- LIVELOCK: threads that are running and responding but making no progress.
+- STARVATION: a thread that could progress but is never scheduled to.""",
+
+"""2. THE INTUITION — the four conditions, and the fact that you only have to break one
+
+COFFMAN'S FOUR CONDITIONS. Deadlock requires ALL FOUR simultaneously. That is the useful part: to make
+deadlock impossible you only have to make ONE of them impossible.
+
+    1. MUTUAL EXCLUSION — a resource can be held by only one thread at a time.
+    2. HOLD AND WAIT — a thread holding one resource may request another.
+    3. NO PREEMPTION — a resource cannot be forcibly taken from the thread holding it.
+    4. CIRCULAR WAIT — there is a cycle of threads, each waiting on one held by the next.
+
+NOW ASK WHICH ONE YOU CAN ACTUALLY BREAK IN JAVA:
+
+    MUTUAL EXCLUSION — usually not. It is the point of the lock. Though sometimes you can: an immutable
+    object, a copy-on-write structure, or a `ConcurrentHashMap` needs no exclusive lock at all, and
+    "make it immutable" is a real and underused answer.
+
+    HOLD AND WAIT — you can, by acquiring everything at once or nothing. Awkward, and it requires
+    knowing the full set up front, which you often do not.
+
+    NO PREEMPTION — you can, with `tryLock(timeout)`: if you cannot get the second lock, RELEASE THE
+    FIRST, back off, and retry. This works, and it is essential when the ordering genuinely cannot be
+    predetermined. But it needs a backoff or you get livelock, and it needs retry logic.
+
+    CIRCULAR WAIT — THIS IS THE ONE. If every thread in the system acquires locks in the SAME GLOBAL
+    ORDER, a cycle is arithmetically impossible: to have a cycle, some thread must hold a higher-ranked
+    lock while waiting for a lower-ranked one, and the rule forbids that. NO COORDINATION, NO TIMEOUTS,
+    NO RETRIES — just a rule everyone follows.
+
+THE ONE-LINE FIX, THEREFORE, IS A CONSISTENT ORDER:
+
+    IF THE OBJECTS HAVE A NATURAL ID — account number, user id, primary key — order by that. It is
+    stable, meaningful, and readable.
+    IF THEY DO NOT, ORDER BY `System.identityHashCode`. It is arbitrary but consistent within a run.
+    AND HANDLE THE TIE: identity hash codes can collide, so take a third "tie-break" lock first in
+    that rare case. Skipping the tie-break leaves a deadlock that fires roughly once in four billion
+    pairs — which on a busy system is not never.
+
+THE DEEPER LESSON, and the one worth saying in an interview: DEADLOCK IS A PROPERTY OF THE SYSTEM, NOT
+OF A METHOD. Two methods that are each individually correct deadlock when combined. Which means you
+cannot find it by reviewing a function; you find it by writing down the lock order for the whole
+codebase and enforcing it.""",
+
+"""3. THE MECHANISM — where deadlocks actually come from, and how to see one
+
+THE TEXTBOOK EXAMPLE — two explicit locks in two orders — almost never appears in real code, because it
+is too visible. THE REAL CAUSES ARE ALL FORMS OF "A LOCK YOU DID NOT KNOW YOU WERE HOLDING":
+
+    THE ALIEN METHOD, the single biggest cause. You hold a lock and call code you do not control — a
+    listener, a callback, an overridable method, a plugin. That code takes its own locks, in its own
+    order, and you have just merged two lock hierarchies without meaning to. THE RULE THAT PREVENTS IT
+    IS "OPEN CALLS": never hold a lock while calling something you do not own.
+
+    LOCK ORDER DETERMINED BY ARGUMENTS. `transfer(from, to)` locks `from` then `to`. Perfectly
+    reasonable, and the reversed call `transfer(b, a)` running concurrently is the deadlock. THE ORDER
+    IS DATA-DEPENDENT, so no amount of reading the method reveals it.
+
+    RE-ENTRANT-LOOKING CODE THAT IS NOT. `synchronized` is re-entrant on the SAME lock, so a recursive
+    call is fine. Two DIFFERENT locks around the same logical operation are not.
+
+    THE THREAD POOL. A task holds a lock and waits on a Future for another task that needs the same
+    lock, in a pool with no free threads. The locks are fine; the RESOURCE is the thread.
+
+    THE DATABASE, which is the same shape one level down. Two transactions updating the same rows in
+    different orders deadlock in the engine — and unlike Java, the database DETECTS it, picks a victim,
+    and throws. That is why the fix there is a retry loop, and why the underlying discipline is
+    identical: update rows in a consistent order.
+
+HOW TO SEE ONE — and this is the part that makes deadlock much less frightening than it sounds:
+
+    `jstack <pid>` (or `jcmd <pid> Thread.print`) DETECTS JAVA DEADLOCKS AUTOMATICALLY. It prints
+    "Found one Java-level deadlock:" followed by exactly which threads, which locks, and which lines.
+    NOT AN INFERENCE — A DIAGNOSIS. It works for both `synchronized` monitors and
+    `java.util.concurrent` locks.
+
+    `ThreadMXBean.findDeadlockedThreads()` does the same programmatically, which lets a health check
+    report it.
+
+    WHAT NEITHER DETECTS: deadlocks that are not lock cycles. Waiting on a `CountDownLatch` nobody
+    counts down, a `SynchronousQueue` handoff nobody takes, a `Future` that will never complete, a
+    thread-pool exhaustion. Those look identical from the outside and require reading the thread dump
+    yourself — every thread's stack, looking for what each is waiting on.
+
+TWO PROPERTIES OF `synchronized` THAT MATTER HERE: it has NO TIMEOUT and it is NOT INTERRUPTIBLE. Once
+a thread is blocked on a monitor there is no way to get it out, which is one of the strongest arguments
+for `ReentrantLock` in code where deadlock is a real risk.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — DATA-DEPENDENT LOCK ORDER. `transfer(a, b)` and `transfer(b, a)`. The method is correct; the
+PAIR is not. This is the canonical real deadlock.
+
+CASE 2 — THE ALIEN METHOD. Holding a lock while calling a listener, callback, or overridable method.
+You have merged an unknown lock hierarchy into yours.
+
+CASE 3 — NESTED SYNCHRONIZED ACROSS LAYERS. A synchronized service method calls a synchronized
+repository method which calls back into a synchronized cache. Nobody wrote a nested lock; the call
+graph did.
+
+CASE 4 — THREAD POOL DEADLOCK. Tasks waiting on other tasks in a bounded pool. Guaranteed on a
+single-thread pool; load-dependent on a larger one, which is worse.
+
+CASE 5 — IDENTITY HASH COLLISION IN AN ORDERING SCHEME. Two objects with the same
+`System.identityHashCode` defeat the ordering. Rare, and requires an explicit tie-break lock.
+
+CASE 6 — LIVELOCK. Both threads detect contention, both back off, both retry at the same interval,
+forever. Running, responsive, making no progress. The fix is RANDOMISED backoff — deterministic backoff
+reproduces the collision.
+
+CASE 7 — LOCK-ORDER INVERSION VIA CLASS INITIALISATION. Class loading takes an internal lock. Two
+classes whose static initialisers reference each other from different threads deadlock inside the JVM
+itself, and the stack traces are baffling.
+
+CASE 8 — DEADLOCK WITH A NON-LOCK. `CountDownLatch` never counted down, a `Future` never completed, a
+`SynchronousQueue` handoff with no partner. `jstack` will NOT report these as deadlocks.
+
+CASE 9 — `synchronized` ON A `String` OR A BOXED `Integer`. Interned literals and cached Integers are
+SHARED GLOBALLY, so unrelated code can be holding "your" lock. Always lock a private final Object.
+
+CASE 10 — LOCKING ON `this` IN A PUBLIC CLASS. Anyone can `synchronized (yourObject)` and participate
+in your lock protocol without you knowing.
+
+CASE 11 — RE-ENTRANCY ASSUMED ACROSS DIFFERENT LOCKS. `synchronized` is re-entrant on the SAME monitor
+only.
+
+CASE 12 — `tryLock` WITHOUT RELEASING WHAT YOU HOLD. If you fail to get the second lock and keep the
+first while retrying, you have preserved hold-and-wait and gained nothing.
+
+CASE 13 — DEADLOCK THAT ONLY APPEARS UNDER LOAD. It is not intermittent behaviour; it is a rare
+interleaving. More traffic means more attempts, which is why it debuts at peak.""",
+
+"""5. THE ALTERNATIVES — designing so the question does not arise
+
+DO NOT SHARE MUTABLE STATE. The strongest fix, and it removes condition 1 entirely:
+    IMMUTABLE OBJECTS need no locks at all. `record`, final fields, defensive copies.
+    CONFINEMENT — give each thread its own copy and merge at the end. This is what a map-reduce does,
+    and what a per-request object graph does.
+    MESSAGE PASSING — an actor or a queue, where state is owned by one thread and others send
+    requests. The lock discipline becomes structural rather than remembered.
+
+USE A CONCURRENT COLLECTION INSTEAD OF LOCKING ONE. `ConcurrentHashMap.compute` performs a read-modify-
+write atomically without you holding anything across the operation. `AtomicLong`, `LongAdder`,
+`CopyOnWriteArrayList`. MOST "I NEED TWO LOCKS" SITUATIONS ARE ACTUALLY "I AM USING THE WRONG DATA
+STRUCTURE".
+
+`ReentrantLock` OVER `synchronized` WHERE DEADLOCK IS A REAL RISK, for three capabilities `synchronized`
+does not have:
+    `tryLock()` and `tryLock(timeout)` — breaks the no-preemption condition;
+    `lockInterruptibly()` — lets you cancel a blocked thread;
+    fairness, and multiple `Condition` objects per lock.
+    The cost is that you must `unlock()` in a `finally`, every time, without exception.
+
+A SINGLE COARSER LOCK. Genuinely underrated. Two fine-grained locks that deadlock are worse than one
+coarse lock that serialises. MEASURE BEFORE ASSUMING THE COARSE LOCK IS TOO SLOW — most contention
+concerns are imagined, and correctness is not.
+
+STAMPEDLOCK for read-heavy structures — an optimistic read mode that takes no lock at all and validates
+afterwards. Not re-entrant, which is a real trap.
+
+DATABASE-LEVEL: consistent update order, short transactions, and a RETRY loop, because the engine
+detects the deadlock and throws rather than hanging. `SELECT ... FOR UPDATE` in a defined order.
+
+THE ONE-LINE FIX ITSELF — a global lock ordering. Not a library, not a framework: a rule, written down,
+applied everywhere:
+
+    Object first  = a.id() < b.id() ? a : b;
+    Object second = a.id() < b.id() ? b : a;
+    synchronized (first) { synchronized (second) { ... } }
+
+WHAT TO SAY: "First I would try to remove the shared mutable state or use a concurrent collection so no
+second lock exists. If two locks are genuinely needed, a global acquisition order breaks circular wait
+with no coordination at all. And `tryLock` with a timeout and randomised backoff where the order
+genuinely cannot be predetermined."
+
+""",
+
+"""6. HOW TO PREVENT AND DIAGNOSE — numbered steps
+
+STEP 1 — TRY TO NEED ONLY ONE LOCK. Immutability, confinement, or a concurrent collection removes the
+problem rather than managing it.
+
+STEP 2 — WRITE DOWN A GLOBAL LOCK ORDER for the whole codebase, and put it somewhere people read.
+Deadlock is a system property; it cannot be prevented one method at a time.
+
+STEP 3 — WHEN LOCKING TWO OBJECTS OF THE SAME TYPE, ORDER BY A STABLE KEY. An id where one exists,
+`System.identityHashCode` otherwise, plus a tie-break lock for the collision case.
+
+STEP 4 — NEVER HOLD A LOCK WHILE CALLING CODE YOU DO NOT OWN. Callbacks, listeners, overridable
+methods, plugins. Compute under the lock, release, then call out.
+
+STEP 5 — PREFER `tryLock(timeout)` WHERE ORDERING IS IMPOSSIBLE, and RELEASE EVERYTHING on failure.
+Keeping the first lock while retrying preserves hold-and-wait.
+
+STEP 6 — RANDOMISE THE BACKOFF. Fixed backoff turns a deadlock into a livelock.
+
+STEP 7 — LOCK PRIVATE FINAL OBJECTS. Never a `String`, never a boxed `Integer`, and never `this` in a
+public class — all of those are locks other code can hold.
+
+STEP 8 — KEEP CRITICAL SECTIONS SHORT AND FREE OF I/O. A lock held across a network call converts a
+downstream slowdown into a total stall.
+
+STEP 9 — WHEN IT HANGS, TAKE A THREAD DUMP FIRST. `jstack <pid>` or `jcmd <pid> Thread.print`. It
+detects lock cycles automatically and names the threads, the locks and the lines.
+
+STEP 10 — IF THE DUMP SHOWS NO DEADLOCK BUT NOTHING PROGRESSES, LOOK FOR THE NON-LOCK VERSIONS. A
+latch, a Future, an empty pool. `jstack` cannot see those, so read every thread's WAITING state
+yourself.
+
+STEP 11 — ADD `ThreadMXBean.findDeadlockedThreads()` TO A HEALTH CHECK. Turning silence into an alert
+is most of the battle.
+
+STEP 12 — USE SEPARATE POOLS FOR DEPENDENT WORK, and never block on a Future from the pool you are
+running in.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Two threads need the same two locks in opposite orders. A takes lock 1 and reaches for 2; B holds 2
+and reaches for 1. Neither releases what it has until it gets what it wants, so they wait forever.
+
+And the symptom is SILENCE. No exception, no timeout, no log line. CPU drops, memory sits still,
+requests hang until the load balancer gives up. Which is why it hurts more than its frequency suggests
+— a crash tells you where it happened, a slow query shows up in a profile, but a deadlock leaves an
+application that looks healthy on every dashboard.
+
+The thing I'd separate out early: it's NOT a race condition. A race is non-deterministic in its
+outcome. A deadlock is fully deterministic — given that interleaving it happens 100% of the time. It's
+the INTERLEAVING that's rare. So it survives testing and staging and appears at peak traffic, because
+peak traffic is just more attempts at the rare ordering.
+
+The framework is Coffman's four conditions — mutual exclusion, hold and wait, no preemption, and
+circular wait. You need all four simultaneously, which is the useful part: you only have to break ONE.
+
+Mutual exclusion you usually can't break, though sometimes you can, and "make it immutable" is a real
+answer people skip. Hold-and-wait means acquiring everything or nothing, which needs the full set up
+front. No-preemption you break with tryLock and a timeout — release what you hold, back off, retry.
+That works, but it needs retry logic and RANDOMISED backoff, because deterministic backoff turns the
+deadlock into a livelock.
+
+But the one to break is CIRCULAR WAIT, and that's the one-line fix. If everyone acquires locks in the
+same global order, a cycle is arithmetically impossible — a cycle requires someone holding a
+higher-ranked lock while waiting for a lower one, and the rule forbids it. No coordination, no
+timeouts, no retries. Order by a natural id if there is one, System.identityHashCode if there isn't,
+and take a third tie-break lock when the hashes collide — otherwise you've left a deadlock that fires
+once in four billion pairs, which on a busy system isn't never.
+
+Where they actually come from is worth saying, because the textbook two-locks-two-orders example almost
+never appears in real code — it's too visible. The real cause is a lock you didn't know you were
+holding. Number one is the ALIEN METHOD: you hold a lock and call a listener or an overridable method,
+that code takes its own locks in its own order, and you've merged two lock hierarchies without meaning
+to. The rule is open calls — never hold a lock while calling code you don't own. Number two is
+data-dependent order: transfer(from, to) locks from then to, which is perfectly reasonable, and the
+reversed call is the deadlock. Reading the method never reveals it.
+
+And the encouraging part: jstack detects Java deadlocks automatically. It prints "Found one Java-level
+deadlock" with the threads, the locks, and the lines. It's a diagnosis, not an inference. What it can't
+see is deadlock that isn't a lock cycle — a latch nobody counts down, a Future that never completes, an
+exhausted thread pool. Those look identical from outside and you have to read the dump yourself.
+
+The framing I'd end on: deadlock is a property of the SYSTEM, not of a method. Two individually correct
+methods deadlock when combined, so you can't find it in code review of a function — you find it by
+writing down the lock order for the codebase and enforcing it.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE REAL DEADLOCK: the order comes from the ARGUMENTS ───────────
+    void transfer(Account from, Account to, long amount) {
+        synchronized (from) {              // ← thread A: locks acct1
+            synchronized (to) {            // ← thread A: wants acct2
+                from.debit(amount); to.credit(amount);
+            }
+        }
+    }
+    // transfer(acct1, acct2) and transfer(acct2, acct1) running concurrently:
+    //   A holds acct1, wants acct2   |   B holds acct2, wants acct1
+    // THE METHOD IS CORRECT. THE PAIR IS NOT. Nothing you can see by reading it.
+
+    // ── THE ONE-LINE FIX: break CIRCULAR WAIT with a global order ───────
+    void transfer(Account from, Account to, long amount) {
+        Account first  = from.id() < to.id() ? from : to;
+        Account second = from.id() < to.id() ? to   : from;
+    //  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ EVERY thread now acquires
+    //  in ascending id order, so a cycle is arithmetically impossible: a cycle needs
+    //  someone holding a higher lock while waiting for a lower one.
+        synchronized (first) { synchronized (second) { ... } }
+    }
+    // No timeouts. No retries. No coordination. Just a rule everyone follows.
+
+    // ── AND THE TIE-BREAK PEOPLE SKIP ───────────────────────────────────
+    private static final Object TIE = new Object();
+    int ha = System.identityHashCode(a), hb = System.identityHashCode(b);
+    if (ha == hb) {                        // ← ~1 in 4 billion. Not never.
+        synchronized (TIE) { synchronized (a) { synchronized (b) { ... } } }
+    } else if (ha < hb) { synchronized (a) { synchronized (b) { ... } } }
+    else                { synchronized (b) { synchronized (a) { ... } } }
+
+    // ── BREAKING "NO PREEMPTION" INSTEAD, when order is impossible ──────
+    while (true) {
+        if (lockA.tryLock()) {
+            try {
+                if (lockB.tryLock(50, MILLISECONDS)) {
+                    try { doWork(); return; } finally { lockB.unlock(); }
+                }
+            } finally { lockA.unlock(); }
+    //                 ^^^^^^^^^^^^^^ RELEASE WHAT YOU HOLD. Retrying while still
+    //                 holding lockA preserves hold-and-wait and fixes nothing.
+        }
+        Thread.sleep(ThreadLocalRandom.current().nextInt(1, 50));
+    //                ^^^^^^^^^^^^^^^^^^ RANDOMISED. A fixed backoff makes both
+    //                threads retry in lockstep forever — that is LIVELOCK.
+    }
+
+    // ── THE BIGGEST REAL CAUSE: the alien method ────────────────────────
+    synchronized void addItem(Item i) {
+        items.add(i);
+        for (Listener l : listeners) l.onItemAdded(i);
+    //                                ^^^^^^^^^^^^^^ CODE YOU DO NOT OWN, called
+    //   while holding YOUR lock. It takes its own locks in its own order, and you
+    //   have just merged two lock hierarchies without knowing it.
+    }
+    void addItem(Item i) {                     // ← the "open call" fix
+        List<Listener> snapshot;
+        synchronized (this) { items.add(i); snapshot = List.copyOf(listeners); }
+        for (Listener l : snapshot) l.onItemAdded(i);   // OUTSIDE the lock
+    }
+
+    // ── LOCKS THAT ARE SECRETLY GLOBAL ──────────────────────────────────
+    synchronized ("lock") { ... }     // interned literal — SHARED PROCESS-WIDE
+    synchronized (Integer.valueOf(1)) { ... }  // cached box — SHARED
+    private final Object lock = new Object();  // ← the only correct form
+
+    // ── SEEING IT ───────────────────────────────────────────────────────
+    // jstack <pid>   →   "Found one Java-level deadlock:"
+    //                    "Thread-1 waiting to lock monitor 0x... which is held by Thread-0"
+    //                    "Thread-0 waiting to lock monitor 0x... which is held by Thread-1"
+    // A DIAGNOSIS, not an inference. Works for synchronized AND j.u.c locks.""",
+
+"""9. THE TRACE — the interleaving, and why it passed every test
+
+TWO THREADS, `transfer(acct1, acct2)` AND `transfer(acct2, acct1)`, starting at the same moment:
+
+    time  Thread A                          Thread B                     state
+    ------------------------------------------------------------------------------------
+    t0    enters transfer(acct1, acct2)     enters transfer(acct2, acct1)  —
+    t1    ACQUIRES acct1                    —                              A holds acct1
+    t2    —                                 ACQUIRES acct2                 B holds acct2
+    t3    requests acct2 → BLOCKED          —                              A waiting on B
+    t4    —                                 requests acct1 → BLOCKED       B waiting on A
+    t5    blocked                           blocked                        CYCLE. FOREVER.
+    ------------------------------------------------------------------------------------
+    NOTHING IS THROWN. Both threads are in state BLOCKED, which looks identical to "waiting for a busy
+    lock". CPU usage falls to zero for these threads. The heap does not grow. Every health check that
+    does not touch this code path passes.
+
+WHY IT PASSED TESTING — the timing window, made explicit:
+
+    A must acquire acct1 in the gap between B starting and B acquiring acct2. That window is on the
+    order of NANOSECONDS. Run the pair a thousand times in a test and you may never hit it. Run it a
+    million times a day in production and you hit it daily.
+
+    THE DEADLOCK IS NOT INTERMITTENT. Given rows t1–t4 in that order, it happens every single time,
+    deterministically. What is rare is the ORDER, not the outcome. Which is exactly why "we couldn't
+    reproduce it" is the normal state of affairs and why the fix must be structural rather than
+    empirical.
+
+NOW THE ORDERED VERSION, with acct1.id = 100 and acct2.id = 200:
+
+    time  Thread A                          Thread B                     state
+    ------------------------------------------------------------------------------------
+    t0    first=acct1(100), second=acct2    first=acct1(100), second=acct2  SAME ORDER
+    t1    ACQUIRES acct1                    —                              A holds acct1
+    t2    —                                 requests acct1 → BLOCKED       B waits (fine)
+    t3    ACQUIRES acct2, does the work     —                              A holds both
+    t4    releases both                     —                              —
+    t5    —                                 ACQUIRES acct1, then acct2     B proceeds
+    ------------------------------------------------------------------------------------
+    B WAITED. That is not a deadlock, that is a lock doing its job. B blocked for microseconds and then
+    made progress. NO CYCLE IS POSSIBLE, because both threads want the low id first, so whoever gets it
+    can always complete.
+
+AND THE LIVELOCK VERSION — what `tryLock` gives you if you forget to randomise:
+
+    time   Thread A                      Thread B                    progress
+    ------------------------------------------------------------------------------------
+    t0     tryLock(A) ✓, tryLock(B) ✗    tryLock(B) ✓, tryLock(A) ✗   none
+    t1     release, sleep 50ms           release, sleep 50ms          none
+    t2     tryLock(A) ✓, tryLock(B) ✗    tryLock(B) ✓, tryLock(A) ✗   none
+    ...    identical forever             identical forever            NONE
+    ------------------------------------------------------------------------------------
+    BOTH THREADS ARE RUNNING. CPU is busy. Thread dumps show RUNNABLE. Every health check passes and no
+    work is done. A FIXED BACKOFF REPRODUCES THE COLLISION EXACTLY, every cycle; randomising it breaks
+    the symmetry on the first or second attempt.
+
+WHAT PRODUCED WHAT:
+    CIRCULAR WAIT      produced trace 1, and removing it produced trace 2. That is the whole fix.
+    THE NANOSECOND WINDOW  produced "it passed testing" — a statement about probability, not about
+                       whether the bug exists.
+    SYMMETRY           produced trace 3. Randomness is the cure for symmetry, which is why the sleep
+                       is random and not tidy.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Deadlock needs ALL FOUR Coffman conditions; breaking any one makes it impossible.
+    Global lock ordering breaks circular wait at ZERO runtime cost — no timeouts, retries, or
+    coordination. It is the cheapest correct fix available.
+    `tryLock(timeout)` breaks no-preemption, at the cost of retry logic and a randomised backoff.
+    `synchronized`: no timeout, not interruptible, re-entrant on the same monitor.
+    `ReentrantLock`: timeout, interruptible, fair mode, multiple conditions — and `unlock()` in a
+    `finally` is mandatory.
+    `jstack` / `jcmd Thread.print` detect lock-cycle deadlocks automatically and name the lines.
+    They do NOT detect latch, Future, queue-handoff or pool-exhaustion hangs.
+
+THE #1 MISTAKE: data-dependent lock order. `transfer(from, to)` is correct and the reversed pair is not.
+
+THE #2 MISTAKE: holding a lock while calling code you do not own. The alien method merges lock
+hierarchies invisibly. Make it an open call.
+
+THE #3 MISTAKE: assuming testing would have caught it. The interleaving window is nanoseconds; the
+deadlock itself is 100% deterministic once it occurs.
+
+THE #4 MISTAKE: `tryLock` that keeps the first lock while retrying. Hold-and-wait preserved, nothing
+fixed.
+
+THE #5 MISTAKE: a fixed backoff. Converts deadlock into livelock, which looks healthier and is not.
+
+THE #6 MISTAKE: ordering by identity hash with no tie-break. One in four billion is not never at scale.
+
+THE #7 MISTAKE: `synchronized` on a String literal, a boxed Integer, or `this` in a public class. Those
+locks are reachable — and holdable — by code you have never seen.
+
+THE #8 MISTAKE: blocking on a Future from the pool you are running in. Thread-pool deadlock, guaranteed
+on one thread and load-dependent on many.
+
+THE #9 MISTAKE: holding a lock across I/O. A slow downstream call becomes a total stall.
+
+THE #10 MISTAKE: expecting `jstack` to explain every hang. A latch nobody counts down produces the same
+silence and is not a lock cycle.
+
+THE #11 MISTAKE: fine-grained locks adopted for performance without measurement. Two locks that
+deadlock are worse than one that serialises, and most contention worries are imagined.
+
+ONE-SENTENCE TAKEAWAY: deadlock needs mutual exclusion, hold-and-wait, no preemption AND circular wait
+all at once — so you only have to break one, and the cheapest is circular wait via a GLOBAL LOCK
+ORDERING (by natural id, or `System.identityHashCode` with a tie-break lock), which costs nothing at
+runtime; the real causes are almost never the textbook two-locks-two-orders but rather data-dependent
+ordering and holding a lock while calling code you do not own, the symptom is total silence rather than
+an error, and `jstack` will name the threads and lines for you — but only when the hang is an actual
+lock cycle, not a latch, a Future, or an exhausted pool.""",
+]
