@@ -1,0 +1,420 @@
+{# Day Board — the whole day on one fixed screen.
+
+   THE ONE RULE THIS FILE EXISTS TO ENFORCE: the page cannot scroll. Not
+   "should not" — cannot. html/body are overflow:hidden and the grid is
+   exactly 100dvh, so there is no scroll container to fall into. Everything
+   else here follows from that:
+
+     * every size on the page derives from ONE custom property, --u, so a
+       single number shrinks the whole layout proportionally;
+     * a script measures each panel and steps --u down until the content fits;
+     * when even the floor is not enough, the overflow is COUNTED and shown
+       ("+7 more") rather than clipped, because a board that hides work
+       without saying so is worse than no board.
+
+   Built for a 10" panel — 1280x800 or 1024x600 — but the fit pass means it is
+   correct at any size, including a phone in landscape. #}
+<!doctype html>
+<html lang="en" data-theme="{{ theme }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{ date_label }} — Day Board</title>
+{% include "_pwa_head.html" %}
+<style>
+:root{
+  /* THE ONE KNOB. Every size below is a multiple of this, so the fit pass
+     only has to change one number to rescale the entire board. */
+  --u: 10px;
+
+  --bg:#0e1117; --panel:#161b26; --line:#243044; --text:#e8edf7;
+  --dim:#8b98ae; --accent:#6366f1; --ok:#2dd4a7; --warn:#fbbf24;
+  --q1:#f43f5e; --q2:#6366f1; --q3:#f59e0b; --q4:#64748b;
+}
+html[data-theme="light"]{
+  --bg:#f7f8fa; --panel:#ffffff; --line:#e3e7ee; --text:#141824;
+  --dim:#66718a; --accent:#5457e6;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+
+/* ── THE NO-SCROLL CONTRACT ─────────────────────────────────────────── */
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:'Inter',system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+#board{
+  height:100dvh; width:100vw; overflow:hidden;
+  display:grid;
+  grid-template-rows:auto 1fr;
+  gap:calc(var(--u) * .7);
+  padding:calc(var(--u) * .7);
+}
+
+/* ── HEADER ─────────────────────────────────────────────────────────── */
+header{
+  display:flex; align-items:baseline; gap:calc(var(--u) * 1.2);
+  padding:0 calc(var(--u) * .3);
+}
+.date{font-size:calc(var(--u) * 2.2); font-weight:800; letter-spacing:-.02em}
+.clock{font-size:calc(var(--u) * 2.2); font-weight:800; font-variant-numeric:tabular-nums;
+       color:var(--accent)}
+.counts{margin-left:auto; display:flex; gap:calc(var(--u) * 1.1);
+        font-size:calc(var(--u) * 1.05); color:var(--dim)}
+.counts b{color:var(--text); font-weight:700}
+.stale{color:var(--warn)}
+
+/* ── THE TWO COLUMNS ────────────────────────────────────────────────── */
+.cols{
+  min-height:0;                    /* lets the grid child actually shrink */
+  display:grid;
+  grid-template-columns:1.15fr .85fr;
+  gap:calc(var(--u) * .7);
+}
+@media (max-aspect-ratio: 1/1){    /* a portrait panel: stack instead */
+  .cols{grid-template-columns:1fr; grid-template-rows:1.2fr 1fr}
+}
+.right{min-height:0; display:grid; grid-template-rows:1fr 1fr;
+       gap:calc(var(--u) * .7)}
+
+.panel{
+  min-height:0; overflow:hidden;
+  background:var(--panel); border:1px solid var(--line);
+  border-radius:calc(var(--u) * .8);
+  display:grid; grid-template-rows:auto 1fr;
+}
+.panel h2{
+  font-size:calc(var(--u) * .95); font-weight:700; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--dim);
+  padding:calc(var(--u) * .55) calc(var(--u) * .8) calc(var(--u) * .35);
+  display:flex; gap:calc(var(--u) * .5); align-items:center;
+}
+.panel h2 .n{color:var(--text)}
+.body{min-height:0; overflow:hidden; position:relative}
+
+/* ── TIMELINE ───────────────────────────────────────────────────────── */
+.rail{position:relative; height:100%}
+.evlayer{position:absolute; inset:0 0 0 calc(var(--u) * 3.4)}
+.hour{
+  position:absolute; left:0; right:calc(var(--u) * .5);
+  border-top:1px solid var(--line);
+  font-size:calc(var(--u) * .8); color:var(--dim);
+}
+.hour span{position:absolute; left:calc(var(--u) * .5); top:calc(var(--u) * -.55);
+           background:var(--panel); padding:0 calc(var(--u) * .25)}
+.ev{
+  position:absolute; overflow:hidden;
+  background:color-mix(in srgb, var(--accent) 22%, var(--panel));
+  border-left:calc(var(--u) * .3) solid var(--accent);
+  border-radius:calc(var(--u) * .35);
+  padding:calc(var(--u) * .25) calc(var(--u) * .45);
+  font-size:calc(var(--u) * .95); line-height:1.15;
+}
+.ev.now{background:color-mix(in srgb, var(--ok) 26%, var(--panel));
+        border-left-color:var(--ok)}
+.ev .t{font-size:calc(var(--u) * .75); color:var(--dim); font-variant-numeric:tabular-nums}
+.ev .ttl{font-weight:650; display:-webkit-box; -webkit-line-clamp:2;
+         -webkit-box-orient:vertical; overflow:hidden}
+.nowline{
+  position:absolute; left:calc(var(--u) * 3.0); right:0; height:2px;
+  background:var(--ok); z-index:5; pointer-events:none;
+}
+.nowline::before{
+  content:''; position:absolute; left:calc(var(--u) * -.35); top:calc(var(--u) * -.25);
+  width:calc(var(--u) * .7); height:calc(var(--u) * .7);
+  border-radius:50%; background:var(--ok);
+}
+
+/* ── LISTS ──────────────────────────────────────────────────────────── */
+ul{list-style:none; padding:0 calc(var(--u) * .7) calc(var(--u) * .5)}
+li{
+  display:flex; gap:calc(var(--u) * .5); align-items:flex-start;
+  padding:calc(var(--u) * .3) 0;
+  font-size:calc(var(--u) * 1.05); line-height:1.25;
+  border-bottom:1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+li:last-child{border-bottom:0}
+li.done{color:var(--dim)}
+li.done .txt{text-decoration:line-through}
+.dot{
+  flex:0 0 auto; width:calc(var(--u) * .62); height:calc(var(--u) * .62);
+  border-radius:50%; margin-top:calc(var(--u) * .3); background:var(--q4);
+}
+.q1 .dot{background:var(--q1)} .q2 .dot{background:var(--q2)}
+.q3 .dot{background:var(--q3)} .q4 .dot{background:var(--q4)}
+.tick{flex:0 0 auto; width:calc(var(--u) * .9); text-align:center;
+      color:var(--ok); font-weight:800}
+.txt{flex:1; min-width:0; display:-webkit-box; -webkit-line-clamp:2;
+     -webkit-box-orient:vertical; overflow:hidden}
+.at{flex:0 0 auto; color:var(--dim); font-size:calc(var(--u) * .85);
+    font-variant-numeric:tabular-nums}
+.more{
+  padding:calc(var(--u) * .3) calc(var(--u) * .8);
+  font-size:calc(var(--u) * .95); font-weight:700; color:var(--warn);
+}
+.empty{padding:calc(var(--u) * .8); color:var(--dim);
+       font-size:calc(var(--u) * 1)}
+</style>
+</head>
+<body>
+<div id="board">
+
+  <header>
+    <div class="date">{{ date_label }}</div>
+    {% if is_today %}<div class="clock" id="clock">--:--</div>{% endif %}
+    <div class="counts">
+      <span><b>{{ placed|length }}</b> events</span>
+      <span><b>{{ open_task_count }}</b> to do</span>
+      <span><b>{{ checklist_done }}/{{ checklist|length }}</b> checklist</span>
+      <span id="freshness"></span>
+    </div>
+  </header>
+
+  <div class="cols">
+
+    <!-- ── CALENDAR ─────────────────────────────────────────────── -->
+    <section class="panel">
+      <h2>Calendar
+        <span class="n">{{ win_start.strftime('%H:%M') }}–{{ win_end.strftime('%H:%M') }}</span>
+      </h2>
+      <div class="body">
+        <div class="rail" id="rail">
+          {%- set span = (win_end.hour*60+win_end.minute) - (win_start.hour*60+win_start.minute) -%}
+          {% for h in hours %}
+            {%- set pct = ((h.hour*60) - (win_start.hour*60+win_start.minute)) / span * 100 -%}
+            {% if pct >= 0 and pct <= 100 %}
+            <div class="hour" style="top:{{ '%.3f'|format(pct) }}%">
+              <span>{{ '%02d'|format(h.hour) }}</span>
+            </div>
+            {% endif %}
+          {% endfor %}
+
+          <div class="evlayer">
+          {% for p in placed %}
+            {%- set w = 100.0 / p.lane_count -%}
+            <div class="ev{% if p.is_now %} now{% endif %}"
+                 data-start="{{ p.s }}" data-end="{{ p.t }}"
+                 style="top:{{ '%.3f'|format(p.top) }}%;
+                        height:{{ '%.3f'|format(p.height) }}%;
+                        left:{{ '%.3f'|format(p.lane * w) }}%;
+                        width:calc({{ '%.3f'|format(w) }}% - var(--u) * .4);">
+              <div class="t">{{ p.start }}–{{ p.end }}</div>
+              <div class="ttl">{{ p.title }}</div>
+            </div>
+          {% endfor %}
+          </div>
+
+          {% if now_pct is not none %}
+            <div class="nowline" id="nowline"
+                 style="top:{{ '%.3f'|format(now_pct) }}%"></div>
+          {% endif %}
+
+          {% if not placed %}
+            <div class="empty">No timed events today.</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <div class="right">
+
+      <!-- ── TASKS ──────────────────────────────────────────────── -->
+      <section class="panel">
+        <h2>To do <span class="n">{{ open_task_count }}</span></h2>
+        <div class="body">
+          <ul data-fit>
+            {% for e in untimed %}
+              <li class="q2">
+                <span class="dot"></span>
+                <span class="txt">{{ e.title or e.event_text or e.name }}</span>
+              </li>
+            {% endfor %}
+            {% for t in tasks %}
+              {%- set done = t.is_done or t.status == 'done' -%}
+              <li class="{{ (t.quadrant or 'q4')|lower }}{% if done %} done{% endif %}">
+                {% if done %}<span class="tick">✓</span>
+                {% else %}<span class="dot"></span>{% endif %}
+                <span class="txt">{{ t.task_text }}</span>
+                {% if t.task_time %}<span class="at">{{ t.task_time[:5] }}</span>{% endif %}
+              </li>
+            {% endfor %}
+            {% if not tasks and not untimed %}
+              <li class="empty">Nothing scheduled.</li>
+            {% endif %}
+          </ul>
+          <div class="more" hidden></div>
+        </div>
+      </section>
+
+      <!-- ── CHECKLIST ──────────────────────────────────────────── -->
+      <section class="panel">
+        <h2>Checklist <span class="n">{{ checklist_done }}/{{ checklist|length }}</span></h2>
+        <div class="body">
+          <ul data-fit>
+            {% for c in checklist %}
+              <li class="{% if c.done %}done{% endif %}">
+                {% if c.done %}<span class="tick">✓</span>
+                {% else %}<span class="dot"></span>{% endif %}
+                <span class="txt">{{ c.title }}</span>
+              </li>
+            {% endfor %}
+            {% if not checklist %}
+              <li class="empty">No checklist items for today.</li>
+            {% endif %}
+          </ul>
+          <div class="more" hidden></div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── THE FIT PASS ────────────────────────────────────────────────────
+  // Every size on the page is a multiple of --u, so fitting the board is a
+  // one-dimensional search for the largest --u at which nothing overflows.
+  // Binary search rather than a decrementing loop: ~7 measurements instead
+  // of ~40, which matters because each one forces a layout.
+  var MIN_U = 5.5, MAX_U = 22;
+
+  function overflows() {
+    var lists = document.querySelectorAll("[data-fit]");
+    for (var i = 0; i < lists.length; i++) {
+      var box = lists[i].parentElement;                // .body
+      if (lists[i].scrollHeight > box.clientHeight + 1) return true;
+    }
+    var b = document.getElementById("board");
+    return b.scrollHeight > b.clientHeight + 1;
+  }
+
+  function setU(px) {
+    document.documentElement.style.setProperty("--u", px.toFixed(2) + "px");
+  }
+
+  function fit() {
+    // Reveal everything first, so the search measures the true content height
+    // rather than a previous pass's truncation.
+    document.querySelectorAll("[data-fit] > li").forEach(function (li) {
+      li.hidden = false;
+    });
+    document.querySelectorAll(".more").forEach(function (m) { m.hidden = true; });
+
+    var lo = MIN_U, hi = MAX_U, best = MIN_U;
+    for (var i = 0; i < 8; i++) {
+      var mid = (lo + hi) / 2;
+      setU(mid);
+      if (overflows()) { hi = mid; } else { best = mid; lo = mid; }
+    }
+    setU(best);
+
+    // If even the smallest readable size overflows, TRUNCATE HONESTLY: hide
+    // the tail and say how much is hidden. Silently clipping the bottom of a
+    // to-do list is the one failure this board must never have.
+    if (Math.abs(best - MIN_U) < 0.01) {
+      document.querySelectorAll("[data-fit]").forEach(function (ul) {
+        var box = ul.parentElement;
+        var more = box.querySelector(".more");
+        var items = Array.prototype.slice.call(ul.children);
+        var hiddenCount = 0;
+        for (var j = items.length - 1; j >= 0 && ul.scrollHeight > box.clientHeight - 1; j--) {
+          items[j].hidden = true;
+          hiddenCount++;
+        }
+        if (hiddenCount && more) {
+          more.textContent = "+" + hiddenCount + " more";
+          more.hidden = false;
+        }
+      });
+    }
+  }
+
+  // ── CLOCK + LIVE "NOW" LINE ─────────────────────────────────────────
+  var winStart = {{ win_start.hour * 60 + win_start.minute }};
+  var winSpan  = {{ (win_end.hour*60+win_end.minute) - (win_start.hour*60+win_start.minute) }};
+  var isToday  = {{ 'true' if is_today else 'false' }};
+
+  function tick() {
+    var now = new Date();
+    var el = document.getElementById("clock");
+    if (el) {
+      el.textContent = String(now.getHours()).padStart(2, "0") + ":" +
+                       String(now.getMinutes()).padStart(2, "0");
+    }
+    if (!isToday) return;
+
+    var mins = now.getHours() * 60 + now.getMinutes();
+    var line = document.getElementById("nowline");
+    if (line) {
+      var pct = (mins - winStart) / winSpan * 100;
+      if (pct < 0 || pct > 100) { line.style.display = "none"; }
+      else { line.style.display = ""; line.style.top = pct.toFixed(3) + "%"; }
+    }
+    // Highlight whatever is happening right now, so the eye lands on it first.
+    document.querySelectorAll(".ev").forEach(function (ev) {
+      var s = +ev.dataset.start, t = +ev.dataset.end;
+      ev.classList.toggle("now", mins >= s && mins < t);
+    });
+  }
+
+  // ── AUTO-REFRESH ────────────────────────────────────────────────────
+  // A kiosk left running for weeks must not drift out of date, and must not
+  // reload while it is hidden (a backgrounded tab reloading every two minutes
+  // is pure waste). If the reload ever fails — the laptop is asleep, the
+  // network is down — the header says how stale the data is rather than
+  // showing yesterday as though it were live.
+  var REFRESH = {{ refresh }};
+  var loadedAt = Date.now();
+
+  function freshness() {
+    var mins = Math.floor((Date.now() - loadedAt) / 60000);
+    var el = document.getElementById("freshness");
+    if (!el) return;
+    if (mins < 5) { el.textContent = ""; el.className = ""; return; }
+    el.textContent = "updated " + mins + "m ago";
+    el.className = mins > 15 ? "stale" : "";
+  }
+
+  if (REFRESH > 0) {
+    setInterval(function () {
+      if (document.visibilityState === "visible") location.reload();
+    }, REFRESH * 1000);
+  }
+
+  // ── WIRING ──────────────────────────────────────────────────────────
+  function refit() { fit(); }
+
+  window.addEventListener("resize", debounce(refit, 120));
+  window.addEventListener("orientationchange", function () {
+    setTimeout(refit, 220);          // wait for the new viewport to settle
+  });
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(refit); // web fonts change metrics; re-fit after
+  }
+
+  function debounce(fn, ms) {
+    var id; return function () { clearTimeout(id); id = setTimeout(fn, ms); };
+  }
+
+  fit();
+  tick();
+  setInterval(tick, 20000);
+  setInterval(freshness, 60000);
+
+  // Arrow keys walk the days — the only interaction a board needs.
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowLeft")  location.search = updateParam("date", "{{ prev_date }}");
+    if (e.key === "ArrowRight") location.search = updateParam("date", "{{ next_date }}");
+    if (e.key === "t" || e.key === "T") location.search = "";
+  });
+  function updateParam(k, v) {
+    var p = new URLSearchParams(location.search); p.set(k, v); return "?" + p.toString();
+  }
+})();
+</script>
+</body>
+</html>
