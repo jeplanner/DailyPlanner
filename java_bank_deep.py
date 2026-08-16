@@ -12547,3 +12547,1026 @@ and every close failure attached as SUPPRESSED rather than substituted — leavi
 restoration (unlocking, clearing a `ThreadLocal`, restoring a thread name) where "put it back" is the
 cleanup rather than "close it".""",
 ]
+
+
+DEEP["OutOfMemoryError — five different messages, five different causes"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — "out of memory" is not one problem
+
+Everyone reads `OutOfMemoryError` as "the heap is full, raise `-Xmx`". That is right for ONE of the
+messages and actively wrong for most of the others. THE TEXT AFTER THE COLON IS THE DIAGNOSIS, and
+ignoring it is how teams spend a week raising a limit that was never the constraint.
+
+    `Java heap space`                      the heap really is full
+    `GC overhead limit exceeded`           the heap is effectively full, reported earlier
+    `Metaspace`                            CLASS metadata, a different region entirely
+    `unable to create new native thread`   the OPERATING SYSTEM refused. The heap is fine.
+    `Direct buffer memory`                 OFF-heap NIO buffers. The heap is fine.
+    `Requested array size exceeds VM limit` you asked for an array bigger than an `int` can index
+    `Compressed class space`               the fixed region holding class pointers
+    `Out of swap space?`                   a native allocation failed. Usually not Java's fault at all
+
+    NUMBERS FOUR, FIVE, SIX AND EIGHT ALL OCCUR WITH A HEAP THAT IS BARELY USED. Raising `-Xmx` makes
+    number four WORSE, because a bigger heap leaves less address space for thread stacks.
+
+AND THERE IS A NINTH FAILURE THAT IS NOT AN `OutOfMemoryError` AT ALL, and is now the most common one in
+practice: THE CONTAINER OOM-KILL. In Kubernetes the kernel kills the process when its total resident
+memory exceeds the container limit. Exit code 137, no Java error, no stack trace, no heap dump — just a
+process that vanished. THE JVM NEVER GOT TO COMPLAIN, because the heap was not full; everything else
+was.
+
+THE EVERYDAY VERSION: "the kitchen has run out" can mean out of ingredients, out of clean plates, out of
+oven space, out of staff, or the building's power being cut. Ordering more ingredients helps in exactly
+one case and is irrelevant in the rest — and in one of them it makes things worse, because the new
+delivery takes up the space the plates needed.
+
+TERMS AS THEY APPEAR:
+- HEAP: where objects live. Bounded by `-Xmx`.
+- METASPACE: native memory holding class metadata. Bounded by `-XX:MaxMetaspaceSize`, unbounded by
+  default.
+- NATIVE / OFF-HEAP: memory the JVM allocates outside the heap — thread stacks, direct buffers, the
+  code cache, GC bookkeeping.
+- RSS: resident set size — what the operating system thinks your process is using. THIS is what a
+  container limit measures, and it is much more than the heap.""",
+
+"""2. THE INTUITION — a JVM's memory is at least seven separate pools
+
+`-Xmx` BOUNDS ONE OF THEM. This is the single most useful thing to internalise, because it explains why
+a container with a 2 GB limit and `-Xmx2g` is guaranteed to be killed:
+
+    HEAP                    objects. `-Xmx`.
+    METASPACE               class metadata. Native. UNBOUNDED BY DEFAULT.
+    COMPRESSED CLASS SPACE  a 1 GB region for compressed class pointers, when compressed oops are on.
+    THREAD STACKS           ~1 MB RESERVED per thread (`-Xss`). 500 threads is 500 MB of reservation.
+    CODE CACHE              JIT-compiled machine code. ~240 MB default reserved.
+    GC STRUCTURES           card tables, remembered sets, mark bitmaps — roughly 5–10% of heap size.
+    DIRECT BUFFERS / NATIVE what NIO, Netty, compression libraries and JNI allocate.
+
+    TOTAL RSS ≈ HEAP + EVERYTHING ELSE, and "everything else" is routinely 500 MB to 1 GB on a real
+    service. So `-Xmx` should be roughly 50–75% of the container limit, and the standard way to say
+    that is `-XX:MaxRAMPercentage=70` rather than a hard-coded `-Xmx`.
+
+NOW THE SECOND INTUITION, WHICH DECIDES YOUR ENTIRE INVESTIGATION: IS IT A LEAK OR A LEGITIMATE NEED?
+
+    THE TEST IS NOT THE OOM ITSELF. It is the GC log: LOOK AT OLD-GENERATION OCCUPANCY IMMEDIATELY
+    AFTER EACH FULL COLLECTION.
+
+    IF THAT NUMBER CLIMBS MONOTONICALLY — 400 MB, then 700 MB, then 1.1 GB after successive full GCs —
+    YOU HAVE A LEAK. Something is retaining objects, more memory will only delay the failure, and no
+    tuning flag will help.
+    IF IT RETURNS TO ROUGHLY THE SAME FLOOR EACH TIME AND THE PEAKS ARE SIMPLY TOO HIGH, YOU HAVE A
+    CAPACITY OR ALLOCATION-RATE PROBLEM. More heap, or less allocation, genuinely helps.
+
+    THAT ONE CHART ANSWERS "SHOULD I RAISE -Xmx OR TAKE A HEAP DUMP", and it takes thirty seconds.
+
+AND THE THIRD: `GC overhead limit exceeded` IS A GIFT, NOT A DIFFERENT PROBLEM. The JVM throws it when
+more than 98% of recent time went into GC while recovering less than 2% of the heap. WITHOUT IT, the
+application would not fail — it would grind, spending nearly all its CPU collecting, serving almost no
+requests, and looking "slow" rather than "broken" for hours. The check converts an indefinite hang into
+a diagnosable crash. Disabling it with `-XX:-UseGCOverheadLimit` is almost always the wrong instinct.
+
+A NOTE ON CATCHING IT: `OutOfMemoryError` is an `Error`, not an `Exception`, and you should not catch it.
+The allocation that failed may be unrelated to the code that caused the problem, other threads are
+probably about to fail too, and the JVM is in no state to be reasoned about. The correct response is
+`-XX:+HeapDumpOnOutOfMemoryError` plus `-XX:+ExitOnOutOfMemoryError` — capture the evidence and die
+cleanly so the orchestrator restarts you.""",
+
+"""3. THE MECHANISM — what each message actually means, and how to confirm it
+
+`Java heap space` — a `new` could not be satisfied and GC could not free enough.
+    CAUSES: a retention leak; a genuinely too-small heap; or one enormous allocation (loading a 2 GB
+    file into a byte array, an unbounded query result, `list.addAll` of everything).
+    CONFIRM: heap dump plus the DOMINATOR TREE in Eclipse MAT — it answers "what is keeping this alive",
+    which is the only question that matters. `-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps`.
+
+`GC overhead limit exceeded` — >98% of time in GC, <2% of heap recovered.
+    SAME UNDERLYING CAUSE as heap space, detected earlier. Treat identically.
+
+`Metaspace` (pre-Java 8: `PermGen space`) — class metadata, in NATIVE memory, UNBOUNDED by default.
+    CAUSES: heavy dynamic class generation — CGLIB/ByteBuddy proxies, scripting engines, some ORM and
+    mocking frameworks; or, classically, a CLASSLOADER LEAK, where redeploying a web application leaves
+    the old loader reachable so every class it ever loaded is retained. Ten redeploys, ten copies of
+    the application's classes.
+    CONFIRM: `jcmd <pid> VM.metaspace`, and count loaded classes over time with `jstat -class`. A
+    monotonically rising class count with a stable workload is the tell.
+
+`unable to create new native thread` — the OS refused to create a thread. THE HEAP IS USUALLY FINE.
+    CAUSES: a genuine thread leak (a pool created per request, an unshut-down executor); `ulimit -u` or
+    a container PID limit; or — the counter-intuitive one — A HEAP SO LARGE THERE IS NO ADDRESS SPACE
+    OR RAM LEFT FOR STACKS, since each thread RESERVES about 1 MB.
+    CONFIRM: `jstack` and count threads, grouped by name. RAISING `-Xmx` MAKES THIS WORSE.
+
+`Direct buffer memory` — `ByteBuffer.allocateDirect` exceeded `-XX:MaxDirectMemorySize` (which defaults
+to roughly `-Xmx`).
+    CAUSES: Netty, NIO, or any library buffering off-heap without releasing. Direct buffers are freed
+    only when their `Cleaner` runs, which requires the buffer object to be COLLECTED — so a heap that
+    is comfortable can starve off-heap memory by never bothering to collect.
+    CONFIRM: `-XX:NativeMemoryTracking=summary` then `jcmd <pid> VM.native_memory summary`.
+
+`Requested array size exceeds VM limit` — an array larger than roughly `Integer.MAX_VALUE - 8`. This is
+NOT a heap problem; the array simply cannot be indexed by an `int`. The fix is chunking or a different
+data structure.
+
+`Compressed class space` — the fixed 1 GB region for compressed class pointers is full. Raise
+`-XX:CompressedClassSpaceSize`, or fix the class explosion causing it.
+
+`Out of swap space?` — a native `malloc` failed. The JVM is often the victim rather than the cause; look
+at whole-machine memory, other processes, and native libraries.
+
+AND THE CONTAINER KILL, WHICH LOOKS LIKE NONE OF THESE: exit code 137, no Java output at all. The kernel
+killed the process because RSS exceeded the cgroup limit. `kubectl describe pod` shows `OOMKilled`. The
+fix is `-XX:MaxRAMPercentage=70` and accounting for the non-heap pools — NOT raising `-Xmx`, which is
+what everyone tries first and which makes it happen sooner.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — RAISING `-Xmx` FOR A RETENTION LEAK. It delays the failure and makes the eventual heap dump
+larger and slower to analyse. The old-gen-after-full-GC chart tells you not to.
+
+CASE 2 — RAISING `-Xmx` FOR `unable to create new native thread`. Actively harmful: less memory remains
+for the ~1 MB each thread reserves.
+
+CASE 3 — `-Xmx` EQUAL TO THE CONTAINER LIMIT. Guarantees an OOM-kill, because metaspace, stacks, code
+cache, GC structures and direct buffers all live outside `-Xmx`.
+
+CASE 4 — RAISING `-Xmx` ABOVE ~32 GB. Compressed ordinary object pointers are lost, every reference
+doubles from 4 to 8 bytes, and EFFECTIVE CAPACITY CAN FALL. A 31 GB heap can hold more objects than a
+33 GB one.
+
+CASE 5 — CATCHING `OutOfMemoryError`. The allocation that failed is often unrelated to the cause, other
+threads are about to fail, and the handler itself may need to allocate.
+
+CASE 6 — DISABLING `UseGCOverheadLimit`. Converts a diagnosable crash into an application that spends
+98% of its CPU in GC and looks merely "slow" for hours.
+
+CASE 7 — A CLASSLOADER LEAK AFTER REDEPLOY. One `ThreadLocal`, one static registry entry, or one
+un-deregistered JDBC driver holds the old loader, retaining every class it loaded. Metaspace fills after
+N redeploys, and the heap looks fine throughout.
+
+CASE 8 — DIRECT BUFFERS FREED ONLY BY GC. A `Cleaner` runs when the buffer object is collected, so a
+comfortable heap that rarely collects can starve off-heap memory. `System.gc()` is the traditional
+desperate remedy, which tells you how awkward the coupling is.
+
+CASE 9 — NO HEAP DUMP CONFIGURED. The OOM happened, the pod restarted, and the evidence is gone.
+`-XX:+HeapDumpOnOutOfMemoryError` costs nothing until it fires.
+
+CASE 10 — A HEAP DUMP THAT WILL NOT FIT. Dumping a 32 GB heap needs 32 GB of disk and a machine with
+enough memory to open it. Plan the path and the tooling before you need them.
+
+CASE 11 — READING `size()` OR `Runtime.freeMemory()` AS TRUTH. `freeMemory` is free space in the CURRENT
+heap, not the maximum; it drops and recovers constantly and tells you almost nothing on its own.
+
+CASE 12 — AN OLD JVM IN A CONTAINER. Pre-8u191 JVMs size the heap from the HOST's memory, ignoring the
+cgroup limit entirely, and are killed with no Java-level error.
+
+CASE 13 — ASSUMING A THREAD DUMP SHOWS MEMORY. It shows threads. For memory you need a heap dump, GC
+logs, or Native Memory Tracking — three different tools for three different pools.""",
+
+"""5. THE ALTERNATIVES — the tool for each pool
+
+FOR HEAP: a heap dump plus ECLIPSE MAT. Open the DOMINATOR TREE and the LEAK SUSPECTS report. The
+dominator tree answers "what is retaining this", which is the only useful question — "what is largest"
+almost never is. `jcmd <pid> GC.heap_dump /path`, or `jmap` on older JVMs.
+
+FOR ALLOCATION RATE: JFR (`-XX:StartFlightRecording`) or async-profiler in allocation mode. These tell
+you WHICH CALL SITE is producing garbage, which is what you fix when the problem is churn rather than
+retention.
+
+FOR GC BEHAVIOUR: `-Xlog:gc*:file=gc.log:time,uptime,level,tags` and GCeasy or GCViewer. The one chart
+that matters is old-generation occupancy after each full collection.
+
+FOR NATIVE MEMORY: `-XX:NativeMemoryTracking=summary` then `jcmd <pid> VM.native_memory summary`. It
+breaks RSS down by category — heap, class, thread, code, GC, internal — and is the only way to explain
+"the heap is 1 GB and RSS is 3 GB".
+
+FOR CLASSES AND METASPACE: `jcmd <pid> VM.metaspace`, `jstat -class <pid> 1s`, and MAT's duplicate-class
+analysis, which finds the same class loaded by several loaders — the classloader-leak signature.
+
+FOR THREADS: `jstack` or `jcmd Thread.print`, grouped by thread name. Which is why naming your threads
+matters.
+
+PREVENTIVE FLAGS TO SET EVERYWHERE, BEFORE YOU NEED THEM:
+    -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps
+    -XX:+ExitOnOutOfMemoryError            (so the orchestrator restarts a broken JVM)
+    -XX:MaxRAMPercentage=70                (instead of a hard-coded -Xmx, in a container)
+    -Xlog:gc*:file=gc.log:...              (nearly free, and you cannot reconstruct it later)
+
+DESIGN-LEVEL FIXES, WHICH BEAT ALL OF THE ABOVE:
+    STREAM INSTEAD OF MATERIALISING. Paginate queries, stream file processing, write to an
+    `OutputStream` rather than building a 500 MB `String`. THIS CONVERTS AN O(n) MEMORY REQUIREMENT
+    INTO O(1) AND IS USUALLY THE REAL FIX.
+    BOUND EVERY CACHE. Caffeine or Guava with `maximumSize` and expiry. An unbounded cache is a memory
+    leak with a schedule.
+    BOUND EVERY QUEUE. An unbounded work queue turns overload into an OOM instead of backpressure.
+    CLEAR `ThreadLocal`s IN A `finally`. Pooled threads never die.
+    DEREGISTER LISTENERS. Symmetry between register and unregister is the fix for most retention leaks.
+
+WHAT TO SAY: "First I read the message after the colon, because four of the eight mean the heap is fine.
+Then I check old-gen occupancy after successive full GCs — if it climbs, it is a leak and no flag helps,
+so I take a heap dump and read the dominator tree. And in a container I would check for an OOM-kill
+first, because exit 137 with no Java error is not an OutOfMemoryError at all."
+
+""",
+
+"""6. HOW TO DIAGNOSE ONE — numbered steps
+
+STEP 1 — READ THE TEXT AFTER THE COLON. Four of the eight messages mean the heap is not the problem.
+
+STEP 2 — IF THERE IS NO JAVA ERROR AT ALL, CHECK FOR AN OOM-KILL. Exit 137, `kubectl describe pod`,
+`dmesg`. The kernel killed the process; the JVM never got to complain.
+
+STEP 3 — FOR A HEAP MESSAGE, PLOT OLD-GEN OCCUPANCY AFTER EACH FULL GC. Climbing means a leak; a stable
+floor means capacity or allocation rate.
+
+STEP 4 — FOR A LEAK, TAKE A HEAP DUMP AND OPEN THE DOMINATOR TREE. Ask what RETAINS the largest object,
+not what is largest.
+
+STEP 5 — FOR CAPACITY, LOOK AT ALLOCATION RATE BEFORE RAISING THE LIMIT. JFR or async-profiler in
+allocation mode names the call site.
+
+STEP 6 — FOR `unable to create new native thread`, COUNT THREADS AND CHECK `ulimit -u`. Do NOT raise
+`-Xmx`; it makes this worse.
+
+STEP 7 — FOR `Metaspace`, WATCH THE LOADED-CLASS COUNT OVER TIME. A rising count under a stable workload
+means a classloader leak or runtime class generation.
+
+STEP 8 — FOR `Direct buffer memory`, TURN ON NATIVE MEMORY TRACKING and look at the "Internal" and
+"Other" categories.
+
+STEP 9 — IN A CONTAINER, SET `-XX:MaxRAMPercentage=70` RATHER THAN A HARD `-Xmx`, and account for
+stacks, metaspace, code cache and GC structures.
+
+STEP 10 — NEVER CATCH `OutOfMemoryError`. Configure `-XX:+HeapDumpOnOutOfMemoryError` and
+`-XX:+ExitOnOutOfMemoryError` instead: capture the evidence, die cleanly, let the orchestrator restart.
+
+STEP 11 — CHECK WHETHER THE FIX IS TO STREAM. Paginating a query or streaming a file turns an O(n)
+memory requirement into O(1) and is usually the real answer.
+
+STEP 12 — BOUND EVERY CACHE AND EVERY QUEUE. Both are leaks with a schedule.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'The first thing I'd say is that "out of memory" isn't one problem, and the text AFTER the colon is the
+diagnosis. Everyone reads OutOfMemoryError as "heap full, raise -Xmx", and that's right for one message
+and actively wrong for most of the others.
+
+"Java heap space" and "GC overhead limit exceeded" are the heap — the second is the same problem
+detected earlier, when more than 98% of recent time went into GC while recovering less than 2% of the
+heap. That check is a GIFT, by the way: without it the application wouldn't fail, it would grind for
+hours looking merely slow. Disabling it is almost always the wrong instinct.
+
+But "Metaspace" is class metadata in native memory, unbounded by default. "unable to create new native
+thread" means the OPERATING SYSTEM refused — the heap is fine, and raising -Xmx makes it WORSE, because
+each thread reserves about a megabyte and a bigger heap leaves less room. "Direct buffer memory" is
+off-heap NIO. "Requested array size exceeds VM limit" just means you asked for an array bigger than an
+int can index. Four of the eight messages occur with a heap that's barely used.
+
+The mental model I'd offer is that -Xmx bounds ONE of at least seven pools. Heap, metaspace, compressed
+class space, thread stacks at ~1 MB reserved each, the code cache at ~240 MB reserved, GC structures at
+5-10% of heap, and direct buffers. Total RSS is heap PLUS all of that, and "all of that" is routinely
+500 MB to a gigabyte on a real service. Which is why -Xmx equal to the container limit guarantees an
+OOM-kill, and why the answer in a container is MaxRAMPercentage around 70 rather than a hard -Xmx.
+
+And there's a ninth failure that isn't an OutOfMemoryError at all, and is the most common one now: the
+container OOM-kill. The kernel kills the process when RSS exceeds the cgroup limit. Exit 137, no Java
+error, no stack trace, no heap dump — just a process that vanished. The JVM never got to complain,
+because the heap wasn't full; everything else was.
+
+For diagnosis, the single most useful thing takes thirty seconds: look at old-generation occupancy
+IMMEDIATELY AFTER each full GC. If that number climbs monotonically across successive full collections,
+you have a retention leak — more memory only delays it and no flag helps, so take a heap dump and read
+the DOMINATOR TREE, which answers "what is retaining this" rather than "what is largest". If it returns
+to the same floor each time and the peaks are just too high, it's capacity or allocation rate, and more
+heap or less allocation genuinely helps.
+
+Two practical things. Never catch OutOfMemoryError — the allocation that failed is often unrelated to
+the cause, other threads are about to fail, and your handler may need to allocate. Configure
+HeapDumpOnOutOfMemoryError and ExitOnOutOfMemoryError instead: capture the evidence and die cleanly. And
+before tuning anything, check whether the fix is to STREAM — paginating a query or streaming a file
+turns an O(n) memory requirement into O(1), and that's usually the real answer.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE MESSAGE IS THE DIAGNOSIS ────────────────────────────────────
+    // java.lang.OutOfMemoryError: Java heap space            ← the heap
+    // java.lang.OutOfMemoryError: GC overhead limit exceeded ← the heap, earlier
+    // java.lang.OutOfMemoryError: Metaspace                  ← CLASS metadata, native
+    // java.lang.OutOfMemoryError: unable to create new native thread
+    //                                                        ← the OS refused. Heap fine.
+    // java.lang.OutOfMemoryError: Direct buffer memory       ← OFF-heap NIO. Heap fine.
+    // java.lang.OutOfMemoryError: Requested array size exceeds VM limit
+    //                                                        ← > Integer.MAX_VALUE-ish
+    // java.lang.OutOfMemoryError: Compressed class space     ← the fixed 1 GB region
+    // java.lang.OutOfMemoryError: Out of swap space?         ← a native malloc failed
+    //
+    // (and) exit code 137, NO Java output at all             ← the KERNEL killed you
+
+    // ── WHY -Xmx == CONTAINER LIMIT ALWAYS DIES ─────────────────────────
+    // container limit: 2048 MB
+    // -Xmx2g          → heap alone may reach 2048 MB
+    //   + metaspace           ~100 MB
+    //   + 200 threads × 1 MB  ~200 MB reserved stacks
+    //   + code cache          up to 240 MB reserved
+    //   + GC structures       ~5-10% of heap
+    //   + direct buffers      whatever Netty wants
+    //   = RSS well past 2048 → OOMKilled, exit 137, no heap dump, no stack trace
+    // -XX:MaxRAMPercentage=70   ← say this instead of a hard-coded -Xmx
+
+    // ── THE THIRTY-SECOND DIAGNOSIS ─────────────────────────────────────
+    // [gc] Pause Full ... 1900M->420M(2G)     ← after full GC: 420 MB
+    // [gc] Pause Full ... 1950M->710M(2G)     ← after full GC: 710 MB
+    // [gc] Pause Full ... 1990M->1180M(2G)    ← after full GC: 1180 MB
+    //                              ^^^^ THE FLOOR IS CLIMBING → RETENTION LEAK.
+    //   More heap only delays it. No flag helps. Take a heap dump.
+    // [gc] Pause Full ... 1900M->418M(2G)
+    // [gc] Pause Full ... 1930M->421M(2G)     ← STABLE FLOOR → capacity or allocation
+    //   rate. More heap, or less allocation, genuinely helps.
+
+    // ── THE ONE THAT GETS RAISED THE WRONG WAY ──────────────────────────
+    // OutOfMemoryError: unable to create new native thread
+    for (Request r : requests) {
+        Executors.newFixedThreadPool(4).submit(() -> handle(r));
+    //  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ A NEW POOL PER REQUEST, never shut down.
+    //  4 non-daemon threads each, forever. The heap is barely touched.
+    }
+    // RAISING -Xmx MAKES THIS WORSE: each thread RESERVES ~1 MB outside the heap, so
+    // a bigger heap leaves less room for stacks. Count threads with jstack instead.
+
+    // ── THE CLASSLOADER LEAK ────────────────────────────────────────────
+    // OutOfMemoryError: Metaspace, after the 9th redeploy
+    static final ThreadLocal<Ctx> CTX = new ThreadLocal<>();   // never remove()d
+    // ^ a pooled container thread holds a Ctx → whose class → whose CLASSLOADER →
+    //   which retains EVERY CLASS THE OLD WEBAPP EVER LOADED. Ten redeploys, ten
+    //   complete copies of the application's classes in metaspace. The heap looks
+    //   fine the whole time.
+    // Tell: jstat -class <pid> 1s shows the loaded-class count RISING under a stable
+    //       workload.
+
+    // ── DIRECT BUFFERS: freed only when the GC bothers ──────────────────
+    ByteBuffer buf = ByteBuffer.allocateDirect(64 * 1024 * 1024);
+    // ^ 64 MB OFF the heap. It is released when buf's Cleaner runs — which requires
+    //   buf to be COLLECTED. A comfortable heap that rarely collects can therefore
+    //   starve off-heap memory while showing plenty of free heap.
+    // -XX:MaxDirectMemorySize=512m, and -XX:NativeMemoryTracking=summary to see it.
+
+    // ── DO NOT DO THIS ──────────────────────────────────────────────────
+    try { ... } catch (OutOfMemoryError e) { log.error("oom", e); }
+    //                 ^^^^^^^^^^^^^^^^^ the allocation that failed is often unrelated
+    //   to the cause, other threads are about to fail, and log.error may itself need
+    //   to allocate. Configure this instead:
+    // -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps
+    // -XX:+ExitOnOutOfMemoryError      ← capture the evidence, die, let the
+    //                                     orchestrator restart a JVM you cannot trust""",
+
+"""9. THE TRACE — the same symptom, four different causes
+
+A SERVICE FAILS AFTER SIX HOURS. Four investigations, all starting from "it ran out of memory":
+
+    INVESTIGATION 1 — `Java heap space`, floor climbing
+    evidence                                          conclusion
+    ---------------------------------------------------------------------------------
+    post-full-GC old gen: 420 → 710 → 1180 MB          RETENTION LEAK
+    heap dump, dominator tree: a static ConcurrentHashMap
+      retains 1.1 GB across 2.4 million entries
+    the map is a cache with no eviction                the fix is `maximumSize`, not
+                                                       `-Xmx`
+    ---------------------------------------------------------------------------------
+    RAISING -Xmx WOULD HAVE MOVED THE FAILURE FROM SIX HOURS TO TWELVE and doubled the size of the heap
+    dump you eventually had to analyse.
+
+    INVESTIGATION 2 — `unable to create new native thread`, heap at 12%
+    evidence                                          conclusion
+    ---------------------------------------------------------------------------------
+    heap usage 240 MB of 2 GB                          THE HEAP IS NOT THE PROBLEM
+    jstack: 8,400 threads named "pool-N-thread-1"       a pool created per request and
+                                                        never shut down
+    each reserves ~1 MB of stack                        ~8 GB of stack reservation
+    ---------------------------------------------------------------------------------
+    THE INSTINCTIVE FIX MAKES IT WORSE. Raising `-Xmx` takes address space and RAM away from exactly
+    the thing that failed. The real fix is one shared executor and a `shutdown()`.
+
+    INVESTIGATION 3 — `Metaspace`, after the ninth redeploy
+    evidence                                          conclusion
+    ---------------------------------------------------------------------------------
+    heap steady at 600 MB throughout                   NOT the heap
+    jstat -class: loaded classes 42k → 61k → 79k …      classes accumulating
+    MAT duplicate-class analysis: 9 copies of           CLASSLOADER LEAK — nine old
+      com.example.Service, each from a different        webapp loaders still reachable
+      loader
+    the retaining path: a pooled thread's ThreadLocal
+    ---------------------------------------------------------------------------------
+    NINE COMPLETE COPIES OF THE APPLICATION'S CLASSES. One un-removed `ThreadLocal` on a thread that
+    never dies retained a whole class loader, which retains every class it ever defined.
+
+    INVESTIGATION 4 — no Java error at all
+    evidence                                          conclusion
+    ---------------------------------------------------------------------------------
+    the pod restarted; exit code 137                   THE KERNEL KILLED IT
+    no stack trace, no heap dump, no GC log entry      the JVM never got to react
+    kubectl describe pod: OOMKilled                    RSS exceeded the cgroup limit
+    -Xmx2g with a 2 GB container limit                 heap + metaspace + 200 stacks +
+                                                       code cache + GC structures
+    ---------------------------------------------------------------------------------
+    THERE IS NO `OutOfMemoryError` HERE AND THERE NEVER WILL BE. The heap was never full; everything
+    outside it was. Searching the application logs for "OutOfMemoryError" finds nothing, which is why
+    this one is so often misdiagnosed as a crash or a liveness-probe failure.
+
+NOW THE POOL BREAKDOWN THAT EXPLAINS INVESTIGATION 4 — `jcmd VM.native_memory summary` on a healthy
+service with `-Xmx1g`:
+
+    category            reserved     committed    what it is
+    ---------------------------------------------------------------------------------
+    Java Heap           1024 MB      1024 MB      -Xmx. The only pool most people know.
+    Class               1100 MB       120 MB      metaspace + compressed class space
+    Thread               420 MB        30 MB      ~1 MB reserved per thread
+    Code                 240 MB        60 MB      JIT-compiled machine code
+    GC                    80 MB        70 MB      card tables, mark bitmaps
+    Internal / Other     variable     variable    direct buffers, JNI, symbols
+    ---------------------------------------------------------------------------------
+    RSS ≈ 1024 + 120 + 30 + 60 + 70 + … ≈ 1.4 GB FOR A 1 GB HEAP. Committed is what counts against the
+    container; reserved is address space. THE GAP BETWEEN `-Xmx` AND RSS IS NOT A LEAK, IT IS THE
+    NORMAL SHAPE OF A JVM, and budgeting for it is the whole content of `MaxRAMPercentage`.
+
+WHAT PRODUCED WHAT:
+    SEPARATE POOLS         produced investigations 2, 3 and 4 — three failures with a healthy heap.
+    THE POST-FULL-GC FLOOR produced the leak-versus-capacity answer in thirty seconds.
+    REACHABILITY           produced the classloader leak: one ThreadLocal, nine copies of everything.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `-Xmx` bounds the HEAP only. RSS ≈ heap + metaspace + thread stacks (~1 MB reserved each) + code
+    cache (~240 MB reserved) + GC structures (5–10% of heap) + direct buffers.
+    Metaspace is native and UNBOUNDED by default; `-XX:MaxMetaspaceSize` bounds it.
+    Compressed class space is a fixed 1 GB region when compressed oops are on.
+    Above ~32 GB compressed oops are lost and every reference doubles in size.
+    `GC overhead limit exceeded`: >98% of time in GC recovering <2% of heap.
+    Max array length is roughly `Integer.MAX_VALUE - 8`.
+    Container OOM-kill: exit 137, no Java error, no heap dump.
+
+THE #1 MISTAKE: reading `OutOfMemoryError` without the message after the colon. Four of eight mean the
+heap is fine.
+
+THE #2 MISTAKE: raising `-Xmx` for a retention leak. It delays failure and enlarges the dump.
+
+THE #3 MISTAKE: raising `-Xmx` for `unable to create new native thread`. Actively harmful.
+
+THE #4 MISTAKE: `-Xmx` equal to the container limit. Guarantees an OOM-kill.
+
+THE #5 MISTAKE: raising `-Xmx` past ~32 GB. Compressed oops are lost and effective capacity can fall.
+
+THE #6 MISTAKE: catching `OutOfMemoryError`. The failed allocation is often unrelated to the cause and
+the handler may need to allocate.
+
+THE #7 MISTAKE: disabling `UseGCOverheadLimit`. It turns a diagnosable crash into hours of grinding.
+
+THE #8 MISTAKE: not configuring `-XX:+HeapDumpOnOutOfMemoryError`. It costs nothing until it fires, and
+without it the pod restarts and the evidence is gone.
+
+THE #9 MISTAKE: searching for the LARGEST object in a heap dump. Ask what RETAINS it — that is what the
+dominator tree is for.
+
+THE #10 MISTAKE: ignoring the loaded-class count. A rising count under a stable workload is a
+classloader leak, and the heap will look healthy throughout.
+
+THE #11 MISTAKE: treating a thread dump as a memory tool. Three pools, three tools: heap dump, GC log,
+Native Memory Tracking.
+
+THE #12 MISTAKE: tuning before checking whether the fix is to STREAM. Paginating or streaming converts
+O(n) memory into O(1).
+
+ONE-SENTENCE TAKEAWAY: `OutOfMemoryError` is eight different failures wearing one name, and the text
+after the colon is the diagnosis — `Metaspace`, `unable to create new native thread`, `Direct buffer
+memory` and `Requested array size` all occur with a nearly-empty heap, and raising `-Xmx` makes the
+thread one WORSE because each thread reserves about a megabyte outside the heap; `-Xmx` bounds only one
+of at least seven pools, so total RSS is routinely 40% above it, which is why `-Xmx` equal to a container
+limit guarantees a kernel OOM-kill that produces exit 137 and no Java error at all; and the thirty-second
+triage is to plot OLD-GENERATION OCCUPANCY AFTER EACH FULL GC — climbing means a retention leak that no
+flag will fix, so take a heap dump and read the dominator tree, while a stable floor means capacity or
+allocation rate, where more heap or less allocation genuinely helps.""",
+]
+
+
+DEEP["Class loading and the parent-delegation model"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — how a class gets from a file into the running program
+
+Java does not load your whole program at startup. A class arrives the first time it is actually needed,
+in three phases:
+
+    LOADING          find the bytes for `com.example.Foo`, and turn them into a `Class` object.
+    LINKING          VERIFY the bytecode is well-formed and safe, PREPARE static fields with their
+                     default values, and RESOLVE symbolic references to other types.
+    INITIALISATION   run the static initialisers — `<clinit>`. Once, ever.
+
+    THE VERIFY STEP IS WHY JAVA IS MEMORY-SAFE. Before any bytecode runs, the verifier checks that the
+    stack cannot underflow, that types match, that jumps land inside the method, and that a local
+    holding an `int` is never used as a reference. That check is what makes it impossible for pure Java
+    bytecode to corrupt memory the way C can — the safety is in the LOADER, not only in the language.
+
+THE PART WITH THE NAME — PARENT DELEGATION — IS ABOUT WHO FINDS THE BYTES:
+
+    WHEN A CLASS LOADER IS ASKED FOR A CLASS, IT ASKS ITS PARENT FIRST, and only looks itself if the
+    parent cannot supply it. The chain runs Application → Platform → Bootstrap, and the bootstrap loader
+    holds the JDK's own classes.
+
+    SO IF YOU PUT YOUR OWN `java/lang/String.class` ON THE CLASSPATH, IT IS NEVER USED. The request
+    reaches the bootstrap loader first, which has a `String`, and returns it. YOUR VERSION IS NEVER
+    CONSULTED. That is the security property: a jar on the classpath cannot replace a core class, so it
+    cannot rewrite `String` to leak passwords or `ClassLoader` to disable its own checks.
+
+THE EVERYDAY VERSION: an office where any request for a form goes up the chain of command first. If head
+office has that form, theirs is used, full stop. A local team can invent new forms nobody upstairs has,
+but they can never override the official one — which is annoying occasionally and is exactly the point.
+
+TERMS AS THEY APPEAR:
+- BOOTSTRAP LOADER: native, loads the core JDK. `getClassLoader()` on `String` returns `null`.
+- PLATFORM LOADER: JDK modules outside the core. (Before Java 9 it was the "extension" loader.)
+- APPLICATION / SYSTEM LOADER: your classpath.
+- DEFINING LOADER: the loader that actually created the `Class` object. Remember this one — it is half
+  of a class's identity.""",
+
+"""2. THE INTUITION — a class's identity includes its loader, and that explains everything strange
+
+HERE IS THE FACT THAT MAKES SENSE OF EVERY CONFUSING CLASSLOADER ERROR:
+
+    A CLASS IS IDENTIFIED BY (FULLY QUALIFIED NAME, DEFINING CLASS LOADER). Not by name alone.
+
+    So `com.example.Foo` loaded by loader A and `com.example.Foo` loaded by loader B are TWO DIFFERENT
+    CLASSES. Not two copies — two distinct types, as unrelated as `String` and `Integer`. They have
+    separate static fields. An instance of one cannot be assigned to a variable of the other.
+
+    WHICH PRODUCES THE MOST BAFFLING ERROR MESSAGE IN JAVA:
+
+        java.lang.ClassCastException: com.example.Foo cannot be cast to com.example.Foo
+
+    People assume the logs are broken. They are not — those are genuinely different classes with the
+    same name, and the JVM has no better way to say so. The fix is always to work out which two loaders
+    are involved and why one of them saw the class it should have delegated for.
+
+NOW THE THREE THINGS DELEGATION BUYS, in order of importance:
+
+    SECURITY. Core classes cannot be shadowed. A malicious jar cannot supply its own `java.lang.String`,
+    `java.lang.ClassLoader`, or `java.security.*`. (The JVM ALSO refuses to define any class in a
+    `java.*` package from a non-bootstrap loader, so the protection is belt and braces.)
+    CONSISTENCY. Everyone gets the SAME `java.lang.String` class, so instances pass freely between
+    libraries. Without delegation, two libraries could each load their own `String` and nothing would
+    interoperate.
+    NON-DUPLICATION. A class is loaded once per loader, and delegation makes "once" the common case.
+
+AND THE PLACES DELEGATION IS DELIBERATELY BROKEN, which is where the interesting engineering is:
+
+    APPLICATION SERVERS INVERT IT. Tomcat's webapp loader is CHILD-FIRST for application classes: it
+    looks in `WEB-INF/lib` BEFORE asking its parent, so your bundled version of a library wins over the
+    server's. Without that, every webapp would be forced onto the container's dependency versions. It
+    still delegates `java.*` upward, because that part is not negotiable.
+    OSGi AND THE MODULE SYSTEM use a graph rather than a chain, so a bundle sees exactly the packages it
+    declares — allowing two versions of the same library to coexist in one JVM.
+    SERVICE PROVIDER INTERFACES BREAK IT FROM THE OTHER DIRECTION, and this is the subtle one. JDBC's
+    `DriverManager` is a BOOTSTRAP class, and it must load a driver that lives on the APPLICATION
+    classpath — but the bootstrap loader can only delegate upward, and there is nothing above it. THE
+    ESCAPE HATCH IS THE THREAD CONTEXT CLASS LOADER: a per-thread loader reference that a core class can
+    reach down through. `ServiceLoader`, JNDI, JAXP and most frameworks depend on it, and "it works in
+    my IDE and not in the container" is very often a context-loader problem.""",
+
+"""3. THE MECHANISM — the hierarchy, the two errors, and the leak
+
+THE HIERARCHY SINCE JAVA 9:
+
+    BOOTSTRAP (null)      java.base and the core modules. Written in native code, which is why
+                          `String.class.getClassLoader()` returns `null` rather than an object.
+       ↑
+    PLATFORM              other JDK modules — `java.sql`, `java.xml`, and so on. Replaced the old
+                          "extension" loader, which used to load anything dropped into `lib/ext` and
+                          was removed precisely because that was a security hazard.
+       ↑
+    APPLICATION / SYSTEM  your classpath and module path. `getSystemClassLoader()`.
+       ↑
+    CUSTOM                yours, or a framework's.
+
+`loadClass` IS FIVE LINES, and reading them is the whole model:
+
+    protected Class<?> loadClass(String name, boolean resolve) {
+        Class<?> c = findLoadedClass(name);        // 1. already loaded by ME?
+        if (c == null) {
+            try { c = parent.loadClass(name); }     // 2. ASK THE PARENT FIRST
+            catch (ClassNotFoundException ignored) { }
+            if (c == null) c = findClass(name);     // 3. only now, look myself
+        }
+        return c;
+    }
+
+    TO WRITE A CUSTOM LOADER YOU OVERRIDE `findClass`, NOT `loadClass` — which keeps delegation intact.
+    Overriding `loadClass` is how you deliberately invert it, and it is what an application server does.
+
+THE TWO ERRORS PEOPLE CONFUSE, and the distinction is precise:
+
+    `ClassNotFoundException` — a CHECKED EXCEPTION, thrown when code EXPLICITLY asks for a class by name
+    and it is not there: `Class.forName("com.foo.Bar")`, `loader.loadClass(...)`. YOU asked; the answer
+    is no.
+    `NoClassDefFoundError` — an ERROR, thrown by the JVM when a class that was present AT COMPILE TIME
+    is missing at RUNTIME... OR, and this is the case that wastes days, when the class was FOUND but its
+    initialisation ALREADY FAILED EARLIER. The message reads `Could not initialize class Foo` and the
+    real cause was a single `ExceptionInInitializerError`, possibly hours ago, possibly on another
+    thread. ALWAYS SEARCH FOR THE FIRST OCCURRENCE.
+
+THE CLASSLOADER LEAK, which is the operational reason this topic matters:
+
+    A `Class` object holds a reference to its DEFINING LOADER. A loader holds every class it has
+    defined. So ANY ONE reference to ANY ONE class from a loader keeps the ENTIRE loader — and every
+    class it ever loaded — alive.
+
+    REDEPLOY A WEB APPLICATION AND THE OLD LOADER SHOULD BECOME GARBAGE. It does not if anything outside
+    it still points in. The usual culprits are all core-JDK statics that outlive the webapp:
+        a `ThreadLocal` on a pooled container thread holding an application object;
+        a JDBC driver still registered with `DriverManager`;
+        a shutdown hook, a `Timer`, or a thread the application started and never stopped;
+        a listener in a static registry;
+        an application class used as a key in a JDK-level cache.
+    TEN REDEPLOYS, TEN COMPLETE COPIES OF THE APPLICATION'S CLASSES, and an `OutOfMemoryError:
+    Metaspace` with a perfectly healthy heap.
+
+HIDDEN CLASSES (Java 15) are the modern mechanism for runtime-generated classes — lambdas, records'
+generated members, and frameworks. They are not discoverable by name, are tied to a host class, and can
+be unloaded independently, which avoids exactly the retention problem above.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `ClassCastException: com.example.Foo cannot be cast to com.example.Foo`. Two loaders, two
+distinct classes with the same name. The message is correct and looks like a logging bug.
+
+CASE 2 — `NoClassDefFoundError: Could not initialize class X`. The class exists. Its `<clinit>` failed
+earlier and the class is permanently marked erroneous. Find the first `ExceptionInInitializerError`.
+
+CASE 3 — `ClassNotFoundException` VS `NoClassDefFoundError` TREATED AS THE SAME THING. The first means
+you asked by name and it is absent; the second means the JVM needed it and it was absent OR poisoned.
+
+CASE 4 — A CLASSLOADER LEAK ON REDEPLOY. One `ThreadLocal`, one registered driver, one un-stopped
+thread, and every class the old application loaded is retained.
+
+CASE 5 — TWO VERSIONS OF THE SAME LIBRARY ON THE CLASSPATH. The classpath is ORDER-DEPENDENT: the first
+match wins, silently. `NoSuchMethodError` at runtime for a method that plainly exists in the jar you
+think you are using is the signature of this.
+
+CASE 6 — A LIBRARY BUNDLED IN A WEBAPP THAT THE CONTAINER ALSO PROVIDES. Child-first delegation gives
+you yours; a different container may delegate parent-first and give you theirs. Same war file, different
+behaviour.
+
+CASE 7 — `Class.forName(name)` VS `Class.forName(name, false, loader)`. The first INITIALISES the class;
+the three-argument version does not. If a driver registers itself in a static block, the difference is
+whether it registers at all.
+
+CASE 8 — THE THREAD CONTEXT CLASS LOADER BEING WRONG. A framework calls
+`Thread.currentThread().getContextClassLoader()` and gets a loader that cannot see your classes. Very
+often the cause of "works in my IDE, fails in the container".
+
+CASE 9 — CALLING `getClassLoader()` ON A CORE CLASS AND GETTING `null`. That is the bootstrap loader,
+not an error. `String.class.getClassLoader()` is `null` by specification.
+
+CASE 10 — LOADING A RESOURCE WITH THE WRONG LEADING SLASH.
+`getClass().getResourceAsStream("config.properties")` is relative to the class's PACKAGE;
+`"/config.properties"` is from the classpath root; and `getClassLoader().getResourceAsStream(...)` never
+takes a leading slash. Three near-identical calls with three different meanings.
+
+CASE 11 — FAT JARS AND SHADED DEPENDENCIES. Two shaded copies of the same library under different
+package names are two unrelated sets of classes, and objects cannot pass between them.
+
+CASE 12 — SPLIT PACKAGES UNDER THE MODULE SYSTEM. The same package supplied by two modules is an error
+at startup, where the old classpath silently picked one.
+
+CASE 13 — ASSUMING CLASSES ARE UNLOADED. A class is only unloaded when its ENTIRE loader is unreachable.
+For the application loader, that is never.""",
+
+"""5. THE ALTERNATIVES — when you actually need a custom loader, and what to do instead
+
+MOST CODE SHOULD NEVER WRITE A CLASS LOADER. The legitimate reasons are few:
+
+    PLUGIN ISOLATION — each plugin in its own loader, so plugins can carry conflicting library versions
+    and can be unloaded by dropping the loader.
+    HOT RELOAD — load a new version into a new loader and discard the old one. This is what an
+    application server's redeploy is, and why the leak above matters so much.
+    INSTRUMENTATION — `java.lang.instrument` agents transforming bytecode as it loads. This is how
+    profilers, APM tools and coverage tools work, and it is the supported route rather than a custom
+    loader.
+    LOADING FROM SOMEWHERE UNUSUAL — a database, an encrypted archive, over a network.
+
+IF YOU DO WRITE ONE: OVERRIDE `findClass`, NOT `loadClass`, so delegation is preserved. Override
+`loadClass` only when you deliberately want child-first, and even then always delegate `java.*` upward.
+
+BETTER ANSWERS FOR THE COMMON PROBLEMS:
+
+    "TWO LIBRARY VERSIONS CONFLICT" → fix the dependency tree first. `mvn dependency:tree` or
+    `gradle dependencies`, then exclusions or a BOM. SHADING (relocating a library into your own package
+    namespace) is the next option, and separate loaders is the last.
+    "I WANT PLUGINS" → `ServiceLoader` plus the module system, or an established framework. `ServiceLoader`
+    handles the context-loader question for you.
+    "I WANT TO RELOAD CODE IN DEVELOPMENT" → Spring DevTools, JRebel, or simply restarting. Hand-rolled
+    hot reload is a large amount of subtle work.
+    "I NEED TO GENERATE CLASSES AT RUNTIME" → ByteBuddy or the ASM library, and prefer HIDDEN CLASSES
+    (Java 15+) so the generated class can be unloaded with its host rather than retained forever.
+
+FOR RESOURCES, THE THREE FORMS, since this is where people actually get bitten:
+    `getClass().getResourceAsStream("x.properties")`   relative to the class's PACKAGE
+    `getClass().getResourceAsStream("/x.properties")`  from the classpath ROOT
+    `getClass().getClassLoader().getResourceAsStream("x.properties")`   root, and NO leading slash
+
+FOR THE SPI PROBLEM: use `ServiceLoader`, or accept a `ClassLoader` parameter in your API rather than
+reaching for the thread context loader implicitly. Making the loader an explicit argument turns a
+mysterious environment-dependent failure into a visible one.
+
+WHAT TO SAY: "Delegation means a loader asks its parent first, which is why you cannot replace
+`java.lang.String` and why every library sees the same one. The fact that matters operationally is that
+a class's identity is (name, defining loader) — so the same class from two loaders is two unrelated
+types, which is where `Foo cannot be cast to Foo` comes from, and it is why a single lingering
+`ThreadLocal` after a redeploy retains an entire application's worth of classes."
+
+""",
+
+"""6. HOW TO DIAGNOSE CLASSLOADING PROBLEMS — numbered steps
+
+STEP 1 — DISTINGUISH THE TWO ERRORS. `ClassNotFoundException` means you asked by name and it was absent.
+`NoClassDefFoundError` means the JVM needed it and it was absent — or its initialisation already failed.
+
+STEP 2 — IF THE MESSAGE SAYS "Could not initialize class", STOP LOOKING AT THE CLASSPATH. Search the log
+for the first `ExceptionInInitializerError`; that is the real failure.
+
+STEP 3 — FOR `Foo cannot be cast to Foo`, PRINT THE LOADERS.
+`obj.getClass().getClassLoader()` on both sides, and `System.identityHashCode` on each. You are looking
+for two different loaders.
+
+STEP 4 — FOR "WHICH JAR DID THIS COME FROM", USE
+`Foo.class.getProtectionDomain().getCodeSource().getLocation()`, or run with `-verbose:class`.
+
+STEP 5 — FOR `NoSuchMethodError` ON A METHOD THAT PLAINLY EXISTS, YOU HAVE TWO VERSIONS ON THE CLASSPATH.
+The first match wins, silently. Check the dependency tree.
+
+STEP 6 — FOR "WORKS IN MY IDE, FAILS IN THE CONTAINER", SUSPECT THE THREAD CONTEXT CLASS LOADER. Print
+it and compare with `getClass().getClassLoader()`.
+
+STEP 7 — FOR A METASPACE OOM AFTER REDEPLOYS, LOOK FOR A CLASSLOADER LEAK. MAT's duplicate-class
+analysis shows the same class defined by several loaders; then find what retains the oldest one.
+
+STEP 8 — CHECK THE USUAL RETAINERS: `ThreadLocal`s on pooled threads, registered JDBC drivers, threads
+and timers the application started, shutdown hooks, entries in static registries.
+
+STEP 9 — WHEN WRITING A LOADER, OVERRIDE `findClass`. Override `loadClass` only to invert delegation
+deliberately, and always delegate `java.*` upward.
+
+STEP 10 — PREFER `ServiceLoader` OVER `Class.forName` FOR PLUGGABILITY. It handles the context-loader
+question and it is checked at build time by the module system.
+
+STEP 11 — GET THE RESOURCE PATH FORM RIGHT. Leading slash with `Class`, no leading slash with
+`ClassLoader`, and relative-to-package with neither.
+
+STEP 12 — USE HIDDEN CLASSES OR AN ESTABLISHED LIBRARY FOR RUNTIME CODE GENERATION, so generated classes
+can be unloaded rather than accumulating.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'A class arrives the first time it's needed, in three phases. LOADING finds the bytes and makes a Class
+object. LINKING verifies the bytecode, prepares static fields with defaults, and resolves references.
+INITIALISATION runs the static initialisers, once ever.
+
+The verify step is worth pausing on, because it's why Java is memory-safe. Before any bytecode runs the
+verifier checks the stack can't underflow, that types match, that jumps land inside the method, and that
+a local holding an int is never used as a reference. That's what makes it impossible for pure Java
+bytecode to corrupt memory the way C can — the safety is in the LOADER, not just the language.
+
+Parent delegation is about who finds the bytes. When a loader is asked for a class it asks its PARENT
+first, and only looks itself if the parent can't supply it. The chain is Application, then Platform,
+then Bootstrap, and bootstrap has the JDK's own classes.
+
+So if you put your own java/lang/String.class on the classpath, it's never used. The request reaches
+bootstrap first, which has a String, and returns it. Yours is never consulted. That's the security
+property: a jar can't replace a core class, so it can't rewrite String to leak passwords. And the
+consistency property comes free — everyone gets the SAME String class, so instances pass freely between
+libraries.
+
+Now the fact that makes sense of every confusing classloader error: A CLASS IS IDENTIFIED BY ITS NAME
+*AND* ITS DEFINING LOADER. Not by name alone. So com.example.Foo from loader A and com.example.Foo from
+loader B are two DIFFERENT classes — not two copies, two distinct types, as unrelated as String and
+Integer, with separate static fields. Which produces the most baffling message in Java:
+"ClassCastException: com.example.Foo cannot be cast to com.example.Foo". People assume the logs are
+broken. They aren't — those genuinely are different classes and the JVM has no better way to say it.
+
+Delegation gets deliberately broken in two directions, and both are interesting. Application servers
+INVERT it: Tomcat's webapp loader is child-first for application classes, so your bundled library
+version wins over the container's — otherwise every webapp would be forced onto the container's
+dependency versions. It still delegates java.* upward, because that part isn't negotiable. And service
+provider interfaces break it from the other side: JDBC's DriverManager is a bootstrap class that has to
+load a driver from the APPLICATION classpath, but bootstrap can only delegate upward and there's nothing
+above it. The escape hatch is the THREAD CONTEXT CLASS LOADER — a per-thread reference a core class can
+reach down through. "Works in my IDE, fails in the container" is very often that.
+
+Operationally, the thing that bites is the classloader leak. A Class holds a reference to its defining
+loader, and a loader holds every class it defined. So ONE reference to ONE class keeps the whole loader
+and everything it ever loaded alive. Redeploy a webapp and the old loader should become garbage — it
+doesn't if a ThreadLocal on a pooled container thread, or a registered JDBC driver, or a thread the app
+started still points in. Ten redeploys, ten complete copies of the application's classes, and an
+OutOfMemoryError: Metaspace with a perfectly healthy heap.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── loadClass IS THE WHOLE MODEL, IN FIVE LINES ─────────────────────
+    protected Class<?> loadClass(String name, boolean resolve) {
+        Class<?> c = findLoadedClass(name);       // 1. have I already loaded it?
+        if (c == null) {
+            try { c = parent.loadClass(name); }   // 2. ASK THE PARENT FIRST
+            catch (ClassNotFoundException ignored) { }
+            if (c == null) c = findClass(name);   // 3. only now, look myself
+        }
+        return c;
+    }
+    // OVERRIDE findClass, NOT loadClass — that keeps delegation intact.
+    // Override loadClass ONLY to invert it deliberately, as an app server does.
+
+    // ── WHY YOU CANNOT REPLACE String ───────────────────────────────────
+    // put your own java/lang/String.class on the classpath:
+    //   app loader → asks PLATFORM → asks BOOTSTRAP → bootstrap HAS String → returns
+    //   it. YOUR VERSION IS NEVER CONSULTED. (And the JVM separately refuses to
+    //   define any class in a java.* package from a non-bootstrap loader.)
+    System.out.println(String.class.getClassLoader());   // null — that is BOOTSTRAP,
+    //                                                      not an error
+
+    // ── THE MESSAGE THAT LOOKS LIKE A LOGGING BUG ───────────────────────
+    // java.lang.ClassCastException:
+    //     com.example.Foo cannot be cast to com.example.Foo
+    //
+    // A class's identity is (NAME, DEFINING LOADER). Two loaders → TWO DISTINCT
+    // TYPES, as unrelated as String and Integer, with SEPARATE static fields.
+    System.out.println(a.getClass().getClassLoader());   // ← print both
+    System.out.println(b.getClass().getClassLoader());   //   to confirm
+
+    // ── THE TWO ERRORS, PRECISELY ───────────────────────────────────────
+    Class.forName("com.foo.Missing");     // → ClassNotFoundException (CHECKED)
+    //                                       YOU asked by name. The answer is no.
+    new SomeClassThatWasOnTheCompileClasspath();
+    //                                    // → NoClassDefFoundError (an ERROR)
+    //                                       the JVM needed it and it is absent...
+    // ... OR the class is PRESENT and its <clinit> already failed:
+    // NoClassDefFoundError: Could not initialize class Registry
+    //   ^ STOP LOOKING AT THE CLASSPATH. Search the log for the FIRST
+    //     ExceptionInInitializerError — possibly hours ago, possibly another thread.
+
+    // ── THE SPI ESCAPE HATCH ────────────────────────────────────────────
+    // DriverManager is a BOOTSTRAP class. It must load a driver from the APPLICATION
+    // classpath. But bootstrap can only delegate UPWARD, and nothing is above it.
+    ClassLoader cl = Thread.currentThread().getContextClassLoader();
+    //               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a per-thread loader
+    //   reference a core class can reach DOWN through. ServiceLoader, JNDI and JAXP
+    //   all rely on it, and a wrong one is the usual cause of "works in my IDE".
+    ServiceLoader.load(Driver.class);      // ← prefer this; it handles the question
+
+    // ── THE LEAK ────────────────────────────────────────────────────────
+    // A Class holds its DEFINING LOADER. A loader holds EVERY class it defined.
+    // So ONE reference to ONE class retains the ENTIRE loader and all its classes.
+    static final ThreadLocal<AppContext> CTX = new ThreadLocal<>();  // never removed
+    // ^ on a POOLED container thread that outlives the webapp:
+    //   pooled thread → ThreadLocal value → AppContext → its Class → its LOADER →
+    //   every class the old webapp ever loaded.
+    // Ten redeploys → ten complete copies → OutOfMemoryError: Metaspace, with a
+    // perfectly healthy HEAP.
+    // Other usual retainers: a registered JDBC driver, a Timer or thread the app
+    // started, a shutdown hook, an entry in a static registry.
+
+    // ── THE THREE RESOURCE FORMS, WHICH ARE ALL DIFFERENT ───────────────
+    getClass().getResourceAsStream("config.properties")    // relative to the PACKAGE
+    getClass().getResourceAsStream("/config.properties")   // classpath ROOT
+    getClass().getClassLoader().getResourceAsStream("config.properties")
+    //                                              ^ root, and NO leading slash
+
+    // ── WHERE DID THIS CLASS COME FROM? ─────────────────────────────────
+    Foo.class.getProtectionDomain().getCodeSource().getLocation();
+    // or run with -verbose:class""",
+
+"""9. THE TRACE — one class request, and three ways it goes wrong
+
+THE HAPPY PATH: application code references `com.example.Service` for the first time.
+
+    step  who                          what happens
+    ---------------------------------------------------------------------------------
+    1     app loader                   findLoadedClass → not mine yet
+    2     app loader → platform        delegate upward
+    3     platform → bootstrap         delegate upward
+    4     bootstrap                    searches java.base etc. → not found
+    5     platform                     searches JDK modules → not found
+    6     app loader                   findClass → reads Service.class from the jar
+    7     LINK: verify                 stack shapes, type consistency, jump targets
+    8     LINK: prepare                static fields set to defaults (0, null, false)
+    9     LINK: resolve                symbolic references resolved (lazily, in HotSpot)
+    10    INITIALISE                   <clinit> runs. Once, ever.
+    ---------------------------------------------------------------------------------
+    NOTE STEPS 2–5. The class was found by the loader that was asked FIRST, but only after two loaders
+    above it declined. That upward trip is the security guarantee: bootstrap always gets right of first
+    refusal, so no jar can shadow a core class.
+
+    NOW `java.lang.String`, with a malicious copy on the classpath:
+    step 3 reaches bootstrap, which HAS String, and returns it at once. The classpath copy is never
+    read. Steps 6 onward do not happen. THAT IS THE WHOLE PROTECTION, and it is one `if` in five lines
+    of code.
+
+FAILURE 1 — `Foo cannot be cast to Foo`
+
+    context: a webapp with CHILD-FIRST delegation, and the same library in both
+             WEB-INF/lib and the container's lib directory
+    ---------------------------------------------------------------------------------
+    the container creates a Foo   → defined by the SHARED loader        → type Foo@A
+    the webapp creates a Foo      → child-first, so WEB-INF/lib wins    → type Foo@B
+    the container passes its Foo into the webapp
+    the webapp assigns it to a Foo variable
+    → ClassCastException: com.example.Foo cannot be cast to com.example.Foo
+    ---------------------------------------------------------------------------------
+    BOTH SIDES ARE BEHAVING AS DESIGNED. Child-first exists so a webapp can carry its own library
+    versions; the price is that a class crossing the boundary is a different type. The fix is to remove
+    the duplicate — pick one side to own that library — not to fight the loader.
+
+FAILURE 2 — `NoSuchMethodError` FOR A METHOD THAT IS PLAINLY IN THE JAR
+
+    classpath: lib-1.2.jar, lib-2.0.jar   (both present, 1.2 listed first)
+    ---------------------------------------------------------------------------------
+    compile against 2.0     → your code calls Util.newMethod()
+    at runtime, the loader scans the classpath IN ORDER
+    → finds Util in lib-1.2.jar FIRST → loads that one → stops looking
+    → NoSuchMethodError: Util.newMethod()
+    ---------------------------------------------------------------------------------
+    THE CLASSPATH IS ORDER-DEPENDENT AND SILENT ABOUT IT. Nothing warns that two jars supply the same
+    class. `-verbose:class` or `getProtectionDomain().getCodeSource()` tells you which one won;
+    `mvn dependency:tree` tells you why both are there.
+
+FAILURE 3 — `Metaspace` AFTER THE NINTH REDEPLOY
+
+    time      what happens                                    metaspace
+    ---------------------------------------------------------------------------------
+    deploy 1  loader L1 defines 18,000 classes                 ~90 MB
+    redeploy  webapp stopped; L1 SHOULD become garbage
+              but a pooled container thread still holds a
+              ThreadLocal → an AppContext → its Class → L1     ~90 MB RETAINED
+    deploy 2  loader L2 defines 18,000 classes again           ~180 MB
+    ...
+    deploy 9                                                   ~810 MB → OOM: Metaspace
+    heap throughout                                            healthy, ~600 MB
+    ---------------------------------------------------------------------------------
+    THE HEAP NEVER LOOKED WRONG. The tell is `jstat -class` showing the loaded-class count rising under
+    a stable workload, and MAT's duplicate-class analysis showing nine definitions of the same class by
+    nine loaders. ONE `ThreadLocal.remove()` IN A `finally` PREVENTS ALL OF IT.
+
+WHAT PRODUCED WHAT:
+    DELEGATION UPWARD          produced steps 2–5, and therefore the impossibility of shadowing String.
+    (NAME, DEFINING LOADER)    produced failure 1's message, which is accurate and unbelievable.
+    ORDERED CLASSPATH SEARCH   produced failure 2, silently.
+    Class → LOADER → ALL CLASSES produced failure 3: one small reference, an entire application
+                               retained.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Three phases: load, link (verify / prepare / resolve), initialise. Verification is what makes
+    bytecode memory-safe.
+    Delegation: ask the parent first. Application → Platform → Bootstrap.
+    A class's identity is (fully qualified name, DEFINING loader). Same name, two loaders = two
+    unrelated types with separate statics.
+    A `Class` retains its defining loader; a loader retains every class it defined. Unloading requires
+    the WHOLE loader to be unreachable.
+    `ClassNotFoundException` is checked and comes from an explicit lookup; `NoClassDefFoundError` is an
+    Error from the JVM — including when initialisation previously failed.
+    `String.class.getClassLoader()` is `null`: that is the bootstrap loader.
+
+THE #1 MISTAKE: reading `Foo cannot be cast to Foo` as a logging bug. Two loaders, two distinct types.
+
+THE #2 MISTAKE: chasing the classpath for `NoClassDefFoundError: Could not initialize class X`. The
+class is there; its static initialiser failed earlier.
+
+THE #3 MISTAKE: treating `ClassNotFoundException` and `NoClassDefFoundError` as interchangeable. They
+have different causes and different fixes.
+
+THE #4 MISTAKE: leaving a `ThreadLocal`, a registered driver, or a started thread behind on undeploy.
+Each one retains an entire application's classes.
+
+THE #5 MISTAKE: two versions of a library on the classpath. First match wins, silently, and the symptom
+is `NoSuchMethodError` for a method that is plainly present.
+
+THE #6 MISTAKE: overriding `loadClass` when you meant to extend the search. Override `findClass`, and
+keep delegating `java.*` upward regardless.
+
+THE #7 MISTAKE: assuming the thread context class loader is the one you expect. It is the usual cause of
+"works in my IDE, fails in the container".
+
+THE #8 MISTAKE: `Class.forName(name, false, loader)` where a class must register itself in a static
+block. It does not initialise.
+
+THE #9 MISTAKE: getting the resource path form wrong. Leading slash with `Class`, none with
+`ClassLoader`, relative-to-package with neither.
+
+THE #10 MISTAKE: expecting classes to be unloaded. Only when the entire defining loader is unreachable —
+which, for the application loader, is never.
+
+THE #11 MISTAKE: writing a custom loader for a dependency conflict. Fix the dependency tree, then shade,
+and only then reach for a loader.
+
+ONE-SENTENCE TAKEAWAY: a loader asks its PARENT before looking itself, which is why no jar can shadow
+`java.lang.String` and why every library sees the same one — and the fact that explains every strange
+error in this area is that a class's identity is (NAME, DEFINING LOADER), so the same class from two
+loaders is two unrelated types with separate static fields, producing `Foo cannot be cast to Foo`; that
+same coupling means a `Class` retains its loader and a loader retains every class it defined, so one
+lingering `ThreadLocal` or registered driver after a redeploy keeps an entire application's classes
+alive and produces `OutOfMemoryError: Metaspace` with a perfectly healthy heap, while delegation is
+deliberately inverted by application servers (child-first, so a webapp's own library version wins) and
+bypassed downward by the thread context class loader, which is how a bootstrap class like
+`DriverManager` reaches an application-classpath driver at all.""",
+]
