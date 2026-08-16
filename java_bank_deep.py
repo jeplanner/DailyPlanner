@@ -14606,3 +14606,1010 @@ underneath, `switch` exists because dense cases compile to a `tableswitch` jump 
 regardless of case count, which is also why you cannot switch on a `long` (both bytecodes index on an
 `int`) and why switching on a null `String` throws — the compiled form calls `hashCode()` on it.""",
 ]
+
+
+DEEP["What actually happens when you run a Java program?"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two compilers, and a portable middle step
+
+You write `Hello.java`. You run `javac Hello.java` and then `java Hello`. Between those two commands
+something happens that is different from C, Python or Go, and understanding it explains most of Java's
+character — its portability, its slow startup, and why it gets faster the longer it runs.
+
+    `javac` DOES NOT PRODUCE MACHINE CODE. It produces BYTECODE — instructions for an imaginary machine
+    that no physical CPU implements. A `.class` file will not run on your processor.
+
+    `java` STARTS A VIRTUAL MACHINE that reads those instructions and executes them. At first it
+    INTERPRETS them one at a time, while watching which parts run often. Then a SECOND compiler — the
+    JIT, inside the running JVM — translates the hot parts into real machine code, using what it
+    observed.
+
+    SO JAVA IS COMPILED TWICE: ONCE AHEAD OF TIME, TO A PORTABLE FORMAT, AND AGAIN AT RUNTIME, TO THE
+    ACTUAL MACHINE. That is the whole design, and everything else follows from it.
+
+WHAT IT BUYS AND WHAT IT COSTS:
+
+    BUYS PORTABILITY. The `.class` file is the artifact you ship, and it is identical on Linux, Windows
+    and macOS, on x86 and ARM. "Write once, run anywhere" is a statement about the BYTECODE, not about
+    the JVM — you need a platform-specific JVM, and that is precisely the point: the platform-specific
+    part is written once, by someone else.
+    BUYS RUNTIME OPTIMISATION. Because the second compilation happens while the program runs, it can
+    use facts an ahead-of-time compiler can never know — which branches are actually taken, which types
+    actually appear at a call.
+    COSTS STARTUP. The JVM must start, load and verify classes, and interpret before it optimises. A
+    "hello world" that a native binary does in a millisecond takes tens of milliseconds.
+    COSTS WARM-UP. The first few thousand executions of a method are slow. This is why benchmarks
+    without warm-up are meaningless.
+
+THE EVERYDAY VERSION: writing instructions in a universal notation instead of one country's language.
+Anyone anywhere can follow them if they have the notation's handbook. It is slower than instructions
+already in your own language — until the reader notices you keep repeating the same section and writes
+themselves a shortcut in their own language for it.
+
+TERMS AS THEY APPEAR:
+- BYTECODE: the instruction set of the JVM. One byte per opcode, roughly 200 of them.
+- CLASS FILE: the compiled form of one class. Starts with the bytes `CAFEBABE`.
+- VERIFIER: the component that proves the bytecode is safe before it runs.
+- JIT: the just-in-time compiler inside the JVM.""",
+
+"""2. THE INTUITION — a stack machine, and why it is one
+
+JVM BYTECODE IS A STACK MACHINE, NOT A REGISTER MACHINE. `a + b` compiles to:
+
+    iload_1        push local variable 1
+    iload_2        push local variable 2
+    iadd           pop two, add, push the result
+    istore_3       pop, store into local 3
+
+    NO REGISTERS ARE NAMED ANYWHERE. Every instruction operates on an implicit operand stack.
+
+    WHY? THREE REASONS, AND THEY ARE THE REASON THE FORMAT HAS SURVIVED THIRTY YEARS:
+
+    IT IS PLATFORM-NEUTRAL BY CONSTRUCTION. Real CPUs have different numbers of registers — x86 has 16,
+    ARM has 31, older x86 had 8. Naming registers in the portable format would have baked one
+    architecture's shape into it. A stack has no such number.
+    IT IS COMPACT. Most instructions need no operands at all, because the stack says where the values
+    are. `iadd` is ONE BYTE. That mattered enormously when class files were downloaded over modems, and
+    it still matters for the code cache and for class-loading time.
+    IT IS EASY TO VERIFY. The verifier can simulate the stack's shape through every path of a method and
+    prove that it never underflows and that types always match. Register allocation would have made
+    that far harder, and verification is what makes Java memory-safe.
+
+    THE COST IS THAT A STACK MACHINE IS SLOW TO INTERPRET — every value moves through the stack. WHICH
+    IS FINE, BECAUSE INTERPRETING IS NOT THE POINT: THE JIT COMPILES THE HOT PARTS TO REAL REGISTER CODE
+    ANYWAY. The bytecode's job is to be a portable, verifiable, compact DESCRIPTION, not to be fast.
+
+THE SECOND intuition: A CLASS FILE IS FULL OF NAMES, NOT ADDRESSES.
+
+    When your code calls `System.out.println("hi")`, the class file does not contain an address. It
+    contains a SYMBOLIC REFERENCE: the string "java/lang/System", the field name "out", its descriptor,
+    the method name "println" and its descriptor. All of it lives in the CONSTANT POOL at the top of the
+    file.
+
+    THOSE NAMES ARE RESOLVED TO REAL LOCATIONS LAZILY, THE FIRST TIME EACH IS USED. Which is why:
+    you can compile against one version of a library and run against another, as long as the names and
+    descriptors still match — this is what binary compatibility means;
+    a missing class is discovered when it is first NEEDED, not at startup, which is why
+    `NoClassDefFoundError` appears mid-run rather than at launch;
+    changing a method's PARAMETER TYPES is a breaking change even though the name is the same, because
+    the descriptor is part of the reference. Hence `NoSuchMethodError` for a method that plainly
+    exists — under a different descriptor.""",
+
+"""3. THE MECHANISM — from source to a running `main`
+
+STEP 1 — `javac`. Parses, type-checks, and emits one `.class` file per class (including nested and
+anonymous ones — `Outer$1.class`). It performs only modest optimisation: constant folding of
+compile-time constants, string concatenation lowering, and syntactic sugar (generics erasure, enhanced
+`for` to iterators, autoboxing, lambdas to `invokedynamic`). ALMOST ALL REAL OPTIMISATION IS LEFT TO THE
+JIT, deliberately, because the JIT knows more.
+
+STEP 2 — THE CLASS FILE, whose structure is worth being able to name:
+
+    CAFEBABE            the magic number
+    minor/major version 65 = Java 21, 61 = 17, 52 = 8. A newer file on an older JVM gives
+                        `UnsupportedClassVersionError`, which names both numbers.
+    CONSTANT POOL       every string, class name, method name and descriptor. The bulk of the file.
+    access flags, this class, super class, interfaces
+    fields, methods     each method carries a `Code` attribute with `max_stack`, `max_locals` and the
+                        bytecode itself
+    attributes          `LineNumberTable` (for stack traces), `LocalVariableTable` (for debuggers, only
+                        with `-g`), `Signature` (generic types, which survive erasure), `StackMapTable`
+                        (precomputed type states that make verification fast)
+
+STEP 3 — THE `java` LAUNCHER. It is a small native program that: creates the JVM by calling
+`JNI_CreateJavaVM` in `libjvm`; initialises the heap and the GC; starts the bootstrap class loader;
+initialises core classes in phases (`System.initPhase1/2/3` — which is why an exception during startup
+can produce an unhelpfully bare stack trace); loads YOUR main class; verifies, links and initialises it;
+and finally invokes `main(String[])` on the "main" thread.
+
+STEP 4 — LOADING, LINKING, INITIALISING each class as it is first needed:
+    LOAD      find the bytes, delegate to the parent loader first.
+    VERIFY    prove the bytecode is well-formed: the stack cannot underflow, types match, jumps land
+              inside the method, a local holding an `int` is never used as a reference. THIS IS WHY PURE
+              JAVA BYTECODE CANNOT CORRUPT MEMORY.
+    PREPARE   static fields get default values.
+    RESOLVE   symbolic references become real ones — lazily, on first use.
+    INITIALISE run `<clinit>`. Once, ever.
+
+STEP 5 — EXECUTION. Tier 0 interprets while collecting a profile; roughly a couple of hundred
+invocations later a method is compiled by C1 with instrumentation; around ten thousand it is recompiled
+by C2 using the profile — inlining monomorphic calls, replacing never-taken branches with traps, and
+eliminating allocations that provably never escape.
+
+STEP 6 — SHUTDOWN. The JVM exits when all NON-DAEMON threads finish, or on `System.exit`, or on a fatal
+signal. Registered shutdown hooks run — unless the process is killed with `SIGKILL` or the JVM crashes.
+THIS IS WHY A FORGOTTEN THREAD POOL KEEPS A PROGRAM ALIVE AFTER `main` RETURNS: its threads are
+non-daemon by default.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `UnsupportedClassVersionError`. A class file compiled by a newer JDK than the JVM running it.
+The message gives both version numbers — 65 is Java 21, 61 is 17, 52 is 8. Compile with `--release`, not
+just `-source`/`-target`, so the API surface matches too.
+
+CASE 2 — `NoClassDefFoundError` MID-RUN. Resolution is LAZY, so a missing class surfaces when it is
+first needed, possibly hours in — or the class is present and its `<clinit>` already failed.
+
+CASE 3 — `NoSuchMethodError` FOR A METHOD THAT PLAINLY EXISTS. The DESCRIPTOR is part of the symbolic
+reference, so a changed parameter or return type is a different method. Usually two library versions on
+the classpath.
+
+CASE 4 — `-source`/`-target` WITHOUT `--release`. You get the old bytecode version and the NEW JDK's
+API, so the code compiles and then fails at runtime on an older JVM with `NoSuchMethodError`.
+
+CASE 5 — `main` WITH THE WRONG SIGNATURE. It must be `public static void main(String[])`.
+`String... args` works, because varargs IS an array. Anything else gives "Main method not found".
+
+CASE 6 — THE PROGRAM NOT EXITING AFTER `main` RETURNS. A non-daemon thread — usually an executor nobody
+shut down — is still alive. `setDaemon(true)` or a proper shutdown.
+
+CASE 7 — SHUTDOWN HOOKS NOT RUNNING. `SIGKILL`, `Runtime.halt()`, a JVM crash, or a container's grace
+period expiring. Hooks are best-effort, not a guarantee.
+
+CASE 8 — A SLOW FIRST REQUEST IN PRODUCTION. Class loading plus interpretation plus JIT warm-up. This is
+why services are warmed with synthetic traffic before joining a load balancer.
+
+CASE 9 — A STACK TRACE WITH NO LINE NUMBERS. Compiled without `-g:lines`, or the `LineNumberTable` was
+stripped by an obfuscator or a size-optimising build.
+
+CASE 10 — A TRACE-LESS `NullPointerException` IN PRODUCTION. Not a logging bug: after enough throws
+from one site, HotSpot recompiles it to throw a pre-allocated exception with no stack trace.
+`-XX:-OmitStackTraceInFastThrow` while diagnosing.
+
+CASE 11 — SPLIT PACKAGES OR MISSING `--add-opens` UNDER THE MODULE SYSTEM. Reflection into JDK internals
+that worked on Java 8 is refused from Java 17 onward.
+
+CASE 12 — ASSUMING `javac` OPTIMISES. It barely does. Do not hand-optimise source for the compiler's
+benefit; optimise for the JIT, and mostly do not optimise at all.
+
+CASE 13 — A FAT JAR WITH DUPLICATE CLASSES. The classpath is order-dependent and silent; the first
+match wins.""",
+
+"""5. THE ALTERNATIVES — other ways to get Java code running
+
+`java Hello.java` (JAVA 11) — SINGLE-FILE SOURCE LAUNCH. Compiles in memory and runs, with no `.class`
+file produced. Excellent for scripts and for reproducing a bug in one file. Java 22 extended it to
+multi-file programs.
+
+JSHELL (Java 9) — a REPL. The fastest way to answer "what does this actually return".
+
+`jlink` — build a custom runtime image containing only the modules you use. A 40 MB runtime instead of
+200 MB, which matters for container images.
+
+`jpackage` — produce a platform-native installer bundling the runtime.
+
+GRAALVM NATIVE IMAGE — AHEAD-OF-TIME compile the whole application to a native binary. This is the real
+alternative to the model in this entry:
+    GAINS millisecond startup, low memory, no warm-up, no JVM to ship.
+    LOSES peak throughput, because it never sees a runtime profile. And it requires a CLOSED WORLD:
+    reflection, dynamic proxies and resource loading must be declared at build time.
+    THE TRADE IS EXPLICIT: right for CLI tools and serverless functions that exit before they warm up;
+    wrong for a long-running server, where the JIT eventually wins.
+
+CLASS DATA SHARING (`-Xshare`, AppCDS) — pre-parse and memory-map class metadata so startup skips work
+and several JVMs share it. A real startup improvement with no downside worth mentioning.
+
+PROJECT LEYDEN is the ongoing work to shift more of this earlier — caching JIT decisions and class
+loading across runs — which is worth knowing as the direction of travel.
+
+TOOLS FOR SEEING ANY OF THIS:
+    `javap -c -p Foo.class` — the bytecode, and the single best way to answer "what does the compiler
+    actually do with this". Read it once for a string concatenation and once for a lambda.
+    `-verbose:class` — every class as it loads, and where it came from.
+    `-XX:+PrintCompilation` — the JIT's decisions, live, with `%` marking on-stack replacement and
+    `made not entrant` marking a deoptimisation.
+    `jcmd <pid> VM.command_line`, `VM.flags` — what this JVM is actually running with, which is often
+    not what anyone believes.
+
+WHAT TO SAY: "`javac` produces bytecode for a stack machine, not machine code — that is the portable
+artifact, and it is a stack machine because it has to be architecture-neutral, compact and verifiable.
+The JVM interprets it while profiling, then JIT-compiles the hot parts using facts an ahead-of-time
+compiler could never know. That buys portability and peak performance and costs startup and warm-up,
+which is exactly the trade GraalVM native image reverses."
+
+""",
+
+"""6. HOW TO USE THIS KNOWLEDGE — numbered steps
+
+STEP 1 — WHEN BEHAVIOUR SURPRISES YOU, READ THE BYTECODE. `javap -c -p`. String concatenation, lambdas,
+enhanced `for`, autoboxing and generics all look different from the source, and one look settles the
+argument.
+
+STEP 2 — COMPILE WITH `--release N`, NOT `-source`/`-target`. Only `--release` also restricts the API
+surface, so you cannot accidentally use a newer method.
+
+STEP 3 — READ THE VERSION NUMBERS IN `UnsupportedClassVersionError`. 65 = 21, 61 = 17, 52 = 8. The
+message tells you both halves of the mismatch.
+
+STEP 4 — EXPECT RESOLUTION TO BE LAZY. A missing class or method appears when first used, not at
+startup. Integration tests that exercise every path find these; unit tests do not.
+
+STEP 5 — WARM UP BEFORE MEASURING, AND BEFORE SERVING. Several thousand iterations for a benchmark;
+synthetic traffic before a new instance joins the load balancer.
+
+STEP 6 — MAKE BACKGROUND THREADS DAEMONS, OR SHUT THEM DOWN. Otherwise the JVM will not exit after
+`main` returns.
+
+STEP 7 — TREAT SHUTDOWN HOOKS AS BEST-EFFORT. They do not run on `SIGKILL`, `Runtime.halt()`, or a crash.
+
+STEP 8 — KEEP `-g:lines` ON IN PRODUCTION BUILDS. Line numbers in stack traces cost almost nothing and
+are worth a great deal at 3am.
+
+STEP 9 — USE `java Hello.java` OR `jshell` TO ANSWER SMALL QUESTIONS. Far faster than building a project
+to test one behaviour.
+
+STEP 10 — CONSIDER `jlink` OR AppCDS FOR CONTAINER STARTUP, and native image only when the process is
+short-lived enough never to warm up.
+
+STEP 11 — DO NOT HAND-OPTIMISE FOR `javac`. It barely optimises; the JIT does the work, and it does it
+better with straightforward code.
+
+STEP 12 — WHEN A JVM BEHAVES UNEXPECTEDLY, CHECK WHAT IT IS ACTUALLY RUNNING WITH.
+`jcmd <pid> VM.command_line` and `VM.flags` — inherited flag lists are often obsolete or contradictory.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'The thing that makes Java different is that it's compiled TWICE. javac produces BYTECODE — instructions
+for an imaginary machine that no physical CPU implements — and then the JVM reads those, interprets them
+at first while watching which parts run often, and a second compiler inside the running JVM translates
+the hot parts into real machine code using what it observed.
+
+So the .class file is the portable artifact. It's byte-for-byte identical on Linux, Windows and macOS,
+on x86 and ARM. "Write once, run anywhere" is a claim about the BYTECODE — you still need a
+platform-specific JVM, and that's the point: the platform-specific part is written once, by someone
+else.
+
+The bytecode is a STACK machine, not a register machine. `a + b` is iload, iload, iadd, istore — no
+registers are named anywhere. Three reasons, and they're why the format has survived thirty years. It's
+architecture-neutral by construction: real CPUs have different register counts, so naming registers
+would have baked one architecture into the portable format. It's compact — most instructions need no
+operands because the stack says where the values are, so iadd is ONE BYTE, which mattered when class
+files came over modems and still matters for load time. And it's easy to VERIFY: the verifier can
+simulate the stack shape through every path and prove it never underflows and that types always match.
+That verification is what makes pure Java bytecode unable to corrupt memory.
+
+A stack machine is slow to interpret, and that's fine, because interpreting isn't the point — the JIT
+compiles the hot parts to real register code anyway. The bytecode's job is to be a portable, verifiable,
+compact DESCRIPTION.
+
+The other thing worth knowing is that a class file is full of NAMES, not addresses. Calling
+System.out.println stores the strings "java/lang/System", "out", "println" and their descriptors in a
+constant pool, and those are resolved to real locations LAZILY, the first time each is used. Which
+explains three things at once: you can compile against one library version and run against another as
+long as names and descriptors match — that's what binary compatibility IS; a missing class surfaces
+mid-run rather than at startup, hence NoClassDefFoundError appearing hours in; and changing a method's
+parameter types is a breaking change even though the name is unchanged, because the descriptor is part
+of the reference. That's where NoSuchMethodError for a method that plainly exists comes from.
+
+The trade is explicit. You buy portability, and you buy runtime optimisation the JIT can only do because
+it sees what actually happened. You pay startup — the JVM has to boot, load and verify classes — and you
+pay warm-up, which is why an unwarmed benchmark is meaningless. GraalVM native image reverses exactly
+that trade: millisecond startup, lower peak, and a closed world where reflection has to be declared.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHAT javac PRODUCES ─────────────────────────────────────────────
+    int add(int a, int b) { return a + b; }
+    // javap -c:
+    //   iload_1        push local 1        ← NO REGISTERS ARE NAMED. It is a STACK
+    //   iload_2        push local 2           machine, because real CPUs disagree
+    //   iadd           pop 2, add, push 1     about how many registers exist.
+    //   ireturn        pop and return
+    // `iadd` is ONE BYTE — most instructions need no operands, because the stack
+    // already says where the values are.
+
+    // ── A CLASS FILE IS NAMES, NOT ADDRESSES ────────────────────────────
+    System.out.println("hi");
+    // the class file stores SYMBOLIC references in the constant pool:
+    //   Class     java/lang/System
+    //   Fieldref  System.out : Ljava/io/PrintStream;
+    //   Methodref PrintStream.println : (Ljava/lang/String;)V
+    //                                   ^^^^^^^^^^^^^^^^^^^^^ THE DESCRIPTOR IS PART
+    //   OF THE REFERENCE. Change a parameter type and it is a DIFFERENT method —
+    //   which is why you get NoSuchMethodError for a method that plainly exists.
+    // These are resolved to real locations LAZILY, on first use. Which is why a
+    // missing class appears MID-RUN, not at startup.
+
+    // ── THE CLASS FILE HEADER ───────────────────────────────────────────
+    // CAFEBABE                 magic
+    // 00 00 00 41              minor 0, major 65 = Java 21   (61 = 17, 52 = 8)
+    // constant pool ...        every name, string and descriptor. The bulk of the file.
+    // methods → Code attribute → max_stack, max_locals, the bytecode
+    // attributes: LineNumberTable   (stack traces — keep -g:lines in production)
+    //             LocalVariableTable (debuggers — only with -g)
+    //             Signature          (generic types, which SURVIVE erasure)
+    //             StackMapTable      (precomputed type states, so verification is fast)
+
+    // ── THE LAUNCH SEQUENCE ─────────────────────────────────────────────
+    // java Hello
+    //  1. the `java` launcher calls JNI_CreateJavaVM in libjvm
+    //  2. heap and GC initialised; bootstrap class loader started
+    //  3. core classes initialised in phases (System.initPhase1/2/3) — which is why
+    //     a startup failure can produce a bare, unhelpful stack trace
+    //  4. Hello is LOADED → VERIFIED → PREPARED → RESOLVED (lazily) → INITIALISED
+    //  5. main(String[]) invoked on the "main" thread
+    //  6. the JVM exits when all NON-DAEMON threads finish
+
+    public static void main(String[] args)      // ✓
+    public static void main(String... args)     // ✓ varargs IS an array
+    public static void main(String args)        // ✗ "Main method not found"
+
+    // ── WHY THE PROGRAM DOES NOT EXIT ───────────────────────────────────
+    var pool = Executors.newFixedThreadPool(4);
+    pool.submit(task);
+    // main returns... AND THE PROCESS HANGS. Pool threads are NON-DAEMON by default,
+    // and the JVM exits only when every non-daemon thread has finished.
+    pool.shutdown();                            // ← or setDaemon(true) in a factory
+
+    // ── THE ERROR THAT NAMES BOTH HALVES ────────────────────────────────
+    // UnsupportedClassVersionError: Hello has been compiled by a more recent version
+    //   of the Java Runtime (class file version 65.0), this version of the Java
+    //   Runtime only recognizes class file versions up to 61.0
+    //                                                    ^^ 65 = Java 21, 61 = 17
+    // javac --release 17 ...     ← --release ALSO restricts the API surface.
+    //                               -source/-target does not, so you get old bytecode
+    //                               calling new methods, and NoSuchMethodError later.
+
+    // ── THE TOOLS ───────────────────────────────────────────────────────
+    // javap -c -p Foo.class        the bytecode. Read it once for string concat and
+    //                              once for a lambda; it settles most arguments.
+    // java Hello.java              Java 11: compile in memory and run. No .class file.
+    // jshell                       a REPL, for "what does this actually return"
+    // -verbose:class               every class as it loads, and from which jar
+    // -XX:+PrintCompilation        the JIT's decisions live; % = OSR, "made not
+    //                              entrant" = a deoptimisation
+    // jcmd <pid> VM.command_line   what this JVM is ACTUALLY running with""",
+
+"""9. THE TRACE — one `println`, from source to machine code
+
+`System.out.println("hi")` INSIDE A LOOP THAT RUNS 100,000 TIMES.
+
+    PHASE 1 — COMPILE TIME
+    step  what happens                                    artifact
+    ---------------------------------------------------------------------------------
+    1     javac parses and type-checks                     —
+    2     the string "hi" goes in the CONSTANT POOL        a CONSTANT_String entry
+    3     the call becomes a symbolic Methodref            "println", descriptor
+                                                           (Ljava/lang/String;)V
+    4     bytecode emitted: getstatic, ldc, invokevirtual  3 instructions
+    ---------------------------------------------------------------------------------
+    NOTHING WAS RESOLVED. The class file contains the NAME of `System.out` and the NAME and DESCRIPTOR
+    of `println`. No address exists anywhere in it.
+
+    PHASE 2 — FIRST EXECUTION
+    step  what happens                                    cost
+    ---------------------------------------------------------------------------------
+    5     the JVM hits `getstatic System.out` for the      class loading: delegate to
+          first time → java.lang.System must be LOADED     the parent, find the bytes
+    6     VERIFY: simulate the operand stack through        proportional to code size
+          every path, check types and jump targets
+    7     PREPARE: static fields to defaults
+    8     RESOLVE: the symbolic reference becomes a real   ONCE, then cached
+          field offset
+    9     INITIALISE: <clinit> runs. Once, ever.
+    10    the call is INTERPRETED — every bytecode          ~100x slower than compiled
+          dispatched through a switch
+    ---------------------------------------------------------------------------------
+    STEPS 5–9 HAPPEN EXACTLY ONCE. This is the startup cost, and it is why a native binary starts in a
+    millisecond and a JVM does not.
+
+    PHASE 3 — WARMING UP
+    iteration    what is executing                          relative speed
+    ---------------------------------------------------------------------------------
+    1            tier 0, interpreter, collecting a profile   ~100x slow
+    ~500         tier 3, C1 + full profiling — real machine  ~8x
+                 code, deliberately slower than tier 1
+                 because it carries counters
+    ~12,000      tier 4, C2. The profile is CONSUMED:        ~1x
+                 the call inlined behind a class check,
+                 never-taken branches replaced by traps,
+                 escaping-nowhere objects not allocated
+    ---------------------------------------------------------------------------------
+    THE SAME LINE RAN AT THREE DIFFERENT SPEEDS IN ONE PROGRAM. Which is the whole reason an unwarmed
+    benchmark is not slightly wrong but wrong by two orders of magnitude.
+
+NOW THE PORTABILITY TRACE — the same class file on three machines:
+
+    machine        the .class file    what actually executes
+    ---------------------------------------------------------------------------------
+    x86-64 Linux   IDENTICAL bytes    x86 machine code, generated by that JVM's C2
+    ARM macOS      IDENTICAL bytes    AArch64 machine code, from the same bytecode
+    a phone        IDENTICAL bytes    whatever that runtime produces
+    ---------------------------------------------------------------------------------
+    THE PORTABLE THING IS THE DESCRIPTION, NOT THE EXECUTION. Every machine ends up running native code
+    for its own architecture — it is just generated locally, at runtime, from a shared description.
+    THAT is what "write once, run anywhere" actually means, and it is why the JVM itself is the
+    unportable part and always was.
+
+AND THE LAZY-RESOLUTION TRACE, which explains two familiar errors:
+
+    situation                                    when you find out
+    ---------------------------------------------------------------------------------
+    a class referenced but never reached          NEVER. The program runs fine.
+    a class on a rarely-taken branch, missing     when that branch first runs — possibly
+    from the runtime classpath                    hours in → NoClassDefFoundError
+    a method whose parameter type changed in a    when that call first runs →
+    newer library                                 NoSuchMethodError, for a method that
+                                                  is visibly present in the jar
+    ---------------------------------------------------------------------------------
+    ALL THREE ARE THE SAME MECHANISM: names are resolved on FIRST USE, and the descriptor is part of the
+    name. Which is also why binary compatibility is a real, checkable property rather than a hope.
+
+WHAT PRODUCED WHAT:
+    A STACK-BASED, NAME-BASED FORMAT   produced portability, verifiability, and lazy resolution.
+    LAZY RESOLUTION                    produced mid-run NoClassDefFoundError and NoSuchMethodError.
+    TWO COMPILERS                      produced the warm-up curve, and the reason benchmarks lie.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `javac` → bytecode: a stack machine, ~200 one-byte opcodes, architecture-neutral by construction.
+    Class file version 65 = Java 21, 61 = 17, 52 = 8.
+    Loading is lazy; resolution of symbolic references is lazy; initialisation happens once, ever.
+    Verification proves the operand stack cannot underflow and types match — this is what makes
+    bytecode memory-safe.
+    Interpreted → C2 steady state is commonly 10–100x. Roughly a couple of hundred invocations to leave
+    the interpreter, on the order of ten thousand to reach C2.
+    The JVM exits when all NON-DAEMON threads finish.
+
+THE #1 MISTAKE: thinking `javac` produces machine code, or that it optimises much. It produces a
+portable description and leaves the optimisation to the JIT.
+
+THE #2 MISTAKE: benchmarking without warm-up. You measured the interpreter, and it is not close.
+
+THE #3 MISTAKE: `-source`/`-target` instead of `--release`. Old bytecode, new API, and a runtime failure
+on the older JVM.
+
+THE #4 MISTAKE: expecting a missing class at startup. Resolution is lazy; it surfaces on first use.
+
+THE #5 MISTAKE: reading `NoSuchMethodError` as "the jar is missing". The descriptor is part of the
+reference, so a changed signature is a different method.
+
+THE #6 MISTAKE: forgetting non-daemon threads keep the JVM alive after `main` returns.
+
+THE #7 MISTAKE: relying on shutdown hooks. Best-effort — not on `SIGKILL`, `halt()`, or a crash.
+
+THE #8 MISTAKE: stripping line numbers from production builds. They cost almost nothing and are worth a
+great deal during an incident.
+
+THE #9 MISTAKE: treating a trace-less production `NullPointerException` as a logging failure. The JIT
+optimised the trace away at a hot throw site.
+
+THE #10 MISTAKE: choosing native image for a long-running server. It reverses the trade — great startup,
+lower peak, closed world.
+
+THE #11 MISTAKE: arguing about what the compiler does instead of running `javap -c`. One command settles
+it.
+
+ONE-SENTENCE TAKEAWAY: Java is compiled TWICE — `javac` emits bytecode for a STACK machine that names no
+registers (so it is architecture-neutral, one byte per opcode, and simple enough for a verifier to prove
+memory-safe before anything runs), and the JVM then interprets it while profiling before a second
+compiler turns the hot parts into real machine code using facts no ahead-of-time compiler could know;
+the class file holds SYMBOLIC names and descriptors rather than addresses, resolved lazily on first use,
+which is simultaneously what makes binary compatibility possible, why `NoClassDefFoundError` arrives
+mid-run, and why a changed parameter type produces `NoSuchMethodError` for a method that is plainly
+there — and the whole design buys portability and peak throughput at the price of startup and warm-up,
+which is exactly the trade a native image reverses.""",
+]
+
+
+DEEP["Varargs — and the overload ambiguity it creates"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — an array, with the array-making hidden
+
+`void log(String... parts)` lets a caller write `log("a")`, `log("a", "b")` or `log()`. Inside the
+method, `parts` IS AN ARRAY — `String[]`. Nothing else. The whole feature is that the COMPILER creates
+the array at the CALL SITE so you do not have to.
+
+    log("a", "b");        // compiles to:  log(new String[]{"a", "b"});
+    log();                // compiles to:  log(new String[0]);
+
+    THAT IS THE ENTIRE MECHANISM. `String...` and `String[]` are the same type at runtime; the `...`
+    only changes what callers are allowed to write. You can pass an existing array directly and it is
+    used AS-IS, with no wrapping.
+
+    WHICH IMMEDIATELY EXPLAINS THE TWO SURPRISES:
+
+    `log(null)` PASSES A NULL ARRAY, not an array containing null. `parts.length` then throws
+    `NullPointerException` inside a method that looks defensive. To pass one null ELEMENT you must
+    write `log((String) null)`.
+
+    PASSING AN ARRAY SPREADS IT INSTEAD OF WRAPPING IT. `Arrays.asList(someArray)` gives a list of the
+    array's ELEMENTS — usually what you want, and catastrophically not what you want when the array is
+    a primitive array. See section 2; this is the single most famous varargs bug in Java.
+
+AND THE COST NOBODY MENTIONS: EVERY VARARGS CALL ALLOCATES AN ARRAY. Even a zero-argument one, though
+some JDK methods special-case that. On a hot path — a logging call, a formatting call — that allocation
+is real, and it is exactly why `List.of` has eleven fixed-arity overloads before it falls back to
+varargs.
+
+THE EVERYDAY VERSION: a form that says "list any number of items". You still fill in a numbered list;
+the form just prints the numbers for you. And if you hand in a list you already made, it is used as-is
+— not put inside a new list of one.
+
+TERMS AS THEY APPEAR:
+- ARITY: how many arguments a method takes.
+- VARIABLE ARITY METHOD: the specification's name for a varargs method.
+- HEAP POLLUTION: a generic variable referring to an object of a different generic type — which varargs
+  makes possible, and which `@SafeVarargs` exists to acknowledge.""",
+
+"""2. THE INTUITION — why overload resolution treats it as a last resort
+
+JAVA CHOOSES AMONG OVERLOADS IN THREE ORDERED PHASES, and varargs is dead last:
+
+    PHASE 1  try to match using only WIDENING conversions. No boxing, no varargs.
+    PHASE 2  if none matched, allow BOXING and unboxing. Still no varargs.
+    PHASE 3  if still none, allow VARARGS.
+
+    THE FIRST PHASE THAT FINDS ANY APPLICABLE METHOD WINS, and the later phases are never consulted.
+
+    SO A VARARGS METHOD LOSES TO EVERYTHING. Given `f(int, int)` and `f(int...)`, the call `f(1, 2)`
+    picks the fixed-arity one. Given `f(Integer)` and `f(int...)`, the call `f(1)` picks `f(Integer)` —
+    boxing is phase 2, varargs is phase 3.
+
+    WHY THE ORDER EXISTS IS THE INTERESTING PART: AUTOBOXING AND VARARGS BOTH ARRIVED IN JAVA 5, and
+    neither was allowed to change the meaning of any program written before them. Making both
+    last-resort guarantees that. The ordering is not a design preference; it is a backwards-compatibility
+    obligation, and knowing that makes it memorable rather than arbitrary.
+
+NOW THE FAMOUS BUG, WHICH IS VARARGS MEETING PRIMITIVES:
+
+    Arrays.asList(new int[]{1, 2, 3})     →  a List<int[]> of SIZE 1
+    Arrays.asList(new Integer[]{1, 2, 3}) →  a List<Integer> of size 3
+
+    `asList` IS `<T> List<T> asList(T... a)`. A type parameter `T` must be a REFERENCE type — erasure
+    turns it into `Object`, and a primitive is not a reference. So `int[]` cannot be spread into `T...`
+    elements, because `int` cannot be a `T`. But `int[]` IS ITSELF AN OBJECT, so it matches as a single
+    element, and you get one list containing one array.
+
+    THE COMPILER IS PERFECTLY HAPPY. The result is a size-1 list and everyone expects 3, and it is
+    exactly the same root cause as `List<int>` not existing. `Arrays.stream(intArray).boxed().toList()`
+    is the fix.
+
+THE SECOND STRUCTURAL ISSUE IS AMBIGUITY. Two varargs overloads can both be applicable with neither more
+specific:
+
+    f(Object...) and f(String, Object...) called as f("x")  →  AMBIGUOUS, a compile error.
+
+    Neither is more specific: the first accepts everything the second does at that arity, and the second
+    is more specific in its first parameter. THE COMPILER REFUSES RATHER THAN GUESSING, which is the
+    right behaviour and produces an error message that reads like a puzzle.
+
+AND THE GENERICS PROBLEM — HEAP POLLUTION:
+
+    A varargs parameter of a generic type creates an array of a generic type, and Java has no such
+    thing. `T...` becomes `Object[]` after erasure. That array can be aliased and written into with the
+    wrong type, and nothing checks. Hence the "possible heap pollution" warning, and `@SafeVarargs` —
+    which does not make anything safe, it asserts that YOU have checked the method only READS the array
+    and never stores it or exposes it.""",
+
+"""3. THE MECHANISM — what the compiler emits, and the three call shapes
+
+THE DECLARATION `void log(String prefix, String... parts)` COMPILES TO
+`void log(String prefix, String[] parts)` with an ACC_VARARGS flag on the method. That flag is the only
+difference, and it exists so that callers compiled later know they may use the sugar. Reflection sees a
+`String[]` parameter, and `Method.isVarArgs()` reports the flag.
+
+THREE THINGS A CALLER CAN WRITE, AND WHAT EACH BECOMES:
+
+    log("p", "a", "b")     →  log("p", new String[]{"a","b"})   the compiler builds the array
+    log("p")               →  log("p", new String[0])           an EMPTY array, allocated
+    log("p", existingArr)  →  log("p", existingArr)              PASSED AS-IS. No wrapping.
+
+    THE THIRD ONE IS WHY YOU CANNOT PASS AN ARRAY AS A SINGLE ELEMENT WITHOUT SAYING SO. To wrap it:
+    `log("p", new String[][]{existingArr})` for an array element, or more usually you wanted `spread`
+    and this is fine.
+
+THE RULES:
+    THE VARARGS PARAMETER MUST BE LAST, and there can be at most ONE. Otherwise a call would be
+    ambiguous about where the variable part ends.
+    A VARARGS METHOD CAN BE OVERRIDDEN by one taking an array, and vice versa — they are the same
+    erasure — but the compiler warns, because callers of the two forms behave differently.
+    `main(String... args)` IS A VALID ENTRY POINT, because it is exactly `main(String[])`.
+
+THE ALLOCATION COST, and how the JDK responds to it:
+
+    EVERY CALL ALLOCATES. `List.of("a")` would allocate a one-element array on every call if it were
+    varargs-only — so `List.of` declares ELEVEN fixed-arity overloads (`of()`, `of(E)`, `of(E,E)` …
+    up to ten) and only then a varargs one. `Map.of` does the same. `EnumSet.of` does the same.
+    THAT IS NOT STYLE; IT IS AN ALLOCATION AVOIDANCE MEASURE in code that runs everywhere.
+    Escape analysis often removes the array when the method is inlined and the array provably does not
+    escape — so on a warm hot path the cost may be zero. On a cold path, or where the method is too big
+    to inline, it is not.
+
+`@SafeVarargs` — where it may be applied and what it means:
+    Applicable to `static` methods, `final` instance methods, `private` instance methods (Java 9+), and
+    constructors — that is, anything that cannot be overridden, because an override could break the
+    promise.
+    IT SUPPRESSES THE WARNING. IT DOES NOT MAKE ANYTHING SAFE. You are asserting that the method only
+    reads from the varargs array and never stores it, returns it, or lets it escape somewhere it could
+    be written through.
+
+`Arrays.stream`, `String.format`, `Logger.log`, `EnumSet.of`, `Objects.hash`, `List.of`, `Stream.of` —
+the varargs API surface is enormous, which is why the resolution rules matter more than the feature's
+apparent simplicity.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `f(null)` PASSES A NULL ARRAY. `args.length` throws `NullPointerException` inside a method that
+was written defensively. `f((String) null)` passes an array of one null.
+
+CASE 2 — `Arrays.asList(intArray)` GIVES A `List<int[]>` OF SIZE 1. A type parameter cannot be a
+primitive, so the `int[]` matches as a single element. The most famous varargs bug in Java, and the
+compiler is content.
+
+CASE 3 — PASSING AN `Object[]` TO `f(Object...)` SPREADS IT. If you meant to pass the array itself as
+one element, you must wrap it explicitly.
+
+CASE 4 — VARARGS LOSES EVERY OVERLOAD CONTEST. `f(int, int)` beats `f(int...)`; `f(Integer)` beats
+`f(int...)`. Phases 1 and 2 come first, for backwards compatibility with pre-Java-5 code.
+
+CASE 5 — TWO APPLICABLE VARARGS OVERLOADS WITH NEITHER MORE SPECIFIC. `f(Object...)` and
+`f(String, Object...)` called as `f("x")` is a compile error. The compiler refuses to guess.
+
+CASE 6 — HEAP POLLUTION WITH GENERIC VARARGS. `T...` erases to `Object[]`, which can be aliased and
+written with the wrong type. Hence the warning and `@SafeVarargs`.
+
+CASE 7 — `@SafeVarargs` READ AS A SAFETY MECHANISM. It only suppresses the warning; you are asserting
+the method never stores or exposes the array.
+
+CASE 8 — AN ALLOCATION PER CALL ON A HOT PATH. `log.debug("x", a, b)` allocates an array even when the
+level is disabled — and so does the string concatenation, if you wrote one.
+
+CASE 9 — `String.format("%s", someArray)` PRINTING SOMETHING ODD. `format` is varargs, so an
+`Object[]` is SPREAD into the format arguments rather than being one argument.
+
+CASE 10 — OVERLOADING A VARARGS METHOD WITH AN ARRAY VERSION. Same erasure, so it does not compile as
+two methods — and where it does apply (an override), the two call shapes behave differently.
+
+CASE 11 — VARARGS PLUS AUTOBOXING. `f(Integer... xs)` called with `f(1, 2)` boxes both AND allocates the
+array. Two costs, neither visible.
+
+CASE 12 — REFLECTION. `Method.invoke` takes `Object...`, so invoking a method whose single parameter is
+an `Object[]` requires wrapping: `invoke(target, new Object[]{ theArray })`.
+
+CASE 13 — A VARARGS PARAMETER THAT IS NOT LAST. A compile error, and necessarily so: there would be no
+way to tell where the variable part ends.""",
+
+"""5. THE ALTERNATIVES — and when not to use varargs at all
+
+AN EXPLICIT `List<T>` PARAMETER. Clearer, no allocation surprise, no null-array trap, no ambiguity, and
+composable — a caller who already has a collection does not have to convert it. FOR ANYTHING WITH MORE
+THAN A COUPLE OF ARGUMENTS, THIS IS USUALLY THE BETTER SIGNATURE.
+
+FIXED-ARITY OVERLOADS FOR THE COMMON CASES, with a varargs fallback. Exactly what `List.of`, `Map.of`
+and `EnumSet.of` do — ten explicit arities, then varargs. It removes the allocation for the calls that
+actually happen and keeps the general form available.
+
+`Collection<T>` OR `Iterable<T>` for input, so callers can pass whatever they have.
+
+A BUILDER when there are several optional things, rather than a varargs of alternating key/value pairs.
+`Map.of("a",1,"b",2)` is convenient and untyped in its pairing; a builder is typed.
+
+PARAMETERISED LOGGING RATHER THAN A HOT VARARGS CALL. `log.debug("x {}", v)` — the SLF4J API has
+fixed-arity overloads for one and two arguments precisely to avoid the array allocation on a disabled
+level.
+
+`Arrays.stream(intArray).boxed().toList()` INSTEAD OF `Arrays.asList(intArray)`. And
+`IntStream.of(intArray)` when you want to stay primitive.
+
+`Objects.requireNonNull(args, "args")` AT THE TOP OF A VARARGS METHOD if you accept references, because
+`f(null)` really does hand you null.
+
+FOR GENERIC VARARGS: prefer `List<T>` over `T...` wherever you can, since it sidesteps heap pollution
+entirely. When you cannot, apply `@SafeVarargs` and genuinely verify that the method only reads.
+
+WHEN VARARGS IS RIGHT: `String.format`, `List.of`, `EnumSet.of`, `Objects.hash`, assertion helpers,
+logging APIs — cases where the arguments are HETEROGENEOUS OR FEW, where the call sites are numerous,
+and where the readability gain at the call site is the whole point.
+
+WHEN IT IS WRONG: as a substitute for a collection parameter; in a method that is called in a tight
+loop; in any signature that already has close overloads, because it turns overload resolution into a
+puzzle.
+
+WHAT TO SAY: "It is sugar for an array built at the call site, so the runtime type is just `String[]` —
+which is why `f(null)` passes a null ARRAY and why passing an existing array spreads rather than wraps.
+Overload resolution treats it as a LAST resort, in phase three after widening and boxing, because
+autoboxing and varargs both arrived in Java 5 and neither was allowed to change the meaning of existing
+code. And I would usually take a `List` instead once there are more than a couple of arguments."
+
+""",
+
+"""6. HOW TO USE VARARGS WELL — numbered steps
+
+STEP 1 — ASK WHETHER A `List` OR `Collection` PARAMETER IS BETTER. Usually it is, once there is more
+than a handful of arguments.
+
+STEP 2 — NULL-CHECK THE ARRAY ITSELF. `f(null)` hands you a null array, not an empty one.
+
+STEP 3 — REMEMBER PASSING AN ARRAY SPREADS IT. If you meant one element, wrap it explicitly.
+
+STEP 4 — NEVER PASS A PRIMITIVE ARRAY TO A GENERIC VARARGS METHOD. `Arrays.asList(intArray)` is a
+size-1 list. Use `Arrays.stream(...).boxed()`.
+
+STEP 5 — EXPECT VARARGS TO LOSE EVERY OVERLOAD CONTEST. It is phase three, after widening and boxing.
+
+STEP 6 — DO NOT ADD A VARARGS OVERLOAD NEXT TO CLOSE FIXED-ARITY ONES. Ambiguity errors here read like
+puzzles, and readers cannot predict which one runs.
+
+STEP 7 — PROVIDE FIXED-ARITY OVERLOADS FOR HOT COMMON CASES. `List.of` does it ten times over, and for
+a reason.
+
+STEP 8 — KEEP VARARGS OUT OF TIGHT LOOPS. Every call allocates, unless escape analysis happens to remove
+it.
+
+STEP 9 — USE PARAMETERISED LOGGING. Fixed-arity overloads for one and two arguments avoid the array when
+the level is disabled.
+
+STEP 10 — WITH GENERIC VARARGS, PREFER `List<T>`; OTHERWISE APPLY `@SafeVarargs` AND ACTUALLY CHECK that
+the method only reads the array.
+
+STEP 11 — DOCUMENT WHAT ZERO ARGUMENTS MEANS. `f()` is legal and gives an empty array; decide whether
+that is "nothing" or an error, and say so.
+
+STEP 12 — WHEN REFLECTING, WRAP AN ARRAY ARGUMENT. `Method.invoke` is itself varargs, so a single
+`Object[]` parameter needs `new Object[]{ theArray }`.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Varargs is sugar. `void log(String... parts)` compiles to `log(String[] parts)` with a flag on the
+method, and at each CALL SITE the compiler builds the array for you. `log("a","b")` becomes `log(new
+String[]{"a","b"})`, and `log()` becomes `log(new String[0])`. Inside the method it is just an array,
+and `String...` and `String[]` are the same type at runtime.
+
+Which immediately explains the two surprises. `log(null)` passes a NULL ARRAY, not an array containing
+null — so `parts.length` throws inside a method that looks defensive. To pass one null element you have
+to write `log((String) null)`. And passing an existing array SPREADS it rather than wrapping it, because
+the array is used as-is.
+
+That second one gives the most famous varargs bug in Java. `Arrays.asList(new int[]{1,2,3})` returns a
+List of SIZE ONE — a `List<int[]>`. Because asList is `<T> List<T> asList(T... a)`, and a type parameter
+must be a REFERENCE type; erasure makes T an Object and a primitive isn't one. So `int` can't be a T and
+the array can't be spread — but `int[]` is itself an object, so it matches as a single element. The
+compiler is perfectly happy, you expected three, and it's exactly the same root cause as `List<int>` not
+existing. The fix is `Arrays.stream(arr).boxed().toList()`.
+
+On overload resolution: varargs is a LAST resort. Java picks among overloads in three ordered phases —
+widening only, then boxing allowed, then varargs allowed — and the first phase that finds anything wins.
+So `f(int,int)` beats `f(int...)`, and `f(Integer)` beats `f(int...)` because boxing is phase two.
+
+The reason for that order is the part worth saying: autoboxing and varargs BOTH arrived in Java 5, and
+neither was allowed to change the meaning of any program written before them. Making both last-resort
+guarantees it. It's not a design preference, it's a backwards-compatibility obligation.
+
+Two more things. Every varargs call ALLOCATES an array — which is why `List.of` has eleven fixed-arity
+overloads before falling back to varargs, and `Map.of` and `EnumSet.of` do the same. That's not style,
+it's allocation avoidance in code that runs everywhere. Escape analysis often removes it on a warm
+inlined path, but not on a cold one.
+
+And generic varargs cause HEAP POLLUTION, because `T...` erases to `Object[]` and Java has no real
+generic arrays — the array can be aliased and written with the wrong type. That's what the "possible
+heap pollution" warning is, and `@SafeVarargs` doesn't make anything safe; it's you asserting the method
+only READS the array and never stores or exposes it.
+
+Practically, once there are more than a couple of arguments I'd usually take a `List` instead — clearer,
+no allocation surprise, no null-array trap, and a caller who already has a collection doesn't have to
+convert it.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── IT IS SUGAR, AND NOTHING ELSE ───────────────────────────────────
+    void log(String prefix, String... parts) { ... }
+    // compiles to:  void log(String prefix, String[] parts)   + an ACC_VARARGS flag
+    // The flag is the ONLY difference. Reflection sees String[]; isVarArgs() sees
+    // the flag.
+
+    log("p", "a", "b");        // → log("p", new String[]{"a","b"})   compiler builds
+    log("p");                  // → log("p", new String[0])           ALLOCATED
+    log("p", existingArray);   // → log("p", existingArray)           PASSED AS-IS
+
+    // ── THE NULL TRAP ───────────────────────────────────────────────────
+    log("p", null);
+    //        ^^^^ a NULL ARRAY, not an array containing null.
+    //   parts.length → NullPointerException, inside a method that looks defensive.
+    log("p", (String) null);   // ← an array of ONE null. The cast is the whole fix.
+
+    // ── THE MOST FAMOUS VARARGS BUG IN JAVA ─────────────────────────────
+    int[] nums = {1, 2, 3};
+    List<int[]> wrong = Arrays.asList(nums);     // SIZE 1
+    System.out.println(Arrays.asList(nums).size());     // 1  ← everyone expects 3
+    System.out.println(Arrays.asList(1, 2, 3).size());  // 3
+    //
+    // asList is  <T> List<T> asList(T... a).  A type parameter must be a REFERENCE
+    // type — erasure makes T an Object, and `int` is not one. So int[] cannot be
+    // SPREAD into T elements. But int[] IS ITSELF AN OBJECT, so it matches as ONE
+    // element. The compiler is content. Same root cause as List<int> not existing.
+    List<Integer> right = Arrays.stream(nums).boxed().toList();   // ← the fix
+
+    // ── VARARGS LOSES EVERY OVERLOAD CONTEST ────────────────────────────
+    static void f(int a, int b) { print("fixed");   }
+    static void f(int... xs)    { print("varargs"); }
+    f(1, 2);                   // "fixed"   — phase 1 (widening) found a match
+
+    static void g(Integer x) { print("boxed");   }
+    static void g(int... xs) { print("varargs"); }
+    g(1);                      // "boxed"   — phase 2 beats phase 3
+    //
+    // PHASE 1 widening only → PHASE 2 boxing allowed → PHASE 3 varargs allowed.
+    // The first phase that finds ANY applicable method wins.
+    // WHY THAT ORDER: autoboxing AND varargs both arrived in Java 5, and neither was
+    // allowed to change the meaning of a program written before them.
+
+    // ── THE AMBIGUITY THE COMPILER REFUSES TO GUESS ─────────────────────
+    static void h(Object... xs)          { }
+    static void h(String a, Object... xs){ }
+    h("x");                    // ✗ COMPILE ERROR: reference to h is ambiguous
+    // Neither is more specific: the first accepts everything at that arity, the
+    // second is more specific in its first parameter. The compiler refuses.
+
+    // ── THE ALLOCATION, AND WHAT THE JDK DOES ABOUT IT ──────────────────
+    // EVERY varargs call allocates an array. Which is why List.of declares:
+    //   of()  of(E)  of(E,E)  of(E,E,E) ... of(E×10)   ← ELEVEN fixed arities
+    //   of(E... elements)                              ← only then varargs
+    // Map.of and EnumSet.of do the same. Not style — ALLOCATION AVOIDANCE in code
+    // that runs everywhere. (Escape analysis often removes it on a warm inlined
+    // path; not on a cold one.)
+    log.debug("state {}", v);  // ← SLF4J has 1- and 2-arg overloads for exactly this
+
+    // ── GENERIC VARARGS: heap pollution ─────────────────────────────────
+    @SafeVarargs
+    static <T> List<T> listOf(T... items) { return List.of(items); }
+    //                        ^^^^ T... erases to Object[], and Java has no real
+    //   generic arrays — so the array can be aliased and written with the wrong type.
+    //   That is what "possible heap pollution" means.
+    // @SafeVarargs DOES NOT MAKE ANYTHING SAFE. It suppresses the warning, and you
+    // are asserting the method only READS the array and never stores or exposes it.
+    // Allowed on static, final, private (9+) methods and constructors — anything that
+    // cannot be OVERRIDDEN, because an override could break the promise.
+
+    // ── AND ONE REFLECTION QUIRK ────────────────────────────────────────
+    method.invoke(target, theArray);              // SPREAD as several arguments
+    method.invoke(target, new Object[]{theArray});// ← the array as ONE argument
+    // Method.invoke is itself Object... , so it has the same spreading behaviour.""",
+
+"""9. THE TRACE — three calls, three different methods chosen
+
+THE OVERLOAD SET:
+
+    f(int a, int b)      // fixed arity
+    f(Integer a)         // one boxed
+    f(int... xs)         // varargs
+
+    call    phase 1 (widening only)   phase 2 (boxing)     phase 3 (varargs)   chosen
+    ---------------------------------------------------------------------------------
+    f(1,2)  f(int,int) APPLICABLE     not consulted        not consulted       f(int,int)
+    f(1)    nothing applicable        f(Integer) APPLIC.   not consulted       f(Integer)
+    f(1,2,3) nothing applicable       nothing applicable   f(int...) APPLIC.   f(int...)
+    ---------------------------------------------------------------------------------
+    NOTE ROW 2. A human reading `f(1)` would probably guess the varargs one — one argument, variable
+    arity, seems natural. The compiler boxes instead, because phase 2 comes before phase 3. AND THAT IS
+    NOT AN AESTHETIC CHOICE: if varargs could win at phase 2, adding an `f(int...)` overload to an
+    existing library would silently change what pre-existing callers of `f(Integer)` invoke. The phase
+    ordering is a compatibility guarantee.
+
+NOW `Arrays.asList`, traced against its own signature:
+
+    signature: <T> List<T> asList(T... a)
+
+    call                          what T can be    what happens              size
+    ---------------------------------------------------------------------------------
+    asList("a","b","c")           String           spread into 3 elements     3
+    asList(new Integer[]{1,2,3})  Integer          the array IS T[] already,
+                                                   passed as-is, 3 elements   3
+    asList(new int[]{1,2,3})      ??? — T must be  int[] cannot be T[],
+                                  a REFERENCE      but int[] IS an Object,
+                                  type, and int    so it matches as ONE
+                                  is not           element                    1
+    ---------------------------------------------------------------------------------
+    ROWS 2 AND 3 DIFFER ONLY IN `Integer` VERSUS `int`, and the results differ by a factor of three. No
+    warning is issued, because the third call is perfectly legal — it is a `List<int[]>` and the type
+    system is satisfied. The failure is that the developer wanted a different type than the one they
+    asked for.
+
+    AND THE ROOT CAUSE IS THE SAME AS EVERYTHING ELSE PRIMITIVE-RELATED: erasure turns `T` into `Object`,
+    a reference, and a primitive is not a reference. `List<int>` does not exist for the same reason.
+
+THE NULL TRACE, showing why the cast matters:
+
+    call                what the compiler emits              parts inside
+    ---------------------------------------------------------------------------------
+    log("p")            log("p", new String[0])              an EMPTY array. length 0.
+    log("p", null)      log("p", (String[]) null)            NULL. parts.length → NPE
+    log("p",(String)null) log("p", new String[]{null})       an array of ONE null
+    ---------------------------------------------------------------------------------
+    THREE CALLS THAT LOOK LIKE VARIATIONS OF EACH OTHER PRODUCE AN EMPTY ARRAY, A NULL, AND A ONE-NULL
+    ARRAY. The middle row is the one that reaches production, because `null` is what a caller passes
+    when they mean "nothing" — and the method's own `if (parts.length == 0)` guard is what throws.
+
+AND THE ALLOCATION TRACE, which explains a JDK design decision:
+
+    expression              allocations                     why the JDK cares
+    ---------------------------------------------------------------------------------
+    List.of("a")            0 — matches of(E), a fixed       called everywhere, in
+                            arity overload                   every JDK code path
+    List.of(a,b,c,…,k)      1 — 11 arguments falls through   rare enough to accept
+                            to of(E... )
+    a hypothetical          1 PER CALL, forever              which is why the eleven
+    varargs-only List.of                                     overloads exist
+    ---------------------------------------------------------------------------------
+    ELEVEN NEARLY-IDENTICAL METHODS IN THE PUBLIC API OF `List` IS NOT AN ACCIDENT OR A STYLE CHOICE. It
+    is what avoiding one array allocation looks like when the method is called billions of times across
+    an ecosystem.
+
+WHAT PRODUCED WHAT:
+    "IT IS JUST AN ARRAY"     produced the null trace and the spreading behaviour.
+    ERASURE (T = Object)      produced the `Arrays.asList(int[])` result, and heap pollution.
+    PHASE ORDERING            produced row 2 of the first table — and it exists to protect programs
+                              written before Java 5.
+    ONE ALLOCATION PER CALL   produced eleven overloads of `List.of`.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `T...` IS `T[]`. Identical at runtime; the only difference is an `ACC_VARARGS` flag on the method.
+    Every varargs call allocates an array — including the zero-argument case — unless escape analysis
+    removes it on an inlined path.
+    Overload resolution: phase 1 widening, phase 2 boxing, phase 3 varargs. First phase to find any
+    applicable method wins.
+    The varargs parameter must be LAST, and there can be only one.
+    Generic varargs erase to `Object[]`, hence heap pollution and `@SafeVarargs`.
+    `@SafeVarargs` applies only to methods that cannot be overridden: `static`, `final`, `private`
+    (Java 9+), and constructors.
+
+THE #1 MISTAKE: `f(null)`. It passes a null ARRAY, and the method's own length check throws.
+
+THE #2 MISTAKE: `Arrays.asList(primitiveArray)`. A size-1 list, because a type parameter cannot be a
+primitive. Use `Arrays.stream(...).boxed()`.
+
+THE #3 MISTAKE: expecting an array argument to be wrapped. It is spread, because varargs IS the array
+parameter.
+
+THE #4 MISTAKE: expecting varargs to win an overload contest. It is phase three, after widening and
+boxing.
+
+THE #5 MISTAKE: adding a varargs overload beside close fixed-arity ones. Ambiguity errors that read like
+puzzles, and readers who cannot predict which runs.
+
+THE #6 MISTAKE: reading `@SafeVarargs` as a safety mechanism. It suppresses a warning; you are making
+the promise.
+
+THE #7 MISTAKE: varargs in a tight loop. An allocation per call, plus boxing if the parameter is a
+wrapper.
+
+THE #8 MISTAKE: `log.debug("x " + v, a, b)` — the concatenation AND the array both happen before the
+call, regardless of the level.
+
+THE #9 MISTAKE: `String.format("%s", someArray)`. `format` is varargs, so the array is spread into the
+format arguments.
+
+THE #10 MISTAKE: using varargs where a `List` parameter belongs. Clearer, allocation-free, null-safe,
+and callers with a collection do not have to convert.
+
+THE #11 MISTAKE: forgetting `Method.invoke` is itself varargs. A single `Object[]` parameter must be
+wrapped.
+
+ONE-SENTENCE TAKEAWAY: varargs is pure call-site sugar — `String...` IS `String[]`, with the compiler
+building the array for the caller — which is why `f(null)` hands the method a NULL array rather than an
+empty one, why passing an existing array SPREADS it rather than wrapping it, and why
+`Arrays.asList(intArray)` returns a size-1 `List<int[]>` (a type parameter erases to `Object`, and a
+primitive is not a reference, exactly as `List<int>` does not exist); overload resolution treats varargs
+as a LAST resort in phase three after widening and boxing, not as a preference but as a compatibility
+obligation to programs written before Java 5 — and since every call allocates an array, `List.of`
+declares eleven fixed-arity overloads before falling back to it.""",
+]
