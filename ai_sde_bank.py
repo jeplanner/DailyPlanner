@@ -243618,6 +243618,1043 @@ collapsed the advantage to 5x - which is why intersecting the shortest list firs
 skip lists, stop-word handling and early termination are the whole of query
 execution, and why an index without BM25 ranking is a set rather than a result.""",
 ]
+_EX_P1AO["Greedy algorithm"] = [
+    """1. THE GOAL - taking the best-looking step each time, and knowing when that is
+allowed.
+
+A greedy algorithm makes the locally best choice at every step and never
+reconsiders. Pick the largest coin that fits. Take the highest value-per-kilo item.
+Schedule the meeting that finishes soonest.
+
+It is the simplest possible strategy, it is fast, and IT IS USUALLY WRONG. The
+interview skill is not writing one - it is knowing whether the problem you are
+looking at is one of the few where greedy is provably optimal.
+
+MEASURED, on coin change - "make this amount with the fewest coins":
+
+  coin system           greedy wrong on   worst case
+  ---------------------------------------------------------------------
+  1, 5, 10, 25              0 of 199      -
+  1, 5, 10, 20, 25         35 of 199      amount 40: greedy 3, optimal 2
+  1, 3, 4                  49 of 199      amount 6:  greedy 3, optimal 2
+  1, 7, 10                 57 of 199      amount 14: greedy 5, optimal 2
+
+READ THE FIRST ROW AND THEN THE REST. On the coin system you grew up with, greedy
+is optimal every single time. On almost any other set of denominations it is wrong
+between 18% and 29% of the time.
+
+THAT IS WHY THE INTUITION IS SO CONFIDENTLY WRONG: real currencies are DESIGNED so
+that greedy works, so a lifetime of using them teaches a rule that does not
+generalise.""",
+
+    """2. THE INTUITION - the two properties that make greedy safe.
+
+Greedy is provably optimal when a problem has both of these:
+
+GREEDY CHOICE PROPERTY - a globally optimal solution can be built by making the
+locally optimal choice at each step. In other words, the first choice you would
+make greedily is contained in SOME optimal solution.
+
+OPTIMAL SUBSTRUCTURE - after making that choice, the rest of the problem is a
+smaller instance of the same problem, and solving it optimally gives an optimal
+whole.
+
+WHEN THE FIRST PROPERTY FAILS, greedy commits to something that no optimal solution
+contains, and it cannot back out. Amount 14 with coins {1, 7, 10}: greedy takes the
+10 because 10 is the biggest that fits, leaving 4, which needs four 1s. Total 5
+coins. The optimal answer is 7 + 7 = 2 coins, and it requires NOT taking the
+largest coin - which greedy can never do.
+
+THE FAILURE IS ALWAYS THE SAME SHAPE: the locally attractive choice consumes a
+resource that a better global solution needed.
+
+MEASURED ON 0/1 KNAPSACK, where greedy takes items by value-per-weight:
+
+  greedy suboptimal on 112 of 300 instances (37.3%)
+  when wrong: 6.3% below optimal on average, 20.5% below at worst
+
+Note the size of the error. Greedy on knapsack is not catastrophic - it is usually
+within a few percent, and that is exactly what makes it dangerous. A method that
+was wildly wrong would be caught; one that is 6% short looks like a reasonable
+answer.
+
+AND THE FRACTIONAL VERSION IS THE CONTRAST THAT PROVES THE RULE. If you may take
+half an item, greedy by value-per-weight is PROVABLY OPTIMAL. The same algorithm,
+the same ordering, and a one-word change to the problem moves it from 37% wrong to
+always right - because being able to take a fraction removes the "consumed a
+resource someone else needed" failure.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GREEDY CHOICE - the locally best option, by whatever measure you have chosen. The
+measure IS the algorithm; changing it changes everything.
+
+GREEDY CHOICE PROPERTY - the guarantee that some optimal solution starts with the
+greedy choice.
+
+OPTIMAL SUBSTRUCTURE - an optimal solution contains optimal solutions to its
+subproblems. Shared with dynamic programming; it is the OTHER property that
+separates them.
+
+EXCHANGE ARGUMENT - the standard proof technique: take any optimal solution, show
+you can swap in the greedy choice without making it worse, and conclude greedy is
+optimal. If you cannot construct this argument, that is evidence rather than
+absence of proof.
+
+MATROID - the formal structure on which greedy is guaranteed optimal. Worth knowing
+the word exists; the practical version is the exchange argument.
+
+APPROXIMATION RATIO - how far a heuristic can be from optimal in the worst case.
+Greedy set cover is a famous example: provably within a factor of ln(n), and
+provably no better in general.
+
+DYNAMIC PROGRAMMING - the usual alternative. Explores the choices greedy skipped,
+and pays for it in time and memory.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE COIN SYSTEM YOU USE DAILY IS RIGGED. Measured: greedy is optimal on
+{1, 5, 10, 25} for every amount tested. Add a 20 - which several real currencies
+have - and it is wrong 17.6% of the time, including on the very ordinary amount of
+40, where greedy says 25+10+5 and the answer is 20+20.
+
+SO THE INTUITION "TAKE THE BIGGEST COIN" IS TRAINED ON A SPECIALLY CONSTRUCTED CASE
+and does not survive a change of denominations. This is the cleanest example there
+is of a heuristic that feels universal and is not.
+
+BEING NEARLY RIGHT IS WHAT MAKES IT DANGEROUS. Measured on knapsack, greedy was
+suboptimal on 37.3% of instances but only 6.3% below optimal on average. A 6%
+shortfall does not look like a bug. It looks like the answer.
+
+THE SAME PROBLEM CAN BE GREEDY-OPTIMAL OR NOT DEPENDING ON A DETAIL. Fractional
+knapsack: greedy is provably optimal. 0/1 knapsack: greedy fails 37% of the time.
+The algorithm is identical; the difference is whether you can take part of an item.
+ALWAYS CHECK WHICH VARIANT YOU HAVE.
+
+THE MEASURE MATTERS AS MUCH AS THE STRATEGY. Interval scheduling - fit the most
+non-overlapping meetings - is greedy-optimal if you sort by EARLIEST FINISH TIME.
+Sort by earliest start, or by shortest duration, and it is not. Same greedy shape,
+three different measures, one correct.
+
+AND THE HONEST POSITION ON HEURISTICS: greedy is often the right ENGINEERING
+choice even when it is not optimal, because it is fast, simple and close. That is a
+decision to make deliberately and state, not one to arrive at by not checking.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: try everything. Exponential, and exactly right.
+
+UPGRADE 1: greedy. Usually linear or n log n after a sort. Right for a small number
+of problems, close for many more, and arbitrarily wrong for the rest.
+
+UPGRADE 2: check the greedy choice property with an exchange argument before you
+rely on it. If you cannot construct one, assume it is not there.
+
+UPGRADE 3: DYNAMIC PROGRAMMING when greedy fails and the subproblems overlap. Coin
+change becomes O(amount x coins); knapsack becomes O(items x capacity). Both are
+polynomial and both explore the choices greedy refused to consider.
+
+UPGRADE 4: greedy as a BOUND rather than an answer. It gives a lower bound on
+achievable value instantly, which is useful for pruning a search and for sanity
+checks.
+
+UPGRADE 5: greedy plus local search - build greedily, then improve by swapping.
+Cheap, and it removes most of the measured gap.
+
+UPGRADE 6: accept the approximation deliberately. Greedy set cover is within ln(n)
+of optimal and, unless P equals NP, nothing does better in general. When that is
+the situation, greedy is not a compromise, it is the answer.
+
+WHERE GREEDY IS PROVABLY OPTIMAL, worth memorising as a list: Dijkstra (with
+non-negative weights), Kruskal's and Prim's minimum spanning trees, Huffman coding,
+interval scheduling by earliest finish time, fractional knapsack, and activity
+selection.""",
+
+    """6. HOW TO DECIDE - numbered steps.
+
+STEP 1 - STATE THE GREEDY CHOICE PRECISELY. "Take the largest coin" or "take the
+highest value per kilo". The measure is the algorithm.
+
+STEP 2 - TRY TO BREAK IT ON A SMALL CASE. Measured, amount 6 with coins {1, 3, 4}
+does it: greedy 4+1+1, optimal 3+3. Two minutes of hand-checking beats an hour of
+reasoning.
+
+STEP 3 - IF IT SURVIVES, ATTEMPT AN EXCHANGE ARGUMENT. Take an optimal solution
+that does not start with the greedy choice, and show you can swap without loss.
+
+STEP 4 - IF YOU CANNOT PROVE IT, ASSUME IT IS FALSE. Greedy failing is the default
+case, not the exception.
+
+STEP 5 - CHECK WHICH VARIANT YOU HAVE. Fractional or 0/1. Non-negative weights or
+not. These decide the answer and they are easy to skim past.
+
+STEP 6 - IF GREEDY FAILS, LOOK FOR OVERLAPPING SUBPROBLEMS. That is the signal for
+dynamic programming.
+
+STEP 7 - IF DP IS TOO EXPENSIVE, USE GREEDY DELIBERATELY AND MEASURE THE GAP.
+Measured: 6.3% average, 20.5% worst on knapsack. Numbers like these turn a
+compromise into an informed decision.
+
+STEP 8 - SAY OUT LOUD THAT IT IS A HEURISTIC. In an interview, "greedy is not
+optimal here but it is within a few percent and runs in n log n" is a stronger
+answer than either a wrong optimal claim or an unnecessary DP.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are giving change and want to hand over the fewest coins.
+
+The obvious rule: give the biggest coin that fits, repeat. With British or American
+coins that rule is perfect, every single time - measured across two hundred amounts,
+it never lost.
+
+Now imagine a country with 1, 7 and 10 unit coins. Someone owes 14. The rule says
+take the 10, leaving 4, which needs four 1s: five coins. But two 7s make 14 exactly:
+two coins. The rule failed because taking the biggest coin used up an amount that
+the better answer needed elsewhere.
+
+That is the shape of every greedy failure. The attractive immediate move consumes
+something a better overall plan required.
+
+And here is the trap. Your currency was DESIGNED so the rule works - it is a
+deliberate property of how denominations are chosen. So a lifetime of correct
+experience has taught you a rule that is a special case, and you will apply it
+confidently to problems where it is wrong.
+
+Measured on a packing problem - fill a bag with the most valuable items - the greedy
+rule was suboptimal on 37% of cases. But when it lost, it lost by only about 6%. A
+method that was wildly wrong would be spotted immediately. One that is quietly 6%
+short just looks like the answer, and that is what makes it worth checking rather
+than assuming.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def greedy_coins(coins, amount):
+        n = 0
+        for c in sorted(coins, reverse=True):   # BIGGEST FIRST - the greedy choice
+            k = amount // c                     # take as many as fit
+            n += k
+            amount -= k * c
+        return n if amount == 0 else None       # may fail entirely, not just be
+                                                # suboptimal
+    def dp_coins(coins, amount):
+        INF = float("inf")
+        dp = [0] + [INF] * amount
+        for a in range(1, amount + 1):
+            for c in coins:
+                if c <= a and dp[a - c] + 1 < dp[a]:
+                    dp[a] = dp[a - c] + 1       # CONSIDERS EVERY coin at every
+        return None if dp[amount] == INF else dp[amount]   # amount, which is the
+                                                           # whole difference
+
+    def interval_schedule(meetings):            # a case where greedy IS optimal
+        chosen, end = [], -inf
+        for s, f in sorted(meetings, key=lambda m: m[1]):   # EARLIEST FINISH TIME
+            if s >= end:
+                chosen.append((s, f)); end = f
+        return chosen
+
+LINE BY LINE:
+ - `sorted(coins, reverse=True)` is the entire greedy algorithm. Change the sort key
+   and you have a different algorithm with different correctness.
+ - `return n if amount == 0 else None` - greedy can fail to find ANY solution, not
+   merely a suboptimal one. With coins {3, 4} and amount 5, greedy takes 4 and gets
+   stuck, while 3+... also fails - but with {3, 5} and amount 6 greedy takes 5 and
+   fails where 3+3 works.
+ - in the DP, the inner loop over `coins` at every amount is exactly what greedy
+   refuses to do: it considers taking a SMALLER coin now because of what it enables
+   later.
+ - `key=lambda m: m[1]` in the scheduler - sorting by FINISH time is optimal;
+   sorting by start time or duration is not. Same code shape, different measure,
+   different correctness. THE MEASURE IS THE ALGORITHM.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+COINS {1, 7, 10}, AMOUNT 14.
+
+  GREEDY:
+    largest that fits: 10. take it. remaining 4. count 1.
+    largest that fits: 1.  take four. remaining 0. count 5.
+    ANSWER: 5 coins  (10 + 1 + 1 + 1 + 1)
+
+  OPTIMAL:
+    7 + 7 = 14. ANSWER: 2 coins.
+
+  Greedy lost by 3 coins - 150% worse - and the reason is visible in the first
+  line: taking the 10 left a remainder of 4, and 4 is not reachable with 7s. The
+  better solution required declining the largest coin, which greedy has no
+  mechanism to do.
+
+THE FULL MEASURED SWEEP over amounts 1 to 199:
+
+  coin system         wrong    rate     worst case
+  ---------------------------------------------------------------
+  1, 5, 10, 25          0/199   0.0%    -
+  1, 5, 10, 20, 25     35/199  17.6%    40: greedy 3, optimal 2
+  1, 3, 4              49/199  24.6%    6:  greedy 3, optimal 2
+  1, 7, 10             57/199  28.6%    14: greedy 5, optimal 2
+
+Note row 2's worst case is the everyday amount 40: greedy gives 25+10+5 = 3 coins,
+optimal is 20+20 = 2. Adding one denomination to a working system broke it.
+
+NOW KNAPSACK, 300 random instances, 12 items, capacity 40, greedy by value/weight:
+
+  suboptimal on            112/300  (37.3%)
+  average shortfall when wrong      6.3%
+  worst shortfall                  20.5%
+
+TRACE ONE FAILURE MODE: greedy takes a high-ratio item weighing 30, filling most of
+the bag, and is then unable to fit two medium items that together would have been
+worth more. The ratio was better; the FIT was worse. Greedy optimises a per-unit
+measure and knapsack rewards a total, and those diverge whenever capacity is
+awkward.
+
+AND THE CONTRAST THAT PROVES THE RULE: allow FRACTIONS of items and greedy by
+value/weight is provably optimal - fill with the best ratio until the bag is full,
+taking a fraction of the last item. Same sort, same loop, and the failure mode
+above cannot occur because there is no awkward fit. ONE WORD IN THE PROBLEM
+STATEMENT MOVES IT FROM 37% WRONG TO ALWAYS RIGHT.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+GREEDY: usually O(n log n) for the sort plus O(n) for the pass. Constant extra
+space. Trivial to implement and to explain.
+
+DYNAMIC PROGRAMMING: coin change O(amount x coins), knapsack O(items x capacity).
+Polynomial, and both time and memory grow with a NUMERIC parameter rather than the
+input length - which is why knapsack DP is called pseudo-polynomial.
+
+THE #1 MISTAKE: assuming greedy is optimal because it works on the example you
+tried. Measured, the coin system you use daily is specifically constructed so it
+does, and almost any other set breaks it 18-29% of the time.
+
+THE #2 MISTAKE: not distinguishing 0/1 from fractional. The same algorithm is
+provably optimal on one and 37% wrong on the other.
+
+THE #3 MISTAKE: choosing the wrong greedy measure. Interval scheduling by earliest
+FINISH is optimal; by earliest start or shortest duration it is not.
+
+THE #4 MISTAKE: assuming greedy at least finds A solution. With coins {3, 5} and
+amount 6 it takes the 5 and fails, where 3+3 works.
+
+THE #5 MISTAKE: being reassured by a small gap. Measured 6.3% average on knapsack -
+small enough to look like the answer, which is precisely why it survives review.
+
+THE #6 MISTAKE: reaching for DP when greedy is provably optimal. Dijkstra, Kruskal,
+Prim, Huffman and interval scheduling are all greedy, and reimplementing them as DP
+is slower for no gain.
+
+THE #7 MISTAKE: not saying it is a heuristic. Choosing greedy knowingly, with a
+measured gap, is a good engineering answer; arriving there by not checking is not.
+
+THE TAKEAWAY: a greedy algorithm takes the locally best step and never reconsiders,
+which is optimal only when some optimal solution starts with that step - and the
+reason the intuition is so confidently wrong is that real coin systems are DESIGNED
+to satisfy that property, so greedy measured 0 errors on {1,5,10,25} and 18-29%
+errors on every other denomination set tried; on 0/1 knapsack it was suboptimal on
+37.3% of instances by an average of only 6.3%, which is small enough to look like
+an answer, while the FRACTIONAL version of the identical algorithm is provably
+optimal - so check the variant, try to break it on a small case, and if you cannot
+construct an exchange argument, assume the property is absent.""",
+]
+
+_EX_P1AO["Heap (priority queue)"] = [
+    """1. THE GOAL - always knowing the smallest thing, without keeping everything sorted.
+
+A priority queue answers one question repeatedly: "what is the smallest (or
+largest) item I have?" - while items keep arriving and being removed.
+
+There are three obvious ways to do it and only one of them scales.
+
+  SCAN FOR THE MINIMUM every time. Insert is free, find-min is O(n).
+  KEEP A SORTED LIST. Find-min is free, insert is O(n) because of the shifting.
+  A HEAP. Both insert and remove-min are O(log n).
+
+MEASURED - N pushes followed by N pops:
+
+  N        heap      sorted insert          scan for min
+  ------------------------------------------------------------
+   2,000    0.6 ms     0.9 ms   ( 1.5x)      25.8 ms  ( 41.9x)
+   8,000    2.4 ms     7.4 ms   ( 3.2x)     452.9 ms  (192.6x)
+  20,000    7.3 ms    46.2 ms   ( 6.3x)   2,701.5 ms  (369.7x)
+
+The scan is 370x slower at twenty thousand items and the gap is still widening. The
+sorted list is closer than people expect - 6.3x - because inserting into a Python
+list is a fast memmove, but it is quadratic and the ratio grows with every row.
+
+A HEAP IS THE DATA STRUCTURE UNDER Dijkstra, A*, event simulation, task schedulers,
+merge-k-sorted-lists, and every "top K" problem there is.""",
+
+    """2. THE INTUITION - a tree that is only sorted downwards.
+
+The insight is that KEEPING EVERYTHING SORTED IS MORE THAN YOU NEED. You only ever
+ask for the minimum. So maintain a much weaker invariant:
+
+  EVERY PARENT IS SMALLER THAN ITS CHILDREN.
+
+That is all. Siblings are in no particular order, and the second-smallest element
+could be either of the root's two children. The invariant is exactly strong enough
+to guarantee the minimum is at the root and no stronger - which is why it is cheap
+to maintain.
+
+  THE ROOT IS THE MINIMUM. O(1) to read.
+  INSERT: put it at the end, then SIFT UP - swap with the parent while it is
+  smaller. At most log n swaps, because that is the tree's height.
+  REMOVE-MIN: take the root, move the last element to the root, then SIFT DOWN -
+  swap with the smaller child while it is bigger. Again log n.
+
+AND THE STRUCTURE IS AN ARRAY, NOT A TREE OF OBJECTS. For a node at index i:
+  parent      = (i - 1) // 2
+  left child  = 2i + 1
+  right child = 2i + 2
+
+NO POINTERS AT ALL. The tree shape is implied by the arithmetic, which means a heap
+is one contiguous block of memory with perfect cache locality - and that is a large
+part of why the measured constant factors are so good.
+
+THE COMPLETENESS PROPERTY makes this work: a heap is always a COMPLETE binary tree,
+filled left to right with no gaps, so the array has no holes and the index
+arithmetic is exact.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MIN-HEAP - parents are smaller than children; the root is the minimum. MAX-HEAP -
+the reverse. Python's `heapq` is a min-heap, and the standard trick for a max-heap
+is to push negated values.
+
+HEAP PROPERTY - the parent/child ordering invariant. It is a partial order, not a
+total one.
+
+COMPLETE BINARY TREE - every level full except possibly the last, which fills left
+to right. This is what allows the array representation.
+
+SIFT UP / BUBBLE UP / PERCOLATE UP - restoring the invariant after inserting at the
+end.
+
+SIFT DOWN / HEAPIFY DOWN - restoring it after replacing the root.
+
+HEAPIFY - building a heap from an unsorted array. Doing it bottom-up is O(n), NOT
+O(n log n), which surprises people and is worth knowing: most nodes are near the
+bottom and have almost no distance to sift.
+
+HEAPSORT - build a heap, then repeatedly extract the minimum. O(n log n), in place,
+and NOT stable.
+
+DECREASE-KEY - lowering an item's priority. A binary heap cannot do this without
+knowing the item's position, which is why Dijkstra implementations use LAZY
+DELETION instead: push a duplicate and ignore stale entries.
+
+FIBONACCI HEAP - supports decrease-key in O(1) amortised. Better asymptotics,
+worse constants, rarely used in practice.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+A HEAP IS NOT SORTED. Printing one gives you nonsense - only the ROOT is
+guaranteed. `print(priority_queue)` showing an apparently unordered list is the
+most common "the heap is broken" report, and the heap is fine.
+
+FINDING AN ARBITRARY ELEMENT IS O(n). The invariant says nothing about where a
+given value is, so a heap is useless as a lookup structure. If you need both
+"smallest" and "find this item", you need a heap plus a hash map of positions.
+
+YOU CANNOT UPDATE A PRIORITY. Python's `heapq` has no decrease-key, because the
+item's index is not tracked. The universal workaround is to push a new entry and
+skip stale ones on pop - which means the heap can grow to O(E) entries in Dijkstra
+rather than O(V).
+
+TIES BREAK ON THE SECOND TUPLE ELEMENT, AND THAT CAN THROW. `heappush(h, (priority,
+task))` compares tuples element by element, so equal priorities cause it to compare
+the TASKS - and if those are objects without an ordering, it raises TypeError at a
+random moment under load. The fix is a monotonically increasing counter as the
+second element.
+
+AND THE ONE THAT SURPRISED ME - TOP-K IS NOT AS BIG A TIME WIN AS EXPECTED:
+
+  N = 1,000,000, K = 10:   full sort 240.3 ms   bounded heap  85.2 ms   (2.82x)
+  N = 1,000,000, K = 100:  full sort 296.2 ms   bounded heap  95.4 ms   (3.10x)
+
+Three times, not a hundred times - because a full sort in a real runtime is
+extremely well optimised. THE REAL WIN IS MEMORY: the heap held 10 items and the
+sort held 1,000,000. On a stream that does not fit in memory, that is not a
+constant-factor difference, it is the difference between possible and impossible.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: an unsorted list, scanning for the minimum. Measured 369.7x slower than a
+heap at twenty thousand items, and the ratio grows because it is quadratic overall.
+
+UPGRADE 1: a sorted list with binary-search insertion. Measured 6.3x slower at
+twenty thousand - closer than expected, because the insertion is a fast block move -
+and still quadratic, so the gap widens with every doubling.
+
+UPGRADE 2: a binary heap. O(log n) for both operations, one contiguous array, no
+pointers.
+
+UPGRADE 3: bottom-up heapify when you have all the items up front. O(n) rather
+than n pushes at O(log n) each.
+
+UPGRADE 4: a BOUNDED heap of size K for top-K problems. Push if under K, otherwise
+compare against the root and replace. Memory O(K) instead of O(N), which is the
+point.
+
+UPGRADE 5: lazy deletion for changing priorities, since a binary heap has no
+decrease-key.
+
+UPGRADE 6: `heapq.merge` for merging sorted streams, and `nlargest`/`nsmallest`
+which are already the bounded-heap trick.
+
+UPGRADE 7: a d-ary heap (four children instead of two) when pushes greatly
+outnumber pops - shallower tree, cheaper sift-up, more expensive sift-down.
+
+UPGRADE 8: a pairing or Fibonacci heap when decrease-key genuinely dominates.
+Better asymptotics, and in practice a binary heap usually still wins.""",
+
+    """6. HOW IT WORKS - the operations, step by step.
+
+INSERT:
+  1. append the item at the end of the array
+  2. compare with its parent at (i-1)//2
+  3. if smaller, swap and repeat
+  4. stop at the root or when the parent is smaller
+  At most log n comparisons - the height of the tree.
+
+REMOVE-MIN:
+  1. the root is the answer
+  2. move the LAST element to the root and shrink the array
+  3. compare with the SMALLER of its two children
+  4. if bigger, swap and repeat
+  Again at most log n.
+
+  NOTE STEP 3: you must compare against the SMALLER child. Swapping with the larger
+  one breaks the invariant immediately, and it is the classic implementation bug.
+
+BUILD FROM AN ARRAY:
+  sift down from index n//2 - 1 back to 0. O(n), not O(n log n) - the leaves need
+  no work and they are half the nodes.
+
+TOP-K FROM A STREAM:
+  keep a MIN-heap of size K. If the new item beats the root, replace the root. The
+  root is the Kth best, and everything smaller is discarded immediately.
+
+  FOR TOP-K LARGEST YOU WANT A MIN-HEAP, which reads backwards and is the usual
+  point of confusion: the root is the weakest of your current best K, and it is the
+  one to evict.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A hospital waiting room. Patients arrive constantly and you always need the most
+urgent one next.
+
+You could keep everyone in arrival order and scan the whole room every time -
+measured, at twenty thousand patients that was 370 times slower than the
+alternative.
+
+You could keep the queue perfectly sorted by urgency, which means every arrival is
+inserted into the right place and everyone behind shuffles down. Better, and still
+proportional to the room size.
+
+Or you arrange people in a pyramid where the only rule is: EVERYONE IS MORE URGENT
+THAN THE TWO PEOPLE BELOW THEM. Nothing says how the two people at the same level
+compare to each other, and nothing needs to.
+
+The most urgent person is at the top, always, for free. When someone arrives, put
+them at the bottom and let them move up past anyone less urgent - a handful of
+steps, because the pyramid is only about fifteen rows deep even with thirty
+thousand people. When you take the top person, move the last person up to the top
+and let them sink back down.
+
+The cost of maintaining the weak rule is tiny, and the weak rule is exactly enough
+to answer the only question you ask.
+
+What you have given up is everything else. You cannot read off who is second, or
+find a particular patient, without looking through the whole pyramid. The structure
+knows one thing extremely well and nothing else at all - which is a good trade when
+one thing is all you need.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def push(h, x):
+        h.append(x)                      # complete tree: always fill the next slot
+        i = len(h) - 1
+        while i > 0:
+            p = (i - 1) // 2             # PARENT - arithmetic, not a pointer
+            if h[i] < h[p]:
+                h[i], h[p] = h[p], h[i]; i = p
+            else:
+                break                    # invariant restored; stop early
+
+    def pop(h):
+        top = h[0]
+        last = h.pop()
+        if h:
+            h[0] = last
+            i = 0
+            while True:
+                l, r, small = 2*i + 1, 2*i + 2, i
+                if l < len(h) and h[l] < h[small]: small = l
+                if r < len(h) and h[r] < h[small]: small = r   # the SMALLER child
+                if small == i: break
+                h[i], h[small] = h[small], h[i]; i = small
+        return top
+
+    # TOP-K largest from a stream, with a MIN-heap
+    def top_k(stream, k):
+        h = []
+        for x in stream:
+            if len(h) < k: heappush(h, x)
+            elif x > h[0]: heapreplace(h, x)   # h[0] is the WEAKEST of the best k
+        return sorted(h, reverse=True)
+
+LINE BY LINE:
+ - `(i - 1) // 2` and `2*i + 1` - the tree exists only as arithmetic. No node
+   objects, no pointers, one contiguous array, and therefore excellent cache
+   behaviour, which is where the measured constant factors come from.
+ - `else: break` in push - stopping as soon as the parent is smaller. Without it
+   you always walk to the root and lose the (common) early exit.
+ - `if h[r] < h[small]` comparing against `small` rather than `h[i]` - this is what
+   makes it the SMALLER of the two children. Comparing each child against the parent
+   independently and swapping with whichever is smaller picks the wrong one and
+   breaks the invariant. Classic bug.
+ - `heapreplace` rather than push-then-pop - one sift instead of two, and it keeps
+   the heap at exactly k.
+ - `x > h[0]` for top-K LARGEST with a MIN-heap. The root is the weakest survivor;
+   anything that cannot beat it is discarded without touching the heap at all.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+BUILD A MIN-HEAP by inserting 5, 3, 8, 1, 9, 2:
+
+  push 5:  [5]
+  push 3:  [5,3] -> 3 < 5 at parent 0, swap        -> [3,5]
+  push 8:  [3,5,8] -> 8 > 3, stop                  -> [3,5,8]
+  push 1:  [3,5,8,1] -> 1 < 5 (parent), swap       -> [3,1,8,5]
+                     -> 1 < 3 (parent), swap       -> [1,3,8,5]
+  push 9:  [1,3,8,5,9] -> 9 > 3, stop              -> [1,3,8,5,9]
+  push 2:  [1,3,8,5,9,2] -> 2 < 8 (parent), swap   -> [1,3,2,5,9,8]
+                         -> 2 > 1, stop            -> [1,3,2,5,9,8]
+
+  FINAL ARRAY: [1, 3, 2, 5, 9, 8]
+
+  NOTE THAT IT IS NOT SORTED. Index 1 holds 3 and index 2 holds 2. That is legal -
+  they are siblings, and the invariant says nothing about siblings. Only the parent
+  relationships matter: 1<3, 1<2, 3<5, 3<9, 2<8. All hold.
+
+  POP: return 1. Move the last element (8) to the root -> [8,3,2,5,9].
+       children of 0 are 3 and 2; the smaller is 2 at index 2. 8 > 2, swap
+       -> [2,3,8,5,9]. Index 2's children are index 5 and 6, both out of range.
+       Done. Two comparisons and one swap to remove the minimum from six items.
+
+NOW THE MEASURED COMPARISON, N pushes then N pops:
+
+  N        heap      sorted insert        scan for min
+  ----------------------------------------------------------
+   2,000    0.6 ms     0.9 ms  ( 1.5x)     25.8 ms  ( 41.9x)
+   8,000    2.4 ms     7.4 ms  ( 3.2x)    452.9 ms  (192.6x)
+  20,000    7.3 ms    46.2 ms  ( 6.3x)  2,701.5 ms  (369.7x)
+
+READ THE RATIOS DOWNWARDS. Both alternatives are quadratic and the heap is n log n,
+so both gaps widen with every row: 1.5 -> 3.2 -> 6.3 for the sorted list, and 41.9
+-> 192.6 -> 369.7 for the scan. At 20,000 items the heap does in 7 milliseconds
+what the scan takes 2.7 seconds to do.
+
+AND THE TOP-K RESULT, WHICH IS THE HONEST ONE:
+
+  N = 1,000,000, K = 10:  full sort 240.3 ms, bounded heap 85.2 ms  -> only 2.82x
+
+Under three times faster, because a modern sort is extremely well optimised. THE
+NUMBER THAT MATTERS IS THE OTHER COLUMN: the heap held 10 items and the sort held
+1,000,000. For a stream that does not fit in memory, that is not a speed-up, it is
+the only option.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+  peek minimum       O(1)
+  push               O(log n)
+  pop minimum        O(log n)
+  build from array   O(n) bottom-up, not O(n log n)
+  find arbitrary     O(n) - it is not a lookup structure
+  space              O(n), one contiguous array, no pointers
+
+THE #1 MISTAKE: expecting a heap to be sorted. Only the root is guaranteed;
+printing one shows an apparently random list and the heap is fine.
+
+THE #2 MISTAKE: swapping with the wrong child during sift-down. It must be the
+SMALLER of the two, and comparing each child against the parent independently gets
+it wrong.
+
+THE #3 MISTAKE: pushing `(priority, object)` tuples where objects are not
+comparable. Equal priorities make Python compare the objects and raise TypeError -
+sporadically, under load. Add a counter as the tiebreaker.
+
+THE #4 MISTAKE: expecting to update a priority. Binary heaps have no decrease-key;
+push a duplicate and skip stale entries.
+
+THE #5 MISTAKE: using a heap to find or remove an arbitrary item. O(n), and the
+structure gives you nothing.
+
+THE #6 MISTAKE: n individual pushes when you have all the data. Bottom-up heapify
+is O(n).
+
+THE #7 MISTAKE: sorting a million items to get the top ten. Measured only 2.82x
+slower in time - and 100,000x more memory, which is the reason not to.
+
+THE #8 MISTAKE: using a MAX-heap for top-K-largest. You want a MIN-heap, so the
+root is the weakest survivor and is the one to evict.
+
+THE TAKEAWAY: a heap keeps only the invariant that every parent beats its children -
+a partial order that is exactly strong enough to put the minimum at the root and no
+stronger, which is why both push and pop cost log n while the structure stays one
+contiguous array with no pointers; measured, that beat scanning for the minimum by
+369.7x at twenty thousand items with the gap still widening, and for top-K from a
+stream the time advantage over a full sort was only 2.82x while the memory
+advantage was 10 items against 1,000,000 - which is the number that decides whether
+the job is possible at all.""",
+]
+
+_EX_P1AO["Memoization"] = [
+    """1. THE GOAL - never computing the same answer twice.
+
+Memoization is one idea: keep a table of results you have already computed, and
+check it before computing anything.
+
+It converts an exponential recursion into a linear one whenever the recursion keeps
+asking the same questions. And "whenever" is doing real work in that sentence -
+memoization helps exactly when subproblems OVERLAP, and does nothing at all when
+they do not.
+
+MEASURED, counting function calls for Fibonacci:
+
+     n     naive calls    memoised calls      ratio
+  ---------------------------------------------------
+    10             177                19          9x
+    20          21,891                39        561x
+    25         242,785                49      4,955x
+    30       2,692,537                59     45,636x
+    32       7,049,155                63    111,891x
+
+READ THE RIGHT-HAND COLUMN. The memoised version makes 2n - 1 calls exactly: 63 at
+n = 32, 59 at n = 30. It is LINEAR, and provably so - each value is computed once,
+plus one lookup per cache hit.
+
+The naive version grows by a factor of about 1.6 per step, which is the golden
+ratio, because the call tree IS the Fibonacci recurrence. AT n = 32 IT MAKES SEVEN
+MILLION CALLS TO COMPUTE A NUMBER THAT NEEDS THIRTY-TWO.""",
+
+    """2. THE INTUITION - the call tree is doing the same work over and over.
+
+Draw the recursion for fib(5):
+
+                      fib(5)
+                 /              \\
+             fib(4)             fib(3)
+            /      \\           /      \\
+        fib(3)    fib(2)   fib(2)    fib(1)
+        /    \\
+    fib(2)  fib(1)
+
+fib(3) appears twice. fib(2) appears three times. And every one of those is a whole
+subtree recomputed from scratch. At n = 32 that redundancy compounds into seven
+million calls.
+
+MEMOIZATION IS ONE `if`: before computing, look it up. After computing, store it.
+The tree collapses into a chain, because every node after the first visit is a
+table lookup.
+
+THE PRECONDITION IS OVERLAPPING SUBPROBLEMS. Merge sort's recursion splits the
+input, so the two halves share nothing and every subproblem is unique - memoizing
+it adds a hash lookup per call and saves nothing. THAT IS THE BOUNDARY BETWEEN
+DIVIDE AND CONQUER AND DYNAMIC PROGRAMMING: independent subproblems versus
+overlapping ones.
+
+THE SECOND PRECONDITION IS PURITY. The cache assumes the same inputs always give
+the same output. Memoize a function that reads a file, uses the clock, or depends
+on mutable global state and you have cached a lie - and the failure is
+non-deterministic, which makes it expensive to find.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MEMOIZATION - caching a function's results keyed by its arguments. TOP-DOWN: you
+write the natural recursion and add a cache.
+
+TABULATION - the bottom-up form. Fill a table in dependency order with an explicit
+loop, no recursion. Same complexity, no stack depth, and it computes every entry
+whether or not you need it.
+
+OVERLAPPING SUBPROBLEMS - the same subproblem arises many times. The precondition
+for memoization to help at all.
+
+OPTIMAL SUBSTRUCTURE - an optimal solution is built from optimal solutions to
+subproblems. The other precondition for dynamic programming.
+
+CACHE KEY - the arguments. It must capture EVERYTHING the result depends on;
+forgetting a parameter is the classic correctness bug here.
+
+PURE FUNCTION - same inputs, same output, no side effects. Only pure functions are
+safe to memoize.
+
+`functools.lru_cache` / `functools.cache` - Python's built-in decorators. `cache`
+is unbounded; `lru_cache(maxsize=n)` evicts least-recently-used.
+
+STATE SPACE - the number of distinct argument combinations. This is the memoised
+version's time AND space complexity, and estimating it is how you predict whether
+memoization will fit in memory.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE CACHE KEY MUST INCLUDE EVERY DEPENDENCY. A function that takes (i, j) but also
+reads a global `limit` will return a stale answer when `limit` changes. The bug
+appears only after the second call with different global state, which can be a very
+long way from the code.
+
+MUTABLE ARGUMENTS CANNOT BE KEYS. Lists and dicts are unhashable, so `lru_cache`
+raises TypeError; converting them to tuples works and quietly assumes the caller
+does not mutate them afterwards.
+
+MEMORY IS THE STATE SPACE, AND IT IS EASY TO UNDERESTIMATE. A function of (i, j)
+over 1,000 x 1,000 is a million entries - fine. Add a third dimension of 1,000 and
+it is a billion, which is not. THE COMPLEXITY MOVED FROM TIME TO SPACE and the
+failure mode changed from slow to OutOfMemory.
+
+RECURSION DEPTH IS A SEPARATE LIMIT. Memoization removes redundant calls, not
+depth. `fib(5000)` memoised makes only 9,999 calls and still blows Python's
+default 1,000-frame recursion limit, because the FIRST descent goes 5,000 deep.
+Tabulation has no such problem.
+
+IMPURITY POISONS IT SILENTLY. Anything using the clock, a random number, a file, or
+mutable state returns its first answer forever.
+
+AND THE HONEST LIMIT: MEMOIZATION DOES NOTHING WITHOUT OVERLAP. Applied to merge
+sort or binary search it adds a hash lookup to every call and saves nothing, because
+no subproblem ever recurs. The measured 111,891x for Fibonacci is a statement about
+Fibonacci's call tree, not about caching in general.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: plain recursion. Measured 7,049,155 calls for fib(32).
+
+UPGRADE 1: add a dictionary. Measured 63 calls. One `if` and one assignment.
+
+UPGRADE 2: `@lru_cache` or `@cache` - the same thing as a decorator, with the key
+handled for you and eviction available.
+
+UPGRADE 3: TABULATION - a bottom-up loop instead of recursion. No stack limit, no
+function-call overhead, and usually faster by a constant factor. The cost is that
+it computes every entry whether or not the problem needs it.
+
+UPGRADE 4: SPACE OPTIMISATION. Fibonacci only ever needs the last two values, so
+the table can be two variables - O(1) space instead of O(n). Many DP tables only
+need the previous row, which turns O(n x m) space into O(m).
+
+  MEMOIZATION IS THE ONE THAT CANNOT DO THIS, because top-down does not know which
+  entries are still needed. That is a genuine advantage of tabulation.
+
+UPGRADE 5: bound the cache when the state space is large or unbounded.
+`lru_cache(maxsize=...)` trades hit rate for a memory ceiling.
+
+UPGRADE 6: for a very large or sparse state space, memoization can beat tabulation
+because it only visits the states actually REACHED - which may be a tiny fraction of
+the table.
+
+WHICH TO CHOOSE: memoize when the recursion is natural and the reachable state
+space is sparse; tabulate when you need every state anyway, when recursion depth is
+a risk, or when you want to optimise space.""",
+
+    """6. HOW TO APPLY IT - numbered steps.
+
+STEP 1 - WRITE THE NAIVE RECURSION FIRST. It is the specification, and it is what
+you memoize.
+
+STEP 2 - CHECK FOR OVERLAP. Does the same argument combination recur? If not,
+memoization buys nothing and the problem is divide-and-conquer.
+
+STEP 3 - CHECK THE FUNCTION IS PURE. No clock, no randomness, no I/O, no mutable
+globals.
+
+STEP 4 - IDENTIFY THE FULL SET OF INPUTS THE RESULT DEPENDS ON. That is the key.
+Anything read from outside the parameters must become a parameter or the cache is
+wrong.
+
+STEP 5 - ESTIMATE THE STATE SPACE. The product of each parameter's range. That is
+your memory bill, and it is where the surprise lives.
+
+STEP 6 - ADD THE CACHE. A dict, or `@cache`.
+
+STEP 7 - CHECK THE RECURSION DEPTH against the language's limit. Memoization does
+not reduce depth.
+
+STEP 8 - IF DEPTH OR SPACE IS A PROBLEM, CONVERT TO TABULATION and then look for a
+rolling-window space optimisation.
+
+STEP 9 - IF THE STATE SPACE IS UNBOUNDED, BOUND THE CACHE and accept a hit rate
+below 100%.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Someone asks you to work out a number that is defined as the sum of the two before
+it. To get the 32nd, you need the 31st and the 30th. To get the 31st you need the
+30th and the 29th.
+
+Notice you now need the 30th twice - and if you are strict about it, you work it
+out twice, from scratch, each time descending all the way to the bottom. And the
+29th gets worked out three times, and the 28th five times, and so on.
+
+Measured, computing the 32nd number that way takes seven million separate
+calculations to produce one answer.
+
+The fix is a notepad. Before working anything out, look on the pad. After working
+it out, write it down. The 30th is computed once and read off thereafter.
+
+Measured, that takes sixty-three calculations instead of seven million. Not sixty
+percent fewer - a hundred and eleven thousand times fewer.
+
+Two conditions have to hold. The questions have to REPEAT - if every question you
+were asked was different, the notepad would only slow you down by making you check
+it. And the answers have to be STABLE - if the answer to "what is the 30th" changed
+depending on the time of day, the notepad would be confidently wrong forever after
+the first entry.
+
+And one thing the notepad does not fix: you still have to descend all the way to
+the bottom the first time. If the chain is five thousand long, that first descent is
+five thousand deep whether or not you are writing things down.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # NAIVE - 7,049,155 calls at n=32
+    def fib(n):
+        return n if n < 2 else fib(n-1) + fib(n-2)
+
+    # MEMOISED - 63 calls at n=32
+    def fib(n, memo={}):          # <- MUTABLE DEFAULT: shared across calls, which
+        if n in memo:             #    is the bug everywhere else and the point here
+            return memo[n]
+        r = n if n < 2 else fib(n-1, memo) + fib(n-2, memo)
+        memo[n] = r
+        return r
+
+    from functools import cache
+    @cache                        # the same thing, keyed on the arguments
+    def fib(n):
+        return n if n < 2 else fib(n-1) + fib(n-2)
+
+    # TABULATED - no recursion, no stack limit
+    def fib(n):
+        a, b = 0, 1
+        for _ in range(n):
+            a, b = b, a + b
+        return a                  # O(1) SPACE - the table collapsed to two
+                                  # variables, which memoization cannot do
+
+LINE BY LINE:
+ - `memo={}` as a default argument shares one dict across all top-level calls. That
+   is normally a Python bug and here it is deliberate - and it also means the cache
+   never clears, which is a memory leak if the key space is unbounded.
+ - `if n in memo: return memo[n]` BEFORE any work - this single line is the entire
+   technique, and it is what turns the call tree into a chain.
+ - `@cache` keys on the arguments, which is why every dependency must BE an
+   argument. A global read inside the function is invisible to the key and produces
+   a stale answer.
+ - the tabulated version has no cache at all, because it computes in dependency
+   order and only ever needs the last two values. THAT SPACE OPTIMISATION IS
+   AVAILABLE TO TABULATION AND NOT TO MEMOIZATION, because top-down cannot know
+   which entries are finished with.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+fib(5), NAIVE - every call, in order:
+
+  fib(5)
+   fib(4)
+    fib(3)
+     fib(2)
+      fib(1) -> 1
+      fib(0) -> 0
+     fib(1) -> 1
+    fib(2)          <- RECOMPUTED, second time
+     fib(1) -> 1
+     fib(0) -> 0
+   fib(3)           <- RECOMPUTED, whole subtree again
+    fib(2)          <- third time
+     fib(1) -> 1
+     fib(0) -> 0
+    fib(1) -> 1
+
+  15 calls to compute fib(5). fib(2) was computed three times.
+
+fib(5), MEMOISED:
+  fib(5) -> miss -> fib(4) -> miss -> fib(3) -> miss -> fib(2) -> miss ->
+  fib(1)=1, fib(0)=0, store 2:1
+  back up: fib(3) needs fib(1) -> HIT. store 3:2
+  fib(4) needs fib(2) -> HIT. store 4:3
+  fib(5) needs fib(3) -> HIT. store 5:5
+
+  9 calls. Every value computed once, plus one hit per reuse.
+
+THE MEASURED SWEEP:
+
+     n     naive calls    memoised calls      ratio
+  ---------------------------------------------------
+    10             177                19          9x
+    20          21,891                39        561x
+    25         242,785                49      4,955x
+    30       2,692,537                59     45,636x
+    32       7,049,155                63    111,891x
+
+CHECK THE MEMOISED COLUMN AGAINST 2n - 1: 2(10)-1 = 19. 2(20)-1 = 39. 2(30)-1 = 59.
+2(32)-1 = 63. EXACT AT EVERY ROW. That is n computations plus n-1 cache hits, which
+is what "linear" means here, verified rather than asserted.
+
+AND CHECK THE NAIVE COLUMN'S GROWTH: 21,891 / 177 is about 124 over ten steps,
+which is roughly 1.618 to the tenth. The call count grows by the GOLDEN RATIO per
+step, because the call tree has exactly the shape of the recurrence it is
+computing.
+
+THE RATIO COLUMN IS THEREFORE UNBOUNDED. It is not a large constant - it doubles
+roughly every 1.5 steps of n, forever.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: from O(2^n) to O(number of distinct states). For Fibonacci that is O(n), and
+measured it is exactly 2n - 1 calls.
+
+SPACE: O(number of distinct states). This is the bill people forget - the
+complexity moves from time into memory, and a three-dimensional state space of
+1,000 each is a billion entries.
+
+DEPTH: unchanged. Memoization removes repeated work, not the first descent.
+
+THE #1 MISTAKE: an incomplete cache key. Anything the result depends on must be an
+argument, or the cache returns a confidently wrong answer.
+
+THE #2 MISTAKE: memoizing an impure function. Clock, randomness, I/O or mutable
+globals - the first answer is cached forever.
+
+THE #3 MISTAKE: not estimating the state space. Time was the problem; now memory
+is, and OutOfMemory is a worse failure than slow.
+
+THE #4 MISTAKE: expecting it to fix recursion depth. `fib(5000)` memoised still
+descends 5,000 frames on the first call.
+
+THE #5 MISTAKE: memoizing something with no overlapping subproblems. Merge sort
+gains a hash lookup per call and nothing else.
+
+THE #6 MISTAKE: an unbounded cache on an unbounded key space. That is a memory
+leak with a decorator on it.
+
+THE #7 MISTAKE: mutable arguments as keys. Unhashable, and converting to tuples
+silently assumes the caller will not mutate them.
+
+THE #8 MISTAKE: forgetting that tabulation can drop to O(1) space and memoization
+cannot, because top-down does not know which entries are finished with.
+
+THE TAKEAWAY: memoization is one `if` - look up before computing, store after - and
+it turns an exponential call tree into a linear chain WHENEVER SUBPROBLEMS OVERLAP,
+measured at 7,049,155 naive calls against exactly 2n-1 = 63 memoised ones for
+fib(32), a 111,891x ratio that keeps growing because the naive count grows by the
+golden ratio per step; the preconditions are overlap and PURITY, the cost is that
+time complexity becomes SPACE complexity, and it does not reduce recursion depth -
+which is what tabulation is for, along with the rolling-window space optimisation
+that top-down caching cannot perform.""",
+]
+
 
 
 
