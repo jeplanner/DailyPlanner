@@ -1345,9 +1345,11 @@ anywhere a silently wrong number would cost money.""",
 # ─────────────────────────────────────────────────────────────────────
 from java_bank_core import build as _build_core
 from java_bank_advanced import build as _build_advanced
+from java_bank_traps import build as _build_traps
 
 ENTRIES.extend(_build_core(Q))
 ENTRIES.extend(_build_advanced(Q))
+ENTRIES.extend(_build_traps(Q))
 
 
 # ─────────────────────────────────────────────────────────────────────
