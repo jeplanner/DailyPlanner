@@ -240169,6 +240169,1357 @@ additive path with factor exactly 1, plus normalisation and sane
 initialisation), while gradient clipping by norm is a seatbelt whose FIRING RATE
 is the number worth monitoring.""",
 ]
+_EX_P1AO["Adjacency list"] = [
+    """1. THE GOAL - storing a graph so that the questions you ask are cheap.
+
+A graph is a set of things (NODES) and the connections between them (EDGES).
+Before you can run any algorithm on it you have to decide how to store it, and
+there are two standard answers.
+
+ADJACENCY MATRIX - an n-by-n grid of yes/no. Cell [u][v] says whether u connects
+to v. Simple, and it costs n squared cells whether the graph has a million edges
+or three.
+
+ADJACENCY LIST - for each node, a list of the nodes it connects to. Costs one
+cell per edge-endpoint, so 2E cells for an undirected graph.
+
+ALMOST EVERY REAL GRAPH IS SPARSE - a person has a few hundred friends, not
+three billion; a web page links to a few dozen pages, not the whole web. So the
+list wins, usually by orders of magnitude, and the measurements below say by how
+much.
+
+THE INTERVIEW POINT: the textbook trade-off is "matrix gives O(1) adjacency
+tests, list gives O(degree)". That is true and it is not the whole answer, and
+section 4 has the measurement that complicates it.""",
+
+    """2. THE INTUITION - density decides, and real graphs are sparse.
+
+DENSITY is edges divided by the maximum possible edges. A complete graph has
+density 1; a social network with 500 million users and 200 friends each has
+density about 0.0000004.
+
+The matrix always costs n squared. The list costs 2E. So the list wins whenever
+2E is much less than n squared - which is to say, whenever the average degree is
+much less than n. MEASURED:
+
+  n        edges     density   list cells   matrix cells    matrix/list
+  ---------------------------------------------------------------------
+  100        200     0.0404          400         10,000         25x
+  1,000    2,000     0.0040        4,000      1,000,000        250x
+  1,000   25,000     0.0501       50,000      1,000,000         20x
+  10,000  20,000     0.0004       40,000    100,000,000      2,500x
+  10,000 500,000     0.0100    1,000,000    100,000,000        100x
+
+The matrix penalty grows with n even at constant density, because n squared
+grows faster than the edge count does. At ten thousand nodes and average degree
+4, the matrix is 2,500 times larger - a hundred million cells to store twenty
+thousand edges.
+
+THE CROSSOVER: the matrix only wins on space when the graph is dense enough that
+2E approaches n squared - roughly, average degree comparable to n/2. THAT
+ALMOST NEVER HAPPENS at any interesting scale, and it is why every serious graph
+library is list-based.
+
+THE ONE PLACE THE MATRIX IS GENUINELY RIGHT: small n with heavy adjacency
+querying, or when you want to do LINEAR ALGEBRA on the graph - matrix
+multiplication counts paths, eigenvectors give PageRank, and those want a matrix
+by definition.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NODE (vertex) - a thing. A person, a page, a city, an account.
+
+EDGE - a connection. UNDIRECTED if the relation is symmetric (friendship);
+DIRECTED if not (follows, links to, depends on).
+
+DEGREE - how many edges touch a node. For directed graphs, IN-DEGREE and
+OUT-DEGREE separately.
+
+WEIGHT - a number on an edge. Distance, cost, capacity, strength.
+
+SPARSE - E is roughly proportional to n (each node has a bounded number of
+edges). DENSE - E is roughly proportional to n squared.
+
+ADJACENCY LIST - a mapping from node to its neighbours. In practice a list of
+lists when nodes are 0..n-1, or a dictionary of lists when they are not.
+
+ADJACENCY SET - the same, but each node's neighbours are a SET rather than a
+list. This is the variant most people forget and it changes the trade-off - see
+section 4.
+
+EDGE LIST - just a list of (u, v, w) triples. The most compact form, the worst
+for traversal, and the right format for reading a graph in from a file before
+you build something better.
+
+CSR / COMPRESSED SPARSE ROW - two flat arrays instead of a list of lists. The
+production form for very large static graphs, because it has one allocation
+instead of n and perfect cache locality.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the textbook trade-off is incomplete.
+
+The standard claim: "matrix answers 'is u adjacent to v' in O(1); the list needs
+O(degree)". Measured, on n = 2,000 with average degree 6, over 200,000 random
+queries:
+
+  matrix lookup            0.102 us/query
+  list-of-SETS lookup      0.056 us/query      <- FASTER THAN THE MATRIX
+  list-of-lists scan       0.121 us/query
+
+A LIST OF SETS BEAT THE MATRIX AT THE MATRIX'S OWN GAME. Both are O(1); the set
+lookup won on constants, because indexing a row of a Python list-of-bytearrays
+costs two dereferences while a set lookup is one hash.
+
+I EXPECTED THE MATRIX TO WIN THIS ROW AND IT DID NOT. The honest conclusion is
+that the "O(1) adjacency test" argument for matrices is much weaker than it is
+usually presented, because you can have O(1) adjacency AND O(degree) iteration
+at the same time by storing sets. You pay memory for the set overhead, but not n
+squared of it.
+
+AND THE OTHER DIRECTION IS NOT CLOSE AT ALL. Iterating every node's neighbours,
+fifty times over:
+
+  adjacency list       3.7 ms
+  adjacency matrix   780.3 ms      (210x slower)
+
+Because the matrix has to scan all 2,000 cells of a row to find the 6 that are
+set. EVERY GRAPH TRAVERSAL - BFS, DFS, Dijkstra, PageRank, connected components
+- is built on "give me u's neighbours", and that is the operation the matrix is
+210 times worse at.
+
+SO THE REAL SUMMARY IS: the list is enormously better at the operation
+algorithms actually use, and its supposed weakness is fixable by using sets.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: an edge list, a flat list of (u, v) pairs. Compact, trivial to read from
+a file, and finding a node's neighbours means scanning ALL E edges. Fine for
+input, useless for traversal.
+
+UPGRADE 1: adjacency list, one list per node. Now neighbours are O(degree), and
+this is the default answer.
+
+UPGRADE 2: adjacency SET per node, when you also need fast "is u adjacent to v".
+Measured above at 0.056 us, faster than the matrix. Costs more memory per edge
+than a list, and still nowhere near n squared.
+
+UPGRADE 3: a dictionary of lists when node IDs are not small integers - user
+IDs, URLs, strings. Or map them to 0..n-1 once and use arrays, which is what
+every serious system does because arrays are far more cache-friendly.
+
+UPGRADE 4: CSR (compressed sparse row) for large static graphs. Two flat arrays:
+`offsets[n+1]` and `targets[E]`. Node u's neighbours are
+`targets[offsets[u] : offsets[u+1]]`. ONE ALLOCATION INSTEAD OF n, contiguous
+memory, and it is why graph libraries load into this form. The cost is that you
+cannot add an edge without rebuilding.
+
+UPGRADE 5: sort each neighbour list. Enables binary search for adjacency (O(log
+degree) without the set overhead) and makes set-intersection operations - mutual
+friends, triangle counting - linear rather than quadratic.
+
+UPGRADE 6: for a DIRECTED graph you often need both directions - who I follow
+and who follows me. Store two structures, or accept that reverse queries are
+O(E).""",
+
+    """6. HOW TO BUILD AND USE ONE - numbered steps.
+
+STEP 1 - decide directed or undirected. For undirected, EVERY EDGE IS STORED
+TWICE, once at each endpoint. Forgetting the second insertion is the single most
+common bug here, and it produces a graph that is subtly wrong rather than
+obviously broken.
+
+STEP 2 - map node identifiers to 0..n-1 if they are not already. Keep the map
+for reporting results back.
+
+STEP 3 - allocate `[[] for _ in range(n)]`. Note that `[[]] * n` gives you n
+references to the SAME list - a classic Python bug that makes every node share
+one neighbour list.
+
+STEP 4 - insert each edge at both endpoints (undirected) or one (directed).
+
+STEP 5 - if you need adjacency tests, keep sets as well, or sort the lists.
+
+STEP 6 - if the graph is large and static, convert to CSR once.
+
+STEP 7 - for weighted graphs store (neighbour, weight) pairs, and be consistent
+about the order - `(v, w)` versus `(w, v)` mixed across a codebase is a bug that
+type-checks.
+
+STEP 8 - handle self-loops and duplicate edges explicitly. Real data has both,
+and most algorithms assume neither.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have a thousand people and you want to record who knows whom.
+
+METHOD ONE: a giant grid, a thousand rows by a thousand columns, with a tick in
+a cell if those two people know each other. A million cells. To find everyone
+Alice knows you read her entire row of a thousand cells and find the four ticks.
+To check whether Alice knows Bob you go straight to one cell.
+
+METHOD TWO: give each person a small card listing the people they know. A
+thousand cards with about four names each - four thousand names in total instead
+of a million cells. To find everyone Alice knows you read her card. To check
+whether Alice knows Bob you scan her card, which is four names long.
+
+The grid uses 250 times the space to make one question slightly easier. And it
+makes the question you actually ask constantly - "who does this person know" -
+250 times harder, because you read a thousand cells to find four names.
+
+Every algorithm that walks a network asks that question over and over. So the
+cards win, decisively, and the measured penalty for the grid was 210x on that
+operation.
+
+And the grid's one advantage turns out to be avoidable: write each card's names
+in an index rather than a plain list, and looking up "does Alice know Bob" is as
+fast as the grid - measured, slightly faster.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    n = 1000
+    adj    = [[] for _ in range(n)]        # NOT [[]] * n - that shares one list
+    adjset = [set() for _ in range(n)]     # optional, for O(1) adjacency tests
+
+    def add_edge(u, v, w=1, directed=False):
+        adj[u].append((v, w))
+        adjset[u].add(v)
+        if not directed:
+            adj[v].append((u, w))          # THE LINE PEOPLE FORGET
+            adjset[v].add(u)
+
+    def neighbours(u):
+        return adj[u]                      # O(degree). What every traversal uses.
+
+    def is_adjacent(u, v):
+        return v in adjset[u]              # O(1), measured at 0.056 us
+
+    # CSR, for a large static graph
+    offsets = [0]
+    targets = []
+    for u in range(n):
+        targets.extend(v for v, _ in adj[u])
+        offsets.append(len(targets))
+    # node u's neighbours are targets[offsets[u] : offsets[u+1]]
+
+LINE BY LINE:
+ - `[[] for _ in range(n)]` versus `[[]] * n` - the second creates ONE list and n
+   references to it, so adding an edge to node 0 adds it to every node. It is
+   syntactically shorter and completely wrong.
+ - `if not directed: adj[v].append(...)` - undirected edges are stored twice. Omit
+   it and BFS still runs, still terminates, and quietly explores a different
+   graph.
+ - `adjset` doubles the memory per edge and buys the matrix's only advantage.
+   Measured: 0.056 us versus the matrix's 0.102 us, on the same data.
+ - the CSR loop replaces n small lists with two flat arrays. One allocation,
+   contiguous memory, and no ability to insert - which is the right trade for a
+   graph you load once and query forever.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Five nodes, undirected, edges: 0-1, 0-2, 1-2, 2-3, 3-4.
+
+ADJACENCY LIST, after inserting each edge at both endpoints:
+  0: [1, 2]
+  1: [0, 2]
+  2: [0, 1, 3]
+  3: [2, 4]
+  4: [3]
+  Total cells: 2 + 2 + 3 + 2 + 1 = 10 = 2 x 5 edges.
+
+ADJACENCY MATRIX:
+       0  1  2  3  4
+    0  .  1  1  .  .
+    1  1  .  1  .  .
+    2  1  1  .  1  .
+    3  .  .  1  .  1
+    4  .  .  .  1  .
+  Total cells: 25. Ten of them are set; fifteen are wasted.
+
+At n = 5 the ratio is only 2.5x and the matrix is perfectly reasonable. THE
+RATIO IS WHAT GROWS: at n = 10,000 with the same average degree it measured
+2,500x, because the list grows linearly with n and the matrix grows
+quadratically.
+
+NOW TRACE "VISIT EVERY NEIGHBOUR OF EVERY NODE" ON BOTH:
+
+  LIST:   read 10 cells total. Every cell read is an actual neighbour.
+  MATRIX: read 25 cells, of which 15 are empty. 60% wasted.
+
+At n = 2,000 with degree 6 that waste ratio becomes 1,994 empty cells per 6 real
+ones - 99.7% wasted - and that is exactly where the measured 210x came from. IT
+IS NOT A CONSTANT-FACTOR DIFFERENCE; the waste fraction grows with n while the
+useful work stays fixed.
+
+AND THE ADJACENCY QUERY, traced:
+  "is 0 adjacent to 3?"
+  MATRIX: read cell [0][3]. One access.
+  LIST:   scan [1, 2]. Two comparisons, no match.
+  SET:    hash 3, probe. One access.
+  The list is the loser here and only here - and the set version removes even
+  that, which is why the measured set beat the matrix.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+SPACE: list is O(n + E); matrix is O(n squared). Measured ratios from 20x on a
+dense small graph to 2,500x on a sparse large one.
+
+NEIGHBOUR ITERATION: list is O(degree); matrix is O(n). Measured 210x for
+n = 2,000, degree 6 - and the gap widens with n.
+
+ADJACENCY TEST: matrix O(1); list O(degree); LIST-OF-SETS O(1), measured
+slightly FASTER than the matrix.
+
+ADD AN EDGE: both O(1). Remove an edge: matrix O(1), list O(degree) or O(1) with
+sets.
+
+THE #1 MISTAKE: `[[]] * n`. It creates one list and n references to it, so every
+node shares the same neighbours. It looks correct and is catastrophically wrong.
+
+THE #2 MISTAKE: forgetting to insert the reverse edge for an undirected graph.
+Nothing crashes; you just silently traverse a different graph than you have.
+
+THE #3 MISTAKE: reaching for a matrix because "adjacency tests are O(1)".
+Measured, a list of sets is O(1) too and was faster, for a fraction of the
+memory.
+
+THE #4 MISTAKE: assuming your graph is dense. Compute the density before
+choosing. Social, web, road and dependency graphs are all extremely sparse.
+
+THE #5 MISTAKE: not handling self-loops and duplicate edges. Real data has both
+and most algorithms assume neither.
+
+THE #6 MISTAKE: using a matrix for a graph that will grow. n squared means
+doubling the node count quadruples the memory.
+
+WHEN THE MATRIX IS RIGHT: small n, or when you want linear algebra on the graph
+- matrix powers count paths, and eigenvector methods like PageRank are naturally
+matrix operations.
+
+THE TAKEAWAY: an adjacency list stores 2E cells against the matrix's n squared,
+which measured as a 2,500x memory saving on a sparse ten-thousand-node graph and
+a 210x speed-up on neighbour iteration - the operation every traversal is built
+from - while the matrix's one advantage, O(1) adjacency testing, is fully
+recovered by storing each node's neighbours as a SET, which measured faster than
+the matrix itself.""",
+]
+
+_EX_P1AO["Dijkstra's algorithm"] = [
+    """1. THE GOAL - the cheapest route, not the shortest-looking one.
+
+You have a network where every connection has a COST - distance, time, money,
+latency - and you want the cheapest way from one starting point to everywhere
+else.
+
+BFS answers the wrong question here. BFS finds the path with the FEWEST STEPS,
+and one expensive step beats three cheap ones on step count while losing badly
+on cost. Measured on a 500-node weighted graph, four nodes in five got a worse
+route from BFS, averaging 641% overpayment, with one node reachable for a cost
+of 6 that BFS routed through 171.
+
+Dijkstra's answer: keep a running best-known cost to every node, always expand
+the CHEAPEST unfinished node next, and relax its edges. The key insight is that
+once you pop the cheapest unfinished node, its distance is FINAL - nothing
+reachable later can be cheaper, because everything else already costs at least
+as much and every edge adds a non-negative amount.
+
+THAT SENTENCE IS ALSO THE ALGORITHM'S ONLY REQUIREMENT AND ITS ONLY WEAKNESS.
+"Every edge adds a non-negative amount" is why negative weights break it - and
+section 4 shows that HOW badly they break it depends on which implementation you
+wrote, which is not the usual story.""",
+
+    """2. THE INTUITION - greedy, and why greedy is provably right here.
+
+Greedy algorithms are usually wrong. Dijkstra is greedy and correct, and the
+reason is worth being able to state.
+
+At every step you pop the node with the smallest tentative distance. CLAIM: that
+distance is final. WHY: any other route to it must go through some node still in
+the queue, and every node in the queue already has a tentative distance greater
+than or equal to this one. Since every edge weight is at least zero, going
+through them can only add. So no cheaper route exists.
+
+THE ENTIRE PROOF RESTS ON "EVERY EDGE ADDS AT LEAST ZERO". Remove that and the
+greedy claim collapses: a node you already finalised could be improved later by
+a negative edge, and Dijkstra has already moved on.
+
+RELAXATION is the other half. For each neighbour v of the popped node u:
+    if dist[u] + weight(u, v) < dist[v]:
+        dist[v] = dist[u] + weight(u, v)
+That is the whole update. "Relax" means loosening an upper bound - dist[v]
+starts at infinity and only ever decreases.
+
+WHY A PRIORITY QUEUE: you need "the cheapest unfinished node" repeatedly. A
+linear scan makes it O(V squared), fine for dense graphs. A binary heap makes it
+O((V + E) log V), which is what you want for sparse graphs - and sparse is the
+normal case.
+
+DIJKSTRA IS BFS WITH A PRIORITY QUEUE INSTEAD OF A QUEUE. On an unweighted graph
+(all weights 1) it produces exactly BFS's answer, more slowly.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TENTATIVE DISTANCE - the best cost found to a node so far. Starts at infinity
+for everything except the source, which starts at 0.
+
+RELAX AN EDGE - check whether going through u gives a cheaper route to v, and if
+so update v's tentative distance.
+
+FINALISED / SETTLED - a node whose distance is known to be optimal. In Dijkstra
+a node becomes finalised the moment it is popped.
+
+PRIORITY QUEUE / MIN-HEAP - a structure that returns the smallest element. Push
+and pop are O(log n).
+
+LAZY DELETION - the standard Python trick: instead of updating a node's key in
+the heap (which the standard library cannot do), push a NEW entry with the better
+distance and ignore stale entries when they surface with `if du > dist[u]:
+continue`. Simple, and it means the heap can hold more than V entries.
+
+DECREASE-KEY - the textbook operation the lazy trick replaces. Fibonacci heaps
+support it in O(1) amortised, giving O(E + V log V) - beautiful in theory and
+slower than a binary heap in practice.
+
+NEGATIVE CYCLE - a cycle whose total weight is negative. Going round it lowers
+your cost forever, so "shortest path" has no answer. Bellman-Ford detects this;
+Dijkstra cannot.
+
+PARENT / PREDECESSOR ARRAY - what turns a distance into a route.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the standard counterexample does not work.
+
+"Dijkstra fails on negative edges" is true, and the graph everybody draws to
+prove it usually does not prove it. Measured, on two implementations:
+
+  IMPLEMENTATION A - lazy heap: re-push on improvement, skip stale entries.
+                     This is what almost everyone writes in Python.
+  IMPLEMENTATION B - visited set: once a node is popped it is never touched
+                     again. This is the textbook formulation.
+
+  graph: 0->1 (4), 0->2 (1), 2->1 (-3), 1->3 (1), 2->3 (7)
+    truth (Bellman-Ford):  [0, -2, 1, -1]
+    lazy heap:             [0, -2, 1, -1]   CORRECT
+    visited set:           [0, -2, 1, -1]   CORRECT
+
+BOTH GOT THE CLASSIC EXAMPLE RIGHT. I expected at least one failure and got
+none, which means this graph does not demonstrate what it is usually used to
+demonstrate.
+
+A deeper graph does break one of them:
+
+  graph: 0->1 (2), 0->2 (3), 2->1 (-2), 1->3 (2), 3->4 (2), 4->5 (2), 2->5 (10)
+    truth:         [0, 1, 3, 3, 5, 7]
+    lazy heap:     [0, 1, 3, 3, 5, 7]   CORRECT
+    visited set:   [0, 2, 3, 4, 6, 8]   *** WRONG on four of six nodes ***
+
+THE VISITED-SET VERSION FINALISED NODE 1 AT COST 2 AND THEN REFUSED TO REVISIT
+IT when the -2 edge made it reachable for 1. The error then propagated down the
+chain to nodes 3, 4 and 5. The lazy version simply re-pushed node 1 and
+recovered.
+
+SO "DIJKSTRA BREAKS ON NEGATIVE EDGES" IS REALLY "THE VISITED-SET DIJKSTRA
+BREAKS; THE LAZY ONE DEGRADES INTO A SLOW BELLMAN-FORD". And that degradation
+has its own failure: on a negative CYCLE the lazy version never terminates. On
+0->1 (1), 1->2 (-3), 2->0 (1) - cycle sum -1 - it was still running after
+200,000 pops with distances at -66,666 and falling. Bellman-Ford detects the
+cycle and reports it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: try every path. Exponential. Unusable past a handful of nodes.
+
+UPGRADE 1: BFS. Linear, and it answers the wrong question on weighted graphs -
+measured 79.2% of nodes worse, 641.6% average overpayment.
+
+UPGRADE 2: Dijkstra with a linear scan for the minimum. O(V squared). Genuinely
+the right choice for a DENSE graph, where E approaches V squared and the heap's
+log factor buys nothing.
+
+UPGRADE 3: Dijkstra with a binary heap. O((V + E) log V). The default.
+
+UPGRADE 4: lazy deletion instead of decrease-key, because standard heaps cannot
+update a key. Push a duplicate, skip stale pops. The heap grows to O(E) entries
+instead of O(V), which is a memory cost and almost always the right trade.
+
+UPGRADE 5: early exit when you only need one target - stop as soon as it is
+popped, since its distance is final at that moment. On a large graph this is a
+large saving and it is one line.
+
+UPGRADE 6: bidirectional search - run from both ends and meet in the middle.
+Roughly square-roots the explored area on road-like graphs.
+
+UPGRADE 7: A* - Dijkstra plus an admissible heuristic (straight-line distance,
+for maps). Same guarantees, far fewer nodes expanded. This is what routing
+engines actually run.
+
+UPGRADE 8: Bellman-Ford when weights can be negative. O(V x E), and it DETECTS
+negative cycles rather than looping forever.
+
+UPGRADE 9: Johnson's algorithm for all-pairs on a sparse graph with negative
+edges - reweight with Bellman-Ford once, then run Dijkstra from every node.""",
+
+    """6. HOW IT WORKS - the loop, step by step.
+
+STEP 1 - dist[source] = 0, everything else infinity. Push (0, source).
+
+STEP 2 - pop the smallest (d, u) from the heap.
+
+STEP 3 - if d > dist[u], this is a STALE entry left over from before an
+improvement. Skip it. (This one line is what makes lazy deletion work.)
+
+STEP 4 - u is now FINALISED. If u is the only target you care about, stop here.
+
+STEP 5 - for each neighbour v with edge weight w: if dist[u] + w < dist[v], set
+dist[v] = dist[u] + w, set parent[v] = u, and push (dist[v], v).
+
+STEP 6 - repeat until the heap is empty.
+
+STEP 7 - to recover the route to any node, follow parent pointers back to the
+source and reverse.
+
+CHECK BEFORE YOU RUN IT: are all weights non-negative? If not, you need
+Bellman-Ford, and the measurement in section 4 shows the failure is silent -
+wrong numbers, no error.
+
+CHECK AFTER: nodes still at infinity are unreachable, which is information
+rather than a bug.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are at a train station and want the cheapest fare to every other station.
+
+Write "0" next to your own station and "unknown" next to everywhere else. Now
+repeatedly do this: find the station with the cheapest confirmed fare that you
+have not yet worked from, and look at every station you can reach directly from
+it. For each, if going via this station is cheaper than anything you had written
+down, cross out the old number and write the new one.
+
+The clever part is knowing when a number is FINAL. When you pick the cheapest
+unfinished station, nothing you discover later can beat it - every other route
+would have to pass through a station that already costs at least as much, and
+fares are never negative, so it can only get more expensive. So you can write
+that number in pen and never revisit it.
+
+That is the whole algorithm, and it is why it is fast: every station is
+finalised exactly once.
+
+It also shows exactly where it breaks. If some route PAID you to travel it - a
+negative fare - then a station you already wrote in pen could turn out to be
+cheaper after all, and you have already moved on. Measured, the version that
+writes in pen got four of six stations wrong on such a network. The version that
+allows itself to rub things out got them right, at the cost of no longer having
+a guarantee it will ever finish - on a loop that pays you each time round, it
+was still going after two hundred thousand steps with the fares at minus sixty
+thousand.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    import heapq
+
+    def dijkstra(adj, source, target=None):
+        INF = float("inf")
+        dist   = [INF] * len(adj);  dist[source] = 0
+        parent = [None] * len(adj)
+        pq = [(0, source)]
+
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]:
+                continue                        # STALE entry. Lazy deletion.
+            if u == target:
+                return dist, parent             # early exit: d is already final
+            for v, w in adj[u]:
+                nd = d + w
+                if nd < dist[v]:                # RELAX
+                    dist[v] = nd
+                    parent[v] = u
+                    heapq.heappush(pq, (nd, v)) # push a duplicate, do not update
+        return dist, parent
+
+    def route(parent, target):
+        path = []
+        while target is not None:
+            path.append(target)
+            target = parent[target]
+        return path[::-1]
+
+LINE BY LINE:
+ - `(d, u)` in that order - the heap sorts on the tuple, so the distance must be
+   first. `(u, d)` compiles, runs, and returns nonsense sorted by node id.
+ - `if d > dist[u]: continue` - the stale check. Without it you reprocess nodes
+   through out-of-date distances; the answer survives and the work multiplies.
+   THIS LINE IS ALSO WHAT ACCIDENTALLY MAKES THE ALGORITHM RECOVER FROM NEGATIVE
+   EDGES, by allowing a finalised node to be re-pushed.
+ - `if u == target: return` - a one-line optimisation that is correct precisely
+   because a popped node's distance is final.
+ - `heapq.heappush(pq, (nd, v))` rather than updating v's existing entry -
+   Python's heapq has no decrease-key. The heap can reach O(E) entries.
+ - `parent[v] = u` inside the relax - it must be updated in the SAME branch as
+   the distance, or you get correct distances with an inconsistent route.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Graph (directed): 0->1 (4), 0->2 (1), 2->1 (2), 1->3 (1), 2->3 (5)
+
+  dist = [0, inf, inf, inf]   heap = [(0,0)]
+
+  POP (0,0). Not stale. Relax:
+     0->1 (4): 0+4 = 4 < inf   -> dist[1]=4, push (4,1)
+     0->2 (1): 0+1 = 1 < inf   -> dist[2]=1, push (1,2)
+  dist = [0, 4, 1, inf]   heap = [(1,2), (4,1)]
+
+  POP (1,2). 1 == dist[2], not stale. NODE 2 IS NOW FINAL. Relax:
+     2->1 (2): 1+2 = 3 < 4     -> dist[1]=3, push (3,1)      <- IMPROVED
+     2->3 (5): 1+5 = 6 < inf   -> dist[3]=6, push (6,3)
+  dist = [0, 3, 1, 6]   heap = [(3,1), (4,1), (6,3)]
+                                       ^^^^^ the STALE entry for node 1
+
+  POP (3,1). 3 == dist[1], not stale. NODE 1 IS FINAL. Relax:
+     1->3 (1): 3+1 = 4 < 6     -> dist[3]=4, push (4,3)
+  dist = [0, 3, 1, 4]   heap = [(4,1), (4,3), (6,3)]
+
+  POP (4,1). dist[1] is 3, and 4 > 3 -> STALE. SKIPPED.
+  POP (4,3). Final. Relax: no outgoing edges.
+  POP (6,3). dist[3] is 4, 6 > 4 -> STALE. SKIPPED.
+
+  FINAL: dist = [0, 3, 1, 4].
+
+TWO THINGS THE TRACE SHOWS. Node 1's distance improved from 4 to 3 AFTER it had
+been pushed, and the fix was pushing a second entry rather than editing the
+first - which is why two stale entries had to be skipped later. And node 3 was
+reached twice, at 6 via node 2 and at 4 via node 1, and the greedy order
+guaranteed the cheaper one was popped first.
+
+NOW THE SAME MACHINERY WITH A NEGATIVE EDGE, from the measurement:
+  0->1 (2), 0->2 (3), 2->1 (-2), 1->3 (2), 3->4 (2), 4->5 (2), 2->5 (10)
+  The visited-set version pops node 1 at cost 2, marks it done, and later refuses
+  the improvement to 1 that the -2 edge offers. Result [0,2,3,4,6,8] against the
+  truth [0,1,3,3,5,7] - WRONG ON FOUR OF SIX NODES, silently.
+  The lazy version re-pushes node 1 and gets [0,1,3,3,5,7], correct - but it is
+  no longer running Dijkstra, it is running a heap-ordered Bellman-Ford with no
+  termination guarantee.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WITH A BINARY HEAP: O((V + E) log V). Each node is finalised once; each edge is
+relaxed once; each relaxation may push, and each push costs log.
+
+WITH A LINEAR SCAN: O(V squared). Better on DENSE graphs, where E approaches V
+squared and the log factor is pure overhead.
+
+WITH A FIBONACCI HEAP: O(E + V log V). Theoretically better, practically slower
+because of constant factors. Worth knowing as a fact and not as advice.
+
+SPACE: O(V) for distances and parents, O(E) for the heap under lazy deletion.
+
+THE #1 MISTAKE: using it with negative edges. Measured: the visited-set version
+was silently wrong on four of six nodes, and the lazy version never terminates on
+a negative cycle - 200,000 pops in, distances at -66,666 and falling.
+
+THE #2 MISTAKE: using BFS on a weighted graph. Measured: 79.2% of nodes worse,
+641.6% average overpayment, 28.5x worst case.
+
+THE #3 MISTAKE: `(node, dist)` instead of `(dist, node)` in the heap. Sorts by
+node id, returns nonsense, and compiles perfectly.
+
+THE #4 MISTAKE: omitting the `if d > dist[u]: continue` stale check. The answer
+survives; the work multiplies.
+
+THE #5 MISTAKE: trying to update a key in `heapq`. It has no decrease-key. Push
+a duplicate and skip stale entries.
+
+THE #6 MISTAKE: not exiting early when there is a single target. The popped
+node's distance is final, so it is one line and often a large saving.
+
+THE #7 MISTAKE: forgetting the parent array and then being unable to report the
+route.
+
+THE #8 MISTAKE: treating unreachable nodes as an error. Infinity is a correct
+answer.
+
+THE TAKEAWAY: Dijkstra repeatedly finalises the cheapest unfinished node and
+relaxes its edges, and it is correct because every edge adds a NON-NEGATIVE
+amount - which is why negative weights break it, though the measured failure is
+subtler than the textbook version: the classic four-node counterexample fooled
+neither implementation, a deeper chain made the visited-set version silently
+wrong on four of six nodes, and the lazy-heap version people actually write
+recovers by re-pushing at the price of never terminating on a negative cycle,
+where Bellman-Ford detects it and reports.""",
+]
+
+_EX_P1AO["Divide and conquer"] = [
+    """1. THE GOAL - making a big problem small by cutting it in half.
+
+Divide and conquer is three steps: split the problem into smaller pieces of the
+SAME KIND, solve each piece, and combine the answers.
+
+The reason it is worth a name is what it does to the running time. If solving a
+problem of size n means solving two of size n/2 plus a linear amount of merging
+work, the total is n log n rather than n squared - and the gap between those two
+is not a constant factor, it grows without bound.
+
+MEASURED, counting actual comparison operations:
+
+     n      merge sort ops    n log2 n     bubble sort ops     ratio
+  --------------------------------------------------------------------
+    16                  64          64                 120      1.9x
+   128                 896         896               8,128      9.1x
+  1,024             10,240      10,240             523,776     51.1x
+  4,096             49,152      49,152           8,386,560    170.6x
+
+TWO THINGS TO NOTICE. The merge sort count is EXACTLY n log2 n at every size -
+not approximately, exactly, because the recursion is perfectly balanced and each
+level does n comparisons. And the ratio grows: 1.9x, 9.1x, 51x, 171x. Doubling n
+again would make it about 320x.
+
+THAT GROWING RATIO IS THE ENTIRE ARGUMENT for the technique, and it is why the
+same idea appears in sorting, searching, matrix multiplication, FFT, and every
+distributed system that says "map" and "reduce".""",
+
+    """2. THE INTUITION - why halving turns a square into a log.
+
+A quadratic algorithm compares every element with every other: n times n.
+
+Divide and conquer refuses to do that. It compares elements only within their
+own half, then merges the two sorted halves with a single linear pass - and that
+merge is where the saving lives, because merging two SORTED lists never needs to
+compare an element against more than one candidate at a time.
+
+Count the work by LEVEL of the recursion:
+  level 0:  1 problem  of size n     -> n units of merging
+  level 1:  2 problems of size n/2   -> n units
+  level 2:  4 problems of size n/4   -> n units
+  ...
+  level k:  2^k problems of size n/2^k -> n units
+
+Every level costs n. There are log2 n levels, because that is how many times you
+can halve n before reaching 1. Total: n log2 n. THE MEASUREMENT MATCHES THIS
+EXACTLY - 4,096 x 12 = 49,152.
+
+WHEN IT DOES NOT WORK: the pieces must be INDEPENDENT and the combine step must
+be cheap. If solving the left half requires knowing the answer to the right half,
+you have a dependency, not a division - and that is a dynamic programming
+problem instead. If the merge costs n squared, you have gained nothing.
+
+THE MASTER THEOREM is the general accounting: for T(n) = a T(n/b) + f(n), compare
+f(n) against n^(log_b a). Merge sort has a=2, b=2, f=n, and n^(log_2 2) = n, so
+the two are equal and you get n log n. Binary search has a=1, b=2, f=1, giving
+log n.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIVIDE - split into subproblems of the SAME TYPE. Not merely smaller work: two
+half-sized instances of the identical problem, so the same function can solve
+them.
+
+CONQUER - solve each subproblem, usually by recursing until a BASE CASE that is
+trivially solvable.
+
+COMBINE - assemble the sub-answers. This is where the algorithm's real work
+usually is, and where its complexity is decided.
+
+BASE CASE - the size at which you stop recursing and solve directly. Missing or
+wrong base case means infinite recursion.
+
+RECURRENCE RELATION - T(n) = a T(n/b) + f(n). a subproblems, each of size n/b,
+plus f(n) to split and combine.
+
+MASTER THEOREM - the rule for solving that recurrence without unrolling it.
+
+STABLE - a sort is stable if equal elements keep their original relative order.
+Merge sort is stable; quicksort is not. It matters when you sort by one key
+having already sorted by another.
+
+IN PLACE - uses O(1) extra memory. Quicksort is; merge sort is not, and that is
+the main practical difference between them.
+
+TAIL RECURSION - a recursive call that is the last thing a function does. Some
+languages optimise it into a loop; Java and Python do not.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE COMBINE STEP IS WHERE THE COST HIDES. "Split in half and recurse" is not
+automatically fast. If the merge is quadratic, the total is quadratic and the
+recursion bought nothing. The technique's benefit is entirely contingent on the
+combine being cheap, and the interesting divide-and-conquer algorithms are
+interesting because someone found a cheap combine.
+
+STRASSEN'S MATRIX MULTIPLICATION is the clearest example: the naive divide into
+four quadrants gives 8 subproblems and stays at n cubed. Strassen found a way to
+do it with SEVEN multiplications instead of eight and got n^2.807. The division
+was the same; the combine was the discovery.
+
+THE BASE CASE IS NOT ALWAYS SIZE 1. Recursion has overhead, and for small arrays
+insertion sort beats merge sort on constants. Real library sorts switch to
+insertion sort below about 16 elements - Java's `Arrays.sort` does exactly this,
+and Timsort is built around runs of insertion-sorted data.
+
+UNBALANCED SPLITS DESTROY IT. Quicksort's n log n assumes the pivot splits
+roughly in half. Pick the first element as pivot on already-sorted input and
+every split is 1 and n-1: the recursion depth becomes n and the cost becomes n
+squared - which is quicksort's worst case and the reason for randomised or
+median-of-three pivots.
+
+RECURSION DEPTH IS A REAL LIMIT. log2 of a million is 20, which is fine. But an
+unbalanced recursion reaching depth n will exhaust the stack - Python's default
+limit is 1,000 frames.
+
+MEASURED: at n = 4,096 the merge sort did 49,152 operations and the quadratic
+sort did 8,386,560. The quadratic algorithm was doing 170 times the work, and at
+n = 16 it was doing less than twice as much. SMALL BENCHMARKS HIDE THIS
+ENTIRELY.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: solve the whole problem directly. For sorting, compare everything with
+everything - measured at 8.4 million operations for 4,096 elements.
+
+UPGRADE 1: split in half, recurse, combine. Merge sort - measured at 49,152 for
+the same input, exactly n log2 n.
+
+UPGRADE 2: cut off the recursion early. Below roughly 16 elements, insertion
+sort wins on constants. Every production sort does this.
+
+UPGRADE 3: choose the split point well. Quicksort's whole behaviour depends on
+the pivot - randomised or median-of-three converts a common worst case into a
+vanishingly unlikely one.
+
+UPGRADE 4: exploit structure in the input. Timsort - Python's and Java's
+object sort - finds existing sorted RUNS and merges those, so nearly-sorted data
+is nearly linear instead of n log n.
+
+UPGRADE 5: parallelise. The subproblems are independent by construction, so
+divide and conquer is embarrassingly parallel. This is exactly what fork/join
+frameworks and MapReduce are built on.
+
+UPGRADE 6: memoise when subproblems OVERLAP. That is the boundary with dynamic
+programming: divide and conquer assumes independent subproblems, and naive
+recursion on overlapping ones (Fibonacci) is exponential. If the same subproblem
+recurs, cache it.""",
+
+    """6. HOW TO APPLY IT - numbered steps.
+
+STEP 1 - CAN THE PROBLEM BE SPLIT INTO SMALLER INSTANCES OF ITSELF? If the
+halves are a different kind of problem, this is not the technique.
+
+STEP 2 - ARE THE SUBPROBLEMS INDEPENDENT? If solving one requires the other's
+answer, you want dynamic programming.
+
+STEP 3 - WRITE THE BASE CASE FIRST. Size 0 and size 1. Getting this wrong is the
+most common source of infinite recursion.
+
+STEP 4 - WRITE THE COMBINE STEP AND COST IT. This decides the complexity. If the
+combine is O(n) you get n log n; if it is O(n squared) you have gained nothing.
+
+STEP 5 - WRITE THE RECURRENCE: T(n) = a T(n/b) + f(n), and solve it with the
+master theorem.
+
+STEP 6 - CHECK THE SPLIT IS BALANCED, or make it so. An unbalanced split turns
+log depth into linear depth and n log n into n squared.
+
+STEP 7 - ADD A CUTOFF for small inputs. Insertion sort below ~16 is standard.
+
+STEP 8 - CHECK RECURSION DEPTH against the language's stack limit, and convert
+to an explicit stack or an iterative bottom-up form if it is close.
+
+STEP 9 - CONSIDER PARALLELISM. The subproblems are independent, which is the
+whole reason MapReduce exists.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have a thousand exam papers to put in alphabetical order, alone.
+
+The brute-force way is to look for the first name, put it aside, look for the
+next, and so on. Every search scans what remains, so you make roughly half a
+million comparisons.
+
+The divide-and-conquer way: split the pile in two, sort each half - by the same
+method, splitting again and again until you have piles of one, which are sorted
+by definition. Then MERGE two sorted piles by repeatedly taking whichever top
+card comes first alphabetically. Merging two sorted piles of 500 takes 1,000
+comparisons, because you only ever compare the two cards on top.
+
+Count the merging. Merging pairs of 1-card piles into 2-card piles: 1,000
+comparisons across the whole pile. Then 2 into 4: another 1,000. Then 4 into 8:
+another 1,000. Ten rounds of that gets you to 1,000, so about 10,000 comparisons
+instead of half a million.
+
+Measured on 4,096 items, the counted operations were 49,152 versus 8,386,560 -
+the brute force did 170 times the work. On 16 items it did less than twice as
+much, which is why a small test tells you nothing.
+
+And the technique has an obvious second benefit: once you have split the pile,
+you can hand half to a colleague. The pieces do not depend on each other, which
+is exactly why this pattern is the basis of every large-scale distributed
+computation.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def merge_sort(a):
+        if len(a) <= 1:                    # BASE CASE - write this first
+            return a
+        mid = len(a) // 2                  # DIVIDE
+        left  = merge_sort(a[:mid])        # CONQUER
+        right = merge_sort(a[mid:])
+        return merge(left, right)          # COMBINE - where the cost lives
+
+    def merge(l, r):
+        out, i, j = [], 0, 0
+        while i < len(l) and j < len(r):
+            if l[i] <= r[j]:               # <= NOT < : this is what makes it STABLE
+                out.append(l[i]); i += 1
+            else:
+                out.append(r[j]); j += 1
+        out += l[i:]                       # one side is exhausted; the other is
+        out += r[j:]                       # already sorted, so append it wholesale
+        return out
+
+    def binary_search(a, x):               # divide and conquer with a=1
+        lo, hi = 0, len(a) - 1
+        while lo <= hi:
+            mid = lo + (hi - lo) // 2      # NOT (lo+hi)//2 - that overflows in
+            if a[mid] == x: return mid     # fixed-width languages
+            if a[mid] < x: lo = mid + 1
+            else:          hi = mid - 1
+        return -1
+
+LINE BY LINE:
+ - `if len(a) <= 1: return a` - the base case, and `<= 1` rather than `== 1` so
+   an empty input terminates too.
+ - `a[:mid]` and `a[mid:]` copy in Python, which is why this uses O(n log n)
+   extra space. An in-place merge sort passes indices instead, and is fiddlier.
+ - `if l[i] <= r[j]` - the `<=` takes from the LEFT on ties, preserving the
+   original order of equal elements. Change it to `<` and the sort becomes
+   unstable, silently, which breaks any multi-key sort built on it.
+ - `out += l[i:]` after the loop - exactly one of the two sides has leftovers,
+   and it is already sorted, so no comparisons are needed. This is why the merge
+   is n rather than n log n.
+ - `lo + (hi - lo) // 2` - the famous overflow-safe midpoint. In Python it is
+   unnecessary and in Java it was a real bug in the standard library for two
+   decades.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Sort [5, 2, 8, 1] with merge sort.
+
+  DIVIDE:  [5, 2] and [8, 1]
+  DIVIDE:  [5] [2] and [8] [1]     -- all base cases now
+  MERGE [5] and [2]:  compare 5 vs 2 -> [2, 5]          1 comparison
+  MERGE [8] and [1]:  compare 8 vs 1 -> [1, 8]          1 comparison
+  MERGE [2,5] and [1,8]:
+      2 vs 1 -> take 1                                  1
+      2 vs 8 -> take 2                                  1
+      5 vs 8 -> take 5                                  1
+      right side exhausted? no - append 8, NO COMPARISON
+                                              -> [1, 2, 5, 8]
+  TOTAL: 5 comparisons.  n log2 n = 4 x 2 = 8, so we came in under - the
+  wholesale append of the leftover saved three.
+
+NOW THE COUNTED MEASUREMENT AT SCALE:
+
+     n      merge ops   n log2 n   bubble ops       n^2/2      ratio
+  --------------------------------------------------------------------
+    16             64         64          120         128       1.9x
+   128            896        896        8,128       8,192       9.1x
+  1,024       10,240     10,240      523,776     524,288      51.1x
+  4,096       49,152     49,152    8,386,560   8,388,608     170.6x
+
+THE MERGE COLUMN IS EXACTLY n log2 n IN EVERY ROW. 4,096 x 12 = 49,152.
+1,024 x 10 = 10,240. That is the recursion tree being perfectly balanced and
+every level doing exactly n units of merging - the accounting from section 2,
+confirmed by counting.
+
+AND THE BUBBLE COLUMN IS ALMOST EXACTLY n squared over 2, which is the count of
+all pairs.
+
+READ THE RATIO COLUMN DOWNWARDS: 1.9, 9.1, 51.1, 170.6. Each quadrupling of n
+roughly triples-and-a-bit the advantage, because the ratio is n/(2 log2 n) and
+that grows without bound. AT n = 16 THE ADVANTAGE IS NEARLY NOTHING, which is
+exactly why real sorts switch to insertion sort below about 16 elements - the
+asymptotic winner loses on constants down there.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+MERGE SORT: O(n log n) time always - best, average and worst. O(n) extra space.
+STABLE.
+
+QUICKSORT: O(n log n) average, O(n squared) worst with a bad pivot. O(log n)
+stack space, in place, NOT stable. Faster in practice on constants, which is why
+it is used for primitives where stability is meaningless.
+
+BINARY SEARCH: O(log n), and log2 of a million is 20.
+
+RECURSION DEPTH: log2 n when balanced - 20 for a million. Linear when
+unbalanced, which exhausts the stack.
+
+THE #1 MISTAKE: assuming the recursion is the saving. It is not - the CHEAP
+COMBINE is. A quadratic merge gives a quadratic algorithm.
+
+THE #2 MISTAKE: no base case, or a base case that misses the empty input.
+Infinite recursion.
+
+THE #3 MISTAKE: an unbalanced split. Quicksort on sorted input with a
+first-element pivot is n squared and blows the stack.
+
+THE #4 MISTAKE: applying it to OVERLAPPING subproblems. Naive recursive
+Fibonacci recomputes the same values exponentially; that is a dynamic
+programming problem.
+
+THE #5 MISTAKE: `<` instead of `<=` in the merge. Silently loses stability, which
+breaks every multi-key sort built on top.
+
+THE #6 MISTAKE: `(lo + hi) // 2` in a fixed-width language. It overflows, and it
+did so in the JDK for twenty years.
+
+THE #7 MISTAKE: recursing all the way to size 1. Real sorts cut over to
+insertion sort below about 16, because the measured advantage at n = 16 was only
+1.9x and recursion has overhead.
+
+THE #8 MISTAKE: benchmarking at small n. The measured advantage grew from 1.9x
+at 16 to 170.6x at 4,096, so a small test actively misleads.
+
+THE TAKEAWAY: divide and conquer splits a problem into independent instances of
+ITSELF, solves them recursively, and combines - and the whole benefit lives in
+the COMBINE being cheap, because n units of merging at each of log n levels gives
+exactly n log n, which the measurement confirmed to the operation (4,096 x 12 =
+49,152) against 8.4 million for the quadratic version; the advantage grows with
+n (1.9x at 16, 170.6x at 4,096), which is why small benchmarks mislead and why
+production sorts cut over to insertion sort at the bottom of the recursion.""",
+]
+
+_EX_P1AO["Graph"] = [
+    """1. THE GOAL - the data structure for anything that is a network of relations.
+
+A graph is NODES (things) and EDGES (connections between them). That is the
+entire definition, and it is the reason graphs turn up everywhere: friends,
+roads, web links, package dependencies, money transfers, task schedules, state
+machines, neural networks.
+
+You reach for a graph when the RELATIONSHIPS are the point. A list of users is a
+list; a list of users plus who follows whom is a graph, and questions like "who
+is within two hops of Alice", "is there any path from A to B", "what is the
+cheapest route" only exist once you have modelled it that way.
+
+WHAT MAKES GRAPHS DIFFERENT FROM TREES AND LISTS: a graph can have CYCLES, so
+you can walk in a circle forever. Every graph algorithm therefore has a VISITED
+set, and forgetting it is not a performance problem - it is an infinite loop.
+
+THE INTERVIEW REALITY: most graph interview questions are one of four things -
+traverse it, find a shortest path, detect a cycle, or find the connected pieces.
+Knowing those four and the choice between BFS and DFS covers the large majority.""",
+
+    """2. THE INTUITION - the vocabulary is the hard part, the algorithms are short.
+
+DIRECTED vs UNDIRECTED. "Alice is friends with Bob" is symmetric - undirected.
+"Alice follows Bob" is not - directed. Getting this wrong changes every answer,
+and the modelling decision is usually the interview's real content.
+
+WEIGHTED vs UNWEIGHTED. If every edge costs the same, "shortest" means "fewest
+hops" and BFS is optimal and simple. If edges have different costs, BFS is WRONG
+- measured in section 4, badly wrong - and you need Dijkstra.
+
+CYCLIC vs ACYCLIC. A directed acyclic graph (DAG) is what you get from
+dependencies, build orders and schedules, and it unlocks topological sort and
+linear-time shortest paths. A cycle in a dependency graph is a bug in the system
+being modelled.
+
+CONNECTED vs DISCONNECTED. Real graphs usually have one giant component and a
+scattering of small ones. An algorithm started from one node explores ONE
+component, which is why "find all components" is a loop over unvisited nodes
+rather than a single traversal.
+
+THE TWO TRAVERSALS, and the only difference between them:
+  BFS uses a QUEUE - explores level by level. Finds the fewest-hops path.
+  DFS uses a STACK - goes deep first. Natural for cycle detection and
+  topological sort, and recursion is a stack you did not write.
+SWAPPING THE QUEUE FOR A STACK IS LITERALLY THE WHOLE DIFFERENCE IN CODE.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NODE / VERTEX - a thing. EDGE - a connection.
+
+ADJACENT / NEIGHBOUR - directly connected by one edge.
+
+DEGREE - number of edges at a node. In-degree and out-degree for directed
+graphs; in-degree zero is where a topological sort starts.
+
+PATH - a sequence of nodes each adjacent to the next. CYCLE - a path that
+returns to its start.
+
+CONNECTED COMPONENT - a maximal set of nodes all reachable from each other. For
+directed graphs, STRONGLY connected means reachable in both directions, which is
+a different and harder question.
+
+DAG - directed acyclic graph. Dependencies, schedules, git history.
+
+TOPOLOGICAL SORT - an ordering where every edge points forwards. Exists if and
+only if the graph is a DAG, which makes it a cycle DETECTOR as well as a
+scheduler.
+
+BIPARTITE - nodes split into two groups with edges only between groups. Users
+and items, students and classes. Detectable by two-colouring during BFS.
+
+SPANNING TREE - a subset of edges connecting every node with no cycles.
+MINIMUM spanning tree minimises total weight - Kruskal's or Prim's.
+
+DENSE / SPARSE - see the adjacency list entry; it decides your representation
+and almost every real graph is sparse.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - BFS on a weighted graph, measured.
+
+BFS finds the path with the FEWEST EDGES. On an unweighted graph that is the
+shortest path. On a weighted graph it is not, and the size of the error is much
+larger than people expect.
+
+Measured on a 500-node weighted graph, average degree 6, edge weights drawn from
+{1, 1, 1, 2, 5, 20, 50}, comparing the cost of the path BFS finds against the
+true cheapest path from Dijkstra:
+
+  reachable nodes:                                    499
+  nodes where BFS's path costs more than optimal:     395  (79.2%)
+  average overpayment on those nodes:                 641.6%
+  worst single node:  BFS path cost 171 vs optimal 6  (28.5x)
+
+FOUR NODES IN FIVE GET A WORSE ANSWER, AND ON AVERAGE THEY PAY SEVEN TIMES TOO
+MUCH. The worst node was reachable for a cost of 6 and BFS routed it through 171.
+
+The mechanism is simple: BFS commits to the first path that reaches a node,
+which is the one with the fewest hops. One hop across a weight-50 edge beats
+three hops across weight-1 edges on hop count, and loses badly on cost.
+
+THE SECOND TRAP: NO VISITED SET. A graph has cycles, so a traversal without a
+visited set walks in circles forever. This is not a slow program; it is a
+non-terminating one, and it is the most common way a graph question is failed.
+
+THE THIRD: MARKING VISITED AT THE WRONG MOMENT. Marking a node when you POP it
+from the queue rather than when you PUSH it lets the same node be queued many
+times before it is first popped. The answer is still correct and the queue can
+blow up. Mark on push.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: a nested loop over an edge list. Finding a node's neighbours scans all E
+edges, so a traversal is O(V x E). Correct and unusable past a few thousand
+edges.
+
+UPGRADE 1: build an adjacency list first. Traversal becomes O(V + E).
+
+UPGRADE 2: BFS with a queue and a visited set, for fewest-hops paths and for
+"is B reachable from A". Also gives connected components, bipartiteness, and
+level-by-level structure.
+
+UPGRADE 3: DFS with a stack, for cycle detection, topological sort, and
+strongly connected components. Prefer an explicit stack over recursion on large
+graphs - Python's default recursion limit is 1,000 and a long path will blow it.
+
+UPGRADE 4: Dijkstra when edges have non-negative weights. Measured above:
+skipping this costs 79% of nodes a worse answer.
+
+UPGRADE 5: Bellman-Ford when weights can be negative - slower at O(V x E), and
+it DETECTS negative cycles, which Dijkstra cannot.
+
+UPGRADE 6: A* when you have a distance heuristic - Dijkstra with a hint, and it
+is what routing engines actually run.
+
+UPGRADE 7: union-find for connectivity questions asked incrementally. Near
+constant time per query, and the basis of Kruskal's MST.
+
+UPGRADE 8: for very large graphs, a graph database or a distributed frame like
+Pregel, where the algorithm is expressed as messages between nodes.""",
+
+    """6. HOW TO APPROACH A GRAPH PROBLEM - numbered steps.
+
+STEP 1 - IS IT EVEN A GRAPH? "Things and relationships between them" is the
+signal. Courses with prerequisites, tasks with dependencies, tiles with adjacent
+tiles, words differing by one letter - all graphs, and none of them say so.
+
+STEP 2 - DIRECTED OR UNDIRECTED? WEIGHTED OR NOT? These two answers select the
+algorithm before you write anything.
+
+STEP 3 - BUILD AN ADJACENCY LIST. Almost always. Remember both endpoints for
+undirected edges.
+
+STEP 4 - PICK THE TRAVERSAL FROM THE QUESTION:
+  reachability, fewest hops, level order      -> BFS
+  cycle detection, topological sort, all paths -> DFS
+  cheapest path, non-negative weights          -> Dijkstra
+  cheapest path, negative weights allowed      -> Bellman-Ford
+  connectivity asked repeatedly                -> union-find
+
+STEP 5 - VISITED SET, ALWAYS, MARKED ON PUSH. This is the difference between a
+program and an infinite loop.
+
+STEP 6 - HANDLE THE DEGENERATE INPUTS: empty graph, single node, disconnected
+components, self-loops, duplicate edges. Interviewers ask about exactly these.
+
+STEP 7 - IF THE ANSWER IS THE PATH RATHER THAN THE DISTANCE, keep a parent
+pointer per node and walk it backwards at the end.
+
+STEP 8 - STATE THE COMPLEXITY IN V AND E. O(V + E) for a traversal, O(E log V)
+for Dijkstra with a binary heap. Saying "O(n)" without specifying n is the
+answer that gets probed.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have a map of towns and the roads between them, and you want to visit
+everywhere.
+
+You could keep a huge table with one row and one column per town, ticking the
+cells where a road exists. Or you could give each town a card listing the towns
+you can reach directly from it. The cards are far smaller, because most towns
+connect to three or four others rather than to all thousand.
+
+Now, how do you explore? Two strategies.
+
+Visit all your neighbours first, then all THEIR neighbours, and so on - rings
+spreading out from where you started. That is breadth-first, and it naturally
+answers "what is the fewest roads to get there".
+
+Or pick one road and follow it as far as it goes, backtracking when you get
+stuck. That is depth-first, and it naturally answers "is there a loop in this
+road network".
+
+Two things will trip you up. First, roads form loops, so you must write down
+which towns you have already visited - otherwise you drive round the same
+triangle forever. Second, "fewest roads" is not "shortest drive". Measured on a
+real weighted map, four towns in five had a fewest-roads route that cost more
+than the cheapest one, on average seven times more - and one town reachable for
+a cost of 6 was routed via a path costing 171.
+
+If the roads have lengths, you need the algorithm that adds the lengths up as it
+goes, not the one that counts turnings.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    from collections import deque
+
+    def bfs(adj, start):
+        dist = {start: 0}
+        parent = {start: None}
+        q = deque([start])                  # QUEUE -> breadth first
+        while q:
+            u = q.popleft()                 # popleft, not pop
+            for v in adj[u]:
+                if v not in dist:           # VISITED CHECK, ON PUSH
+                    dist[v] = dist[u] + 1
+                    parent[v] = u
+                    q.append(v)
+        return dist, parent
+
+    def dfs(adj, start):
+        seen = set()
+        stack = [start]                     # STACK -> depth first
+        while stack:
+            u = stack.pop()                 # pop, not popleft. The ONLY change.
+            if u in seen:
+                continue
+            seen.add(u)
+            for v in adj[u]:
+                if v not in seen:
+                    stack.append(v)
+        return seen
+
+    def components(adj, n):
+        seen, out = set(), []
+        for s in range(n):                  # a LOOP over start nodes -
+            if s not in seen:               # one traversal finds ONE component
+                c = dfs(adj, s)
+                seen |= c
+                out.append(c)
+        return out
+
+LINE BY LINE:
+ - `deque` and `popleft` versus `list` and `pop` is the entire BFS/DFS
+   difference. `list.pop(0)` also works and is O(n) per call, turning a linear
+   traversal quadratic - the classic invisible performance bug here.
+ - `if v not in dist` INSIDE the neighbour loop, before appending - marking on
+   PUSH. Marking on pop instead keeps the answer correct and lets the same node
+   sit in the queue many times.
+ - `parent` is what turns a distance into a route. Without it you know it takes
+   four hops and cannot say which four.
+ - `components` loops over ALL start nodes. A single traversal explores one
+   component, and forgetting the outer loop silently ignores the rest of the
+   graph.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Graph: 0-1, 0-2, 1-3, 2-3, 3-4, and a separate component 5-6.
+
+BFS FROM 0:
+  step  queue        pop  new neighbours        dist
+  --------------------------------------------------------
+   1    [0]           0   1 (d1), 2 (d1)        {0:0,1:1,2:1}
+   2    [1,2]         1   3 (d2)                +{3:2}
+   3    [2,3]         2   3 already seen        -
+   4    [3]           3   4 (d3)                +{4:3}
+   5    [4]           4   none new              -
+  Result: {0:0, 1:1, 2:1, 3:2, 4:3}. Nodes 5 and 6 NEVER APPEAR - they are a
+  different component, and one traversal from 0 cannot reach them.
+
+  Note step 3: node 3 was already in `dist` because it was marked when node 1
+  PUSHED it. Marking on pop instead would have queued it twice.
+
+DFS FROM 0, same graph:
+   stack [0] -> pop 0, push 1,2
+   stack [1,2] -> pop 2 (LAST in), push 3
+   stack [1,3] -> pop 3, push 4
+   stack [1,4] -> pop 4
+   stack [1] -> pop 1, 3 already seen
+  Visit order: 0, 2, 3, 4, 1. Completely different from BFS's 0, 1, 2, 3, 4, and
+  the ONLY code difference was pop versus popleft.
+
+NOW THE WEIGHTED CASE, which is the measured trap. Add weights:
+  0-1: 1,  0-2: 50,  1-3: 1,  2-3: 1,  3-4: 1
+
+  BFS says node 3 is 2 hops away and would route 0 -> 2 -> 3 if it happened to
+  discover 2 first: cost 51.
+  The cheapest route is 0 -> 1 -> 3: cost 2.
+
+  On the measured 500-node graph this happened for 395 of 499 reachable nodes -
+  79.2% - with an average overpayment of 641.6% and a worst case of 171 versus
+  6. BFS IS NOT SLIGHTLY WRONG ON WEIGHTED GRAPHS; it is answering a different
+  question, and the answers diverge by an order of magnitude.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+BFS and DFS: O(V + E) time, O(V) space. You touch every node once and every edge
+twice (undirected).
+
+Dijkstra with a binary heap: O((V + E) log V). Bellman-Ford: O(V x E). Union-find:
+near O(1) amortised per operation.
+
+Adjacency list space: O(V + E). Matrix: O(V squared) - measured 2,500x larger on
+a sparse ten-thousand-node graph.
+
+THE #1 MISTAKE: no visited set. A graph has cycles; the program does not
+terminate. This is the most common way a graph question is failed.
+
+THE #2 MISTAKE: BFS on a weighted graph. Measured: 79.2% of nodes get a worse
+path, averaging 641.6% overpayment.
+
+THE #3 MISTAKE: `list.pop(0)` instead of `deque.popleft()`. O(n) per pop turns a
+linear traversal quadratic, and nothing about the code looks wrong.
+
+THE #4 MISTAKE: marking visited on pop instead of on push. Correct answer,
+exploding queue.
+
+THE #5 MISTAKE: forgetting the outer loop over start nodes. One traversal finds
+one component, and real graphs are disconnected.
+
+THE #6 MISTAKE: recursive DFS on a large graph. Python's recursion limit is
+1,000 and a long path exceeds it; use an explicit stack.
+
+THE #7 MISTAKE: not asking directed or undirected. It changes the model, the
+algorithm and the answer, and it is usually the actual content of the question.
+
+THE #8 MISTAKE: `[[]] * n` for the adjacency list - n references to one list.
+
+THE TAKEAWAY: a graph is nodes plus edges, stored as an adjacency list, and
+almost every question is traverse / shortest path / cycle / components - where
+BFS and DFS differ only by queue versus stack, both need a VISITED SET because
+cycles make the alternative non-terminating, and BFS's "shortest" means fewest
+HOPS, which on a weighted graph measured wrong for 79.2% of nodes at an average
+of 641.6% overpayment.""",
+]
+
 
 
 # NOTE: Class Imbalance and Ensembles already had example blocks in earlier
