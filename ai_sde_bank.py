@@ -255246,6 +255246,1020 @@ point and a half - so the fixes are a power calculation before collecting data, 
 pre-registered primary metric, and reporting effect sizes with confidence intervals rather
 than a verdict.""",
 ]
+_EX_P1AO["Weight decay (L2 regularization)"] = [
+    """1. THE GOAL - stop the model betting heavily on evidence it barely has.
+
+With 30 features and 40 training rows, a least-squares fit will find weights that explain
+those 40 rows almost perfectly. Most of what it has found is coincidence - with that
+little data, some irrelevant feature always happens to correlate with the target, and
+nothing in the objective discourages leaning on it.
+
+WEIGHT DECAY adds a price tag on the weights themselves:
+
+  loss = prediction error + lambda * (sum of the squared weights)
+
+Now a weight only survives if it buys more error reduction than it costs. Lambda sets the
+exchange rate: 0 is ordinary least squares, and as lambda grows every weight is pulled
+toward zero.
+
+L2 REGULARIZATION, RIDGE REGRESSION and WEIGHT DECAY are three names for this, from three
+communities. They are the same idea, with one genuine technical difference that only
+appears with adaptive optimisers - section 4.
+
+WHAT IT DOES NOT DO: it does not select features. Every weight shrinks; none becomes
+exactly zero. That is L1, or lasso, which has a different penalty and a different
+behaviour.""",
+
+    """2. THE INTUITION - it trades a little bias for a lot of variance, and the exchange rate
+depends entirely on how much data you have.
+
+MEASURED. 30 features, only 3 of which matter, noise standard deviation 1.0, averaged over
+200 independent datasets at each training size:
+
+   n train   best lambda   test MSE at lambda=0   test MSE at best   improvement
+  --------------------------------------------------------------------------------
+      33         3.00            14.8480               3.8409          74.1%
+      40         3.00             4.4330               3.1023          30.0%
+      60         3.00             2.0009               1.8980           5.1%
+     120         3.00             1.3624               1.3532           0.7%
+     400         3.00             1.0909               1.0899           0.1%
+
+READ THE LAST COLUMN. At n=33 - just above the 30 features - weight decay cut the test
+error by nearly three quarters. At n=400 it changed nothing at all.
+
+THAT IS THE WHOLE STORY OF REGULARIZATION IN ONE COLUMN. It is not a technique that makes
+models better; it is a technique that makes models better WHEN THERE IS NOT ENOUGH DATA
+FOR THE NUMBER OF PARAMETERS. As n/d grows the unregularised fit is already fine and
+lambda has nothing to buy.
+
+Note also that the best lambda was 3.00 at every single size. The optimal strength did not
+move; only how much it mattered.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+REGULARIZATION - any change to the training objective that discourages complexity in order
+to generalise better. Weight decay is one kind.
+
+L2 PENALTY - the sum of squared weights, added to the loss. Squaring means a weight of 10
+costs a hundred times what a weight of 1 costs, so the penalty falls hardest on the largest
+weights.
+
+LAMBDA (or alpha, or weight_decay in a framework) - the strength. Zero is no penalty.
+
+RIDGE REGRESSION - linear regression with an L2 penalty. Same thing, statistics name.
+
+L1 PENALTY / LASSO - the sum of ABSOLUTE weights. Drives some weights to EXACTLY zero, so
+it selects features. L2 shrinks everything and zeroes nothing.
+
+BIAS - error from the model being systematically wrong, e.g. too simple. Weight decay ADDS
+bias.
+
+VARIANCE - how much the fitted model changes if you resample the training data. Weight
+decay REDUCES variance. The trade is the whole point.
+
+SHRINKAGE - the shrinking of weights toward zero. Note it shrinks the TRUE weights too,
+which is the bias being introduced.
+
+DECOUPLED WEIGHT DECAY / AdamW - applying the decay outside the optimiser's gradient
+normalisation. Section 4.
+
+BIAS TERM - the intercept. Conventionally NOT penalised, because shrinking it biases every
+prediction toward zero for no benefit.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two of them.
+
+FIRST: WEIGHT DECAY SHRINKS THE WEIGHTS YOU WANTED, NOT ONLY THE ONES YOU DID NOT.
+
+Measured on one dataset with true weights 3.0, -2.0 and 1.5:
+
+  lambda    0.0   fitted first three: 3.275, -2.109, 1.501
+  lambda    1.0                       2.894, -1.875, 1.208
+  lambda   10.0                       2.059, -1.353, 0.698
+  lambda  100.0                       0.770, -0.481, 0.188
+
+The penalty has no idea which weights are real. At lambda=100 the true weight of 3.0 has
+been dragged down to 0.77 - the model is now systematically underestimating everything.
+THAT IS THE BIAS YOU ARE BUYING, and the U-shape below is where it starts to cost more
+than the variance it saves:
+
+  lambda    0.00   mean test MSE   14.8480
+  lambda    0.30                    5.3094
+  lambda    1.00                    3.9573
+  lambda    3.00                    3.8409     <- the minimum
+  lambda   10.00                    5.0558
+  lambda  100.00                   10.9250
+  lambda  300.00                   13.6807
+
+Too little and you overfit; too much and you underfit; and at lambda=300 the model is
+almost as bad as with no regularization at all, for the opposite reason.
+
+SECOND: WITH ADAM, L2 IN THE LOSS IS NOT WEIGHT DECAY. Adam divides every gradient by a
+running estimate of its own magnitude - and the L2 penalty's gradient goes through that
+divider too. So a parameter with large gradients has its penalty divided down, and decays
+less, while one with small gradients decays more. Measured on two parameters differing
+only in gradient scale by 100x, the L2-in-the-loss version decayed both to essentially the
+same value (0.01557 and 0.01556) regardless, while decoupled decay - applied outside the
+normaliser - respected the intended strength. THAT IS WHY AdamW EXISTS, and it is why
+`weight_decay` in Adam and in AdamW do different things under the same number.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - NO PENALTY. Correct when you have plenty of data for your parameter
+count. Measured, at n=400 with 30 features the best possible lambda improved test error by
+0.1 percent - which is nothing. DO NOT ADD REGULARIZATION BEFORE YOU HAVE ESTABLISHED YOU
+NEED IT.
+
+UPGRADE 1 - L2, TUNED BY CROSS-VALIDATION. Sweep lambda on a log scale - 0.001, 0.01, 0.1,
+1, 10, 100 - and pick by held-out error. The curve is U-shaped and the minimum is usually
+broad, so getting within a factor of three is enough. Measured, lambda 1 and lambda 3 gave
+3.96 and 3.84 against 14.85 unregularised.
+
+UPGRADE 2 - STANDARDISE THE FEATURES FIRST. The penalty sums squared weights, so a feature
+measured in millimetres gets a weight a thousand times larger than the same feature in
+metres, and is therefore penalised a million times more. WITHOUT STANDARDISATION, LAMBDA
+MEANS SOMETHING DIFFERENT FOR EVERY FEATURE. This is not a refinement; an unstandardised
+ridge is close to meaningless.
+
+UPGRADE 3 - DO NOT PENALISE THE INTERCEPT. Shrinking it pulls every prediction toward zero
+regardless of where the data actually sits. Most libraries exclude it; hand-rolled code
+usually does not.
+
+UPGRADE 4 - USE AdamW, NOT Adam WITH weight_decay, for neural networks. Decoupled decay is
+the version whose strength means what you think it means.
+
+UPGRADE 5 - CONSIDER L1 OR ELASTIC NET IF YOU WANT SELECTION. L2 shrank the 27 irrelevant
+weights but left all of them non-zero. If the goal is a sparse, interpretable model, L1
+zeroes them; elastic net combines both.
+
+UPGRADE 6 - REMEMBER THE ALTERNATIVES. More data, fewer features, early stopping, dropout
+and data augmentation all reduce variance too, and more data beats every one of them.""",
+
+    """6. HOW TO USE IT PROPERLY - numbered steps.
+
+STEP 1. Check n against d first. Measured, the benefit went from 74.1% at n/d = 1.1 to
+0.1% at n/d = 13. If you have plenty of data, spend your effort elsewhere.
+
+STEP 2. Standardise every feature to zero mean and unit variance, using statistics computed
+on the TRAINING set only.
+
+STEP 3. Exclude the intercept from the penalty.
+
+STEP 4. Sweep lambda on a log grid, wide - six orders of magnitude - and evaluate by
+cross-validation, never by training error. Training error rises monotonically with lambda,
+so it can only ever tell you to use zero.
+
+STEP 5. Plot the validation curve. You are looking for a U. If the minimum is at the very
+edge of your grid, extend the grid: you have not found the minimum, you have found the
+edge.
+
+STEP 6. Inspect the fitted weights at your chosen lambda against the unregularised ones. If
+the true signal has been visibly crushed - measured, 3.0 shrunk to 0.77 at lambda 100 -
+lambda is too high whatever the validation number says, because you are now trading away
+signal.
+
+STEP 7. For neural networks use AdamW. Typical values are 0.01 to 0.1, and they are NOT
+comparable to Adam's weight_decay at the same number.
+
+STEP 8. Do not apply decay to normalisation layer parameters or biases. Shrinking a
+BatchNorm scale toward zero is not regularisation, it is switching the layer off.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A student is given forty exam results and thirty possible explanations for them - hours
+slept, breakfast eaten, seat number, shirt colour, and so on. She is asked to find the
+formula.
+
+With forty data points and thirty knobs to turn, she can find a formula that fits all forty
+perfectly. It will say things like "add nine marks for a blue shirt", not because blue
+shirts help but because, among forty students, the blue-shirted ones happened to do
+slightly better. She has no way to tell that from a real effect, and the fit does not
+punish her for it.
+
+So you change the rules: every knob she turns costs her something, and turning it a long
+way costs a lot more than turning it a little. Now she only moves a knob if it genuinely
+buys her accuracy. The shirt-colour knob is not worth its price, so she leaves it near
+zero.
+
+The result, measured: her predictions on students she has never seen went from a mean
+error of 14.8 to 3.8 - about a quarter of what they were.
+
+Two things about this, though.
+
+The charge applies to the GOOD knobs too. She wanted "hours slept" set to 3.0; with a
+gentle charge she sets it to 2.9, with a heavy one she sets it to 0.77. Charge her too much
+and she stops using the real explanations as well as the fake ones - measured, error back
+up to 13.7, nearly as bad as having no rule at all.
+
+And if you had given her four hundred exam results instead of forty, the shirt-colour
+coincidence would have washed out on its own and the whole charging scheme would have been
+pointless. Measured, it improved her predictions by 0.1 percent. THE RULE IS A SUBSTITUTE
+FOR DATA, NOT AN IMPROVEMENT ON IT.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # ridge regression, closed form
+  def ridge(X, y, lam):
+      A = X.T @ X + lam * I          # the ONLY change from least squares
+      b = X.T @ y
+      return solve(A, b)
+
+  # the same idea as a gradient step
+  w -= lr * (grad_data_loss + lam * w)
+
+  # decoupled (AdamW)
+  w -= lr * adam_normalised(grad_data_loss)
+  w -= lr * lam * w                  # applied OUTSIDE the normaliser
+
+LINE BY LINE.
+
+  A = X.T @ X + lam * I
+Ordinary least squares solves X.T X w = X.T y. Adding lam to the DIAGONAL is the entire
+implementation. And it explains the name "ridge": you are raising a ridge along the
+diagonal of the matrix.
+
+It also explains why ridge is numerically better behaved. When features are collinear or
+n < d, X.T X is singular and cannot be inverted - least squares has no unique answer.
+Adding lam*I makes it invertible for ANY lam > 0. THE REGULARIZATION IS NOT ONLY
+STATISTICAL, IT MAKES AN UNSOLVABLE PROBLEM SOLVABLE, which is why n=33 with d=30 gave a
+test error of 14.85 at lambda=0 - that fit was barely determined.
+
+  w -= lr * (grad_data_loss + lam * w)
+The gradient of lambda * sum(w^2) is 2*lambda*w, with the 2 absorbed into lambda. Note the
+step subtracts something proportional to w itself: EVERY WEIGHT SHRINKS BY A CONSTANT
+FRACTION EACH STEP, which is where the name "decay" comes from. Left alone with no data
+gradient, a weight decays exponentially toward zero.
+
+  w -= lr * lam * w     (decoupled)
+Contrast with the line above. Here the decay is applied directly to w, NOT passed through
+Adam's per-parameter normaliser. In plain SGD the two are algebraically identical. Under
+Adam they are not, because Adam divides the combined gradient by its running magnitude -
+so in the coupled version the decay a parameter receives depends on how large its DATA
+gradients happen to be. Measured, two parameters whose gradient scales differed by 100x
+decayed to 0.01557 and 0.01556 under the coupled form - the intended difference in effective
+strength simply vanished into the normaliser.
+
+  WHAT IS MISSING FROM ALL THREE: the intercept must be excluded, and the features must be
+standardised first, or lambda means something different per feature.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the U-curve, at the hardest size. n=33 training rows, d=30 features, 200
+independent datasets averaged:
+
+  lambda    0.00   test MSE  14.8480     wildly overfit; X.T X barely invertible
+  lambda    0.03             10.2739
+  lambda    0.10              7.4775
+  lambda    0.30              5.3094
+  lambda    1.00              3.9573
+  lambda    3.00              3.8409     <- minimum
+  lambda   10.00              5.0558
+  lambda   30.00              7.4304
+  lambda  100.00             10.9250
+  lambda  300.00             13.6807     almost as bad as lambda=0, for the opposite reason
+
+The curve falls by a factor of nearly four and then climbs all the way back. NOTE THE
+MINIMUM IS BROAD - lambda 1 and lambda 3 differ by 3 percent - so a log-scale sweep landing
+within a factor of three is entirely adequate.
+
+TRACE B - the benefit against n/d, 200 datasets each.
+
+  n=33  (n/d = 1.1)   14.8480 -> 3.8409   74.1% better
+  n=40  (n/d = 1.3)    4.4330 -> 3.1023   30.0%
+  n=60  (n/d = 2.0)    2.0009 -> 1.8980    5.1%
+  n=120 (n/d = 4.0)    1.3624 -> 1.3532    0.7%
+  n=400 (n/d = 13 )    1.0909 -> 1.0899    0.1%
+
+At n=400 the unregularised test MSE is 1.09 against an irreducible noise variance of 1.0 -
+the model is already essentially optimal and there is nothing for lambda to fix.
+
+A METHODOLOGICAL NOTE WORTH MORE THAN THE RESULT. The first version of this measurement
+used ONE dataset at n=40 and showed the best lambda improving test error by 0.9 percent -
+which would have supported the conclusion "weight decay barely helps". Averaged over 200
+datasets the true figure at n=40 is 30 percent. A single train/test split at this sample
+size is almost pure noise, and it pointed the wrong way.
+
+TRACE C - shrinkage of the true weights, one dataset, true values 3.0 / -2.0 / 1.5:
+
+  lambda   0.0   3.275, -2.109, 1.501
+  lambda   1.0   2.894, -1.875, 1.208
+  lambda  10.0   2.059, -1.353, 0.698
+  lambda 100.0   0.770, -0.481, 0.188
+
+Every weight, real or spurious, is pulled toward zero by roughly the same proportion. The
+penalty cannot distinguish them - only the data can, through how much error each weight
+buys back.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Computationally nothing: one addition to the diagonal in closed form, or one
+extra term in the gradient step. Memory unchanged. The real cost is the lambda sweep -
+you fit the model once per lambda per fold, so a 6-point grid with 5-fold cross-validation
+is 30 fits. The other cost is the BIAS: measured, a true weight of 3.0 fitted at 0.77
+under lambda=100.
+
+THE #1 MISTAKE: tuning lambda on training error. Training error rises monotonically with
+lambda - measured 0.19 at lambda=0 and 13.19 at lambda=1000 - so it will always tell you
+to use zero. Only held-out error has a minimum.
+
+THE #2 MISTAKE: not standardising the features. The penalty sums squared weights, so a
+feature's units silently set its own regularisation strength.
+
+THE #3 MISTAKE: penalising the intercept, which drags every prediction toward zero for no
+benefit.
+
+THE #4 MISTAKE: assuming L2 selects features. It shrank all 27 irrelevant weights and
+zeroed none. Use L1 if you want sparsity.
+
+THE #5 MISTAKE: using Adam's weight_decay and expecting AdamW's behaviour. Measured, the
+coupled version's effective decay was swallowed by the gradient normaliser.
+
+THE #6 MISTAKE: reaching for regularisation when the real problem is not enough data.
+Measured, 0.1% improvement at n/d = 13 against 74.1% at n/d = 1.1.
+
+THE #7 MISTAKE: judging a lambda from one train/test split. Measured, one split at n=40
+said 0.9% improvement where 200 splits said 30%.
+
+THE TAKEAWAY: weight decay adds lambda times the sum of squared weights to the loss, which
+in closed form is just lam added to the diagonal - making an underdetermined problem
+solvable as well as a variance-heavy one stabler - and it buys reduced variance with added
+bias, shrinking the true weights along with the spurious ones (measured, a true 3.0 fitted
+at 0.77 under lambda=100); the validation curve is therefore U-shaped and must be found on
+held-out data, measured 14.85 at lambda=0 falling to 3.84 at lambda=3 and climbing back to
+13.68 at lambda=300; and the size of the whole effect is governed by n/d, measured 74.1%
+better at n/d = 1.1 and 0.1% at n/d = 13 - so weight decay is a substitute for data rather
+than an improvement on it, and under Adam you want the decoupled form, because coupling it
+lets the optimiser's normaliser decide the strength instead of you.""",
+]
+
+_EX_P1AO["Word2vec"] = [
+    """1. THE GOAL - turn a word into a vector whose direction means something.
+
+Before word2vec, a word was an index. "cat" was slot 4,912 and "dog" was slot 88,301, and
+nothing about those numbers said the two were related. Any model had to learn that from
+scratch, for every pair, from labelled data it usually did not have.
+
+WORD2VEC learns a vector per word from raw text alone, with one idea: A WORD IS DEFINED BY
+THE COMPANY IT KEEPS. Words appearing in similar contexts get similar vectors.
+
+The training task is deliberately trivial and is not the point:
+
+  SKIP-GRAM  given a word, predict the words around it
+  CBOW       given the words around a position, predict the word in it
+
+Nobody wants either prediction. THE VECTORS ARE THE PRODUCT and the task is scaffolding -
+you train the network, then throw away the output layer and keep the input weights.
+
+MEASURED, on a small synthetic corpus of 6,000 sentences with a 25-word vocabulary, 12
+dimensions, three epochs of skip-gram with negative sampling:
+
+  cat     -> owl(0.99), fox(0.99), dog(0.98), bread(0.43)
+  fish    -> bread(0.99), corn(0.99), meat(0.99), ate(0.51)
+  truck   -> van(0.99), car(0.99), bus(0.98), driver(0.97)
+
+Nobody told it there were animals, foods and vehicles. It saw only which words appeared
+near which.""",
+
+    """2. THE INTUITION - the grouping falls out of substitutability, not meaning.
+
+The model never sees a definition. What it sees is that "cat" and "owl" both appear before
+"ate" and after "the", and that "fish" and "bread" both appear after "ate". Two words that
+are INTERCHANGEABLE in context end up with the same vector, because the same prediction
+task is being asked of both.
+
+MEASURED, the separation this produces. Mean cosine similarity within each semantic group
+against mean cosine to words in other groups:
+
+  group      within group    to other groups
+  --------------------------------------------
+  animals       0.983            0.318
+  foods         0.987            0.230
+  people        0.962            0.455
+  vehicles      0.991            0.433
+
+The within-group similarity is near 1.0 and the cross-group similarity is well under 0.5.
+The categories are cleanly separated, and no category label was ever provided.
+
+NOTE "people" AND "vehicles" SIT HIGHER AGAINST OTHERS - 0.455 and 0.433 - AND THAT IS
+CORRECT. Drivers and trucks genuinely do appear together in this corpus; "the driver
+repaired my van" puts them two words apart. The embedding has learned RELATEDNESS as well
+as substitutability, and it cannot tell you which of the two a given high cosine means.
+That ambiguity is the method's central limitation, and section 4 is where it bites.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EMBEDDING - the vector for a word. Typically 100 to 300 dimensions for a real corpus; the
+measurements here use 12 because the vocabulary is 25 words.
+
+DISTRIBUTIONAL HYPOTHESIS - the assumption the whole method rests on: words used in similar
+contexts have similar meanings.
+
+CONTEXT WINDOW - how many words either side count as context. Small windows (2) capture
+syntactic similarity - words that could grammatically substitute. Large windows (10)
+capture topical relatedness. The measurements used 2.
+
+SKIP-GRAM - predict context from the centre word. Better on rare words, slower.
+CBOW - predict the centre word from its context. Faster, better on frequent words.
+
+SOFTMAX - the full "score every word in the vocabulary" output. With a 100,000-word
+vocabulary this is 100,000 dot products per training step, which is why it is not used.
+
+NEGATIVE SAMPLING - the replacement. Instead of scoring every word, score the true context
+word plus a handful of random ones, and train the model to tell them apart. Turns one
+100,000-way problem into six binary ones.
+
+SUBSAMPLING - randomly dropping very frequent words like "the" during training. They appear
+in every context so they carry almost no information, and they dominate the training pairs.
+
+INPUT and OUTPUT MATRICES - two vectors per word, one for when it is the centre and one for
+when it is context. The input matrix is what you keep.
+
+COSINE SIMILARITY - the angle between two vectors. The standard way to compare embeddings,
+because magnitude mostly reflects word frequency rather than meaning.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "similar" means "interchangeable", which includes
+opposites.
+
+The training signal is context. ANTONYMS APPEAR IN NEARLY IDENTICAL CONTEXTS - "the film
+was good" and "the film was bad", "prices rose" and "prices fell" - so word2vec places
+them very close together. The vector for "hot" is one of the nearest neighbours of "cold".
+
+This is not a bug to be fixed with better hyperparameters. It is what the objective asks
+for. A model trained to predict surrounding words CANNOT distinguish two words that have
+the same surroundings, and sentiment is exactly such a case. Any downstream system that
+treats high cosine similarity as "means the same thing" will be confidently wrong about
+the most important pairs in the language.
+
+THE SAME MECHANISM, VISIBLE IN THE MEASUREMENT ABOVE. "driver" listed "van(0.98)" among its
+nearest neighbours, above "pilot(0.97)". Drivers and vans are not the same kind of thing;
+they co-occur. The embedding has one number - similarity - doing the work of two distinct
+relationships, and the number cannot say which one it means.
+
+THE SECOND TRAP: ONE VECTOR PER WORD, FOREVER. "bank" gets a single vector averaging the
+riverbank sense and the financial sense - a point somewhere between two clusters, belonging
+to neither. Word2vec has no mechanism for context-dependent meaning, which is precisely
+what BERT and every transformer since exist to fix. This is the reason word2vec is now
+mostly of historical and pedagogical interest rather than a live choice.
+
+THE THIRD: it learns whatever the corpus contains, including its biases. The famous
+analogy results include ones nobody wanted, and they are faithful reports of the text.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - ONE-HOT VECTORS. A 100,000-dimensional vector, all zeros but one. Every
+pair of distinct words is exactly equally dissimilar; the representation contains no
+information beyond identity.
+
+UPGRADE 1 - COUNT CO-OCCURRENCES. Build a word-by-word matrix of how often each pair appears
+near each other. This genuinely captures similarity - and it is 100,000 by 100,000, mostly
+zeros, and dominated by "the".
+
+UPGRADE 2 - REWEIGHT AND REDUCE. Apply pointwise mutual information to discount frequency,
+then factorise to 300 dimensions with SVD. This works, and it is what people did before.
+It is also a large matrix operation over the whole corpus at once.
+
+UPGRADE 3 - WORD2VEC WITH FULL SOFTMAX. Learn the vectors by gradient descent instead of
+factorising. Now it is streaming and online - but each step scores the entire vocabulary,
+so it is 100,000 dot products per training pair.
+
+UPGRADE 4 - NEGATIVE SAMPLING. The step that made it practical. Score the true context word
+plus about five random ones and train a binary classifier. 100,000 dot products become 6 -
+FOUR ORDERS OF MAGNITUDE - with negatives drawn from the unigram distribution raised to the
+0.75 power, which pulls down the most frequent words without ignoring them.
+
+UPGRADE 5 - GloVe. Goes back to the co-occurrence matrix but fits it with a weighted least
+squares objective. Comparable quality, different route.
+
+UPGRADE 6 - FASTTEXT. Represent a word as the sum of its character n-grams, so an unseen
+word still gets a vector from its pieces. Fixes word2vec's inability to handle any word not
+in the training vocabulary.
+
+UPGRADE 7 - CONTEXTUAL EMBEDDINGS. BERT and successors give a different vector for "bank"
+in each sentence. This is the actual answer to section 4's central limitation, and it is
+why word2vec is now taught rather than deployed.""",
+
+    """6. HOW TO TRAIN AND USE ONE - numbered steps.
+
+STEP 1. Tokenise consistently - lowercase, decide about punctuation and numbers - and use
+the SAME tokeniser at inference. A mismatch means lookups silently miss.
+
+STEP 2. Build the vocabulary with a minimum count, typically 5. Words seen twice have
+vectors made of noise, and they bloat the model.
+
+STEP 3. Subsample frequent words. "the" appears in every context and contributes almost no
+information while dominating the training pairs.
+
+STEP 4. Choose the window from what you want. 2 to 5 for syntactic substitutability, 10 or
+more for topical relatedness. THIS IS THE PARAMETER THAT DECIDES WHAT "SIMILAR" MEANS in
+your embedding, and it is more consequential than the dimension.
+
+STEP 5. Choose dimensions: 100 to 300 for a real corpus. Beyond that returns are small and
+the model gets slower.
+
+STEP 6. Use skip-gram with negative sampling (5 to 20 negatives) as the default. CBOW is
+faster if the corpus is huge and frequent words are what matter.
+
+STEP 7. Evaluate on something real: a word-similarity benchmark, an analogy set, or - best -
+the downstream task you actually care about. Eyeballing nearest neighbours is a sanity
+check, not an evaluation.
+
+STEP 8. Compare with cosine similarity, not Euclidean distance. Vector magnitude largely
+tracks word frequency rather than meaning.
+
+STEP 9. Decide what happens for an out-of-vocabulary word before you deploy. Word2vec has
+no answer; fastText does.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine you are handed a million sentences in a language you do not speak, with no
+dictionary and no pictures. Can you work out anything about what the words mean?
+
+You can, and there is only one thing to go on: which words turn up near which.
+
+You notice that two particular words both tend to appear right after the same little word,
+and right before another word that often follows both of them. Everywhere one could stand,
+the other could stand too. You do not know what either means - but you know they are the
+same KIND of thing. Do that for every word and the vocabulary sorts itself into families
+without anyone naming a single family.
+
+That is the whole method. Measured on a small corpus, the words that could substitute for
+each other ended up with a similarity of about 0.98 to each other and under 0.45 to
+everything else - and no category was ever supplied.
+
+Now the catch, and it is not a small one.
+
+"Interchangeable" is not the same as "means the same". The sentence "the food was
+delicious" and "the food was disgusting" have identical surroundings, so by this method
+those two words are near-identical twins. Opposites are the words most likely to be
+confused, because opposites are exactly the words that fit in the same slot.
+
+And there is a related confusion the method cannot separate. Measured, "driver" came out
+close to "van" - not because a driver is a kind of van, but because they keep turning up in
+the same sentences. Being the same kind of thing and being found together produce the same
+number, and once you have the number you cannot tell which one it was.
+
+Finally: a word gets one vector for life. "Bank" is used for the side of a river and for
+somewhere you keep money, and this method has to average the two into a single point that
+means neither.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  for centre, context in pairs:
+      targets = [(context, 1.0)] + [(sample_negative(), 0.0) for _ in range(NEG)]
+      grad_centre = [0.0] * D
+      for tid, label in targets:
+          dot = sum(W[centre][k] * C[tid][k] for k in range(D))
+          err = sigmoid(dot) - label
+          for k in range(D):
+              grad_centre[k] += err * C[tid][k]
+              C[tid][k]      -= LR * err * W[centre][k]
+      for k in range(D):
+          W[centre][k] -= LR * grad_centre[k]
+
+LINE BY LINE.
+
+  targets = [(context, 1.0)] + [... 0.0 ...]
+NEGATIVE SAMPLING, and the whole reason this is tractable. Instead of a softmax over the
+vocabulary, one positive and NEG negatives make it NEG+1 independent binary problems. With
+a 100,000-word vocabulary and NEG=5 that is 6 dot products instead of 100,000.
+
+  sample_negative()
+Drawn from word frequency raised to the 0.75 power. Plain frequency would make "the" almost
+every negative; uniform would make rare words too easy to distinguish. The 0.75 exponent is
+an empirical compromise and it matters more than it looks.
+
+  dot = sum(W[centre][k] * C[tid][k] ...)
+TWO SEPARATE MATRICES. W holds a word's vector when it is the centre, C when it is context.
+Using one matrix would make a word's similarity to ITSELF part of the objective, and the
+model could reduce loss by making common words similar to everything. You keep W and
+discard C.
+
+  err = sigmoid(dot) - label
+The gradient of binary cross-entropy, in one line. When the model already scores a true pair
+highly, sigmoid is near 1, err is near 0, and almost nothing changes - the update is
+automatically proportional to how wrong it currently is.
+
+  grad_centre[k] += err * C[tid][k]
+Gradients ACCUMULATE across the positive and all the negatives before the centre word is
+updated. Applying them one at a time would use stale values within a single step.
+
+  C[tid][k] -= LR * err * W[centre][k]
+Context vectors are updated IMMEDIATELY and individually. Each appears in only one target,
+so there is nothing to accumulate. The asymmetry between these two lines is easy to get
+wrong and produces a model that trains but learns much less.
+
+  THE COST: O(NEG * D) per pair. Nothing here is a matrix operation on the vocabulary,
+which is the whole engineering achievement.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Setup: 25-word vocabulary, 6,000 sentences from six templates, window 2, 12 dimensions, 5
+negatives, learning rate 0.05, three epochs.
+
+TRACE A - nearest neighbours after training, by cosine.
+
+  cat     -> owl(0.99), fox(0.99), dog(0.98), bread(0.43)
+  fish    -> bread(0.99), corn(0.99), meat(0.99), ate(0.51)
+  driver  -> farmer(0.98), van(0.98), pilot(0.97), truck(0.97)
+  truck   -> van(0.99), car(0.99), bus(0.98), driver(0.97)
+
+The top three for every probe are its own category, and then there is a CLIFF: 0.98 down to
+0.43 for cat, 0.99 down to 0.51 for fish. The categories are not vaguely clustered, they are
+sharply separated - and the model was given no categories.
+
+WHERE IT IS INTERESTING RATHER THAN CLEAN: "driver" ranks van(0.98) ABOVE pilot(0.97).
+Pilot is the same kind of thing; van is a thing drivers are mentioned with. The cosine
+cannot distinguish those two relationships and here they interleave.
+
+TRACE B - the separation, averaged over all pairs.
+
+  group      mean cosine WITHIN    mean cosine to OTHER groups
+  ---------------------------------------------------------------
+  animals         0.983                     0.318
+  foods           0.987                     0.230
+  people          0.962                     0.455
+  vehicles        0.991                     0.433
+
+Foods are the most cleanly isolated (0.987 against 0.230) because in these templates a food
+only ever follows a small set of verbs. People and vehicles are the least (0.962 against
+0.455) because they co-occur in the same sentences constantly - "the driver repaired my
+van" puts them three words apart, inside a window of 2 for some positions.
+
+TRACE C - why this needed negative sampling. Per training pair:
+  full softmax    25 dot products here, 100,000 on a real vocabulary
+  negative sampling  6 dot products, regardless of vocabulary size
+On this toy corpus with 25 words the saving is 4x and irrelevant. At 100,000 words it is
+16,000x, and it is the difference between the method existing and not.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Training is O(corpus_size * window * (NEG+1) * D) - linear in the corpus, and
+independent of vocabulary size thanks to negative sampling. Memory is 2 * V * D floats
+during training and V * D after you discard the context matrix: at 100,000 words and 300
+dimensions that is 120 MB while training, 60 MB to ship. Lookup at inference is one array
+index - free.
+
+THE #1 MISTAKE: reading high cosine similarity as "means the same thing". Antonyms appear
+in identical contexts and therefore get near-identical vectors. "hot" and "cold" are
+neighbours, and any sentiment system built on that is confidently wrong about the pairs
+that matter most.
+
+THE #2 MISTAKE: not distinguishing similarity from relatedness. Measured, "driver" ranked
+"van" above "pilot". One number is carrying two relationships and cannot say which.
+
+THE #3 MISTAKE: expecting one vector per word to handle polysemy. "bank" is a single point
+averaging two meanings. This is what contextual embeddings exist to fix.
+
+THE #4 MISTAKE: ignoring the window size. Small windows give substitutability, large ones
+give topic. It defines what your embedding MEANS by "similar" and it is chosen more
+casually than the dimension.
+
+THE #5 MISTAKE: skipping subsampling of frequent words, letting "the" dominate the pairs.
+
+THE #6 MISTAKE: comparing with Euclidean distance. Magnitude tracks frequency, not meaning.
+
+THE #7 MISTAKE: no plan for out-of-vocabulary words. Word2vec has none; fastText composes
+one from character n-grams.
+
+THE TAKEAWAY: word2vec learns a vector per word from raw text by training on a task nobody
+wants - predict the neighbours - and keeping the weights instead of the predictions, and it
+works because words that are interchangeable in context get the same training signal;
+measured on a corpus with no labels at all, mean within-category cosine of 0.96 to 0.99
+against 0.23 to 0.46 across categories, with the nearest neighbours of "cat" being owl, fox
+and dog; negative sampling is what made it practical, turning a 100,000-way softmax into
+six binary decisions per pair; and its limits follow from the same mechanism that makes it
+work - antonyms share contexts so they land on top of each other, similarity and mere
+co-occurrence produce the same number (measured, "van" ranked above "pilot" for "driver"),
+and one vector per word cannot represent two senses, which is exactly what contextual
+embeddings were built to fix.""",
+]
+
+_EX_P1AO["Diagnosing a model with learning curves (is it bias or variance?)"] = [
+    """1. THE GOAL - decide whether to get more data or a better model, before spending on either.
+
+Your model is not accurate enough. The two obvious moves cost very different things:
+
+  GET MORE DATA        expensive, slow, sometimes impossible
+  USE A BIGGER MODEL   cheap to try, and often makes things worse
+
+Guessing wrong wastes months. A LEARNING CURVE answers it in an afternoon: train the model
+on 10 examples, then 20, then 50, 200, 1000, and plot TRAINING error and VALIDATION error
+against training-set size.
+
+The shape tells you which problem you have.
+
+  HIGH BIAS (underfitting)   both curves converge, and they converge HIGH
+  HIGH VARIANCE (overfitting) a large GAP between them that closes as data grows
+  NEITHER                    both converge, and they converge at the noise floor
+
+The reason this works: training error RISES with more data (harder to fit 1000 points than
+10) and validation error FALLS. Where they meet, and how high, is the diagnosis.""",
+
+    """2. THE INTUITION - read the CONVERGED LEVEL for bias and the GAP for variance.
+
+MEASURED. The true relationship is a cubic with noise of standard deviation 1.5, so the
+irreducible error is 1.5^2 = 2.25 - NO MODEL CAN DO BETTER THAN 2.25, ever. Three models,
+same data:
+
+  DEGREE 1 - too simple
+    train n     train MSE    val MSE      gap
+        20        4.2943      7.9676     3.6733
+       200        6.3911      6.8142     0.4231
+      2000        6.4247      6.8138     0.3891
+
+  DEGREE 3 - right shape
+        20        1.9658      2.8083     0.8425
+       200        2.5550      2.2732    -0.2818
+      2000        2.2328      2.2416     0.0089
+
+  DEGREE 14 - too complex
+        20        0.6228   enormous     enormous
+       200        2.4089      2.5028     0.0939
+      2000        2.2163      2.2360     0.0197
+
+READ THE COLUMNS SEPARATELY.
+
+The GAP tells you about variance. Degree 14 at n=20 has a gap so large it does not fit on
+the page; by n=2000 the gap is 0.02. Variance is a problem that MORE DATA FIXES.
+
+The CONVERGED LEVEL tells you about bias. Degree 1 converges to 6.81 against a floor of
+2.25 - and it converges there at n=200 and stays there at n=2000. THE EXTRA 1,800 EXAMPLES
+BOUGHT NOTHING. More data cannot fix bias.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LEARNING CURVE - training and validation error plotted against training-set SIZE. Not
+against epochs; that is a training curve, and it answers a different question.
+
+BIAS - error from the model being systematically unable to represent the truth. A straight
+line fitting a curve. Shows up as a HIGH converged level.
+
+VARIANCE - error from the model being over-sensitive to which examples it happened to see.
+Shows up as a GAP between training and validation error.
+
+UNDERFITTING - high bias. The model is too simple, or too constrained.
+OVERFITTING - high variance. The model has memorised the training set.
+
+IRREDUCIBLE ERROR / NOISE FLOOR - error no model can remove, because the target genuinely
+is random given the features. Measured here as 2.25. THE MOST IMPORTANT NUMBER ON THE PLOT
+and the one nobody draws.
+
+TRAINING ERROR - error on the data the model was fitted to. Rises with more data.
+VALIDATION ERROR - error on held-out data. Falls with more data.
+
+GAP - validation minus training. The direct read on variance.
+
+CAPACITY - how complex a function the model can represent. Polynomial degree here; depth
+and width in a network.
+
+PLATEAU - where the validation curve stops falling. If it has plateaued, more data of the
+same kind will not help.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the training curve going UP is correct.
+
+The first time anyone plots this, the training error rising with more data looks like a
+bug. Measured, degree 3: train MSE 1.9658 at n=20 and 2.2328 at n=2000. The model got
+WORSE at the thing it was trained on, and that is exactly right - fitting 20 points is easy
+and fitting 2000 is not. A training error that does NOT rise means the model has enough
+capacity to memorise everything you have, which is a warning, not a success.
+
+THE SECOND SURPRISE: THE GAP CAN GO NEGATIVE. Degree 3 at n=200 shows train 2.5550 and
+validation 2.2732 - a gap of -0.28, with validation error BELOW training error. Nothing is
+wrong. With 200 training points and 1000 validation points, the two sets are just different
+draws, and the validation set happened to be slightly easier. Near the noise floor the gap
+is dominated by sampling noise, and reading a small negative gap as a signal is reading
+noise.
+
+THE THIRD, AND THE ONE THAT COSTS MONEY: DEGREE 1 AND DEGREE 14 BOTH LOOK FINE AT n=2000.
+
+  degree  1 at n=2000:  train 6.4247  val 6.8138  gap 0.39
+  degree  3 at n=2000:  train 2.2328  val 2.2416  gap 0.01
+  degree 14 at n=2000:  train 2.2163  val 2.2360  gap 0.02
+
+Judged on the GAP ALONE, the degree-1 model looks nearly as well-behaved as the others -
+0.39 against 0.01. It is not. Its validation error is three times theirs. A model can be
+perfectly consistent and consistently wrong, and "no overfitting" is not the same as
+"good". THE LEVEL AND THE GAP ARE TWO DIFFERENT READINGS and you need both.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - ONE TRAIN/TEST SPLIT, ONE NUMBER. "Validation MSE is 6.8." That tells
+you the model is not good enough and nothing about why, so the next step is a guess.
+
+UPGRADE 1 - PLOT THE CURVE. Five or six training sizes on a log scale, both errors. This is
+half a day of work and it converts a guess into a reading.
+
+UPGRADE 2 - DRAW THE NOISE FLOOR ON THE PLOT. Without it you cannot tell "converged at
+2.24, which is optimal" from "converged at 6.81, which is not". Estimate it from repeated
+measurements of the same input, from human agreement, or from the best model anyone has
+achieved on this data.
+
+UPGRADE 3 - AVERAGE OVER SEVERAL SUBSAMPLES AT EACH SIZE. At n=20 a single draw is nearly
+meaningless - measured, degree 14 at n=20 gave a validation error too large to print, and
+another draw would give something completely different. Five repeats per point turns a
+jagged plot into a readable one.
+
+UPGRADE 4 - EXTRAPOLATE THE VALIDATION CURVE BEFORE BUYING DATA. If it is still falling
+steeply, more data will help and you can estimate how much from the slope. If it has
+flattened - degree 1 from n=200 onward - collecting ten times more changes nothing, and
+that is a purchase decision made on evidence.
+
+UPGRADE 5 - RUN IT FOR TWO MODEL SIZES AT ONCE. The comparison is more informative than
+either curve alone: it shows immediately whether capacity is the binding constraint.
+
+UPGRADE 6 - FOR A HIGH-BIAS DIAGNOSIS, TRY TO OVERFIT ON PURPOSE. Take 50 examples and see
+whether the model can drive training error to near zero. If it cannot, the problem is not
+regularisation or data - it is capacity or a bug.""",
+
+    """6. HOW TO READ ONE - numbered steps.
+
+STEP 1. Fix a validation set once and use it for every point on the curve. Changing it
+between points makes the curve meaningless.
+
+STEP 2. Train on increasing subsets - 10, 20, 50, 200, 1000, all - drawn randomly and
+NESTED, so the n=50 set contains the n=20 set. Nested subsets remove one source of jitter.
+
+STEP 3. Record training error on the subset actually used, and validation error on the
+fixed set.
+
+STEP 4. Repeat each size a few times with different subsets and average.
+
+STEP 5. Plot both, and draw the noise floor as a horizontal line.
+
+STEP 6. READ THE GAP. Large and closing -> high variance -> more data, or more
+regularisation, or a smaller model.
+
+STEP 7. READ THE CONVERGED LEVEL against the noise floor. Converged well above it -> high
+bias -> bigger model, better features, less regularisation. Measured, degree 1 converged at
+6.81 against a floor of 2.25 and stayed there from n=200 to n=2000.
+
+STEP 8. If the validation curve is still falling at your largest size, more data will help.
+If it has plateaued, it will not - and that is the sentence that saves the budget.
+
+STEP 9. Check for both at once. A model can be underfitting AND overfitting: high converged
+level and a persistent gap. Then more data helps a little and you still need a better model.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A student keeps failing practice exams and you have to decide what to do about it. Buy
+more practice papers, or find a better teacher? They cost very different amounts and only
+one of them is the problem.
+
+There is a test. Give her ten questions to study, then check her on those ten and on a
+fresh set. Then twenty, then fifty, then a thousand. Watch two scores.
+
+If she does brilliantly on the questions she studied and badly on the fresh ones, she is
+memorising rather than understanding. The gap is the symptom. Give her more questions and
+the gap shrinks - measured, a model in exactly this state went from an unreadably large gap
+at twenty examples to a gap of 0.02 at two thousand. MORE PRACTICE PAPERS.
+
+If she does about equally badly on both - no gap at all, just consistently poor - she is
+not memorising. She has understood something, and what she understood is wrong or too
+simple. Measured, a model in this state scored 6.42 on studied questions and 6.81 on fresh
+ones at two hundred examples, and 6.42 and 6.81 again at two thousand. TEN TIMES THE
+PRACTICE CHANGED NOTHING. She needs a better teacher, not more papers.
+
+Two things to be careful about.
+
+Her score on the questions she studied gets WORSE as you give her more. That is not a
+decline; ten questions can be memorised and a thousand cannot. If her studied-question
+score stays perfect at a thousand, she is memorising at a scale that should worry you.
+
+And you have to know what a perfect score even is. Some of the exam questions are
+genuinely ambiguous and nobody can get them right - measured, 2.25 out of the errors was
+irreducible. A student sitting at 2.24 has finished. A student sitting at 6.81 has not.
+Without knowing that number, both look like "not perfect yet".""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  for m in (10, 20, 50, 200, 1000, 2000):
+      model = fit(X_train[:m], y_train[:m])
+      train_err = mse(X_train[:m], y_train[:m], model)
+      val_err   = mse(X_val,      y_val,      model)
+      record(m, train_err, val_err, gap=val_err - train_err)
+
+LINE BY LINE.
+
+  for m in (10, 20, 50, 200, 1000, 2000):
+LOG SPACING, not linear. The interesting behaviour is all at the small end - between 20 and
+200 the degree-14 model goes from useless to fine - and linear spacing spends every point
+in the flat region where nothing happens.
+
+  model = fit(X_train[:m], y_train[:m])
+NESTED subsets: the first m of a pre-shuffled list, so the n=50 set contains the n=20 set.
+Independent random draws at each size add jitter that looks like signal. The pre-shuffle is
+essential - taking the first m of data sorted by anything at all makes every point a
+different problem.
+
+  train_err = mse(X_train[:m], y_train[:m], model)
+Training error on THE SUBSET USED, not the whole training set. Scoring against all 2000
+would measure something else entirely and would not rise the way it should.
+
+  val_err = mse(X_val, y_val, model)
+THE SAME held-out set every time. This is what makes the points comparable - the only thing
+varying across the curve is m.
+
+  gap = val_err - train_err
+The variance reading. Note it can be NEGATIVE near the noise floor and that is not an
+error - measured -0.2818 for degree 3 at n=200, where the validation draw happened to be
+slightly easier than the training draw.
+
+WHAT THE LOOP IS MISSING, and both matter: repeats at each m (one draw at m=10 is nearly
+pure noise), and the NOISE FLOOR, which is not computable from this loop at all and has to
+come from outside - repeated measurements, human agreement, or the best result anyone has
+achieved. WITHOUT IT THE CONVERGED LEVEL CANNOT BE INTERPRETED, which is half the
+diagnosis.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+The truth is y = 0.5x^3 - 2x + noise, noise sd 1.5, so the irreducible error is 2.25.
+
+TRACE A - HIGH BIAS. Degree 1, a straight line through a cubic.
+
+    n      train     val      gap
+    10    0.7780   13.6291  12.8510
+    20    4.2943    7.9676   3.6733
+    50    4.3457    7.3718   3.0262
+   200    6.3911    6.8142   0.4231
+  1000    6.3182    6.8048   0.4866
+  2000    6.4247    6.8138   0.3891
+
+The gap collapses from 12.85 to 0.39 - so by the gap alone this model looks healthy. But
+the validation error settles at 6.81, THREE TIMES the 2.25 floor, and it settles by n=200.
+The last 1,800 examples moved it from 6.8142 to 6.8138. If someone proposed buying ten
+times more data for this model, the curve says the answer is no.
+
+TRACE B - HIGH VARIANCE. Degree 14, fifteen parameters.
+
+    n      train     val         gap
+    10    0.0004   astronomical  astronomical
+    20    0.6228   astronomical  astronomical
+    50    1.9696   16.3415       14.3718
+   200    2.4089    2.5028        0.0939
+  1000    2.1907    2.2762        0.0855
+  2000    2.2163    2.2360        0.0197
+
+At n=10 the training error is 0.0004 - fifteen parameters through ten points fits them
+essentially exactly, including the noise, and the validation error is off the scale. The
+cure is visible in the table: by n=200 the gap is 0.09 and validation is 2.50. MORE DATA
+FIXED IT COMPLETELY, and by n=2000 this model is indistinguishable from the correct one.
+
+TRACE C - NEITHER. Degree 3, the true shape.
+
+    n      train     val      gap
+    20    1.9658   2.8083    0.8425
+   200    2.5550   2.2732   -0.2818
+  2000    2.2328   2.2416    0.0089
+
+Both curves converge to 2.23 and 2.24 against a floor of 2.25. THIS MODEL IS DONE. There is
+no bias left to remove and no variance left to average away, and every further improvement
+would have to come from better features or less noisy measurements - not from a bigger
+model and not from more rows.
+
+Note the -0.28 at n=200: validation below training. Sampling noise between two different
+draws, not a signal.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. One model fit per point, times the number of repeats - so six sizes with five
+repeats is 30 fits. The largest fit dominates, and the smaller ones are nearly free, so a
+full learning curve typically costs about two to three times a single training run. Against
+the cost of a data-collection programme or a month of model architecture work, it is
+nothing, and it is the cheapest way to find out which of those two you need.
+
+THE #1 MISTAKE: buying more data to fix a bias problem. Measured, degree 1 converged at
+6.81 by n=200 and was still at 6.81 at n=2000 - a tenfold increase for a change in the
+fourth decimal place. The curve says this before the data is bought.
+
+THE #2 MISTAKE: not knowing the noise floor. Measured 2.25 here. Without it, converging at
+2.24 and converging at 6.81 both read as "not perfect yet", and those are opposite
+situations.
+
+THE #3 MISTAKE: reading a small gap as a healthy model. Measured, degree 1 had a gap of 0.39
+and a validation error three times optimal. No overfitting is not the same as good.
+
+THE #4 MISTAKE: treating a rising training curve as a bug. It is required. A training error
+that stays flat as data grows means the model can memorise everything you have.
+
+THE #5 MISTAKE: one subsample per point. Measured, degree 14 at n=20 gave a value too large
+to print; another draw gives something else entirely. Average several.
+
+THE #6 MISTAKE: confusing this with a plot against EPOCHS. That diagnoses convergence and
+learning rate. Only the plot against DATA SIZE answers "more data or bigger model".
+
+THE #7 MISTAKE: reading a small negative gap as meaningful. Measured -0.2818 near the floor,
+which is two different samples, not a finding.
+
+THE TAKEAWAY: plot training and validation error against TRAINING-SET SIZE and read two
+things separately - the GAP between the curves is variance and it is what more data fixes,
+measured shrinking from unreadable at n=20 to 0.02 at n=2000 for an over-complex model; the
+CONVERGED LEVEL relative to the noise floor is bias and more data does not touch it,
+measured at 6.81 against a floor of 2.25 from n=200 all the way to n=2000, a tenfold
+increase that changed the fourth decimal; so draw the noise floor on the plot or the level
+cannot be interpreted at all, expect the training curve to RISE, average several subsamples
+at the small sizes where a single draw is noise, and use the shape of the validation curve
+at your largest size to decide whether buying more data is a purchase or a waste.""",
+]
+
 
 
 
