@@ -958,6 +958,62 @@ def test_card_title_is_not_sliced_off_on_a_phone(auth_client):
     assert ".q-head .q-chips" in mobile, "the chips never move to their own row on a phone"
 
 
+def test_card_chips_line_up_between_cards_on_desktop(auth_client):
+    """Reported as "misaligned among different cards, hard to read".
+
+    The desktop rule was `display: contents`, which dissolved the wrapper so
+    the six chips became plain flex children trailing a flex:1 title, each at
+    its natural width. The content varies far too much for that to line up:
+    the category label runs 12 to 27 characters, the sub-area 3 to 19. Every
+    card put its priority, its time and its difficulty at a different x, so
+    reading down a column of cards meant re-finding each chip on every row.
+
+    A fixed-track grid is the fix, and this test is here because
+    `display: contents` is the tidier-looking rule and would be easy to
+    restore by accident."""
+    import re
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    rules = re.findall(r"\.q-head \.q-chips \{[^}]*\}", html)
+    assert rules, "no desktop rule for the header chips"
+    desktop = rules[0]
+    assert "display: contents" not in desktop, (
+        "chips back to display: contents — they will not align between cards")
+    assert "display: grid" in desktop and "grid-template-columns" in desktop, desktop
+    # Fixed tracks, not auto/min-content: a track sized to its content is a
+    # track that moves when the content changes, which is the whole bug.
+    cols = re.search(r"grid-template-columns:\s*([^;]+);", desktop).group(1)
+    assert "auto" not in cols and "min-content" not in cols and "max-content" not in cols, cols
+    assert len(cols.split()) >= 6, f"a track per chip is what keeps them aligned: {cols}"
+    # A chip whose value overruns must shorten, not widen its track.
+    assert "text-overflow: ellipsis" in html
+
+
+def test_a_timed_task_draws_on_its_own_day_only():
+    """A task scheduled for 9am Monday drew a chip at 9am on Tuesday,
+    Wednesday and every day after, until it was marked done.
+
+    /api/v2/project-tasks filters `due_date is null OR due_date <= date`,
+    which is the right question for the unscheduled backlog panel and the
+    wrong one for the grid. drag-to-schedule already writes plan_date
+    beside start_time, so the day was recorded — the grid just never
+    looked at it, and the endpoint did not even return it."""
+    import re
+    js = open("static/v2/planner_v2.js", encoding="utf-8").read()
+    grid = re.search(r"const timedTasks = taskData\.filter\((.*?)\);", js, re.S).group(1)
+    assert "plan_date" in grid, "the grid still ignores which day a task belongs to"
+    assert "start_time" in grid
+    # ...and the endpoint has to actually send it.
+    py = open("routes/projects.py", encoding="utf-8").read()
+    sel = re.search(r'"select": "task_id,task_text,priority,project_id,[^"]*"'
+                    r'(?:\s*"[^"]*")*', py).group(0)
+    assert "plan_date" in sel, "plan_date is not in the calendar task payload"
+    # A task given a day but no clock time is scheduled, not floating — it
+    # must not reappear in the "unscheduled" panel as a second copy.
+    floating = re.search(r"const unscheduled = \(tasks \|\| \[\]\)\.filter\((.*?)\);",
+                         js, re.S).group(1)
+    assert "plan_date" in floating, "a task with a day still lists as unscheduled"
+
+
 def test_quick_bucket_top5_wraps_instead_of_truncating(auth_client):
     """Today's five are the tasks she actually reads, so a long one must WRAP.
     It used to be white-space: nowrap with an ellipsis, which meant identifying

@@ -686,20 +686,36 @@ def ai_sde_schedule():
         "plan_date": f"eq.{plan_date}",
         "task_text": _pg_eq(title),
         "is_deleted": "eq.false",
-        "select": "task_id,start_time",
+        "select": "task_id",
         "limit": "1",
     }, optional={"is_deleted"})
     if existing:
+        # The time comes from the daily_events row, not the task — the task
+        # deliberately carries no start_time (see below) — and re-reading it
+        # to echo it back is not worth a round trip. The day is the answer
+        # she needs; the calendar shows the rest.
         return jsonify({
             "status": "already-scheduled",
             "project_id": project_id,
             "task_id": existing[0]["task_id"],
             "plan_date": plan_date,
-            "start_time": existing[0].get("start_time") or AI_SDE_MIDNIGHT,
             "message": f"Already on {plan_date}.",
         })
 
     # ── 1. The project task — the record of what she planned ────────
+    #
+    # NOTE THE ABSENT start_time. The calendar page draws BOTH sources:
+    # planner_v2.js fetches /api/v2/events AND /api/v2/project-tasks, then
+    # renders `taskData.filter(t => t.start_time)` as chips alongside the
+    # events. Setting it here put the same topic on the grid twice — once
+    # as its event, once as its task — which is what "tasks repeating
+    # twice in the calendar" was.
+    #
+    # The event is the one that survives, because it is the row the grid
+    # treats as a real appointment: its own end_time (so the block is the
+    # topic's actual prep length rather than the flat 30 minutes the task
+    # renderer assumes) and the Google mirror hangs off it. The task keeps
+    # plan_date as the record of which day it belongs to.
     task_payload = {
         "user_id": user_id,
         "project_id": project_id,
@@ -707,7 +723,6 @@ def ai_sde_schedule():
         "status": "open",
         "priority": "medium",
         "plan_date": plan_date,
-        "start_time": start_time,
         "due_date": plan_date,
         "notes": "AI/SDE prep topic · scheduled from /ai-sde",
         "is_deleted": False,

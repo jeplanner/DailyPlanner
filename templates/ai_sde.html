@@ -38,10 +38,30 @@
   .q-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
   .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
   .q-head .q-text { flex: 1; font-size: 14.5px; font-weight: 700; min-width: 0; }
-  /* The chips live in their own element so a phone can drop them onto a
-     second line as a group. `display: contents` means the wrapper is invisible
-     to layout on a wide screen, so the row looks exactly as it always did. */
-  .q-head .q-chips { display: contents; }
+  /* The chips get their own row, as a FIXED-COLUMN GRID.
+     This used to be `display: contents`, which dissolved the wrapper so the
+     six chips became plain flex children trailing a flex:1 title. Each then
+     took its natural width — and the content varies enormously: the category
+     label runs from "Coding & DSA" (12 chars) to "Thought-Provoking
+     Questions" (27), the sub-area from "OOP" to "Feature-Engineering". So
+     every card put its priority, its time and its difficulty at a different
+     x, and scanning a column of forty cards meant re-finding each chip on
+     every row. Unreadable, which is exactly what it was reported as.
+     A grid with fixed track widths puts P0 under P0 and ⏱ under ⏱ all the
+     way down. Widths are set from the longest real value in the bank at each
+     chip's own font-size, so nothing truncates; the category takes whatever
+     is left. All six fields are populated for all 1,120 entries, so no track
+     is ever empty and the columns cannot slip.
+     Phones keep the wrapped-flex version below — there is no room for six
+     fixed columns at 360px, and that layout was never the problem. */
+  .q-head .q-chips { display: grid; align-items: center; gap: 6px;
+                     grid-template-columns: 34px 70px 80px 124px 68px minmax(0, 1fr);
+                     flex: 1 0 100%; min-width: 0; margin-top: 1px; }
+  /* Long values shorten rather than widen their track — a chip that pushed
+     its column would take the whole grid out of alignment with the cards
+     above it, which is the bug this is fixing. */
+  .q-head .q-chips > * { justify-self: start; max-width: 100%;
+                         overflow: hidden; text-overflow: ellipsis; }
   .q-head .q-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 8px; white-space: nowrap; flex: none; }
   .q-card.done .q-text { color: var(--color-text-secondary); }
   .q-body { padding: 0 13px 13px 41px; display: none; }
@@ -194,7 +214,9 @@
   .sched-msg.err { color: #b91c1c; font-weight: 700; }
   html.dark .sched-msg.ok { color: #6ee7b7; } html.dark .sched-msg.err { color: #fca5a5; }
   /* The 📅 in the card header — the one that lets her plan a week without
-     opening a single card. Sized as a thumb target, not a chip. */
+     opening a single card. Sized as a thumb target, not a chip. It follows
+     the title, and since the title is flex:1 that parks it at the right edge
+     of every row: same x on every card, so the eye finds it once. */
   .q-sched-btn { flex: none; font-size: 15px; line-height: 1; background: none;
                  border: 1px solid transparent; border-radius: 8px; padding: 4px 5px;
                  cursor: pointer; opacity: .55; }
@@ -963,8 +985,8 @@
       <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
-          <button class="q-sched-btn" type="button" data-sched-head title="Put this topic on a day" aria-label="Schedule this topic">📅</button>
           <span class="q-text">${esc(e.title)}</span>
+          <button class="q-sched-btn" type="button" data-sched-head title="Put this topic on a day" aria-label="Schedule this topic">📅</button>
           <span class="q-chips">
             ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
             ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}

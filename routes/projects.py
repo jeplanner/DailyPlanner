@@ -1381,8 +1381,12 @@ def get_project_tasks():
                 "is_eliminated": "eq.false",
                 "status": "neq.done",
                 "or": f"(due_date.is.null,due_date.lte.{date})",
+                # plan_date is in the select because the calendar needs it to
+                # know WHICH day a timed task belongs to. Without it every
+                # task with a start_time redrew its chip on this day and every
+                # later one, since the filter below is due_date <= date.
                 "select": "task_id,task_text,priority,project_id,start_time,due_date,"
-                          "is_recurring,recurrence_type",
+                          "plan_date,is_recurring,recurrence_type",
                 "limit": 200,
             }
         ) or []

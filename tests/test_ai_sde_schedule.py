@@ -189,7 +189,6 @@ def test_one_tap_writes_all_three_places(auth_client, db):
     task = db.only("project_tasks")
     assert task["task_text"] == TITLE
     assert task["plan_date"] == "2026-09-01"
-    assert task["start_time"] == "00:00"
     assert task["is_deleted"] is False
 
     ev = db.only("daily_events")
@@ -202,6 +201,28 @@ def test_one_tap_writes_all_three_places(auth_client, db):
     assert TITLE in qb["text"]
     assert qb["text"].startswith("AISDEPrep")
     assert qb["is_done"] is False
+
+
+def test_the_topic_appears_on_the_calendar_exactly_once(auth_client, db):
+    """Reported as "tasks repeating twice in the calendar".
+
+    planner_v2.js builds each day column from TWO sources — /api/v2/events
+    and /api/v2/project-tasks — and renders every task carrying a
+    start_time as a chip beside the events. Writing both rows with a time
+    therefore drew the same topic twice on the same day.
+
+    The event wins: it is the row the grid treats as a real appointment,
+    with its own end_time (so the block is the topic's actual prep length
+    instead of the flat 30 minutes the task renderer assumes) and the
+    Google mirror hanging off it. The task keeps plan_date as the record
+    of which day it belongs to, and no start_time, so it draws nothing."""
+    _post(auth_client, title=TITLE, start_time="09:00")
+    task = db.only("project_tasks")
+    assert "start_time" not in task or task["start_time"] is None, (
+        "a project task with a start_time draws its OWN chip on the grid — "
+        "that is the second copy")
+    assert task["plan_date"] == "2026-09-01", "the task still records its day"
+    assert db.only("daily_events")["start_time"] == "09:00"
 
 
 def test_a_given_time_is_kept_and_becomes_a_deadline(auth_client, db):

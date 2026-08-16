@@ -383,7 +383,17 @@ async function loadAllEvents() {
       }
     } catch (e) { console.warn("Tasks fetch failed for", ds, e); }
 
-    const timedTasks = taskData.filter(t => t.start_time);
+    // A timed task belongs to ONE day: the plan_date that drag-to-schedule
+    // sets alongside start_time. The endpoint's filter is
+    // `due_date is null OR due_date <= date`, which is right for the
+    // unscheduled backlog below but wrong here — without the plan_date
+    // check a task scheduled for 9am Monday drew a chip at 9am on Tuesday,
+    // Wednesday and every day after, until it was marked done.
+    // Tasks with no plan_date keep the old behaviour so nothing that was
+    // scheduled before this fix silently vanishes off the grid.
+    const timedTasks = taskData.filter(
+      t => t.start_time && (!t.plan_date || t.plan_date === ds)
+    );
 
     const combined = [
       ...eventData.map(e => ({ ...e, type: "event" })),
@@ -1778,8 +1788,14 @@ function renderFloatingTasks(tasks) {
   if (!container) return;
   container.innerHTML = "";
 
-  // Only unscheduled tasks (no start_time)
-  const unscheduled = (tasks || []).filter(t => !t.start_time);
+  // Only genuinely unscheduled tasks. A plan_date means the task has been
+  // given a day even if it was given no clock time — /ai-sde's scheduler
+  // does exactly that, deliberately, so the topic's calendar chip comes
+  // from its event row and not from the task as well. Listing it here as
+  // "unscheduled" would be the same double-entry in a different panel,
+  // and it would pile up: every topic she has planned but not yet ticked
+  // off would sit in this list from its day onward.
+  const unscheduled = (tasks || []).filter(t => !t.start_time && !t.plan_date);
 
   if (!unscheduled.length) {
     container.innerHTML = `<div class="empty-state">No unscheduled tasks</div>`;
