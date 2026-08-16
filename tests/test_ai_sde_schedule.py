@@ -456,6 +456,14 @@ def test_the_button_is_reachable_without_opening_a_card(auth_client):
     # which is what renders for every row of the list.
     head = html.split('class="q-prac"')[1][:400]
     assert "data-sched-head" in head, "the 📅 is not in the row header"
+    # It must LOOK pressable. A bare glyph at reduced opacity, sitting among
+    # six coloured chips, read as decoration — reported as "very dull",
+    # which for the page's only real control is a failure of the control.
+    import re
+    btn = re.search(r"\.q-sched-btn \{[^}]*\}", html).group(0)
+    assert "opacity" not in btn, "the button is dimmed again"
+    assert "background: var(--color-primary)" in btn, "the button has no fill"
+    assert ">Plan<" in html, "icon-only gives no clue what the button does"
     # ...and inside the body, the panel comes before the prep-time section
     # rather than after the follow-ups.
     body = html.split("function bodyHTML")[1]

@@ -214,14 +214,29 @@
   .sched-msg.err { color: #b91c1c; font-weight: 700; }
   html.dark .sched-msg.ok { color: #6ee7b7; } html.dark .sched-msg.err { color: #fca5a5; }
   /* The 📅 in the card header — the one that lets her plan a week without
-     opening a single card. Sized as a thumb target, not a chip. It follows
-     the title, and since the title is flex:1 that parks it at the right edge
-     of every row: same x on every card, so the eye finds it once. */
-  .q-sched-btn { flex: none; font-size: 15px; line-height: 1; background: none;
-                 border: 1px solid transparent; border-radius: 8px; padding: 4px 5px;
-                 cursor: pointer; opacity: .55; }
-  .q-sched-btn:hover, .q-sched-btn:focus-visible { opacity: 1; border-color: var(--color-border); }
-  .q-card.open .q-sched-btn { opacity: 1; }
+     opening a single card. It follows the title, and since the title is
+     flex:1 that parks it at the right edge of every row: same x on every
+     card, so the eye finds it once.
+
+     Drawn as a FILLED button, not a bare glyph. The first version was a
+     transparent 📅 at opacity .55, which read as decoration sitting among
+     six coloured chips and was reported as too dull to see. Nothing else
+     in the header is a solid blue pill, so this is the one thing on the
+     row that looks pressable — which is the point, because it is the only
+     control here that does anything other than open the card. */
+  .q-sched-btn { flex: none; display: inline-flex; align-items: center; gap: 5px;
+                 font: inherit; font-size: 11.5px; font-weight: 800; line-height: 1;
+                 color: #fff; background: var(--color-primary);
+                 border: 1px solid var(--color-primary); border-radius: 999px;
+                 padding: 7px 11px; cursor: pointer; white-space: nowrap;
+                 box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .q-sched-btn:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+  .q-sched-btn:active { transform: translateY(1px); }
+  .q-sched-btn:focus-visible { outline: 3px solid var(--color-primary-ring); outline-offset: 1px; }
+  /* Once the card is open the in-body scheduler is the obvious way in, so
+     the header button steps back rather than competing with it. */
+  .q-card.open .q-sched-btn { background: var(--color-surface); color: var(--color-primary);
+                              border-color: var(--color-border); box-shadow: none; }
   /* Its phone rules live in the single @media block below, not in one of
      their own — the page has exactly one mobile block by convention. */
 
@@ -986,7 +1001,7 @@
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
-          <button class="q-sched-btn" type="button" data-sched-head title="Put this topic on a day" aria-label="Schedule this topic">📅</button>
+          <button class="q-sched-btn" type="button" data-sched-head title="Put this topic on a day" aria-label="Schedule this topic">📅<span class="lbl">Plan</span></button>
           <span class="q-chips">
             ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
             ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
