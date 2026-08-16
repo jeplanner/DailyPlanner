@@ -254236,6 +254236,1017 @@ get the dependency order wrong, tabulate when the states are dense or the recurs
 deep, and remember that the loop direction and the array initialisation are not style
 choices - they are the base cases and the recurrence, and both fail silently.""",
 ]
+_EX_P1AO["Time vs Space complexity"] = [
+    """1. THE GOAL - decide what to keep in memory so you do not have to recompute it.
+
+Almost every optimisation is one of two moves.
+
+  STORE SOMETHING, so you do not compute it again.  More space, less time.
+  RECOMPUTE SOMETHING, so you do not have to keep it. More time, less space.
+
+Time complexity counts operations as the input grows. Space complexity counts extra
+memory, not counting the input itself. Both are written in big-O and both matter, but
+they matter at different moments: time decides whether the request is slow, space decides
+whether the process dies.
+
+THE CLASSIC EXAMPLE, MEASURED. Two Sum - find two numbers adding to a target.
+
+  n = 1,000,000
+    hash map            5.6 ms      dict costs about 40 MB
+    sort + two pointers 514.9 ms    no extra memory beyond the sort
+
+Ninety times faster for forty megabytes. On one array in one process that is an obvious
+trade. On ten thousand concurrent requests it is four hundred gigabytes and the answer
+flips.
+
+THE TRADE IS NOT A LAW, THOUGH, AND SECTION 4 IS THE MEASUREMENT THAT SHOWS SOMETIMES YOU
+GET BOTH.""",
+
+    """2. THE INTUITION - the exchange rate is what matters, not the direction.
+
+Two questions decide whether a space-for-time trade is worth making, and both are
+arithmetic rather than judgement.
+
+HOW MUCH TIME PER BYTE? Measured, prefix sums over a 200,000-element array:
+
+  recompute each range sum      1400.87 us per query,  0 extra memory
+  prefix-sum array                 0.35 us per query,  1.5 MB extra, 27.0 ms to build
+
+3,953 times faster per query for 1.5 MB. That is an extraordinary exchange rate and the
+decision is not close.
+
+HOW MANY TIMES WILL YOU USE IT? Precomputation only pays if you amortise the build.
+
+  break-even: 19.3 queries
+
+Below twenty queries, recomputing is genuinely faster - the 27 ms build has not paid for
+itself. Above it, the precomputed version wins and keeps winning. THE BREAK-EVEN IS A
+NUMBER YOU CAN COMPUTE, and "should I cache this" is usually that arithmetic rather than
+an opinion.
+
+AND THE THIRD QUESTION, THE ONE PEOPLE FORGET: does the space scale with the same thing
+the time does? A 40 MB hash map per REQUEST is a different proposition from a 40 MB table
+built once at startup and shared. Same big-O, opposite deployment.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TIME COMPLEXITY - how the number of operations grows with input size n. O(n) means
+doubling the input roughly doubles the work.
+
+SPACE COMPLEXITY - how much EXTRA memory is needed, beyond the input. An algorithm that
+sorts a list in place is O(1) space even though the list itself is large.
+
+AUXILIARY SPACE - the same thing, named explicitly to distinguish it from input size.
+This is what people usually mean by "space complexity", and the ambiguity causes real
+confusion in interviews.
+
+IN-PLACE - modifies the input rather than building a new structure. O(1) auxiliary space,
+usually at the cost of destroying the original.
+
+PRECOMPUTATION - work done once up front so that many later queries are cheap. Prefix
+sums, indexes, lookup tables.
+
+AMORTISED - the average cost per operation over a sequence, where an occasional expensive
+operation is spread across many cheap ones. A dynamic array's append is amortised O(1)
+despite occasional O(n) resizes.
+
+BREAK-EVEN POINT - the number of uses at which precomputation becomes cheaper than
+recomputing. Measured above as 19.3 queries.
+
+CACHE LOCALITY - whether memory accessed together sits together. Not in the big-O, and
+frequently larger than the effect that is.
+
+BITSET - one bit per possible value instead of a hash entry per present value.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the trade is often not a trade at all.
+
+"Time-space tradeoff" is taught as a law, which suggests that saving memory must cost
+time. Measured, on membership testing over 500,000 values out of 10 million possible:
+
+  set of ints    16.0 MB     21.1 ms for 200,000 probes
+  bitset          1.2 MB     21.0 ms for 200,000 probes
+
+THIRTEEN TIMES LESS MEMORY, AND VERY SLIGHTLY FASTER. There is no trade here. The bitset
+is smaller because it stores one bit per possible value rather than a pointer, a hash and
+an object header per present value, and it is not slower because the operation is two
+shifts and an AND against a hash and a probe.
+
+THE OTHER DIRECTION IS EVEN MORE SURPRISING. Big-O said the hash map version of Two Sum
+is O(n) and sort-plus-two-pointers is O(n log n) - a factor of about 20 at a million
+elements. Measured:
+
+  n =   100,000    hash 8.8 ms   sorted 33.2 ms     ratio 3.8x
+  n = 1,000,000    hash 5.6 ms   sorted 514.9 ms    ratio 92x
+
+The ratio is not 20, and the hash version got FASTER in absolute terms going from 100,000
+to a million elements - because the answer happened to be found early and it exits on
+finding it, while the sort must complete regardless. BIG-O DESCRIBES THE WORST CASE AS n
+GOES TO INFINITY. It does not predict a runtime, and where two algorithms differ by a log
+factor on paper, constants and early exits routinely swamp it in both directions.
+
+WHICH IS WHY THE ANSWER IS ALWAYS "MEASURE", and why the useful skill is knowing which
+comparisons big-O can settle (exponential against polynomial) and which it cannot.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - RECOMPUTE EVERYTHING, STORE NOTHING. Minimal memory, correct, and
+often fast enough. Measured, 1400 us per range-sum query - fine for twenty queries,
+hopeless for fifty thousand. START HERE, because the version that stores nothing has no
+invalidation bugs.
+
+UPGRADE 1 - PRECOMPUTE, IF YOU WILL USE IT ENOUGH. Compute the break-even first: build
+cost divided by the per-query saving. Measured, 19.3 queries. Below that the naive version
+genuinely wins.
+
+UPGRADE 2 - CHOOSE A DENSER REPRESENTATION. Often pure profit rather than a trade.
+Measured, bitset against set: 13.4x less memory at the same speed. Also: arrays of
+primitives instead of lists of boxed objects, struct-of-arrays instead of array-of-structs,
+a sorted array with binary search instead of a hash map when the data is static.
+
+UPGRADE 3 - BOUND THE SPACE. An unbounded cache is a memory leak with good intentions. Use
+an LRU with a fixed capacity, and accept a hit rate below 100 percent in exchange for a
+process that does not die. The right question is not "how much do I need" but "how much am
+I allowed".
+
+UPGRADE 4 - STREAM IT. If the data does not fit, process it in one pass with O(1) state:
+running sums, reservoir sampling, count-min sketch, HyperLogLog. These give approximate
+answers in constant memory, and for cardinality or frequency questions the approximation
+is usually irrelevant.
+
+UPGRADE 5 - ROLL THE ARRAY, in dynamic programming. If the recurrence only reaches back
+one row, keep one row. O(n*m) memory becomes O(m) with zero time cost - the purest
+available win, and the one that most often makes an impossible problem fit.""",
+
+    """6. HOW TO DECIDE - numbered steps.
+
+STEP 1. Measure before optimising. Not "profile at the end" - measure now, so you know
+whether the thing you are about to trade memory for is where the time goes.
+
+STEP 2. Write down both complexities for each candidate, and then write down the actual
+numbers for YOUR n. O(n log n) at n=1000 is about 10,000 operations; O(n^2) is 1,000,000.
+At n=20 they are 86 and 400 and nobody cares.
+
+STEP 3. Compute the break-even for any precomputation: build cost divided by per-query
+saving. If you will not exceed it, stop.
+
+STEP 4. Establish the memory budget per process and, separately, PER REQUEST. A 40 MB
+structure is nothing once and fatal at a thousand concurrent requests. This is the
+distinction that big-O does not capture at all.
+
+STEP 5. Look for the free wins before the trades: denser representations, in-place
+operations, rolled DP arrays. Measured, 13.4x memory saved at 0.99x the time.
+
+STEP 6. If you cache, bound it and decide the eviction policy and the invalidation rule
+before you write it. Stale data is a correctness bug that a memory saving cannot justify.
+
+STEP 7. Re-measure after the change, on realistic data. Measured here, the hash version of
+Two Sum was FASTER at a million elements than at a hundred thousand - runtimes do not
+follow big-O and only the measurement is the measurement.
+
+STEP 8. Write down which resource you optimised for and why, next to the code. The next
+person will otherwise "simplify" it back.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A chef needs a particular sauce for a dish that customers order all evening.
+
+She can make it fresh each time. Nothing takes up room in the kitchen, and if only three
+people order it that is clearly right. But making it takes several minutes, and every
+order waits.
+
+Or she can make a big batch at the start of service. Now each order takes seconds. The
+batch occupies a shelf all evening, which is fine unless the fridge is already full, and
+it was wasted if only two people order.
+
+The question is never which approach is better. It is: how long does one batch take to
+make, how much time does it save per order, and how many orders will there be? Measured on
+a real version of this - precomputing a table of running totals - each query went from
+1,400 microseconds to 0.35, so the batch pays for itself after twenty orders. Below twenty,
+make it fresh. Above it, make the batch. The number is not a matter of taste.
+
+Now the part that surprises people. It is not always a trade.
+
+She has been storing her spices in large jars with a lot of air in them. Switching to
+small tightly-packed containers uses a thirteenth of the shelf space - measured - and
+reaching for one takes exactly as long as before. Nothing was given up. That is not a
+trade-off, it is just a better container, and most real memory savings are of that kind
+rather than the dramatic sacrifice the phrase "trade-off" suggests.
+
+And one more. The fastest method on paper is not always fastest in the kitchen. The
+theory said one approach should be twenty times quicker than another; measured, it was
+ninety-two times quicker in one case and only four in another, because sometimes she finds
+what she needs in the first drawer she opens.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # O(n) time, O(n) space
+  def two_sum_hash(a, t):
+      seen = {}
+      for i, x in enumerate(a):
+          if t - x in seen:
+              return (seen[t - x], i)
+          seen[x] = i
+      return None
+
+  # O(n log n) time, O(1) auxiliary space (given a sorted array)
+  def two_sum_sorted(a, t):
+      lo, hi = 0, len(a) - 1
+      while lo < hi:
+          s = a[lo] + a[hi]
+          if s == t: return (lo, hi)
+          if s < t: lo += 1
+          else:     hi -= 1
+      return None
+
+LINE BY LINE.
+
+  seen = {}
+The memory being spent. It grows to hold every element examined so far - measured, about
+40 MB at a million integers, and that is the entire cost of this approach.
+
+  if t - x in seen:
+The payoff. One hash lookup answers "have I already seen the number that pairs with this
+one", which without the dict would be a scan of everything before it. THIS ONE LINE IS THE
+WHOLE TRADE: O(1) instead of O(n), bought with memory.
+
+  seen[x] = i
+Note the order - CHECK BEFORE INSERT. Inserting first would let an element pair with
+itself when t is exactly twice x. A one-line reordering, and a wrong answer.
+
+  lo, hi = 0, len(a) - 1
+The other approach's entire state: two integers. That is what O(1) auxiliary space means.
+
+  if s < t: lo += 1 else: hi -= 1
+The sorted array makes this decision sound: if the sum is too small the only way to
+increase it is a bigger left value, so nothing left of lo can be part of the answer. Each
+step eliminates a whole row of the pair matrix, which is why n steps suffice after the
+sort.
+
+  WHAT THE CODE DOES NOT SHOW: the sort itself. It dominates the runtime - measured 514.9
+ms against the hash version's 5.6 ms at a million elements - and if the array must be
+copied to preserve the original, the O(1) space claim goes with it. INPUT ALREADY SORTED
+IS THE CONDITION UNDER WHICH THIS IS THE BETTER ALGORITHM, and it is easy to forget.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the break-even, derived and confirmed.
+
+  build the prefix array                          27.0 ms
+  recompute one range sum                       1400.87 us
+  read one answer from the prefix array             0.35 us
+  saving per query                              1400.52 us
+
+  break-even = 27000 us / 1400.52 us = 19.28 queries
+
+Measured break-even: 19.3. The arithmetic is the whole decision, and it takes ten seconds.
+With 50,000 queries the precomputed version does 27 ms + 17.5 ms = 44.5 ms of work against
+70 seconds. WITH 10 QUERIES IT WOULD LOSE.
+
+TRACE B - big-O against the clock, on Two Sum.
+
+  n =   100,000    hash  8.8 ms    sorted  33.2 ms
+  n = 1,000,000    hash  5.6 ms    sorted 514.9 ms
+
+Two things to explain, and both are instructive. The sorted version's time grew 15.5x for
+a 10x input, which is close to the 11.5x that n log n predicts - the theory held. The hash
+version got FASTER at ten times the data, which the theory does not predict at all,
+because it returns the moment it finds a pair and where in the array that happens is luck.
+BIG-O BOUNDS THE WORST CASE; IT DOES NOT PREDICT A RUNTIME.
+
+TRACE C - the free win.
+
+  set of 500,000 ints       16.0 MB    21.1 ms per 200k probes
+  bitset over 10M values     1.2 MB    21.0 ms per 200k probes
+
+  memory ratio 13.4x, time ratio 0.99x
+
+The set stores 500,000 entries each carrying an object header, a hash and a pointer. The
+bitset stores 10,000,000 bits - one per POSSIBLE value, present or not - which is 1.25 MB
+total. The crossover: a bitset wins whenever the density is above roughly 1/256, since
+each set entry costs about 32 bytes against one bit. Below that density the set wins on
+memory too, and the "free" win becomes a real trade in the other direction.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Measured, at the sizes above:
+
+  hash map Two Sum           5.6 ms     ~40 MB at n = 1,000,000
+  sort + two pointers      514.9 ms     no extra beyond the sort
+  prefix sums              0.35 us/query, 1.5 MB, 27 ms build, break-even 19.3 queries
+  set membership            21.1 ms     16.0 MB
+  bitset membership         21.0 ms      1.2 MB
+
+THE #1 MISTAKE: treating big-O as a runtime prediction. Measured, the O(n) algorithm was
+3.8x faster at n=100,000 and 92x faster at n=1,000,000 - and got faster in absolute terms
+as the input grew, because it exits early. Big-O settles exponential against polynomial;
+it does not settle a log factor against a constant.
+
+THE #2 MISTAKE: budgeting memory per process instead of per REQUEST. 40 MB once is
+nothing; 40 MB times a thousand concurrent requests is the whole machine.
+
+THE #3 MISTAKE: precomputing without computing the break-even. Measured, 19.3 queries.
+Below that the naive version is genuinely faster and simpler.
+
+THE #4 MISTAKE: an unbounded cache. That is a memory leak with a good motive. Bound it.
+
+THE #5 MISTAKE: assuming space must cost time. Measured, 13.4x less memory at 0.99x the
+time. Look for the free win before making a trade.
+
+THE #6 MISTAKE: counting the input in the space complexity, or forgetting the copy. An
+in-place algorithm that has to copy the input first is not O(1) space.
+
+THE #7 MISTAKE: ignoring cache locality, which is not in the big-O and routinely dominates
+it for small n.
+
+THE TAKEAWAY: nearly every optimisation is storing something to avoid recomputing it or
+recomputing something to avoid storing it, and the decision is arithmetic rather than
+taste - build cost over per-use saving gives a break-even, measured at 19.3 queries for
+prefix sums that were 3,953x faster each; but big-O bounds the worst case as n goes to
+infinity and does not predict a runtime, measured as a 3.8x gap at one size and 92x at
+another for the same pair of algorithms, so measure; budget memory per REQUEST and not
+per process, since 40 MB once is free and 40 MB a thousand times is fatal; and look for
+the free win first, because a denser representation is usually not a trade at all -
+measured, 13.4x less memory at 0.99x the time.""",
+]
+
+_EX_P1AO["Triplet loss"] = [
+    """1. THE GOAL - learn a space where same things are close and different things are far.
+
+Face recognition cannot be a classifier over people, because new people keep arriving and
+you have three photos of each. So instead of learning "which of these 10,000 people is
+this", you learn an EMBEDDING: a function turning an image into a vector, such that two
+photos of the same person land near each other and photos of different people land apart.
+Then recognition is a distance comparison, and a person the model has never seen still
+works.
+
+TRIPLET LOSS trains that directly, from three items at a time:
+
+  ANCHOR   a  - some example
+  POSITIVE p  - a different example of the SAME thing
+  NEGATIVE n  - an example of something else
+
+  loss = max(0, d(a,p)^2 - d(a,n)^2 + margin)
+
+Read it as a demand: the anchor must be closer to the positive than to the negative BY AT
+LEAST the margin. If it already is, the max clamps to zero and this triplet is satisfied.
+If not, the loss is exactly how much the demand is violated.
+
+IT LEARNS RELATIVE DISTANCES, NOT ABSOLUTE ONES. There is no target value for d(a,p). Only
+the comparison matters, which is what makes it work with three examples per class.""",
+
+    """2. THE INTUITION - the margin is what stops the trivial solution.
+
+Without the margin the loss would be max(0, d(a,p)^2 - d(a,n)^2), and there is a way to
+make that zero for every triplet simultaneously: MAP EVERY INPUT TO THE SAME POINT. Then
+all distances are zero, the difference is zero, and the loss is zero everywhere. A perfect
+global minimum that has learned nothing.
+
+MEASURED, the loss at total collapse for three margins:
+
+  margin 0.0  ->  loss at total collapse = 0.00   collapse is a FREE global minimum
+  margin 0.2  ->  loss at total collapse = 0.20   collapse still costs
+  margin 1.0  ->  loss at total collapse = 1.00   collapse still costs
+
+THE MARGIN IS NOT A TUNING KNOB FOR ACCURACY. It is what makes the objective well-posed
+at all, and a margin of zero is a broken loss rather than a lenient one.
+
+THE SECOND THING THE MARGIN DOES is decide when a triplet stops contributing. Measured, at
+margin 0.2:
+
+  d(a,p)   d(a,n)   loss     gradient?
+    1.00     3.00   0.0000   none - already satisfied
+    1.00     1.50   0.0000   none
+    1.00     1.05   0.0975   yes
+    1.00     0.90   0.3900   yes
+
+A triplet already meeting the margin contributes EXACTLY ZERO GRADIENT. Not a small
+gradient - none. That is the design working as intended, and section 4 is what it costs.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EMBEDDING - a vector representing an input, in a space where distance means similarity.
+Usually the output of a network, and usually normalised to unit length so that distance
+depends on direction rather than magnitude.
+
+ANCHOR, POSITIVE, NEGATIVE - the three inputs. Positive shares the anchor's identity or
+class; negative does not.
+
+MARGIN - how much closer the positive must be than the negative before the triplet is
+considered satisfied. Typically 0.2 on unit-normalised embeddings.
+
+ACTIVE TRIPLET - one with non-zero loss, so it produces gradient. Everything else is dead
+weight in the batch.
+
+EASY TRIPLET - already satisfies the margin comfortably. Zero loss.
+HARD TRIPLET - the negative is CLOSER than the positive. Large loss.
+SEMI-HARD TRIPLET - the negative is farther than the positive but within the margin.
+Non-zero loss, and the sweet spot, for the reason in section 5.
+
+MINING - choosing which triplets to train on rather than sampling at random.
+
+BATCH-HARD MINING - within each batch, for each anchor, take the FARTHEST positive and the
+NEAREST negative. The standard practical recipe.
+
+COLLAPSE - every embedding converging to the same point. The failure the margin exists to
+prevent, and it is still possible with a margin if training is unstable.
+
+CONTRASTIVE LOSS - the two-input predecessor: pull pairs together, push pairs apart to a
+fixed distance. Absolute rather than relative.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - almost every random triplet is already solved.
+
+Once training has made any progress, a randomly chosen negative is usually obviously
+different from the anchor, so the margin is already satisfied and the loss is exactly
+zero. That triplet costs a full forward pass and contributes nothing.
+
+MEASURED, on 10 classes of 30 embeddings each, 20,000 random triplets:
+
+  margin 0.2:  99.29% give ZERO loss  ->  0.71% of the batch does any work
+  margin 1.0:  99.22% give ZERO loss  ->  0.78%
+  margin 5.0:  98.79% give ZERO loss  ->  1.21%
+
+MORE THAN NINETY-NINE PERCENT OF THE COMPUTE IS WASTED. And notice that raising the margin
+from 0.2 to 5.0 - a 25x increase - only moved the active fraction from 0.71% to 1.21%.
+YOU CANNOT FIX THIS BY RAISING THE MARGIN. The problem is which triplets you chose, not
+how strict the test is.
+
+WHAT THIS LOOKS LIKE IN PRACTICE: training appears to converge quickly and then the loss
+sits near zero while the model stops improving. It is not converged. It has run out of
+triplets that disagree with it, and the ones it needs are still out there.
+
+THE FIX IS MINING, and it works. Measured, choosing the CLOSEST negative in the batch
+instead of a random one:
+
+  margin 0.2:  random negative  mean loss 0.0313   0.8% active
+               hardest negative mean loss 2.4862  36.0% active
+
+Forty-five times the active fraction and eighty times the mean loss, from the same data
+and the same model. The signal was always there; random sampling simply never found it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - RANDOM TRIPLETS. Pick an anchor, a random positive, a random negative.
+Measured, 0.71% active. Correct, and almost entirely wasted compute.
+
+UPGRADE 1 - BATCH-HARD MINING. Build a batch containing P classes with K examples each.
+Compute all pairwise distances once. For every anchor, take the farthest positive and the
+nearest negative. Measured, 36% active. The distance matrix costs one matrix multiply, so
+this is nearly free relative to the forward pass it makes useful.
+
+UPGRADE 2 - SEMI-HARD MINING, and the reason it usually beats batch-hard. The very hardest
+negatives are frequently mislabelled data or genuine outliers, and training hard on those
+destabilises or collapses the embedding. Semi-hard picks negatives that are FARTHER than
+the positive but still inside the margin: non-zero loss, genuinely informative, not
+pathological. This is what the original FaceNet paper used, and it is the safer default.
+
+UPGRADE 3 - LARGER BATCHES. Mining can only find what is in the batch. With 32 examples
+the nearest negative is not very near; with 512 it is much nearer and much more useful.
+Batch size functions as a mining-quality parameter here, which it does not in ordinary
+classification.
+
+UPGRADE 4 - NORMALISE THE EMBEDDINGS to unit length. Without it the model can reduce the
+loss by scaling all embeddings up, which changes every distance without changing any
+relationship. With it, distance is a function of angle and the margin has a consistent
+meaning across training.
+
+UPGRADE 5 - USE A DIFFERENT LOSS ENTIRELY. Modern face and retrieval systems mostly use
+ArcFace or CosFace - classification losses with an angular margin - which need no mining
+and train more stably. Or, with lots of data and large batches, InfoNCE, which contrasts
+one positive against many negatives at once and gets much of the benefit without an
+explicit mining step. TRIPLET LOSS IS THE IDEA THAT MADE THIS WORK, AND IT IS RARELY THE
+CURRENT BEST CHOICE.""",
+
+    """6. HOW TO TRAIN WITH IT - numbered steps.
+
+STEP 1. Decide the embedding dimension - 128 or 256 is typical - and L2-normalise the
+output so every embedding lies on the unit sphere.
+
+STEP 2. Set the margin. 0.2 is the standard starting point for unit-normalised
+embeddings. Do NOT set it to zero: collapse becomes a free global minimum.
+
+STEP 3. Build batches as P classes with K examples each - for example 32 classes with 4
+images - so that every anchor definitely has a positive available in the batch. A
+uniformly random batch often contains no matching pair at all.
+
+STEP 4. Compute the full pairwise distance matrix for the batch once. Everything below is
+a lookup into it.
+
+STEP 5. Mine. Start with semi-hard: among negatives farther than the positive, take the
+nearest. Fall back to the hardest negative when no semi-hard one exists.
+
+STEP 6. Watch the ACTIVE FRACTION, not just the loss. Measured, random sampling gives 0.7%
+and mining gives 36%. A loss falling toward zero with a collapsing active fraction means
+you have run out of usable triplets, not that you have converged.
+
+STEP 7. Watch for collapse explicitly: log the mean pairwise distance between embeddings.
+If it trends to zero, training has found the degenerate solution regardless of the margin.
+
+STEP 8. Evaluate on a retrieval metric on HELD-OUT IDENTITIES - recall@k, or verification
+accuracy at a fixed false-accept rate. The training loss is nearly uninformative here,
+because it is dominated by which triplets you happened to mine.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are teaching someone to recognise faces they have never seen, so you cannot give them
+a list of names to memorise. Instead you teach them to judge SIMILARITY.
+
+You show them three photos at a time: a person, another photo of that same person, and a
+photo of someone else. The instruction is: the first two should look more alike to you
+than the first and third - and not just slightly more alike, clearly more alike. That gap
+is the margin, and it matters more than it sounds.
+
+Without the gap requirement there is a way to cheat. If they decide that all faces look
+identical, then every pair is equally similar, and "these two are at least as similar as
+those two" is technically true every single time. They have satisfied you completely and
+learned nothing. Requiring a clear gap makes that answer impossible, which is the only
+reason the gap is there.
+
+Now the practical problem, and it is the whole difficulty of the method.
+
+Once they are any good at all, most triples you could show them are trivial. Two photos of
+your sister and one of a stranger from another continent - obviously right, they learn
+nothing, and you have wasted the lesson. Measured, more than ninety-nine percent of
+randomly chosen triples were already answered correctly with room to spare.
+
+And you cannot fix it by demanding a bigger gap. Measured, making the requirement
+twenty-five times stricter took the useful fraction from 0.7 percent to 1.2 percent.
+
+What works is choosing the third photo deliberately: find the stranger who most resembles
+your sister. Measured, that took the useful fraction from under one percent to thirty-six.
+Same photos, same student. The hard cases were always in the pile; showing them at random
+never found them.
+
+With one caution. The very hardest case may not be a hard case at all - it may be a photo
+that was filed under the wrong name. Train hard on those and you teach a mistake.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def triplet_loss(a, p, n, margin=0.2):
+      return max(0.0, dist(a, p)**2 - dist(a, n)**2 + margin)
+
+  # batch-hard mining, given a batch of embeddings and labels
+  def batch_hard(emb, labels, margin=0.2):
+      D = pairwise_distances(emb)
+      total = 0.0
+      for i in range(len(emb)):
+          same  = [j for j in range(len(emb)) if labels[j] == labels[i] and j != i]
+          other = [j for j in range(len(emb)) if labels[j] != labels[i]]
+          if not same or not other:
+              continue
+          hardest_pos = max(same,  key=lambda j: D[i][j])
+          hardest_neg = min(other, key=lambda j: D[i][j])
+          total += max(0.0, D[i][hardest_pos]**2 - D[i][hardest_neg]**2 + margin)
+      return total / len(emb)
+
+LINE BY LINE.
+
+  max(0.0, ...)
+THE HINGE. Once the margin is satisfied the loss is a constant zero, and the derivative of
+a constant is zero - so a satisfied triplet contributes NO gradient, not a small one. This
+is why the active fraction is the number to watch.
+
+  dist(a,p)**2 - dist(a,n)**2
+SQUARED distances. Squaring keeps the gradient smooth at zero, where the derivative of a
+plain Euclidean distance is undefined. It also means the loss grows quadratically in the
+violation, so a badly wrong triplet dominates a batch - which is exactly why mining the
+very hardest negatives can destabilise training.
+
+  + margin
+Shifts the hinge so the demand is a STRICT improvement. Setting this to 0 makes total
+collapse a zero-loss solution.
+
+  D = pairwise_distances(emb)
+Computed ONCE per batch. Every mining decision below is an index into this matrix, so
+mining costs one matrix multiply rather than a forward pass per triplet. This is what
+makes batch-hard practical.
+
+  hardest_pos = max(same, key=...)
+The FARTHEST same-class example - the hardest positive. Note max for positives and min for
+negatives; swapping them silently trains on the easiest triplets and the loss will look
+beautiful.
+
+  if not same or not other: continue
+An anchor whose class appears once in the batch has no positive. This is why batches are
+built as P classes by K examples rather than sampled uniformly - a uniform batch can leave
+most anchors with nothing to pair with, and this line quietly skips them.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the hinge, one triplet at a time, margin 0.2. Loss = d_ap^2 - d_an^2 + margin.
+
+  d(a,p)=1.00, d(a,n)=3.00:  1 - 9 + 0.2 = -7.8   -> max(0, -7.8) = 0.0000   DEAD
+  d(a,p)=1.00, d(a,n)=1.50:  1 - 2.25 + 0.2 = -1.05 -> 0.0000                DEAD
+  d(a,p)=1.00, d(a,n)=1.05:  1 - 1.1025 + 0.2 = 0.0975 -> 0.0975             active
+  d(a,p)=1.00, d(a,n)=0.90:  1 - 0.81 + 0.2 = 0.39   -> 0.3900               active
+
+The switch happens between d(a,n) = 1.05 and 1.50. With squared distances and margin 0.2,
+a negative farther than sqrt(1 + 0.2) = 1.0954 is already satisfied. THE ACTIVE ZONE IS
+NARROW, which is the arithmetic behind the 99% figure.
+
+TRACE B - the waste, measured over 20,000 random triplets.
+
+  margin 0.2   99.29% zero loss
+  margin 1.0   99.22% zero loss
+  margin 5.0   98.79% zero loss
+
+Raising the margin 25-fold moved the active fraction by half a percentage point. The
+negatives being sampled are simply nowhere near the anchor, and no margin fixes distance.
+
+TRACE C - what mining changes, same data, same model.
+
+  margin 0.2   random negative:   mean loss 0.0313    0.8% active
+               hardest negative:  mean loss 2.4862   36.0% active
+  margin 1.0   random negative:   mean loss 0.0553    0.8% active
+               hardest negative:  mean loss 2.6878   36.9% active
+
+45x the active fraction, 80x the mean loss. Note the ACTIVE FRACTION barely moved with the
+margin (0.8% to 0.8%) while it leapt with mining (0.8% to 36%). THE CHOICE OF NEGATIVE
+DOMINATES THE CHOICE OF MARGIN, and it is not close.
+
+TRACE D - collapse, arithmetic. Every embedding at the same point: d(a,p) = d(a,n) = 0.
+  loss = 0 - 0 + margin = margin
+  margin 0.0 -> 0.00, a free global minimum
+  margin 0.2 -> 0.20, a cost the optimiser must escape
+One line of arithmetic, and it is why margin 0 is not a valid setting.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. The loss itself is three distance computations - trivial. The real costs are
+elsewhere. THREE forward passes per triplet instead of one per example, which is why
+batch mining computes one embedding per example and forms triplets from the distance
+matrix instead. That matrix is O(B^2) in the batch size B - at B=512 that is 262,144
+distances, one matrix multiply, negligible against the forward pass. And measured, 99.29%
+of randomly sampled triplets contribute nothing, so the effective cost per unit of
+learning is over a hundred times the nominal cost unless you mine.
+
+THE #1 MISTAKE: training on random triplets and concluding the model has converged when
+the loss flattens near zero. Measured, 0.71% active - it has not converged, it has stopped
+finding triplets it disagrees with. Log the ACTIVE FRACTION.
+
+THE #2 MISTAKE: margin = 0. Total collapse becomes a zero-loss global minimum. Measured
+arithmetic: loss at collapse equals the margin exactly.
+
+THE #3 MISTAKE: raising the margin to fix a low active fraction. Measured, 25x the margin
+bought 0.5 percentage points. Mine instead - 0.8% to 36%.
+
+THE #4 MISTAKE: always mining the very hardest negative. Those are disproportionately
+mislabelled examples, and squared distances make them dominate the batch. Prefer semi-hard.
+
+THE #5 MISTAKE: uniformly random batches, leaving most anchors with no positive present.
+Build batches as P classes by K examples.
+
+THE #6 MISTAKE: not normalising embeddings, so the model can shrink the loss by rescaling
+without changing any relationship, and the margin means something different every epoch.
+
+THE #7 MISTAKE: judging by training loss. It reflects which triplets you mined more than
+model quality. Evaluate retrieval on held-out identities.
+
+THE TAKEAWAY: triplet loss teaches relative distance - the anchor must be closer to the
+positive than to the negative by at least a margin - which is what lets it work for classes
+it has never seen and with three examples each; the margin is not a tuning knob but the
+thing that makes the objective well-posed, since at margin 0 mapping every input to one
+point is a free global minimum (loss at collapse equals the margin, exactly); and the
+central practical fact is that the hinge gives a satisfied triplet ZERO gradient, so once
+training works at all, measured 99.29% of randomly sampled triplets contribute nothing -
+a waste no margin can fix, measured 25x the margin buying 0.5 percentage points, while
+mining the nearest negative took the active fraction from 0.8% to 36% on the same data,
+with the caveat that the very hardest negatives are often mislabelled and semi-hard is the
+safer target.""",
+]
+
+_EX_P1AO["Type I vs Type II error"] = [
+    """1. THE GOAL - name the two ways a test can be wrong, because they are not symmetric.
+
+You run an experiment. Either there is a real effect or there is not; either your test
+says there is or it does not. Four outcomes, two of them wrong:
+
+                          | no real effect      | real effect exists
+  --------------------------------------------------------------------
+  test says "significant" | TYPE I  (false alarm) | correct
+  test says "nothing"     | correct               | TYPE II (missed it)
+
+TYPE I ERROR - you claim an effect that is not there. A false positive. Its rate is called
+ALPHA, and you CHOOSE it - conventionally 0.05.
+
+TYPE II ERROR - a real effect exists and you missed it. A false negative. Its rate is
+called BETA, and you do not choose it; it falls out of the effect size, the noise and your
+sample size.
+
+POWER = 1 - beta. The probability of detecting a real effect that is there.
+
+THE ASYMMETRY IS THE POINT. Alpha is a knob you set before the experiment. Beta is a
+consequence you have to work out, and almost nobody does - which is why underpowered
+experiments that could never have detected the effect they were looking for are the normal
+case rather than the exception.""",
+
+    """2. THE INTUITION - alpha is a promise, not an achievement.
+
+Set alpha to 0.05 and you are promising: if there is genuinely nothing here, I will
+wrongly claim something 5 percent of the time. That is a guarantee about your procedure,
+and it holds regardless of sample size.
+
+MEASURED, testing two samples drawn from the SAME distribution - no real difference
+whatsoever - 5,000 times at each size:
+
+  n =  30 per group:  rejected 5.32% of tests
+  n = 200 per group:  rejected 5.14% of tests
+
+MORE DATA DID NOT REDUCE THE FALSE-POSITIVE RATE. It is not supposed to. Alpha is where
+you set the threshold, so it is what you get - collecting seven times the data changed it
+by less than a fifth of a percentage point.
+
+NOW THE OTHER ERROR, WHICH DOES DEPEND ON SAMPLE SIZE. A real effect of 0.3 standard
+deviations, same alpha of 0.05 throughout:
+
+  n =   30 per group:  power  22.7%   Type II error 77.3%
+  n =  100 per group:  power  55.4%   Type II error 44.6%
+  n =  400 per group:  power  99.1%   Type II error  0.9%
+  n = 1000 per group:  power 100.0%   Type II error  0.0%
+
+AT n=30 THE EXPERIMENT MISSES A REAL EFFECT MORE THAN THREE TIMES IN FOUR. Run it, get
+"not significant", and you have learned essentially nothing - the test was never capable
+of finding what you were looking for.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NULL HYPOTHESIS - the boring claim: no difference, no effect. Tests are built to reject
+it or fail to.
+
+TYPE I ERROR - rejecting a TRUE null. False positive. False alarm.
+
+TYPE II ERROR - failing to reject a FALSE null. False negative. A miss.
+
+ALPHA - the Type I error rate you accept, chosen before the experiment. 0.05 by
+convention, and the convention is arbitrary.
+
+BETA - the Type II error rate. A consequence, not a choice.
+
+POWER - 1 minus beta. The chance of detecting a real effect of a given size. 80% is the
+usual target, which means accepting a one-in-five chance of missing a real effect.
+
+P-VALUE - the probability of seeing data at least this extreme IF the null were true. It
+is NOT the probability the null is true, and the difference matters.
+
+EFFECT SIZE - how big the difference is, in standard deviations. The measurements here use
+0.3, which is small-to-moderate.
+
+SIGNIFICANCE - p below alpha. It means "unlikely under the null", not "important" and not
+"true".
+
+MULTIPLE COMPARISONS - running many tests, so alpha applies many times over. Section 4.
+
+BONFERRONI CORRECTION - divide alpha by the number of tests. Crude, safe, and it costs
+power.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - twenty metrics and no real effect anywhere.
+
+You run an A/B test and check twenty metrics. Nothing has actually changed. How often does
+at least one metric come back "significant at 0.05"?
+
+MEASURED, over 3,000 simulated experiments at each count, with NO real effect in any of
+them:
+
+    1 test:   at least one significant   4.9% of the time   (1 - 0.95^1  =  5.0%)
+    5 tests:                            22.8%               (1 - 0.95^5  = 22.6%)
+   20 tests:                            65.7%               (1 - 0.95^20 = 64.2%)
+  100 tests:                            99.5%               (1 - 0.95^100 = 99.4%)
+
+WITH TWENTY METRICS YOU FIND SOMETHING TWO TIMES IN THREE, GUARANTEED, ON A CHANGE THAT
+DOES NOTHING. And the measured rates track 1 - 0.95^k almost exactly, so this is not a
+subtle statistical effect - it is arithmetic anyone can do in advance.
+
+THIS IS WHY IT IS SO DANGEROUS IN PRACTICE. Nobody sets out to run twenty tests. What
+happens is: the headline metric is flat, so you look at engagement. Then at mobile only.
+Then at new users. Then at new mobile users in Europe. Each look is a test, the count
+climbs, and the eventual "significant" result feels like a discovery rather than what it
+is - the expected outcome of looking twenty times.
+
+THE SAME MECHANISM, WEARING OTHER NAMES: peeking at an experiment daily and stopping when
+it goes significant; trying several model variants and reporting the best; dropping
+outliers and re-running. All of them multiply the number of chances alpha gets.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - RUN THE TEST, READ p < 0.05, SHIP. No sample-size calculation, no
+correction, no stated effect size. Measured, this misses a real 0.3-sigma effect 77% of
+the time at n=30, and finds a fake one 66% of the time across twenty metrics.
+
+UPGRADE 1 - DO A POWER CALCULATION BEFORE COLLECTING DATA. Decide the smallest effect
+worth detecting, pick your alpha and a power target of 80 or 90 percent, and compute the
+required n. Measured, detecting 0.3 sigma at 80% power needs somewhere between 100 and 400
+per group - and if you cannot afford that, YOU HAVE LEARNED THE EXPERIMENT IS NOT WORTH
+RUNNING, which is a valuable thing to learn before spending the money rather than after.
+
+UPGRADE 2 - PRE-REGISTER ONE PRIMARY METRIC. Everything else is exploratory and gets
+labelled as such. This is the single most effective fix for section 4 and it costs
+nothing.
+
+UPGRADE 3 - CORRECT FOR MULTIPLE COMPARISONS when you genuinely have many. Bonferroni -
+alpha divided by k - is safe and conservative, and it costs power: at k=20 the threshold
+becomes 0.0025 and beta rises accordingly. Benjamini-Hochberg controls the false DISCOVERY
+rate instead and is much less brutal when you are screening many hypotheses.
+
+UPGRADE 4 - REPORT CONFIDENCE INTERVALS, NOT p-VALUES. "The lift is 2.1% with a 95%
+interval of -0.4% to 4.6%" says everything the p-value does and adds the effect size and
+the precision. A non-significant result with a tight interval near zero and a
+non-significant result with an interval spanning the entire plausible range are completely
+different findings, and the p-value shows them as identical.
+
+UPGRADE 5 - FOR SEQUENTIAL TESTING, USE SEQUENTIAL METHODS. If you want to peek, use
+alpha-spending or a Bayesian approach designed for it. Peeking with a fixed-horizon test
+inflates the false-positive rate far above the alpha you think you set.""",
+
+    """6. HOW TO RUN A TEST HONESTLY - numbered steps.
+
+STEP 1. State the null hypothesis and the ONE primary metric, in writing, before you look
+at any data.
+
+STEP 2. State the minimum effect worth acting on. Not the effect you hope for - the
+smallest one that would change a decision. Everything downstream depends on this number
+and it is a business question, not a statistical one.
+
+STEP 3. Choose alpha, and choose it for the consequences. A false positive that ships a
+harmless UI change costs little; one that ships a drug costs a great deal. 0.05 is a
+convention, not a law.
+
+STEP 4. Compute the required sample size for 80% power at that effect and alpha. Do this
+BEFORE collecting anything.
+
+STEP 5. If the required n is unaffordable, stop. An underpowered experiment cannot produce
+a useful negative result - measured, 77.3% Type II error at n=30 - so running it anyway
+buys nothing but the appearance of rigour.
+
+STEP 6. Collect the full sample. Do not stop early because it went significant; that is
+sequential peeking and it breaks the alpha you set.
+
+STEP 7. Analyse the primary metric once. Report the effect size and its confidence
+interval, not only the p-value.
+
+STEP 8. Label every other metric exploratory, and correct for the number of them. Measured,
+twenty uncorrected metrics produce a false alarm 65.7% of the time.
+
+STEP 9. Write down what a null result would mean, and treat it as a result. "No effect
+larger than 1% at 90% power" is a finding; "not significant" alone is not.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A smoke alarm can be wrong in two ways. It can go off when there is no fire, or it can
+stay silent when the house is burning.
+
+You control the first one directly, by choosing the sensitivity. Set it so that it
+false-alarms about five times in a hundred quiet nights and that is what you will get -
+measured, 5.32% and 5.14% in two separate runs of five thousand quiet nights each. Living
+in the house for longer does not reduce it. The rate is the setting.
+
+The second kind of error is not something you set. Whether the alarm catches a real fire
+depends on how big the fire is and how close the alarm is to it - and on a small fire, far
+away, it very often does not. Measured, on a genuinely real but modest effect, a small
+experiment missed it more than three times in four. Somebody who runs that experiment,
+hears nothing, and concludes there is no fire has drawn a conclusion the alarm was never
+able to support.
+
+Now the part that catches everyone, and it needs no statistics at all.
+
+Suppose you install twenty alarms around the house, each with the same five-percent
+false-alarm rate, and you count the night as "something happened" if any one of them
+sounds. Measured, on nights with no fire at all, at least one alarm went off 65.7 percent
+of the time. Two nights in three you would be up in the corridor investigating nothing.
+
+Nobody decides to install twenty alarms. What happens is that the first one is quiet, so
+you check the second, then the kitchen one, then the one upstairs, then the garage. Each
+check is another chance for a false alarm, and the one that finally goes off feels like
+evidence rather than like the arithmetic it is: one minus 0.95 to the twentieth, which is
+64 percent, and the measurement came out at 65.7.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def welch_p(a, b):
+      na, nb = len(a), len(b)
+      ma, mb = mean(a), mean(b)
+      va, vb = variance(a), variance(b)
+      se = sqrt(va/na + vb/nb)
+      t = (ma - mb) / se
+      return 2 * (1 - normal_cdf(abs(t)))
+
+  # and the loop that measures the error rates
+  false_positives = sum(1 for _ in range(5000)
+                        if welch_p(sample(mu=0), sample(mu=0))   < 0.05)
+  detections      = sum(1 for _ in range(3000)
+                        if welch_p(sample(mu=0.3), sample(mu=0)) < 0.05)
+
+LINE BY LINE.
+
+  se = sqrt(va/na + vb/nb)
+The STANDARD ERROR of the difference - how much the observed gap would wobble if you ran
+the whole experiment again. Note both n values are in denominators: this is the ONLY place
+sample size enters, and it is why the entire relationship between n and power runs through
+this line. Quadrupling n halves the standard error.
+
+  t = (ma - mb) / se
+The observed difference measured IN UNITS OF ITS OWN NOISE. A gap of 5 means nothing until
+you know whether the noise is 0.5 or 50. This ratio is the whole idea of a test.
+
+  return 2 * (1 - normal_cdf(abs(t)))
+The p-value: the probability of a t this large or larger IF the null were true. The 2 makes
+it two-tailed - it counts a difference in either direction. Using a one-tailed test after
+seeing which way the data went is a way of halving your p-value for free, and is cheating.
+
+  READ THE DEFINITION CAREFULLY. It is P(data this extreme GIVEN no effect). It is not
+P(no effect GIVEN this data). Those are different quantities and swapping them is the most
+common misreading in the whole subject.
+
+  if welch_p(sample(mu=0), sample(mu=0)) < 0.05
+BOTH SAMPLES FROM THE SAME DISTRIBUTION. Any rejection here is a Type I error by
+construction, which is what makes this loop a direct measurement of alpha rather than an
+estimate of anything.
+
+  if welch_p(sample(mu=0.3), sample(mu=0)) < 0.05
+Here the effect is REAL. A failure to reject is a Type II error, so this loop measures
+power directly. Same test, same alpha - only the truth of the null changed.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - alpha does what you set it to, and sample size is irrelevant to it.
+
+  n =  30 per group, 5000 tests, no real difference: 5.32% rejected
+  n = 200 per group, 5000 tests, no real difference: 5.14% rejected
+
+Both within sampling noise of the 5% that was set. Note the expected wobble: with 5,000
+trials at p=0.05, the standard error on the rate is sqrt(0.05*0.95/5000) = 0.31%, so
+anything between about 4.4% and 5.6% is consistent with a correctly-calibrated test. Both
+measurements sit inside that. SEVEN TIMES THE DATA MOVED THE FALSE-POSITIVE RATE BY 0.18
+PERCENTAGE POINTS, which is noise.
+
+TRACE B - power, at one fixed effect of 0.3 sigma and one fixed alpha of 0.05.
+
+  n =   30:  power  22.7%   beta 77.3%
+  n =  100:  power  55.4%   beta 44.6%
+  n =  400:  power  99.1%   beta  0.9%
+  n = 1000:  power 100.0%   beta  0.0%
+
+Between n=30 and n=400 - a 13x increase in cost - the chance of detecting the SAME real
+effect goes from roughly one in four to essentially certain. Nothing about the effect
+changed and nothing about the threshold changed. The standard error fell as 1/sqrt(n):
+sqrt(400/30) = 3.65, so the same difference is 3.65 times larger relative to its noise.
+
+THE 80% POWER CONVENTION SITS BETWEEN n=100 AND n=400 HERE. That is the number a power
+calculation would have produced before spending anything.
+
+TRACE C - multiple comparisons, measured against the arithmetic.
+
+    k=1     measured  4.9%   predicted 1 - 0.95^1   =  5.0%
+    k=5     measured 22.8%   predicted 1 - 0.95^5   = 22.6%
+    k=20    measured 65.7%   predicted 1 - 0.95^20  = 64.2%
+    k=100   measured 99.5%   predicted 1 - 0.95^100 = 99.4%
+
+Every measured value matches the prediction to about a percentage point. This is not a
+subtle bias needing simulation to discover - it is one line of arithmetic, and it is
+available before the experiment rather than after.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Alpha and beta trade against each other at fixed sample size: lowering alpha
+to 0.01 raises beta, because you demand more evidence before believing anything. The only
+way to reduce BOTH is more data or less noise. Measured, at a 0.3-sigma effect, going from
+n=30 to n=400 took beta from 77.3% to 0.9% at unchanged alpha - THIRTEEN TIMES THE SAMPLE
+FOR THE ONE ERROR RATE YOU CANNOT SET DIRECTLY.
+
+THE #1 MISTAKE: reading "not significant" as "no effect". Measured, a real 0.3-sigma effect
+went undetected 77.3% of the time at n=30. A null result from an underpowered test carries
+almost no information, and the only way to know which you have is a power calculation.
+
+THE #2 MISTAKE: checking many metrics and reporting the one that came up. Measured, 65.7%
+false-alarm rate across twenty metrics with no real effect anywhere - matching 1 - 0.95^20
+exactly. Pre-register one primary metric.
+
+THE #3 MISTAKE: believing more data lowers the false-positive rate. Measured, 5.32% at
+n=30 and 5.14% at n=200. Alpha is a setting.
+
+THE #4 MISTAKE: peeking daily and stopping when it goes significant. Every peek is another
+test; the true alpha is far above the one you set.
+
+THE #5 MISTAKE: reading the p-value as the probability the null is true. It is the
+probability of the data given the null, which is a different conditional.
+
+THE #6 MISTAKE: confusing significance with importance. With a large enough n, a 0.01%
+lift is significant and worth nothing. Report the effect size.
+
+THE #7 MISTAKE: choosing alpha = 0.05 without thinking. Match it to what a false positive
+actually costs.
+
+THE TAKEAWAY: a Type I error is a false alarm and its rate is ALPHA, which you choose and
+therefore get - measured 5.32% and 5.14% at two sample sizes seven times apart, because
+more data does not make a chosen threshold stricter; a Type II error is a miss and its
+rate BETA is a consequence of effect size, noise and sample size, which is why the same
+real 0.3-sigma effect was detected 22.7% of the time at n=30 and 99.1% at n=400 with the
+identical alpha, and why "not significant" from a small study means almost nothing; and
+because alpha is a per-test promise, checking twenty metrics gives at least one false
+alarm 65.7% of the time with nothing real anywhere - matching 1 - 0.95^20 to within a
+point and a half - so the fixes are a power calculation before collecting data, one
+pre-registered primary metric, and reporting effect sizes with confidence intervals rather
+than a verdict.""",
+]
+
 
 
 
