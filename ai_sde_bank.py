@@ -253238,6 +253238,1005 @@ which measured wrong by up to 99 requests over-blocked and 97 under-blocked agai
 limit of 100 - so where the burst size genuinely matters, use a token bucket, whose burst
 is a parameter you chose rather than an accident of where the clock happened to tick.""",
 ]
+_EX_P1AO["Stable sort"] = [
+    """1. THE GOAL - when two things tie, keep them in the order they arrived.
+
+A sort is STABLE if elements that compare EQUAL come out in the same relative order they
+went in. That is the whole definition. It says nothing about speed, and nothing about
+what happens to elements that differ.
+
+It sounds like a detail about ties. It is the property that makes this work:
+
+  sort the rows by RANK          (the secondary key)
+  then sort the result by DEPT   (the primary key)
+
+and get rows ordered by dept, and by rank within each dept. The second sort only cares
+about dept, so it treats every row in a dept as equal - and stability means "equal" rows
+keep the order the FIRST sort gave them, which was by rank.
+
+MEASURED, on eight rows:
+
+  after sorting by rank:  Bo, Ed, Gus, Cy, Di, Hal, Ana, Fi
+  then by dept:           Bo(eng,1) Gus(eng,1) Di(eng,2) Ana(eng,3)
+                          Ed(sal,1) Cy(sal,2) Hal(sal,2) Fi(sal,3)
+
+Both keys correct, and the second sort never saw the rank field at all. THE SECOND SORT
+PRESERVED WORK THE FIRST SORT DID. That is what stability buys, and it is why Python's
+sorted and list.sort guarantee it.""",
+
+    """2. THE INTUITION - an unstable sort is allowed to shuffle ties, and it does.
+
+Nothing about "sorted" requires ties to keep their order. An algorithm that swaps
+distant elements - selection sort, most quicksorts, heapsort - moves equal elements past
+each other as a side effect of doing its job, and the result is still correctly sorted by
+the key it was given.
+
+MEASURED, the identical two-step chain run with a selection sort that swaps:
+
+  stable chain:    Bo(eng,1) Gus(eng,1) Di(eng,2) Ana(eng,3)
+                   Ed(sal,1) Cy(sal,2)  Hal(sal,2) Fi(sal,3)
+  unstable chain:  Bo(eng,1) Gus(eng,1) Di(eng,2) Ana(eng,3)
+                   Cy(sal,2) Hal(sal,2) Ed(sal,1)  Fi(sal,3)
+
+Look at the sales block. Rank goes 2, 2, 1, 3. The dept order is perfect; the rank order
+inside it has been destroyed.
+
+AND IT IS NOT AN EDGE CASE. Repeating the whole experiment on random data:
+
+  n=20,  3 groups:   the unstable chain matched the stable one   0 times out of 200
+  n=50,  5 groups:                                               0 times out of 200
+  n=100, 10 groups:                                              0 times out of 200
+
+NOT RARE - EFFECTIVELY NEVER. With enough ties, an unstable sort essentially always
+scrambles at least one of them. A bug that reproduces on every run is at least easy to
+find; the danger is that the output still looks sorted, because it IS sorted, by the
+last key.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STABLE - equal elements keep their original relative order. A property of the ALGORITHM,
+not of the data.
+
+KEY - the value used for comparison. In sorted(rows, key=f), f extracts it. Two rows with
+the same key are "equal" as far as this sort is concerned, whatever else differs.
+
+PRIMARY and SECONDARY KEY - when you want "by dept, then by rank", dept is primary and
+rank is secondary.
+
+TIE - two elements with the same key. Ties are where stability is the only thing that
+decides the outcome.
+
+IN-PLACE - rearranges the original list rather than building a new one. list.sort is
+in-place; sorted returns a new list. Both are stable.
+
+TIMSORT - CPython's algorithm. A merge sort that first finds naturally ordered RUNS in
+the data and merges them. Stable, and adaptive - see section 4.
+
+MERGE SORT - stable if, when merging two halves and the fronts compare equal, you take
+from the LEFT half. One comparison operator decides it.
+
+QUICKSORT - partitions around a pivot by swapping distant elements. Not stable, and
+making it stable costs extra memory, which defeats its point.
+
+HEAPSORT - not stable, for the same reason: it swaps across the array.
+
+DECORATE-SORT-UNDECORATE - the alternative to chaining: build a tuple key and sort once.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE ORDER OF THE CHAINED SORTS IS BACKWARDS FROM HOW YOU SAY IT. "Sort by dept, then by
+rank" describes the OUTPUT, but the code must sort by RANK FIRST and dept second.
+
+  by_rank = sorted(rows, key=lambda r: r[2])     # secondary key FIRST
+  final   = sorted(by_rank, key=lambda r: r[1])  # primary key LAST
+
+The LAST sort is the primary one. Every earlier sort survives only inside its ties.
+Getting this backwards produces output sorted correctly by rank and arbitrarily by dept -
+and because it IS correctly sorted by something, it looks fine at a glance.
+
+THE SECOND TRAP: STABILITY IS NOT PORTABLE. Python's sorted and list.sort guarantee
+stability. Java's Collections.sort and Arrays.sort on OBJECTS guarantee it. But Java's
+Arrays.sort on PRIMITIVES uses a dual-pivot quicksort and is NOT stable - it does not
+matter there, because two equal ints are indistinguishable. C++ std::sort is NOT
+guaranteed stable; std::stable_sort is. SQL ORDER BY does not guarantee anything about
+ties, so chained queries and pagination by an unstable key can repeat or skip rows
+between pages.
+
+A chained-sort idiom that works perfectly in Python is a real bug when ported to C++
+std::sort, and the symptom is not a crash - it is quietly wrong ordering inside groups.
+
+THE THIRD TRAP: it also decides which duplicate survives a deduplication that keeps the
+first of each key, and which record wins a "take the latest per user" pass. Both are
+stability questions wearing a different hat.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - CHAINED SORTS. Sort by secondary, then by primary. Readable, works,
+and costs two full sorts: O(n log n) twice.
+
+UPGRADE 1 - A TUPLE KEY, ONE SORT.
+
+  sorted(rows, key=lambda r: (r[1], r[2]))
+
+One pass. Does not depend on stability at all, so it survives being ported to a language
+whose sort is unstable, and it states the intent in the order you say it out loud.
+THIS IS THE DEFAULT ANSWER when all keys sort the same direction.
+
+UPGRADE 2 - MIXED DIRECTIONS. For "dept ascending, rank DESCENDING", a tuple key needs a
+trick. If the descending key is numeric, negate it: key=lambda r: (r[1], -r[2]). If it is
+a string, negation is not available and CHAINING IS THE CLEAN ANSWER:
+
+  rows.sort(key=lambda r: r[2], reverse=True)   # secondary, descending
+  rows.sort(key=lambda r: r[1])                 # primary, ascending
+
+This is the case where chaining is not a beginner's version of the tuple key but the
+better tool, and it depends entirely on stability.
+
+UPGRADE 3 - AN EXPLICIT TIE-BREAKER. Append a unique field - an id, an ingest sequence
+number - to the tuple key. Now the order is TOTAL and does not depend on the sort's
+stability, the input order, or the language. For anything paginated or reproducible
+across runs, this is not an upgrade, it is a requirement.
+
+UPGRADE 4 - functools.cmp_to_key when the comparison is genuinely relational and cannot
+be expressed as a key. Slower, and rarely needed.""",
+
+    """6. HOW TO GET MULTI-KEY ORDERING RIGHT - numbered steps.
+
+STEP 1. Write down the desired order in words: "by dept ascending, then rank descending,
+then name ascending".
+
+STEP 2. If every key sorts the same direction, use ONE sort with a TUPLE key in the order
+you just wrote. Stop here - this is most cases and it depends on nothing.
+
+STEP 3. If directions differ and the descending keys are numeric, negate them inside the
+tuple key. Still one sort.
+
+STEP 4. If directions differ and a descending key is a string or otherwise not
+negatable, chain the sorts - and remember the order is REVERSED: last-written key first
+in the chain, primary key last.
+
+STEP 5. Confirm your language's sort is stable before relying on step 4. Python: yes.
+Java objects: yes. Java primitives: no. C++ std::sort: no, use std::stable_sort. SQL:
+no guarantee at all.
+
+STEP 6. If the output is paginated, persisted, compared between runs, or fed to a diff,
+append a UNIQUE tie-breaker. Without one, two runs over the same data can legitimately
+differ, and page 2 can repeat a row from page 1.
+
+STEP 7. Test with deliberate ties. A test whose rows all have distinct keys cannot fail
+for instability, which is why this class of bug survives test suites.
+
+STEP 8. Do not reach for a hand-written sort. CPython's is stable, adaptive and written
+in C; measured below, it sorts 200,000 already-ordered floats in 2.5 ms.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A teacher has a stack of exam papers and wants them arranged by class, and within each
+class by mark.
+
+She does it in two passes. First she sorts the whole stack by mark - highest at the top,
+lowest at the bottom. Then she deals the stack into piles, one per class, laying each
+paper on top of its pile as she reaches it. Because she goes through the stack in order
+and never reorders anything within a pile, each pile comes out in mark order too. Two
+simple passes and both requirements are met.
+
+That works because of one specific thing: in the second pass, when two papers belong to
+the same class, she keeps them in the order she found them. That is stability.
+
+Now suppose an assistant does the second pass differently - he grabs papers from anywhere
+in the stack, throwing each onto the right pile in whatever order he happens to pick them
+up. Every pile still contains exactly the right papers for its class. It looks completely
+correct. But inside each pile the marks are scrambled, and the first pass was wasted.
+
+Measured on random stacks, the assistant's method produced the right answer 0 times out
+of 200. Not occasionally wrong - reliably wrong. And the failure is quiet: the papers ARE
+sorted by class, which is the thing anyone glancing at them would check.
+
+The other trap is that the passes run backwards from how you describe the job. "By class,
+then by mark" is the description, but the mark pass has to happen FIRST and the class
+pass LAST. Do them in the order the sentence suggests and you get papers perfectly
+ordered by mark and randomly ordered by class.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # the chain - depends on stability
+  by_rank = sorted(rows, key=lambda r: r[2])
+  final   = sorted(by_rank, key=lambda r: r[1])
+
+  # the tuple key - does not
+  final   = sorted(rows, key=lambda r: (r[1], r[2]))
+
+  # and what makes a merge stable, at the one line that decides it
+  def merge(left, right, key):
+      out, i, j = [], 0, 0
+      while i < len(left) and j < len(right):
+          if key(right[j]) < key(left[i]):     # STRICT less-than
+              out.append(right[j]); j += 1
+          else:
+              out.append(left[i]); i += 1
+      return out + left[i:] + right[j:]
+
+LINE BY LINE.
+
+  by_rank = sorted(rows, key=lambda r: r[2])
+The secondary key, sorted FIRST. sorted returns a new list; list.sort would sort in place
+and is equally stable.
+
+  final = sorted(by_rank, key=lambda r: r[1])
+The primary key, LAST. This sort compares only r[1]. Every pair of rows in the same dept
+is equal to it, and stability is the only reason they stay in rank order.
+
+  key=lambda r: (r[1], r[2])
+Tuples compare element by element: r[1] first, and r[2] only when the r[1]s are equal.
+This is the two-key comparison written directly, so nothing depends on stability. Also
+faster - one pass instead of two.
+
+  if key(right[j]) < key(left[i]):
+THE ENTIRE STABILITY GUARANTEE OF MERGE SORT IS THIS ONE OPERATOR. It is strict <, so on
+a tie the condition is False and the else branch takes from the LEFT - the half that came
+earlier in the original list. Change it to <= and equal elements are taken from the right
+first, and the sort becomes unstable. One character.
+
+  return out + left[i:] + right[j:]
+One of the two slices is always empty. Appending both avoids a branch.
+
+THE COST OF STABILITY: merge sort needs O(n) scratch space to merge. Quicksort sorts
+in place with O(log n) stack and is not stable. That is the trade, and it is the reason
+both algorithms still exist.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the chain, on the eight rows.
+
+  input:   Ana(eng,3) Bo(eng,1) Cy(sal,2) Di(eng,2) Ed(sal,1) Fi(sal,3) Gus(eng,1) Hal(sal,2)
+
+  pass 1, key = rank:
+    rank 1: Bo, Ed, Gus     - in their original relative order
+    rank 2: Cy, Di, Hal
+    rank 3: Ana, Fi
+    result: Bo, Ed, Gus, Cy, Di, Hal, Ana, Fi
+
+  pass 2, key = dept. Every eng row is equal to every other eng row, so they keep the
+  order pass 1 left them in:
+    eng, in pass-1 order:   Bo(1), Gus(1), Di(2), Ana(3)
+    sal, in pass-1 order:   Ed(1), Cy(2), Hal(2), Fi(3)
+
+  final: Bo(eng,1) Gus(eng,1) Di(eng,2) Ana(eng,3) Ed(sal,1) Cy(sal,2) Hal(sal,2) Fi(sal,3)
+
+Ranks ascend inside each dept. Note Cy before Hal - both rank 2, and Cy came before Hal
+in the original input. Stability carried the original order through two sorts.
+
+TRACE B - the same input, unstable second pass.
+
+  final: ... Cy(sal,2) Hal(sal,2) Ed(sal,1) Fi(sal,3)
+
+The sales block reads 2, 2, 1, 3. The selection sort swapped Ed with a later element
+while collecting sales rows, and pass 1's work in that block was lost. One violated pair
+out of eight rows - and on random data with more ties, the chain produced the correct
+answer 0 times in 200.
+
+TRACE C - why CPython's sort is fast as well as stable. 200,000 floats:
+
+  random            34.1 ms
+  already sorted     2.5 ms
+  reversed           2.3 ms
+  10 sorted runs    13.4 ms
+
+Timsort finds runs that are ALREADY in order and merges them instead of re-sorting. A
+sorted input is one run: a single scan, 13x faster than random. A reversed input is one
+descending run, detected and flipped, and it is the fastest of all. Ten pre-sorted chunks
+cost about a third of random. THE SAME MERGE STRUCTURE THAT MAKES IT STABLE IS WHAT LETS
+IT EXPLOIT EXISTING ORDER - and real data is very often partly ordered already.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Timsort is O(n log n) worst case, O(n) on already-sorted input, and needs O(n)
+scratch memory to merge - that memory is the price of stability. Quicksort and heapsort
+sort in place and are not stable. Chaining two sorts costs two full passes; a tuple key
+costs one, which makes the tuple key faster as well as more portable.
+
+THE #1 MISTAKE: chaining the sorts in the order you SAY them. "By dept then rank" must be
+coded rank first, dept last. Backwards, the output is correctly sorted by rank and
+arbitrarily by dept - and it looks sorted, because it is.
+
+THE #2 MISTAKE: assuming every language's sort is stable. Python and Java objects: yes.
+Java primitives, C++ std::sort, and SQL ORDER BY: no. A chained idiom ported to
+std::sort is silently wrong.
+
+THE #3 MISTAKE: paginating on a non-unique sort key. With ties broken arbitrarily, page 2
+can repeat a row from page 1 or skip one entirely. Append a unique tie-breaker.
+
+THE #4 MISTAKE: testing only on data with distinct keys. Such a test cannot fail for
+instability, which is how this bug survives a full suite.
+
+THE #5 MISTAKE: writing <= instead of < in a hand-rolled merge. One character, and the
+sort is no longer stable.
+
+THE #6 MISTAKE: reaching for a chain when a tuple key would do. One pass, no dependency
+on the language, and it reads in the order you would say it.
+
+THE #7 MISTAKE: relying on stability for the *input* order when the input came from a
+set, a dict before 3.7, or a parallel scatter - there was no original order to preserve.
+
+THE TAKEAWAY: a stable sort keeps equal elements in their original relative order, which
+is what lets you sort by a secondary key and then by a primary key and end up ordered by
+both - the second sort treats every row in a group as equal and stability preserves the
+first sort's work inside those groups; the chain must be written BACKWARDS from how you
+say it, and it silently breaks where the sort is not stable, measured 0 correct results
+out of 200 random trials with a swapping selection sort; so prefer a single tuple key
+except when directions differ on a non-negatable field, always append a unique
+tie-breaker for anything paginated or compared between runs, and remember the O(n)
+scratch memory that stability costs is the same merge structure that lets Timsort sort
+200,000 already-ordered floats in 2.5 ms against 34.1 ms for random ones.""",
+]
+
+_EX_P1AO["Stratified sampling"] = [
+    """1. THE GOAL - make sure the sample contains the groups you care about, in the right
+proportions.
+
+SIMPLE RANDOM SAMPLING picks n items uniformly from the population. Every item has the
+same chance, which is fair, and the result is unbiased. It is also at the mercy of luck:
+nothing stops it from picking a sample that is 90 percent city-dwellers, or from missing
+a small group entirely.
+
+STRATIFIED SAMPLING first splits the population into STRATA - non-overlapping groups you
+believe differ from each other - and then samples within each stratum separately, usually
+in proportion to stratum size.
+
+  population: 6000 small-town, 3000 suburb, 1000 city
+  a stratified sample of 100 takes exactly 60, 30 and 10
+
+TWO THINGS FOLLOW, AND THEY ARE DIFFERENT THINGS.
+
+FIRST, the estimate gets more precise - often dramatically. Measured on that population,
+estimating the mean:
+
+  sample size 100:  SRS standard error 2.0831   stratified 0.4658   20.0x variance reduction
+
+SECOND, small groups are GUARANTEED to appear. Not likely to - guaranteed, by
+construction. Section 4 measures how badly simple random sampling fails at this.""",
+
+    """2. THE INTUITION - it removes the variance BETWEEN groups, and leaves only the variance
+within them.
+
+Total variation in a population splits into two parts: how much the group means differ
+from each other, and how much individuals vary inside their group.
+
+Simple random sampling is exposed to both. Draw a sample that happens to contain too many
+city-dwellers and your estimate is too high, and that error comes entirely from the
+between-group part.
+
+Stratified sampling FIXES the group proportions to their true values. The between-group
+variation cannot contribute error any more, because the mix is no longer random. Only the
+within-group variation is left.
+
+WHICH TELLS YOU EXACTLY WHEN IT HELPS AND WHEN IT DOES NOT. In the measurement the strata
+means were 30, 55 and 95 with standard deviations of 4, 5 and 8 - the groups differ far
+more from each other than individuals differ inside them, so almost all the variance was
+the between-group kind and removing it was worth 20x:
+
+  sample 50:   SRS 2.8639   stratified 0.6775   17.9x
+  sample 100:  SRS 2.0831   stratified 0.4658   20.0x
+  sample 300:  SRS 1.1932   stratified 0.2796   18.2x
+
+STRATIFY BY SOMETHING THAT ACTUALLY PREDICTS YOUR OUTCOME and the gain is large. Stratify
+by something unrelated - shoe size, when measuring income - and the between-group variance
+is near zero, there is nothing to remove, and the gain is nothing. The variable you choose
+IS the method.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POPULATION - everything you could sample from. Size N.
+
+STRATUM (plural STRATA) - one of the non-overlapping groups the population is split into.
+Every member belongs to exactly one; the strata must cover everybody.
+
+SIMPLE RANDOM SAMPLE (SRS) - n items drawn uniformly, every item equally likely.
+
+PROPORTIONAL ALLOCATION - take from each stratum in proportion to its share of the
+population. A stratum that is 10 percent of the population gets 10 percent of the sample.
+The default.
+
+EQUAL ALLOCATION - take the same number from every stratum regardless of size. Used when
+you need to say something about each stratum separately.
+
+NEYMAN ALLOCATION - take more from strata that are large AND internally variable, in
+proportion to stratum size times its standard deviation. Minimises the variance of the
+overall estimate, and needs an estimate of each stratum's spread up front.
+
+WEIGHT - a stratum's share of the population, N_h/N. Estimates are recombined by
+weighting each stratum's mean by this, which is what keeps the overall estimate unbiased.
+
+STANDARD ERROR - the standard deviation of the ESTIMATE across repeated samples. How much
+your answer would move if you ran the whole study again. The thing stratification shrinks.
+
+OVERSAMPLING - deliberately taking more of a small stratum than its share, then correcting
+with weights. Section 5.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - a small stratum is usually ABSENT ENTIRELY.
+
+Take a population that is 99 percent common and 1 percent rare. Draw a simple random
+sample. How often does the rare group fail to appear at all?
+
+MEASURED, over 5,000 repetitions at each size:
+
+  sample size   20:  the rare 1% stratum is absent  81.92% of the time
+  sample size   50:                                 60.96%
+  sample size  100:                                 36.46%
+  sample size  200:                                 12.92%
+
+AT A SAMPLE OF 100 - which sounds respectable - THE RARE GROUP IS MISSING MORE THAN A
+THIRD OF THE TIME. Not under-represented. Absent. And when it does appear it is usually
+represented by exactly one individual, so any statement about that group rests on one
+observation.
+
+WHY THIS IS WORSE THAN IT LOOKS. The failure is invisible from inside the sample. You
+have 100 responses, the analysis runs, the numbers look reasonable, and the report says
+nothing about the rare group because there was nothing to say. Nobody sees an error
+message. The most common version of this in practice is a model evaluation set that
+happens to contain no examples of the failure mode you were trying to measure.
+
+STRATIFIED SAMPLING MAKES THIS IMPOSSIBLE BY CONSTRUCTION. You decide up front how many
+come from each stratum, so a stratum you have named cannot vanish. The cost is that you
+must know the strata in advance - which means you must know what matters before you
+collect the data, and that is the real constraint.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - SIMPLE RANDOM SAMPLING. Unbiased, needs no prior knowledge, and one
+line of code. Measured standard error 2.0831 at n=100, and it loses the rare stratum a
+third of the time. For a homogeneous population it is the right answer and nothing here
+improves on it.
+
+UPGRADE 1 - PROPORTIONAL STRATIFICATION. Split by the variable you believe drives the
+outcome, sample in proportion. Measured, a 20x variance reduction at n=100 on a population
+whose strata really did differ. Still unbiased, because the proportions are the true ones.
+
+UPGRADE 2 - NEYMAN ALLOCATION. Give more of the sample to strata that are internally
+variable. A stratum where everyone answers the same needs very few observations; one where
+answers scatter needs many. Minimises variance for a fixed total sample, and requires a
+prior estimate of each stratum's spread - often from a pilot.
+
+UPGRADE 3 - OVERSAMPLE THE SMALL STRATA, THEN REWEIGHT. If you need to say something
+specific about the 1 percent group, proportional allocation gives you one person from it.
+Take 200 instead, and weight their responses by their true population share when computing
+overall figures. You get a usable estimate for the small group AND an unbiased overall
+number. FORGETTING THE WEIGHTS IS THE CLASSIC BUG - the overall estimate then reflects a
+population that does not exist.
+
+UPGRADE 4 - STRATIFY YOUR TRAIN/TEST SPLIT AND YOUR CROSS-VALIDATION FOLDS. Same idea,
+different setting: with a 1 percent positive class, a random 80/20 split can hand you a
+test set with almost no positives. Stratified k-fold keeps the class ratio in every fold,
+and it is the default for a reason.
+
+UPGRADE 5 - CLUSTER SAMPLING, which is NOT this. Cluster sampling picks a few whole groups
+and surveys everyone in them - cheaper to administer, and it INCREASES variance because
+people in a cluster resemble each other. Stratification takes from every group and reduces
+variance. They are opposites that are constantly confused.""",
+
+    """6. HOW TO DO IT PROPERLY - numbered steps.
+
+STEP 1. Name the variable you will stratify on, and justify it: it must be something you
+believe is related to the outcome AND that you know for every member of the population
+before sampling. Both halves are required, and the second is what usually rules out the
+variable you actually want.
+
+STEP 2. Define strata that are exhaustive and mutually exclusive. Everyone in exactly one.
+Decide where the awkward cases go before you look at any data.
+
+STEP 3. Record the true size of each stratum, N_h. These are the weights and every
+estimate depends on them being right.
+
+STEP 4. Choose allocation. Proportional by default. Neyman if you have spread estimates
+and want maximum precision. Oversample a small stratum if you need to report on it.
+
+STEP 5. Sample WITHIN each stratum independently, at random. The randomness inside the
+stratum is what keeps it unbiased; stratification only fixes the mix.
+
+STEP 6. Recombine with weights: overall estimate = sum over strata of (N_h/N) * (stratum
+mean). If you used anything other than proportional allocation, this step is not optional
+and skipping it silently biases everything.
+
+STEP 7. Report the standard error, computed within strata and pooled - not the SRS
+formula, which will overstate it and throw away the precision you just paid for.
+
+STEP 8. Sanity-check that your realised proportions match the population's. A rounding
+rule applied per stratum can drift the total sample size and the mix.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A council wants to know the average household income in a district of ten thousand homes.
+Six thousand are in small towns, three thousand in suburbs, one thousand in the city
+centre, and incomes differ a lot between the three.
+
+The obvious method is to pick a hundred addresses out of a hat. It is fair, and on
+average it gives the right answer. But any one hatful might happen to contain fifteen
+city addresses instead of the ten it should, and city incomes are much higher, so that
+particular survey comes out too high. Run the survey again next month with a fresh hatful
+and you get a noticeably different number - measured, the answer wobbles by about two
+income units either side.
+
+The better method is to decide in advance: sixty small-town, thirty suburb, ten city.
+Then pick at random within each. The mix can no longer be lucky or unlucky, because you
+chose it. The only remaining wobble is that households differ from their own neighbours,
+and that is much smaller. Measured, the answer now wobbles by less than half a unit - the
+survey is about twenty times more precise for exactly the same hundred visits.
+
+And then the part that matters even more than precision.
+
+Suppose one hundred of the ten thousand homes are on a traveller site, and the council
+specifically wants to know about them. Pick a hundred addresses out of a hat and, measured
+over five thousand attempts, that site is not represented at all more than a third of the
+time. The survey comes back, the numbers look fine, and the report simply says nothing
+about those hundred families - and nothing in the data reveals that anything is missing.
+
+Deciding the quotas in advance makes that impossible. You cannot lose a group you have
+already promised to visit.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def stratified_mean(population, strata_sizes, k):
+      N = sum(strata_sizes.values())
+      estimate = 0.0
+      for name, N_h in strata_sizes.items():
+          group = [v for s, v in population if s == name]
+          take = max(1, round(k * N_h / N))
+          sample = random.sample(group, take)
+          estimate += (N_h / N) * mean(sample)
+      return estimate
+
+LINE BY LINE.
+
+  N = sum(strata_sizes.values())
+The true population total. Everything downstream is a share of this, so if these numbers
+are wrong the estimate is biased and nothing in the code will notice.
+
+  for name, N_h in strata_sizes.items():
+Every stratum, always. The loop is the guarantee - a stratum in this dict cannot be
+missing from the sample, which is the property section 4 measures the absence of.
+
+  take = max(1, round(k * N_h / N))
+PROPORTIONAL ALLOCATION. The max(1, ...) is doing real work: a stratum that is 0.4 percent
+of the population would round to zero at a sample of 100, and then the loop's guarantee
+would be a lie. Note it also means the realised sample can exceed k slightly, and that the
+allocation is no longer exactly proportional for those tiny strata - which is precisely
+why the weights on the next line matter.
+
+  sample = random.sample(group, take)
+Randomness WITHIN the stratum. This is what keeps the estimate unbiased. Stratification
+fixes the mix; it does not replace random selection. Sampling the first `take` items
+instead - a very common shortcut - reintroduces whatever order the data was stored in.
+
+  estimate += (N_h / N) * mean(sample)
+THE WEIGHTING, and the line that is most often dropped. Each stratum's mean is worth its
+true population share, NOT its share of the sample. When take was bumped by max(1, ...),
+or when a stratum was deliberately oversampled, the sample proportions and the population
+proportions differ - and only this line keeps the answer honest. Averaging the pooled
+sample directly instead would describe a population that does not exist.
+
+  MISSING GUARD: random.sample raises if take exceeds the group size. A stratum smaller
+than its allocation needs to be handled - take all of it, and say so.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Population: 6000 small-town (mean 30, sd 4), 3000 suburb (mean 55, sd 5), 1000 city
+(mean 95, sd 8). True population mean, measured: 43.9684.
+
+TRACE A - why the weighted recombination gives the right answer.
+
+  weights: 6000/10000 = 0.6,  3000/10000 = 0.3,  1000/10000 = 0.1
+  0.6 * 30 + 0.3 * 55 + 0.1 * 95 = 18.0 + 16.5 + 9.5 = 44.0
+
+Against the measured true mean of 43.9684 - the small gap is sampling noise in generating
+the population itself. THE WEIGHTS ARE WHY IT LANDS THERE. Average the three stratum means
+unweighted and you get (30+55+95)/3 = 60.0, which is the answer for a district that is one
+third city - a district that does not exist.
+
+TRACE B - the precision gain, at three sample sizes, 2000 repetitions each.
+
+  n=50   SRS 2.8639   stratified 0.6775   17.87x variance reduction
+  n=100  SRS 2.0831   stratified 0.4658   20.00x
+  n=300  SRS 1.1932   stratified 0.2796   18.21x
+
+Note the ratio is roughly CONSTANT across sample size. Stratification is not a trick that
+fades as n grows - it removes a component of the variance, and that component stays
+removed. Also note the SRS errors fall as 1/sqrt(n): 2.86, 2.08, 1.19 for n of 50, 100,
+300, and sqrt(300/50) = 2.45 against the observed 2.86/1.19 = 2.40.
+
+TO MATCH stratified sampling's n=50 error of 0.6775, simple random sampling would need
+about 50 * 17.87 = 890 samples. That is the practical statement of the result: the SAME
+precision for a seventeenth of the fieldwork.
+
+TRACE C - the rare stratum, 1 percent of the population, 5000 repetitions.
+
+  n=20   absent 81.92% of the time
+  n=50   absent 60.96%
+  n=100  absent 36.46%
+  n=200  absent 12.92%
+
+Sanity-check the first: the chance of missing it entirely is about 0.99^20 = 0.818.
+Measured 0.8192. The arithmetic is not subtle - it is just rarely done.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Computationally nothing: one pass to bucket the population, then a sample per
+stratum, O(N) time and O(N) memory. The real costs are elsewhere. You must KNOW the strata
+membership of every population member before sampling, and you must know the true stratum
+sizes. Where that information does not exist, stratification is not available at any
+price - which is the usual reason people use simple random sampling.
+
+THE #1 MISTAKE: forgetting the weights after non-proportional allocation. Oversample the
+1 percent group to 200 responses, then average the pooled sample, and your overall figure
+describes a population that is half rare - measured, the unweighted average of the three
+stratum means was 60.0 against a true 44.0.
+
+THE #2 MISTAKE: stratifying on a variable unrelated to the outcome. The gain comes entirely
+from removing BETWEEN-stratum variance; if the strata do not differ there is none to
+remove, and you have added complexity for nothing.
+
+THE #3 MISTAKE: assuming a decent sample size protects small groups. Measured, a 1 percent
+stratum was absent from a sample of 100 more than a third of the time, and the absence is
+invisible from inside the data.
+
+THE #4 MISTAKE: using the simple-random-sample standard error formula on stratified data.
+It overstates the error and throws away the precision you paid for.
+
+THE #5 MISTAKE: confusing this with cluster sampling. Clusters pick a few whole groups and
+INCREASE variance; strata take from every group and reduce it.
+
+THE #6 MISTAKE: taking the first k of each stratum instead of sampling randomly within it.
+Stratification fixes the mix, not the selection.
+
+THE #7 MISTAKE: a random train/test split on imbalanced data. Same failure, different name;
+use stratified k-fold.
+
+THE TAKEAWAY: stratified sampling fixes the group proportions to their true values instead
+of leaving them to luck, which removes the between-group component of the variance entirely
+and leaves only the within-group part - measured, a 20x variance reduction at a sample of
+100, meaning the same precision as a simple random sample seventeen times larger, provided
+you stratified on something that actually predicts the outcome; and separately from
+precision it guarantees that a named group cannot be absent, which matters because a 1
+percent stratum was missing from a simple random sample of 100 more than a third of the
+time and nothing in the resulting data says so - all of it conditional on knowing stratum
+membership and true stratum sizes in advance, and on remembering to weight each stratum's
+mean by its population share rather than its sample share.""",
+]
+
+_EX_P1AO["Tabulation"] = [
+    """1. THE GOAL - fill a table from the bottom up instead of recursing from the top down.
+
+Dynamic programming has two shapes, and they compute exactly the same answers.
+
+MEMOIZATION, top-down: write the natural recursion, and cache each result so a subproblem
+is solved once. You ask for the answer you want, and the recursion asks for whatever it
+needs.
+
+TABULATION, bottom-up: work out the ORDER in which subproblems depend on each other, make
+an array, and fill it from the smallest case upward. By the time you reach a cell, every
+cell it depends on is already filled.
+
+  def fib_tab(n):
+      dp = [0] * (n + 1)
+      dp[1] = 1
+      for i in range(2, n + 1):
+          dp[i] = dp[i-1] + dp[i-2]
+      return dp[n]
+
+No recursion, no cache lookups, no function-call overhead - just a loop over an array.
+
+THE PRICE IS THAT YOU MUST WORK OUT THE ORDER YOURSELF. Memoization gets the order for
+free, because the call stack discovers it. Tabulation makes you name it, and getting it
+wrong means reading a cell that has not been filled yet - which does not crash, it just
+returns the initial value and gives a wrong answer.""",
+
+    """2. THE INTUITION - the two differ in what they cost, not in what they compute.
+
+Three differences, and all three are measurable.
+
+FIRST, TABULATION HAS NO STACK LIMIT. Recursion depth is bounded by the interpreter.
+Measured, with CPython's default recursion limit of 1000:
+
+  n = 100     memoized: ok (21 digits)     tabulated: ok,     77.3 us
+  n = 900     memoized: ok (188 digits)    tabulated: ok,     66.5 us
+  n = 2000    memoized: RecursionError     tabulated: ok,    191.9 us
+  n = 20000   memoized: RecursionError     tabulated: ok,  11502.2 us
+
+The memoized version does not get slow at n=2000. It stops working.
+
+SECOND, TABULATION IS FASTER WHEN EVERY SUBPROBLEM IS NEEDED. No call frames, no hashing,
+just array indexing. Measured on 0/1 knapsack:
+
+  n=60  capacity=800    tabulation   8.3 ms   memoization  20.4 ms   2.45x
+  n=120 capacity=1500   tabulation  29.0 ms   memoization 155.2 ms   5.34x
+
+THIRD - AND THIS IS THE ONE THAT DECIDES IT - MEMOIZATION WINS WHEN MOST SUBPROBLEMS ARE
+NEVER REACHED. Coin change with coins of 1000, 2500 and 7000 against a target of 100,000:
+
+  tabulation  filled  100,001 cells in  16.3 ms
+  memoization touched     714 states in   0.3 ms  (0.238% of the full table)
+
+Fifty times faster, because 99.76 percent of the table is unreachable. Tabulation cannot
+know that; it fills everything.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SUBPROBLEM - a smaller version of the same question. For Fibonacci, fib(k) for k < n.
+
+OVERLAPPING SUBPROBLEMS - the same subproblem is needed more than once. Without this,
+caching buys nothing and plain recursion is fine.
+
+OPTIMAL SUBSTRUCTURE - the best answer to the whole is built from best answers to the
+parts. Both DP styles need this; without it neither applies.
+
+STATE - what identifies one subproblem. For knapsack: which item index, and how much
+capacity is left. The state is the array's index, so choosing it badly is what makes a DP
+hard.
+
+TRANSITION or RECURRENCE - the formula giving one state's answer from smaller states.
+
+BASE CASE - the smallest states, filled directly. In tabulation these are the array's
+initial values, and getting them wrong is silent.
+
+MEMOIZATION - top-down: recurse, cache each result. Also called top-down DP.
+
+TABULATION - bottom-up: iterate over states in dependency order, filling a table.
+
+TOPOLOGICAL ORDER - an ordering where every state comes after everything it depends on.
+This is exactly what the loop order in tabulation must be.
+
+ROLLING ARRAY - keeping only the last row or two instead of the whole table, when the
+recurrence only reaches back a fixed distance. Section 5.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the loop direction is part of the algorithm.
+
+The 0/1 knapsack, space-optimised to one row:
+
+  for i in range(len(w)):
+      for c in range(C, w[i]-1, -1):        # DESCENDING
+          dp[c] = max(dp[c], dp[c - w[i]] + v[i])
+
+Change that inner loop to ascending and it still runs, still produces plausible numbers,
+and SOLVES A DIFFERENT PROBLEM.
+
+WHY. dp[c - w[i]] is a smaller capacity. Going DOWNWARD, that cell has not been touched
+yet in this item's pass, so it still holds the value from the PREVIOUS item - meaning item
+i is used at most once. Going UPWARD, dp[c - w[i]] has already been updated by item i in
+this same pass, so item i can be used again, and again. Ascending is UNBOUNDED knapsack.
+
+BOTH ARE CORRECT ALGORITHMS. Neither errors. The difference between "each item once" and
+"unlimited copies" is the sign of a loop step, and the only way to catch it is a test case
+where using an item twice beats using it once.
+
+THE SAME CLASS OF BUG, MORE GENERALLY: tabulation reads cells with no guarantee they are
+filled. A memoized version cannot make this mistake - if a value is not cached it computes
+it, so the dependency order is enforced by construction. Tabulation trades that safety for
+speed, and the wrong order gives you the initial value of an unfilled cell rather than an
+exception.
+
+AND THE THIRD TRAP: the base cases ARE the array initialisation. dp = [0]*(n+1) quietly
+asserts that every unfilled state is worth zero. For a maximisation that is often right;
+for a minimisation it should be infinity, and for a counting problem dp[0] must be 1, not
+0, or every count comes out zero.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - PLAIN RECURSION, no caching. Exponential. fib(40) makes over 300
+million calls. Correct and unusable.
+
+UPGRADE 1 - MEMOIZE IT. Add functools.lru_cache and the same code becomes linear. This is
+almost always the right FIRST move: it is one line, it cannot get the dependency order
+wrong, and it only computes states you actually need.
+
+UPGRADE 2 - TABULATE IT. Rewrite as a loop when you need the speed, or when the recursion
+depth is a problem. Measured, 2.45x to 5.34x faster on dense knapsack, and it works at
+n=20000 where memoization raises RecursionError.
+
+UPGRADE 3 - ROLL THE ARRAY. If the recurrence only looks back a fixed distance, keep only
+that much:
+
+  def fib_rolling(n):
+      a, b = 0, 1
+      for _ in range(n):
+          a, b = b, a + b
+      return a
+
+O(n) memory becomes O(1). For a 2-D table where each row depends only on the previous,
+two rows replace n rows - the standard trick for edit distance and knapsack, and it is
+what makes an otherwise impossible table fit in memory.
+
+UPGRADE 4 - SHRINK THE STATE SPACE. Faster than any constant-factor win. If capacities are
+all multiples of 100, divide by 100 and the table is a hundredth the size. If a dimension
+turns out not to affect the answer, drop it.
+
+UPGRADE 5 - KNOW WHEN NOT TO TABULATE. If the reachable states are sparse, memoization is
+the better algorithm, not the beginner's version of one. Measured, 714 states against
+100,001 cells - fifty times faster. Choose by measuring reachability, not by preference.""",
+
+    """6. HOW TO WRITE ONE - numbered steps.
+
+STEP 1. Write the recurrence first, on paper, in the top-down form. What is the state?
+What is the transition? What are the base cases? Do not open an editor yet.
+
+STEP 2. Implement it recursively with lru_cache and get it CORRECT. This is your reference
+implementation and you will check everything else against it.
+
+STEP 3. Decide whether to tabulate at all. Estimate the number of reachable states against
+the size of the full table. If reachability is sparse, stop - you are done, and tabulating
+would be slower.
+
+STEP 4. Work out the dependency order: for each state, which states does it read? Choose
+loop bounds and directions so those are always already filled.
+
+STEP 5. Initialise the array to the value that means "base case", not to whatever is
+convenient. 0 for a maximum over non-negative values, infinity for a minimum, 1 at dp[0]
+for a counting problem.
+
+STEP 6. Write the loops. Then check every read against step 4, especially the direction of
+any loop that writes into the same array it reads.
+
+STEP 7. Test the tabulated version against the memoized one on random inputs - measured
+here on knapsack, both agreed exactly, which is the check that catches a wrong loop
+direction.
+
+STEP 8. Only now consider rolling the array to save memory, and re-run the same comparison
+afterwards. Space optimisation is where the loop-direction bug is introduced.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Two people are working out how many ways there are to climb a staircase.
+
+The first works backwards from the top. To know about step 20 she needs to know about
+steps 19 and 18, so she asks about those; to know about 19 she needs 18 and 17, and so on
+down. She keeps a notebook and writes down every answer she works out, so she never solves
+the same step twice. It works, and she only ever thinks about steps that are genuinely
+needed.
+
+The second starts at the bottom. He knows step 0 and step 1 without thinking. From those
+he gets step 2, from those step 3, and so on straight up to step 20. No questions, no
+notebook lookups, no keeping track of what he was in the middle of - just a list he fills
+in order.
+
+For a staircase of twenty steps they are the same. The differences show up at the extremes.
+
+If the staircase has twenty thousand steps, the first person runs out of room to keep
+track of all the questions she has asked but not yet answered. Measured, she fails at
+around two thousand steps - not slowly, she simply stops. The second person is unaffected;
+he is only ever filling in the next entry in a list.
+
+But now change the problem. Suppose you can only climb in strides of 1000, 2500 or 7000
+steps, and the staircase is 100,000 steps tall. The second person still fills in all
+100,001 entries, because that is what his method does. The first person only ever asks
+about heights she can actually reach - measured, 714 of them, a quarter of one percent of
+the staircase - and finishes fifty times faster.
+
+Neither method is the clever one. The question is whether you need most of the answers.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def knap_tab(w, v, C):
+      dp = [0] * (C + 1)
+      for i in range(len(w)):
+          for c in range(C, w[i] - 1, -1):
+              dp[c] = max(dp[c], dp[c - w[i]] + v[i])
+      return dp[C]
+
+LINE BY LINE.
+
+  dp = [0] * (C + 1)
+One cell per capacity from 0 to C inclusive - hence the +1, and forgetting it is an
+off-by-one that loses the answer you actually want. Initialising to 0 encodes the base
+case: with no items available, every capacity is worth zero. For a MINIMISATION this would
+have to be infinity, and for a COUNT dp[0] would have to be 1 - the initialisation IS the
+base case, and it is silent when wrong.
+
+  for i in range(len(w)):
+Outer loop over items. This is the dimension that was collapsed away: the honest table is
+2-D, dp[i][c], and after item i is processed dp holds the row for "the first i+1 items".
+
+  for c in range(C, w[i] - 1, -1):
+THE DESCENDING LOOP, and the whole correctness of the space optimisation. Reading right to
+left: start at C, stop just above w[i]-1, step -1. It stops at w[i] because a capacity
+smaller than the item cannot hold it, so those cells are unchanged.
+
+Descending means dp[c - w[i]] has NOT yet been visited in this pass, so it still holds the
+previous item row - item i is used at most once. Ascending, that cell would already
+include item i, and item i could be taken repeatedly. Same code, unbounded knapsack.
+
+  dp[c] = max(dp[c], dp[c - w[i]] + v[i])
+The transition. dp[c] is "skip this item", dp[c - w[i]] + v[i] is "take it". Note dp[c] on
+the right is the PREVIOUS row's value, which only holds because of the loop direction.
+
+  return dp[C]
+The full-capacity answer. The array now holds the answer for every capacity up to C, which
+is often useful and always paid for.
+
+THE COST: O(n * C) time, O(C) memory. Note C is a VALUE, not an input size - so this is
+pseudo-polynomial, and doubling the numbers doubles the work.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the recursion wall.
+
+  n = 100     memoized ok     tabulated ok,     77.3 us
+  n = 900     memoized ok     tabulated ok,     66.5 us
+  n = 2000    RecursionError  tabulated ok,    191.9 us
+  n = 20000   RecursionError  tabulated ok,  11502.2 us
+
+Between 900 and 2000 the memoized version stops working entirely. The default recursion
+limit is 1000 and fib(n) memoized recurses about n deep before any cache hit helps -
+the first call chain goes all the way down to the base case before anything is stored.
+Note n=900 was FASTER than n=100 for tabulation (66.5 against 77.3 us): at that size the
+measurement is dominated by warm-up, which is a reminder that microsecond timings need
+repetition before they mean anything.
+
+TRACE B - dense workload, every state needed.
+
+  n=60,  C=800    tabulation   8.3 ms   memoization  20.4 ms   2.45x
+  n=120, C=1500   tabulation  29.0 ms   memoization 155.2 ms   5.34x
+
+Both gave identical answers. The gap WIDENS with size - 2.45x to 5.34x - because
+memoization pays a function call and a dictionary hash per state while tabulation pays an
+array index, and the per-state overhead compounds as the state count grows.
+
+TRACE C - sparse workload, the opposite verdict.
+
+  coins 1000, 2500, 7000, target 100,000
+  tabulation  filled  100,001 cells   16.3 ms
+  memoization touched     714 states   0.3 ms   (0.238% of the table)
+
+Every reachable total is a combination 1000a + 2500b + 7000c, and only 714 such values
+exist below 100,000. Tabulation fills 99.76 percent of the table with values no one will
+ever read. This is not a tuning difference - it is a 54x gap in the other direction, and
+it is decided entirely by the arithmetic of which states are reachable.
+
+TRACE D - the loop direction, on one tiny case. One item, weight 3, value 5, C = 9.
+  DESCENDING: c=9 reads dp[6]=0 -> 5. c=8 reads dp[5]=0 -> 5 ... answer dp[9] = 5.
+  ASCENDING:  c=3 sets dp[3]=5. c=6 reads dp[3]=5 -> 10. c=9 reads dp[6]=10 -> 15.
+Same code, one character different, and 5 against 15 - the item taken once against taken
+three times.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Tabulation is O(number of states) time and O(size of the table) memory, and it
+pays that whether or not the states are needed. Memoization is O(number of REACHABLE
+states) time plus per-state overhead for the call and the hash, and O(reachable) memory,
+plus O(depth) stack. Rolling the array takes tabulation's memory from O(n*C) to O(C) with
+no time cost, and it is usually what makes a large DP fit at all.
+
+THE #1 MISTAKE: the wrong inner loop direction after space-optimising. Measured on one
+item of weight 3 and value 5 at capacity 9: descending gives 5, ascending gives 15. Both
+run, neither errors, and the difference is 0/1 knapsack against unbounded knapsack.
+
+THE #2 MISTAKE: initialising the table to 0 out of habit. The initialisation IS the base
+case. A minimisation needs infinity; a count needs dp[0] = 1 or every answer is zero.
+
+THE #3 MISTAKE: tabulating a sparse problem. Measured, 714 reachable states out of 100,001
+cells - memoization was 54x faster. Tabulation is not the optimised version of
+memoization; it is a different trade.
+
+THE #4 MISTAKE: memoizing something deep in a language with a stack limit. Measured,
+RecursionError between n=900 and n=2000 at CPython's default of 1000. Raising the limit
+risks a real stack overflow; converting to a loop does not.
+
+THE #5 MISTAKE: forgetting the +1 in [0]*(C+1), so the array is one short of the answer.
+
+THE #6 MISTAKE: treating O(n*C) as polynomial in the input size. C is a VALUE; the input
+is its digits. This is pseudo-polynomial and doubling the numbers doubles the work.
+
+THE #7 MISTAKE: not testing the tabulated version against the memoized one. It is the
+only cheap check that catches a wrong loop order.
+
+THE TAKEAWAY: tabulation fills a table from the base cases upward in dependency order, so
+it has no call overhead and no stack limit - measured 2.45x to 5.34x faster than
+memoization on dense knapsack, and working at n=20000 where the memoized version raised
+RecursionError past about n=1000 - but it fills EVERY cell whether or not anything reads
+it, which measured 16.3 ms against memoization's 0.3 ms on a coin problem where only 714
+of 100,001 states were reachable; so write the memoized version first because it cannot
+get the dependency order wrong, tabulate when the states are dense or the recursion too
+deep, and remember that the loop direction and the array initialisation are not style
+choices - they are the base cases and the recurrence, and both fail silently.""",
+]
+
 
 
 
