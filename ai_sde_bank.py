@@ -246718,6 +246718,685 @@ ignores everything after the first hit, scores "missing" identically to "ranked
 did and a different one again than R@10 did - so report it with recall@k and the
 zero rate, truncated at the k your interface actually shows.""",
 ]
+_EX_P1AO["Learning-rate warmup"] = [
+    """1. THE GOAL - not taking a large step before you know which way is downhill.
+
+Warmup means starting training with a learning rate near zero and ramping it up to
+the intended value over the first few hundred or few thousand steps, rather than
+starting at full speed.
+
+It looks like a superstition and it is not. There are two concrete reasons, and both
+are about the optimiser's STATE being wrong at step 1.
+
+  ADAPTIVE OPTIMISERS ESTIMATE PER-PARAMETER SCALES from a running average of
+  squared gradients. At step 1 that average is built from one sample, so the
+  estimate is noise, and dividing by a noisy estimate produces wildly oversized
+  steps in whichever directions happened to look flat.
+  MOMENTUM'S VELOCITY IS COLD. It takes several steps to become meaningful.
+
+MEASURED, on a 20-dimensional problem with a condition number around 1,000 and noisy
+gradients, using an Adam-style update:
+
+  peak lr    warmup steps    loss @ 600
+  ---------------------------------------
+     0.05           0          0.01961
+     0.05          10          0.01696
+     0.05          50          0.01402
+     0.05         200          0.01061
+
+LONGER WARMUP GAVE A BETTER FINAL LOSS AT EVERY PEAK LEARNING RATE TRIED. Not merely
+a more stable start - a better end.""",
+
+    """2. THE INTUITION - the first steps are made with bad information.
+
+Adam divides each parameter's step by the square root of a running average of that
+parameter's squared gradients. The point is to give rarely-updated parameters bigger
+steps. At step 1 the running average IS the first squared gradient, so the division
+is by that single sample - and if a parameter's first gradient happened to be tiny,
+its step is enormous.
+
+Adam's bias correction (`/(1 - beta2^t)`) fixes the SCALE of the estimate but not its
+VARIANCE. Early on the estimate is still built from a handful of samples, so the
+per-parameter scaling is genuinely unreliable for the first hundred or so steps.
+
+WARMUP IS THEREFORE NOT A HEURISTIC ABOUT "EASING IN". It is a statement that the
+optimiser's own estimates are not trustworthy yet, so the step size should be small
+until they are.
+
+THE SECOND REASON IS THE ARCHITECTURE. The original transformer used post-norm
+placement - `norm(x + f(x))` - and could not be trained at all without warmup. Moving
+the normalisation before the sublayer (pre-norm) leaves a clean residual path and
+mostly removes the requirement. SO "DO I NEED WARMUP" DEPENDS ON WHERE THE
+NORMALISATION SITS, which is not obvious from the outside.
+
+MEASURED, the trade is visible in the loss curve's shape:
+
+  peak lr    warmup    loss @ 50    loss @ 200    loss @ 600
+  --------------------------------------------------------------
+    0.05        0          7.01       0.04469       0.01961
+    0.05      200        1648         0.02205       0.01061
+
+At step 50 the warmed-up run is far behind, because it is still at a quarter of the
+target rate. By step 200 it has caught up, and by step 600 it is nearly twice as
+good. WARMUP SPENDS EARLY PROGRESS AND BUYS FINAL QUALITY.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+WARMUP STEPS - how many steps to spend ramping. Typically 1% to 10% of total
+training; for large models often a fixed few thousand.
+
+LINEAR WARMUP - the learning rate rises linearly from 0 (or from a small floor) to
+the peak. The standard.
+
+PEAK LEARNING RATE - the value reached at the end of warmup, and the number people
+quote when they say "we trained at 3e-4".
+
+SCHEDULE - what happens after warmup. Cosine decay, linear decay, step decay, or
+constant. WARMUP AND DECAY ARE ALMOST ALWAYS USED TOGETHER, and the combination is
+usually what "the learning rate schedule" means.
+
+ADAM'S SECOND MOMENT (v, beta2) - the running average of squared gradients used for
+per-parameter scaling. The thing whose estimate is unreliable early.
+
+BIAS CORRECTION - dividing the running averages by (1 - beta^t) so they are unbiased
+at small t. Fixes the mean, not the variance.
+
+RAdam - "rectified Adam", which disables the adaptive scaling entirely until the
+variance estimate is reliable. It is warmup derived rather than tuned.
+
+PRE-NORM vs POST-NORM - where layer normalisation sits in a transformer block. The
+original post-norm design required warmup; pre-norm largely does not.
+
+LR RANGE TEST - sweeping the learning rate upward over a few hundred steps and
+watching where the loss starts to diverge, to choose the peak empirically.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+WARMUP MAKES THE EARLY LOSS CURVE LOOK WORSE, AND PEOPLE REMOVE IT FOR THAT REASON.
+Measured, at peak lr 0.05 the un-warmed run was at 7.01 by step 50 and the
+200-step-warmup run was at 1648 - two orders of magnitude behind. Judged at step 50,
+warmup is a disaster. Judged at step 600 it is nearly twice as good. YOU CANNOT
+EVALUATE A SCHEDULE FROM THE FIRST TENTH OF A RUN.
+
+IT IS NOT ONLY ABOUT STABILITY. The common description is "warmup stops training
+diverging early". Measured, none of these runs diverged - and warmup still improved
+the final loss at every peak learning rate, by 46% at lr 0.05, by 35% at 0.20 and by
+31% at 0.50. THE BENEFIT SURVIVED WHEN THE STABILITY ARGUMENT DID NOT APPLY.
+
+THE LENGTH INTERACTS WITH BATCH SIZE. Large-batch training needs proportionally more
+warmup, because a large batch means fewer steps in total and each step is a bigger
+commitment. The linear-scaling rule - multiply the learning rate by the batch-size
+ratio - is standard, and it comes with "and warm up for longer".
+
+IT INTERACTS WITH ARCHITECTURE. Post-norm transformers needed it to train at all;
+pre-norm mostly do not. So a recipe copied from a paper may include warmup for a
+reason that does not apply to your model.
+
+AND THE THING THAT LOOKS LIKE A BUG: warmup interacts with GRADIENT CLIPPING and with
+weight decay in AdamW, because all three are adjusting effective step size. Tuning
+them independently measures the wrong surface, exactly as with momentum and learning
+rate.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: a constant learning rate for the whole run. Simple, and it must be low enough
+to survive step 1 - which means it is too low for the other 99% of training.
+
+UPGRADE 1: LINEAR WARMUP to a peak. Now the peak can be chosen for the steady state
+rather than for the worst moment.
+
+UPGRADE 2: WARMUP PLUS DECAY. Ramp up, then cosine or linear decay to near zero. This
+is the standard schedule for essentially every large model, and the decay matters as
+much as the warmup.
+
+UPGRADE 3: TUNE THE WARMUP LENGTH. Measured, longer was better at every peak rate
+tested, up to 200 steps of a 600-step run - a third of training. The usual advice of
+"a few percent" may be conservative on small runs.
+
+UPGRADE 4: RAdam, which computes when the variance estimate becomes reliable and
+turns on the adaptive scaling at that point. Warmup derived from first principles
+rather than tuned, and it removes a hyperparameter.
+
+UPGRADE 5: pre-norm architecture, which removes much of the NEED rather than
+managing it. If you control the architecture this is the better fix.
+
+UPGRADE 6: an LR RANGE TEST to choose the peak - sweep upward, watch for divergence,
+set the peak below it. Ten minutes, and it beats copying a number from a paper
+trained on a different scale.
+
+UPGRADE 7: for very large batches, the linear scaling rule plus proportionally longer
+warmup. This is what made large-batch ImageNet training work.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - DECIDE WHETHER YOU NEED IT. Adaptive optimiser, large batch, post-norm
+transformer, or a high peak learning rate all argue yes.
+
+STEP 2 - START AT 1% TO 10% OF TOTAL STEPS, or a few thousand for a long run.
+
+STEP 3 - RAMP LINEARLY FROM 0 TO THE PEAK. Anything smooth works; linear is standard
+and has no hyperparameters.
+
+STEP 4 - PAIR IT WITH A DECAY. Warmup alone leaves you at the peak forever, which is
+not what you want at the end.
+
+STEP 5 - DO NOT JUDGE IT AT STEP 50. Measured, the warmed run was two orders of
+magnitude behind early and 46% better at the end.
+
+STEP 6 - TUNE THE PEAK AND THE WARMUP LENGTH TOGETHER. They interact, as do gradient
+clipping and weight decay.
+
+STEP 7 - LOG THE LEARNING RATE AS A METRIC. A schedule bug - an off-by-one on the
+step counter, a scheduler stepped per epoch instead of per batch - is invisible in
+the loss curve and obvious in the LR curve.
+
+STEP 8 - IF YOU RAISE THE BATCH SIZE, RAISE THE PEAK AND THE WARMUP LENGTH TOGETHER.
+
+STEP 9 - CONSIDER FIXING THE CAUSE. Pre-norm placement and RAdam address why warmup
+is needed rather than compensating for it.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are learning to steer a car in dense fog with a steering system that ADAPTS: the
+harder you have been turning recently, the less each turn of the wheel does. The idea
+is sensible - it stops you oversteering on a road you already know is twisty.
+
+The problem is the very beginning. The system has no history, so it has no idea how
+sensitive to be. Its guess is based on the single first moment, and if that moment
+happened to be on a straight bit, it concludes the wheel needs to be very responsive
+- and then your first real turn sends you off the road.
+
+Warmup is: drive slowly for the first minute. Not because slow is better, but because
+the steering system's own calibration is worthless until it has a minute of data.
+Once it has that, you can safely go fast.
+
+Measured, that is not just about avoiding crashes. Across three different target
+speeds, the runs that started slowly ended up in a better place after the same total
+time - 46%, 35% and 31% better - even in runs where nothing crashed at all.
+
+The cost is that if you check the odometer after one minute, the cautious driver is
+far behind. Measured, dramatically behind. Judged at that moment they look wrong, and
+judged at the end they are ahead - which is why people who evaluate a schedule from
+the first tenth of a run keep concluding the schedule is a mistake.
+
+And there is a design answer as well as a driving answer: if you build the steering
+system so it does not need calibrating, you do not need the slow minute. Some
+architectures need warmup and some do not, for exactly that reason.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def lr_at(step, peak, warmup_steps, total_steps):
+        if step < warmup_steps:
+            return peak * step / warmup_steps          # LINEAR RAMP from 0
+        # then cosine decay to zero
+        p = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return peak * 0.5 * (1 + cos(pi * p))
+
+    for step, batch in enumerate(loader):
+        lr = lr_at(step, PEAK, WARMUP, TOTAL)
+        for group in optimizer.param_groups:
+            group["lr"] = lr                           # set BEFORE the step
+        loss = model(batch); loss.backward()
+        clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step(); optimizer.zero_grad()
+        log({"lr": lr, "loss": loss.item()})           # LOG THE LR
+
+LINE BY LINE:
+ - `peak * step / warmup_steps` - at step 0 this is exactly 0, so the first update
+   does nothing at all. Some implementations start at `peak/warmup_steps` instead to
+   avoid a wasted step; both are fine and the difference is one step.
+ - the cosine term goes from 1 to 0 over the remaining steps. Warmup and decay are
+   one function, because they are one schedule - implementing them as two separate
+   schedulers is where off-by-one bugs live.
+ - `group["lr"] = lr` BEFORE `optimizer.step()`. Setting it after means every step
+   uses the previous step's rate, which is a silent one-step lag that nothing will
+   report.
+ - `step` counts BATCHES, not epochs. Stepping the scheduler once per epoch instead
+   of once per batch is the single most common schedule bug, and it makes the warmup
+   hundreds of times longer than intended.
+ - `log({"lr": lr})` - the loss curve cannot distinguish a schedule bug from a bad
+   model. The LR curve can, instantly.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+PEAK 0.001, WARMUP 100 STEPS, TOTAL 1,000, linear warmup then cosine decay:
+
+  step      learning rate     what is happening
+  --------------------------------------------------------------
+     1      0.00001           1% of peak. The optimiser's variance estimate
+                              is built from one sample.
+    25      0.00025           25%.
+    50      0.00050           50%.
+   100      0.00100           PEAK. Warmup complete.
+   300      0.00087           cosine decay begins to bite
+   550      0.00050           halfway down
+   900      0.00006
+  1000      0.00000
+
+NOW THE MEASURED EXPERIMENT - 20 dimensions, condition number ~1,000, noisy
+gradients, Adam-style updates, 600 steps:
+
+  peak lr   warmup    loss@50    loss@200    loss@600    improvement at 600
+  --------------------------------------------------------------------------
+    0.05        0        7.01     0.04469     0.01961          -
+    0.05       10       30.42     0.03761     0.01696        -13.5%
+    0.05       50       15.61     0.02824     0.01402        -28.5%
+    0.05      200     1648        0.02205     0.01061        -45.9%
+  --------------------------------------------------------------------------
+    0.20        0       11.77     0.09403     0.24610          -
+    0.20      200       15.61     0.06933     0.15890        -35.4%
+  --------------------------------------------------------------------------
+    0.50        0        6.78     0.23580     0.19420          -
+    0.50      200       52.97     0.24690     0.14130        -27.2%
+
+READ THE loss@50 COLUMN AND THEN THE loss@600 COLUMN. At step 50 the longest warmup
+is the WORST run in every group, by a wide margin - at peak 0.05 it is at 1648 while
+the un-warmed run is at 7.01. At step 600 it is the BEST run in every group.
+
+THE CROSSOVER IS AROUND STEP 200 in each case. Anyone comparing schedules on a short
+run, or watching the first few minutes of a long one, will conclude that warmup is
+harmful - and they will be reading a real measurement correctly and drawing the wrong
+conclusion from it.
+
+AND NOTE THAT NONE OF THESE RUNS DIVERGED. The usual justification for warmup is
+"it prevents early divergence", and here there was no divergence to prevent, and it
+still improved the final loss by 27% to 46%. THE STABILITY ARGUMENT IS NOT THE WHOLE
+ARGUMENT.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: none. It is one multiplication per step to compute the rate.
+
+TIME: the warmup steps are slower progress, measured as a large early deficit that
+had reversed by roughly step 200 of 600.
+
+HYPERPARAMETERS: two more - warmup length and peak - and they interact with each
+other, with batch size, with clipping and with weight decay.
+
+THE #1 MISTAKE: judging it early. Measured, the best-at-600 configuration was the
+worst-at-50 configuration in every group.
+
+THE #2 MISTAKE: stepping the scheduler per EPOCH instead of per BATCH. Makes warmup
+hundreds of times too long, and nothing reports it.
+
+THE #3 MISTAKE: not logging the learning rate. A schedule bug and a bad model look
+identical in the loss curve.
+
+THE #4 MISTAKE: setting the rate after `optimizer.step()`. A silent one-step lag.
+
+THE #5 MISTAKE: warmup without decay. You end training at the peak rate, which is not
+where you want to be.
+
+THE #6 MISTAKE: copying a warmup length from a paper with a different batch size.
+Large batches need proportionally longer warmup.
+
+THE #7 MISTAKE: assuming you need it. Pre-norm transformers largely do not, and
+RAdam derives it automatically.
+
+THE #8 MISTAKE: tuning peak and warmup independently. They interact, as do clipping
+and weight decay - all four are adjusting effective step size.
+
+THE TAKEAWAY: warmup ramps the learning rate from near zero because an adaptive
+optimiser's per-parameter scale estimates are built from almost no data at step 1 and
+dividing by a noisy estimate produces oversized steps - so it is a statement that the
+optimiser cannot yet be trusted, not a superstition; measured on an ill-conditioned
+problem it improved the FINAL loss by 27% to 46% at every peak rate tried even though
+no run diverged, while being dramatically the WORST run at step 50 in every group,
+which is why anyone evaluating a schedule from the first tenth of training reaches
+the opposite conclusion from a correct measurement.""",
+]
+
+_EX_P1AO["Mixup"] = [
+    """1. THE GOAL - training on examples that do not exist.
+
+Mixup takes two training examples and produces a new one by blending them - and
+blends their LABELS by the same proportion.
+
+  x = lambda * x1 + (1 - lambda) * x2
+  y = lambda * y1 + (1 - lambda) * y2
+
+Blend a cat 70% with a dog 30% and the target becomes "0.7 cat, 0.3 dog". The
+resulting image looks like a double exposure and is not a photograph of anything.
+
+THE SURPRISING PART IS THAT IT WORKS. Deliberately training on inputs that could
+never occur, with targets that are not true of any real image, consistently improves
+accuracy, calibration and robustness on real vision benchmarks.
+
+The usual explanation is that it forces the model to behave LINEARLY BETWEEN
+training examples rather than doing something arbitrary there - and "between the
+training examples" is exactly where a model's behaviour is unconstrained and where
+adversarial examples live.
+
+BUT IT IS AN AUGMENTATION, WHICH MEANS IT ENCODES AN ASSUMPTION, and section 4 has a
+measurement where that assumption did not hold and mixup made things slightly worse
+at every setting.""",
+
+    """2. THE INTUITION - alpha does not control how much you mix.
+
+Lambda is drawn from a Beta(alpha, alpha) distribution, and alpha is the only
+hyperparameter. The universal misreading is that a larger alpha means "more mixing".
+
+MEASURED, 20,000 draws at each setting:
+
+  alpha    mean lambda    P(lambda < 0.1 or > 0.9)    what you are mostly training on
+  -----------------------------------------------------------------------------------
+    0.1       0.4997              0.8145              mostly ONE original example
+    0.2       0.5036              0.6750              mostly ONE original example
+    0.4       0.5035              0.4763              mixed
+    1.0       0.5017              0.2018              mixed
+    2.0       0.4979              0.0532              mostly 50/50 blends
+    5.0       0.4999              0.0017              mostly 50/50 blends
+
+THE MEAN LAMBDA IS 0.5 AT EVERY SETTING. Alpha does not change how much you mix ON
+AVERAGE - it changes how OFTEN you mix at all.
+
+At alpha 0.1, Beta(0.1, 0.1) is U-shaped: 81% of draws are above 0.9 or below 0.1, so
+81% of your training examples are essentially UNMIXED originals and the remaining 19%
+are genuine blends. At alpha 5 the distribution is bell-shaped around 0.5 and almost
+every example is a near-even blend of two things.
+
+SO alpha = 0.2 (the standard ImageNet setting) IS A LIGHT TOUCH: most batches look
+normal, and occasionally the model is shown something strange. That is a very
+different mental model from "average 20% mixing", and it explains why the small
+values published for large datasets are not timidity.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LAMBDA - the blending weight, drawn per example (or per batch) from Beta(alpha,
+alpha).
+
+BETA DISTRIBUTION - a distribution on [0, 1]. With both parameters equal and BELOW 1
+it is U-shaped (mass at the ends); at 1 it is uniform; ABOVE 1 it is bell-shaped
+around 0.5.
+
+SOFT LABEL - a target that is a distribution rather than a single class. Mixup
+produces these, which is why the loss must accept them.
+
+VICINAL RISK MINIMISATION - the formal framing: instead of minimising loss at the
+training points, minimise it in a NEIGHBOURHOOD around them. Mixup defines that
+neighbourhood as the straight lines between pairs of training points.
+
+CUTMIX - the same idea in the input space: paste a rectangular patch of one image
+into another and blend the labels by AREA. Usually better than mixup for images,
+because the result is locally realistic rather than ghostly.
+
+MANIFOLD MIXUP - blend at a hidden layer rather than at the input.
+
+LABEL SMOOTHING - a related idea that softens targets without touching inputs. Mixup
+softens both.
+
+ADVERSARIAL EXAMPLE - a tiny input perturbation that flips the prediction. Mixup
+measurably reduces susceptibility, which is evidence for the "control the space
+between examples" explanation.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - it is an augmentation, and augmentations
+encode assumptions.
+
+Measured on a deliberately overfitting setup - 30 training rows, 200 features of
+which only 6 carry signal, 3,000 test rows:
+
+  setup                train acc    test acc
+  ---------------------------------------------
+  no mixup                1.000       0.682
+  mixup alpha = 0.1       1.000       0.670
+  mixup alpha = 0.2       1.000       0.672
+  mixup alpha = 0.4       1.000       0.668
+  mixup alpha = 1.0       1.000       0.670
+
+MIXUP MADE IT SLIGHTLY WORSE AT EVERY SETTING. Not dramatically - one to one and a
+half points - but consistently, and in the regime where regularisation is supposed to
+help most.
+
+WHY: mixup asserts that the model should behave LINEARLY between training examples.
+For images, blending two photographs and blending their labels is a plausible
+constraint on a very high-dimensional space with lots of local structure. For a
+linear model on data where 194 of 200 features are pure noise, the blend mostly
+averages noise, and the constraint is neither true nor useful.
+
+THIS MATCHES THE INDEPENDENT MEASUREMENT ON GAUSSIAN-JITTER AUGMENTATION on the same
+data, which also hurt at every setting. Two different augmentations, same dataset,
+same direction - which is evidence that the problem is the DATA rather than the
+technique.
+
+THE GENERAL LESSON: MIXUP IS NOT A FREE REGULARISER. It works extremely well where
+its assumption holds - image classification, most notably - and it is not a switch
+to turn on everywhere.
+
+TWO IMPLEMENTATION TRAPS:
+
+THE LOSS MUST ACCEPT SOFT TARGETS. A cross-entropy implementation that takes an
+integer class index cannot express "0.7 cat, 0.3 dog", and the common workaround -
+`lam * loss(pred, y1) + (1 - lam) * loss(pred, y2)` - is equivalent for cross-entropy
+and NOT equivalent for other losses.
+
+IT INTERACTS WITH BATCH NORM. Mixing changes the batch's statistics, which changes
+what batch norm normalises against. Layer norm has no such interaction.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: no augmentation. The model memorises the training points and behaves
+arbitrarily between them.
+
+UPGRADE 1: standard augmentations - flips, crops, colour jitter. These encode
+invariances you know to be true of images.
+
+UPGRADE 2: LABEL SMOOTHING - soften the targets so the model stops driving towards
+absolute confidence. Related, and it does not touch the inputs.
+
+UPGRADE 3: MIXUP - soften both the inputs and the targets, along the straight lines
+between training points.
+
+UPGRADE 4: CUTMIX - paste a patch rather than blend pixel-wise, with labels weighted
+by area. Usually outperforms mixup on images, because the result is locally
+realistic: every region of the image is a real image region, and only the composition
+is synthetic.
+
+UPGRADE 5: MANIFOLD MIXUP - blend hidden representations rather than raw inputs, so
+the interpolation happens in a space where a straight line is more meaningful.
+
+UPGRADE 6: TUNE alpha, and understand what it does. Measured, alpha controls the
+FREQUENCY of real mixing, not its average amount: 0.2 leaves 68% of examples
+essentially unmixed while 2.0 leaves only 5%.
+
+UPGRADE 7: MEASURE IT. Measured here, on non-image data with a linear model, it hurt
+by 1 to 1.5 points at every setting. The published gains are on image benchmarks and
+do not transfer automatically.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - CHECK THE ASSUMPTION APPLIES. Does "a blend of two examples should get a
+blend of their labels" make sense for your data? For images, yes. For tabular data
+with categorical features, blending produces categories that do not exist.
+
+STEP 2 - START AT alpha = 0.2 FOR LARGE DATASETS AND 1.0 FOR SMALL ONES. Understand
+what you are choosing: 0.2 mixes properly on about a third of examples, 1.0 on about
+four fifths.
+
+STEP 3 - USE A LOSS THAT TAKES SOFT TARGETS, or the two-term equivalent, and check
+the equivalence actually holds for your loss.
+
+STEP 4 - MIX WITHIN THE BATCH by permuting it, rather than sampling extra examples.
+One shuffle and no extra data loading.
+
+STEP 5 - APPLY IT TO TRAINING ONLY. Never to validation or test.
+
+STEP 6 - MEASURE. Compare against no mixup on held-out data. Measured here it hurt
+at every setting on the wrong kind of data.
+
+STEP 7 - CONSIDER CUTMIX INSTEAD for images. It usually wins and it produces locally
+realistic inputs.
+
+STEP 8 - WATCH THE INTERACTION WITH BATCH NORM. Mixing shifts the batch statistics.
+
+STEP 9 - EXPECT THE TRAINING LOSS TO LOOK WORSE. You are training on harder,
+synthetic examples, so training accuracy falls while test accuracy is meant to
+rise - and comparing training curves across the change is meaningless.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are teaching someone to recognise animals, and you start showing them
+double-exposure photographs - a cat and a dog superimposed, seventy percent cat -
+and telling them "this is seventy percent cat, thirty percent dog".
+
+That is an absurd thing to say about a photograph. No such animal exists and no such
+photograph was ever taken.
+
+And it helps. Because you are no longer only teaching them what a cat looks like -
+you are teaching them how their confidence should CHANGE as an image moves gradually
+from cat towards dog. Without that, their opinion about the space between the
+examples they have seen is completely unconstrained, and that space is where the
+strange failures live.
+
+There is one detail that everyone misreads. The blending proportion is drawn at
+random, and the setting people tune does not control how much you blend on average -
+measured, the average is fifty-fifty at every setting. It controls how OFTEN you
+blend at all. At the standard low setting, roughly two thirds of the images you show
+are essentially normal photographs and only the remainder are genuine double
+exposures. It is an occasional strange image, not a permanent haze.
+
+And it is not universal. Measured on a problem where blending two examples produces
+something meaningless - mostly-noise measurements rather than pictures - it made the
+learner slightly worse at every setting tried. The technique works because
+double-exposing two photographs produces something that is still, in a real sense,
+between them. When blending two examples does not produce something between them, you
+are teaching a lie.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def mixup_batch(x, y, alpha=0.2):
+        lam = beta_sample(alpha, alpha)          # ONE lambda for the whole batch
+        idx = randperm(len(x))                   # mix against a SHUFFLE of itself -
+        x_mixed = lam * x + (1 - lam) * x[idx]   # no extra data loading at all
+        return x_mixed, y, y[idx], lam
+
+    def mixup_loss(pred, y_a, y_b, lam):
+        return lam * cross_entropy(pred, y_a) + (1 - lam) * cross_entropy(pred, y_b)
+        # equivalent to cross-entropy against the BLENDED target, for cross-entropy
+        # specifically. NOT equivalent for an arbitrary loss.
+
+    # in the training loop
+    x, y_a, y_b, lam = mixup_batch(x, y, ALPHA)
+    loss = mixup_loss(model(x), y_a, y_b, lam)
+
+LINE BY LINE:
+ - `beta_sample(alpha, alpha)` - both parameters equal, so the distribution is
+   symmetric and the mean lambda is 0.5 whatever alpha is. Measured across six alpha
+   values, the mean was 0.4979 to 0.5036 every time. ALPHA CHANGES THE SHAPE, NOT
+   THE CENTRE.
+ - `x[idx]` where idx is a permutation of the batch - mixing the batch with itself.
+   This is why mixup costs essentially nothing: one shuffle, one weighted add, no
+   additional examples fetched.
+ - ONE lambda per batch rather than per example is the standard implementation. Per
+   example is also valid and slightly more diverse; the paper used per batch and it
+   is simpler.
+ - `lam * ce(pred, y_a) + (1-lam) * ce(pred, y_b)` - the two-term form avoids needing
+   a soft-target loss. It is EXACTLY equivalent for cross-entropy because
+   cross-entropy is linear in the target. For a loss that is not, it is a different
+   objective, and this substitution is made carelessly.
+ - nothing here touches validation. Mixup is a training-time transformation only,
+   and applying it at evaluation would be measuring a different task.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+ONE MIXED EXAMPLE, three classes, lambda = 0.7:
+
+  x1 = a cat image,  y1 = [1, 0, 0]
+  x2 = a dog image,  y2 = [0, 1, 0]
+
+  x_mixed = 0.7 * cat + 0.3 * dog          - a ghostly double exposure
+  y_mixed = [0.7, 0.3, 0.0]
+
+  If the model predicts [0.9, 0.1, 0.0] - very confident cat - the loss against the
+  blended target is:
+    -(0.7 * log 0.9 + 0.3 * log 0.1) = -(0.7 x -0.105 + 0.3 x -2.303)
+                                     = 0.0737 + 0.6908 = 0.7645
+
+  If it predicts exactly [0.7, 0.3, 0.0]:
+    -(0.7 * log 0.7 + 0.3 * log 0.3) = 0.2497 + 0.3612 = 0.6109
+
+  THE CONFIDENT ANSWER IS PENALISED. The model is being taught that 70% cat should
+  produce 70% confidence - a claim about how its output should vary along the line
+  between two examples, which is precisely the space that is otherwise unconstrained.
+
+NOW THE LAMBDA DISTRIBUTION, 20,000 draws per alpha:
+
+  alpha    mean lambda    fraction with lambda < 0.1 or > 0.9
+  ---------------------------------------------------------------
+    0.1       0.4997                  0.8145
+    0.2       0.5036                  0.6750
+    0.4       0.5035                  0.4763
+    1.0       0.5017                  0.2018
+    2.0       0.4979                  0.0532
+    5.0       0.4999                  0.0017
+
+THE MEAN IS 0.5 IN EVERY ROW. Alpha does not move the average blend - it moves the
+SHAPE. At alpha 0.2, two thirds of your training examples are essentially unmixed
+originals; at alpha 5, almost none are. "Alpha 0.2 means light mixing" is right for
+the wrong reason: it is not gentle blending, it is INFREQUENT blending.
+
+AND THE MEASURED EFFECT ON A PROBLEM WHERE THE ASSUMPTION FAILS:
+
+  setup                train    test
+  ---------------------------------------
+  no mixup             1.000    0.682
+  alpha = 0.1          1.000    0.670
+  alpha = 0.2          1.000    0.672
+  alpha = 0.4          1.000    0.668
+  alpha = 1.0          1.000    0.670
+
+Consistently 1 to 1.5 points WORSE, in exactly the small-data high-noise regime where
+a regulariser is supposed to help. The blend of two rows whose signal lives in 6 of
+200 dimensions is mostly a blend of noise, so the linearity constraint is being
+imposed on a relationship that does not exist.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: one permutation and one weighted add per batch. Essentially free, because
+the second example comes from the batch you already loaded.
+
+HYPERPARAMETERS: one - alpha. 0.2 for large image datasets, up to 1.0 for smaller
+ones.
+
+TRAINING SIGNAL: training accuracy falls, because you are training on harder
+synthetic examples. That is expected and it makes training curves incomparable
+across the change.
+
+THE #1 MISTAKE: reading alpha as "how much to mix". Measured, the mean blend is 0.5
+at every alpha; what changes is how OFTEN a real blend occurs - 19% of examples at
+alpha 0.1, 95% at alpha 2.
+
+THE #2 MISTAKE: assuming it helps everywhere. Measured on non-image data with a
+linear model it hurt at every setting, and so did Gaussian jitter on the same data -
+the technique is not the problem, the assumption is.
+
+THE #3 MISTAKE: using the two-term loss with a loss that is not linear in the
+target. It is exactly equivalent for cross-entropy and not in general.
+
+THE #4 MISTAKE: applying it at validation or test time.
+
+THE #5 MISTAKE: blending categorical or one-hot features in tabular data. The result
+is a category that does not exist.
+
+THE #6 MISTAKE: comparing training curves before and after enabling it. You changed
+the training distribution.
+
+THE #7 MISTAKE: not trying CutMix. For images it usually beats mixup, because each
+region of the result is a real image region.
+
+THE #8 MISTAKE: ignoring the interaction with batch norm. Mixing changes the batch's
+statistics.
+
+THE TAKEAWAY: mixup trains on linear blends of two examples with correspondingly
+blended labels, which constrains the model's behaviour BETWEEN training points -
+otherwise-unconstrained space where the strange failures live - and its single
+hyperparameter alpha does not control how much you mix (the mean blend measured 0.5
+at every setting) but how OFTEN, with alpha 0.2 leaving two thirds of examples
+essentially unmixed; it is an augmentation, so it encodes an assumption, and measured
+on data where blending two rows produces something meaningless it was 1 to 1.5 points
+WORSE at every setting - matching an independent jitter-augmentation measurement on
+the same data.""",
+]
+
 
 
 
