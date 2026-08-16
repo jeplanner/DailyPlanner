@@ -8388,3 +8388,980 @@ and in practice offer BOTH via the interface-plus-skeletal-implementation patter
 framework is built on — because an abstract class spends the implementor's one inheritance slot, which
 locks out records, enums, and every class that already has a parent.""",
 ]
+
+
+DEEP["ConcurrentHashMap and friends — and why null is forbidden"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — a map many threads can use without a lock around it
+
+A plain `HashMap` used by two threads at once is not merely "might give wrong answers". It can CORRUPT
+ITSELF: two threads resizing simultaneously in older JDKs could link a bucket's chain into a cycle, and
+a later `get()` would spin forever at 100% CPU. That is a real, famous production failure mode, and it
+is why "just wrap it in synchronized" existed.
+
+    THE OBVIOUS FIX — ONE LOCK AROUND EVERYTHING — WORKS AND SCALES BADLY. `Hashtable` and
+    `Collections.synchronizedMap` put every method behind a single monitor, so a hundred threads reading
+    a hundred different keys queue up one at a time even though they never touch each other's data.
+
+    `ConcurrentHashMap` MAKES READS COMPLETELY LOCK-FREE AND LOCKS WRITES ONLY AT THE INDIVIDUAL BUCKET.
+    Two threads writing different keys almost never contend. Readers never block at all, ever, including
+    while a writer is working.
+
+    AND IT FORBIDS `null` — as a key AND as a value — which surprises everyone and is the most
+    interesting design decision in the class. See section 2: it is not an arbitrary restriction, it is
+    the removal of an ambiguity that CANNOT be resolved in a concurrent setting.
+
+THE EVERYDAY VERSION: a library with a hundred thousand shelves. One lock on the front door means one
+person inside at a time. Locking each shelf as you reshelve it means a hundred people work at once and
+only collide when they want the same shelf. Readers just look — nobody has to wait for them, and they
+never wait for anyone.
+
+TERMS AS THEY APPEAR:
+- BIN / BUCKET: one slot of the hash table, holding a chain (or a tree) of entries.
+- CAS: compare-and-set. A single atomic instruction: "if this is still X, make it Y". No lock.
+- LOCK-FREE: progress does not require acquiring a lock. A stalled thread cannot block others.
+- WEAKLY CONSISTENT: an iterator that never throws and reflects the map at some point at or after it
+  was created, without promising a single instant.""",
+
+"""2. THE INTUITION — why null is banned, which is the whole design in miniature
+
+START WITH THE PLAIN `HashMap`. `map.get(k)` returns null. That means one of two things: THERE IS NO
+MAPPING, or THERE IS A MAPPING TO null. You disambiguate with `map.containsKey(k)`.
+
+    NOW MAKE IT CONCURRENT AND TRY THE SAME THING:
+
+        if (map.get(k) == null) {          // ← is it absent, or mapped to null?
+            if (map.containsKey(k)) { ... } // ← ANOTHER THREAD MAY HAVE CHANGED IT
+        }                                   //   BETWEEN THESE TWO LINES
+
+    THE DISAMBIGUATION IS NOT POSSIBLE. Two separate calls cannot be made atomic by the caller, and the
+    map has no single operation that answers "absent or null?" — the answer would already be stale by
+    the time it returned. THE AMBIGUITY IS UNRESOLVABLE, NOT MERELY INCONVENIENT.
+
+    So Doug Lea removed the ambiguity by removing the case. In `ConcurrentHashMap`, `get()` returning
+    null means EXACTLY ONE THING: no mapping. That is a guarantee the caller can actually use.
+
+    HIS OWN ARGUMENT WENT FURTHER: he has said that allowing null in maps and sets was probably a
+    mistake in the original collections, and that it "creates more trouble than it's worth" — the
+    concurrent classes simply did not repeat it. This is worth saying in an interview because it turns
+    a memorised restriction into a design principle: AN API SHOULD NOT OFFER A RETURN VALUE WHOSE
+    MEANING THE CALLER CANNOT DETERMINE.
+
+THE SECOND INTUITION — WHY PER-BUCKET LOCKING IS ENOUGH:
+
+    A hash map's whole premise is that keys SPREAD across buckets. If two threads pick random keys in a
+    table with thousands of bins, the chance they land in the same bin is tiny. So locking the bin gives
+    you almost the concurrency of no locking at all, with none of the reasoning burden.
+
+    AND READS NEED NO LOCK BECAUSE OF ONE FIELD MODIFIER. The `val` and `next` fields of each node are
+    `volatile`, and the table array is read with volatile semantics. A reader either sees the old value
+    or the new one — never a half-written node — because writers publish a fully-constructed node with
+    a single atomic store. THAT IS THE ENTIRE READ PATH: no lock, no CAS, no retry loop.
+
+THE THIRD, AND THE ONE THAT CHANGES HOW YOU WRITE CODE: A THREAD-SAFE MAP DOES NOT MAKE YOUR CODE
+THREAD-SAFE.
+
+        if (!map.containsKey(k)) map.put(k, compute());   // ← STILL A RACE
+
+    Both calls are individually atomic and the SEQUENCE is not. Two threads can both see "absent" and
+    both compute and both put. THIS IS WHY THE CLASS PROVIDES `putIfAbsent`, `computeIfAbsent`,
+    `compute` and `merge` — they are not conveniences, they are the only way to make a read-modify-write
+    atomic, and they are the actual reason to use the class.""",
+
+"""3. THE MECHANISM — CAS on empty bins, synchronized on the first node, and an approximate size
+
+THE JAVA 8 REWRITE. Before it, `ConcurrentHashMap` had 16 SEGMENTS, each a small hash table with its own
+`ReentrantLock` — so concurrency was capped at 16 regardless of table size, and each segment carried
+overhead. Java 8 threw that away:
+
+    THE TABLE IS A FLAT `Node<K,V>[]`, exactly like `HashMap`.
+    INSERTING INTO AN EMPTY BIN uses a CAS on the array slot — NO LOCK AT ALL. This is the common case
+    in a sparsely-populated table.
+    IF THE BIN IS OCCUPIED, the writer `synchronized`s ON THE FIRST NODE OF THAT BIN and walks the
+    chain. The lock's granularity is therefore one bucket, and the number of independent locks grows
+    with the table.
+    READS TAKE NOTHING. `Node.val` and `Node.next` are `volatile`.
+    TREEIFICATION at 8 nodes in a bin, exactly like `HashMap`, so a degenerate hash cannot make an
+    operation O(n).
+
+RESIZING IS COOPERATIVE, which is the cleverest part: a thread that arrives during a resize does not
+wait — it HELPS, taking a range of bins to transfer. So a resize is spread across whichever threads
+happen to be working, instead of stalling everyone behind one.
+
+`size()` IS AN ESTIMATE, AND THIS IS DELIBERATE. A single shared counter would be the hottest
+contention point in the class — every write hitting one cache line. Instead the count is STRIPED across
+an array of counter cells (the same idea as `LongAdder`): each thread increments its own cell, and
+`size()` sums them. THE SUM IS NOT AN INSTANT SNAPSHOT, because writes happen while you are summing.
+
+    USE `mappingCount()`, which returns `long` and is the documented preferred form. And treat any size
+    as advisory: in a concurrent map, "the size" is not a well-defined quantity at a moment in time.
+
+THE ATOMIC COMPOSITE OPERATIONS, which are the actual API:
+
+    putIfAbsent(k, v)          insert only if absent; returns the existing value or null.
+    computeIfAbsent(k, fn)     compute and insert only if absent. THE MEMOISATION PRIMITIVE, and the
+                               function runs AT MOST ONCE per key even under contention.
+    compute(k, fn)             read-modify-write, with the old value passed in. Returning null REMOVES.
+    merge(k, v, fn)            insert v if absent, otherwise combine. The counter idiom.
+    remove(k, expectedValue)   conditional remove.
+    replace(k, old, new)       conditional replace.
+
+    ALL OF THESE HOLD THE BIN LOCK FOR THE DURATION OF YOUR FUNCTION — which has a sharp consequence:
+    THE FUNCTION MUST BE SHORT AND MUST NOT TOUCH THE MAP. A `computeIfAbsent` whose mapping function
+    inserts another key that hashes to the same bin can deadlock; since Java 9 the class detects the
+    same-key case and throws `IllegalStateException: Recursive update` rather than corrupting silently.
+
+BULK OPERATIONS — `forEach`, `search`, `reduce` — take a PARALLELISM THRESHOLD: below that many
+elements they run sequentially, above it they use the common ForkJoinPool. Passing `Long.MAX_VALUE`
+means "always sequential", which is usually what you want.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `NullPointerException` FROM `put(k, null)`. Neither key nor value may be null. Code migrated
+from `HashMap` fails at runtime, not at compile time, and often only on the path where the value is
+absent.
+
+CASE 2 — CHECK-THEN-ACT ON A THREAD-SAFE MAP. `if (!containsKey) put(...)` is a race even though each
+call is atomic. Use `putIfAbsent` or `computeIfAbsent`.
+
+CASE 3 — `computeIfAbsent` WHOSE FUNCTION TOUCHES THE MAP. The bin lock is held. Same key throws
+`IllegalStateException` since Java 9; a different key in the same bin can deadlock.
+
+CASE 4 — A LONG-RUNNING `computeIfAbsent` MAPPING FUNCTION. It blocks every other writer to that bin.
+Loading from a database inside one serialises far more than you expect.
+
+CASE 5 — TRUSTING `size()`. It is a sum of striped counters taken while writes continue. Use
+`mappingCount()` and treat it as advisory.
+
+CASE 6 — EXPECTING ITERATION TO BE A SNAPSHOT. Iterators are WEAKLY CONSISTENT: they never throw
+`ConcurrentModificationException`, and they may or may not show concurrent changes. That is a different
+guarantee, not a stronger one.
+
+CASE 7 — COMPOUND OPERATIONS ACROSS TWO MAPS, or a map plus another variable. No single-map method can
+make those atomic; you need a lock or a redesign.
+
+CASE 8 — `Collections.synchronizedMap` AND EXPECTING SAFE ITERATION. Each method is synchronized; the
+LOOP is not. You must synchronize on the map across the whole iteration yourself, and almost nobody
+does.
+
+CASE 9 — USING IT AS A CACHE WITH NO EVICTION. It grows without bound. `ConcurrentHashMap` is a map, not
+a cache — Caffeine or Guava for eviction, expiry and refresh.
+
+CASE 10 — MUTABLE KEYS. Same problem as `HashMap`: mutate a key after insertion and it lands in the
+wrong bucket and is unfindable. Concurrency makes it harder to notice, not different.
+
+CASE 11 — `keySet().removeIf(...)` UNDER HEAVY WRITE LOAD. Correct, but it is many individual atomic
+removals rather than one atomic bulk operation, so the map is never in a "before" or "after" state as a
+whole.
+
+CASE 12 — ASSUMING BULK OPERATIONS ARE ATOMIC. `forEach`, `search` and `reduce` are not; they observe a
+weakly consistent view.
+
+CASE 13 — REACHING FOR IT WHEN THE MAP IS EFFECTIVELY IMMUTABLE. If it is populated once at startup and
+only read afterwards, a plain `Map.copyOf(...)` is faster and states the intent.""",
+
+"""5. THE ALTERNATIVES — the whole concurrent-collections family and when each is right
+
+`ConcurrentHashMap` — the default for a shared mutable map. Lock-free reads, per-bin write locks,
+atomic compute/merge. Use it unless you need one of the below.
+
+`ConcurrentSkipListMap` / `ConcurrentSkipListSet` — the SORTED concurrent map. A lock-free skip list, so
+O(log n) rather than O(1), and it gives you `firstKey`, `headMap`, `ceilingKey` and ordered iteration.
+THERE IS NO CONCURRENT `TreeMap`, and this is why.
+
+`CopyOnWriteArrayList` / `CopyOnWriteArraySet` — every WRITE copies the whole array; reads and iteration
+take nothing and iterate a snapshot. Perfect for listener registries and configuration read on every
+request and changed twice a day. Catastrophic for anything write-heavy.
+
+THE BLOCKING QUEUES, which are how you should usually hand work between threads:
+    `ArrayBlockingQueue`      bounded, one lock. Bounded is a FEATURE — it is backpressure.
+    `LinkedBlockingQueue`     optionally bounded, separate head and tail locks, higher throughput.
+    `SynchronousQueue`        zero capacity: a direct handoff. What `newCachedThreadPool` uses.
+    `PriorityBlockingQueue`   unbounded, ordered.
+    `DelayQueue`              elements become available at a time. Scheduling.
+    `LinkedTransferQueue`     the fastest general-purpose one; `transfer` waits for a consumer.
+
+THE ATOMICS AND ACCUMULATORS:
+    `AtomicInteger` / `AtomicLong` / `AtomicReference` — CAS on a single variable.
+    `LongAdder` — the SAME STRIPING IDEA as `ConcurrentHashMap`'s counter: many cells, summed on read.
+    UNDER HIGH CONTENTION IT MASSIVELY OUTPERFORMS `AtomicLong`, because CAS on one hot cache line is
+    the bottleneck. Use it for metrics counters; use `AtomicLong` when you need the exact current value
+    at every increment.
+
+WHAT NOT TO USE:
+    `Hashtable` — legacy, one lock, and now also slower for no benefit.
+    `Collections.synchronizedMap` — one lock, and iteration is still your problem.
+    `Vector`, `Stack` — legacy for the same reason.
+
+AND THE OPTION THAT IS OFTEN BEST: DO NOT SHARE THE MAP. Confine it to one thread and communicate
+through a queue, or make it immutable and publish it with a volatile reference — replace the whole map
+on update. NO LOCK, NO CONCURRENT CLASS, NO REASONING.
+
+WHAT TO SAY: "`ConcurrentHashMap` and its atomic `compute`/`merge` methods, because a thread-safe map
+does not make check-then-act safe. `ConcurrentSkipListMap` if I need ordering, `CopyOnWriteArrayList`
+for read-mostly lists, `LongAdder` for contended counters — and a real cache library the moment I need
+eviction, because this is a map, not a cache."
+
+""",
+
+"""6. HOW TO USE IT WELL — numbered steps
+
+STEP 1 — NEVER PUT `null`. Not as a key, not as a value. Use a sentinel object or `Optional` as the
+value type if absence must be recorded.
+
+STEP 2 — REPLACE EVERY CHECK-THEN-ACT WITH AN ATOMIC METHOD. `putIfAbsent`, `computeIfAbsent`,
+`compute`, `merge`, or the two-argument `remove`/`replace`.
+
+STEP 3 — KEEP MAPPING FUNCTIONS SHORT AND PURE. They run while the bin lock is held. No I/O, no calls
+back into the map, no locks of your own.
+
+STEP 4 — USE `merge` FOR COUNTERS. `map.merge(k, 1L, Long::sum)` is the whole idiom and it is atomic.
+
+STEP 5 — USE `mappingCount()` RATHER THAN `size()`, and treat any count as advisory.
+
+STEP 6 — DO NOT EXPECT ITERATION TO BE A SNAPSHOT. Weakly consistent means it never throws and never
+promises an instant.
+
+STEP 7 — IF YOU NEED ORDERING, USE `ConcurrentSkipListMap`. There is no concurrent `TreeMap`.
+
+STEP 8 — IF IT IS A CACHE, USE A CACHE LIBRARY. Eviction, expiry, refresh-ahead and stampede protection
+are not this class's job, and an unbounded cache is a memory leak with a schedule.
+
+STEP 9 — FOR HIGHLY CONTENDED COUNTERS, USE `LongAdder`. Striping beats CAS on one cache line by a wide
+margin when many threads increment.
+
+STEP 10 — IF THE MAP IS READ-ONLY AFTER STARTUP, MAKE IT IMMUTABLE. `Map.copyOf` is faster and states
+the intent; concurrency machinery you do not need is still cost you pay.
+
+STEP 11 — FOR COMPOUND INVARIANTS ACROSS MULTIPLE STRUCTURES, TAKE A LOCK. No concurrent collection can
+make two of your operations atomic together.
+
+STEP 12 — PREFER NOT SHARING AT ALL. Thread confinement plus a queue, or an immutable map republished
+on change, removes the problem instead of managing it.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'A plain HashMap shared between threads isn't just "might be wrong" — it can corrupt itself. In older
+JDKs two threads resizing at once could link a bucket's chain into a cycle, and a later get() would spin
+at 100% CPU forever. That's a real famous production failure.
+
+The obvious fix — one lock around everything, which is what Hashtable and synchronizedMap do — works and
+scales badly: a hundred threads reading a hundred different keys queue up one at a time even though
+they never touch each other's data.
+
+ConcurrentHashMap makes reads completely lock-free and locks writes at the individual BUCKET. Since
+Java 8 it's a flat Node array like HashMap: inserting into an EMPTY bin is a CAS on the array slot with
+no lock at all, and if the bin is occupied the writer synchronizes on the first node of that bin. So the
+number of independent locks grows with the table. Before Java 8 it was 16 segments each with a lock, so
+concurrency was capped at 16 no matter how big the map got.
+
+Reads take nothing because Node.val and Node.next are volatile — a reader sees either the old value or
+the new one, never a half-written node, because the writer publishes a fully-constructed node with one
+atomic store. And resizing is COOPERATIVE: a thread arriving during a resize doesn't wait, it helps,
+taking a range of bins to transfer.
+
+The design decision I find most interesting is that null is forbidden — as a key AND as a value. In a
+HashMap, get returning null means either "absent" or "mapped to null", and you disambiguate with
+containsKey. In a concurrent map you CANNOT: another thread can change things between your two calls,
+and there's no single operation that answers the question. The ambiguity is unresolvable, not just
+inconvenient. So they removed the case rather than the confusion: in ConcurrentHashMap, get returning
+null means exactly one thing. Doug Lea has said allowing null in maps was probably a mistake in the
+original collections and the concurrent classes just didn't repeat it.
+
+And then the thing that actually changes how you write code: A THREAD-SAFE MAP DOESN'T MAKE YOUR CODE
+THREAD-SAFE. `if (!map.containsKey(k)) map.put(k, compute())` is still a race — both calls are atomic
+and the SEQUENCE isn't, so two threads can both see absent and both put. Which is why putIfAbsent,
+computeIfAbsent, compute and merge exist. Those aren't conveniences, they're the only way to make a
+read-modify-write atomic, and they're the real reason to use the class.
+
+The catch with them is that the bin lock is held while YOUR function runs. So the function has to be
+short and must not touch the map — a computeIfAbsent whose function inserts another key hashing to the
+same bin can deadlock, and since Java 9 the same-key case throws IllegalStateException: Recursive
+update rather than corrupting silently.
+
+One more: size() is an estimate. A single counter would be the hottest contention point in the class, so
+the count is striped across cells like LongAdder and summed on read. Use mappingCount, and treat any
+size in a concurrent map as advisory — "the size at an instant" isn't really a well-defined quantity.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE RACE A THREAD-SAFE MAP DOES NOT FIX ─────────────────────────
+    if (!map.containsKey(k)) {         // ← thread A: absent
+        map.put(k, expensive());       // ← thread B ran the SAME two lines in the gap
+    }                                  //   Both compute. Both put. One result is lost.
+    // Each call is atomic. THE SEQUENCE IS NOT. This is the bug the class exists to
+    // remove, and using ConcurrentHashMap without changing this line fixes nothing.
+
+    map.computeIfAbsent(k, key -> expensive());
+    //  ^^^^^^^^^^^^^^^ atomic. The function runs AT MOST ONCE per key, even with a
+    //  hundred threads arriving simultaneously.
+
+    map.merge(userId, 1L, Long::sum);  // ← the counter idiom, atomic, one line
+    map.compute(k, (key, old) -> old == null ? v : combine(old, v));
+    map.remove(k, expectedValue);      // ← conditional; plain remove(k) is not
+
+    // ── WHY null IS FORBIDDEN ───────────────────────────────────────────
+    Object v = hashMap.get(k);
+    if (v == null) {
+        if (hashMap.containsKey(k)) { /* mapped TO null */ }
+        else                        { /* absent        */ }
+    }
+    // ^ Works single-threaded. In a CONCURRENT map another thread can change the
+    //   entry BETWEEN those two calls, and there is no single operation that answers
+    //   "absent or null?". THE AMBIGUITY IS UNRESOLVABLE — so the case was removed.
+    chm.put(k, null);                  // → NullPointerException
+    chm.put(null, v);                  // → NullPointerException
+    // Now `chm.get(k) == null` means EXACTLY ONE THING: no mapping.
+
+    // ── THE WRITE PATH, IN OUTLINE ──────────────────────────────────────
+    for (Node<K,V>[] tab = table;;) {
+        if ((f = tabAt(tab, i)) == null) {
+            if (casTabAt(tab, i, null, new Node<>(hash, key, value)))
+    //          ^^^^^^^^^ EMPTY BIN → a single CAS on the array slot. NO LOCK. This is
+    //          the common case in a sparsely populated table.
+                break;
+        } else {
+            synchronized (f) {         // ← lock the FIRST NODE of this bin only
+    //          ^^^^^^^^^^^^ granularity is ONE BUCKET, and the number of independent
+    //          locks grows with the table. (Pre-Java-8: 16 segment locks, forever.)
+                ... walk the chain or the tree, insert or replace ...
+            }
+        }
+    }
+    static class Node<K,V> {
+        final int hash; final K key;
+        volatile V val;                // ← THE ENTIRE REASON READS NEED NO LOCK:
+        volatile Node<K,V> next;       //   a reader sees the old value or the new one,
+    }                                  //   never a half-written node.
+
+    // ── THE MAPPING FUNCTION RUNS UNDER THE BIN LOCK ────────────────────
+    map.computeIfAbsent(k, key -> { map.put(other, v); return x; });
+    //                              ^^^^^^^^^^^^^^^^ TOUCHING THE MAP while holding
+    //   its bin lock. Same key → IllegalStateException: Recursive update (Java 9+).
+    //   Different key, same bin → DEADLOCK.
+    map.computeIfAbsent(k, key -> db.load(key));
+    //                              ^^^^^^^^^^^ a database call under the bin lock —
+    //   every other writer to that bin waits for the network. Load outside, then put.
+
+    // ── SIZE IS AN ESTIMATE, ON PURPOSE ─────────────────────────────────
+    map.size();                        // int, and a sum of STRIPED counter cells
+    map.mappingCount();                // long, and the documented preferred form
+    // A single shared counter would be the hottest cache line in the class, so the
+    // count is striped exactly like LongAdder and summed on read. Advisory, always.
+
+    // ── AND WHAT IT IS NOT ──────────────────────────────────────────────
+    // ConcurrentHashMap is a MAP, not a CACHE. No eviction, no expiry, no refresh,
+    // no stampede protection. An unbounded cache is a memory leak with a schedule.
+    Caffeine.newBuilder().maximumSize(10_000).expireAfterWrite(5, MINUTES).build();""",
+
+"""9. THE TRACE — four threads, four keys, and where each one actually waits
+
+THE MAP has a 64-bin table. Four threads act at the same instant:
+
+    thread  operation              bin  what it does                  waits for
+    ---------------------------------------------------------------------------------
+    T1      get("alpha")           12   volatile read of the node      NOTHING, EVER
+    T2      put("beta", 1)         12   bin 12 is OCCUPIED by alpha    the bin-12 lock
+                                        → synchronized on that node
+    T3      put("gamma", 2)        40   bin 40 is EMPTY → a single     nothing
+                                        CAS on the array slot
+    T4      put("delta", 3)        12   same bin as T2                 T2's bin lock
+    ---------------------------------------------------------------------------------
+    ONLY T4 WAITED, AND ONLY BEHIND T2. T1 read while T2 was writing the same bin and did not block —
+    it saw either the old chain or the new one, because the node's `val` and `next` are volatile and the
+    new node was published with one atomic store. T3 never touched a lock at all.
+
+    NOW CONTRAST `Collections.synchronizedMap`, same four operations:
+    T1 waits, T2 waits, T3 waits, T4 waits — ALL BEHIND ONE MONITOR, including the reader and including
+    the two threads working on completely unrelated keys. That is the entire difference, in one table.
+
+THE CHECK-THEN-ACT RACE, traced — this is the bug that survives switching map implementations:
+
+    time  Thread A                          Thread B                    map state
+    ---------------------------------------------------------------------------------
+    t0    containsKey("x") → false          —                           {}
+    t1    —                                 containsKey("x") → false    {}
+    t2    expensive() ... running           expensive() ... running     {}
+    t3    put("x", A_result)                —                           {x=A}
+    t4    —                                 put("x", B_result)          {x=B}
+    ---------------------------------------------------------------------------------
+    `expensive()` RAN TWICE and A's result was silently discarded. Every individual call was atomic and
+    correct. If `expensive()` opened a connection, allocated an id, or charged a card, you now have two
+    of them.
+
+    THE SAME SEQUENCE WITH `computeIfAbsent`:
+    t0    A enters computeIfAbsent, takes the bin lock
+    t1    B enters computeIfAbsent, BLOCKS on the bin lock
+    t2    A runs expensive(), stores, releases
+    t3    B acquires, finds the value present, RETURNS IT WITHOUT CALLING THE FUNCTION
+    ---------------------------------------------------------------------------------
+    ONE CALL. Which is precisely why "the function runs at most once per key" is the guarantee worth
+    knowing.
+
+AND THE COST OF THAT GUARANTEE, traced with a slow function:
+
+    t0    A: computeIfAbsent(k, key -> db.load(key))   ← takes the bin lock
+    t1    A: waiting on the network                    ← STILL HOLDING THE BIN LOCK
+    t2    B: put(otherKeyInSameBin, v)                 ← BLOCKED, on a network call
+    t3    C: put(anotherKeyInSameBin, v)               ← BLOCKED
+    t4    A: db returns after 200ms, releases
+    ---------------------------------------------------------------------------------
+    THE LOCK IS FINE-GRAINED AND YOUR FUNCTION IS NOT. Every writer to that bin waited 200 ms for a
+    database you did not know they were waiting for. The fix is to load outside and `putIfAbsent`
+    after — accepting that the load may occasionally run twice, which is usually the better trade.
+
+WHAT PRODUCED WHAT:
+    VOLATILE val AND next     produced T1 never waiting — the whole lock-free read path.
+    CAS ON AN EMPTY BIN       produced T3 never waiting.
+    PER-BIN synchronized      produced T4 waiting, and ONLY behind T2.
+    THE BIN LOCK SPANNING     produced both the "at most once" guarantee and the 200 ms stall. Same
+    YOUR FUNCTION             mechanism, read as a feature or a hazard depending on what you put in it.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `get`: O(1) average, LOCK-FREE. Never blocks, ever, even during a concurrent write or resize.
+    `put`: O(1) average. A CAS on an empty bin; `synchronized` on the first node otherwise.
+    Treeification at 8 nodes per bin, so a degenerate hash is O(log n) rather than O(n).
+    Lock granularity: ONE BIN, and the number of locks grows with the table. (Pre-Java 8: 16 segments,
+    fixed.)
+    Resize: cooperative — arriving threads help transfer bins instead of waiting.
+    `size()` / `mappingCount()`: a sum over striped counter cells. An ESTIMATE by design.
+    Iterators: weakly consistent. Never throw, never promise an instant.
+    `ConcurrentSkipListMap`: O(log n), sorted, lock-free. The only ordered concurrent map.
+
+THE #1 MISTAKE: check-then-act on a thread-safe map. Each call is atomic and the sequence is not. Use
+`computeIfAbsent` / `merge` / `putIfAbsent`.
+
+THE #2 MISTAKE: putting `null`. Forbidden for both key and value, and the failure is at runtime.
+
+THE #3 MISTAKE: doing real work inside a mapping function. The bin lock is held, so I/O there
+serialises every writer to that bin.
+
+THE #4 MISTAKE: calling back into the map from a mapping function. `IllegalStateException` on the same
+key, deadlock on a different key in the same bin.
+
+THE #5 MISTAKE: relying on `size()` as exact. Striped counters, summed while writes continue.
+
+THE #6 MISTAKE: expecting iteration to be a snapshot. Weakly consistent is a different guarantee, not a
+weaker version of the same one.
+
+THE #7 MISTAKE: `Collections.synchronizedMap` for concurrent iteration. Per-method locking; the loop is
+yours to protect.
+
+THE #8 MISTAKE: using it as a cache. No eviction, no expiry — an unbounded cache is a scheduled memory
+leak. Use Caffeine.
+
+THE #9 MISTAKE: `AtomicLong` for a hot counter. `LongAdder` stripes exactly like this class's own size
+counter and wins by a wide margin under contention.
+
+THE #10 MISTAKE: reaching for a concurrent map when the data is written once at startup. `Map.copyOf`
+is faster and says what you mean.
+
+THE #11 MISTAKE: expecting a single map to protect an invariant spanning two structures. Nothing here
+can make two of your operations atomic together.
+
+ONE-SENTENCE TAKEAWAY: `ConcurrentHashMap` makes reads entirely lock-free — `val` and `next` are
+volatile, so a reader sees the old node or the new one and never blocks — and locks writes at ONE BIN
+(a CAS when the bin is empty, `synchronized` on its first node otherwise), with cooperative resizing and
+a deliberately approximate striped size; `null` is banned as key and value because `get` returning null
+would otherwise be ambiguous between "absent" and "mapped to null" and NO SEQUENCE OF CALLS CAN
+DISAMBIGUATE IT CONCURRENTLY; and the fact that actually changes your code is that a thread-safe map
+does not make check-then-act safe, so `putIfAbsent`, `computeIfAbsent`, `compute` and `merge` are the
+real API — remembering that they hold the bin lock while YOUR function runs, which is what makes "at
+most once per key" a guarantee and a database call in there a stall.""",
+]
+
+
+DEEP["CompletableFuture — composing async work without blocking"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — a result that has not arrived yet, that you can still build on
+
+`Future` arrived in Java 5 and is almost useless. You submit work, you get a `Future`, and the ONLY
+thing you can do with it is call `get()` — WHICH BLOCKS. You cannot ask it to notify you. You cannot
+chain a transformation. You cannot combine two of them. You cannot attach an error handler.
+
+    SO EVERY `Future` EVENTUALLY BECOMES A BLOCKED THREAD, which defeats the purpose of having started
+    the work asynchronously in the first place.
+
+`CompletableFuture` (Java 8) is two things at once:
+
+    A FUTURE YOU CAN COMPLETE YOURSELF — `complete(value)` or `completeExceptionally(e)` — which is what
+    lets you adapt any callback-based API into one.
+    AND A COMBINATOR LIBRARY: describe what to do WHEN the value arrives, without ever waiting for it.
+
+    THE SHIFT IS FROM "GET THE VALUE" TO "DESCRIBE THE PIPELINE". You never hold a thread waiting. You
+    say "when the user arrives, fetch their orders; when those arrive, render the page; if anything
+    fails, return the cached version" — and the whole description executes itself as results arrive.
+
+THE EVERYDAY VERSION: ordering a coffee. `Future.get()` is standing at the counter staring at the
+barista until it is ready — you are occupied the whole time. `CompletableFuture` is taking a buzzer:
+you say "when it is ready, I will add sugar and take it to table 4", and then you go and do something
+else. The instructions are attached to the buzzer, not to you.
+
+    AND THE MODERN CAVEAT WORTH STATING UP FRONT: since Java 21, VIRTUAL THREADS make blocking cheap
+    again, so for simple sequential I/O you can go back to plain blocking calls and skip all of this.
+    `CompletableFuture` remains the right tool for genuine FAN-OUT — several independent calls combined
+    — and for timeouts and fallbacks.
+
+TERMS AS THEY APPEAR:
+- STAGE: one step in the chain. The interface is literally `CompletionStage`.
+- COMPLETE: the moment a value (or an exception) becomes available.
+- COMBINATOR: a method that builds a new stage from existing ones — `thenApply`, `thenCombine`, `allOf`.""",
+
+"""2. THE INTUITION — the naming scheme, and the two decisions it encodes
+
+THE API LOOKS ENORMOUS — around fifty methods — AND IT IS ACTUALLY A GRID. Learn the two axes and the
+whole thing collapses:
+
+    AXIS 1 — WHAT YOUR FUNCTION DOES WITH THE VALUE:
+        thenApply(fn)      takes T, returns U            → a TRANSFORM (this is `map`)
+        thenAccept(c)      takes T, returns nothing      → a SIDE EFFECT
+        thenRun(r)         ignores the value entirely    → "just do this afterwards"
+        thenCompose(fn)    takes T, returns ANOTHER CompletableFuture  → this is `flatMap`
+        thenCombine(other, fn)  waits for TWO, combines them           → this is `zip`
+
+    AXIS 2 — WHICH THREAD RUNS IT:
+        thenApply(fn)                  runs on WHICHEVER THREAD COMPLETED THE PREVIOUS STAGE — or on
+                                       YOUR CALLING THREAD if the stage is already complete.
+        thenApplyAsync(fn)             runs on the common ForkJoinPool.
+        thenApplyAsync(fn, executor)   runs on YOUR executor. ← THE ONLY ONE TO USE IN PRODUCTION.
+
+    AXIS 2 IS WHERE THE REAL BUGS LIVE. The non-async form gives you no idea which thread your code runs
+    on: it may be the calling thread, or a pool thread belonging to whatever produced the value.
+    Attaching an expensive callback with `thenApply` can therefore hijack a Netty I/O thread or a
+    database driver's callback thread — a genuinely serious production problem.
+
+`thenApply` VERSUS `thenCompose` IS THE CLASSIC QUESTION, and the answer is `map` versus `flatMap`:
+
+    If your function returns a PLAIN VALUE, use `thenApply`.
+    If your function returns ANOTHER `CompletableFuture` — which it does whenever the next step is
+    itself async — use `thenCompose`. Using `thenApply` there gives you
+    `CompletableFuture<CompletableFuture<User>>`, a nested future you then have to unwrap by hand.
+    IT IS EXACTLY `Optional.map` VERSUS `Optional.flatMap`, and exactly `Stream.map` versus
+    `Stream.flatMap`. Same shape, three places in the JDK.
+
+THE OTHER DECISION THE API ENCODES: FAILURE IS A VALUE THAT FLOWS THROUGH THE PIPELINE.
+
+    If any stage throws, every downstream `thenApply`/`thenAccept` is SKIPPED and the exception is
+    carried forward, until something handles it. That is exactly how a `try` block behaves — the
+    remaining statements do not run — and it is why you can put one `exceptionally` at the end of a
+    ten-stage chain rather than a try/catch around each step.
+
+    `exceptionally(fn)`   handle the failure, supply a fallback value. Only runs on failure.
+    `handle((v, e) -> …)` runs on BOTH paths; you inspect `e` and decide.
+    `whenComplete((v,e))` observes both and CHANGES NOTHING — the result passes through unaltered.
+                          This is the logging hook.""",
+
+"""3. THE MECHANISM — the default executor, exception wrapping, and what cancellation is not
+
+THE DEFAULT EXECUTOR IS `ForkJoinPool.commonPool()`, AND THIS IS THE SINGLE MOST IMPORTANT OPERATIONAL
+FACT ABOUT THE CLASS.
+
+    Its parallelism is `availableProcessors() - 1`. On a 2-core container that is ONE THREAD.
+    It is shared by every parallel stream, every executor-less `CompletableFuture`, and every library
+    doing either, across the entire JVM.
+    Its threads are DAEMON threads, so pending work does not keep the JVM alive and can be killed at
+    shutdown with no notice.
+    IT IS SIZED FOR CPU-BOUND WORK. Every blocking call you put on it removes one of your very few
+    threads for the duration.
+    THEREFORE: PASS AN EXECUTOR TO EVERY `*Async` METHOD AND TO `supplyAsync`. This is not a style
+    preference; the default is wrong for I/O and the failure is a JVM-wide stall.
+
+EXCEPTION WRAPPING, which trips everyone once:
+    Inside the pipeline, a thrown exception is wrapped in a `CompletionException`.
+    `get()` throws the CHECKED `ExecutionException` wrapping the cause.
+    `join()` throws the UNCHECKED `CompletionException` wrapping the cause.
+    So the handler you write almost always needs `e.getCause()`, and code that catches your domain
+    exception directly will silently not match. `join()` is generally preferable inside lambdas
+    precisely because it is unchecked and functional interfaces cannot declare `throws`.
+
+CANCELLATION IS WEAKER THAN IT LOOKS. `cancel(true)` completes the future exceptionally with a
+`CancellationException` — IT DOES NOT INTERRUPT THE RUNNING THREAD. The `mayInterruptIfRunning` flag is
+ignored, and the Javadoc says so. Work started by `supplyAsync` runs to completion regardless; you have
+cancelled the RESULT, not the WORK. If you need real cancellation you must plumb it yourself, and
+`StructuredTaskScope` exists partly because of this.
+
+TIMEOUTS DID NOT EXIST UNTIL JAVA 9. `orTimeout(t, unit)` completes exceptionally with
+`TimeoutException`; `completeOnTimeout(v, t, unit)` completes with a fallback value. Before Java 9 you
+had to build one from a scheduled executor, which is why so much older code blocks on `get(timeout)`
+instead.
+
+`allOf` AND `anyOf`, and the sharp edges on both:
+    `allOf(a, b, c)` returns `CompletableFuture<Void>` — it gives you NO RESULTS. The idiom is to join
+    each individual future after `allOf` completes, at which point every `join()` returns immediately.
+    `allOf` fails as soon as ANY input fails, but the others keep running.
+    `anyOf(...)` returns `CompletableFuture<Object>` — untyped, because the inputs need not share a
+    type — and it completes on the first to finish EITHER WAY, including with a failure.
+
+WHAT VIRTUAL THREADS CHANGED. Much of this API existed to avoid blocking a scarce OS thread. On Java 21
+blocking is cheap, so the sequential case — call A, then call B with A's result — is better written as
+two ordinary blocking calls in a virtual thread, with a real stack trace and a working debugger. WHAT
+`CompletableFuture` STILL DOES BEST IS FAN-OUT, timeouts, and fallbacks — the cases where the structure
+genuinely is a graph rather than a line.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — NOT PASSING AN EXECUTOR. Everything lands on the common pool, sized `cores - 1`, shared
+JVM-wide. On a 2-core container that is one thread for the entire process's async work.
+
+CASE 2 — BLOCKING INSIDE A STAGE ON THE COMMON POOL. A JDBC call or a `get()` inside a
+`supplyAsync` starves parallel streams and every other library using the pool.
+
+CASE 3 — `thenApply` WHERE `thenCompose` BELONGS. Gives
+`CompletableFuture<CompletableFuture<T>>`. It compiles, and the nesting is discovered later.
+
+CASE 4 — NOT KNOWING WHICH THREAD A NON-ASYNC CALLBACK RUNS ON. It may be your calling thread, or the
+completing thread — which could be a Netty I/O thread or a driver callback thread you must not occupy.
+
+CASE 5 — `allOf` AND EXPECTING RESULTS. It returns `Void`. Join each future afterwards.
+
+CASE 6 — CATCHING YOUR OWN EXCEPTION TYPE IN A HANDLER. It arrives wrapped in `CompletionException`.
+Unwrap with `getCause()` or the `catch` will not match.
+
+CASE 7 — EXPECTING `cancel(true)` TO INTERRUPT. It does not. The work runs to completion; only the
+result is discarded.
+
+CASE 8 — `join()` OR `get()` IN THE MIDDLE OF A CHAIN. It blocks, which is exactly what the whole API
+exists to avoid, and on a pool thread it can deadlock the pool.
+
+CASE 9 — SWALLOWING FAILURES. A chain with no `exceptionally`/`handle`, whose result nobody joins,
+fails completely silently. THE SAME SHAPE AS `ExecutorService.submit` WITH AN IGNORED `Future`.
+
+CASE 10 — `whenComplete` USED AS A HANDLER. It observes and passes the result through unchanged; it
+does NOT recover. Use `exceptionally` or `handle` to change the outcome.
+
+CASE 11 — DAEMON THREADS AT SHUTDOWN. Common-pool threads are daemons, so pending work can be killed at
+JVM exit with no warning.
+
+CASE 12 — LOSING `ThreadLocal` CONTEXT ACROSS STAGES. MDC logging context, security context and
+transaction context do not follow the value to another thread. Frameworks provide decorators; without
+one your logs lose their correlation id.
+
+CASE 13 — BUILDING A CHAIN AND NEVER TRIGGERING IT. A `CompletableFuture` created but never completed
+simply never runs its dependents. Nothing warns.
+
+CASE 14 — UNBOUNDED FAN-OUT. `list.stream().map(x -> supplyAsync(...))` over ten thousand items submits
+ten thousand tasks at once. Bound it with a `Semaphore` or a sized executor.""",
+
+"""5. THE ALTERNATIVES — including the one that makes most of this unnecessary
+
+VIRTUAL THREADS (Java 21) FOR SEQUENTIAL I/O. If the shape is "call A, then call B with A's result",
+just write the two blocking calls in a virtual thread. You get a stack trace containing your caller, a
+debugger that steps, and try/catch that spans the operation — all of which async code gives up.
+`CompletableFuture` was largely a workaround for expensive threads, and that premise has changed.
+
+STRUCTURED CONCURRENCY (`StructuredTaskScope`) FOR FAN-OUT. Fork several tasks, join them, and the
+scope guarantees none outlives the block, cancels siblings on failure, and attaches child stack traces
+to the parent. THIS IS THE SUCCESSOR for the parallel case, and it fixes exactly the two things
+`CompletableFuture` is weakest at: lifetime and cancellation.
+
+`CompletableFuture` IS STILL RIGHT FOR:
+    combining a fixed set of independent calls — `thenCombine`, `allOf`;
+    timeouts and fallbacks — `orTimeout`, `completeOnTimeout`, `exceptionally`;
+    adapting a CALLBACK-BASED API into something composable, via `complete`/`completeExceptionally`;
+    library APIs that must return a non-blocking result to callers you do not control.
+
+REACTIVE (Reactor, RxJava) WHEN YOU HAVE A STREAM, NOT A VALUE. `CompletableFuture` holds exactly ONE
+result. If the answer is a sequence with backpressure, windowing, merging or retry policies, that is a
+`Flux`, and no amount of futures will express it. Conversely, do not adopt reactive for a single async
+value — you are paying the whole cost for none of the benefit.
+
+`ExecutorService` + `Future` — only when you genuinely just want to fire work and block later, and even
+then `CompletableFuture.supplyAsync` gives you a superset.
+
+RESILIENCE LIBRARIES — Resilience4j, Failsafe — for retry, circuit breaking, bulkheads and rate
+limiting. Hand-rolling retry on a `CompletableFuture` chain is possible and rarely correct: jitter,
+budgets and half-open states are the hard parts.
+
+`Flow` (Java 9) — the reactive-streams interfaces in the JDK. An interop SPI, not something to build on
+directly.
+
+WHAT TO SAY: "On Java 21 I would write sequential I/O as plain blocking calls in a virtual thread,
+because the stack traces and debugging are worth more than the thread saving. I would use
+`CompletableFuture` for genuine fan-out, timeouts and fallbacks — always passing an explicit executor,
+because the default is the common pool sized to cores minus one and shared by the whole JVM — and
+`StructuredTaskScope` where I can, since it gives bounded lifetimes and real cancellation, which
+`CompletableFuture` does not."
+
+""",
+
+"""6. HOW TO USE IT WELL — numbered steps
+
+STEP 1 — ASK WHETHER YOU NEED IT AT ALL. Sequential I/O on Java 21 is better as blocking calls in a
+virtual thread. Reach for this when the shape is a graph, not a line.
+
+STEP 2 — ALWAYS PASS AN EXECUTOR. Every `supplyAsync` and every `*Async` method. The default is the
+common pool, sized `cores - 1`, shared by the entire JVM.
+
+STEP 3 — NEVER BLOCK INSIDE A STAGE RUNNING ON THE COMMON POOL. Use a dedicated I/O executor.
+
+STEP 4 — USE `thenCompose` WHEN THE FUNCTION RETURNS A FUTURE, `thenApply` WHEN IT RETURNS A VALUE.
+flatMap versus map.
+
+STEP 5 — PREFER THE EXPLICIT `*Async(fn, executor)` FORMS even when the non-async one would work, so
+that which thread runs your code is stated rather than inherited.
+
+STEP 6 — TERMINATE EVERY CHAIN WITH `exceptionally` OR `handle`, AND LOG. An unhandled, unjoined chain
+fails in complete silence.
+
+STEP 7 — UNWRAP `CompletionException` IN HANDLERS. `e.getCause()` is the exception you actually threw.
+
+STEP 8 — ADD A TIMEOUT. `orTimeout` or `completeOnTimeout` (Java 9+). A future with no timeout is a hang
+with extra steps.
+
+STEP 9 — AFTER `allOf`, JOIN EACH FUTURE INDIVIDUALLY to collect results — `allOf` gives you `Void`.
+
+STEP 10 — DO NOT RELY ON `cancel` TO STOP WORK. It discards the result; the task keeps running. Plumb a
+cancellation flag if you need one.
+
+STEP 11 — BOUND YOUR FAN-OUT. Mapping a large collection to `supplyAsync` submits one task per element.
+
+STEP 12 — PROPAGATE CONTEXT DELIBERATELY. MDC, security and transaction context do not follow the value
+across threads; wrap the executor or pass the context explicitly.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Future from Java 5 is almost useless: the only thing you can do with it is call get(), which BLOCKS.
+You can't be notified, you can't chain, you can't combine two, you can't attach an error handler. So
+every Future eventually becomes a blocked thread, which defeats the point of starting the work
+asynchronously.
+
+CompletableFuture is two things. It's a future you can complete yourself — complete or
+completeExceptionally — which is what lets you wrap any callback-based API. And it's a combinator
+library: you describe what to do WHEN the value arrives instead of waiting for it.
+
+The API looks enormous, about fifty methods, but it's really a grid with two axes. The first is what
+your function does with the value: thenApply is map, thenAccept is a side effect, thenRun ignores the
+value, thenCompose is flatMap, thenCombine is zip. The thenApply-versus-thenCompose question is just map
+versus flatMap — if your function returns another CompletableFuture, which it does whenever the next
+step is also async, you need thenCompose, or you get a CompletableFuture of a CompletableFuture. Same
+distinction as Optional.map versus flatMap.
+
+The second axis is WHICH THREAD runs it, and that's where the real bugs are. Plain thenApply runs on
+whichever thread completed the previous stage — or on your CALLING thread if the stage is already
+complete. So you genuinely don't know where your code runs, and attaching something expensive can
+hijack a Netty I/O thread or a driver's callback thread.
+
+Which leads to the single most important operational fact: the default executor is
+ForkJoinPool.commonPool, with parallelism of cores MINUS ONE. On a 2-core container that's one thread,
+shared by every parallel stream and every executor-less future in the whole JVM, and it's sized for
+CPU-bound work. So every blocking call you put on it removes one of your very few threads. Always pass
+an explicit executor — that's not style, the default is wrong for I/O and the failure is a JVM-wide
+stall.
+
+Failure is a VALUE that flows through the pipeline: if a stage throws, every downstream thenApply is
+skipped and the exception is carried forward until something handles it — exactly like the rest of a
+try block not running. That's why one exceptionally at the end of a ten-stage chain works. Just
+remember exceptions get wrapped in CompletionException, so handlers usually need getCause. And
+whenComplete OBSERVES both outcomes and changes nothing — it's the logging hook, not a recovery.
+
+Two things that surprise people. cancel(true) does NOT interrupt the running thread — the flag is
+ignored, the work runs to completion, and you've cancelled the RESULT not the WORK. And allOf returns
+Void, so you have to join each future afterwards to get results.
+
+And I'd be honest about the modern picture: virtual threads made blocking cheap again, so on Java 21 I'd
+write sequential I/O as plain blocking calls and get real stack traces and a working debugger back.
+CompletableFuture still earns its place for genuine fan-out, timeouts and fallbacks — and
+StructuredTaskScope is the better answer for fan-out now, because it gives bounded lifetimes and real
+cancellation, which this doesn't.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHY Future WAS NOT ENOUGH ───────────────────────────────────────
+    Future<User> f = executor.submit(() -> loadUser(id));
+    User u = f.get();                  // ← BLOCKS. And that is the ONLY option.
+    //                                    No callback, no chaining, no combining,
+    //                                    no error handler. A thread is now parked.
+
+    // ── THE TWO AXES OF THE API ─────────────────────────────────────────
+    cf.thenApply(u -> u.name())            // map:      T → U
+    cf.thenAccept(u -> log.info("{}", u))  // consume:  T → void
+    cf.thenRun(() -> metrics.inc())        // ignore the value entirely
+    cf.thenCompose(u -> loadOrders(u))     // FLATMAP:  T → CompletableFuture<U>
+    cf.thenCombine(other, (a, b) -> merge(a, b))   // zip TWO futures
+
+    cf.thenApply(fn)                   // runs on whichever thread COMPLETED the
+    //                                    previous stage — or YOUR CALLING THREAD if
+    //                                    it is already complete. You do not know.
+    cf.thenApplyAsync(fn)              // the COMMON POOL. Sized cores-1. JVM-wide.
+    cf.thenApplyAsync(fn, ioExecutor)  // ← THE ONLY FORM TO USE IN PRODUCTION
+
+    // ── THE map/flatMap MISTAKE ─────────────────────────────────────────
+    CompletableFuture<CompletableFuture<List<Order>>> nested =
+        userFuture.thenApply(u -> loadOrders(u));
+    //             ^^^^^^^^^ loadOrders RETURNS A FUTURE, so thenApply wraps a future
+    //             in a future. It compiles. You discover it later.
+    CompletableFuture<List<Order>> flat =
+        userFuture.thenCompose(u -> loadOrders(u));      // ← flatMap
+
+    // ── FAILURE IS A VALUE THAT FLOWS DOWN THE CHAIN ────────────────────
+    loadUser(id)
+        .thenCompose(u -> loadOrders(u))     // ← SKIPPED if loadUser failed
+        .thenApply(this::render)             // ← SKIPPED
+        .exceptionally(e -> cachedPage())    // ← the exception arrives HERE
+    // Exactly like the rest of a try block not running. One handler for ten stages.
+
+    .handle((v, e) -> e == null ? v : fallback())   // runs on BOTH paths
+    .whenComplete((v, e) -> log.info("done {} {}", v, e))
+    //             ^^^^^^ OBSERVES and passes the result through UNCHANGED. It is the
+    //             logging hook, NOT a recovery. People use it as one and lose the fix.
+
+    // ── THE WRAPPING THAT BREAKS YOUR catch ─────────────────────────────
+    .exceptionally(e -> {
+        if (e instanceof MyDomainException) { ... }        // ← NEVER MATCHES
+        if (e.getCause() instanceof MyDomainException) { } // ← the real one
+    //       ^^^^^^^^^^ everything is wrapped in CompletionException on the way here
+    })
+    // get()  throws the CHECKED ExecutionException.
+    // join() throws the UNCHECKED CompletionException — preferable inside lambdas,
+    //        because functional interfaces cannot declare `throws`.
+
+    // ── THE OPERATIONAL FACT THAT MATTERS MOST ──────────────────────────
+    CompletableFuture.supplyAsync(() -> jdbc.query(sql));
+    //                                  ^^^^^^^^^^^^^^^ A BLOCKING CALL on
+    //   ForkJoinPool.commonPool(), whose parallelism is availableProcessors() MINUS
+    //   ONE — one thread on a 2-core container — shared by every parallel stream and
+    //   every executor-less future in the entire JVM, and sized for CPU-bound work.
+    CompletableFuture.supplyAsync(() -> jdbc.query(sql), ioExecutor);   // ← always
+
+    // ── FAN-OUT, WHICH IS WHAT IT IS ACTUALLY GOOD AT ───────────────────
+    var user   = supplyAsync(() -> loadUser(id),   io);
+    var orders = supplyAsync(() -> loadOrders(id), io);
+    var prefs  = supplyAsync(() -> loadPrefs(id),  io);
+    CompletableFuture.allOf(user, orders, prefs)
+    //               ^^^^^ returns CompletableFuture<VOID> — NO RESULTS. You must
+        .thenApply(v -> new Page(user.join(), orders.join(), prefs.join()))
+    //                            ^^^^^^ join each one; they return immediately now
+        .orTimeout(2, SECONDS)         // ← Java 9. Before that, no timeout existed.
+        .exceptionally(e -> Page.degraded());
+
+    // ── WHAT cancel DOES NOT DO ─────────────────────────────────────────
+    cf.cancel(true);
+    //        ^^^^ mayInterruptIfRunning is IGNORED. The task runs to completion.
+    //        You cancelled the RESULT, not the WORK. The Javadoc says so.""",
+
+"""9. THE TRACE — three calls, four ways to arrange them
+
+THE TASK: load a user (100 ms), their orders (150 ms) and their preferences (120 ms), then render.
+
+    ARRANGEMENT 1 — SEQUENTIAL BLOCKING
+    step                     elapsed    threads held
+    ---------------------------------------------------------------------------------
+    loadUser                 0–100ms    1 (blocked)
+    loadOrders               100–250    1 (blocked)
+    loadPrefs                250–370    1 (blocked)
+    render                   370–375    1
+    TOTAL 375 ms, one thread parked for 370 of them.
+
+    ARRANGEMENT 2 — FAN-OUT WITH allOf
+    step                     elapsed    threads held
+    ---------------------------------------------------------------------------------
+    all three submitted      0          3 pool threads, each blocked on I/O
+    prefs completes          120        2
+    orders completes         150        1  ← the slowest determines the total
+    user completed at        100        —
+    render                   150–155    1
+    TOTAL 155 ms. THE SUM BECAME THE MAXIMUM. That is the entire point of the class.
+
+    ARRANGEMENT 3 — THE ACCIDENTAL SEQUENTIAL CHAIN
+    loadUser().thenCompose(u -> loadOrders(u)).thenCompose(o -> loadPrefs(o))
+    ---------------------------------------------------------------------------------
+    TOTAL 375 ms again — identical to arrangement 1, using three times the machinery.
+    thenCompose means "AFTER this, do that". If the calls do not actually depend on
+    each other, chaining them throws away the only benefit while keeping every cost.
+    THIS IS THE MOST COMMON WAY CompletableFuture CODE ENDS UP SLOWER THAN BLOCKING
+    CODE: the shape says parallel and the operators say sequential.
+
+    ARRANGEMENT 4 — VIRTUAL THREADS, JAVA 21
+    try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+        var u = scope.fork(() -> loadUser(id));   // plain blocking calls
+        var o = scope.fork(() -> loadOrders(id));
+        var p = scope.fork(() -> loadPrefs(id));
+        scope.join().throwIfFailed();
+        return new Page(u.get(), o.get(), p.get());
+    }
+    ---------------------------------------------------------------------------------
+    TOTAL 155 ms — the same as arrangement 2 — with real stack traces, a working
+    debugger, try/catch spanning the whole thing, and tasks that CANNOT outlive the
+    block. This is why StructuredTaskScope is the successor for fan-out.
+
+NOW THE THREAD TRACE — where a non-async callback actually runs:
+
+    code                                        which thread runs the lambda
+    ---------------------------------------------------------------------------------
+    cf.thenApply(fn), cf already complete       YOUR CALLING THREAD
+    cf.thenApply(fn), cf completes later        the thread that COMPLETED cf — which
+                                                may be a Netty I/O thread, a JDBC
+                                                driver callback thread, or a pool
+                                                thread you have never heard of
+    cf.thenApplyAsync(fn)                       a common-pool thread (cores - 1)
+    cf.thenApplyAsync(fn, myExecutor)           yours. Stated, not inherited.
+    ---------------------------------------------------------------------------------
+    ROW 2 IS THE PRODUCTION HAZARD. Attach anything expensive there and you occupy a thread whose owner
+    needs it for something else. The symptom is a completely unrelated subsystem getting slow.
+
+AND THE COMMON-POOL TRACE ON A 2-CORE CONTAINER:
+
+    availableProcessors() = 2  →  commonPool parallelism = 1
+    supplyAsync(() -> jdbc.query(...))          ← occupies THE thread for 40 ms
+    someList.parallelStream().map(...)          ← waits
+    another library's executor-less future      ← waits
+    ---------------------------------------------------------------------------------
+    ONE BLOCKING CALL SERIALISED THE ENTIRE JVM'S ASYNC WORK. Nothing threw, nothing logged, and the
+    fix is one extra argument.
+
+WHAT PRODUCED WHAT:
+    INDEPENDENT SUBMISSION   produced 375 ms → 155 ms. Sum became maximum.
+    thenCompose              produced arrangement 3 — correct, and sequential by definition.
+    THE DEFAULT EXECUTOR     produced the last table, and it is one argument away from never
+                             happening.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Fan-out turns a SUM of latencies into a MAXIMUM. That is the whole performance story.
+    Default executor: `ForkJoinPool.commonPool()`, parallelism `availableProcessors() - 1`, daemon
+    threads, shared JVM-wide, sized for CPU-bound work.
+    Non-async callbacks run on the completing thread — or the calling thread if already complete.
+    Exceptions are wrapped: `get()` → checked `ExecutionException`; `join()` → unchecked
+    `CompletionException`. Handlers need `getCause()`.
+    `cancel(true)` does NOT interrupt; the work runs to completion.
+    `orTimeout` / `completeOnTimeout`: Java 9+. There was no timeout before that.
+    `allOf` returns `Void`; `anyOf` returns `Object` and completes on the first result OR failure.
+
+THE #1 MISTAKE: not passing an executor. The common pool is `cores - 1`, shared by the whole JVM, and
+one blocking call on a small container serialises everything.
+
+THE #2 MISTAKE: `thenApply` where `thenCompose` belongs. A future inside a future.
+
+THE #3 MISTAKE: chaining independent calls with `thenCompose`. Correct, sequential, and slower than the
+blocking version it replaced.
+
+THE #4 MISTAKE: not knowing which thread a non-async callback runs on. It can hijack an I/O thread.
+
+THE #5 MISTAKE: `whenComplete` used as a recovery. It observes and changes nothing.
+
+THE #6 MISTAKE: catching your own exception type without unwrapping `CompletionException`.
+
+THE #7 MISTAKE: expecting `cancel` to stop work. It discards the result only.
+
+THE #8 MISTAKE: `allOf` and then looking for results in the returned future. It is `Void`.
+
+THE #9 MISTAKE: no `exceptionally`/`handle`, and nobody joins the chain. Silent failure, exactly like an
+ignored `Future` from `submit`.
+
+THE #10 MISTAKE: no timeout. A future that never completes is a hang with extra machinery.
+
+THE #11 MISTAKE: losing MDC, security or transaction context across stages. It does not follow the
+value to another thread.
+
+THE #12 MISTAKE: unbounded fan-out over a large collection. One task per element, all submitted at once.
+
+ONE-SENTENCE TAKEAWAY: `CompletableFuture` replaces "get the value" with "describe the pipeline" — a
+grid of combinators where `thenApply` is map, `thenCompose` is flatMap, `thenCombine` is zip, and a
+failure flows down the chain skipping every stage until something handles it, so fan-out turns a SUM of
+latencies into a MAXIMUM; the operational fact that matters most is that the default executor is the
+common ForkJoinPool sized to `cores - 1` and shared by the entire JVM, so every `*Async` call needs an
+explicit executor, and the two behaviours that surprise people are that non-async callbacks run on
+whichever thread completed the previous stage and that `cancel(true)` never interrupts anything — while
+on Java 21 sequential I/O belongs in a virtual thread with plain blocking calls, and fan-out
+increasingly belongs in `StructuredTaskScope`, which gives the bounded lifetimes and real cancellation
+this API never had.""",
+]
