@@ -369,6 +369,8 @@ def ai_sde_bank():
         # per entry that says the same thing.
         "reading": {
             "mandatory_tag": ai_sde_summary.MANDATORY_TAG,
+            "mandatory_priority": ai_sde_summary.MANDATORY_PRIORITY,
+            "rule": ai_sde_summary.RULE_TEXT,
             "counts": _AI_SDE_READING_COUNTS,
         },
     })

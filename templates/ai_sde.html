@@ -56,7 +56,7 @@
      Phones keep the wrapped-flex version below — there is no room for six
      fixed columns at 360px, and that layout was never the problem. */
   .q-head .q-chips { display: grid; align-items: center; gap: 6px;
-                     grid-template-columns: 34px 70px 80px 124px 68px minmax(0, 1fr);
+                     grid-template-columns: 88px 34px 70px 80px 124px 68px minmax(0, 1fr);
                      flex: 1 0 100%; min-width: 0; margin-top: 1px; }
   /* Long values shorten rather than widen their track — a chip that pushed
      its column would take the whole grid out of alignment with the cards
@@ -208,6 +208,18 @@
   .rbtn .n { font-weight: 700; opacity: .75; }
   .rbtn.on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
   .rbtn.on .n { opacity: .85; }
+  /* Which section this topic is in, said on the card itself. The
+     frequency chip beside it says "Common", which is the vocabulary the
+     RULE is written in, not the answer to "must I read this?" — and a
+     split you can only see by switching sections is one you cannot act
+     on while reading. */
+  .q-read { font-size: 10px; font-weight: 900; letter-spacing: .02em; border-radius: 999px;
+            padding: 2px 8px; white-space: nowrap; }
+  .read-must { color: #fff; background: #b45309; }
+  .read-opt  { color: var(--color-text-secondary); background: var(--color-bg);
+               border: 1px solid var(--color-border); }
+  html.dark .read-must { color: #fde68a; background: #78350f; }
+
   .rnote { font-size: 12px; line-height: 1.5; color: var(--color-text-secondary); margin: 0 0 10px; }
 
   /* The group heading in "Everything", so the split stays visible even
@@ -432,8 +444,13 @@
      than being written here, so the page and ai_sde_summary.py cannot
      disagree about what "must read" means. */
   let reading = "must";
-  let MANDATORY_TAG = "Must-Know";      // replaced by the server's value on load
-  const readingOf = (e) => (e.tag_priority === MANDATORY_TAG ? "must" : "opt");
+  // Both replaced by the server's values on load, so the page and
+  // ai_sde_summary.py cannot disagree about what must-read means.
+  let MANDATORY_TAG = "Must-Know", MANDATORY_PRI = "P0", READING_RULE = "";
+  // EITHER signal is enough. Requiring both would cut the set to 58, and
+  // using the tag alone left "Balanced Binary Tree" — a P0 — in optional.
+  const readingOf = (e) =>
+    (e.tag_priority === MANDATORY_TAG || e.priority === MANDATORY_PRI) ? "must" : "opt";
 
   /* Summaries arrive on their OWN request, after the list has rendered.
      Folded into /api/ai-sde they take it from 57 KB gzipped to 135 KB —
@@ -928,6 +945,10 @@
           ${PrepScheduler.button("ai_sde", e.title, e.id)}
           <p class="q-sum">${esc(SUMS[e.id] || "")}</p>
           <span class="q-chips">
+            <span class="q-read read-${readingOf(e)}" title="${readingOf(e)==='must'
+              ? 'Must read — always asked, or top of the stack rank'
+              : 'Optional — skim the summary, open it if it is new to you'}">${
+              readingOf(e)==='must' ? '📕 Must read' : '📗 Optional'}</span>
             ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
             ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
             ${e.tag_priority ? `<span class="q-freq ${FREQ_CLASS[e.tag_priority]||''}" title="How often this is really asked of a new grad">${esc(e.tag_priority)}</span>` : ""}
@@ -1028,7 +1049,8 @@
   function paintReadingNote(){
     const el = $("rnote"); if (!el) return;
     el.textContent = reading === "must"
-      ? "The topics that are always asked. Finish these before anything else."
+      ? (READING_RULE ? READING_RULE + " Finish these before anything else."
+                      : "Finish these before anything else.")
       : reading === "opt"
         ? "Skim the one-line summary. Open it only if it is new to you — nothing here is hidden, it is just second."
         : "Everything, grouped. Must read first, optional underneath.";
@@ -1059,6 +1081,8 @@
       loadStudied();
       if (BANK.reading) {
         MANDATORY_TAG = BANK.reading.mandatory_tag || MANDATORY_TAG;
+        MANDATORY_PRI = BANK.reading.mandatory_priority || MANDATORY_PRI;
+        READING_RULE = BANK.reading.rule || "";
         paintReadingCounts(BANK.reading.counts || {});
       }
       (BANK.categories||[]).forEach(c => catLabel[c.key]=c.label);

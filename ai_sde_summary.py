@@ -21,12 +21,23 @@ don't — the bank's answers were written to lead with the thesis, because
 that is what makes an answer answerable out loud — and the fix when one
 does is to fix the answer, which is the right place for it.
 
-WHY "Must-Know" IS THE LINE. The alternative was the P0-P3 stack rank,
-but that ranks the BACKLOG — how much of the syllabus is left, in what
-order to work it — while must-read is a question about the INTERVIEW: is
-this asked or isn't it. tag_priority is the field that answers that one.
-It gives 278 must-read topics against 842 optional, which is the point:
-278 is a set you can finish.
+WHERE THE LINE IS, AND WHY IT MOVED. The first version used tag_priority
+alone: must-read meant "Must-Know", the field that answers the question
+must-read is actually asking — is this asked in interviews or isn't it —
+rather than the P0-P3 stack rank, which ranks the BACKLOG.
+
+That reasoning was right about which field means what and wrong to make
+it the only input. "Balanced Binary Tree" is tagged Common and ranked P0,
+so it landed in optional; so did Dijkstra, Topological Sort, Union-Find,
+Minimum Window Substring, Merge k Sorted Lists and 49 others. P0 is the
+bank's own verdict that a topic is the first thing to work on. A P0 in
+the pile marked "read this second" is a contradiction, and the reader
+finding one there stops trusting the split — which costs more than the
+split gains.
+
+So must-read is the UNION: always asked, OR top of the stack rank. Still
+two named fields and still one sentence. 332 topics against 788, about
+30% of the bank, which is the point — 332 is a set you can finish.
 
 NOT A HIERARCHY OF WORTH. Optional here means "skim the summary, open it
 if it is new to you", not "ignore". Nothing is hidden and nothing is
@@ -37,11 +48,16 @@ import re
 
 import ai_sde_recall
 
-#: The tag_priority value that makes a topic must-read. One value, one
-#: rule, stated on the page — a formula combining three fields would be
-#: more precise and impossible to explain, and a split nobody can explain
-#: gets ignored.
-MANDATORY_TAG = "Must-Know"
+#: Either of these makes a topic must-read. Two named fields, no weights
+#: and no thresholds — a formula would be more precise and impossible to
+#: explain, and a split nobody can explain gets ignored.
+MANDATORY_TAG = "Must-Know"       # always asked
+MANDATORY_PRIORITY = "P0"         # top of the bank's own stack rank
+
+#: What the page prints under the buttons. Kept here rather than in the
+#: template so the rule and its explanation cannot drift apart.
+RULE_TEXT = ("Always asked in interviews (Must-Know), or top of the stack "
+             "rank (P0). Either one is enough.")
 
 #: Long enough to say what the topic IS, short enough that forty of them
 #: scan as a list rather than as a page of prose. Also the difference
@@ -90,8 +106,14 @@ def summarise(entry, cap=SUMMARY_CAP):
 
 
 def is_mandatory(entry):
-    """Must-read, or optional-and-summarised."""
-    return (entry.get("tag_priority") or "") == MANDATORY_TAG
+    """Must-read, or optional-and-summarised.
+
+    Either signal is enough. A topic that is always asked belongs in the
+    first pass whatever its rank; a topic the bank ranks P0 belongs there
+    whatever its tag. Requiring both would have cut the set to 58.
+    """
+    return ((entry.get("tag_priority") or "") == MANDATORY_TAG
+            or (entry.get("priority") or "") == MANDATORY_PRIORITY)
 
 
 def reading_of(entry):

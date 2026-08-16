@@ -91,18 +91,48 @@ def test_the_summary_is_derived_from_the_answer_not_invented():
 
 # ── the split ────────────────────────────────────────────────────────
 
-def test_the_split_is_one_stated_rule():
-    """A formula over three fields would be more precise and impossible to
-    explain, and a split nobody can explain gets ignored."""
+def test_the_split_is_two_named_fields_either_of_which_is_enough():
+    """No weights, no thresholds — a formula would be more precise and
+    impossible to explain, and a split nobody can explain gets ignored."""
     assert S.MANDATORY_TAG == "Must-Know"
+    assert S.MANDATORY_PRIORITY == "P0"
     for e in ENTRIES:
-        assert S.is_mandatory(e) == (e.get("tag_priority") == "Must-Know")
+        expected = (e.get("tag_priority") == "Must-Know"
+                    or e.get("priority") == "P0")
+        assert S.is_mandatory(e) == expected, e["title"]
         assert S.reading_of(e) in ("must", "opt")
 
 
+def test_no_p0_topic_is_filed_as_optional():
+    """The bug this rule was changed for. "Balanced Binary Tree" is tagged
+    Common and ranked P0, so the tag-only rule filed it under "read this
+    second" — along with Dijkstra, Topological Sort, Union-Find, Minimum
+    Window Substring and 50 others.
+
+    P0 is the bank's own verdict that a topic is the FIRST thing to work
+    on. A P0 in the optional pile is a contradiction, and a reader who
+    finds one there stops trusting the split, which costs more than the
+    split gains."""
+    stranded = [e["title"] for e in ENTRIES
+                if e.get("priority") == "P0" and S.reading_of(e) != "must"]
+    assert not stranded, f"{len(stranded)} P0 topics are optional: {stranded[:5]}"
+    # The specific one that was reported.
+    bbt = next(e for e in ENTRIES if e["title"] == "Balanced Binary Tree")
+    assert S.reading_of(bbt) == "must"
+
+
+def test_every_always_asked_topic_is_must_read():
+    """The other half of the union — a topic that is always asked belongs
+    in the first pass whatever its rank. Requiring BOTH signals instead of
+    either would have cut the set from 332 to 58."""
+    for e in ENTRIES:
+        if e.get("tag_priority") == "Must-Know":
+            assert S.reading_of(e) == "must", e["title"]
+
+
 def test_the_must_read_set_is_small_enough_to_finish():
-    """278 against 842. If "must read" were most of the bank it would not
-    be a split, it would be a relabelling."""
+    """332 against 788 — about 30% of the bank. If "must read" were most of
+    it, this would not be a split, it would be a relabelling."""
     c = S.counts(ENTRIES)
     assert c["must"] + c["opt"] == c["total"] == len(ENTRIES)
     assert c["must"] < c["total"] * 0.4, c
@@ -145,11 +175,13 @@ def test_the_summaries_payload_is_worth_deferring_but_not_huge(auth_client):
 
 
 def test_the_list_ships_the_split_rule_not_a_second_field(auth_client):
-    """The page filters on tag_priority, which every row already carries.
-    Shipping a per-entry "reading" field would add 1,120 copies of a value
-    derivable from one it already has."""
+    """The page filters on tag_priority and priority, both of which every
+    row already carries. Shipping a per-entry "reading" field would add
+    1,120 copies of a value derivable from two it already has."""
     d = _json(auth_client.get("/api/ai-sde"))
     assert d["reading"]["mandatory_tag"] == S.MANDATORY_TAG
+    assert d["reading"]["mandatory_priority"] == S.MANDATORY_PRIORITY
+    assert d["reading"]["rule"] == S.RULE_TEXT
     assert d["reading"]["counts"] == S.counts(ENTRIES)
     for e in d["entries"]:
         assert "reading" not in e
@@ -164,9 +196,18 @@ def test_the_page_opens_on_the_must_read_set(auth_client):
     html = auth_client.get("/ai-sde").get_data(as_text=True)
     assert 'data-reading="must"' in html and 'data-reading="opt"' in html
     assert 'let reading = "must";' in html, "the page no longer defaults to must-read"
-    # The rule comes from the server so the page and the module cannot
-    # disagree about what must-read means.
+    # BOTH halves of the rule come from the server, so the page and the
+    # module cannot disagree about what must-read means. Taking only the
+    # tag is exactly how "Balanced Binary Tree" ended up optional.
     assert "BANK.reading.mandatory_tag" in html
+    assert "BANK.reading.mandatory_priority" in html
+    assert "e.priority === MANDATORY_PRI" in html, (
+        "the page checks the tag but not the rank — P0 topics will read as optional")
+    # And the card says which section it is in. The frequency chip beside
+    # it says "Common", which is the vocabulary the rule is written in,
+    # not the answer to "must I read this?".
+    assert 'class="q-read read-' in html
+    assert "📕 Must read" in html and "📗 Optional" in html
     # Summaries are fetched after the list, not with it.
     assert '/api/ai-sde/summaries' in html
     assert 'class="q-sum"' in html
