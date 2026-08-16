@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v54-2026-08-16-board-controls"
+const CACHE_VERSION = "v55-2026-08-16-ambient-push"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -337,23 +337,38 @@ self.addEventListener("push", (event) => {
     payload = { title: "DailyPlanner", body: event.data ? event.data.text() : "" };
   }
 
+  // Defaults are ALERT behaviour, because a reminder that does not interrupt
+  // has failed. But every one of them is overridable by the payload, because
+  // an AMBIENT notification — the pinned day summary — needs the exact
+  // opposite: it refreshes itself and must never buzz the phone to say the
+  // same thing again. Hardcoding these meant there was only one kind of
+  // notification this app could ever send.
+  const pick = (key, fallback) =>
+    Object.prototype.hasOwnProperty.call(payload, key) ? payload[key] : fallback;
+
   const title = payload.title || "DailyPlanner";
   const options = {
     body: payload.body || "",
     icon: payload.icon || "/static/icons/icon-192.png",
     badge: payload.badge || "/static/icons/icon-192.png",
     tag: payload.tag || "dailyplanner",
-    renotify: true,
+    // renotify only means anything alongside a tag: it decides whether
+    // REPLACING an existing notification alerts again. False = update in place,
+    // silently, which is what a status display wants.
+    renotify: pick("renotify", true),
     // Keep on screen until the user taps/dismisses — otherwise Android
     // auto-hides after a few seconds.
-    requireInteraction: true,
+    requireInteraction: pick("requireInteraction", true),
     // Explicit vibration pattern so phones on the default channel
     // importance still rumble.
-    vibrate: [200, 100, 200],
+    vibrate: pick("vibrate", [200, 100, 200]),
     // Force non-silent so OS playback of the channel's sound triggers.
-    silent: false,
+    silent: pick("silent", false),
     data: { url: payload.url || "/checklist" },
   };
+  if (Array.isArray(payload.actions) && payload.actions.length) {
+    options.actions = payload.actions.slice(0, 2);   // Android shows at most 2
+  }
 
   event.waitUntil(self.registration.showNotification(title, options));
 });

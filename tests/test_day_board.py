@@ -228,3 +228,75 @@ def test_blueprint_is_registered(app):
     rules = {r.rule for r in app.url_map.iter_rules()}
     assert "/day-board" in rules
     assert "/board" in rules
+
+
+# ── the notification summary ────────────────────────────────────────────
+from unittest.mock import patch
+
+
+def _summary(events, tasks, checklist, minutes):
+    with patch.object(db, "_events_for", return_value=events), \
+         patch.object(db, "_tasks_for", return_value=tasks), \
+         patch.object(db, "_checklist_for", return_value=checklist):
+        return db.build_summary("u", dt.date(2026, 8, 16), now_minutes=minutes)
+
+
+EVENTS = [
+    {"title": "Standup", "start_time": "09:00", "end_time": "09:15"},
+    {"title": "Design review", "start_time": "14:00", "end_time": "15:30"},
+]
+TASKS = [{"task_text": "Ship it", "quadrant": "Q1", "is_done": False}]
+CHECK = [{"id": 1, "title": "Meds", "done": True},
+         {"id": 2, "title": "Walk", "done": False}]
+
+
+def test_summary_leads_with_what_is_happening_now():
+    s = _summary(EVENTS, TASKS, CHECK, 9 * 60 + 5)
+    assert s["title"] == "Now: Standup"
+
+
+def test_summary_leads_with_what_is_next():
+    s = _summary(EVENTS, TASKS, CHECK, 8 * 60 + 30)
+    assert s["title"] == "Next in 30m: Standup"
+
+
+def test_summary_uses_a_clock_time_when_the_next_thing_is_far_off():
+    """'in 315m' is not a useful thing to read on a lock screen."""
+    s = _summary(EVENTS, TASKS, CHECK, 10 * 60)
+    assert s["title"] == "Next at 14:00: Design review"
+
+
+def test_summary_title_says_what_is_LEFT_once_the_events_are_over():
+    """'2 events today' at 6pm is a fact about the past and answers nothing."""
+    s = _summary(EVENTS, TASKS, CHECK, 18 * 60)
+    assert s["title"] == "1 to do"
+
+
+def test_summary_says_day_clear_when_nothing_remains():
+    s = _summary(EVENTS, [{"task_text": "x", "is_done": True}],
+                 [{"id": 1, "title": "Meds", "done": True}], 18 * 60)
+    assert s["title"] == "Day clear"
+
+
+def test_summary_body_is_capped_to_three_lines():
+    """A notification body is a glance, not a list. Android truncates anyway;
+    choosing WHAT to drop is better than letting the OS choose."""
+    many = [{"task_text": f"task {i}", "quadrant": "Q1", "is_done": False}
+            for i in range(20)]
+    s = _summary(EVENTS, many, CHECK, 8 * 60)
+    assert len(s["body"].split("\n")) <= 3
+
+
+def test_summary_counts_overflow_rather_than_hiding_it():
+    many = [{"task_text": f"task {i}", "quadrant": "Q1", "is_done": False}
+            for i in range(5)]
+    s = _summary([], many, [], 8 * 60)
+    assert "(+3)" in s["body"], "must say how many tasks were not listed"
+
+
+def test_summary_never_counts_done_tasks_as_outstanding():
+    tasks = [{"task_text": "done one", "is_done": True},
+             {"task_text": "open one", "is_done": False}]
+    s = _summary([], tasks, [], 8 * 60)
+    assert s["counts"]["open_tasks"] == 1
+    assert "done one" not in s["body"]

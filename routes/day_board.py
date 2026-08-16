@@ -34,7 +34,7 @@ should not depend on a token still being valid in JavaScript.
 import logging
 from datetime import date, datetime, time, timedelta
 
-from flask import Blueprint, render_template, request, session
+from flask import Blueprint, jsonify, render_template, request, session
 
 from services.login_service import login_required
 from services import event_recurrence
@@ -229,6 +229,126 @@ def _layout_events(events, win_start, win_end):
     for p in placed:
         p["lane_count"] = lanes
     return placed
+
+
+def build_summary(user_id, plan_date, now_minutes=None):
+    """The day compressed to a notification: a title and 2-3 short lines.
+
+    A notification is not a board — it is one glance, in a shade the user is
+    already looking at for other reasons. So it answers only the question a
+    glance is asking: WHAT IS NEXT, and HOW MUCH IS LEFT. Everything else is
+    one tap away on the board itself.
+    """
+    events = _events_for(user_id, plan_date)
+    tasks = _tasks_for(user_id, plan_date)
+    checklist = _checklist_for(user_id, plan_date)
+
+    open_tasks = [t for t in tasks
+                  if not (t.get("is_done") or t.get("status") == "done")]
+    done_checks = sum(1 for c in checklist if c["done"])
+
+    timed = []
+    for e in events:
+        st = _parse_hhmm(e.get("start_time"))
+        if not st:
+            continue
+        en = _parse_hhmm(e.get("end_time")) or st
+        timed.append((_minutes(st), _minutes(en), st.strftime("%H:%M"),
+                      e.get("title") or e.get("event_text") or e.get("name") or "Event"))
+    timed.sort()
+
+    lines = []
+    title = None
+
+    if now_minutes is not None:
+        current = [t for t in timed if t[0] <= now_minutes < max(t[1], t[0] + 1)]
+        upcoming = [t for t in timed if t[0] > now_minutes]
+        if current:
+            title = "Now: " + current[0][3]
+        elif upcoming:
+            mins = upcoming[0][0] - now_minutes
+            when = f"in {mins}m" if mins < 60 else f"at {upcoming[0][2]}"
+            title = f"Next {when}: {upcoming[0][3]}"
+        # The next two things after that, so the glance has a horizon rather
+        # than just a single item.
+        for t in upcoming[:2] if current else upcoming[1:3]:
+            lines.append(f"{t[2]}  {t[3]}")
+    else:
+        upcoming = timed
+        for t in timed[:2]:
+            lines.append(f"{t[2]}  {t[3]}")
+
+    if title is None:
+        # No event now and none to come. The title should say WHAT IS LEFT,
+        # not restate the day's total — "3 events today" at 6pm is a fact
+        # about the past and answers nothing.
+        if open_tasks:
+            title = f"{len(open_tasks)} to do"
+        elif checklist and done_checks < len(checklist):
+            title = f"Checklist {done_checks}/{len(checklist)}"
+        elif timed or tasks or checklist:
+            title = "Day clear"
+        else:
+            title = "Nothing scheduled"
+
+    if open_tasks:
+        lines.append("To do: " + ", ".join(
+            (t.get("task_text") or "").strip() for t in open_tasks[:2]))
+        if len(open_tasks) > 2:
+            lines[-1] += f"  (+{len(open_tasks) - 2})"
+    if checklist:
+        lines.append(f"Checklist {done_checks}/{len(checklist)}")
+
+    if not lines:
+        lines.append("Nothing left for today.")
+
+    return {
+        "title": title,
+        "body": "\n".join(lines[:3]),
+        "counts": {
+            "events": len(timed),
+            "open_tasks": len(open_tasks),
+            "checklist_done": done_checks,
+            "checklist_total": len(checklist),
+        },
+    }
+
+
+@day_board_bp.route("/api/day-board/pin", methods=["POST"])
+@login_required
+def pin_to_notifications():
+    """Push today's summary as an AMBIENT notification.
+
+    Android will not let a web app draw over other apps — that needs a native
+    permission a PWA cannot hold. The notification shade is the one surface a
+    web app CAN occupy while you are in another app, so this puts the day's
+    next thing there and keeps it there.
+
+    silent + no vibration + renotify:false, so refreshing it updates the same
+    row in place without a second buzz. requireInteraction keeps it pinned
+    until dismissed rather than auto-hiding after a few seconds. Urgency low
+    lets the push service batch delivery and spare the battery, which is the
+    right trade for a status update and the wrong one for a reminder.
+    """
+    from services import push_service
+
+    user_id = session["user_id"]
+    plan_date = user_today()
+    now = user_now()
+    summary = build_summary(user_id, plan_date,
+                            now_minutes=now.hour * 60 + now.minute)
+
+    sent, failed = push_service.send_to_user(
+        user_id,
+        title=summary["title"],
+        body=summary["body"],
+        url="/day-board",
+        tag="day-board",                # one row, replaced — never a stack
+        extra={"silent": True, "renotify": False, "vibrate": [],
+               "requireInteraction": True},
+        urgency="low",
+    )
+    return jsonify({"sent": sent, "failed": failed, **summary})
 
 
 @day_board_bp.route("/day-board")

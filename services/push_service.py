@@ -56,8 +56,22 @@ def _deactivate(endpoint):
         logger.exception("Failed to deactivate push subscription")
 
 
-def send_to_user(user_id, title, body, url="/checklist", tag=None, icon=None):
-    """Return (sent_count, failed_count)."""
+def send_to_user(user_id, title, body, url="/checklist", tag=None, icon=None,
+                 extra=None, urgency="high"):
+    """Return (sent_count, failed_count).
+
+    `extra` is merged into the payload and reaches the service worker as-is.
+    It exists for AMBIENT notifications — a pinned day summary that refreshes
+    itself must not buzz the phone every time it updates, so it needs to send
+    {"silent": True, "renotify": False, "vibrate": []}. Without a channel like
+    this the service worker's alert defaults apply to everything, and a status
+    display becomes an interruption.
+
+    `urgency` is the Web Push header, not a notification property. "low" tells
+    the push service it may batch and delay delivery to save the device's
+    battery, which is the correct trade for a status update and the wrong one
+    for a reminder.
+    """
     try:
         from pywebpush import WebPushException, webpush
     except ImportError:
@@ -73,13 +87,16 @@ def send_to_user(user_id, title, body, url="/checklist", tag=None, icon=None):
     if not subs:
         return 0, 0
 
-    payload = json.dumps({
+    body_payload = {
         "title": title,
         "body": body,
         "url": url,
         "tag": tag or "dailyplanner",
         "icon": icon or "/static/icons/icon.svg",
-    })
+    }
+    if extra:
+        body_payload.update(extra)
+    payload = json.dumps(body_payload)
 
     claims = _vapid_claims()
     sent = 0
@@ -97,7 +114,7 @@ def send_to_user(user_id, title, body, url="/checklist", tag=None, icon=None):
                 vapid_private_key=private_key,
                 vapid_claims=dict(claims),
                 ttl=3600,
-                headers={"Urgency": "high"},
+                headers={"Urgency": urgency},
             )
             sent += 1
         except WebPushException as e:
