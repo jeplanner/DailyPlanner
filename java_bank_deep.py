@@ -16597,3 +16597,979 @@ the value is a number, `.equals` on wrappers, a static-analysis rule to eliminat
 entirely, and an enum the moment the value set is closed, which is the single place the `==` habit is
 right.""",
 ]
+
+
+DEEP["The ternary operator can throw a NullPointerException on a line with no method call"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — a conditional that unboxes a branch you did not ask about
+
+    Map<String, Boolean> flags = new HashMap<>();
+    flags.put("beta", null);
+
+    Boolean enabled = flags.containsKey("beta") ? flags.get("beta") : false;
+    →  NullPointerException
+
+    LOOK AT THE TARGET VARIABLE. It is a `Boolean`. A `Boolean` can hold null perfectly well. `flags.get`
+    returned null, and assigning null to a `Boolean` is completely legal. NOTHING ON THAT LINE CALLS A
+    METHOD ON A NULL REFERENCE — and yet it throws.
+
+    THE CULPRIT IS THE OTHER BRANCH. `false` is a primitive `boolean`. Because one operand of the
+    conditional is a primitive, THE WHOLE EXPRESSION IS PROMOTED TO A PRIMITIVE TYPE — so the selected
+    branch has to be unboxed to satisfy that type, and unboxing null throws.
+
+    CHANGE `false` TO `Boolean.FALSE` AND THE IDENTICAL-LOOKING LINE IS FINE. Five characters, in the
+    branch that was not even taken.
+
+WHY THIS IS WORTH KNOWING RATHER THAN JUST AVOIDING: because it is a TYPE rule, and the type of a
+conditional expression is determined FROM BOTH OPERANDS BEFORE EITHER BRANCH IS CHOSEN. So reading the
+branch that runs tells you nothing about whether it will throw. There is no defensive check you can add
+inside the branch, because the unboxing is inserted around it by the compiler.
+
+    AND THE SECOND, RELATED SURPRISE FROM THE SAME RULE:
+
+        Object o = true ? Integer.valueOf(1) : Double.valueOf(2.0);
+        System.out.println(o);        // prints 1.0
+
+    The condition is `true`, so the `Integer` branch is taken — and it prints `1.0`, a Double. Both
+    operands are numeric wrapper types, so binary numeric promotion applies to the EXPRESSION, giving
+    `double`; the `Integer` is unboxed to `int`, widened to `double`, and re-boxed. THE UNTAKEN BRANCH
+    DETERMINED THE TYPE OF THE TAKEN ONE.
+
+THE EVERYDAY VERSION: a form field labelled "amount, in whole units or decimals". If ANY answer on the
+form uses decimals, the whole column is treated as decimal — so your "1" is filed as "1.0", and if you
+left the box blank where a number was required, the filing clerk rejects it even though the field was
+optional. The rule was applied to the COLUMN, not to your row.
+
+TERMS AS THEY APPEAR:
+- CONDITIONAL EXPRESSION: `condition ? a : b`. The specification's name for the ternary operator.
+- BINARY NUMERIC PROMOTION: converting two numeric operands to a common type before an operation.
+- UNBOXING: `Integer` → `int`, via an inserted `intValue()` call. Throws on null.""",
+
+"""2. THE INTUITION — the type is decided before the branch is
+
+A CONDITIONAL EXPRESSION HAS A TYPE, LIKE ANY OTHER EXPRESSION. The compiler must work it out from both
+operands, statically, before anything runs. There are three classifications, and everything follows from
+which one applies:
+
+    A BOOLEAN CONDITIONAL — both operands are `boolean` or `Boolean`.
+    A NUMERIC CONDITIONAL — both operands are convertible to numeric types.
+    A REFERENCE CONDITIONAL — everything else. The type is the least upper bound of the two.
+
+    THE FIRST TWO CAN UNBOX. THE THIRD CANNOT. So the entire question is which classification your
+    expression falls into, and that is decided by BOTH operands together.
+
+    `flags.get(k) : false`      → `Boolean` and `boolean` → a BOOLEAN conditional → the expression's
+                                  type is `boolean` → the selected branch is unboxed.
+    `flags.get(k) : Boolean.FALSE` → `Boolean` and `Boolean` → no primitive operand → a REFERENCE
+                                  conditional → type `Boolean` → NO unboxing anywhere → null flows
+                                  through unharmed.
+
+    ONE OPERAND CHANGED FROM A PRIMITIVE TO A WRAPPER, AND THE CLASSIFICATION CHANGED, AND WITH IT
+    WHETHER THE OTHER BRANCH IS UNBOXED. That is the whole mechanism.
+
+WHY THE LANGUAGE DOES IT THIS WAY, since "just use the branch that ran" seems obviously better:
+
+    THE EXPRESSION MUST HAVE ONE STATIC TYPE. `int x = flag ? 1 : 2;` has to be assignable to an `int`
+    at compile time, whichever branch runs. If the type depended on which branch was taken, it would not
+    be known until runtime, and Java's type system is static. SO THE RULE IS NOT A MISTAKE; IT IS THE
+    PRICE OF THE EXPRESSION HAVING A TYPE AT ALL.
+
+    The unfortunate part is only that UNBOXING IS SILENT. If the promotion required an explicit cast the
+    problem would be visible in the source, and this entry would not exist.
+
+THE THIRD CONSEQUENCE, WHICH IS THE MOST SURPRISING OF ALL:
+
+    Object o = true ? Integer.valueOf(1) : Double.valueOf(2.0);   // prints 1.0
+
+    Both are numeric wrappers, so this is a NUMERIC conditional. Binary numeric promotion between `int`
+    and `double` gives `double`. The Integer is unboxed, widened to `double`, and re-boxed as a Double.
+    THE BRANCH THAT WAS NOT TAKEN CHANGED THE VALUE THE TAKEN BRANCH PRODUCED — from `1` to `1.0`, and
+    from an `Integer` to a `Double`.
+
+    THAT IS THE CLEAREST DEMONSTRATION THAT THE RULE IS ABOUT THE EXPRESSION, NOT THE BRANCH. And note
+    it would also throw if the taken branch were a null `Integer`, for the same reason.""",
+
+"""3. THE MECHANISM — the three classifications, and where the NPE is inserted
+
+FOR EACH CLASSIFICATION, WHAT THE COMPILER EMITS:
+
+    REFERENCE CONDITIONAL — `cond ? someString : null`
+        Type: the least upper bound. No conversion of either operand. Null is fine.
+
+    BOOLEAN CONDITIONAL — `cond ? someBoolean : false`
+        Type: `boolean`, because one operand is primitive.
+        Emitted: `cond ? someBoolean.booleanValue() : false` ← THE NPE LIVES HERE
+        And then, if the target is a `Boolean`, `Boolean.valueOf(...)` around the whole thing.
+
+    NUMERIC CONDITIONAL — `cond ? someInteger : 0`
+        Type: `int`.
+        Emitted: `cond ? someInteger.intValue() : 0` ← THE NPE LIVES HERE
+
+    NUMERIC CONDITIONAL WITH TWO DIFFERENT NUMERIC TYPES — `cond ? anInteger : aDouble`
+        Type: `double`, by binary numeric promotion.
+        Emitted: `cond ? (double) anInteger.intValue() : aDouble.doubleValue()`
+        Then re-boxed to `Double` if assigned to an `Object`.
+
+    IN EVERY CASE THE CONVERSION IS APPLIED TO THE OPERAND THAT IS ACTUALLY EVALUATED. Only one branch
+    runs — but the CONVERSION APPLIED TO IT was chosen from both. Which is why a null in the branch that
+    runs throws, and why a value in the branch that runs can change type because of the branch that does
+    not.
+
+THE PROMOTION TABLE, since it decides the numeric case:
+    if either operand is `double` → `double`
+    else if either is `float`     → `float`
+    else if either is `long`      → `long`
+    else                          → `int`   (so `byte`, `short` and `char` all promote to `int`)
+
+    WITH ONE SPECIAL CASE WORTH KNOWING: if one operand is a constant expression that FITS in the other's
+    smaller type, the result keeps the smaller type. `char c = flag ? 'a' : 65;` compiles, because `65`
+    fits in a `char`. Change `65` to a non-constant `int` variable and it does not.
+
+WHERE THIS BITES IN REAL CODE — three shapes that recur:
+
+    A DEFAULTING IDIOM. `int timeout = config.get("timeout") != null ? config.get("timeout") : 30;` —
+    fine, because the null check guards it. But `int timeout = cond ? config.get("timeout") : 30;` where
+    `cond` is something else entirely is not.
+    A MAP LOOKUP WITH A FALLBACK. `Boolean b = map.containsKey(k) ? map.get(k) : false;` — the
+    `containsKey` guard proves the KEY exists and says nothing about the VALUE being non-null.
+    A NULLABLE FIELD WITH A PRIMITIVE DEFAULT. `int count = obj.getCount() != null ? obj.getCount() : 0;`
+    — correct, and it calls the getter twice, which is its own problem.
+
+    THE PATTERN IN ALL THREE: A PRIMITIVE LITERAL AS THE "DEFAULT" BRANCH IS WHAT TURNS THE OTHER BRANCH
+    INTO AN UNBOXING SITE.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `Boolean b = cond ? map.get(k) : false;` throws when the value is null, even though `b` is a
+`Boolean` that would accept null. The primitive `false` forces promotion.
+
+CASE 2 — `Integer i = cond ? 1 : nullableInteger;` throws when `cond` is false. The `1` makes it a
+numeric conditional.
+
+CASE 3 — `Object o = true ? Integer.valueOf(1) : Double.valueOf(2.0);` prints `1.0`. Both are numeric
+wrappers, so promotion to `double` applies — and the untaken branch chose the type.
+
+CASE 4 — `containsKey` USED AS A NULL GUARD. It proves the key is present; it says nothing about the
+value. `HashMap` permits null values.
+
+CASE 5 — A GETTER CALLED TWICE. `obj.getX() != null ? obj.getX() : 0` is correct and evaluates the
+getter twice — a problem if it is expensive or if another thread can change it in between.
+
+CASE 6 — `char c = flag ? 'a' : 65;` COMPILES because `65` is a constant that fits in a `char`. Replace
+`65` with a non-constant `int` and it does not. A constant-expression special case.
+
+CASE 7 — A `long` AND AN `int` BRANCH. The result is `long`, so an `int` branch is widened silently —
+usually harmless, and occasionally the reason a value no longer fits its target.
+
+CASE 8 — A `float` AND A `double` BRANCH. Result `double`, so a `float` gains precision it does not
+have. Cosmetically odd in output.
+
+CASE 9 — NESTED TERNARIES. Each level is classified independently, so an inner conditional's type can
+force an outer promotion. Unreadable and unpredictable together.
+
+CASE 10 — THE SAME RULE IN A `switch` EXPRESSION. Arms of different numeric types promote the same way,
+so `Object o = switch (n) { case 1 -> 1; default -> 2.0; };` behaves like the ternary.
+
+CASE 11 — ASSUMING A CAST FIXES IT. `(Boolean)(cond ? map.get(k) : false)` still throws — the unboxing
+happens INSIDE the conditional, before the cast is applied.
+
+CASE 12 — HELPFUL NULLPOINTEREXCEPTIONS (JAVA 14+) MAKING IT DIAGNOSABLE. The message now names the
+operation, which turns "NPE on line 42" into something readable. Enabled by default from Java 15.""",
+
+"""5. THE ALTERNATIVES — how to write a default that cannot throw
+
+MAKE BOTH BRANCHES THE SAME REFERENCE TYPE. `Boolean.FALSE` rather than `false`, `Integer.valueOf(0)`
+rather than `0`. No primitive operand, no promotion, no unboxing. THE MINIMAL FIX, and five characters.
+
+`getOrDefault` FOR MAPS. `map.getOrDefault(k, false)` — one lookup, no conditional, and no ambiguity
+between "absent" and "present but null"... with the caveat that it returns the STORED null if the key
+is present with a null value. `Objects.requireNonNullElse(map.get(k), false)` covers both.
+
+`Objects.requireNonNullElse(value, fallback)` — states the intent, has no promotion rule, and reads as
+"use this unless it is null".
+
+`Optional.ofNullable(x).orElse(fallback)` when you are already in an `Optional` pipeline. Do not
+introduce one solely for this; it allocates and reads worse than `requireNonNullElse`.
+
+AN `if` STATEMENT. Genuinely the clearest answer when the branches differ in type or nullability:
+
+    Boolean enabled;
+    if (flags.containsKey(k)) enabled = flags.get(k); else enabled = false;
+
+    NO PROMOTION RULE APPLIES TO AN ASSIGNMENT. Each branch is assigned independently, and null is fine.
+
+DO NOT STORE NULL IN MAPS AT ALL. This is the root fix for the most common shape. `ConcurrentHashMap`
+forbids null for exactly this family of reasons — the ambiguity between "absent" and "mapped to null"
+is not resolvable — and a map that never stores null makes `getOrDefault` unambiguous.
+
+PRIMITIVES ALL THE WAY DOWN. If the value is genuinely a `boolean` or an `int`, use a
+`Map<String, Boolean>` that never contains null, or a primitive collection. The trap only exists because
+a value became an object that can be absent.
+
+STATIC ANALYSIS. IntelliJ flags "unboxing may produce NullPointerException" in a conditional; ErrorProne
+and SpotBugs have equivalent checks. WORTH TURNING ON, because this is invisible on review — the line
+contains no method call.
+
+WHAT TO SAY: "The type of a conditional expression is decided from BOTH operands before either branch is
+chosen, so a primitive in one branch promotes the whole expression and forces the other branch to be
+unboxed — even when the target variable is a wrapper that would happily hold null. I make both branches
+the same reference type, or use `requireNonNullElse`, or just write an `if`, where no promotion rule
+applies."
+
+""",
+
+"""6. HOW TO AVOID IT — numbered steps
+
+STEP 1 — WHEN ONE BRANCH IS A PRIMITIVE LITERAL, CHECK WHETHER THE OTHER CAN BE NULL. That combination
+is the entire bug.
+
+STEP 2 — MAKE BOTH BRANCHES THE SAME REFERENCE TYPE. `Boolean.FALSE`, `Integer.valueOf(0)`. Five
+characters.
+
+STEP 3 — PREFER `Objects.requireNonNullElse(value, fallback)`. It states the intent and has no promotion
+rule.
+
+STEP 4 — FOR MAPS, USE `getOrDefault` — remembering it returns a STORED null if the key is present with
+a null value.
+
+STEP 5 — DO NOT USE `containsKey` AS A NULL GUARD. It proves the key exists, not that the value is
+non-null.
+
+STEP 6 — DO NOT STORE NULL IN MAPS. That removes the ambiguity at the source, which is why
+`ConcurrentHashMap` forbids it outright.
+
+STEP 7 — WRITE AN `if` WHEN THE BRANCHES DIFFER IN TYPE OR NULLABILITY. Assignments are not subject to
+the conditional's promotion rule.
+
+STEP 8 — DO NOT MIX NUMERIC TYPES ACROSS BRANCHES. An `Integer` and a `Double` promote to `double`, so
+`1` becomes `1.0` and the type changes.
+
+STEP 9 — DO NOT CALL A GETTER TWICE TO NULL-CHECK IT. Assign it to a local first — cheaper, and safe
+against a concurrent change.
+
+STEP 10 — AVOID NESTED TERNARIES ENTIRELY. Each level classifies independently and the interaction is
+unpredictable.
+
+STEP 11 — REMEMBER A CAST DOES NOT HELP. The unboxing happens inside the conditional, before the cast.
+
+STEP 12 — TURN ON THE INSPECTION. "Unboxing may produce NullPointerException" — this is invisible on
+review, because the line contains no method call.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`Boolean enabled = flags.containsKey(k) ? flags.get(k) : false;` throws a NullPointerException when the
+stored value is null — and the thing to notice is that the target variable is a `Boolean`, which would
+hold null perfectly happily. Nothing on that line calls a method on a null reference.
+
+The culprit is the OTHER branch. `false` is a primitive boolean. Because one operand of the conditional
+is a primitive, the whole EXPRESSION is promoted to a primitive type — so the selected branch has to be
+unboxed to satisfy that type, and unboxing null throws. Change `false` to `Boolean.FALSE` and the
+identical-looking line is fine.
+
+So it's a TYPE rule, and the type of a conditional expression is determined from BOTH operands BEFORE
+either branch is chosen. Which means reading the branch that runs tells you nothing about whether it
+throws, and there's no defensive check you can add inside the branch, because the unboxing is inserted
+around it by the compiler.
+
+The classification is the mechanism. If both operands are boolean-ish, it's a boolean conditional. If
+both are numeric-convertible, it's a numeric conditional. Otherwise it's a REFERENCE conditional, and
+that's the only one that can't unbox. `Boolean` and `boolean` gives you the first; `Boolean` and
+`Boolean` gives you the third. One operand changed from a primitive to a wrapper, the classification
+changed, and with it whether the other branch gets unboxed.
+
+The most striking version is: `Object o = true ? Integer.valueOf(1) : Double.valueOf(2.0);` prints
+"1.0". The condition is TRUE, so the Integer branch is taken — and it prints a Double. Both operands are
+numeric wrappers, so binary numeric promotion gives double; the Integer is unboxed, widened, re-boxed.
+The branch that wasn't taken changed both the value and the type of the branch that was. That's the
+clearest proof the rule is about the EXPRESSION, not the branch.
+
+And I'd say the rule isn't a mistake — it's the price of the expression having a static type at all.
+`int x = flag ? 1 : 2` has to be assignable to an int at compile time whichever branch runs, so the type
+can't depend on the branch. The unfortunate part is only that the unboxing is SILENT. If it required an
+explicit cast this would be visible.
+
+Practically: when one branch is a primitive literal, check whether the other can be null — that
+combination is the whole bug. Make both branches the same reference type, or use
+Objects.requireNonNullElse, or just write an `if`, because assignments aren't subject to the promotion
+rule. And I'd stop storing null in maps, which is the root fix for the most common shape — it's exactly
+why ConcurrentHashMap forbids null outright.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE ONE THAT REACHES PRODUCTION ─────────────────────────────────
+    Map<String, Boolean> flags = new HashMap<>();
+    flags.put("beta", null);                       // legal: HashMap allows null values
+
+    Boolean enabled = flags.containsKey("beta") ? flags.get("beta") : false;
+    //                                                                 ^^^^^ A PRIMITIVE
+    //   boolean. It forces the WHOLE expression to type `boolean`, so flags.get(...)
+    //   is UNBOXED → NullPointerException.
+    //   AND `enabled` IS A Boolean THAT WOULD HAVE HELD null PERFECTLY WELL.
+    //   Nothing on this line calls a method on a null reference.
+
+    Boolean enabled = flags.containsKey("beta") ? flags.get("beta") : Boolean.FALSE;
+    //                                                                ^^^^^^^^^^^^^ now
+    //   both operands are references → a REFERENCE conditional → NO promotion, NO
+    //   unboxing. FIVE CHARACTERS, in the branch that was not even taken.
+
+    // ── THE THREE CLASSIFICATIONS ───────────────────────────────────────
+    cond ? aString  : null            // REFERENCE  → lub of the two. Cannot unbox.
+    cond ? aBoolean : false           // BOOLEAN    → type `boolean`. UNBOXES.
+    cond ? anInteger: 0               // NUMERIC    → type `int`.     UNBOXES.
+    cond ? anInteger: aDouble         // NUMERIC    → promoted to `double`. UNBOXES BOTH.
+    // The first two operands DECIDE THE CLASSIFICATION. Everything follows from that.
+
+    // ── WHAT THE COMPILER ACTUALLY EMITS ────────────────────────────────
+    // source:   Boolean b = cond ? map.get(k) : false;
+    // becomes:  Boolean b = Boolean.valueOf( cond ? map.get(k).booleanValue() : false );
+    //                                                        ^^^^^^^^^^^^^^^ inserted.
+    //   This is why no defensive check inside the branch can help: the unboxing is
+    //   wrapped AROUND the branch by the compiler.
+
+    // ── THE ONE THAT LOOKS IMPOSSIBLE ───────────────────────────────────
+    Object o = true ? Integer.valueOf(1) : Double.valueOf(2.0);
+    System.out.println(o);             // 1.0     ← a DOUBLE
+    System.out.println(o.getClass());  // class java.lang.Double
+    //   The condition is TRUE, so the Integer branch runs. But both operands are
+    //   numeric wrappers, so BINARY NUMERIC PROMOTION gives `double`: the Integer is
+    //   unboxed to int, widened to double, and re-boxed as a Double.
+    //   THE UNTAKEN BRANCH CHANGED THE VALUE AND THE TYPE OF THE TAKEN ONE.
+
+    // ── containsKey IS NOT A NULL GUARD ─────────────────────────────────
+    if (map.containsKey(k)) { ... }    // proves the KEY exists.
+    //                                    Says NOTHING about the value being non-null.
+
+    // ── THE FIXES, IN ORDER OF PREFERENCE ───────────────────────────────
+    Boolean b = Objects.requireNonNullElse(map.get(k), Boolean.FALSE);  // states intent
+    boolean b = map.getOrDefault(k, false);        // one lookup — but returns a STORED
+    //                                                null if the key IS present
+    Boolean b;                                     // no promotion rule applies to an
+    if (map.containsKey(k)) b = map.get(k);        // ASSIGNMENT. Each branch stands
+    else                    b = false;             // alone.
+
+    // ── AND ONE THAT DOES NOT WORK ──────────────────────────────────────
+    Boolean b = (Boolean)(cond ? map.get(k) : false);
+    //          ^^^^^^^^^ STILL THROWS. The unboxing happens INSIDE the conditional,
+    //   before the cast is ever applied.
+
+    // ── A CONSTANT-EXPRESSION SPECIAL CASE ──────────────────────────────
+    char c = flag ? 'a' : 65;          // ✓ compiles — 65 is a CONSTANT that fits in char
+    int n = 65;
+    char d = flag ? 'a' : n;           // ✗ does not compile — n is not a constant, so
+    //                                      promotion gives `int`""",
+
+"""9. THE TRACE — the same line, three variations
+
+VARIATION 1 — THE THROWING FORM. `Boolean b = cond ? map.get(k) : false;` where `map.get(k)` is null.
+
+    step  what the COMPILER does                              at compile time
+    ---------------------------------------------------------------------------------
+    1     look at both operand types: `Boolean` and `boolean`  —
+    2     one is a PRIMITIVE → this is a BOOLEAN CONDITIONAL   the expression's type
+                                                                is `boolean`
+    3     the reference operand must yield a `boolean`         insert `.booleanValue()`
+    4     the result must be assigned to a `Boolean`           wrap in `valueOf(...)`
+    ---------------------------------------------------------------------------------
+    step  what happens AT RUNTIME                              result
+    ---------------------------------------------------------------------------------
+    5     `cond` is true → the first branch is selected        —
+    6     `map.get(k)` returns null                            —
+    7     the inserted `.booleanValue()` runs on null          NullPointerException
+    ---------------------------------------------------------------------------------
+    STEPS 1–4 HAPPENED BEFORE THE PROGRAM RAN, AND THEY ARE WHY IT THROWS. The runtime steps contain no
+    mistake at all.
+
+VARIATION 2 — ONE TOKEN CHANGED. `Boolean b = cond ? map.get(k) : Boolean.FALSE;`
+
+    step  what the COMPILER does
+    ---------------------------------------------------------------------------------
+    1     both operand types are `Boolean`                      —
+    2     NO primitive operand → a REFERENCE CONDITIONAL        type is `Boolean`
+    3     no conversion is required of either operand           NOTHING IS INSERTED
+    ---------------------------------------------------------------------------------
+    at runtime: null flows through and is assigned. `b` is null. No exception.
+    ---------------------------------------------------------------------------------
+    THE DIFFERENCE IS ENTIRELY IN STEP 2, AND STEP 2 NEVER LOOKED AT WHICH BRANCH WOULD RUN.
+
+VARIATION 3 — THE ONE THAT CHANGES A VALUE.
+`Object o = true ? Integer.valueOf(1) : Double.valueOf(2.0);`
+
+    step  what happens                                          value / type
+    ---------------------------------------------------------------------------------
+    1     both operands are numeric wrappers → NUMERIC           —
+          CONDITIONAL
+    2     binary numeric promotion: int and double → DOUBLE      expression type
+                                                                 is `double`
+    3     the condition is TRUE → the Integer branch is taken    Integer(1)
+    4     unbox to `int`                                          1
+    5     widen to `double`                                       1.0
+    6     the target is `Object`, so box                          Double(1.0)
+    7     println                                                 prints "1.0"
+    ---------------------------------------------------------------------------------
+    NO BRANCH WAS MISTAKEN. The taken branch was `Integer.valueOf(1)`. It arrived as a `Double` holding
+    `1.0` because the OTHER branch was a `Double`. Steps 4 and 5 are the entire surprise, and they were
+    decided at step 2 — before the condition was evaluated.
+
+AND THE PRODUCTION SHAPE, showing why it survives testing:
+
+    test data                                     result
+    ---------------------------------------------------------------------------------
+    flags = {"beta": true}                         works
+    flags = {"beta": false}                        works
+    flags = {}                                     works — containsKey is false, the
+                                                   `false` branch runs, nothing unboxes
+    flags = {"beta": null}                         THROWS
+    ---------------------------------------------------------------------------------
+    THREE OF THE FOUR CASES ARE FINE, INCLUDING THE OBVIOUS "MISSING KEY" CASE THAT EVERY TEST COVERS.
+    The failing case requires a map that CONTAINS the key with a NULL value — which is exactly the state
+    a partially-populated configuration or a database column with NULLs produces, and exactly the state
+    nobody writes a test for.
+
+WHAT PRODUCED WHAT:
+    THE EXPRESSION NEEDING A STATIC TYPE   produced the whole rule — it is a consequence, not a bug.
+    ONE PRIMITIVE OPERAND                  produced the classification, and therefore the inserted
+                                           unboxing.
+    SILENT UNBOXING                         produced the invisibility. If it required a cast, none of
+                                           this would be surprising.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    A conditional expression has ONE static type, determined from BOTH operands before either branch is
+    evaluated.
+    Three classifications: boolean, numeric, and reference. Only the reference form cannot unbox.
+    Binary numeric promotion: `double` > `float` > `long` > `int`, and `byte`/`short`/`char` promote to
+    `int`.
+    A constant expression that fits the other operand's smaller type keeps that smaller type.
+    A cast around the conditional does not help — the unboxing happens inside it.
+    Java 14+ helpful NullPointerExceptions name the operation, which makes this diagnosable at last.
+
+THE #1 MISTAKE: a primitive literal as the "default" branch, with a nullable wrapper as the other. That
+combination is the entire bug.
+
+THE #2 MISTAKE: assuming the target variable's type protects you. A `Boolean` target does not stop the
+expression being promoted to `boolean`.
+
+THE #3 MISTAKE: reading only the branch that runs. The type was decided from both.
+
+THE #4 MISTAKE: `containsKey` as a null guard. It proves the key exists; the value may still be null.
+
+THE #5 MISTAKE: mixing numeric types across branches. `Integer` and `Double` promote to `double`, so `1`
+becomes `1.0` and the runtime type changes.
+
+THE #6 MISTAKE: adding a cast to fix it. The unboxing precedes the cast.
+
+THE #7 MISTAKE: calling a getter twice to null-check it. Expensive, and unsafe if another thread can
+change it.
+
+THE #8 MISTAKE: nested ternaries. Each level classifies independently and the interaction is
+unpredictable.
+
+THE #9 MISTAKE: storing null in maps at all. That is the root cause of the commonest shape, and why
+`ConcurrentHashMap` forbids it.
+
+THE #10 MISTAKE: assuming a test suite would catch it. Missing keys and present non-null values both
+work; only a present NULL value fails.
+
+THE #11 MISTAKE: forgetting the same promotion applies to `switch` expression arms.
+
+ONE-SENTENCE TAKEAWAY: a conditional expression must have ONE static type, computed from BOTH operands
+before either branch is chosen — so a primitive in one branch classifies the whole expression as
+primitive and forces the other branch to be UNBOXED, which throws on null even when the target variable
+is a wrapper that would have accepted it, and which likewise turns `true ? Integer.valueOf(1) :
+Double.valueOf(2.0)` into the Double `1.0` because the untaken branch determined the type; the rule is
+the price of static typing rather than a defect, the unboxing is what makes it invisible, and the fixes
+are to make both branches the same reference type, use `Objects.requireNonNullElse`, or write an `if` —
+where no promotion rule applies at all.""",
+]
+
+
+DEEP["list.remove(1) — the overload that removes the wrong thing"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two methods with the same name and opposite meanings
+
+    List<Integer> list = new ArrayList<>(List.of(10, 20, 30));
+    list.remove(1);                        // removes 20 — the element AT INDEX 1
+    list.remove(Integer.valueOf(1));       // removes the VALUE 1 (there isn't one)
+
+    BOTH COMPILE. Both are `remove`. One means "by position" and the other means "by value", and on a
+    `List<Integer>` the argument `1` is a plausible spelling of either.
+
+The reason is that `List` inherits TWO different `remove` methods from two different places:
+
+    `boolean remove(Object o)`  — from `Collection`. Remove the first element EQUAL to this.
+    `E remove(int index)`       — from `List`. Remove the element AT this position.
+
+    For a `List<String>` those never collide: `remove("a")` can only mean the first, `remove(0)` only
+    the second. FOR A `List<Integer>` THEY BOTH APPLY TO THE SAME LITERAL, and the compiler picks
+    silently.
+
+    IT PICKS `remove(int)` — the INDEX one — because overload resolution prefers a match that needs no
+    boxing. So `remove(1)` removes the SECOND element, and everyone who wrote it meant "remove the
+    value 1".
+
+WHY IT IS WORTH KNOWING: because of HOW it fails. If the list is short, you get an
+`IndexOutOfBoundsException` — loud, immediate, and easy to diagnose. IF THE LIST IS LONG ENOUGH, YOU
+SILENTLY REMOVE THE WRONG ELEMENT. No exception, no warning, and a data bug that surfaces somewhere
+else entirely.
+
+    AND THE SHORT-LIST CASE IS THE LUCKY ONE. It is also the case a unit test with three elements is
+    most likely to produce, which means the trap tends to be found in development when the data is small
+    and to be silent when it is not.
+
+THE EVERYDAY VERSION: a filing system where "remove 5" could mean "remove the fifth folder" or "remove
+the folder labelled 5", and the clerk always assumes position without asking. With four folders they
+tell you there is no fifth. With five hundred, they quietly remove the wrong one.
+
+TERMS AS THEY APPEAR:
+- OVERLOAD RESOLUTION: choosing among same-named methods from the argument types, at COMPILE time.
+- AUTOBOXING: the compiler inserting `Integer.valueOf(...)` when an object is required.
+- ERASURE: generic type arguments being removed at compile time, which is why `Collection.remove` takes
+  `Object` rather than `E`.""",
+
+"""2. THE INTUITION — why the compiler prefers the index, and why the API is like this
+
+OVERLOAD RESOLUTION HAPPENS IN THREE ORDERED PHASES:
+
+    PHASE 1  find a match using only WIDENING conversions. No boxing, no varargs.
+    PHASE 2  if none, allow BOXING and unboxing.
+    PHASE 3  if still none, allow VARARGS.
+
+    THE FIRST PHASE TO FIND ANY APPLICABLE METHOD WINS, and later phases are never consulted.
+
+    `list.remove(1)` with an `int` literal:
+        PHASE 1 — `remove(int)` matches EXACTLY. No conversion needed at all.
+        → resolved. `remove(Object)` would have required boxing, which is phase 2, and phase 2 is never
+        reached.
+
+    SO THE INDEX OVERLOAD WINS BECAUSE IT NEEDS NO CONVERSION, and that is not a special rule about
+    `List` — it is the same phase ordering that makes `f(long)` beat `f(Integer)` for an `int` argument.
+
+    THE ORDERING EXISTS FOR BACKWARDS COMPATIBILITY: autoboxing arrived in Java 5, and it was not
+    allowed to change the meaning of any program written before it. Making boxing a later phase
+    guarantees that. WHICH MEANS THIS TRAP IS A DIRECT CONSEQUENCE OF A COMPATIBILITY GUARANTEE, not an
+    oversight.
+
+NOW WHY THE API HAS TWO `remove`s AT ALL, since a cleaner design would have avoided the collision:
+
+    `Collection.remove(Object)` PREDATES GENERICS. In Java 1.2 there was no `E`, so it took `Object`.
+    `List.remove(int)` also predates generics, and index-based removal is genuinely a list operation.
+    WHEN GENERICS WERE RETROFITTED IN JAVA 5, `Collection.remove` COULD NOT BE CHANGED TO `remove(E)` —
+    that would have broken every existing caller passing an unrelated object, and the collections API
+    was designed to be source- and binary-compatible across that transition.
+
+    SO THE COLLISION IS THE PRICE OF RETROFITTING GENERICS ONTO A 1998 API WITHOUT BREAKING ANYONE. It
+    is the same reason `Map.get` takes `Object` and `Collection.contains` takes `Object` — and the same
+    reason `list.contains("1")` on a `List<Integer>` compiles and quietly returns false forever.
+
+    THAT LAST ONE IS THE SIBLING TRAP AND IS ARGUABLY WORSE, because it never throws at all.
+
+THE RETURN TYPES DIFFER, WHICH IS OCCASIONALLY YOUR RESCUE:
+
+    `E remove(int index)`       returns the removed ELEMENT
+    `boolean remove(Object o)`  returns whether anything was removed
+
+    So on a `List<Integer>`, `boolean ok = list.remove(1);` DOES NOT COMPILE — the chosen overload
+    returns `Integer`. THE COMPILER CATCHES YOU ONLY IF YOU HAPPEN TO USE THE RESULT, which most callers
+    do not.""",
+
+"""3. THE MECHANISM — the four spellings, and what each resolves to
+
+    list.remove(1)                       → remove(int)     — INDEX 1. Phase 1, exact match.
+    list.remove(Integer.valueOf(1))      → remove(Object)  — the VALUE 1.
+    list.remove((Integer) 1)             → remove(Object)  — the VALUE 1. The cast changes the
+                                                             argument's STATIC type, which is what
+                                                             overload resolution reads.
+    list.remove(Integer.valueOf(1).intValue()) → remove(int) — index again. Unboxing puts you back.
+
+    THE CAST IS DOING SOMETHING SUBTLE AND WORTH NAMING: overload resolution uses the argument's
+    DECLARED (static) type, not its runtime value. `(Integer) 1` is an `Integer` at compile time, so
+    only `remove(Object)` is applicable and phase 1 finds nothing.
+
+WHAT HAPPENS WITH A VARIABLE RATHER THAN A LITERAL — this is where it gets genuinely treacherous:
+
+    int i = 1;        list.remove(i);    → remove(int)     — INDEX
+    Integer i = 1;    list.remove(i);    → remove(Object)  — VALUE
+
+    THE SAME LINE OF CODE, `list.remove(i)`, MEANS TWO DIFFERENT THINGS DEPENDING ON A DECLARATION
+    ELSEWHERE. Change `int` to `Integer` in a refactor — or accept an `Integer` from a method instead of
+    an `int` — and the behaviour flips with no other edit. That is the version that survives review,
+    because the offending line is unchanged.
+
+THE FAMILY OF `Object`-TAKING COLLECTION METHODS, all with the same root cause:
+
+    `Collection.remove(Object)`     `list.remove("1")` on a `List<Integer>` compiles, does nothing.
+    `Collection.contains(Object)`   `list.contains("1")` compiles, ALWAYS false. Never throws.
+    `Map.get(Object)`               `map.get("1")` on a `Map<Integer,?>` compiles, always null.
+    `Map.remove(Object)`            same.
+    `List.indexOf(Object)`          same.
+
+    THESE ARE WORSE THAN `remove(1)` IN ONE RESPECT: THEY CANNOT THROW. `remove(1)` at least fails
+    loudly on a short list. `contains` with the wrong type just returns false forever, and the symptom is
+    "the cache never hits" or "the item is never found".
+
+WHY `remove(int)` CAN THROW AND WHY THAT IS THE GOOD OUTCOME:
+    `remove(index)` bounds-checks and throws `IndexOutOfBoundsException` when `index >= size`. On a
+    three-element list, `remove(5)` fails immediately and unmistakably. ON A FIVE-HUNDRED-ELEMENT LIST IT
+    QUIETLY REMOVES ELEMENT 5. The failure mode depends on the data, which is why the bug's visibility is
+    inversely related to how much it matters.
+
+THE OTHER LISTS THAT THROW FOR A DIFFERENT REASON: `List.of(...)` is immutable and `Arrays.asList(...)`
+is fixed-size, so `remove` on either throws `UnsupportedOperationException` regardless of which overload
+was chosen — a separate trap that often masks this one during experimentation.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `list.remove(1)` ON A `List<Integer>` REMOVING INDEX 1. The headline. Compiles, and means the
+opposite of what most callers intend.
+
+CASE 2 — THE SILENT VERSION. If the list is long enough, no exception — just the wrong element gone, and
+a data bug that surfaces elsewhere.
+
+CASE 3 — THE SAME LINE MEANING DIFFERENT THINGS. `int i` selects the index overload; `Integer i` selects
+the value overload. A declaration far away decides.
+
+CASE 4 — A REFACTOR THAT FLIPS IT. Changing a parameter from `int` to `Integer`, or extracting a method
+that returns `Integer`, silently changes `list.remove(i)` from value to index with no edit to that line.
+
+CASE 5 — `list.contains("1")` ON A `List<Integer>`. Compiles, always false, NEVER throws. The sibling
+trap, and worse because there is no failure mode at all.
+
+CASE 6 — `map.get("1")` ON A `Map<Integer, ?>`. Compiles, always null. Symptom: "the cache never hits".
+
+CASE 7 — `boolean ok = list.remove(1);` DOES NOT COMPILE on a `List<Integer>`, because `remove(int)`
+returns `E`. The compiler rescues you only if you use the result.
+
+CASE 8 — `List<Long>` AND AN `int` LITERAL. `list.remove(1)` is still the index overload; and
+`list.remove(Long.valueOf(1))` is needed for the value, because an `Integer` never `equals` a `Long`.
+
+CASE 9 — `List.of(...)` OR `Arrays.asList(...)`. `UnsupportedOperationException` regardless of overload —
+immutable and fixed-size respectively. This often masks the real bug while experimenting.
+
+CASE 10 — `list.remove(someShort)` OR `remove(someChar)`. Widening to `int` is phase 1, so the INDEX
+overload wins for those too.
+
+CASE 11 — `removeAll(Collection)` HAS NO SUCH AMBIGUITY, which makes it a genuinely safer way to express
+"remove these values".
+
+CASE 12 — AN IDE OR LINTER WARNING SUPPRESSED. IntelliJ flags "suspicious call to remove" on a
+`List<Integer>`. That warning exists for exactly this and is worth never suppressing.""",
+
+"""5. THE ALTERNATIVES — how to say what you mean
+
+BE EXPLICIT AT THE CALL SITE. If you mean the value, say so in a way the compiler cannot misread:
+
+    list.remove(Integer.valueOf(1));      // clearest
+    list.remove((Integer) 1);             // shortest
+    list.remove(Integer.valueOf(x));      // when x is an int variable
+
+    And if you mean the index, `list.remove(index)` is already right — but consider naming the variable
+    `index` so a reader can tell.
+
+`removeIf` — THE MODERN ANSWER, and it has no ambiguity at all:
+
+    list.removeIf(v -> v == 1);           // removes EVERY occurrence
+    list.removeIf(v -> v.equals(target)); // for a nullable target
+
+    It also removes ALL matches rather than the first, which is usually what "remove the value 1" meant,
+    and on an `ArrayList` it compacts in ONE pass — O(n) total rather than O(n) per removal.
+
+`removeAll(Collection)` when you have several values. No overload collision, and clear at the call site.
+
+USE PRIMITIVES OR A DIFFERENT STRUCTURE. `List<Integer>` is the only place this trap exists:
+    an `int[]` or a primitive collection (Eclipse Collections, fastutil) has no `Object` overloads and no
+    boxing;
+    a `Set<Integer>` has only `remove(Object)` — no index concept, so no ambiguity;
+    a `Map<Integer, ?>` likewise.
+    THE TRAP IS SPECIFIC TO A LIST OF INTEGERS, WHICH IS ALSO USUALLY A SIGN THE DATA WANTED A DIFFERENT
+    SHAPE.
+
+TURN ON THE STATIC ANALYSIS. IntelliJ's "Suspicious collection method call", ErrorProne's
+`CollectionIncompatibleType`, SpotBugs' equivalents. THESE CATCH THE WHOLE FAMILY — `remove`, `contains`,
+`indexOf`, `Map.get` with an incompatible type — and that family is far larger than the one method this
+entry is named after.
+
+FOR THE SIBLING TRAPS, THE SAME PRINCIPLE: `contains`, `indexOf`, `Map.get` and `Map.remove` all take
+`Object`, so a wrong-typed argument compiles and silently returns nothing. A linter is the only reliable
+defence, because there is no runtime symptom to notice.
+
+WHY THE API IS NOT FIXED: changing `Collection.remove(Object)` to `remove(E)` would break source
+compatibility for every existing caller, and the collections framework's compatibility guarantee is
+worth more than this trap costs. IT IS A DELIBERATE, DOCUMENTED TRADE, and saying so is a better answer
+than calling it a design flaw.
+
+WHAT TO SAY: "`List` inherits `remove(Object)` from `Collection` and `remove(int)` from `List`, and for
+a `List<Integer>` both apply. Overload resolution picks the `int` one because an exact match needs no
+boxing and that is phase one. So `remove(1)` removes an INDEX. I would write `removeIf` or an explicit
+`Integer.valueOf`, and turn on the linter — because the same `Object` parameter makes
+`contains` and `Map.get` silently return nothing, which is worse since it cannot throw."
+
+""",
+
+"""6. HOW TO AVOID IT — numbered steps
+
+STEP 1 — ON A `List<Integer>`, NEVER WRITE `remove(<int literal>)` MEANING A VALUE. Assume it means the
+index, because it does.
+
+STEP 2 — SAY WHICH ONE YOU MEAN. `remove(Integer.valueOf(x))` for the value, `remove(index)` with a
+variable named `index` for the position.
+
+STEP 3 — PREFER `removeIf`. No ambiguity, removes all matches, and one compacting pass on an
+`ArrayList`.
+
+STEP 4 — USE `removeAll(Collection)` for several values.
+
+STEP 5 — WATCH FOR `int` VERSUS `Integer` IN DECLARATIONS. The same call line means different things,
+and a refactor can flip it without touching that line.
+
+STEP 6 — TURN ON THE COLLECTION-METHOD INSPECTION. IntelliJ's "suspicious collection call", ErrorProne's
+`CollectionIncompatibleType`. It covers the whole family, not just `remove`.
+
+STEP 7 — REMEMBER `contains`, `indexOf`, `Map.get` AND `Map.remove` TAKE `Object`. A wrong-typed argument
+compiles and silently finds nothing — no exception ever.
+
+STEP 8 — DO NOT ASSUME A PASSING TEST MEANS ANYTHING. On a short list, the index version throws; on a
+long one it silently succeeds. Small test data hides the dangerous case.
+
+STEP 9 — IF THE DATA IS BULK NUMERIC, USE `int[]` OR A PRIMITIVE COLLECTION. No `Object` overloads, no
+boxing, and the trap does not exist.
+
+STEP 10 — IF IT IS REALLY A SET, USE A `Set`. There is no index concept, so no ambiguity.
+
+STEP 11 — REMEMBER `List.of` AND `Arrays.asList` THROW `UnsupportedOperationException` on any removal.
+That often masks this bug while you are experimenting.
+
+STEP 12 — WHEN YOU SEE A `List<Integer>` AT ALL, ASK WHETHER IT SHOULD BE SOMETHING ELSE. This trap lives
+in exactly one type combination.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`list.remove(1)` on a `List<Integer>` removes the element at INDEX 1 — the second element — not the
+value 1. And `list.remove(Integer.valueOf(1))` removes the value. Both compile.
+
+The reason is that `List` inherits two different `remove` methods. `boolean remove(Object)` comes from
+`Collection` and means "remove the first element equal to this". `E remove(int index)` comes from `List`
+and means "remove the element at this position". For a `List<String>` those never collide. For a
+`List<Integer>` the literal `1` is a plausible spelling of either, and the compiler picks silently.
+
+It picks the INDEX one, and the reason is the general overload-resolution rule rather than anything
+specific to List. Java resolves in three ordered phases: widening only, then boxing allowed, then
+varargs. `remove(int)` matches EXACTLY in phase one with no conversion, so phase two — where boxing
+would make `remove(Object)` applicable — is never reached. Same rule that makes `f(long)` beat
+`f(Integer)` for an int argument. And that ordering exists because autoboxing arrived in Java 5 and
+wasn't allowed to change the meaning of any earlier program. So this trap is a direct consequence of a
+compatibility guarantee.
+
+Why the API has two removes at all is the same story one level up. `Collection.remove(Object)` predates
+generics — in 1998 there was no E, so it took Object. When generics were retrofitted in Java 5, it
+couldn't be changed to `remove(E)` without breaking every existing caller. So the collision is the price
+of retrofitting generics onto a 1998 API without breaking anyone. Same reason `Map.get` and
+`Collection.contains` take Object.
+
+What makes it dangerous is HOW it fails. On a short list you get IndexOutOfBoundsException — loud and
+easy. On a long enough list you silently remove the wrong element, with no exception, and the data bug
+surfaces somewhere else. So the visibility of the bug is inversely related to how much it matters, and
+a three-element unit test produces the loud version.
+
+There's a nastier variant too: `int i = 1; list.remove(i)` is the index; `Integer i = 1;
+list.remove(i)` is the value. The SAME LINE means two different things depending on a declaration
+elsewhere, so a refactor from int to Integer flips the behaviour without touching that line.
+
+And I'd flag the sibling traps as worse, because they can't throw at all. `list.contains("1")` on a
+`List<Integer>` compiles and is always false. `map.get("1")` on a `Map<Integer,?>` compiles and is always
+null. The symptom is "the cache never hits". Same root cause — those methods take Object.
+
+Practically: `removeIf` for anything value-based, which has no ambiguity and removes all matches in one
+compacting pass, and turn on the collection-method inspection, because it catches the whole family.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE TWO METHODS ─────────────────────────────────────────────────
+    boolean remove(Object o)   // from Collection — remove the first element EQUAL to o
+    E       remove(int index)  // from List       — remove the element AT index
+    // For List<String> these never collide. For List<Integer> the literal 1 is a
+    // plausible spelling of either.
+
+    List<Integer> list = new ArrayList<>(List.of(10, 20, 30));
+    list.remove(1);                     // → [10, 30]   removed INDEX 1, the value 20
+    list.remove(Integer.valueOf(1));    // → unchanged  there is no VALUE 1
+    list.remove((Integer) 1);           // → unchanged  the cast changes the STATIC type
+
+    // ── WHY THE INDEX ONE WINS ──────────────────────────────────────────
+    // PHASE 1  widening only    → remove(int) matches EXACTLY. RESOLVED.
+    // PHASE 2  boxing allowed   → never reached
+    // PHASE 3  varargs          → never reached
+    // Not a special rule about List — the same ordering that makes f(long) beat
+    // f(Integer) for an int argument. It exists because autoboxing arrived in Java 5
+    // and was not allowed to change the meaning of any earlier program.
+
+    // ── THE VARIANT THAT SURVIVES REVIEW ────────────────────────────────
+    int i = 1;        list.remove(i);   // → remove(int)    — INDEX
+    Integer i = 1;    list.remove(i);   // → remove(Object) — VALUE
+    //                ^^^^^^^^^^^^^^^ THE SAME LINE, TWO MEANINGS, decided by a
+    //   declaration elsewhere. Change a parameter from int to Integer in a refactor
+    //   and the behaviour flips with no edit to this line.
+
+    // ── HOW IT FAILS, AND WHY THAT IS BACKWARDS ─────────────────────────
+    List<Integer> small = new ArrayList<>(List.of(10, 20, 30));
+    small.remove(5);            // → IndexOutOfBoundsException. LOUD. Easy. LUCKY.
+    List<Integer> big = ...;    // 500 elements
+    big.remove(5);              // → silently removes element 5. No exception.
+    //                             The data bug surfaces somewhere else entirely.
+    // A three-element unit test produces the LOUD version. Production produces the
+    // silent one.
+
+    // ── THE COMPILER RESCUES YOU ONLY IF YOU USE THE RESULT ─────────────
+    boolean ok = list.remove(1);
+    //           ^^^^^^^^^^^^^^ DOES NOT COMPILE on a List<Integer>: the chosen
+    //   overload, remove(int), returns E — an Integer, not a boolean.
+    Integer removed = list.remove(1);   // compiles, and confirms it chose the INDEX
+
+    // ── THE SIBLINGS, WHICH ARE WORSE BECAUSE THEY CANNOT THROW ─────────
+    List<Integer> nums = List.of(1, 2, 3);
+    nums.contains("1");        // COMPILES. ALWAYS FALSE. Never throws.
+    nums.indexOf("1");         // COMPILES. Always -1.
+    Map<Integer,String> m = ...;
+    m.get("1");                // COMPILES. ALWAYS NULL. Symptom: "the cache never hits".
+    m.remove("1");             // COMPILES. Does nothing, forever.
+    // Same root cause: all of these take Object, because Collection and Map predate
+    // generics and could not be changed to take E without breaking every caller.
+
+    // ── THE FIXES ───────────────────────────────────────────────────────
+    list.removeIf(v -> v == 1);          // ← no ambiguity, removes ALL matches, and on
+    //                                      an ArrayList it compacts in ONE pass:
+    //                                      O(n) total rather than O(n) per removal
+    list.removeAll(Set.of(1, 2));        // ← several values, no collision
+    list.remove(Integer.valueOf(1));     // ← explicit, if you really want the first
+
+    // ── AND ONE THAT MASKS THE BUG WHILE YOU EXPERIMENT ─────────────────
+    List.of(1,2,3).remove(1);            // UnsupportedOperationException — immutable
+    Arrays.asList(1,2,3).remove(1);      // UnsupportedOperationException — fixed size
+    // Neither tells you anything about which overload was chosen.""",
+
+"""9. THE TRACE — resolution, then execution, then the family
+
+TRACE 1 — HOW THE COMPILER CHOOSES. `list.remove(1)` where `list` is a `List<Integer>`:
+
+    phase  candidates considered                     applicable?          outcome
+    ---------------------------------------------------------------------------------
+    1      remove(int) with argument `int`            EXACT MATCH,         RESOLVED —
+           (widening conversions only)                no conversion        remove(int)
+           remove(Object) with argument `int`         needs BOXING →
+                                                      not eligible here
+    2      (never consulted)
+    3      (never consulted)
+    ---------------------------------------------------------------------------------
+    NOTHING ABOUT `List` IS SPECIAL HERE. Phase 1 found a candidate, so the search stopped. That is the
+    same rule that makes `f(long)` beat `f(Integer)` for an `int` argument, and it exists so that adding
+    autoboxing in Java 5 could not change any pre-existing program's behaviour.
+
+TRACE 2 — THE SAME CALL, TWO DECLARATIONS:
+
+    declaration      argument's     what phase 1 finds                chosen          meaning
+                     STATIC type    (widening/subtyping only)
+    ---------------------------------------------------------------------------------
+    int i = 1;       int            remove(int) — exact match.        remove(int)     INDEX
+                                    remove(Object) would need
+                                    BOXING, so it is not eligible.
+    Integer i = 1;   Integer        remove(Object) — Integer IS an    remove(Object)  VALUE
+                                    Object, a plain subtyping
+                                    conversion. remove(int) would
+                                    need UNBOXING, so it is not
+                                    eligible.
+    ---------------------------------------------------------------------------------
+    BOTH ROWS RESOLVE IN PHASE 1, to OPPOSITE methods. Neither call ever reaches phase 2.
+    OVERLOAD RESOLUTION READS THE ARGUMENT'S DECLARED TYPE, NOT ITS VALUE. Which is why a cast works as a
+    fix — `(Integer) 1` changes the static type — and why a refactor that changes a declaration flips the
+    behaviour of a line it never touched.
+
+TRACE 3 — EXECUTION, AND THE INVERTED FAILURE MODE:
+
+    list contents                     call            result
+    ---------------------------------------------------------------------------------
+    [10, 20, 30]                      remove(1)        → [10, 30]. Removed 20.
+                                                        NO EXCEPTION. Already wrong.
+    [10, 20, 30]                      remove(5)        → IndexOutOfBoundsException.
+                                                        LOUD. Found in seconds.
+    500 elements                      remove(5)        → element 5 gone, silently.
+                                                        Discovered days later, in a
+                                                        different subsystem.
+    ---------------------------------------------------------------------------------
+    THE BUG IS LOUDEST WHEN THE DATA IS SMALLEST. A unit test with three elements is most likely to
+    produce row 2 — an exception that gets fixed — while production produces row 3. The visibility is
+    inversely related to the damage.
+
+TRACE 4 — THE FAMILY, AND WHY THE SIBLINGS ARE WORSE:
+
+    call                                     compiles?  throws?  result
+    ---------------------------------------------------------------------------------
+    List<Integer>.remove(1)                   yes        maybe    wrong element or IOOBE
+    List<Integer>.contains("1")               yes        NEVER    always false
+    List<Integer>.indexOf("1")                yes        NEVER    always -1
+    Map<Integer,V>.get("1")                   yes        NEVER    always null
+    Map<Integer,V>.remove("1")                yes        NEVER    does nothing, forever
+    ---------------------------------------------------------------------------------
+    ROWS 2–5 HAVE NO FAILURE MODE AT ALL. `remove(1)` at least CAN throw. `contains` with a wrong-typed
+    argument returns false for the rest of the program's life, and the symptom is "the lookup never
+    matches" or "the cache never hits" — a performance mystery rather than a correctness error, which is
+    how it survives for years.
+
+    AND ALL FIVE HAVE ONE CAUSE: those methods take `Object`, because `Collection` and `Map` were
+    designed in 1998 and could not be changed to take `E` in Java 5 without breaking every existing
+    caller. THE TRAP IS THE PRICE OF THAT COMPATIBILITY, and a linter is the only reliable defence,
+    because four of the five rows produce no runtime signal whatsoever.
+
+WHAT PRODUCED WHAT:
+    PHASE ORDERING              produced the index overload winning — a compatibility guarantee, not a
+                                preference.
+    GENERICS RETROFITTED IN 2004 produced two `remove`s in the first place, and the whole `Object`-taking
+                                family.
+    BOUNDS CHECKING             produced the inverted failure mode: loud on small data, silent on large.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Overload resolution: phase 1 widening, phase 2 boxing, phase 3 varargs. The first phase to find an
+    applicable method wins, and it reads the argument's STATIC type.
+    `remove(int)` is O(n) on an `ArrayList` (an arraycopy of the tail) and bounds-checked.
+    `remove(Object)` is O(n) with an `equals` call per element, and removes only the FIRST match.
+    `removeIf` is ONE compacting pass — O(n) total regardless of how many are removed.
+    `Collection.remove`, `contains`, `indexOf`, `Map.get` and `Map.remove` all take `Object`, because
+    they predate generics.
+
+THE #1 MISTAKE: `list.remove(1)` on a `List<Integer>` meaning the value. It means the index.
+
+THE #2 MISTAKE: assuming it will throw. Only if the index is out of range — which small test data makes
+likely and production makes unlikely.
+
+THE #3 MISTAKE: not noticing `int` versus `Integer` in the declaration. The same call line changes
+meaning, and a refactor can flip it without touching that line.
+
+THE #4 MISTAKE: `list.contains("1")` on a `List<Integer>`. Compiles, always false, never throws. Worse
+than the headline, because there is no signal at all.
+
+THE #5 MISTAKE: `map.get("1")` on a `Map<Integer, ?>`. Always null. Symptom: the cache never hits.
+
+THE #6 MISTAKE: suppressing the IDE's "suspicious collection method call" warning. It exists for exactly
+this family.
+
+THE #7 MISTAKE: an iterator loop or `remove` in a loop where `removeIf` belongs — O(n) per removal versus
+O(n) total.
+
+THE #8 MISTAKE: expecting `remove(Object)` to remove every match. It removes the FIRST.
+
+THE #9 MISTAKE: `list.remove(Integer.valueOf(1))` on a `List<Long>`. An `Integer` never `equals` a
+`Long`, so it does nothing.
+
+THE #10 MISTAKE: testing on `List.of(...)` or `Arrays.asList(...)`. Both throw
+`UnsupportedOperationException` and tell you nothing about which overload ran.
+
+THE #11 MISTAKE: calling this a design flaw without knowing why. It is the documented price of
+retrofitting generics onto a 1998 API without breaking callers.
+
+ONE-SENTENCE TAKEAWAY: `List` inherits `remove(Object)` from `Collection` and `remove(int)` from `List`,
+and on a `List<Integer>` both apply to the literal `1` — overload resolution picks the INDEX version
+because an exact primitive match is phase one and boxing is only phase two, an ordering that exists so
+Java 5's autoboxing could not change the meaning of older programs; the failure mode is inverted, loud
+`IndexOutOfBoundsException` on the short lists that unit tests use and a silently wrong element on the
+long ones production has, and the `Object`-taking siblings (`contains`, `indexOf`, `Map.get`) are worse
+still because they cannot throw at all and simply return nothing forever — so write `removeIf`, spell the
+value case as `Integer.valueOf(x)`, and turn on the collection-method inspection, since four of those five
+methods give no runtime signal whatsoever.""",
+]
