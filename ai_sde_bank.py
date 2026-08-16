@@ -252241,6 +252241,1004 @@ square - so a peak is only evidence when it beats the same sweep run on a struct
 null, and where clusters are elongated it does not merely weaken but inverts, measured
 0.1170 for the TRUE two-band labelling against 0.5752 for a wrong crosswise cut.""",
 ]
+_EX_P1AO["ROUGE"] = [
+    """1. THE GOAL - score a generated summary without paying a human to read it.
+
+You have a model that writes summaries. You have a few hundred REFERENCE summaries a
+human wrote. You need a number, today, that goes up when the model gets better.
+
+ROUGE is the cheapest honest attempt: COUNT THE WORDS THE TWO TEXTS SHARE.
+
+  ROUGE-1  overlap of single words
+  ROUGE-2  overlap of adjacent word PAIRS
+  ROUGE-L  the longest sequence of words appearing in both, in order, not
+           necessarily adjacent
+
+Each comes in three flavours, and the difference matters more than the choice of N:
+
+  RECALL     of the reference's words, how many did the candidate cover?
+  PRECISION  of the candidate's words, how many were in the reference?
+  F-measure  their harmonic mean
+
+The name is Recall-Oriented Understudy for Gisting Evaluation, and the recall-oriented
+part is the historical default - which, as section 4 shows, is the part that breaks.
+
+WHAT IT IS FOR: tracking one system against itself, across versions, on a fixed test
+set. WHAT IT IS NOT FOR: deciding whether a summary is good.""",
+
+    """2. THE INTUITION - it measures word overlap, and word overlap is not meaning.
+
+The whole method rests on an assumption: texts that mean the same thing use the same
+words. That assumption is wrong in both directions, and both failures are measurable.
+
+MEASURED, against the reference "the cat sat on the mat in the warm afternoon sun":
+
+  candidate            R1 recall  R1 prec  R1 F   R2 F    RL F
+  -----------------------------------------------------------------
+  identical              1.000     1.000   1.000  1.000   1.000
+  paraphrase             0.091     0.100   0.095  0.000   0.095
+  reordered words        1.000     1.000   1.000  0.000   0.273
+  half of it             0.545     1.000   0.706  0.667   0.706
+  padded with reference  1.000     0.458   0.629  0.606   0.629
+  keyword soup           1.000     0.688   0.815  0.160   0.444
+
+TWO ROWS CARRY THE ARGUMENT.
+
+"a feline rested upon the rug during a balmy evening" means essentially the reference,
+and ROUGE-1 F gives it 0.095 - almost the floor. A CORRECT SUMMARY IN DIFFERENT WORDS
+SCORES AS A FAILURE.
+
+"sun afternoon warm the in mat the on sat cat the" is the reference backwards. It is not
+English. ROUGE-1 gives it 1.000, because ROUGE-1 has no idea what order is. Only
+ROUGE-2 (0.000) and ROUGE-L (0.273) notice, which is the entire reason those exist.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+N-GRAM - N consecutive words. "the cat sat" contains the 1-grams the, cat, sat and the
+2-grams (the, cat) and (cat, sat). Longer N means more context and far fewer matches.
+
+REFERENCE - the human-written summary you are scoring against. Often several per input,
+because there is no single right summary.
+
+CANDIDATE or HYPOTHESIS - what your model produced.
+
+ROUGE-N RECALL - of the n-grams in the reference, the fraction that also appear in the
+candidate. Denominator is the REFERENCE length.
+
+ROUGE-N PRECISION - of the n-grams in the candidate, the fraction that appear in the
+reference. Denominator is the CANDIDATE length. This is the one that notices padding.
+
+F-MEASURE - 2*P*R/(P+R). The harmonic mean, which stays low unless BOTH are high - an
+arithmetic mean would let a precision of 0.1 hide behind a recall of 1.0.
+
+CLIPPING - when counting overlap, a word appearing twice in the candidate and once in
+the reference counts ONCE. Without clipping, repeating one reference word fifty times
+would score perfectly.
+
+LCS, LONGEST COMMON SUBSEQUENCE - the longest run of words appearing in both texts in
+the same ORDER, with gaps allowed. The basis of ROUGE-L, and why ROUGE-L is
+order-sensitive without demanding adjacency.
+
+BLEU - the same idea built precision-first, used for translation.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+ROUGE RECALL REWARDS SAYING MORE, WITHOUT LIMIT. If you report recall - and the R in
+ROUGE stands for recall-oriented, so people do - then padding is free.
+
+MEASURED. Take the reference, copy it, and append irrelevant filler:
+
+  candidate                              length  recall  precision   F
+  -------------------------------------------------------------------------
+  reference + filler                       15    1.000     0.733    0.846
+  reference x2 + filler x2                 30    1.000     0.367    0.537
+  reference x4 + filler x4                 60    1.000     0.183    0.310
+  reference x8 + filler x8                120    1.000     0.092    0.168
+
+RECALL IS 1.000 IN ALL FOUR ROWS. The 120-word version is eight copies of the reference
+interleaved with nonsense, and by recall it is a perfect summary. Only precision falls,
+and therefore only F falls.
+
+THE PRACTICAL VERSION OF THIS: a summariser that just copies the first several sentences
+of the source document scores well on ROUGE, because a human summary usually reuses the
+document's own words. Extractive lead baselines beat many trained models on ROUGE while
+being obviously worse summaries.
+
+AND THE OTHER DIRECTION, from the same table: the honest short summary "the cat sat on
+the mat" has precision 1.000 and recall 0.545. It is not wrong about anything. It simply
+did not say enough - and F, at 0.706, correctly rates it below the padded nonsense in
+recall terms and above it in F terms. Which of those two rankings you see depends
+entirely on which flavour you reported.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION: ROUGE-1 recall against one reference. Rewards padding, cannot see
+word order, punishes correct paraphrase.
+
+UPGRADE 1 - REPORT F, NOT RECALL. This is the single most valuable change and it costs
+nothing. F caught the padding in the table above where recall did not.
+
+UPGRADE 2 - REPORT ROUGE-1, ROUGE-2 AND ROUGE-L TOGETHER. They disagree usefully.
+Measured, the shuffled reference scored 1.000 / 0.000 / 0.273 on the three. A big gap
+between ROUGE-1 and ROUGE-2 means the right words in the wrong arrangement.
+
+UPGRADE 3 - USE MULTIPLE REFERENCES. There is no single correct summary, and scoring
+against one human's phrasing punishes every other valid phrasing. With several,
+ROUGE takes the best or the union, and the paraphrase penalty softens considerably.
+
+UPGRADE 4 - ADD A METRIC THAT SEES MEANING. BERTScore compares contextual embeddings, so
+"feline" and "cat" are close rather than unrelated. Or score with a language model as
+judge against a written rubric. Both are far more expensive per example and both catch
+exactly the case ROUGE cannot - the paraphrase that scored 0.095.
+
+UPGRADE 5 - PAIR IT WITH A LENGTH STATISTIC. Report mean candidate length alongside.
+A jump in ROUGE recall accompanied by a jump in length is not an improvement.
+
+UPGRADE 6 - KEEP A LEAD BASELINE IN THE TABLE. First-three-sentences, always. If your
+model does not beat it, ROUGE has been telling you something you did not want to hear.""",
+
+    """6. HOW TO USE IT PROPERLY - numbered steps.
+
+STEP 1. Fix the test set and the references, and never change them while comparing
+versions. ROUGE numbers are not comparable across datasets - the reference length alone
+moves them.
+
+STEP 2. Normalise both texts identically: lowercase, strip punctuation, decide about
+stemming and stopwords, and write the choice down. Stopword removal in particular can
+move ROUGE-1 by a lot, because "the" and "of" are free matches.
+
+STEP 3. Compute ROUGE-1, ROUGE-2 and ROUGE-L, and report PRECISION, RECALL AND F for
+each. Nine numbers, and they cost the same as one.
+
+STEP 4. Report mean candidate length and mean reference length next to them.
+
+STEP 5. Include a lead-3 extractive baseline and a copy-the-input baseline in every
+table, permanently.
+
+STEP 6. Read a sample of about thirty outputs by hand every time the number moves. ROUGE
+tells you SOMETHING changed, not what.
+
+STEP 7. Do not tune generation length against ROUGE recall. That is optimising the
+metric's known defect and it will make the product worse while the number rises.
+
+STEP 8. Before shipping a decision on ROUGE alone, check the disagreement between ROUGE
+and a meaning-aware metric on the same outputs. Where they disagree is where ROUGE is
+being fooled, and those examples are the ones worth reading.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A teacher has to mark two hundred book reports and has no time to read them. So she
+writes one good report herself and marks the rest by counting how many of HER words
+appear in each pupil's answer.
+
+It sort of works. A pupil who understood the book will naturally use many of the same
+words, and one who did not will use very few. As a way of ranking two hundred papers in
+an afternoon it is far better than nothing.
+
+Then the pupils work out what she is doing.
+
+The first trick is length. Nothing stops a pupil writing four pages of anything at all,
+so long as her words appear somewhere in it. Measured: a report that was eight copies of
+the teacher's own text interleaved with nonsense scored a PERFECT one hundred percent on
+her count of "how many of my words did they use". She only catches it if she also asks
+the opposite question - what fraction of THEIR words were mine - which drops the same
+report to nine percent.
+
+The second problem she cannot fix by counting at all. A pupil who understood the book
+perfectly but wrote it in her own words - "a feline rested upon the rug" instead of "the
+cat sat on the mat" - scores almost zero. Measured, 0.095. Meanwhile a pupil who copied
+the teacher's sentence and shuffled the words into gibberish scores a perfect 1.000,
+because every word is present and counting words cannot see order.
+
+Which is why the method is fine for noticing that this year's class did better than last
+year's, and no use at all for deciding whether any one report is good.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def rouge_n(cand, ref, n):
+      c = Counter(ngrams(cand.split(), n))
+      r = Counter(ngrams(ref.split(), n))
+      overlap = sum(min(c[g], r[g]) for g in r)
+      recall = overlap / sum(r.values())
+      precision = overlap / sum(c.values())
+      return 2 * recall * precision / (recall + precision)
+
+LINE BY LINE.
+
+  c = Counter(ngrams(cand.split(), n))
+ngrams slides a window of n words along the token list. Counter gives how many times
+each n-gram occurs - the COUNTS matter, which is what the next line depends on.
+
+  overlap = sum(min(c[g], r[g]) for g in r)
+THIS IS THE CLIPPING, and it is the whole safety mechanism. For each n-gram in the
+reference, credit is the smaller of the two counts. If the reference says "the" twice
+and the candidate says "the" fifty times, credit is 2, not 50. Without the min, repeating
+one word would drive recall to 1.0 on any reference containing it.
+
+Note the loop is over r, not over c. Iterating over c would give the same overlap, since
+any n-gram absent from r contributes min(count, 0) = 0 - but iterating over the reference
+makes the intent explicit: we are asking what the reference wanted.
+
+  recall = overlap / sum(r.values())
+Divide by the total n-gram count of the REFERENCE. Independent of candidate length,
+which is exactly why padding cannot hurt it.
+
+  precision = overlap / sum(c.values())
+Divide by the total in the CANDIDATE. This one falls as the candidate grows, which is
+what makes it the padding detector.
+
+  return 2 * recall * precision / (recall + precision)
+Harmonic mean. It is dominated by the smaller of the two: precision 0.092 with recall
+1.000 gives F = 0.168, not the 0.546 an arithmetic mean would give. That domination is
+the point - a summary must be both complete and not padded.
+
+  MISSING GUARDS: recall + precision = 0 divides by zero, and an empty reference divides
+by zero in the recall line. Both need handling before this meets real data.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Reference: "the cat sat on the mat in the warm afternoon sun" - 11 tokens.
+
+TRACE A - the honest short summary "the cat sat on the mat" (6 tokens).
+  reference 1-gram counts: the:3 cat:1 sat:1 on:1 mat:1 in:1 warm:1 afternoon:1 sun:1
+  candidate 1-gram counts: the:2 cat:1 sat:1 on:1 mat:1
+  clipped overlap: min(2,3)=2 for "the", plus 1 each for cat, sat, on, mat = 6
+  recall    = 6/11 = 0.545
+  precision = 6/6  = 1.000
+  F         = 2*0.545*1.000/1.545 = 0.706
+Confirmed by the measurement. Note the clipping doing its job on "the": the candidate
+has 2, the reference 3, so 2 is credited - the candidate cannot get credit for a word it
+did not say enough of, and could not have got extra credit for saying it four times.
+
+TRACE B - the shuffled reference, "sun afternoon warm the in mat the on sat cat the".
+  Every 1-gram present with the same multiplicity -> clipped overlap = 11 of 11.
+  ROUGE-1 recall = precision = F = 1.000
+  The 2-grams are (sun, afternoon), (afternoon, warm), ... - not one of them appears in
+  the reference, whose 2-grams are (the, cat), (cat, sat), ...
+  ROUGE-2 F = 0.000
+  Longest common SUBSEQUENCE: 3 words in order out of 11 -> ROUGE-L F = 0.273
+That row is the argument for never reporting ROUGE-1 alone: 1.000 and 0.000 on the same
+pair of texts, and the 0.000 is the true one.
+
+TRACE C - padding, as length grows.
+  15 tokens   recall 1.000  precision 0.733  F 0.846
+  30 tokens   recall 1.000  precision 0.367  F 0.537
+  60 tokens   recall 1.000  precision 0.183  F 0.310
+  120 tokens  recall 1.000  precision 0.092  F 0.168
+Recall is a flat line at the ceiling across an eight-fold change in length. Precision
+halves each time the length doubles, because the numerator is capped by clipping while
+the denominator grows. F follows precision. THE FLAT COLUMN IS THE DEFECT AND THE FALLING
+COLUMN IS THE FIX.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. ROUGE-N is two passes and a dictionary: O(L) time and memory in the text
+length. ROUGE-L needs the longest common subsequence, which is O(L_cand * L_ref) time
+via dynamic programming - on a 500-word summary against a 500-word reference that is
+250,000 cells per example, still trivial. The whole appeal of ROUGE is that it costs
+nothing next to a human reader or a model-based judge.
+
+THE #1 MISTAKE: reporting recall. Measured, eight copies of the reference padded with
+nonsense scored recall 1.000 at 120 tokens. Report F, and report the mean length beside
+it.
+
+THE #2 MISTAKE: reporting ROUGE-1 alone. Measured, a shuffled reference - not English -
+scores ROUGE-1 F = 1.000 and ROUGE-2 F = 0.000. Unigram overlap cannot see order.
+
+THE #3 MISTAKE: treating a low ROUGE as a bad summary. Measured, a correct paraphrase
+scored 0.095. ROUGE punishes vocabulary difference, and vocabulary difference is what
+good abstractive summarisation produces.
+
+THE #4 MISTAKE: comparing ROUGE across datasets or papers. Reference length,
+tokenisation, stemming and stopword handling all move it. It is a within-experiment
+number.
+
+THE #5 MISTAKE: tuning generation length to raise it. That is optimising a known defect.
+
+THE #6 MISTAKE: shipping without a lead-3 baseline in the table. Copying the first few
+sentences beats many real systems on ROUGE, and if yours does not beat it you need to
+know before a reviewer does.
+
+THE #7 MISTAKE: dropping the clipping when implementing it yourself. Without min(),
+repeating a single reference word saturates recall.
+
+THE TAKEAWAY: ROUGE counts shared n-grams, so it is fast, reproducible and completely
+blind to meaning - measured, a correct paraphrase scored 0.095 while the reference with
+its words shuffled into gibberish scored ROUGE-1 F = 1.000 and ROUGE-2 F = 0.000, which
+is why 1, 2 and L must be read together; and because ROUGE recall divides by the
+reference length it cannot fall when the candidate grows - measured, recall stayed at
+exactly 1.000 while padding took the candidate from 15 to 120 tokens and precision fell
+0.733 to 0.092 - so report F with the mean length beside it, keep a lead-3 baseline in
+the table permanently, and treat the whole thing as a regression detector for one system
+over time rather than as a judgement of whether any summary is good.""",
+]
+
+_EX_P1AO["Regret (online learning)"] = [
+    """1. THE GOAL - how much did I lose by not knowing the answer in advance?
+
+You are choosing repeatedly - which headline to show, which ad to serve, which of ten
+treatments to give. You do not know which choice is best; you only find out by trying.
+
+REGRET is the honest accounting of that ignorance:
+
+  regret after T rounds = (what the single best fixed choice would have earned)
+                          - (what you actually earned)
+
+It is not "how much did I lose against a perfect oracle who knows the outcome of each
+individual round" - that bar is unreachable and uninformative. It is measured against
+the best FIXED choice in hindsight, which is exactly what you would have picked if
+somebody had told you the answer on day one.
+
+Two things make it the right metric for this setting.
+
+IT COMBINES EXPLORATION COST AND EXPLOITATION LOSS INTO ONE NUMBER. Every round you
+spend trying an inferior option adds its shortfall to the total. So does every round you
+spend on an inferior option because you never learned better. There is no way to hide
+one behind the other.
+
+AND ITS GROWTH RATE IS THE VERDICT. A total that grows LINEARLY with T means a fixed
+loss per round forever. Anything SUBLINEAR means the per-round loss is going to zero -
+you are converging on the right answer. That distinction, not the absolute number, is
+what separates a working algorithm from a broken one.""",
+
+    """2. THE INTUITION - read regret PER ROUND, not in total.
+
+Total regret always rises. It cannot fall - every round adds a non-negative amount. So
+the total on its own tells you almost nothing, and the useful view is total divided by T.
+
+MEASURED. Ten arms with means 0.30 to 0.75, best arm 0.75, 20,000 pulls.
+
+TOTAL regret:
+
+  policy                  T=100   T=1000   T=5000  T=10000  T=20000
+  ------------------------------------------------------------------
+  random (pure explore)    22.7    223.1   1126.7   2267.1   4514.3
+  eps-greedy eps=0.10      16.1    102.9    194.4    304.8    539.9
+  eps-greedy eps=0.01      16.2    106.9    433.9    692.3   1209.8
+  UCB1                     19.2    123.4    320.0    477.9    603.8
+
+Every column rises. Now the SAME data as regret per pull:
+
+  random (pure explore)  0.2270   0.2231   0.2253   0.2267   0.2257
+  eps-greedy eps=0.10    0.1615   0.1029   0.0389   0.0305   0.0270
+  eps-greedy eps=0.01    0.1625   0.1069   0.0868   0.0692   0.0605
+  UCB1                   0.1920   0.1234   0.0640   0.0478   0.0302
+
+RANDOM IS A FLAT LINE at about 0.225 - it never learns anything, so it loses the same
+amount every round forever, and its total grows linearly. Every other row is falling.
+THAT IS THE WHOLE DIAGNOSIS, and it is invisible in the totals.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ARM - one of the options you can choose. From slot machines, where the metaphor started.
+In practice: a headline, a ranking model, a price, a treatment.
+
+REWARD - what you get back after choosing. Often 0 or 1 (clicked or not), sometimes a
+real number. It is random, which is why one trial tells you very little.
+
+ROUND or PULL, t - one decision. T is the total number.
+
+CUMULATIVE REGRET - summed shortfall against the best fixed arm, over all T rounds.
+
+PER-ROUND or AVERAGE REGRET - cumulative regret divided by T. The column that shows
+whether you are learning.
+
+SUBLINEAR REGRET - total regret growing slower than T, so per-round regret tends to
+zero. This is the definition of "the algorithm eventually learns". UCB1's bound is
+O(log T), which is very sublinear.
+
+LINEAR REGRET - total growing proportionally to T. Per-round regret settles at a
+constant. The algorithm never converges.
+
+EXPLORATION - choosing something you are unsure about, to learn.
+EXPLOITATION - choosing what currently looks best, to earn.
+
+EPSILON-GREEDY - with probability eps choose at random, otherwise choose the current
+best. Simple, and its flaw is measured in section 4.
+
+UCB1 - Upper Confidence Bound. Choose the arm with the highest optimistic estimate:
+mean plus a bonus that shrinks as the arm is tried more. Optimism in the face of
+uncertainty, and it needs no tuning parameter.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two of them, and they pull opposite ways.
+
+FIRST: A FIXED EPSILON GIVES LINEAR REGRET, FOREVER. eps-greedy with eps = 0.10 explores
+on 10 percent of rounds no matter how certain it has become. With 10 arms, 9 percent of
+rounds go to an arm chosen at random from the inferior ones - permanently. Its per-round
+regret cannot fall below that floor, so its total grows linearly in the long run.
+
+Measured, it is settling: 0.0389 at T=5000, 0.0305 at T=10000, 0.0270 at T=20000. The
+falls are getting smaller and it is approaching a floor, not zero.
+
+SECOND, AND THE ONE THAT SURPRISES PEOPLE: eps = 0.01 IS WORSE HERE, NOT BETTER.
+
+  eps=0.10   539.9 total regret at T=20000
+  eps=0.01  1209.8 total regret at T=20000
+
+The tiny-exploration version lost more than TWICE as much. Less exploration is not
+automatically better. With eps=0.01 the algorithm spends a long time locked onto an arm
+that got lucky early, because it almost never tries anything else and so almost never
+discovers its mistake. The cost of NOT exploring is invisible - it does not appear as
+exploration spend, it appears as thousands of rounds quietly committed to arm number
+seven.
+
+AND UCB1 BEATS BOTH ASYMPTOTICALLY WHILE LOOKING WORSE EARLY. At T=100 UCB1 has regret
+19.2 against eps-greedy's 16.1 - it deliberately tries everything at least once. By
+T=20000 its per-round regret is 0.0302 and still falling, while eps=0.10 sits at 0.0270
+and has nearly stopped. Extend the horizon and UCB1 wins; judge at T=1000 and you would
+have thrown it out.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - A/B TEST THEN SWITCH. Split traffic evenly for two weeks, pick the
+winner, stop. During those two weeks you are the "random" row: measured, per-round
+regret of 0.225, flat. For a short test on two arms that is a perfectly reasonable price
+for a clean statistical answer. For ten arms over a long horizon it is enormous.
+
+UPGRADE 1 - EPSILON-GREEDY. Exploit the current best, explore at rate eps. One line of
+code, and it captures most of the available gain: 4514 down to 540 total regret.
+Its ceiling is the fixed exploration floor.
+
+UPGRADE 2 - DECAYING EPSILON. Let eps fall like 1/t. Early exploration is cheap and
+valuable, late exploration is expensive and pointless. This restores sublinear regret
+without abandoning the simplicity, and it is the smallest change that fixes the linear
+floor.
+
+UPGRADE 3 - UCB1. Pick argmax of mean + sqrt(2 log t / n). The bonus is large for
+rarely-tried arms and shrinks as evidence accumulates, so exploration is DIRECTED at
+what is uncertain rather than spread at random. No parameter to tune, and a proven
+O(log T) bound.
+
+UPGRADE 4 - THOMPSON SAMPLING. Keep a probability distribution over each arm's value,
+draw one sample from each, play the argmax. Explores in proportion to the probability an
+arm is best. Usually matches or beats UCB1 in practice and handles delayed and batched
+feedback more gracefully.
+
+UPGRADE 5 - CONTEXTUAL BANDITS. If you observe features of the user before choosing,
+the best arm depends on them. Now you are learning a policy, not a constant, and regret
+is measured against the best policy in a class.""",
+
+    """6. HOW TO USE IT PROPERLY - numbered steps.
+
+STEP 1. Write down the baseline regret is measured against. Best fixed arm in hindsight
+is the standard; against a per-round oracle every algorithm looks terrible and nothing
+is comparable.
+
+STEP 2. In a simulation you know the true means, so compute regret exactly. In
+production you do not - estimate it from the final measured arm values, and say that
+you did.
+
+STEP 3. PLOT CUMULATIVE REGRET AGAINST T. A straight line means linear regret means the
+algorithm is not learning. A bending curve means it is.
+
+STEP 4. ALSO PLOT REGRET PER ROUND. This is where the diagnosis lives - measured, random
+sat flat at 0.225 while everything else fell.
+
+STEP 5. Choose the horizon before you choose the algorithm. UCB1 loses to eps-greedy at
+T=100 and wins by T=20000. There is no answer to "which is better" without T.
+
+STEP 6. Run several seeds. Bandit runs are high variance; a single run can rank two
+policies backwards, and the eps=0.01 result depends heavily on whether a bad arm got
+lucky early.
+
+STEP 7. Check the pull counts, not only the regret. A policy with acceptable regret that
+has pulled the best arm 200 times out of 20000 got lucky and will not repeat it.
+
+STEP 8. Before deploying, ask whether feedback is really immediate. If the reward arrives
+hours later, every algorithm here is choosing on stale counts, and that gap is usually a
+bigger effect than the choice of policy.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A cafe owner has ten different pastries and one display shelf. Each morning she puts one
+out, and at the end of the day she counts how many sold. She has no idea which is best.
+
+At the end of a year she can look back and say: the almond croissant sold best, and if I
+had put it out every single day I would have sold N. I actually sold M. The gap, N minus
+M, is what her ignorance cost her. That is regret.
+
+The gap has two parts and they cannot be separated. Some days she deliberately tried
+something else to learn - that costs money. Other days she put out the wrong pastry
+because she had not learned better yet - that costs money too. Regret is the bill.
+
+Now the interesting part, which is what the year-by-year picture looks like.
+
+If she picks at random every morning forever, her loss per day never shrinks. Measured,
+a flat 0.225 per day from day 100 to day 20,000. Ten years in she is losing exactly what
+she lost in week one. She is not learning; she is sampling.
+
+If she mostly serves her current favourite and tries something else one morning in ten,
+her loss per day falls - but it flattens out, because that one morning in ten never
+stops. Measured, 0.0389 falling to only 0.0270 across four times as many days.
+
+And here is the part nobody guesses. If she tries something new only one morning in a
+HUNDRED, she does WORSE, not better. Measured, more than twice the total loss. Because
+one lucky week early on convinces her that the plain scone is the winner, and trying
+something new once every hundred days is not often enough to find out she is wrong. She
+spends years committed to the wrong pastry, and it never shows up as the cost of
+experimenting - it shows up as nothing at all, which is why it is so easy to miss.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def ucb(t, n, s, K):
+      for a in range(K):
+          if n[a] == 0:
+              return a
+      return max(range(K),
+                 key=lambda a: s[a]/n[a] + math.sqrt(2*math.log(t)/n[a]))
+
+and the loop that scores it:
+
+      a = policy(t, n, s, K)
+      r = 1.0 if random.random() < means[a] else 0.0
+      n[a] += 1; s[a] += r
+      regret += best_mean - means[a]
+
+LINE BY LINE.
+
+  for a in range(K):
+      if n[a] == 0: return a
+Try every arm once before comparing. Not politeness - the formula divides by n[a], so an
+untried arm would divide by zero. It also means UCB1 spends its first K rounds
+deliberately exploring, which is why it looks worse than eps-greedy at T=100.
+
+  s[a]/n[a]
+The arm's current estimated value: total reward over times pulled. The EXPLOIT term.
+
+  math.sqrt(2*math.log(t)/n[a])
+The EXPLORE term, and the whole idea. It is large when n[a] is small (this arm is barely
+tested) and shrinks as 1/sqrt(n[a]) as evidence accumulates. The log(t) on top means it
+grows slowly with time, so an arm ignored for a long while eventually becomes worth
+re-checking - which is what stops UCB1 locking onto an early lucky arm the way eps=0.01
+did. The 2 comes from the concentration bound the proof uses.
+
+  max(range(K), key=...)
+Optimism in the face of uncertainty: play the arm with the best PLAUSIBLE value, not the
+best estimated value. Either it really is that good, or you learn it is not.
+
+  regret += best_mean - means[a]
+Note this uses the TRUE means, not the observed rewards. Regret measures the quality of
+the DECISION, not the luck of the draw. Accumulating best_reward - actual_reward instead
+would mix in noise that no policy could have avoided, and would not converge to anything
+meaningful.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Setup: 10 arms, means 0.30, 0.35, ... 0.75. Best is 0.75. Pulling the worst arm costs
+0.75 - 0.30 = 0.45 of regret; pulling the second best costs 0.75 - 0.70 = 0.05.
+
+TRACE A - why random regret is 0.225 per round, derived.
+The mean of the ten arm means is (0.30 + 0.75)/2 = 0.525. Choosing uniformly, expected
+reward per round is 0.525, so expected regret per round is 0.75 - 0.525 = 0.225.
+Measured across five checkpoints: 0.2270, 0.2231, 0.2253, 0.2267, 0.2257. The prediction
+is 0.225 and the measurement never leaves the third decimal. THIS IS WHAT LINEAR REGRET
+LOOKS LIKE - a constant, derivable in advance, unaffected by 20,000 rounds of experience.
+
+TRACE B - the eps-greedy floor, derived the same way.
+With eps = 0.10, 10 percent of rounds are uniform random. The other 90 percent, once
+converged, are the best arm at zero regret. So the floor is 0.10 * 0.225 = 0.0225.
+Measured at T=20000: 0.0270. It is approaching 0.0225 from above and will never go below
+it. THE FLOOR IS THE ALGORITHM'S DESIGN, not a failure of tuning.
+
+TRACE C - eps=0.01 should have a floor of 0.01 * 0.225 = 0.00225, ten times lower.
+Measured at T=20000: 0.0605 - more than twenty times ABOVE its own floor, and worse than
+eps=0.10's actual value. The gap is entirely the cost of not having learned yet. With
+1 percent exploration over 20,000 rounds each of the 10 arms gets about 20 exploratory
+pulls; 20 samples of a Bernoulli variable is not enough to reliably separate a 0.70 arm
+from a 0.75 arm, so it commits and stays committed.
+
+TRACE D - UCB1 crossing over.
+  T=100    UCB1 19.2   eps=0.10 16.1    UCB1 behind, still trying everything
+  T=1000   UCB1 123.4  eps=0.10 102.9   still behind
+  T=5000   UCB1 320.0  eps=0.10 194.4   still behind
+  T=20000  UCB1 603.8  eps=0.10 539.9   still behind in total...
+but per round: UCB1 0.0302 and falling, eps=0.10 0.0270 and flattening at its 0.0225
+floor. The totals cross after the floors do. JUDGING A BANDIT AT THE WRONG T GIVES THE
+WRONG ANSWER, and the per-round column is what tells you which regime you are in.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Per round, eps-greedy and UCB1 are both O(K) - scan the arms, pick one, update
+two numbers. Memory is O(K): a count and a sum per arm. Thompson sampling is O(K) draws.
+None of this is ever the bottleneck. The expense of a bandit is the REGRET ITSELF - real
+money spent learning - which is what makes measuring it the point.
+
+THE #1 MISTAKE: reading total regret instead of regret per round. Every total rises, so
+totals cannot distinguish "learning slowly" from "not learning at all". Measured, random
+and eps-greedy both had rising totals; only the per-round view showed one flat at 0.225
+and the other falling to 0.027.
+
+THE #2 MISTAKE: assuming less exploration is better. Measured, eps=0.01 accumulated
+1209.8 regret against eps=0.10's 539.9 - more than twice as much, because the cost of not
+learning does not appear as exploration spend, it appears as thousands of rounds
+committed to the wrong arm.
+
+THE #3 MISTAKE: a fixed epsilon in a long-running system. It has a hard regret floor of
+eps * (mean gap) per round - measured 0.0225 for eps=0.10 - so its total is linear
+forever. Decay it.
+
+THE #4 MISTAKE: judging at the wrong horizon. UCB1 was behind eps-greedy at every
+checkpoint up to T=20000 and had the only still-falling per-round curve. Pick T first.
+
+THE #5 MISTAKE: computing regret from observed rewards rather than true means. That mixes
+in noise nobody could have avoided.
+
+THE #6 MISTAKE: one seed. These runs are high variance and a single run can rank two
+policies backwards.
+
+THE #7 MISTAKE: using a bandit when feedback is delayed by hours. Every policy here
+assumes it learns before the next decision.
+
+THE TAKEAWAY: regret is what you lost by not knowing the best fixed choice in advance,
+so it charges you for exploring AND for having failed to explore, and the number that
+matters is not the total - which always rises - but the total divided by T, because a
+per-round regret settling at a constant means linear total regret and an algorithm that
+never converges (measured, pure random flat at 0.225, exactly the 0.75 - 0.525 the arm
+means predict) while a per-round regret still falling means sublinear and eventual
+convergence; the trap is that a fixed exploration rate has a hard floor of eps times the
+mean gap, measured 0.0225 for eps=0.10, and that shrinking eps made things WORSE not
+better - 1209.8 against 539.9 - because the cost of not learning never shows up as
+exploration spend.""",
+]
+
+_EX_P1AO["Sliding window vs fixed window rate limiter"] = [
+    """1. THE GOAL - "100 requests per minute" has to mean something precise.
+
+Every API says something like 100 requests per minute per key. That sentence has at
+least two different meanings, and the one you pick decides how badly you can be
+overloaded.
+
+FIXED WINDOW. Chop time into minutes on the clock - 12:00:00 to 12:00:59, then
+12:01:00 to 12:01:59. Keep one counter per bucket. Allow while the counter is under 100,
+reset it when the bucket rolls over.
+
+SLIDING WINDOW. "In the last 60 seconds, counting backwards from right now, have there
+been 100 requests?" The window moves with every request; there are no boundaries.
+
+They sound like restatements of each other. They are not. Measured, against the same
+limit of 100 per 60 seconds and the same traffic:
+
+  100 requests at t=59.9 and 100 more at t=60.1
+
+  fixed window     allowed 200 of 200
+  sliding log      allowed 100 of 200
+  sliding counter  allowed 101 of 200
+
+THE FIXED WINDOW ALLOWED 200 REQUESTS IN 0.2 SECONDS against a stated limit of 100 per
+60. It was not a bug in the implementation. It is what a fixed window means.""",
+
+    """2. THE INTUITION - the fixed window's defect lives entirely at the boundary.
+
+The counter resets at the top of each minute. A client that saves its whole allowance
+until the end of one bucket and then spends the next bucket's allowance immediately gets
+2x the limit in an arbitrarily short interval.
+
+The DEFECT IS BOUNDED - a fixed window can never allow more than 2x the limit in any
+window of its own length, because any 60-second interval overlaps at most two buckets.
+2x is the worst case and it is exact.
+
+WHETHER THAT MATTERS DEPENDS ENTIRELY ON WHY YOU ARE RATE LIMITING.
+
+If the limit exists for FAIRNESS - stopping one customer monopolising a shared API - then
+2x for 0.2 seconds is irrelevant and the fixed window is the right answer.
+
+If the limit exists to PROTECT CAPACITY - a downstream database that falls over at 150
+queries per second - then 2x is the difference between working and an outage, and the
+boundary burst is precisely the traffic shape that a retry storm produces naturally.
+
+AND HERE IS WHAT THE MEASUREMENT ALSO SHOWS. Under smooth traffic they are identical:
+
+  a steady 2 requests/sec for 180 seconds
+    fixed window     allowed 300 of 360
+    sliding log      allowed 300 of 360
+    sliding counter  allowed 300 of 360
+
+Three algorithms, three different memory costs, identical behaviour. The difference only
+ever appears at bursts and boundaries - which is exactly when you need it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RATE LIMIT - a rule of the form N requests per W seconds, per identity (API key, user,
+IP address).
+
+FIXED WINDOW - buckets aligned to the clock. Bucket index is floor(now / W). One counter
+per bucket; discard old buckets.
+
+SLIDING WINDOW LOG - store the TIMESTAMP of every allowed request. On each request, drop
+timestamps older than W seconds, then compare the remaining count to the limit. Exact.
+
+SLIDING WINDOW COUNTER - a cheap approximation. Keep the count for the current bucket and
+the previous one, and estimate:
+
+  estimate = previous_count * (1 - fraction_through_current) + current_count
+
+At 25 percent into the current minute it charges you 75 percent of last minute's traffic.
+Two counters instead of N timestamps.
+
+BOUNDARY BURST - the 2x spike a fixed window permits either side of a bucket edge.
+
+TOKEN BUCKET - a different family: tokens refill at a steady rate up to a cap, each
+request spends one. Allows a controlled burst of size cap and then a steady rate.
+
+LEAKY BUCKET - a queue drained at a fixed rate. Smooths output completely, at the cost
+of queueing latency.
+
+THUNDERING HERD - many clients retrying at the same instant, usually because they all
+observed the same failure or all wait for the same clock boundary.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the sliding COUNTER is an approximation, and
+its error is enormous.
+
+The sliding counter is the usual production compromise: sliding-window behaviour at
+fixed-window cost. It works by ASSUMING the previous window's traffic was spread evenly
+across it. When that assumption is wrong, so is the answer.
+
+MEASURED. 100 requests all at t=0.1 - front-loaded - then a burst of 100 later. The exact
+log knows those 100 expired at t=60.1, so the full budget is free from then on:
+
+  burst at t   exact log allows   counter allows
+  --------------------------------------------------
+      60.2           100                 1
+      65.0           100                 9
+      75.0           100                25
+      90.0           100                50
+     110.0           100                84
+     119.0           100                99
+     121.0           100               100
+
+At t=60.2 the counter allowed ONE request where the truth was 100. It releases the budget
+linearly across the next window because it believes the old traffic was evenly spread,
+when in fact it had all expired.
+
+AND IT ERRS THE OTHER WAY TOO. Same test with the previous window BACK-loaded - 100
+requests all at t=59.9, which do not expire until t=119.9:
+
+  burst at t   exact log allows   counter allows
+  --------------------------------------------------
+      60.2             0                  1
+      75.0             0                 25
+      90.0             0                 50
+     119.0             0                 99
+     120.1           100                100
+
+Swept across both patterns and 30 probe times, the worst observed error was:
+
+  OVER-blocking by 99 requests it should have allowed
+  UNDER-blocking by 97 requests it should have refused
+
+AGAINST A STATED LIMIT OF 100. The approximation is not a small correction - on adversarial
+or merely bursty traffic it is wrong by nearly the whole limit, in both directions.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - FIXED WINDOW. Two integers per key: bucket index and count. Trivially
+cheap, trivially correct to reason about, and it permits 2x at the boundary. Measured,
+200 of 200 allowed in 0.2 seconds.
+
+UPGRADE 1 - SLIDING WINDOW LOG. Store every timestamp; evict the expired ones; count.
+EXACT: never more than N in any W-second interval, by construction. Memory is O(N) per
+key - measured, 100 timestamps is 800 bytes for the times alone, before any container
+overhead. At a million keys that is most of a gigabyte, for a limiter.
+
+UPGRADE 2 - SLIDING WINDOW COUNTER. Three integers per key. Smooth in the common case
+and, as section 4 measures, badly wrong under bursts. The right choice when the limit is
+about fairness and wrong when it is about capacity.
+
+UPGRADE 3 - TOKEN BUCKET. Refill at N/W tokens per second up to a cap of B; spend one per
+request. Two numbers per key - token count and last-refill time - and it is EXACT for the
+long-run rate. It allows a burst of up to B, but B is a number YOU CHOSE rather than an
+accident of clock alignment. This is why most production limiters are token buckets: the
+burst is a parameter, not a defect.
+
+UPGRADE 4 - MAKE IT DISTRIBUTED. Across many servers, a per-server counter multiplies the
+effective limit by the server count. Options: a shared Redis counter with atomic
+increment-and-expire, or per-server limits of N/servers (wrong when traffic is uneven),
+or a Redis Lua script implementing the whole check atomically.
+
+UPGRADE 5 - TELL THE CLIENT. Return the limit, the remaining allowance and the reset
+time in headers, and return 429 with Retry-After rather than a bare error. A client that
+knows when to come back does not retry-storm you.""",
+
+    """6. HOW TO CHOOSE - numbered steps.
+
+STEP 1. Ask what the limit is protecting. Fairness between customers, or a hard capacity
+ceiling downstream? Fairness tolerates 2x for a fraction of a second; capacity does not.
+Every remaining step depends on this answer.
+
+STEP 2. Compute what 2x actually means for you. Limit 100/minute with a database that
+handles 150 queries per second: the boundary burst is 200 in 0.2 seconds, which is 1000
+per second. Now you know whether it matters.
+
+STEP 3. Count your keys. 100 timestamps per key is fine for 10,000 keys and is not fine
+for 50 million.
+
+STEP 4. If capacity is the concern and the key count is large, use a TOKEN BUCKET. Two
+numbers per key, exact long-run rate, and the burst size is a parameter you set.
+
+STEP 5. If you need a strict "never more than N in any W" guarantee and can afford the
+memory, use the sliding window LOG. Nothing else gives that guarantee exactly.
+
+STEP 6. Use the sliding COUNTER only where fairness is the goal, and only after looking
+at the numbers in section 4.
+
+STEP 7. Make the check atomic. Read-then-write across two round trips lets concurrent
+requests both see 99 and both proceed. Use INCR with an expiry, or a Lua script.
+
+STEP 8. Decide what happens when the limiter itself is unavailable. Fail open (let
+traffic through, protect availability) or fail closed (reject, protect the backend)? This
+is a business decision, and not making it means you have made it by accident.
+
+STEP 9. Return 429 with Retry-After and X-RateLimit headers, and add jitter to the
+suggested retry, or every blocked client returns at the same instant.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A gym lets each member use the pool 100 times a month.
+
+THE FIXED WINDOW WAY: the counter resets on the first of the month. Simple, and everyone
+understands it. But a member who has swum nothing all month can swim 100 times on the
+31st and another 100 on the 1st - two hundred swims in two days, against a limit of a
+hundred a month. She broke no rule. The rule, as written, permits it.
+
+THE SLIDING WINDOW WAY: the gym asks "how many times has she swum in the last thirty
+days, counting back from today". There is no first of the month to save up for, and the
+two hundred swims are impossible. But now the gym has to keep the date of every single
+swim by every single member, forever, and look through them on every visit. Correct, and
+expensive - measured, a hundred timestamps per member just for the dates.
+
+THE COMPROMISE: keep only two numbers - swims last month, swims this month - and
+estimate. Ten days into the month, count this month's swims plus two thirds of last
+month's. Cheap, and usually about right.
+
+Except it assumes last month's swims were spread evenly. Measured, a member who did all
+100 swims on the very first day of last month is told on day 31 that she has one swim
+left, when in truth every one of those swims is now more than thirty days old and she
+should have her full hundred. Across a range of such patterns the estimate was wrong by
+up to 99 swims either way, against a limit of a hundred - it can lock out a member who
+has done nothing for a month, and it can wave through someone who swam a hundred times
+yesterday.
+
+None of which matters for a member who swims three times a week. Measured, all three
+methods gave identical answers on steady traffic. The differences only exist at the
+edges, and the edges are the only reason the limit exists.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def fixed_window(t, state):
+      b = int(t // W)
+      if state.bucket != b:
+          state.bucket, state.count = b, 0
+      state.count += 1
+      return state.count <= LIMIT
+
+  def sliding_log(t, log):
+      while log and log[0] <= t - W:
+          log.popleft()
+      if len(log) < LIMIT:
+          log.append(t)
+          return True
+      return False
+
+  def sliding_counter(t, counts):
+      b = int(t // W)
+      frac = (t % W) / W
+      est = counts.get(b-1, 0) * (1 - frac) + counts.get(b, 0)
+      if est < LIMIT:
+          counts[b] = counts.get(b, 0) + 1
+          return True
+      return False
+
+LINE BY LINE, THE PARTS THAT MATTER.
+
+  b = int(t // W)
+Integer division by the window length gives the bucket index. This is the boundary: every
+key in the system rolls over at the same instant, which is why the 2x burst is
+SYNCHRONISED across clients rather than spread out.
+
+  while log and log[0] <= t - W: log.popleft()
+Evict from the FRONT. A deque makes this O(1) per eviction and each timestamp is evicted
+at most once, so the amortised cost per request is O(1) despite the loop.
+
+  if len(log) < LIMIT: log.append(t)
+Append only when ALLOWED. Appending rejected attempts too would mean a blocked client
+extends its own block by retrying - a self-inflicted denial of service, and a real bug
+people ship.
+
+  frac = (t % W) / W
+How far through the current bucket we are, 0 to 1.
+
+  est = counts.get(b-1, 0) * (1 - frac) + counts.get(b, 0)
+THE APPROXIMATION, in one line. At the very start of a bucket frac is 0 and the whole
+previous count is charged; at the end frac is 1 and none of it is. It is a linear fade,
+and it is correct ONLY IF the previous bucket's requests were uniformly distributed
+across it. Section 4 measures what happens when they were not.
+
+  ALL THREE ARE READ-MODIFY-WRITE. Across processes they must be atomic, or two concurrent
+requests both read 99 and both proceed.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the boundary burst, step by step. Limit 100 per 60s.
+
+  t = 59.9, requests 1 to 100:
+    fixed:   bucket = floor(59.9/60) = 0. Count runs 1..100, all <= 100 -> ALL ALLOWED.
+    log:     nothing older than -0.1 to evict; len goes 0..99 < 100 -> ALL ALLOWED.
+  t = 60.1, requests 101 to 200:
+    fixed:   bucket = floor(60.1/60) = 1, which differs from 0, SO THE COUNT RESETS TO 0.
+             Count runs 1..100 -> ALL ALLOWED. Total 200.
+    log:     evict anything <= 0.1; the 100 timestamps at 59.9 all survive.
+             len is already 100 -> ALL REFUSED. Total 100.
+    counter: b = 1, frac = 0.1/60 = 0.00167.
+             est = 100 * (1 - 0.00167) + 0 = 99.83 < 100 -> the first is ALLOWED,
+             then counts[1] = 1 makes est = 100.83 -> the rest REFUSED. Total 101.
+
+Measured: 200, 100, 101. The fixed window's reset is the entire mechanism - one line,
+`if state.bucket != b: count = 0`, executed 0.2 seconds after 100 requests.
+
+TRACE B - the counter's linear release, front-loaded case.
+100 requests at t=0.1, all genuinely expired by t=60.1.
+
+  probe at t=60.2:  frac = 0.2/60 = 0.0033, est = 100*0.9967 = 99.67
+                    -> 1 allowed before est crosses 100.   Truth: 100.
+  probe at t=75:    frac = 15/60 = 0.25,    est = 100*0.75 = 75
+                    -> 25 allowed.                          Truth: 100.
+  probe at t=90:    frac = 0.5,             est = 50        -> 50 allowed. Truth: 100.
+  probe at t=110:   frac = 50/60 = 0.833,   est = 16.7      -> 84 allowed. Truth: 100.
+  probe at t=121:   previous bucket is now bucket 1, empty  -> 100 allowed. Correct.
+
+The allowed count is 100 * frac, exactly - the budget is handed back on a straight line
+over the full 60 seconds, when the truth is that all of it became available at t=60.1.
+
+TRACE C - swept over five traffic patterns and thirty probe times, the worst errors were
+99 requests over-blocked and 97 under-blocked, against a limit of 100. The approximation
+is not a small correction.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS, per key. Measured for a limit of 100 per 60 seconds:
+
+  fixed window     2 integers (bucket index, count)
+  sliding counter  3 integers (two bucket counts, a timestamp)
+  sliding log      up to 100 timestamps = 800 bytes for the times alone
+  token bucket     2 numbers (tokens, last refill time)
+
+Time per request is O(1) for all of them - the log's eviction loop is amortised O(1)
+because each timestamp is evicted once. At a million keys the log costs the better part
+of a gigabyte and the others cost a few tens of megabytes. THAT is the real trade, and it
+is memory against exactness, not speed.
+
+THE #1 MISTAKE: shipping a fixed window to protect a capacity ceiling. Measured, 200
+requests in 0.2 seconds against a limit of 100 per 60. It is not a bug and no amount of
+testing under smooth traffic will reveal it - measured, all three algorithms allowed
+exactly 300 of 360 on steady traffic.
+
+THE #2 MISTAKE: believing the sliding counter is "basically exact". Measured worst case,
+wrong by 99 either way against a limit of 100.
+
+THE #3 MISTAKE: a non-atomic read-then-write. Two concurrent requests both see 99 and
+both proceed. Use INCR with expiry, or a Lua script.
+
+THE #4 MISTAKE: per-server counters in a fleet. Ten servers means ten times the limit.
+
+THE #5 MISTAKE: recording rejected attempts in the sliding log, so a retrying client
+extends its own block indefinitely.
+
+THE #6 MISTAKE: no jitter on Retry-After. Every blocked client returns at the same
+instant and you have built a thundering herd on purpose.
+
+THE #7 MISTAKE: not deciding fail-open versus fail-closed before the limiter goes down.
+
+THE TAKEAWAY: a fixed window counts into clock-aligned buckets, which is two integers and
+lets a client take twice the limit across a boundary - measured, 200 requests in 0.2
+seconds against 100 per 60 - so it is right for fairness and wrong for capacity; a sliding
+window log stores every timestamp and is exactly right at O(N) memory per key, measured
+800 bytes at a limit of 100; and the sliding counter that is supposed to be the cheap
+middle is an approximation that assumes the previous window's traffic was evenly spread,
+which measured wrong by up to 99 requests over-blocked and 97 under-blocked against a
+limit of 100 - so where the burst size genuinely matters, use a token bucket, whose burst
+is a parameter you chose rather than an accident of where the clock happened to tick.""",
+]
+
 
 
 
