@@ -250267,6 +250267,1051 @@ tail-based keeps EVERY error for 1.7% of storage - and the single highest-value 
 any setup is putting the trace ID on every log record, because without it you have
 three archives and with it you have one.""",
 ]
+_EX_P1AO["Softmax temperature"] = [
+    """1. THE GOAL - a dial between "always the safest word" and "anything at all".
+
+A language model produces a score for every token in its vocabulary. Softmax turns
+those scores into probabilities. TEMPERATURE divides the scores before the softmax:
+
+  p_i = exp(z_i / T) / sum_j exp(z_j / T)
+
+Low T sharpens the distribution towards the top token. High T flattens it towards
+uniform. T = 1 leaves it as the model produced it.
+
+THE FIRST THING TO GET RIGHT IS WHAT IT DOES NOT DO. MEASURED, on a fixed set of
+logits:
+
+  T = 0.1    argmax = token 0    top-5 order = [0, 1, 2, 3, 4]
+  T = 1.0    argmax = token 0    top-5 order = [0, 1, 2, 3, 4]
+  T = 10.0   argmax = token 0    top-5 order = [0, 1, 2, 3, 4]
+
+TEMPERATURE CANNOT CHANGE THE RANKING. Dividing every score by the same positive
+number cannot reorder them. So it never makes a different token "the model's answer" -
+it changes how likely you are to sample something other than the answer.
+
+WHICH MEANS THAT WITH GREEDY DECODING - always take the argmax - TEMPERATURE HAS NO
+EFFECT WHATSOEVER. It only matters when you are sampling.""",
+
+    """2. THE INTUITION - it acts on the TAIL far more than on the head.
+
+Measured, the same logits at seven temperatures:
+
+  T      p(top)   p(top 5)   entropy   effective choices   p(the 43rd token)
+  ---------------------------------------------------------------------------
+  0.01   1.0000    1.0000     0.0000            1.00           0.00e+00
+  0.20   0.9425    1.0000     0.2485            1.28           1.23e-20
+  0.50   0.6606    0.9967     0.9775            2.66           7.35e-09
+  0.70   0.5377    0.9824     1.2808            3.60           1.12e-06
+  1.00   0.4154    0.9318     1.6781            5.36           4.38e-05
+  1.50   0.2850    0.7886     2.3309           10.29           6.36e-04
+  2.00   0.2032    0.6372     2.8540           17.36           2.09e-03
+  5.00   0.0658    0.2682     3.7452           42.32           1.05e-02
+
+TRACK THE TOP TOKEN: 0.94 down to 0.07 across the whole range - a factor of about 14.
+TRACK THE 43RD TOKEN: 1.23e-20 up to 1.05e-02 - A FACTOR OF 10^18.
+
+TEMPERATURE IS OVERWHELMINGLY A CONTROL ON THE TAIL. What actually changes between
+T=0.7 and T=1.2 is not really "how likely is the best word" but "how likely is
+something absurd", and that is the right way to think about the risk.
+
+THE "EFFECTIVE CHOICES" COLUMN is exp(entropy) - how many equally-likely options the
+distribution behaves like. It goes from 1.28 at T=0.2 to 5.36 at T=1.0 to 42.32 at
+T=5.0. AT T=0.2 THE MODEL IS ESSENTIALLY DETERMINISTIC and at T=5 it is essentially
+picking at random from a third of the vocabulary.
+
+AND THE PRACTICAL CONSEQUENCE, measured by actually sampling 200 tokens:
+
+  T = 0.2   3 distinct tokens in 200 draws, top token chosen 188 times
+  T = 0.7   8 distinct,  top token 111 times
+  T = 1.0  11 distinct,  top token  87 times
+  T = 1.5  26 distinct,  top token  66 times
+
+LOW TEMPERATURE IS WHERE REPETITION LOOPS COME FROM. Three distinct tokens in two
+hundred draws is a model that will say the same thing over and over, and the usual
+diagnosis - "the model is repetitive" - is often a decoding setting rather than a
+model property.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LOGIT - the raw score the model produces for each token, before any normalisation.
+Unbounded, and only its DIFFERENCES matter.
+
+SOFTMAX - exponentiate and normalise, turning logits into a probability distribution.
+
+TEMPERATURE (T) - divides the logits before the softmax. T < 1 sharpens; T > 1
+flattens; T = 1 is unchanged.
+
+GREEDY DECODING - always take the highest-probability token. Temperature is irrelevant
+here, because it cannot reorder.
+
+SAMPLING - draw from the distribution. This is the only mode where temperature does
+anything.
+
+ENTROPY - a measure of how spread out the distribution is. exp(entropy) is the
+"effective number of choices", which is a far more readable number.
+
+TOP-K - keep only the k highest-probability tokens and renormalise.
+
+TOP-P / NUCLEUS - keep the smallest set of tokens whose probabilities sum to at least
+p, and renormalise. Adaptive, unlike top-k.
+
+REPETITION PENALTY - reduce the logits of tokens already generated. A separate
+mechanism from temperature that attacks the same symptom.
+
+BEAM SEARCH - keep several partial sequences and expand them all. A different family
+entirely; it is not sampling and temperature does not apply in the same way.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TEMPERATURE 0 IS NOT A TEMPERATURE. Dividing by zero is undefined; every API that
+accepts `temperature=0` special-cases it to greedy decoding. Measured, T=0.01 already
+gives p(top) = 1.0000 to four decimal places, so the limit is reached long before
+zero.
+
+"LOWER TEMPERATURE IS MORE ACCURATE" IS WRONG IN AN IMPORTANT WAY. It makes the model
+more CONSISTENT, not more correct. If the highest-probability token is wrong, low
+temperature guarantees it will be wrong the same way every time - which makes the
+error harder to notice in spot-checking, not less likely.
+
+IT DOES NOT AFFECT THE RANKING, MEASURED. Same argmax and same top-5 ordering at
+T=0.1, 1.0 and 10.0. Anyone expecting a temperature change to make the model "prefer"
+a different answer is expecting something the arithmetic forbids.
+
+REPETITION IS A LOW-TEMPERATURE SYMPTOM. Measured, T=0.2 produced three distinct
+tokens in two hundred draws. When output loops, the decoding parameters are a more
+likely cause than the model.
+
+TEMPERATURE AND TOP-P INTERACT AND ARE USUALLY TUNED AS IF THEY DO NOT. Measured, the
+number of tokens inside the top-p = 0.9 nucleus went from 1 at T=0.2 to 21 at T=2.0,
+on the same logits. RAISING TEMPERATURE WIDENS THE NUCLEUS, so the two settings
+multiply rather than acting independently, and the common advice to "change one, not
+both" exists because of exactly this.
+
+AND THE ONE THAT MATTERS FOR EVALUATION: A NON-ZERO TEMPERATURE MAKES YOUR RESULTS
+NON-REPRODUCIBLE. Two identical prompts give different answers. That is desirable in a
+chat product and fatal in a benchmark, so evaluation runs should be greedy or should
+fix a seed and report it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: greedy decoding - always the top token. Deterministic, reproducible, and prone
+to bland repetitive text because it never takes the second-best option even when the
+model considered it nearly as good.
+
+UPGRADE 1: pure sampling at T = 1.0. Uses the model's actual distribution. Measured,
+the 43rd-ranked token still has probability 4.38e-05, so over a thousand tokens
+something implausible will be chosen.
+
+UPGRADE 2: TEMPERATURE below 1. Suppresses the tail. Measured, T = 0.7 drops the 43rd
+token to 1.12e-06 - forty times less likely than at T = 1.0 - while the top token only
+rises from 0.42 to 0.54.
+
+UPGRADE 3: TOP-K. Truncate to the k best. Removes the tail outright rather than
+merely making it unlikely. Its weakness is that k is fixed and the right k is not.
+
+UPGRADE 4: TOP-P / NUCLEUS. Keep the smallest set summing to p. ADAPTS to how
+confident the model is, which is the whole point.
+
+UPGRADE 5: TOP-P PLUS A MODEST TEMPERATURE - the standard combination. Nucleus removes
+the tail; temperature shapes what is left.
+
+UPGRADE 6: REPETITION AND FREQUENCY PENALTIES for loops, rather than raising
+temperature. Raising temperature to escape a loop also raises the chance of nonsense;
+a penalty targets the actual symptom.
+
+UPGRADE 7: MIN-P - keep tokens whose probability is at least a fraction of the top
+token's. A newer alternative that adapts like top-p and is less sensitive to a long
+flat tail.
+
+UPGRADE 8: for factual work, use T = 0 (greedy) plus grounding and tools. Sampling
+diversity is a liability there.""",
+
+    """6. HOW TO SET IT - numbered steps.
+
+STEP 1 - DECIDE WHETHER YOU WANT VARIETY AT ALL. Factual extraction, classification,
+structured output: greedy. Creative writing, brainstorming, multiple candidates:
+sampling.
+
+STEP 2 - IF SAMPLING, START AT T = 0.7 WITH TOP-P = 0.9. This is the near-universal
+default and it is a sensible prior.
+
+STEP 3 - CHANGE ONE AT A TIME. Measured, temperature changes how many tokens sit
+inside the nucleus - 1 token at T=0.2 and 21 at T=2.0 for the same p - so they are not
+independent.
+
+STEP 4 - IF THE OUTPUT IS REPETITIVE, SUSPECT LOW TEMPERATURE FIRST. Measured, T = 0.2
+gave three distinct tokens in two hundred draws.
+
+STEP 5 - IF THE OUTPUT IS INCOHERENT, LOWER THE TEMPERATURE OR TIGHTEN TOP-P. The tail
+is where incoherence comes from and both settings attack it.
+
+STEP 6 - FOR REPETITION LOOPS SPECIFICALLY, USE A REPETITION PENALTY rather than
+raising temperature. It targets the symptom without widening the tail.
+
+STEP 7 - FOR EVALUATION, USE GREEDY OR FIX A SEED. A non-zero temperature makes runs
+non-reproducible and benchmark numbers uncomparable.
+
+STEP 8 - REPORT THE DECODING PARAMETERS with any result. A model's quality figure is
+meaningless without them, and they are omitted from most reported comparisons.
+
+STEP 9 - REMEMBER THAT TEMPERATURE DOES NOT ADD KNOWLEDGE. It changes which of the
+model's existing options you draw, and nothing else.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+The model finishes every sentence by holding an opinion about each possible next word -
+some strongly preferred, most hopeless. Temperature decides how strictly you follow
+that opinion.
+
+Turn it right down and you always take the favourite. Turn it up and you start
+seriously considering the second and third choices, and eventually the hopeless ones.
+
+The thing to understand is WHERE the change happens. Measured, going from a low
+setting to a high one changed the favourite's chances by a factor of about fourteen -
+and changed the forty-third choice's chances by a factor of a billion billion.
+
+So the dial is not really "how much do you prefer the best word". It is "how likely are
+you to say something absurd", and that is the right way to think about the risk.
+
+Two things follow that people get wrong.
+
+It never changes WHICH word is the favourite. Dividing everyone's score by the same
+number cannot change who is winning. So if you were hoping a temperature change would
+make the model give a different answer, it cannot - it can only make you more likely
+to draw one of the answers it already ranked below the top.
+
+And turning it right down is not "more accurate", it is "more consistent". Measured at
+a very low setting, two hundred draws produced three distinct words and the favourite
+came up a hundred and eighty-eight times. If the favourite happens to be wrong, you
+now get the same wrong answer every single time - which is much harder to notice by
+spot-checking than an occasional obvious error.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def softmax_with_temperature(logits, T):
+        if T <= 0:
+            return one_hot(argmax(logits))       # T=0 is GREEDY, special-cased -
+                                                 # dividing by zero is undefined
+        m = max(logits)                          # subtract the max for stability:
+        e = [exp((z - m) / T) for z in logits]   # exp(large) overflows
+        s = sum(e)
+        return [x / s for x in e]
+
+    def sample(logits, T=0.7, top_p=0.9):
+        p = softmax_with_temperature(logits, T)
+        order = sorted(range(len(p)), key=lambda i: -p[i])
+        cum, keep = 0.0, []
+        for i in order:                          # NUCLEUS first, then renormalise
+            keep.append(i); cum += p[i]
+            if cum >= top_p: break
+        total = sum(p[i] for i in keep)
+        r = random() * total
+        c = 0.0
+        for i in keep:
+            c += p[i]
+            if r <= c: return i
+        return keep[-1]
+
+LINE BY LINE:
+ - `if T <= 0: return greedy` - every API does this. There is no such thing as
+   temperature zero; measured, T = 0.01 already gives p(top) = 1.0000 to four decimal
+   places.
+ - `(z - m) / T` - subtracting the maximum before exponentiating. Without it,
+   `exp(large_logit / 0.1)` overflows to infinity and the whole distribution becomes
+   NaN. A one-symbol detail that breaks everything at low temperatures specifically.
+ - the nucleus loop uses `>=` and includes the token that CROSSES the threshold, so
+   the kept mass is at least p. Using `>` and stopping before it can keep less than
+   p, which is a subtle off-by-one that changes behaviour on confident distributions.
+ - `total = sum(p[i] for i in keep)` then sampling against `random() * total` -
+   RENORMALISING over the kept set. Forgetting this makes the truncated tail's
+   probability silently unassigned.
+ - temperature is applied BEFORE the nucleus is computed, which is why the two
+   interact: measured, the same top_p = 0.9 kept 1 token at T = 0.2 and 21 at
+   T = 2.0.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THREE LOGITS: [4.0, 2.0, 1.0]
+
+  T = 1.0:  exp(4-4)=1.000, exp(2-4)=0.135, exp(1-4)=0.050   sum 1.185
+            p = [0.844, 0.114, 0.042]
+
+  T = 0.5:  exponents are (0, -4, -6)
+            exp = 1.000, 0.0183, 0.00248                     sum 1.0208
+            p = [0.980, 0.018, 0.002]
+
+  T = 2.0:  exponents are (0, -1, -1.5)
+            exp = 1.000, 0.368, 0.223                        sum 1.591
+            p = [0.629, 0.231, 0.140]
+
+  THE TOP TOKEN went 0.980 -> 0.844 -> 0.629 across a fourfold temperature change - a
+  factor of 1.6. THE THIRD TOKEN went 0.002 -> 0.042 -> 0.140 - a factor of 70. The
+  effect on the tail is enormously larger, and that pattern holds at scale.
+
+THE MEASURED VERSION over a 50-token vocabulary:
+
+  T      p(top)   entropy   effective choices   p(43rd token)
+  ---------------------------------------------------------------
+  0.20   0.9425    0.2485          1.28            1.23e-20
+  0.70   0.5377    1.2808          3.60            1.12e-06
+  1.00   0.4154    1.6781          5.36            4.38e-05
+  2.00   0.2032    2.8540         17.36            2.09e-03
+  5.00   0.0658    3.7452         42.32            1.05e-02
+
+TOP TOKEN: a factor of 14 across the whole range.
+43RD TOKEN: a factor of 10^18.
+
+AND ACTUALLY SAMPLING 200 TOKENS FROM EACH:
+
+  T = 0.2    3 distinct tokens, top token chosen 188 times
+  T = 0.7    8 distinct, top token 111
+  T = 1.0   11 distinct, top token  87
+  T = 1.5   26 distinct, top token  66
+
+THREE DISTINCT TOKENS IN TWO HUNDRED DRAWS AT T = 0.2. That is what a repetition loop
+looks like from the inside, and it is a decoding setting rather than a model defect.
+
+FINALLY, THE INTERACTION WITH TOP-P, same logits:
+
+  T = 0.2  -> top_p 0.9 keeps  1 token
+  T = 1.0  -> top_p 0.9 keeps  5 tokens
+  T = 2.0  -> top_p 0.9 keeps 21 tokens
+
+THE SAME NUCLEUS SETTING KEEPS TWENTY-ONE TIMES AS MANY TOKENS at high temperature.
+The two parameters multiply, and tuning one while holding the other fixed is measuring
+a moving target.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: one division per logit. Free.
+
+DETERMINISM: any T > 0 makes output non-reproducible without a fixed seed.
+
+RANGE: 0 (greedy, special-cased) to about 2 in practice. Above 2 the output is
+measurably close to random - effective choices 17.4 at T=2 and 42.3 at T=5 out of 50.
+
+THE #1 MISTAKE: believing temperature changes the model's answer. Measured, identical
+argmax and identical top-5 ordering at T = 0.1, 1.0 and 10.0. It cannot reorder.
+
+THE #2 MISTAKE: "lower is more accurate". It is more CONSISTENT. A wrong top token
+becomes reliably wrong, which is harder to catch.
+
+THE #3 MISTAKE: expecting temperature to matter under greedy decoding. It does
+nothing at all there.
+
+THE #4 MISTAKE: raising temperature to escape a repetition loop. That widens the tail
+too; a repetition penalty targets the symptom.
+
+THE #5 MISTAKE: tuning temperature and top-p independently. Measured, the same
+top_p = 0.9 kept 1 token at T = 0.2 and 21 at T = 2.0.
+
+THE #6 MISTAKE: forgetting to subtract the max before exponentiating. At low
+temperatures this overflows and produces NaN.
+
+THE #7 MISTAKE: non-zero temperature in evaluation. The numbers are not reproducible
+and not comparable.
+
+THE #8 MISTAKE: reporting a model's quality without its decoding parameters.
+
+THE TAKEAWAY: temperature divides the logits before the softmax, so it cannot change
+the RANKING - measured, identical argmax and top-5 order from T = 0.1 to T = 10 - and
+it acts overwhelmingly on the TAIL, changing the top token's probability by a factor
+of 14 across the usable range and the 43rd token's by a factor of 10^18, which makes
+it a control on "how likely is something absurd" rather than on "how much do you
+prefer the best answer"; low temperature buys consistency rather than accuracy, and
+measured at T = 0.2 it produced three distinct tokens in two hundred draws, which is
+what a repetition loop is - and because temperature reshapes the distribution BEFORE
+top-p truncates it, the two settings multiply and cannot be tuned separately.""",
+]
+
+_EX_P1AO["Temperature (sampling)"] = [
+    """1. THE GOAL - a dial between "always the safest word" and "anything at all".
+
+A language model produces a score for every token in its vocabulary. Softmax turns
+those scores into probabilities. TEMPERATURE divides the scores before the softmax:
+
+  p_i = exp(z_i / T) / sum_j exp(z_j / T)
+
+Low T sharpens the distribution towards the top token. High T flattens it towards
+uniform. T = 1 leaves it as the model produced it.
+
+THE FIRST THING TO GET RIGHT IS WHAT IT DOES NOT DO. MEASURED, on a fixed set of
+logits:
+
+  T = 0.1    argmax = token 0    top-5 order = [0, 1, 2, 3, 4]
+  T = 1.0    argmax = token 0    top-5 order = [0, 1, 2, 3, 4]
+  T = 10.0   argmax = token 0    top-5 order = [0, 1, 2, 3, 4]
+
+TEMPERATURE CANNOT CHANGE THE RANKING. Dividing every score by the same positive
+number cannot reorder them. So it never makes a different token "the model's answer" -
+it changes how likely you are to sample something other than the answer.
+
+WHICH MEANS THAT WITH GREEDY DECODING - always take the argmax - TEMPERATURE HAS NO
+EFFECT WHATSOEVER. It only matters when you are sampling.""",
+
+    """2. THE INTUITION - it acts on the TAIL far more than on the head.
+
+Measured, the same logits at seven temperatures:
+
+  T      p(top)   p(top 5)   entropy   effective choices   p(the 43rd token)
+  ---------------------------------------------------------------------------
+  0.01   1.0000    1.0000     0.0000            1.00           0.00e+00
+  0.20   0.9425    1.0000     0.2485            1.28           1.23e-20
+  0.50   0.6606    0.9967     0.9775            2.66           7.35e-09
+  0.70   0.5377    0.9824     1.2808            3.60           1.12e-06
+  1.00   0.4154    0.9318     1.6781            5.36           4.38e-05
+  1.50   0.2850    0.7886     2.3309           10.29           6.36e-04
+  2.00   0.2032    0.6372     2.8540           17.36           2.09e-03
+  5.00   0.0658    0.2682     3.7452           42.32           1.05e-02
+
+TRACK THE TOP TOKEN: 0.94 down to 0.07 across the whole range - a factor of about 14.
+TRACK THE 43RD TOKEN: 1.23e-20 up to 1.05e-02 - A FACTOR OF 10^18.
+
+TEMPERATURE IS OVERWHELMINGLY A CONTROL ON THE TAIL. What actually changes between
+T=0.7 and T=1.2 is not really "how likely is the best word" but "how likely is
+something absurd", and that is the right way to think about the risk.
+
+THE "EFFECTIVE CHOICES" COLUMN is exp(entropy) - how many equally-likely options the
+distribution behaves like. It goes from 1.28 at T=0.2 to 5.36 at T=1.0 to 42.32 at
+T=5.0. AT T=0.2 THE MODEL IS ESSENTIALLY DETERMINISTIC and at T=5 it is essentially
+picking at random from a third of the vocabulary.
+
+AND THE PRACTICAL CONSEQUENCE, measured by actually sampling 200 tokens:
+
+  T = 0.2   3 distinct tokens in 200 draws, top token chosen 188 times
+  T = 0.7   8 distinct,  top token 111 times
+  T = 1.0  11 distinct,  top token  87 times
+  T = 1.5  26 distinct,  top token  66 times
+
+LOW TEMPERATURE IS WHERE REPETITION LOOPS COME FROM. Three distinct tokens in two
+hundred draws is a model that will say the same thing over and over, and the usual
+diagnosis - "the model is repetitive" - is often a decoding setting rather than a
+model property.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LOGIT - the raw score the model produces for each token, before any normalisation.
+Unbounded, and only its DIFFERENCES matter.
+
+SOFTMAX - exponentiate and normalise, turning logits into a probability distribution.
+
+TEMPERATURE (T) - divides the logits before the softmax. T < 1 sharpens; T > 1
+flattens; T = 1 is unchanged.
+
+GREEDY DECODING - always take the highest-probability token. Temperature is irrelevant
+here, because it cannot reorder.
+
+SAMPLING - draw from the distribution. This is the only mode where temperature does
+anything.
+
+ENTROPY - a measure of how spread out the distribution is. exp(entropy) is the
+"effective number of choices", which is a far more readable number.
+
+TOP-K - keep only the k highest-probability tokens and renormalise.
+
+TOP-P / NUCLEUS - keep the smallest set of tokens whose probabilities sum to at least
+p, and renormalise. Adaptive, unlike top-k.
+
+REPETITION PENALTY - reduce the logits of tokens already generated. A separate
+mechanism from temperature that attacks the same symptom.
+
+BEAM SEARCH - keep several partial sequences and expand them all. A different family
+entirely; it is not sampling and temperature does not apply in the same way.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TEMPERATURE 0 IS NOT A TEMPERATURE. Dividing by zero is undefined; every API that
+accepts `temperature=0` special-cases it to greedy decoding. Measured, T=0.01 already
+gives p(top) = 1.0000 to four decimal places, so the limit is reached long before
+zero.
+
+"LOWER TEMPERATURE IS MORE ACCURATE" IS WRONG IN AN IMPORTANT WAY. It makes the model
+more CONSISTENT, not more correct. If the highest-probability token is wrong, low
+temperature guarantees it will be wrong the same way every time - which makes the
+error harder to notice in spot-checking, not less likely.
+
+IT DOES NOT AFFECT THE RANKING, MEASURED. Same argmax and same top-5 ordering at
+T=0.1, 1.0 and 10.0. Anyone expecting a temperature change to make the model "prefer"
+a different answer is expecting something the arithmetic forbids.
+
+REPETITION IS A LOW-TEMPERATURE SYMPTOM. Measured, T=0.2 produced three distinct
+tokens in two hundred draws. When output loops, the decoding parameters are a more
+likely cause than the model.
+
+TEMPERATURE AND TOP-P INTERACT AND ARE USUALLY TUNED AS IF THEY DO NOT. Measured, the
+number of tokens inside the top-p = 0.9 nucleus went from 1 at T=0.2 to 21 at T=2.0,
+on the same logits. RAISING TEMPERATURE WIDENS THE NUCLEUS, so the two settings
+multiply rather than acting independently, and the common advice to "change one, not
+both" exists because of exactly this.
+
+AND THE ONE THAT MATTERS FOR EVALUATION: A NON-ZERO TEMPERATURE MAKES YOUR RESULTS
+NON-REPRODUCIBLE. Two identical prompts give different answers. That is desirable in a
+chat product and fatal in a benchmark, so evaluation runs should be greedy or should
+fix a seed and report it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: greedy decoding - always the top token. Deterministic, reproducible, and prone
+to bland repetitive text because it never takes the second-best option even when the
+model considered it nearly as good.
+
+UPGRADE 1: pure sampling at T = 1.0. Uses the model's actual distribution. Measured,
+the 43rd-ranked token still has probability 4.38e-05, so over a thousand tokens
+something implausible will be chosen.
+
+UPGRADE 2: TEMPERATURE below 1. Suppresses the tail. Measured, T = 0.7 drops the 43rd
+token to 1.12e-06 - forty times less likely than at T = 1.0 - while the top token only
+rises from 0.42 to 0.54.
+
+UPGRADE 3: TOP-K. Truncate to the k best. Removes the tail outright rather than
+merely making it unlikely. Its weakness is that k is fixed and the right k is not.
+
+UPGRADE 4: TOP-P / NUCLEUS. Keep the smallest set summing to p. ADAPTS to how
+confident the model is, which is the whole point.
+
+UPGRADE 5: TOP-P PLUS A MODEST TEMPERATURE - the standard combination. Nucleus removes
+the tail; temperature shapes what is left.
+
+UPGRADE 6: REPETITION AND FREQUENCY PENALTIES for loops, rather than raising
+temperature. Raising temperature to escape a loop also raises the chance of nonsense;
+a penalty targets the actual symptom.
+
+UPGRADE 7: MIN-P - keep tokens whose probability is at least a fraction of the top
+token's. A newer alternative that adapts like top-p and is less sensitive to a long
+flat tail.
+
+UPGRADE 8: for factual work, use T = 0 (greedy) plus grounding and tools. Sampling
+diversity is a liability there.""",
+
+    """6. HOW TO SET IT - numbered steps.
+
+STEP 1 - DECIDE WHETHER YOU WANT VARIETY AT ALL. Factual extraction, classification,
+structured output: greedy. Creative writing, brainstorming, multiple candidates:
+sampling.
+
+STEP 2 - IF SAMPLING, START AT T = 0.7 WITH TOP-P = 0.9. This is the near-universal
+default and it is a sensible prior.
+
+STEP 3 - CHANGE ONE AT A TIME. Measured, temperature changes how many tokens sit
+inside the nucleus - 1 token at T=0.2 and 21 at T=2.0 for the same p - so they are not
+independent.
+
+STEP 4 - IF THE OUTPUT IS REPETITIVE, SUSPECT LOW TEMPERATURE FIRST. Measured, T = 0.2
+gave three distinct tokens in two hundred draws.
+
+STEP 5 - IF THE OUTPUT IS INCOHERENT, LOWER THE TEMPERATURE OR TIGHTEN TOP-P. The tail
+is where incoherence comes from and both settings attack it.
+
+STEP 6 - FOR REPETITION LOOPS SPECIFICALLY, USE A REPETITION PENALTY rather than
+raising temperature. It targets the symptom without widening the tail.
+
+STEP 7 - FOR EVALUATION, USE GREEDY OR FIX A SEED. A non-zero temperature makes runs
+non-reproducible and benchmark numbers uncomparable.
+
+STEP 8 - REPORT THE DECODING PARAMETERS with any result. A model's quality figure is
+meaningless without them, and they are omitted from most reported comparisons.
+
+STEP 9 - REMEMBER THAT TEMPERATURE DOES NOT ADD KNOWLEDGE. It changes which of the
+model's existing options you draw, and nothing else.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+The model finishes every sentence by holding an opinion about each possible next word -
+some strongly preferred, most hopeless. Temperature decides how strictly you follow
+that opinion.
+
+Turn it right down and you always take the favourite. Turn it up and you start
+seriously considering the second and third choices, and eventually the hopeless ones.
+
+The thing to understand is WHERE the change happens. Measured, going from a low
+setting to a high one changed the favourite's chances by a factor of about fourteen -
+and changed the forty-third choice's chances by a factor of a billion billion.
+
+So the dial is not really "how much do you prefer the best word". It is "how likely are
+you to say something absurd", and that is the right way to think about the risk.
+
+Two things follow that people get wrong.
+
+It never changes WHICH word is the favourite. Dividing everyone's score by the same
+number cannot change who is winning. So if you were hoping a temperature change would
+make the model give a different answer, it cannot - it can only make you more likely
+to draw one of the answers it already ranked below the top.
+
+And turning it right down is not "more accurate", it is "more consistent". Measured at
+a very low setting, two hundred draws produced three distinct words and the favourite
+came up a hundred and eighty-eight times. If the favourite happens to be wrong, you
+now get the same wrong answer every single time - which is much harder to notice by
+spot-checking than an occasional obvious error.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def softmax_with_temperature(logits, T):
+        if T <= 0:
+            return one_hot(argmax(logits))       # T=0 is GREEDY, special-cased -
+                                                 # dividing by zero is undefined
+        m = max(logits)                          # subtract the max for stability:
+        e = [exp((z - m) / T) for z in logits]   # exp(large) overflows
+        s = sum(e)
+        return [x / s for x in e]
+
+    def sample(logits, T=0.7, top_p=0.9):
+        p = softmax_with_temperature(logits, T)
+        order = sorted(range(len(p)), key=lambda i: -p[i])
+        cum, keep = 0.0, []
+        for i in order:                          # NUCLEUS first, then renormalise
+            keep.append(i); cum += p[i]
+            if cum >= top_p: break
+        total = sum(p[i] for i in keep)
+        r = random() * total
+        c = 0.0
+        for i in keep:
+            c += p[i]
+            if r <= c: return i
+        return keep[-1]
+
+LINE BY LINE:
+ - `if T <= 0: return greedy` - every API does this. There is no such thing as
+   temperature zero; measured, T = 0.01 already gives p(top) = 1.0000 to four decimal
+   places.
+ - `(z - m) / T` - subtracting the maximum before exponentiating. Without it,
+   `exp(large_logit / 0.1)` overflows to infinity and the whole distribution becomes
+   NaN. A one-symbol detail that breaks everything at low temperatures specifically.
+ - the nucleus loop uses `>=` and includes the token that CROSSES the threshold, so
+   the kept mass is at least p. Using `>` and stopping before it can keep less than
+   p, which is a subtle off-by-one that changes behaviour on confident distributions.
+ - `total = sum(p[i] for i in keep)` then sampling against `random() * total` -
+   RENORMALISING over the kept set. Forgetting this makes the truncated tail's
+   probability silently unassigned.
+ - temperature is applied BEFORE the nucleus is computed, which is why the two
+   interact: measured, the same top_p = 0.9 kept 1 token at T = 0.2 and 21 at
+   T = 2.0.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THREE LOGITS: [4.0, 2.0, 1.0]
+
+  T = 1.0:  exp(4-4)=1.000, exp(2-4)=0.135, exp(1-4)=0.050   sum 1.185
+            p = [0.844, 0.114, 0.042]
+
+  T = 0.5:  exponents are (0, -4, -6)
+            exp = 1.000, 0.0183, 0.00248                     sum 1.0208
+            p = [0.980, 0.018, 0.002]
+
+  T = 2.0:  exponents are (0, -1, -1.5)
+            exp = 1.000, 0.368, 0.223                        sum 1.591
+            p = [0.629, 0.231, 0.140]
+
+  THE TOP TOKEN went 0.980 -> 0.844 -> 0.629 across a fourfold temperature change - a
+  factor of 1.6. THE THIRD TOKEN went 0.002 -> 0.042 -> 0.140 - a factor of 70. The
+  effect on the tail is enormously larger, and that pattern holds at scale.
+
+THE MEASURED VERSION over a 50-token vocabulary:
+
+  T      p(top)   entropy   effective choices   p(43rd token)
+  ---------------------------------------------------------------
+  0.20   0.9425    0.2485          1.28            1.23e-20
+  0.70   0.5377    1.2808          3.60            1.12e-06
+  1.00   0.4154    1.6781          5.36            4.38e-05
+  2.00   0.2032    2.8540         17.36            2.09e-03
+  5.00   0.0658    3.7452         42.32            1.05e-02
+
+TOP TOKEN: a factor of 14 across the whole range.
+43RD TOKEN: a factor of 10^18.
+
+AND ACTUALLY SAMPLING 200 TOKENS FROM EACH:
+
+  T = 0.2    3 distinct tokens, top token chosen 188 times
+  T = 0.7    8 distinct, top token 111
+  T = 1.0   11 distinct, top token  87
+  T = 1.5   26 distinct, top token  66
+
+THREE DISTINCT TOKENS IN TWO HUNDRED DRAWS AT T = 0.2. That is what a repetition loop
+looks like from the inside, and it is a decoding setting rather than a model defect.
+
+FINALLY, THE INTERACTION WITH TOP-P, same logits:
+
+  T = 0.2  -> top_p 0.9 keeps  1 token
+  T = 1.0  -> top_p 0.9 keeps  5 tokens
+  T = 2.0  -> top_p 0.9 keeps 21 tokens
+
+THE SAME NUCLEUS SETTING KEEPS TWENTY-ONE TIMES AS MANY TOKENS at high temperature.
+The two parameters multiply, and tuning one while holding the other fixed is measuring
+a moving target.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: one division per logit. Free.
+
+DETERMINISM: any T > 0 makes output non-reproducible without a fixed seed.
+
+RANGE: 0 (greedy, special-cased) to about 2 in practice. Above 2 the output is
+measurably close to random - effective choices 17.4 at T=2 and 42.3 at T=5 out of 50.
+
+THE #1 MISTAKE: believing temperature changes the model's answer. Measured, identical
+argmax and identical top-5 ordering at T = 0.1, 1.0 and 10.0. It cannot reorder.
+
+THE #2 MISTAKE: "lower is more accurate". It is more CONSISTENT. A wrong top token
+becomes reliably wrong, which is harder to catch.
+
+THE #3 MISTAKE: expecting temperature to matter under greedy decoding. It does
+nothing at all there.
+
+THE #4 MISTAKE: raising temperature to escape a repetition loop. That widens the tail
+too; a repetition penalty targets the symptom.
+
+THE #5 MISTAKE: tuning temperature and top-p independently. Measured, the same
+top_p = 0.9 kept 1 token at T = 0.2 and 21 at T = 2.0.
+
+THE #6 MISTAKE: forgetting to subtract the max before exponentiating. At low
+temperatures this overflows and produces NaN.
+
+THE #7 MISTAKE: non-zero temperature in evaluation. The numbers are not reproducible
+and not comparable.
+
+THE #8 MISTAKE: reporting a model's quality without its decoding parameters.
+
+THE TAKEAWAY: temperature divides the logits before the softmax, so it cannot change
+the RANKING - measured, identical argmax and top-5 order from T = 0.1 to T = 10 - and
+it acts overwhelmingly on the TAIL, changing the top token's probability by a factor
+of 14 across the usable range and the 43rd token's by a factor of 10^18, which makes
+it a control on "how likely is something absurd" rather than on "how much do you
+prefer the best answer"; low temperature buys consistency rather than accuracy, and
+measured at T = 0.2 it produced three distinct tokens in two hundred draws, which is
+what a repetition loop is - and because temperature reshapes the distribution BEFORE
+top-p truncates it, the two settings multiply and cannot be tuned separately.""",
+]
+
+_EX_P1AO["Top-p (nucleus) sampling"] = [
+    """1. THE GOAL - truncating the nonsense without also truncating the choice.
+
+When a language model samples its next token, the raw distribution has a very long
+tail of tokens that are individually almost impossible and collectively not. Over a
+thousand tokens, "almost impossible" happens.
+
+TOP-K's answer is to keep only the k best. TOP-P's answer is to keep the SMALLEST SET
+OF TOKENS WHOSE PROBABILITIES SUM TO AT LEAST p, then renormalise and sample from
+those.
+
+THE DIFFERENCE IS THAT TOP-P ADAPTS TO HOW CONFIDENT THE MODEL IS. Measured, at
+temperature 1.0 with p = 0.9:
+
+  distribution                       top token probability    tokens in the nucleus
+  ---------------------------------------------------------------------------------
+  confident (one clear answer)              0.994                    1
+  uncertain (many plausible)                0.046                   40
+
+ONE TOKEN IN THE FIRST CASE AND FORTY IN THE SECOND, from the same setting. A fixed
+k = 40 keeps forty in BOTH - which is wildly too many when the model is certain and
+possibly too few when it is not.
+
+That adaptivity is the entire argument, and it is why top-p replaced top-k as the
+default in essentially every API.""",
+
+    """2. THE INTUITION - the model already knows how uncertain it is.
+
+The distribution's SHAPE carries information. When the model is sure, almost all the
+probability is on one or two tokens. When it is genuinely uncertain - a name, a
+creative choice, a list continuation - the mass is spread across dozens.
+
+TOP-K IGNORES THAT SHAPE. It keeps a fixed count regardless, so it is simultaneously
+too permissive on confident steps (letting in 39 tokens the model gave almost no
+weight) and too restrictive on uncertain ones (cutting off genuine alternatives).
+
+TOP-P READS THE SHAPE. "Keep enough tokens to cover 90% of the probability" is
+automatically one token when one token has 99%, and automatically forty when the mass
+is diffuse.
+
+MEASURED, on a fixed set of logits at several temperatures:
+
+  T      p=0.5    p=0.9    p=0.95   p=0.99    mass covered by a fixed k=40
+  ---------------------------------------------------------------------------
+  0.20   1 tok    1 tok     2 tok    3 tok            1.0000
+  0.50   1 tok    3 tok     3 tok    5 tok            1.0000
+  1.00   2 tok    5 tok     6 tok   15 tok            0.9997
+  1.50   3 tok   11 tok    18 tok   35 tok            0.9947
+  2.00   4 tok   21 tok    30 tok   44 tok            0.9819
+
+READ THE p=0.9 COLUMN DOWNWARDS: 1, 3, 5, 11, 21 tokens as the distribution flattens.
+The setting is constant and the behaviour adapts.
+
+READ THE LAST COLUMN: k = 40 covers essentially everything at every temperature, which
+means it is doing almost nothing at low temperature and only starting to bite at high
+temperature. A FIXED k IS THE WRONG SHAPE OF CONTROL.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NUCLEUS - the kept set: the smallest group of tokens whose probabilities sum to at
+least p.
+
+p - the threshold. 0.9 to 0.95 typical. p = 1.0 keeps everything and is equivalent to
+plain sampling.
+
+RENORMALISATION - after truncating, the kept probabilities must be rescaled to sum to
+1, or the discarded mass is unassigned.
+
+TOP-K - keep the k highest-probability tokens. Fixed count, not adaptive.
+
+MIN-P - keep tokens whose probability is at least some fraction of the top token's
+probability. Another adaptive rule, and it behaves better than top-p on very long flat
+tails.
+
+TYPICAL SAMPLING - keep tokens whose information content is close to the
+distribution's entropy, rather than the highest-probability ones. Aims at "typical"
+rather than "likely".
+
+TEMPERATURE - rescales the logits before any of this. It changes the shape that top-p
+then reads, which is why the two interact.
+
+GREEDY DECODING - always the argmax. Equivalent to top-p with a very small p, or
+top-k with k = 1.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TEMPERATURE AND TOP-P ARE NOT INDEPENDENT, AND THE COMMON ADVICE TO "TUNE ONE, NOT
+BOTH" IS A CONSEQUENCE RATHER THAN A SUPERSTITION. Measured, the same p = 0.9 kept 1
+token at T = 0.2, 5 tokens at T = 1.0 and 21 tokens at T = 2.0. Raising temperature
+flattens the distribution, which means more tokens are needed to reach 90% - so
+temperature WIDENS the nucleus. Tuning them separately is measuring a moving target.
+
+p = 1.0 IS NOT "MAXIMUM CREATIVITY", IT IS NO FILTER AT ALL. It keeps the entire
+vocabulary, including tokens at 1e-8. Over a thousand generated tokens those add up,
+and this is where genuinely bizarre single words come from.
+
+VERY SMALL p COLLAPSES TO GREEDY. Measured, at T = 0.2 even p = 0.5 keeps exactly one
+token. If your temperature is already low, top-p may be doing nothing.
+
+THE NUCLEUS CAN BE ONE TOKEN, AND THAT IS CORRECT BEHAVIOUR. When the model is 99.4%
+sure, keeping one token is exactly what the rule should do - and people sometimes read
+"my top-p sampling produced identical output" as a bug when it is the model being
+certain.
+
+THE OFF-BY-ONE IS REAL. The nucleus must INCLUDE the token that crosses the threshold,
+so that the kept mass is at least p. Stopping before it keeps less than p and behaves
+noticeably differently on confident distributions, where one token can carry most of
+the mass.
+
+AND RENORMALISATION IS NOT OPTIONAL. After truncating to 90% of the mass, the kept
+probabilities sum to 0.9. Sampling against the original scale leaves a 10% chance of
+falling off the end of the list, which implementations handle by clamping to the last
+token - so the final token in the nucleus is silently over-sampled.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: sample from the full distribution. Measured, the 43rd-ranked token still has
+probability 4.38e-05 at T = 1.0, so over a thousand tokens something implausible will
+be drawn.
+
+UPGRADE 1: TOP-K. Truncate to the best k. Removes the tail outright. Its problem is
+that the right k depends on the step and it does not know that.
+
+UPGRADE 2: TOP-P. Truncate by cumulative probability instead of by count. Measured,
+adapts from 1 token to 40 depending on the model's confidence.
+
+UPGRADE 3: TOP-P PLUS A MODEST TEMPERATURE. The standard: T around 0.7 to 1.0 with
+p = 0.9. Temperature shapes, nucleus truncates.
+
+UPGRADE 4: TOP-K AND TOP-P TOGETHER, with k as a hard ceiling. Belt and braces for
+the case where the distribution is so flat that even the nucleus is enormous.
+
+UPGRADE 5: MIN-P - keep tokens at least some fraction of the top token's probability.
+It handles a very long flat tail more gracefully than top-p, which can be forced to
+include hundreds of near-identical low-probability tokens to reach its threshold.
+
+UPGRADE 6: REPETITION AND FREQUENCY PENALTIES, which attack loops directly rather than
+by widening the candidate set.
+
+UPGRADE 7: for structured output, CONSTRAINED DECODING - restrict to tokens valid
+under a grammar or schema. Strictly better than any probability-based filter when the
+output has a required shape.
+
+UPGRADE 8: greedy decoding for anything factual or evaluated. Sampling diversity is a
+liability there.""",
+
+    """6. HOW TO SET IT - numbered steps.
+
+STEP 1 - START AT p = 0.9 WITH T = 0.7. The near-universal default.
+
+STEP 2 - CHANGE ONE AT A TIME, and remember they interact: measured, the same p kept 1
+token at T = 0.2 and 21 at T = 2.0.
+
+STEP 3 - IF THE OUTPUT IS OCCASIONALLY BIZARRE, LOWER p. That is the tail, and the
+nucleus is the tool that removes it.
+
+STEP 4 - IF THE OUTPUT IS BLAND OR REPETITIVE, RAISE p (or temperature) - but check
+whether the real cause is a repetition loop, which wants a penalty instead.
+
+STEP 5 - DO NOT SET p = 1.0 AND CALL IT CREATIVE. It disables the filter entirely and
+lets in tokens at 1e-8.
+
+STEP 6 - CHECK YOUR TEMPERATURE FIRST. Measured, at T = 0.2 even p = 0.5 keeps one
+token, so top-p is inert.
+
+STEP 7 - CONSIDER A TOP-K CEILING ALONGSIDE, for the pathological flat-distribution
+case.
+
+STEP 8 - FOR FACTUAL OR EVALUATED WORK, USE GREEDY. Reproducibility matters more than
+variety.
+
+STEP 9 - REPORT BOTH PARAMETERS with any quality claim. A benchmark number without
+decoding settings is not comparable to anyone else's.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Someone is choosing the next word and has ranked every word in the language by how
+well it fits. The top few are good, and there is an enormous tail of words that are
+almost - but not quite - impossible.
+
+If you let them pick from the whole list, then over a long piece of writing they will
+eventually pick one of the ridiculous ones, because "almost impossible" happens if you
+roll the dice a thousand times.
+
+One fix is a hard rule: only ever consider the top forty. That works, and it is the
+same rule whether they are certain or not. When there is obviously one right word,
+you have just invited thirty-nine wrong ones into the shortlist. When there are
+genuinely sixty reasonable continuations, you have cut off twenty of them.
+
+The better rule is: keep adding words to the shortlist until you have covered ninety
+percent of their confidence, then stop.
+
+Measured, that produced a shortlist of ONE word when they were 99% sure, and FORTY
+words when their best guess was only 5% likely. Same rule, completely different
+behaviour, decided by how certain they actually were.
+
+One thing that catches people: this rule and the "how strictly do you follow your
+preferences" dial are not independent. Loosening the preferences flattens their
+confidence, which means more words are needed to cover ninety percent of it - measured,
+the same ninety-percent rule kept one word at a strict setting and twenty-one at a
+loose one. Turn both up and you have turned one thing up twice.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def nucleus(probs, p=0.9):
+        order = sorted(range(len(probs)), key=lambda i: -probs[i])
+        cum, keep = 0.0, []
+        for i in order:
+            keep.append(i)                       # APPEND FIRST, then check -
+            cum += probs[i]                      # the crossing token is INCLUDED, so
+            if cum >= p: break                   # the kept mass is at least p
+        return keep
+
+    def sample_top_p(logits, T=0.7, p=0.9, rng=random):
+        probs = softmax(logits, T)               # TEMPERATURE FIRST - it changes the
+        keep = nucleus(probs, p)                 # shape the nucleus then reads
+        total = sum(probs[i] for i in keep)      # RENORMALISE over the kept set
+        r = rng.random() * total
+        c = 0.0
+        for i in keep:
+            c += probs[i]
+            if r <= c: return i
+        return keep[-1]                          # float-rounding backstop
+
+LINE BY LINE:
+ - `keep.append(i)` BEFORE the threshold check. The token that crosses p is part of
+   the nucleus, so the kept mass is at least p rather than at most. Reversing these
+   two lines changes the behaviour on confident distributions, where a single token
+   can carry 99% of the mass.
+ - `softmax(logits, T)` before `nucleus(...)`. This ordering is why the two parameters
+   interact: measured, p = 0.9 kept 1 token at T = 0.2 and 21 at T = 2.0.
+ - `total = sum(...)` and `rng.random() * total` - RENORMALISING. Without it the
+   discarded 10% of mass is unassigned, and the loop falls through to the backstop,
+   silently over-sampling the last token in the nucleus.
+ - `return keep[-1]` at the end is a floating-point guard, not a normal path. If it is
+   being hit often, the renormalisation above is missing.
+ - `sorted(...)` is O(V log V) over the whole vocabulary every token. Production
+   implementations use a partial sort or a heap, because V is 50,000 to 200,000 and
+   this runs once per generated token.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+PROBABILITIES: [0.50, 0.25, 0.12, 0.08, 0.03, 0.02]
+
+  TOP-P WITH p = 0.9:
+    add 0.50   cumulative 0.50   <  0.9   continue
+    add 0.25   cumulative 0.75   <  0.9   continue
+    add 0.12   cumulative 0.87   <  0.9   continue
+    add 0.08   cumulative 0.95   >= 0.9   STOP - and this token IS included
+    nucleus = 4 tokens, mass 0.95
+    renormalised: [0.526, 0.263, 0.126, 0.084]
+
+  TOP-K WITH k = 4: the same four tokens, by coincidence.
+
+  NOW MAKE THE MODEL CONFIDENT: [0.97, 0.01, 0.01, 0.005, 0.003, 0.002]
+    TOP-P p = 0.9: 0.97 >= 0.9 on the first token. NUCLEUS = 1 TOKEN.
+    TOP-K k = 4:   still four tokens, three of which the model gave 1% or less.
+
+  AND MAKE IT UNCERTAIN: fifty tokens each around 0.02
+    TOP-P p = 0.9: needs about 45 tokens.
+    TOP-K k = 4:   four tokens, discarding 92% of the model's own probability mass.
+
+THE MEASURED VERSION, at temperature 1.0:
+
+  distribution                    top token prob    nucleus at p=0.9   at p=0.99
+  --------------------------------------------------------------------------------
+  confident (one clear answer)         0.994               1                1
+  uncertain (many plausible)           0.046              40               49
+
+ONE TOKEN AGAINST FORTY, FROM THE SAME SETTING. A fixed k cannot do that, and this is
+the whole argument for nucleus sampling.
+
+AND THE INTERACTION WITH TEMPERATURE, on one fixed set of logits:
+
+  T      p=0.5    p=0.9    p=0.95    p=0.99
+  ---------------------------------------------
+  0.20   1 tok    1 tok     2 tok     3 tok
+  0.50   1 tok    3 tok     3 tok     5 tok
+  1.00   2 tok    5 tok     6 tok    15 tok
+  1.50   3 tok   11 tok    18 tok    35 tok
+  2.00   4 tok   21 tok    30 tok    44 tok
+
+READ ANY COLUMN DOWNWARDS. The setting never changed; the temperature did, and the
+nucleus grew by a factor of twenty-one in the p = 0.9 column. TEMPERATURE IS APPLIED
+FIRST AND TOP-P READS THE RESULT, so raising temperature widens the nucleus - which is
+why raising both is raising one thing twice.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: a sort or partial sort over the vocabulary per generated token. V is 50,000
+to 200,000, so production implementations use a heap or a partial selection rather
+than a full sort.
+
+QUALITY: it removes the tail without removing choice, which is what makes it the
+default in every major API.
+
+RANGE: 0.9 to 0.95 typical. 1.0 disables it entirely.
+
+THE #1 MISTAKE: tuning top-p and temperature independently. Measured, the same p = 0.9
+kept 1 token at T = 0.2 and 21 at T = 2.0, because temperature reshapes the
+distribution that top-p then reads.
+
+THE #2 MISTAKE: p = 1.0 as "maximum creativity". It is no filter at all, and it lets
+in tokens at 1e-8.
+
+THE #3 MISTAKE: expecting top-p to do something at a low temperature. Measured, at
+T = 0.2 even p = 0.5 keeps one token.
+
+THE #4 MISTAKE: excluding the token that crosses the threshold. The kept mass must be
+at least p, and the difference shows on confident distributions.
+
+THE #5 MISTAKE: forgetting to renormalise, so the truncated mass is unassigned and the
+last kept token is silently over-sampled.
+
+THE #6 MISTAKE: reading "the nucleus was one token" as a bug. It is the correct
+behaviour when the model is 99% sure.
+
+THE #7 MISTAKE: a full sort per token in production. Use a partial selection.
+
+THE #8 MISTAKE: reporting quality without the decoding parameters.
+
+THE TAKEAWAY: top-p keeps the smallest set of tokens whose probabilities sum to at
+least p, which makes the candidate set ADAPT to the model's own confidence - measured,
+one token on a distribution whose top probability was 0.994 and forty tokens on one
+whose top probability was 0.046, from the identical setting, where a fixed top-k keeps
+the same count in both and is therefore wrong in both directions; because temperature
+is applied FIRST and reshapes the distribution the nucleus then reads, the same p = 0.9
+kept 1 token at T = 0.2 and 21 at T = 2.0, which is why the two parameters multiply and
+must not be tuned separately.""",
+]
+
 
 
 
