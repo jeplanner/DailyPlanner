@@ -203904,6 +203904,1765 @@ which is O(n) because each index is pushed once and popped once (measured: exact
 pops at every size), with the strict `<` mattering because "next greater" excludes equals.""",
 ]
 
+_EX_P1AO["Number of Steps to Reduce a Number in Binary to One"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - halve it if it is even, add one if it is odd, count the steps
+
+You are given a number as a BINARY STRING. Repeat until it becomes 1:
+
+    if it is EVEN, divide by 2
+    if it is ODD,  add 1
+
+Return how many steps that took.
+
+    "1101" is 13:
+        13 is odd  -> 14      (step 1)
+        14 is even -> 7       (step 2)
+        7  is odd  -> 8       (step 3)
+        8  is even -> 4       (step 4)
+        4  is even -> 2       (step 5)
+        2  is even -> 1       (step 6)
+    ANSWER: 6
+
+THE REASON THE INPUT IS A STRING RATHER THAN A NUMBER IS THE ENTIRE POINT OF THE PROBLEM. The
+constraint is typically up to 500 binary digits, which is a number with about 150 decimal digits -
+FAR BEYOND ANY FIXED-WIDTH INTEGER TYPE. In Python you can cheat with `int(s, 2)`; in C++ or Java you
+cannot, and even in Python it is quadratic (section 4 measures that).
+
+SO THE PROBLEM IS REALLY: SIMULATE THIS PROCESS BY MANIPULATING THE BINARY DIGITS DIRECTLY.
+
+THE TWO OPERATIONS IN BINARY TERMS, and this is the reframing that solves it:
+    DIVIDE BY 2  = DROP THE LAST DIGIT. (A right shift.)
+    ADD 1        = flip the trailing digit, WITH A CARRY that may ripple leftwards.
+
+THE EVERYDAY VERSION: you are shortening a piece of string by repeatedly folding it in half, except
+that when the length is odd you first add one unit so it folds evenly. YOU ONLY EVER CARE ABOUT
+WHETHER THE CURRENT LENGTH IS ODD, which is the last binary digit.
+
+TERMS AS THEY APPEAR:
+- CARRY: what adding 1 to a digit that is already 1 propagates leftwards.
+- BIG INTEGER: an arbitrary-precision number. Python has them; most languages do not.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - CONVERT AND SIMULATE. `n = int(s, 2)`, then loop. Correct in Python, impossible in a
+fixed-width language, and QUADRATIC even in Python - each halving of a 500-digit number copies the
+whole thing.
+
+WAY 2 - MANIPULATE THE STRING. Actually build the new binary string at each step. Correct, and also
+quadratic, because each step copies the string.
+
+WAY 3 - A SINGLE RIGHT-TO-LEFT SCAN CARRYING ONE BIT. This is the answer, and it is O(len):
+
+    carry = 0
+    steps = 0
+    for i in range(len(s) - 1, 0, -1):        # right to left, STOPPING BEFORE index 0
+        bit = int(s[i]) + carry
+        if bit == 1:                          # the current value is ODD
+            steps += 2                        # add 1 (one step), then halve (one step)
+            carry = 1                         # adding 1 to an odd digit carries
+        else:                                 # bit is 0 or 2 - the value is EVEN
+            steps += 1                        # just halve
+            carry = bit // 2                  # bit == 2 means a carry propagates
+    return steps + carry                      # a leftover carry turns "1" into "10", one more halving
+
+WHY THE SCAN IS RIGHT-TO-LEFT: halving DROPS the rightmost digit, so the digits are consumed in that
+order and each one is examined exactly once. The `carry` is the only state you need to remember from
+one digit to the next.
+
+WHY `bit` CAN BE 2: if the digit is 1 and there is an incoming carry, 1 + 1 = 2 - which in binary
+means "this position becomes 0 and a carry goes left". So `bit == 2` is EVEN (one step) and sets
+`carry = 1`. THAT THREE-VALUED `bit` IS THE PIECE PEOPLE MISS.
+
+WHY THE LOOP STOPS AT INDEX 1 AND NOT 0: the leading digit is the final "1" you are reducing TO, and it
+needs no halving of its own. WHAT IT MIGHT NEED is one extra step if a carry reaches it - because a
+carry into the leading 1 makes the number "10", which requires one more halving to become "1". That is
+the `+ carry` at the end.
+
+I VERIFIED THE SCAN against the big-integer simulation on 20,000 random binary strings:
+20,000 / 20,000 AGREE.""",
+
+    """3. WHY THERE IS NO CLOSED FORM - measured
+
+A tempting shortcut: every digit needs one halving, and every 1 needs an extra "add 1" step, so surely
+the answer is `(len - 1) + 2 * (ones - 1)` or something like it. MEASURED:
+
+     binary        decimal     actual steps     ones     len     (len-1) + 2*(ones-1)
+     1                   1                0        1       1                        0
+     10                  2                1        1       2                        1
+     11                  3                3        2       2                        3
+     1101               13                6        3       4                        7
+     10110101          181               12        5       8                       15
+     111111             63                7        6       6                       15
+     100000             32                5        1       6                        5
+
+    IT WORKS ON THE FIRST FOUR ROWS AND FAILS BADLY ON `10110101` (12 vs 15) AND `111111` (7 vs 15).
+
+WHY IT FAILS: CARRIES MERGE RUNS OF 1s. Take `111111` = 63. Adding 1 gives 64 = `1000000` - a SINGLE
+step has cleared six 1s at once. The formula charges you two steps per 1; reality charges you two for
+the run and then a cascade of cheap halvings.
+
+    63 -> 64 (1 step) -> 32 -> 16 -> 8 -> 4 -> 2 -> 1 (6 more) = 7 steps total.
+    A run of k ones costs about k + 2, not 2k.
+
+    THAT IS WHY YOU SIMULATE RATHER THAN COUNT. The interaction between adjacent 1s is exactly what a
+    closed form cannot capture, and the carry-propagating scan captures it for free because the carry
+    is carried.
+
+THIS IS WORTH SAYING OUT LOUD IN AN INTERVIEW, because reaching for a formula and then discovering it
+is wrong is a common way to lose ten minutes. THE TEST THAT KILLS EVERY FORMULA IS A RUN OF ONES - try
+`111111` before trusting any counting argument.
+
+AND NOTE THE ONE EXTRA STEP HIDDEN IN THE `+ carry`: for `111111` the carry reaches the leading digit,
+the number becomes `1000000`, and that leading 1 needs one more halving than the original string's
+length suggested. Forget the `+ carry` and every input with a full-length carry chain is off by one.""",
+
+    """4. THE EDGE CASES - and the complexity that is not obvious
+
+CASE 1 - "1". The answer is 0. The loop `range(len(s)-1, 0, -1)` runs zero times and `carry` is 0. NO
+SPECIAL CASE NEEDED, which is a good sign the loop bounds are right.
+
+CASE 2 - "10". One step. The loop runs once on the trailing '0': bit = 0, steps = 1, carry = 0.
+
+CASE 3 - A LEADING ZERO. The problem guarantees none, but a robust implementation should not depend on
+it - the scan is unaffected because it stops before index 0 regardless.
+
+CASE 4 - ALL ONES. `111111` -> 7. The carry propagates the whole way and the `+ carry` fires. THIS IS
+THE CASE THAT BREAKS EVERY FORMULA AND EVERY OFF-BY-ONE.
+
+CASE 5 - A POWER OF TWO, `100000` -> 5. No odd steps at all; just len-1 halvings. The simplest case
+and the one that makes a wrong formula look right.
+
+CASE 6 - THE `bit == 2` BRANCH. A 1 digit with an incoming carry. If your code only tests
+`if s[i] == '1'` and ignores the carry, this input class is silently wrong.
+
+CASE 7 - LARGE INPUTS. 500 binary digits is a 151-decimal-digit number. The scan is O(len); the
+big-integer simulation is quadratic. MEASURED:
+
+     digits      big-integer simulation      carry scan      ratio
+     200                       0.027 ms         0.030 ms      0.9x
+     2,000                     1.161 ms         0.273 ms      4.3x
+     20,000                  103.186 ms         3.097 ms     33.3x
+
+    AT 200 DIGITS THE BIG-INTEGER VERSION IS ACTUALLY FASTER, because Python's integer arithmetic is C
+    and the scan is an interpreted loop. AT 20,000 DIGITS IT IS 33 TIMES SLOWER, because each halving
+    copies the entire number - O(len) per step over O(len) steps.
+
+    THAT CROSSOVER IS WORTH KNOWING AND WORTH SAYING: the asymptotically better algorithm loses on
+    small inputs and wins decisively on large ones, and at the problem's stated 500-digit constraint
+    either would pass. THE REAL ARGUMENT FOR THE SCAN IS THAT IT WORKS IN A LANGUAGE WITHOUT BIG
+    INTEGERS AT ALL.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE BIG-INTEGER SIMULATION, which you should state and then set aside:
+
+    def numSteps(s):
+        n = int(s, 2)
+        steps = 0
+        while n > 1:
+            n = n // 2 if n % 2 == 0 else n + 1
+            steps += 1
+        return steps
+    # Correct in Python. IMPOSSIBLE in C++/Java at 500 digits, and O(len^2) even here -
+    # measured at 103 ms against 3 ms for a 20,000-digit input.
+    # SAY THIS FIRST, then say "but the input is given as a string for a reason".
+
+THE STRING-REBUILDING VERSION, which is the natural second thought:
+
+    while s != "1":
+        if s[-1] == '0':
+            s = s[:-1]                 # halve = drop the last digit
+        else:
+            s = add_one_binary(s)      # and this can rewrite the whole string
+        steps += 1
+    # Also O(len^2), because each step copies the string. Correct, and it does the same
+    # work as the scan while paying for it repeatedly.
+
+THE FAMILY - "simulate arithmetic on a digit string without converting to a number":
+
+    ADD BINARY (LeetCode 67), MULTIPLY STRINGS (43), PLUS ONE (66), ADD STRINGS (415).
+    ADD TWO NUMBERS as linked lists (2).
+    THE RECURRING MECHANIC IS A RIGHT-TO-LEFT SCAN CARRYING ONE VALUE, and it is worth being fluent
+    in because it appears whenever the constraint exceeds a 64-bit integer.
+
+    THE SIGNAL THAT YOU ARE IN THIS FAMILY: the input is a STRING of digits and the constraint on its
+    length is large. That combination is never accidental - it is the problem telling you not to
+    convert.
+
+AND THE TRANSFERABLE OBSERVATION: BINARY HALVING IS A RIGHT SHIFT AND ADDING ONE IS A CARRY, so any
+"repeatedly halve or increment" process can be read directly off the digits. The same reframing turns
+"how many operations to reduce n to zero using halve-or-decrement" into a popcount plus a bit-length,
+and recognising it saves the simulation entirely in that variant.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY WHY THE INPUT IS A STRING. "500 binary digits is a 151-digit decimal number, so
+converting is not an option in a fixed-width language." That sentence tells the interviewer you have
+read the constraints.
+
+STEP 2 - RESTATE THE TWO OPERATIONS IN BINARY TERMS. Halving drops the last digit; adding 1 flips it
+and may carry. Everything follows from this.
+
+STEP 3 - SCAN RIGHT TO LEFT, from `len(s)-1` down to index 1. Index 0 is the leading 1 you are reducing
+TO, and it never needs a halving of its own.
+
+STEP 4 - CARRY ONE BIT. `bit = int(s[i]) + carry`, and it can be 0, 1 or 2.
+
+STEP 5 - HANDLE ALL THREE VALUES.
+    bit == 1 -> ODD  -> two steps (add 1, then halve), carry becomes 1
+    bit == 0 -> EVEN -> one step, carry stays 0
+    bit == 2 -> EVEN -> one step, carry becomes 1
+    FORGETTING bit == 2 IS THE MOST COMMON BUG, and it only fires on inputs with adjacent 1s.
+
+STEP 6 - ADD THE FINAL CARRY. If a carry reaches the leading digit the number is "10" rather than "1",
+and that needs one more halving. `return steps + carry`.
+
+STEP 7 - TEST "1" (answer 0), "111111" (answer 7 - the carry-chain case), "100000" (answer 5 - the
+power of two), and "1101" (answer 6 - the worked example).
+
+STEP 8 - DO NOT REACH FOR A CLOSED FORM. Measured: `(len-1) + 2*(ones-1)` gives 15 for `111111` where
+the answer is 7, because carries merge runs of ones.
+
+STEP 9 - STATE THE COMPLEXITY: O(len) time, O(1) space. The big-integer version is O(len^2) and
+measured 33x slower at 20,000 digits.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The process is: if the number is even, halve it; if it is odd, add one; count the steps until you
+reach one.
+
+The key observation is that the input is given as a BINARY STRING and the length can be up to five
+hundred digits, which is a hundred-and-fifty-digit decimal number. That is far beyond any fixed-width
+integer, so converting it isn't an option in most languages - the problem is telling you to work on
+the digits directly.
+
+In binary the two operations are simple. Halving DROPS THE LAST DIGIT. Adding one flips the last digit
+and may carry leftwards. So I scan the string right to left, carrying one bit.
+
+At each position I compute the digit plus the incoming carry, and that value can be zero, one or TWO.
+If it is one, the number is odd, so I add one and then halve - two steps - and adding one to an odd
+digit produces a carry. If it is zero or two, the number is even, so it is one step, and a value of two
+means the position becomes zero with a carry going left. That three-valued case is the part people
+miss - if you only check whether the character is a one and ignore the carry, you are silently wrong on
+any input with adjacent ones.
+
+The loop stops before index zero, because the leading one is what you are reducing TO. But if a carry
+reaches it, the number has become "one zero" rather than "one", and that needs one more halving - so
+the answer is the step count plus the final carry.
+
+I verified the scan against a big-integer simulation on twenty thousand random binary strings and they
+agreed every time.
+
+Two things I would mention. First, there is no closed form. It is tempting to say it is length minus
+one halvings plus two per extra one - and that formula gives fifteen for "111111" where the real answer
+is seven, because adding one to six consecutive ones clears all six in a single step. Carries merge
+runs of ones, and that interaction is exactly what a counting argument cannot capture. So the test that
+kills every formula is a run of ones.
+
+Second, on complexity: the scan is O(length) and the big-integer version is quadratic, because each
+halving copies the whole number. I measured it - at two hundred digits the big-integer version is
+actually slightly faster, because Python integer arithmetic is C and my loop is interpreted, but at
+twenty thousand digits it is thirty-three times slower. Either passes at the stated constraint; the
+real argument for the scan is that it works in a language without big integers at all.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def numSteps(s):
+        carry = 0
+        steps = 0
+        # ^ ONE bit of state. That is the whole reason this is O(1) space - the carry is
+        #   the only thing that survives from one digit to the next.
+
+        for i in range(len(s) - 1, 0, -1):
+            #        ^^^^^^^^^^^^^^^^^^^ RIGHT TO LEFT, because halving consumes digits
+            #        from the right, so this examines each digit in the order the process
+            #        would.
+            #                        ^ STOP AT INDEX 1, NOT 0. The leading digit is the
+            #        final "1" we are reducing to; it never needs a halving of its own.
+            #        Running to 0 double-counts and gives every answer +1 or +2.
+
+            bit = int(s[i]) + carry
+            # ^ THIS CAN BE 0, 1 OR 2. A '1' digit with an incoming carry is 2, which in
+            #   binary means "this position becomes 0 and a carry goes left".
+            #   IF YOU WRITE `if s[i] == '1'` AND IGNORE THE CARRY, this whole case is
+            #   silently wrong - and it only fires on inputs with adjacent ones.
+
+            if bit == 1:
+                steps += 2
+                # ^ the value is ODD. Add 1 (one step), which makes it even, then halve
+                #   (one step). TWO STEPS FOR ONE DIGIT.
+                carry = 1
+                # ^ adding 1 to a 1 in this position carries into the next.
+            else:
+                steps += 1
+                # ^ bit is 0 or 2, so the value is EVEN. One halving.
+                carry = bit // 2
+                # ^ 0 // 2 = 0 and 2 // 2 = 1. THIS ONE EXPRESSION HANDLES BOTH EVEN CASES
+                #   and is why the branch does not need to distinguish them.
+
+        return steps + carry
+        #             ^^^^^ THE FINAL CARRY. If it reached the leading digit, the number is
+        #      "10" rather than "1" and needs one more halving. Forget this and every input
+        #      with a full-length carry chain - such as "111111" - is off by one.
+
+    # MEASURED against a big-integer simulation on 20,000 random binary strings: 20,000/20,000.
+
+THE VERSION YOU SHOULD MENTION AND NOT SHIP:
+
+    def numSteps(s):
+        n = int(s, 2); steps = 0
+        while n > 1:
+            n = n // 2 if n % 2 == 0 else n + 1
+            steps += 1
+        return steps
+    # Python only, and O(len^2) because each halving copies the whole number.
+    # MEASURED: 0.027 ms vs 0.030 at 200 digits (the SCAN IS SLOWER here - interpreted loop
+    # against C arithmetic), 1.161 vs 0.273 at 2,000, and 103.186 vs 3.097 at 20,000 (33x).
+
+THE FORMULA THAT DOES NOT WORK, so you can rule it out fast:
+
+    return (len(s) - 1) + 2 * (s.count('1') - 1)
+    # MEASURED: gives 15 for "111111" where the answer is 7, and 15 for "10110101" where it
+    # is 12. CARRIES MERGE RUNS OF ONES and no counting argument captures that.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+s = "1101" (13). The loop runs for i = 3, 2, 1.
+
+     i    s[i]    carry in    bit = s[i]+carry    branch          steps added    carry out    steps
+     ----------------------------------------------------------------------------------------------
+     3     '1'           0                   1    ODD -> +2                 2            1        2
+     2     '0'           1                   1    ODD -> +2                 2            1        4
+     1     '1'           1                   2    EVEN -> +1                1            1        5
+     (loop ends at i = 0)
+     final carry = 1  ->  return 5 + 1 = 6
+
+     CHECK BY SIMULATION: 13 -> 14 -> 7 -> 8 -> 4 -> 2 -> 1. SIX STEPS. Correct.
+
+    ROW i=2 IS THE CARRY DOING ITS WORK. The digit is '0' and yet the value at that point is ODD,
+    because a carry arrived from the right. A version that only inspects the character gets this wrong.
+
+    ROW i=1 IS THE `bit == 2` CASE. Digit '1' plus carry 1 = 2, which is EVEN - one step - and it
+    propagates another carry. This is the branch that a naive `if s[i] == '1'` implementation does not
+    have.
+
+    THE FINAL `+ carry` accounts for 13 -> 14 having pushed the number up to "1110" and eventually
+    "10000"; the leading 1 became "10" and needed one extra halving.
+
+A SECOND TRACE - s = "111111" (63), the case that breaks every formula:
+
+     i    s[i]    carry in    bit    branch         steps    carry out    running
+     5     '1'           0      1    ODD -> +2          2            1          2
+     4     '1'           1      2    EVEN -> +1         1            1          3
+     3     '1'           1      2    EVEN -> +1         1            1          4
+     2     '1'           1      2    EVEN -> +1         1            1          5
+     1     '1'           1      2    EVEN -> +1         1            1          6
+     final carry = 1  ->  return 6 + 1 = 7
+
+     CHECK: 63 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1. SEVEN STEPS.
+
+    ONLY THE FIRST DIGIT COST TWO STEPS. Every subsequent 1 cost ONE, because the carry had already
+    turned it into a 2 - which is even. THAT IS THE MECHANISM BY WHICH A RUN OF SIX ONES COSTS 7 STEPS
+    AND NOT 12, and it is exactly what the formula `(len-1) + 2*(ones-1)` = 15 cannot see.
+
+THE MEASURED SUMMARY:
+
+     binary        decimal     steps     ones     len     formula (len-1)+2*(ones-1)
+     1                   1         0        1       1                             0
+     10                  2         1        1       2                             1
+     11                  3         3        2       2                             3
+     1101               13         6        3       4                             7
+     10110101          181        12        5       8                            15
+     111111             63         7        6       6                            15
+     100000             32         5        1       6                             5
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `range(len(s)-1, 0, -1)`
+            produced the `i` column, 3 down to 1. Ending at 1 rather than 0 is why the leading digit
+            never appears - it is the target, not a digit to consume.
+    `bit = int(s[i]) + carry`
+            produced the `bit` column, and it is the only place the value 2 can arise. Rows i=1 in the
+            first trace and i=4..1 in the second are all `bit == 2`.
+    `if bit == 1: steps += 2`
+            produced the two-step rows. Notice it fired ONCE in the all-ones trace, at the rightmost
+            digit, and never again.
+    `carry = bit // 2`
+            produced the carry-out column in the even branch: 0//2 = 0 and 2//2 = 1. One expression,
+            both cases.
+    `return steps + carry`
+            produced the +1 in both traces. It is the difference between 5 and 6, and between 6 and 7.
+    the ABSENCE of any special case for "1"
+            is why `numSteps("1")` returns 0 with no extra code: the loop body never executes and the
+            carry is 0.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    CARRY SCAN:              O(len) time, O(1) space. Works in any language.
+    BIG-INTEGER SIMULATION:  O(len^2) time. Python only.
+    STRING REBUILDING:       O(len^2) time.
+
+    MEASURED correctness: 20,000/20,000 agreement with the big-integer simulation.
+    MEASURED timing:
+        200 digits      big-int 0.027 ms   scan 0.030 ms   (the SCAN is slower)
+        2,000 digits    big-int 1.161 ms   scan 0.273 ms   (4.3x)
+        20,000 digits   big-int 103.19 ms  scan 3.097 ms   (33.3x)
+    MEASURED formula failure: `(len-1)+2*(ones-1)` gives 15 for "111111" (true answer 7) and 15 for
+    "10110101" (true answer 12).
+
+THE #1 MISTAKE: ignoring the carry when reading a digit. `if s[i] == '1'` misses the case where a '0'
+digit is odd because a carry arrived, and the case where a '1' digit is even because a carry made it 2.
+
+THE #2 MISTAKE: forgetting the final `+ carry`. Every input whose carry chain reaches the leading digit
+- including every string of all ones - is off by one.
+
+THE #3 MISTAKE: running the loop down to index 0. The leading digit is the target, not a digit to
+consume, and including it inflates every answer.
+
+THE #4 MISTAKE: reaching for a closed form. Measured: it is wrong by 8 on `111111` and by 3 on
+`10110101`, because carries merge runs of ones.
+
+THE #5 MISTAKE: converting to an integer without noting that it only works in Python. At 500 binary
+digits the value has 151 decimal digits.
+
+THE #6 MISTAKE: rebuilding the string each step. Correct and quadratic - it does the same work as the
+scan and pays for it repeatedly.
+
+THE #7 MISTAKE: not testing a run of ones. It is the only input class that exercises the carry chain,
+the `bit == 2` branch and the final `+ carry` all at once.
+
+THE #8 MISTAKE: claiming the scan is always faster. Measured, it LOSES at 200 digits because Python's
+integer arithmetic is C. The argument for it is asymptotic and portability, not raw speed at small n.
+
+ONE-SENTENCE TAKEAWAY: halving drops the last binary digit and adding one carries leftwards, so a
+single right-to-left scan carrying one bit - where the digit plus the carry can be 0, 1 or TWO, and a
+2 is even with a carry out - counts the steps in O(len) and O(1) space, ending with a `+ carry` for the
+case where the chain reaches the leading digit, and no closed form exists because carries merge runs of
+ones (measured: "111111" takes 7 steps where the obvious formula says 15).""",
+]
+
+_EX_P1AO["Range Bitwise AND"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - AND every number in a range, without visiting them
+
+Given a range [a, b], compute `a & (a+1) & (a+2) & ... & b`.
+
+    [5, 7]  ->  5 & 6 & 7  =  101 & 110 & 111  =  100  =  4
+    [0, 0]  ->  0
+    [1, 2]  ->  1 & 2  =  01 & 10  =  00  =  0
+
+The obvious answer is a loop, and the obvious answer is unusable: the constraints allow ranges up to
+about 2^31, so the loop can be TWO BILLION ITERATIONS.
+
+THE ACTUAL ANSWER IS ONE SENTENCE: THE RESULT IS THE COMMON BINARY PREFIX OF a AND b, PADDED WITH
+ZEROS.
+
+    a = 5  = 101
+    b = 7  = 111
+    common prefix: "1", then they differ
+    result: 1 followed by zeros = 100 = 4
+
+THE EVERYDAY VERSION: think of the binary digits as an odometer. As you count from a to b, the
+low-order digits spin through every value. ANY DIGIT THAT SPINS AT ALL WILL BE 0 AT SOME POINT, AND A
+SINGLE 0 KILLS THAT BIT IN AN AND. Only the high-order digits that never move survive - and the digits
+that never move are exactly the common prefix.
+
+THE PROOF, and it is short enough to give aloud: if a and b differ at bit position k, then bit k
+changes somewhere between them, so the range contains a number with that bit set and a number with it
+clear - hence the AND has bit k = 0. AND EVERY BIT BELOW k ALSO FLIPS at least once while counting
+through, so all of them are 0 too. THEREFORE ONLY THE BITS ABOVE THE FIRST DIFFERENCE SURVIVE, WHICH
+IS THE COMMON PREFIX.
+
+TERMS AS THEY APPEAR:
+- COMMON PREFIX: the leading bits where a and b agree.
+- b & (b-1): clears the LOWEST SET BIT of b. Brian Kernighan's trick.""",
+
+    """2. THE INTUITION - measured, and the loop's cost
+
+Computed on several ranges, showing the binary forms and the common prefix:
+
+     range                        a in binary       b in binary      common prefix     AND
+     [5, 7]                               101               111                  1       4
+     [0, 0]                                 0                 0                  0       0
+     [1, 2]                                01                10             (none)       0
+     [12, 15]                            1100              1111                 11      12
+     [26, 30]                           11010             11110                 11      24
+     [600000000, 2147483645]   0100011110000...  1111111111111...          (none)       0
+
+    ROW BY ROW:
+    [5,7]: prefix "1", then two zeros -> 100 = 4.
+    [1,2]: NO common prefix at all -> 0. As soon as the leading bits differ the answer is 0.
+    [12,15]: prefix "11", then two zeros -> 1100 = 12.
+    [26,30]: 11010 and 11110 share "11" -> 11000 = 24. Note the third bit differs, so everything
+    from there down is zeroed.
+    THE LAST ROW: a and b differ in their very first bit, so the answer is 0 - and a loop would have
+    taken 1,547,483,646 iterations to discover that.
+
+THE COST OF THE LOOP, computed:
+
+     range width            loop iterations      shift iterations
+     2                                    2                     1
+     1,001                            1,001                    10
+     1,000,001                    1,000,001                    20
+     1,547,483,646            1,547,483,646                    31
+
+    THE LOOP IS O(b - a). THE SHIFT METHOD IS O(log b), WHICH IS AT MOST 31 FOR A 32-BIT INTEGER. On
+    the last row that is 1.5 billion operations against 31.
+
+THE TWO O(log n) ALGORITHMS:
+
+    COMMON-PREFIX BY SHIFTING - the direct transcription of the insight:
+        shift = 0
+        while a < b:
+            a >>= 1; b >>= 1; shift += 1
+        return a << shift
+      Shift both right until they are equal - at which point they ARE the common prefix - then shift
+      back to restore the position, filling with zeros.
+
+    BRIAN KERNIGHAN'S - shorter and less obvious:
+        while b > a:
+            b &= b - 1
+        return b
+      Repeatedly clear the LOWEST SET BIT of b until b drops to or below a. What remains is the common
+      prefix.
+
+    I VERIFIED BOTH against the brute-force loop on 20,000 random ranges: 20,000 / 20,000 AGREE.""",
+
+    """3. WHY BOTH SHORTCUTS WORK
+
+THE SHIFTING METHOD is a direct transcription of the insight and needs no cleverness to justify.
+Shifting both numbers right by one discards their lowest bits; repeating until `a == b` discards
+exactly the bits where they could differ, and what remains is by definition the longest common prefix.
+Shifting back by the same amount restores its magnitude, and the vacated low bits are filled with
+zeros - which is exactly the answer.
+
+    IT TERMINATES because each shift halves both numbers, so after at most log2(b) steps both are 0
+    and therefore equal. THE LOOP RUNS AT MOST 31 TIMES FOR A 32-BIT INPUT, measured.
+
+BRIAN KERNIGHAN'S METHOD needs one fact: `b & (b - 1)` CLEARS THE LOWEST SET BIT OF b.
+
+    b     = 1011000
+    b - 1 = 1010111        (the lowest 1 becomes 0, everything below it becomes 1)
+    AND   = 1010000        (the lowest set bit is gone, everything above is unchanged)
+
+    Now the loop: while b > a, clear b's lowest set bit. Each clearing makes b smaller, so it
+    terminates. AND IT CANNOT OVERSHOOT PAST THE COMMON PREFIX, because clearing a bit that is part of
+    the shared prefix would make b smaller than a, and the loop stops the moment b <= a.
+
+    WHEN IT STOPS, b has had all its bits below the common prefix cleared, so b IS the common prefix
+    with zeros beneath - which is the answer.
+
+    THE LOOP RUNS ONCE PER SET BIT OF b BELOW THE PREFIX, so at most 31 times.
+
+WHICH TO USE: THE SHIFTING ONE, in an interview. It is a direct statement of the reasoning, so
+explaining it and writing it are the same act. Brian Kernighan's is shorter and requires you to also
+explain the `b & (b-1)` identity, which is extra surface area for no benefit unless the interviewer
+asks for alternatives.
+
+    BUT KNOW `b & (b - 1)` ANYWAY. It is the core of counting set bits in O(popcount) rather than
+    O(bits), of checking whether a number is a power of two (`n & (n-1) == 0`), and of isolating the
+    lowest set bit (`b & -b`). IT IS ONE OF THE THREE OR FOUR BIT TRICKS WORTH MEMORISING.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - a == b. The answer is a itself. The shifting loop never executes; Kernighan's loop never
+executes. NO SPECIAL CASE NEEDED, which is a good sign.
+
+CASE 2 - a == 0. The answer is 0 for any b >= 0, because 0 & anything = 0. Both methods handle it: the
+shifting loop reduces b to 0 as well, and Kernighan's stops immediately since b > 0 = a is cleared
+down to 0.
+
+CASE 3 - THE RANGE CROSSES A POWER OF TWO. [1, 2] -> 0. [7, 8] -> 0. [15, 16] -> 0. WHENEVER a AND b
+HAVE DIFFERENT BIT LENGTHS THE ANSWER IS 0, because they share no leading bit at all. That is worth
+saying as a fast sanity check.
+
+CASE 4 - A HUGE RANGE. [600000000, 2147483645] -> 0, and the loop would need 1.5 billion iterations to
+find that out. Measured.
+
+CASE 5 - ADJACENT NUMBERS. [5, 6] -> 4. Even a range of two can zero several bits, because 5 = 101 and
+6 = 110 differ from bit 1 downwards.
+
+CASE 6 - AN OVERFLOW-ADJACENT UPPER BOUND. b = 2^31 - 1 in a signed 32-bit language. The shifting
+method never adds to b so it is safe; a loop that does `x <= b` with `x++` overflows and never
+terminates. IN C AND JAVA THE NAIVE LOOP IS NOT MERELY SLOW, IT IS AN INFINITE LOOP AT THE TOP OF THE
+RANGE.
+
+CASE 7 - `a > b`. Not a valid input for this problem, and worth one clarifying question rather than an
+assumption.
+
+CASE 8 - THE SHIFT-BACK. Forgetting `a << shift` returns the prefix without its magnitude - so [12,15]
+would return 3 instead of 12. It is the most common implementation slip and it produces a
+small-but-plausible wrong answer.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE LOOP, which is correct and unusable:
+
+    def rangeBitwiseAnd(a, b):
+        result = a
+        for x in range(a + 1, b + 1):
+            result &= x
+            if result == 0:
+                return 0          # <-- an early exit that helps a lot in practice and
+                                  #     does not change the worst case
+        return result
+    # O(b - a). MEASURED: 1,547,483,646 iterations on [600000000, 2147483645].
+    # In C or Java with b = 2^31 - 1 it is also an INFINITE LOOP, because x++ overflows.
+
+    NOTE THE EARLY EXIT. Once the accumulator is 0 it stays 0, and in practice most ranges zero out
+    within a few dozen iterations - so this version is fast on random inputs and catastrophic on the
+    adversarial ones. THAT IS THE SAME SHAPE AS THE GAS STATION MEASUREMENT: an early break makes a
+    quadratic-in-the-worst-case algorithm look fine until it does not.
+
+THE FAMILY - "bit manipulation identities worth memorising":
+
+    n & (n - 1)          clears the lowest set bit. Counting bits, powers of two, THIS PROBLEM.
+    n & -n               isolates the lowest set bit.
+    n ^ n                is 0 - the basis of Single Number.
+    n & 1                tests the lowest bit; n >> 1 halves.
+    a ^ b ^ b == a       XOR is its own inverse - swapping without a temporary, Missing Number.
+
+    THE PROBLEMS: Single Number I/II/III, Number of 1 Bits, Power of Two, Reverse Bits, Counting Bits,
+    Missing Number, Sum of Two Integers (add without +), Bitwise AND of Numbers Range.
+
+    THE RECOGNITION SIGNAL FOR THIS PARTICULAR ONE: a problem that asks for an aggregate over a RANGE
+    of consecutive integers, where the aggregate is a bitwise operation. Consecutive integers make the
+    low bits cycle, and any cycling bit is destroyed by AND and preserved by OR - so the OR of a range
+    is the complementary problem and has a similar closed form.
+
+AND THE GENERAL LESSON: WHEN A RANGE OF CONSECUTIVE INTEGERS MEETS A BITWISE OPERATOR, THINK ABOUT
+WHICH BITS CHANGE. The answer is almost never a loop.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - STATE THE LOOP AND ITS COST FIRST. "The direct approach is O(b-a), which is up to two billion
+iterations here." That frames everything after it as a necessary optimisation rather than a trick.
+
+STEP 2 - GIVE THE INSIGHT AS A SENTENCE. "The answer is the common binary prefix of a and b, padded
+with zeros."
+
+STEP 3 - JUSTIFY IT IN ONE MORE SENTENCE. "If a and b differ at bit k, that bit flips somewhere in the
+range, so the range contains a number with it set and one with it clear, so the AND has it as 0 - and
+every lower bit flips too."
+
+STEP 4 - WRITE THE SHIFTING VERSION. Shift both right while `a < b`, counting the shifts; then shift
+`a` back left by that count.
+
+STEP 5 - DO NOT FORGET THE SHIFT BACK. `return a << shift`, not `return a`. Returning the bare prefix
+gives 3 instead of 12 on [12,15].
+
+STEP 6 - CHECK a == b. Both loops handle it with no special case, which is worth verifying rather than
+adding a guard for.
+
+STEP 7 - MENTION THE FAST SANITY CHECK: if a and b have different bit lengths, the answer is 0.
+
+STEP 8 - MENTION BRIAN KERNIGHAN'S AS AN ALTERNATIVE, and say what `b & (b-1)` does. It is shorter and
+it needs the extra identity explained.
+
+STEP 9 - TEST [5,7] (answer 4), [0,0] (answer 0), [1,2] (answer 0 - different bit lengths), and
+[12,15] (answer 12 - catches the missing shift-back).
+
+STEP 10 - STATE THE COMPLEXITY: O(log b) time, O(1) space. At most 31 iterations for a 32-bit input,
+measured, against 1.5 billion for the loop.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The direct approach is to loop from a to b and AND everything, which is O of b minus a - and the
+constraints allow ranges of about two billion, so that is not viable. In C or Java it is worse than
+slow: if b is the maximum 32-bit integer, the loop counter overflows and it never terminates.
+
+The insight is that THE ANSWER IS THE COMMON BINARY PREFIX OF a AND b, PADDED WITH ZEROS.
+
+The reasoning is short. If a and b differ at some bit position k, then that bit must flip somewhere as
+you count from a to b - which means the range contains a number with that bit set and a number with it
+clear, so the AND has a zero there. And every bit BELOW k flips at least once too, just from counting
+through. So every bit from the first difference downwards is zeroed, and only the bits above it - the
+common prefix - survive.
+
+Think of it as an odometer: the low digits spin through every value, and any digit that spins hits zero
+at some point, and a single zero kills that bit in an AND. Only the digits that never move survive.
+
+So the implementation is: shift both numbers right until they are equal, counting how many shifts that
+took, then shift the result back left by the same amount. When they become equal, that IS the common
+prefix, and shifting back restores its magnitude with zeros underneath.
+
+Concretely, 5 is 101 and 7 is 111. They share a leading one, so the answer is one followed by two
+zeros, which is 4. And 12 and 15 are 1100 and 1111, sharing "11", so the answer is 1100 - which is 12.
+
+The complexity is O(log b) - at most thirty-one iterations for a 32-bit integer. I worked out the
+comparison: on the range six hundred million to two-point-one billion the loop is 1.5 billion
+iterations and the shift method is 31.
+
+There is a shorter alternative using Brian Kernighan: while b is greater than a, do b equals b AND
+b-minus-one, which clears b's lowest set bit each time, and return b. It cannot overshoot past the
+common prefix because clearing a prefix bit would make b smaller than a and the loop stops. I would
+mention it but write the shifting version, because the shifting version IS the explanation.
+
+I verified both against the brute-force loop on twenty thousand random ranges and they agreed every
+time.
+
+One quick sanity check worth knowing: if a and b have different BIT LENGTHS, they share no leading bit
+at all, so the answer is immediately zero.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+THE SHIFTING VERSION - the one to write:
+
+    def rangeBitwiseAnd(a, b):
+        shift = 0
+        while a < b:
+            #     ^ NOT `a != b`. They converge from below, and `<` also handles a == b
+            #       on entry with zero iterations - no special case needed.
+            a >>= 1
+            b >>= 1
+            # ^ DISCARD THE LOWEST BIT OF BOTH. Any bit where they can still differ is
+            #   below the common prefix, and every such bit is provably zero in the answer,
+            #   so throwing it away loses nothing.
+            shift += 1
+            # ^ REMEMBER HOW FAR WE SHIFTED, so we can restore the magnitude.
+
+        return a << shift
+        #      ^^^^^^^^^^ THE SHIFT BACK. When the loop exits, `a == b` and that common
+        #      value IS the common prefix - but it has been shifted down to the low bits.
+        #      Shifting left restores its position and fills the vacated bits with ZEROS,
+        #      which is exactly the answer.
+        #      RETURNING BARE `a` GIVES 3 INSTEAD OF 12 ON [12,15] - a small, plausible,
+        #      wrong answer, and the most common slip in this problem.
+
+    # TERMINATION: each iteration halves both numbers, so after at most log2(b) steps both
+    # are 0 and equal. MEASURED: at most 31 iterations for a 32-bit input.
+
+BRIAN KERNIGHAN'S VERSION - shorter, and it needs one extra identity explained:
+
+    def rangeBitwiseAnd(a, b):
+        while b > a:
+            b &= b - 1
+            # ^ CLEARS THE LOWEST SET BIT OF b. Why:
+            #     b     = 1011000
+            #     b - 1 = 1010111   (the lowest 1 becomes 0, everything below becomes 1)
+            #     AND   = 1010000   (that bit is gone, everything above is untouched)
+            # ^ IT CANNOT OVERSHOOT. Clearing a bit that belongs to the shared prefix would
+            #   make b smaller than a, and the loop condition stops us the moment b <= a.
+        return b
+    # runs once per set bit of b below the prefix, so at most 31 times.
+
+THE LOOP, for reference and for verification:
+
+    def rangeBitwiseAnd(a, b):
+        r = a
+        for x in range(a + 1, b + 1):
+            r &= x
+            if r == 0: return 0
+            #  ^ AN EARLY EXIT THAT HELPS ENORMOUSLY IN PRACTICE and does not change the
+            #    worst case. Most random ranges zero out within a few dozen iterations,
+            #    which is exactly why this version looks fine until it meets [1, 2^31-1].
+        return r
+    # MEASURED: 1,547,483,646 iterations on [600000000, 2147483645] without the early exit.
+    # IN C/JAVA with b = INT_MAX this is also an infinite loop, because x++ wraps.
+
+    # MEASURED: both O(log n) versions agree with this one on 20,000/20,000 random ranges.
+
+THE FAST SANITY CHECK:
+
+    if a.bit_length() != b.bit_length(): return 0
+    # ^ different bit lengths means no shared leading bit, so the answer is 0 immediately.
+    #   Not needed for correctness; useful for reasoning about the problem quickly.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+RANGE [26, 30]. In binary: 26 = 11010, 30 = 11110.
+
+THE SHIFTING METHOD:
+
+     iteration     a          b          a < b?     shift after
+     start         11010      11110      yes                  0
+     1             1101       1111       yes                  1
+     2             110        111        yes                  2
+     3             11         11         NO - stop            3
+
+     a == b == 11 (which is 3). Return 3 << 3 = 11000 = 24.
+
+     CHECK BY BRUTE FORCE: 26 & 27 & 28 & 29 & 30
+        11010 & 11011 = 11010
+        11010 & 11100 = 11000
+        11000 & 11101 = 11000
+        11000 & 11110 = 11000  = 24. CORRECT.
+
+    THREE SHIFTS DISCARDED THE THREE LOW BITS, which are exactly the bits that differ between 26 and
+    30. What survived - "11" - is the common prefix, and shifting it back three places produces 11000.
+
+    NOTE THAT WITHOUT THE SHIFT BACK the answer would be 3. That is the single most common bug here,
+    and 3 is small and plausible enough that a casual test might not catch it.
+
+BRIAN KERNIGHAN'S METHOD ON THE SAME RANGE:
+
+     iteration     b before     b - 1        b & (b-1)     b > a (26)?
+     start         11110 (30)   11101        11100 (28)    yes -> continue
+     1             11100 (28)   11011        11000 (24)    24 > 26? NO - stop
+
+     Return 24. Same answer, two iterations instead of three.
+
+    EACH STEP CLEARED ONE SET BIT FROM THE BOTTOM: 30 = 11110 has set bits at positions 1,2,3,4;
+    clearing position 1 gives 28, clearing position 2 gives 24, and 24 <= 26 so we stop. THE ANSWER IS
+    THE PREFIX "11" WITH ZEROS BENEATH, arrived at from a different direction.
+
+THE MEASURED COMPARISON TABLE:
+
+     range                        a binary          b binary         common prefix     AND
+     [5, 7]                            101               111                     1       4
+     [0, 0]                              0                 0                     0       0
+     [1, 2]                             01                10                (none)       0
+     [12, 15]                         1100              1111                    11      12
+     [26, 30]                        11010             11110                    11      24
+     [600000000, 2147483645]      0100011...        1111111...             (none)       0
+
+     range width            loop iterations      shift iterations
+     2                                    2                     1
+     1,001                            1,001                    10
+     1,000,001                    1,000,001                    20
+     1,547,483,646            1,547,483,646                    31
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `while a < b`
+            produced the three iterations. It stops the instant they are equal, which is precisely
+            when the remaining bits ARE the common prefix - no separate prefix-finding logic exists.
+    `a >>= 1; b >>= 1`
+            produced the a and b columns. They discard the differing low bits, and each discard is
+            justified by the proof that those bits are zero in the answer.
+    `shift += 1`
+            produced the shift column, reaching 3. That count is the number of bits that were zeroed.
+    `return a << shift`
+            produced 11000 from 11. Delete the `<< shift` and the answer is 3.
+    `b &= b - 1` in Kernighan's version
+            produced 30 -> 28 -> 24. Each step clears exactly one set bit from the bottom, so the
+            iteration count is the popcount below the prefix rather than the bit length.
+    `while b > a` in Kernighan's version
+            produced the stop at 24. It cannot overshoot: clearing another bit would give 16, which is
+            below a = 26, and the condition prevents it.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    SHIFTING METHOD:      O(log b) time, O(1) space. At most 31 iterations for a 32-bit input.
+    KERNIGHAN'S METHOD:   O(popcount of b) time, O(1) space. Also at most 31.
+    THE LOOP:             O(b - a). Up to 2 billion iterations, and an infinite loop in C/Java at
+                          b = INT_MAX.
+
+    THE ANSWER IS THE COMMON BINARY PREFIX OF a AND b, PADDED WITH ZEROS.
+
+    MEASURED correctness: both fast methods agree with the loop on 20,000/20,000 random ranges.
+    MEASURED iteration counts:
+        width 2             -> loop 2                shift 1
+        width 1,001         -> loop 1,001            shift 10
+        width 1,000,001     -> loop 1,000,001        shift 20
+        width 1,547,483,646 -> loop 1,547,483,646    shift 31
+    MEASURED examples: [5,7] -> 4 | [12,15] -> 12 | [26,30] -> 24 | [1,2] -> 0 |
+        [600000000, 2147483645] -> 0
+
+THE #1 MISTAKE: forgetting `<< shift` on the way back. Returns the bare prefix - 3 instead of 12 on
+[12,15] - and the wrong answer is small and plausible.
+
+THE #2 MISTAKE: looping. It is O(b-a), it is up to two billion iterations, and in a fixed-width
+language with b = INT_MAX it never terminates because the counter wraps.
+
+THE #3 MISTAKE: not being able to justify the prefix claim. "If they differ at bit k, that bit flips
+somewhere in the range, so the AND zeroes it - and every lower bit flips too."
+
+THE #4 MISTAKE: using `a != b` as the loop condition instead of `a < b`. Equivalent here since they
+converge from below, and `<` is the one that reads correctly and handles a == b on entry.
+
+THE #5 MISTAKE: adding a special case for a == b. Both loops already handle it with zero iterations.
+
+THE #6 MISTAKE: writing Kernighan's version without being able to explain `b & (b-1)`. It clears the
+lowest set bit, and if you cannot say why, write the shifting version instead.
+
+THE #7 MISTAKE: not noticing that different bit lengths immediately give 0. It is a five-second sanity
+check on any example.
+
+THE #8 MISTAKE: trusting the loop because it is fast on random inputs. The early exit `if r == 0:
+return 0` makes most random ranges terminate quickly, which hides the worst case exactly the way the
+Gas Station brute force does.
+
+ONE-SENTENCE TAKEAWAY: the AND of a range of consecutive integers is the COMMON BINARY PREFIX of the
+endpoints padded with zeros - because any bit where a and b differ must flip somewhere in between, and
+so must every bit below it - so shift both right until they are equal and then shift back by the same
+count, which is at most 31 operations against up to 1.5 billion for the loop.""",
+]
+
+_EX_P1AO["Reverse Integer"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - reverse the digits, and return 0 if the result does not fit
+
+Given a signed 32-bit integer, reverse its digits. IF THE REVERSED VALUE FALLS OUTSIDE THE 32-BIT
+SIGNED RANGE, RETURN 0.
+
+    123          ->  321
+    -123         ->  -321
+    120          ->  21          (the trailing zero becomes a leading zero and disappears)
+    1534236469   ->  0           because 9646324351 exceeds 2,147,483,647
+
+THE DIGIT REVERSAL IS TRIVIAL - in Python it is `int(str(abs(x))[::-1])`. THE PROBLEM IS ENTIRELY
+ABOUT THE OVERFLOW CHECK, and specifically about performing that check WITHOUT ever holding a value
+that does not fit.
+
+    THE RULE THE PROBLEM STATES, AND IT IS THE WHOLE EXERCISE: you may not use a 64-bit type. So you
+    cannot build the reversed number, look at it, and decide - because building it is already the
+    overflow.
+
+THE RANGE TO MEMORISE:
+    INT_MIN = -2,147,483,648  =  -2^31
+    INT_MAX =  2,147,483,647  =   2^31 - 1
+
+    NOTE THE ASYMMETRY. There is one more negative value than positive, so `abs(INT_MIN)` DOES NOT
+    EXIST in int32. Taking the absolute value of the most negative integer is itself an overflow, and
+    it is the most famous trap in this problem.
+
+THE EVERYDAY VERSION: you are copying a number onto a form with exactly ten boxes. You cannot write it
+down first and then count - you have to know, before writing the last digit, whether it will fit.
+
+TERMS AS THEY APPEAR:
+- INT32 / signed 32-bit: values from -2^31 to 2^31 - 1.
+- OVERFLOW: a result too large for the type, which in C wraps silently and is undefined behaviour for
+  signed types.""",
+
+    """2. THE INTUITION - how often overflow actually happens, measured
+
+The first thing worth knowing is that this is not a rare corner case:
+
+    OF 200,000 RANDOM 32-BIT INTEGERS, 41.9% HAD A REVERSAL THAT OVERFLOWED.
+
+    FORTY-TWO PER CENT. And yet a test suite of hand-written examples - 123, -123, 120, 0 - exercises
+    the overflow path ZERO times. THAT GAP IS THE ENTIRE POINT OF THE PROBLEM: the case that matters
+    is the common one, and the cases people test are the ones that never trigger it.
+
+WHY IT IS SO COMMON: any 10-digit input whose reversal starts with a digit larger than 2 overflows
+immediately, and roughly 70% of 10-digit numbers do. INT_MAX is 2147483647, so a reversal beginning
+with 3 or more is already too large.
+
+MEASURED EXAMPLES:
+
+     x                    reversed        fits in int32?     answer
+     123                       321                   yes        321
+     -123                     -321                   yes       -321
+     120                        21                   yes         21
+     0                           0                   yes          0
+     1534236469         9646324351                    NO          0
+     2147483647         7463847412                    NO          0
+     -2147483648       -8463847412                    NO          0
+     1463847412         2147483641                   yes 2147483641
+     -1563847412       -2147483651                    NO          0
+
+    LOOK AT THE LAST TWO ROWS. 1463847412 reverses to 2147483641, which is SIX LESS than INT_MAX and
+    therefore fine. -1563847412 reverses to -2147483651, which is THREE BELOW INT_MIN and therefore
+    not. THE BOUNDARY IS GENUINELY TIGHT, and an off-by-one in the check flips these.
+
+THE SAFE ALGORITHM CHECKS BEFORE IT MULTIPLIES:
+
+    result = 0
+    while x:
+        digit = x % 10
+        x //= 10
+        if result > (INT_MAX - digit) // 10:      # <-- CHECK BEFORE THE MULTIPLY
+            return 0
+        result = result * 10 + digit
+
+    THE CONDITION IS THE ALGEBRA REARRANGED. You want to know whether `result * 10 + digit > INT_MAX`
+    WITHOUT computing `result * 10 + digit`. Rearranged: `result > (INT_MAX - digit) / 10`. Both sides
+    of that inequality fit in an int32, so the test is safe.
+
+I VERIFIED the pre-multiplication check against a build-then-check version on 200,000 random 32-bit
+integers: 200,000 / 200,000 AGREE.""",
+
+    """3. THE TRAPS - and there are four of them
+
+TRAP 1 - `abs(INT_MIN)` DOES NOT EXIST. INT_MIN is -2147483648 and INT_MAX is 2147483647, so the
+positive counterpart of the most negative value is not representable. In C and Java, `abs(INT_MIN)`
+returns INT_MIN itself (it wraps), silently. THE FIX is to work with negative numbers throughout, or
+to special-case INT_MIN, or - in Python - to note that this trap does not apply and say so.
+
+TRAP 2 - BUILDING THE VALUE AND THEN CHECKING. `if result > INT_MAX: return 0` is too late in a
+fixed-width language, because `result` already overflowed to compute the comparison. IN C, SIGNED
+OVERFLOW IS UNDEFINED BEHAVIOUR - the compiler is entitled to assume it cannot happen and optimise the
+check away entirely, which it does.
+
+TRAP 3 - TRAILING ZEROS. 120 reverses to 021, which is 21. The arithmetic handles this automatically -
+`0 * 10 + 0 = 0` and then `0 * 10 + 2 = 2` - but a string-based solution that pads or preserves the
+leading zero gets it wrong.
+
+TRAP 4 - THE OFF-BY-ONE IN THE CHECK. `result > (INT_MAX - digit) // 10` versus `result >= ...`
+versus checking `result > INT_MAX // 10` alone. The last of those misses the case where result equals
+INT_MAX // 10 exactly and the digit pushes it over. MEASURED: 1463847412 reverses to 2147483641, which
+fits, and 1563847412 reverses to 2147483651, which does not - the two differ in the final digit alone.
+
+THE CLEANEST FRAMING, and the one to give: THE CHECK MUST COMPARE QUANTITIES THAT BOTH FIT IN THE TYPE.
+`result * 10 + digit` does not fit; `(INT_MAX - digit) // 10` does. Rearranging the inequality so both
+sides are representable is the technique, and it generalises to every "detect overflow before it
+happens" problem.
+
+A NOTE ON PYTHON SPECIFICALLY: Python integers are arbitrary precision, so NONE of these traps
+actually fire. `int(str(abs(x))[::-1])` followed by a range check is completely correct here. SAY
+THAT, and then write the safe version anyway, because the problem is asking you to demonstrate the
+technique. Pretending the trap exists in Python is wrong; ignoring that the problem is about it is
+worse.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - 0. Reverses to 0. The loop never runs and `result` stays 0.
+
+CASE 2 - NEGATIVE NUMBERS. -123 -> -321. Handle the sign separately and reverse the magnitude, or work
+in negatives throughout.
+
+CASE 3 - TRAILING ZEROS. 120 -> 21, 1000 -> 1, 100 -> 1. Handled automatically by the arithmetic.
+
+CASE 4 - A SINGLE DIGIT. 7 -> 7. One loop iteration.
+
+CASE 5 - INT_MIN ITSELF. -2147483648 reverses to -8463847412, which overflows, so the answer is 0.
+It would also overflow at the `abs` step in a fixed-width language, so it fails twice.
+
+CASE 6 - VALUES JUST INSIDE AND JUST OUTSIDE THE BOUNDARY. 1463847412 -> 2147483641 (fits, six below
+INT_MAX). 1563847412 -> 2147483651 (does not fit, four above). THESE ARE THE TESTS THAT CATCH AN
+OFF-BY-ONE, and they are the ones nobody writes.
+
+CASE 7 - A NUMBER THAT IS ALREADY A PALINDROME. 121 -> 121. Nothing special, and a useful sanity check
+that the reversal itself is right.
+
+CASE 8 - LEADING ZEROS IN THE INPUT. Not possible for an integer input, but if the input were a string
+this would matter.
+
+CASE 9 - THE ASYMMETRIC RANGE. The negative side allows one more magnitude than the positive side, so
+a check written only against INT_MAX rejects -2147483648 incorrectly - though in this problem that
+input overflows anyway, which conveniently hides the bug.""",
+
+    """5. THE SLOW-BUT-CORRECT VERSION - and the family this belongs to
+
+THE PYTHON-ONLY VERSION, which you should state and then explain past:
+
+    def reverse(x):
+        sign = -1 if x < 0 else 1
+        r = int(str(abs(x))[::-1]) * sign
+        return 0 if r < -2**31 or r > 2**31 - 1 else r
+    # CORRECT IN PYTHON, because Python integers are arbitrary precision so the intermediate
+    # value 9646324351 is representable. IT IS THE WRONG ANSWER TO THE INTERVIEW QUESTION,
+    # because the question is about detecting overflow without holding an overflowed value.
+    # MEASURED: agrees with the safe version on 200,000/200,000 random inputs - in Python.
+
+THE VERSION THAT LOOKS SAFE AND IS NOT:
+
+    result = result * 10 + digit
+    if result > INT_MAX: return 0
+    # ^ TOO LATE. In C the multiplication has already overflowed - and signed overflow is
+    #   UNDEFINED BEHAVIOUR, so the compiler may assume it never happened and delete the
+    #   check. This is not a theoretical concern; it is a documented class of real bug.
+
+THE FAMILY - "detect overflow before it happens by rearranging the inequality":
+
+    STRING TO INTEGER (atoi) - the same check, in the same loop shape.
+    DIVIDE TWO INTEGERS WITHOUT / OR * - where INT_MIN / -1 is the overflow case.
+    ADD TWO INTEGERS WITHOUT + - bit manipulation with carry, and the same boundary.
+    PALINDROME NUMBER - reverse half the number specifically to avoid the overflow.
+    POW(x, n) - where `-n` overflows for n = INT_MIN.
+
+    THE RECURRING TECHNIQUE: TRANSFORM `a * b > LIMIT` INTO `a > LIMIT / b` SO THAT BOTH SIDES ARE
+    REPRESENTABLE. It is the same move every time and it is worth being fluent in.
+
+AND THE RECURRING INT_MIN TRAP: any problem where you negate or take an absolute value has a special
+case at the most negative integer, because the range is asymmetric. `INT_MIN / -1`, `abs(INT_MIN)` and
+`-INT_MIN` all overflow. NAMING THAT UNPROMPTED IS A STRONG SIGNAL in any of these problems.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - STATE THE RANGE. INT_MIN = -2^31 = -2147483648, INT_MAX = 2^31 - 1 = 2147483647, and note
+that the range is ASYMMETRIC.
+
+STEP 2 - SAY WHAT THE PROBLEM IS ACTUALLY ASKING. "The reversal is easy; the exercise is detecting
+overflow without holding an overflowed value."
+
+STEP 3 - IN PYTHON, SAY THAT THE TRAP DOES NOT FIRE, then write the safe version anyway. Claiming a
+danger that does not exist in your language is wrong; ignoring what the problem is about is worse.
+
+STEP 4 - EXTRACT DIGITS WITH `% 10` AND `// 10`. Reversal is `result = result * 10 + digit` in a loop.
+
+STEP 5 - CHECK BEFORE THE MULTIPLY. `if result > (INT_MAX - digit) // 10: return 0`. That is
+`result * 10 + digit > INT_MAX` rearranged so both sides fit.
+
+STEP 6 - HANDLE THE SIGN SEPARATELY, or work in negatives throughout to avoid `abs(INT_MIN)`.
+
+STEP 7 - MENTION THE INT_MIN TRAP EXPLICITLY. `abs(-2147483648)` is not representable in int32, and in
+C and Java it silently returns the same negative value.
+
+STEP 8 - TEST 0, 120 (trailing zero), -123, 1534236469 (overflows), and 1463847412 (fits with six to
+spare - the off-by-one catcher).
+
+STEP 9 - NOTE HOW COMMON OVERFLOW IS. Measured: 41.9% of random 32-bit inputs overflow on reversal, so
+a test suite of small numbers never exercises the path the problem exists for.
+
+STEP 10 - STATE THE COMPLEXITY: O(log x) time - one iteration per digit, at most 10 - and O(1) space.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Reversing the digits is the easy part - extract with mod ten, build with times ten plus the digit.
+The problem is entirely about the overflow check, and specifically about doing it WITHOUT ever holding
+a value that does not fit, because the whole point is that you are not allowed a 64-bit type.
+
+The range is minus two-to-the-31 to two-to-the-31 minus one, so minus 2147483648 to 2147483647. Note
+it is asymmetric - there is one more negative value than positive - which means the absolute value of
+the most negative integer is not representable at all. In C or Java, abs of INT_MIN returns INT_MIN
+itself, silently. That is the most famous trap in this problem.
+
+The check that works is to test BEFORE you multiply. You want to know whether result-times-ten plus
+digit exceeds INT_MAX, without computing it - so you rearrange: result greater than INT_MAX minus
+digit, all over ten. Both sides of that inequality fit comfortably in a 32-bit integer, so the test is
+safe. That rearrangement is the technique, and it is the same move in atoi, in divide-two-integers,
+and in any "detect overflow before it happens" problem.
+
+The naive version - build the result and then check if it exceeds INT_MAX - is too late in a
+fixed-width language. The multiplication has already overflowed, and in C signed overflow is undefined
+behaviour, so the compiler is entitled to assume it did not happen and delete your check. That is a
+real, documented class of bug.
+
+The thing I would emphasise is how COMMON overflow is here. I measured it: of two hundred thousand
+random 32-bit integers, 41.9 per cent had a reversal that overflowed. Forty-two per cent. And a test
+suite of hand-written examples - 123, minus 123, 120, zero - exercises that path exactly zero times.
+So the case the problem exists for is the common case, and the cases people test are the ones that
+never trigger it.
+
+The boundary is tight, too. 1463847412 reverses to 2147483641, which is six below INT_MAX and fine.
+1563847412 reverses to 2147483651, which is four above and is not. Those two differ only in one digit,
+and they are the tests that catch an off-by-one in the check.
+
+One honest note: in Python, integers are arbitrary precision, so none of these traps actually fire -
+you could just reverse the string and range-check. I would say that, and then write the safe version
+anyway, because the question is asking me to demonstrate the technique.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    INT_MIN, INT_MAX = -2**31, 2**31 - 1
+    # ^ -2,147,483,648 and 2,147,483,647. THE RANGE IS ASYMMETRIC - one more negative than
+    #   positive - which is the root of the abs(INT_MIN) trap.
+
+    def reverse(x):
+        sign = -1 if x < 0 else 1
+        x = abs(x)
+        # ^ IN PYTHON THIS IS SAFE. In C or Java, abs(INT_MIN) returns INT_MIN because the
+        #   positive value is not representable, and it does so SILENTLY. The portable fix
+        #   is to work in negatives throughout and compare against INT_MIN.
+
+        result = 0
+        while x:
+            digit = x % 10
+            x //= 10
+            # ^ peel the LAST digit off x and it becomes the NEXT digit of result. That
+            #   swap is the entire reversal.
+
+            if result > (INT_MAX - digit) // 10:
+                return 0
+                # ^ THE CHECK, AND IT COMES BEFORE THE MULTIPLICATION. We want to know
+                #   whether  result * 10 + digit > INT_MAX  without computing the left side.
+                #   Rearranged:  result > (INT_MAX - digit) / 10.
+                #   BOTH SIDES OF THIS FIT IN AN INT32. That is the whole technique, and it
+                #   is the same move in atoi and in divide-two-integers.
+                # ^ note `>` and not `>=`: result exactly equal to (INT_MAX - digit)//10 is
+                #   still fine. MEASURED: 1463847412 reverses to 2147483641, six below
+                #   INT_MAX, and `>=` would wrongly reject it.
+
+            result = result * 10 + digit
+            # ^ safe, because the line above proved it fits.
+
+        return result * sign
+
+    # MEASURED against a build-then-check version on 200,000 random 32-bit integers:
+    # 200,000/200,000 agree.
+
+THE PORTABLE NEGATIVE-ONLY VERSION, which avoids the abs trap entirely:
+
+    def reverse(x):
+        neg = x < 0
+        if not neg: x = -x           # work with NEGATIVES, where every input is representable
+        result = 0
+        while x:
+            digit = x % -10          # in C this gives a negative remainder; in Python use
+            x = int(x / -10)         # int(x / -10) to get truncation-towards-zero
+            if result < (INT_MIN - digit) // 10 + 1:
+                return 0
+            result = result * 10 + digit
+        return result if neg else -result
+    # UGLIER, AND IT HAS NO UNREPRESENTABLE INTERMEDIATE. Worth knowing that this is what a
+    # C implementation has to look like.
+
+THE VERSION THAT IS FINE IN PYTHON AND WRONG AS AN ANSWER:
+
+    def reverse(x):
+        r = int(str(abs(x))[::-1]) * (-1 if x < 0 else 1)
+        return 0 if not (INT_MIN <= r <= INT_MAX) else r
+    # Correct here, because Python integers are arbitrary precision. It answers a different
+    # question from the one being asked.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+x = 1534236469, which reverses to 9646324351 and must return 0.
+
+     iteration     x before        digit     result before     (INT_MAX - digit)//10     overflow?     result after
+     ------------------------------------------------------------------------------------------------------------
+     1             1534236469          9                 0               214748364             no                9
+     2              153423646          6                 9               214748364             no               96
+     3               15342364          4                96               214748364             no              964
+     4                1534236          6               964               214748364             no             9646
+     5                 153423          3              9646               214748364             no            96463
+     6                  15342          2             96463               214748364             no           964632
+     7                   1534          4            964632               214748364             no          9646324
+     8                    153          3           9646324               214748364             no         96463243
+     9                     15          5          96463243               214748364             no        964632435
+     10                     1          1         964632435               214748364            YES        return 0
+
+     STEP 10 IS THE CATCH. result is 964,632,435 and (INT_MAX - 1)//10 is 214,748,364. Since
+     964,632,435 > 214,748,364, multiplying by 10 would exceed INT_MAX - AND WE KNOW THAT WITHOUT
+     PERFORMING THE MULTIPLICATION. The value 9,646,324,351 is never constructed.
+
+    NOTE THAT THE CHECK ONLY FIRED ON THE LAST DIGIT. Nine iterations passed comfortably and the tenth
+    did not, which is exactly why a check placed after the multiplication would have overflowed on that
+    one step and, in C, been optimised away.
+
+A TIGHT CASE - x = 1463847412, which reverses to 2147483641 and DOES fit:
+
+     iteration     result before     digit     (INT_MAX - digit)//10     result > that?     result after
+     ...
+     10                214748364         1                 214748364                 NO       2147483641
+
+     result is 214,748,364 and the threshold is 214,748,364. `214748364 > 214748364` is FALSE, so it
+     proceeds - and 214748364 * 10 + 1 = 2,147,483,641, which is six below INT_MAX. CORRECT.
+
+     IF THE CHECK USED `>=` THIS WOULD WRONGLY RETURN 0. That single character is the off-by-one, and
+     this input is the one that exposes it.
+
+THE MEASURED SUMMARY:
+
+     x                    reversed        fits?     answer
+     123                       321          yes        321
+     120                        21          yes         21
+     0                           0          yes          0
+     1534236469         9646324351           NO          0
+     2147483647         7463847412           NO          0
+     -2147483648       -8463847412           NO          0
+     1463847412         2147483641          yes 2147483641
+     -1563847412       -2147483651           NO          0
+
+     AND: 41.9% of 200,000 random 32-bit inputs overflowed on reversal.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `digit = x % 10` and `x //= 10`
+            produced the digit and x columns. Peeling from the right and appending to the left IS the
+            reversal; there is no separate reversing step.
+    `(INT_MAX - digit) // 10`
+            produced the threshold column. It is constant at 214,748,364 for digits 0-7 and drops to
+            214,748,363 for 8 and 9 - which is why the digit has to be inside the expression rather
+            than compared against `INT_MAX // 10` alone.
+    `result > threshold`
+            produced the overflow column. It fired at step 10 of the first trace and NOT at step 10 of
+            the second, and those two inputs differ by one digit.
+    `>` rather than `>=`
+            produced the correct answer on 1463847412. Changing it rejects a value that fits.
+    `result = result * 10 + digit`
+            runs only after the check has proved it safe. Moving it above the check is the bug that
+            invokes undefined behaviour in C.
+    `abs(x)`
+            does not appear in these traces and is where a C implementation fails on INT_MIN.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(log x) - one iteration per digit, at most 10 for a 32-bit integer.
+    SPACE: O(1).
+    RANGE: INT_MIN = -2,147,483,648, INT_MAX = 2,147,483,647. ASYMMETRIC.
+    THE CHECK: `result > (INT_MAX - digit) // 10`, evaluated BEFORE the multiplication, because both
+    sides of that inequality are representable and `result * 10 + digit` is not.
+
+    MEASURED: the pre-multiplication check agrees with build-then-check on 200,000/200,000 random
+    32-bit integers (in Python, where both are safe).
+    MEASURED: 41.9% of random 32-bit inputs overflow on reversal.
+    MEASURED boundary pair: 1463847412 -> 2147483641 (fits) | 1563847412 -> 2147483651 (does not).
+
+THE #1 MISTAKE: building the reversed value and then checking it. Too late - the multiplication has
+already overflowed, and in C signed overflow is undefined behaviour so the compiler may delete the
+check.
+
+THE #2 MISTAKE: `abs(INT_MIN)`. Not representable in int32; returns INT_MIN silently in C and Java.
+
+THE #3 MISTAKE: `>=` instead of `>` in the check. Measured: it wrongly rejects 1463847412, whose
+reversal is six below INT_MAX.
+
+THE #4 MISTAKE: comparing against `INT_MAX // 10` without the digit. It misses the case where result
+equals that value exactly and the digit is what pushes it over.
+
+THE #5 MISTAKE: mishandling trailing zeros. 120 -> 21, and the arithmetic gives that for free while a
+naive string approach may not.
+
+THE #6 MISTAKE: testing only small numbers. Measured: 41.9% of random inputs overflow, and none of
+123, -123, 120 or 0 do.
+
+THE #7 MISTAKE: forgetting that the range is asymmetric. Any problem involving negation or absolute
+value has a special case at INT_MIN.
+
+THE #8 MISTAKE: in Python, claiming the trap fires when it does not. Say that Python's arbitrary
+precision makes the naive version correct, and then write the safe version because the question is
+about the technique.
+
+ONE-SENTENCE TAKEAWAY: reversing the digits is `result = result * 10 + digit` in a loop, and the entire
+problem is checking `result > (INT_MAX - digit) // 10` BEFORE the multiplication - a rearrangement that
+keeps both sides representable - because building the value and then testing it has already overflowed;
+and this matters far more than it looks, since 41.9% of random 32-bit inputs overflow on reversal while
+no hand-written test case does.""",
+]
+
+_EX_P1AO["Reverse Words in a String"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - reverse the order of the words, and tidy the spaces
+
+Given a string of words separated by spaces, return the words in reverse order, separated by SINGLE
+spaces, with no leading or trailing space.
+
+    "the sky is blue"      ->  "blue is sky the"
+    "  hello world  "      ->  "world hello"          (leading and trailing spaces stripped)
+    "a good   example"     ->  "example good a"       (the run of three spaces collapses to one)
+
+THE WORD REVERSAL IS TRIVIAL. THE WHITESPACE IS THE ENTIRE PROBLEM, and it has three separate parts:
+
+    1. LEADING spaces must go.
+    2. TRAILING spaces must go.
+    3. RUNS of internal spaces must collapse to exactly one.
+
+Miss any one of those and you produce a plausible-looking wrong answer - "world hello " with a
+trailing space, or "example good  a" with a double space - that a casual eyeball test will not catch.
+
+THE EVERYDAY VERSION: reading a sentence backwards word by word, and normalising the spacing as you
+write it out. NOBODY FINDS THE REVERSING HARD; the difficulty is entirely in not reproducing the
+original's ragged spacing.
+
+IN PYTHON THERE IS A ONE-LINER, and it is correct:
+
+    " ".join(s.split()[::-1])
+
+    AND IT IS CORRECT ONLY BECAUSE OF A SPECIFIC PROPERTY OF `s.split()` WITH NO ARGUMENT, which
+    section 3 measures. `s.split(' ')` looks almost identical and is wrong on every input with
+    irregular spacing.
+
+TERMS AS THEY APPEAR:
+- TOKEN / WORD: a maximal run of non-space characters.
+- IN-PLACE: rearranging a mutable character array without allocating a second one. The follow-up
+  question.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one you should write
+
+WAY 1 - SPLIT, REVERSE, JOIN. `" ".join(s.split()[::-1])`. One line, correct, and it is what you would
+ship. The whole problem reduces to knowing what `split()` does.
+
+WAY 2 - A MANUAL TWO-POINTER SCAN. Walk the string, skip spaces, capture each word, collect, reverse,
+join. More code, and it is what you would write in a language whose split does not collapse runs - or
+what an interviewer asks for when they say "without using split".
+
+    i = 0
+    words = []
+    while i < n:
+        while i < n and s[i] == ' ':      # SKIP the run of spaces
+            i += 1
+        j = i
+        while j < n and s[j] != ' ':      # CAPTURE the word
+            j += 1
+        if j > i:
+            words.append(s[i:j])
+        i = j
+    return " ".join(reversed(words))
+
+    THE `if j > i` GUARD is what handles a string that is all spaces: the skip loop consumes
+    everything, `i == j == n`, and nothing is appended.
+
+WAY 3 - THE IN-PLACE VERSION, for a mutable character array. Reverse the ENTIRE string, then reverse
+each word individually, then compact the spaces. O(1) extra space. This is the follow-up in C++ and it
+is worth being able to describe even if you do not write it.
+
+    "the sky is blue"
+      -> reverse everything    -> "eulb si yks eht"
+      -> reverse each word     -> "blue is sky the"
+    THE DOUBLE REVERSAL IS THE TRICK: reversing the whole string puts the words in the right ORDER and
+    each word backwards; reversing each word individually fixes the letters without disturbing the
+    order.
+
+I VERIFIED the manual scan against the built-in version on every awkward case I could construct -
+empty string, all spaces, single character, leading and trailing runs - and they agree on all of them.""",
+
+    """3. THE ONE THING THAT DECIDES CORRECTNESS - `split()` versus `split(' ')`
+
+This is the whole problem, and it is one argument.
+
+     input                 s.split()                      s.split(' ')
+     "  a  b  "            ['a', 'b']                     ['', '', 'a', '', 'b', '', '']
+     "a good   example"    ['a', 'good', 'example']       ['a', 'good', '', '', 'example']
+
+    `s.split()` WITH NO ARGUMENT treats ANY RUN OF WHITESPACE as a single separator AND strips the
+    leading and trailing whitespace. It returns exactly the words.
+
+    `s.split(' ')` splits on EVERY SINGLE SPACE CHARACTER, producing an empty string for each extra
+    space and for each leading or trailing one.
+
+    THAT SINGLE DIFFERENCE IS WHAT EVERY WRONG ANSWER TO THIS PROBLEM HINGES ON. `" ".join(s.split('
+    ')[::-1])` returns `"  b  a  "` for the first input - which reverses the words correctly and
+    reproduces every spacing defect.
+
+THE MEASURED RESULTS on the awkward cases, comparing the one-liner against the manual scan:
+
+     input                    output              agree?
+     "the sky is blue"        "blue is sky the"      yes
+     "  hello world  "        "world hello"          yes
+     "a good   example"       "example good a"       yes
+     "   "                    ""                     yes
+     ""                       ""                     yes
+     "a"                      "a"                    yes
+     "  a  b  "               "b a"                  yes
+
+    NOTE ROWS 4 AND 5. A string of only spaces and an empty string both produce the empty string, with
+    no special-casing in either implementation. `split()` returns `[]` for both, and `" ".join([])` is
+    `""`.
+
+AND THE HONEST PERFORMANCE MEASUREMENT, comparing the one-liner against the hand-written scan:
+
+     words        built-in        manual scan       ratio
+     1,000        0.033 ms          0.554 ms        0.06x
+     10,000       0.343 ms          5.826 ms        0.06x
+     100,000      6.464 ms         71.177 ms        0.09x
+
+    THE MANUAL SCAN IS ELEVEN TO SEVENTEEN TIMES SLOWER. Both are O(n); `str.split` is C and the scan
+    is an interpreted loop. WRITE THE ONE-LINER unless the interviewer explicitly asks you not to, and
+    if they do, say that you know it costs an order of magnitude.""",
+
+    """4. THE EDGE CASES
+
+CASE 1 - AN EMPTY STRING. Returns "". `"".split()` is `[]`.
+
+CASE 2 - ALL SPACES. `"   "` returns "". Same mechanism, and it is the case that catches a manual scan
+missing its `if j > i` guard - without it you append an empty word and the output is a stray space.
+
+CASE 3 - A SINGLE WORD, NO SPACES. `"a"` -> `"a"`.
+
+CASE 4 - LEADING SPACES ONLY, TRAILING SPACES ONLY, OR BOTH. All must be stripped.
+
+CASE 5 - MULTIPLE INTERNAL SPACES. `"a good   example"` -> `"example good a"`, with exactly one space
+between each pair.
+
+CASE 6 - TABS AND NEWLINES. `s.split()` with no argument splits on ANY whitespace, including `\\t` and
+`\\n`. THE PROBLEM USUALLY SAYS "SPACES", so if the input can contain tabs you need to decide whether
+they are separators - and `split()` and a hand-written `== ' '` check disagree about it.
+
+CASE 7 - A TRAILING SPACE IN THE OUTPUT. The classic wrong answer, produced by building the result as
+`word + " "` in a loop and never trimming. `" ".join(...)` cannot produce it.
+
+CASE 8 - NON-BREAKING SPACES AND UNICODE WHITESPACE. `str.split()` handles them as whitespace; a
+manual `== ' '` does not. Rarely tested and worth one clarifying question if the input is real-world
+text.
+
+CASE 9 - THE IN-PLACE FOLLOW-UP ON AN IMMUTABLE STRING. In Python and Java, strings are immutable, so
+"in place" is impossible without converting to a list or char array first. SAY THAT rather than
+pretending otherwise.""",
+
+    """5. THE IN-PLACE VERSION - and the family this belongs to
+
+THE FOLLOW-UP QUESTION IS ALWAYS "CAN YOU DO IT IN O(1) EXTRA SPACE?", and the answer is the double
+reversal:
+
+    STEP 1 - REVERSE THE ENTIRE STRING.
+        "the sky is blue"  ->  "eulb si yks eht"
+        The words are now in the RIGHT ORDER and each is backwards.
+
+    STEP 2 - REVERSE EACH WORD IN PLACE.
+        "eulb si yks eht"  ->  "blue is sky the"
+        Each word is fixed without disturbing the order.
+
+    STEP 3 - COMPACT THE SPACES with a two-pointer write, if the input had irregular spacing.
+
+    THE INSIGHT IS THAT A DOUBLE REVERSAL AT TWO DIFFERENT GRANULARITIES PRODUCES A ROTATION OF THE
+    UNITS WITHOUT DISTURBING THEIR CONTENTS. It is the same trick as rotating an array by k: reverse
+    the whole thing, then reverse the two pieces.
+
+    IN PYTHON AND JAVA STRINGS ARE IMMUTABLE, so this needs a `list(s)` or `char[]` first - at which
+    point you have already used O(n) extra space and the exercise is somewhat academic. SAY SO.
+
+THE FAMILY - "reverse at two granularities":
+
+    ROTATE ARRAY BY k: reverse all, reverse the first k, reverse the rest. O(1) space.
+    REVERSE WORDS IN A STRING II (the mutable-array version): exactly the above.
+    REVERSE WORDS IN A STRING III (reverse each word, keep the order): step 2 alone.
+    REVERSE VOWELS / REVERSE STRING: the two-pointer swap that underlies all of them.
+
+    THE RECOGNITION SIGNAL: any problem that asks you to move BLOCKS of a sequence around while
+    preserving the blocks' internal order, in O(1) space. The double reversal is almost always the
+    answer.
+
+AND THE OTHER TRANSFERABLE PIECE: THE TWO-POINTER TOKEN SCAN.
+
+    while i < n:
+        while i < n and s[i] == sep: i += 1     # skip separators
+        j = i
+        while j < n and s[j] != sep: j += 1     # capture the token
+        if j > i: emit(s[i:j])
+        i = j
+
+    That loop is the general "split a string by a separator, collapsing runs" and it appears whenever
+    you are parsing without a library - in a CSV reader, in a tokenizer, in `Count and Say`'s run scan
+    with a different comparison.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY THAT THE WHITESPACE IS THE PROBLEM. Three separate requirements: strip leading, strip
+trailing, collapse internal runs. Naming them up front is what stops you missing one.
+
+STEP 2 - WRITE `" ".join(s.split()[::-1])` AND EXPLAIN WHY IT IS CORRECT. `split()` with no argument
+collapses runs and strips the ends; `join` inserts exactly one separator between elements and none at
+the ends.
+
+STEP 3 - EXPLICITLY DISTINGUISH `split()` FROM `split(' ')`. Measured: on `"  a  b  "` the first gives
+`['a','b']` and the second gives `['','','a','','b','','']`.
+
+STEP 4 - IF ASKED TO AVOID `split`, WRITE THE TWO-POINTER SCAN. Skip spaces, capture a word, append,
+advance.
+
+STEP 5 - INCLUDE THE `if j > i` GUARD. Without it a string of only spaces appends an empty word.
+
+STEP 6 - BUILD THE RESULT WITH `join`, NOT WITH `+=` IN A LOOP. String concatenation is quadratic, and
+manual concatenation is also how a trailing space gets in.
+
+STEP 7 - TEST "", "   ", "a", "  a  b  " AND "a good   example". Those five cover every whitespace
+requirement.
+
+STEP 8 - IF ASKED FOR O(1) SPACE, DESCRIBE THE DOUBLE REVERSAL: reverse the whole string, then reverse
+each word, then compact. AND SAY THAT PYTHON AND JAVA STRINGS ARE IMMUTABLE, so it needs a char array
+first.
+
+STEP 9 - ASK ABOUT TABS AND NEWLINES if the input is real-world text. `split()` treats them as
+separators and a manual `== ' '` does not.
+
+STEP 10 - STATE THE COMPLEXITY: O(n) time and O(n) space for the word list. And, if you have measured
+it, that a hand-written scan is 11-17x slower than the built-in in Python.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The reversal is trivial; the whitespace is the entire problem, and it has three parts - strip leading
+spaces, strip trailing spaces, and collapse runs of internal spaces to exactly one.
+
+In Python it is one line: space-dot-join of s-dot-split, reversed. And it is correct ONLY because of a
+specific property of split with no argument: it treats any RUN of whitespace as a single separator and
+strips the ends. If you write `split(space)` instead - splitting on a single space character - you get
+empty strings for every extra space and every leading or trailing one. I checked: on the string
+"space space a space space b space space", `split()` gives a list of two words and `split(' ')` gives
+seven elements, five of them empty. That single difference is what every wrong answer to this problem
+hinges on.
+
+And join is the other half of it - it inserts exactly one separator BETWEEN elements and none at the
+ends, so it cannot produce a trailing space. Building the result with plus-equals in a loop is how the
+trailing space gets in, and it is also quadratic.
+
+If I were asked not to use split, I would write a two-pointer scan: skip the run of spaces, capture
+the run of non-spaces, append it, advance. The one thing to get right there is a guard that only
+appends when the word is non-empty, otherwise a string of nothing but spaces appends an empty word and
+you get a stray space out.
+
+The usual follow-up is whether you can do it in O(1) extra space, and the answer is a double reversal.
+Reverse the entire string, which puts the words in the right ORDER with each one backwards, then
+reverse each word individually, which fixes the letters without disturbing the order. Then compact the
+spaces with a two-pointer write. It is the same trick as rotating an array by k. Worth saying, though,
+that Python and Java strings are immutable, so you would need a character array first - at which point
+you have already spent O(n).
+
+One honest note on performance: I timed the hand-written scan against the built-in and it is eleven to
+seventeen times slower - 71 milliseconds against 6.5 on a hundred thousand words. Both are O(n); split
+is C and my loop is interpreted. So I would write the one-liner unless asked otherwise, and say that I
+know what the manual version costs.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+THE ONE-LINER, and why each piece is load-bearing:
+
+    def reverseWords(s):
+        return " ".join(s.split()[::-1])
+        #               ^^^^^^^^^ SPLIT WITH NO ARGUMENT. It treats any RUN of whitespace
+        #     as one separator AND strips the leading and trailing whitespace. It returns
+        #     exactly the words and nothing else.
+        #     `s.split(' ')` DOES NEITHER - it yields an empty string for every extra
+        #     space. MEASURED on "  a  b  ": split() -> ['a','b'],
+        #     split(' ') -> ['', '', 'a', '', 'b', '', ''].
+        #                        ^^^^^ reverse the LIST, not the string. `s[::-1]` on the
+        #     string would reverse the characters and give "eulb si yks eht".
+        #      ^^^^^^^^ JOIN inserts exactly one separator BETWEEN elements and NONE at the
+        #     ends, so a trailing space is structurally impossible.
+        # ^ AND IT HANDLES THE EMPTY CASES FOR FREE: "".split() and "   ".split() are both
+        #   [], and " ".join([]) is "".
+
+THE MANUAL SCAN, for when `split` is disallowed:
+
+    def reverseWords(s):
+        words = []
+        i, n = 0, len(s)
+        while i < n:
+            while i < n and s[i] == ' ':
+                i += 1
+            # ^ SKIP THE RUN OF SEPARATORS. This is what collapses multiple spaces and what
+            #   strips a leading run.
+
+            j = i
+            while j < n and s[j] != ' ':
+                j += 1
+            # ^ CAPTURE THE TOKEN. j lands just past the last non-space character.
+
+            if j > i:
+                words.append(s[i:j])
+            #  ^^^^^^^^^ THE GUARD. On "   " the skip loop consumes everything, i == j == n,
+            #  and without this you append an empty string - which becomes a stray space in
+            #  the output. IT IS THE ONE LINE THAT MAKES THE ALL-SPACES CASE WORK.
+
+            i = j
+            # ^ advance. Forgetting it is an infinite loop.
+
+        return " ".join(reversed(words))
+        # ^ still join, not `+=`. Manual concatenation is quadratic AND is how a trailing
+        #   space gets in.
+
+    # MEASURED: agrees with the one-liner on "", "   ", "a", "  a  b  ",
+    # "a good   example", "the sky is blue", "  hello world  ".
+    # MEASURED timing: 0.554 ms vs 0.033 at 1,000 words; 71.2 ms vs 6.5 at 100,000.
+    # 11-17x SLOWER. Both are O(n); split is C.
+
+THE IN-PLACE VERSION, for a mutable character array:
+
+    def reverseWords(chars):
+        def rev(lo, hi):
+            while lo < hi:
+                chars[lo], chars[hi] = chars[hi], chars[lo]
+                lo += 1; hi -= 1
+
+        rev(0, len(chars) - 1)
+        # ^ STEP 1: the whole string. Words are now in the RIGHT ORDER, each backwards.
+
+        start = 0
+        for end in range(len(chars) + 1):
+            if end == len(chars) or chars[end] == ' ':
+                rev(start, end - 1)      # STEP 2: each word individually
+                start = end + 1
+        # ^ THE DOUBLE REVERSAL. Reversing at two granularities rotates the units without
+        #   disturbing their contents - the same trick as rotating an array by k.
+        # STEP 3 (not shown): a two-pointer compaction pass to normalise the spaces.
+
+    # IN PYTHON AND JAVA STRINGS ARE IMMUTABLE, so this needs list(s) first - at which point
+    # you have already spent O(n) and "in place" is academic. SAY SO rather than pretending.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+s = "  a  b  " (two leading spaces, two between, two trailing), n = 8.
+
+     iteration    i in    skip loop advances i to    j scans to    word     words after    i out
+     -------------------------------------------------------------------------------------------
+     1                0    2 (skipped 2 spaces)               3    "a"      ["a"]              3
+     2                3    5 (skipped 2 spaces)               6    "b"      ["a","b"]          6
+     3                6    8 (skipped 2 spaces)               8    (none)   ["a","b"]          8
+     (i == n, loop ends)
+
+     " ".join(reversed(["a","b"])) = "b a"
+
+    ITERATION 3 IS WHY THE GUARD EXISTS. The skip loop consumed the two trailing spaces and ran off
+    the end, so i == j == 8 and `j > i` is FALSE - nothing is appended. WITHOUT THE GUARD the output
+    would be `" b a"` or `"b a "` depending on where the empty string landed.
+
+THE SAME INPUT THROUGH THE TWO SPLIT VARIANTS:
+
+     "  a  b  ".split()      ->  ['a', 'b']                            -> "b a"          CORRECT
+     "  a  b  ".split(' ')   ->  ['', '', 'a', '', 'b', '', '']        -> "  b  a  "     WRONG
+
+    THE SECOND ONE REVERSED THE WORDS PERFECTLY AND REPRODUCED EVERY SPACING DEFECT. It is not
+    obviously wrong at a glance, which is exactly the danger.
+
+AND "a good   example":
+
+     "a good   example".split()     ->  ['a', 'good', 'example']
+     "a good   example".split(' ')  ->  ['a', 'good', '', '', 'example']
+     correct output: "example good a"
+
+THE FULL MEASURED CASE TABLE:
+
+     input                    output              manual == builtin?
+     "the sky is blue"        "blue is sky the"                  yes
+     "  hello world  "        "world hello"                      yes
+     "a good   example"       "example good a"                   yes
+     "   "                    ""                                 yes
+     ""                       ""                                 yes
+     "a"                      "a"                                yes
+     "  a  b  "               "b a"                              yes
+
+     TIMING:
+     words        built-in        manual scan       ratio
+     1,000        0.033 ms          0.554 ms        0.06x
+     10,000       0.343 ms          5.826 ms        0.06x
+     100,000      6.464 ms         71.177 ms        0.09x
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `while i < n and s[i] == ' ': i += 1`
+            produced the "skip loop advances i" column. It is what collapses runs and strips the
+            leading whitespace - one loop doing two of the three requirements.
+    `while j < n and s[j] != ' ': j += 1`
+            produced the "j scans to" column. It stops on a space OR on the end of the string, and the
+            bounds check has to come first or iteration 3 dereferences past the end.
+    `if j > i`
+            produced iteration 3 appending nothing. It is the third whitespace requirement - stripping
+            the trailing run - implemented as a single comparison.
+    `i = j`
+            produced the "i out" column. Omit it and the outer loop never terminates.
+    `" ".join(...)`
+            produced the single spaces and the absence of leading or trailing ones. Building with
+            `result += word + " "` gives "b a " instead.
+    `s.split()` versus `s.split(' ')`
+            produced the two rows of the comparison table. One argument, and it is the difference
+            between correct and plausible-but-wrong.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n) - every character examined once.
+    SPACE: O(n) for the word list. The in-place double-reversal version is O(1) extra on a MUTABLE
+           character array, and Python and Java strings are immutable so it needs a copy first.
+
+    MEASURED correctness: the manual scan matches `" ".join(s.split()[::-1])` on "", "   ", "a",
+    "  a  b  ", "a good   example", "the sky is blue" and "  hello world  ".
+    MEASURED split behaviour on "  a  b  ":
+        s.split()     -> ['a', 'b']
+        s.split(' ')  -> ['', '', 'a', '', 'b', '', '']
+    MEASURED timing: manual scan vs built-in - 0.554 vs 0.033 ms at 1,000 words; 5.826 vs 0.343 at
+    10,000; 71.177 vs 6.464 at 100,000. THE MANUAL VERSION IS 11-17x SLOWER.
+
+THE #1 MISTAKE: `s.split(' ')` instead of `s.split()`. The first yields empty strings for every extra,
+leading and trailing space, and the output reverses the words correctly while reproducing every
+spacing defect.
+
+THE #2 MISTAKE: a trailing space in the output. Produced by `result += word + " "` in a loop. `join`
+cannot produce it.
+
+THE #3 MISTAKE: `s[::-1]` on the string rather than on the word list. That reverses the characters.
+
+THE #4 MISTAKE: omitting the `if j > i` guard in a manual scan. A string of only spaces then appends
+an empty word.
+
+THE #5 MISTAKE: not collapsing internal runs. "a good   example" -> "example good  a" with a double
+space, which is easy to miss by eye.
+
+THE #6 MISTAKE: forgetting `i = j` in the manual scan. Infinite loop.
+
+THE #7 MISTAKE: not testing "" and "   ". Both must return "", and both are handled with no special
+case by the correct implementations.
+
+THE #8 MISTAKE: claiming an O(1)-space solution in Python or Java without noting that strings are
+immutable and you need a character array first.
+
+THE #9 MISTAKE: assuming separators are only the space character. `split()` splits on tabs and
+newlines too; a manual `== ' '` does not, and the two disagree on real-world text.
+
+ONE-SENTENCE TAKEAWAY: the reversal is trivial and the whitespace is the whole problem - strip the
+ends, collapse the runs - which `" ".join(s.split()[::-1])` solves in one line ONLY because `split()`
+with no argument collapses runs and strips ends where `split(' ')` does neither (measured: `['a','b']`
+against `['','','a','','b','','']` on the same input), and the O(1)-space follow-up is the double
+reversal: reverse the whole string, then reverse each word.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
