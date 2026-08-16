@@ -11481,3 +11481,1069 @@ dispatch never offered, it is destroyed by a single `default` clause, and the tw
 silently are that records are only shallowly immutable and that an array component makes `equals` use
 identity.""",
 ]
+
+
+DEEP["Class initialization order — static blocks, instance blocks, constructors"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two separate ceremonies, run at different times
+
+There are TWO initialisations in Java and people mix them up constantly.
+
+    CLASS INITIALISATION happens ONCE, ever, the first time the class is actually USED. It runs the
+    static field initialisers and the static blocks, in the order they appear in the source. The JVM
+    calls this `<clinit>`.
+
+    INSTANCE INITIALISATION happens EVERY TIME you write `new`. It runs the superclass's instance
+    initialisation first, then this class's instance field initialisers and instance blocks in source
+    order, then the constructor body. The JVM calls this `<init>`.
+
+    SO THE FULL ORDER FOR `new Child()` — with nothing yet loaded — IS:
+
+        1. Parent's static initialisers            ← once, ever
+        2. Child's static initialisers             ← once, ever
+        3. Parent's instance initialisers + blocks ┐
+        4. Parent's constructor body               ┘ every `new`
+        5. Child's instance initialisers + blocks  ┐
+        6. Child's constructor body                ┘ every `new`
+
+    ALL STATICS BEFORE ANY INSTANCE, AND ALL PARENT BEFORE ANY CHILD. That is the whole ordering rule,
+    and almost every surprising behaviour is a consequence of step 4 happening before step 5.
+
+WHY IT MATTERS BEYOND TRIVIA: the gap between steps 4 and 5 is where a constructor calling an
+overridable method sees the subclass's fields as null. And "the first time the class is USED" hides two
+genuinely load-bearing details — one that produces a deployment bug where changing a constant has no
+effect, and one that produces the most confusing error message in Java, where a class that is
+demonstrably present reports `NoClassDefFoundError`.
+
+THE EVERYDAY VERSION: opening a shop. Unlocking the building, turning on the power and setting the tills
+up happens once, on the first day anyone comes in — that is class initialisation. Serving each customer
+happens every time — that is instance initialisation. And the building is always opened before the
+first customer is served, never the other way round.
+
+TERMS AS THEY APPEAR:
+- `<clinit>`: the compiler-generated method holding all static initialisation.
+- `<init>`: the generated method holding instance initialisation plus a constructor body.
+- INITIALISATION vs LOADING: a class can be loaded and linked long before it is initialised.""",
+
+"""2. THE INTUITION — what "first used" actually means, and the two surprises hiding in it
+
+CLASS INITIALISATION IS LAZY AND PRECISELY SPECIFIED. It is triggered by:
+
+    creating an instance (`new`);
+    calling a static METHOD;
+    reading or writing a NON-CONSTANT static field;
+    reflection — `Class.forName(name)` with the default `initialize = true`;
+    initialising a SUBCLASS (which forces the superclass first).
+
+IT IS NOT TRIGGERED BY:
+
+    declaring a variable of the type;
+    creating an ARRAY of the type — `new Foo[10]` initialises nothing;
+    `Class.forName(name, false, loader)`;
+    accessing a COMPILE-TIME CONSTANT.
+
+THAT LAST ONE IS THE FIRST SURPRISE, AND IT IS A REAL DEPLOYMENT BUG:
+
+    `static final int MAX = 100;` — a `static final` primitive or String initialised with a constant
+    expression is a COMPILE-TIME CONSTANT. Its value is COPIED INTO THE CALLER'S CLASS FILE at compile
+    time. Reading it does not touch the declaring class at all, and its static block never runs.
+
+    NOW CHANGE `MAX` TO 200 AND REBUILD ONLY THE LIBRARY. Every already-compiled caller still contains
+    the literal 100. The library says 200, the application behaves as 100, and nothing anywhere is
+    wrong — the old value was baked in. THE FIX IS A FULL REBUILD, and knowing this is the difference
+    between five minutes and an afternoon.
+
+    (`static final Foo X = new Foo();` is NOT a constant — only primitives and Strings with constant
+    initialisers are — so reading it does initialise the class.)
+
+THE SECOND SURPRISE IS WHAT HAPPENS WHEN A STATIC INITIALISER THROWS:
+
+    The exception is wrapped in `ExceptionInInitializerError`, and — this is the part people do not
+    know — THE CLASS IS PERMANENTLY MARKED ERRONEOUS. Initialisation is attempted exactly once. Every
+    subsequent use of that class, for the life of the JVM, throws `NoClassDefFoundError: Could not
+    initialize class Foo`.
+
+    SO THE SECOND ERROR MESSAGE SAYS THE CLASS CANNOT BE FOUND, AND THE CLASS IS RIGHT THERE. People
+    spend hours on classpath theories. The real cause is a single `ExceptionInInitializerError` that
+    happened earlier — often in a different thread, often already swallowed by a catch block. ALWAYS
+    LOOK FOR THE FIRST OCCURRENCE IN THE LOG, NOT THE ONE YOU ARE STARING AT.
+
+AND THE THIRD THING THAT MAKES `<clinit>` SPECIAL: THE JVM GUARANTEES IT RUNS EXACTLY ONCE AND IS
+THREAD-SAFE. It takes a per-class initialisation lock, so concurrent threads block until the first one
+finishes. That guarantee — free, built in, no synchronisation to write — is what the
+INITIALIZATION-ON-DEMAND HOLDER idiom exploits to get a lazy thread-safe singleton with no locking in
+your code at all.""",
+
+"""3. THE MECHANISM — what the compiler generates, and the two orders
+
+`<clinit>`, THE CLASS INITIALISER. The compiler collects EVERY static field initialiser and EVERY static
+block, in SOURCE ORDER, into one synthetic method:
+
+    class Config {
+        static int a = 1;                 ┐
+        static { a = 2; b = 5; }          │  all of this becomes one <clinit>,
+        static int b = 3;                 │  executed top to bottom
+        static { System.out.println(b); } ┘  → prints 3, not 5
+    }
+
+    READ THAT OUTPUT AGAIN. The block sets `b = 5`, then the DECLARATION `static int b = 3` runs after
+    it and overwrites. Source order is the only order, and a declaration that appears later wins over a
+    block that appears earlier. THIS IS WHY MIXING BLOCKS AND INITIALISERS IS DISCOURAGED.
+
+    A static block MAY ASSIGN a field declared later (as above) but may NOT READ it by simple name —
+    that is an "illegal forward reference" and a compile error. The asymmetry is deliberate: writing is
+    harmless, reading would observe a default value that looks like a bug.
+
+`<init>`, THE INSTANCE INITIALISER. For every constructor the compiler emits, in this order:
+
+    1. the `super(...)` call (implicit `super()` if you wrote neither `super` nor `this`)
+    2. ALL instance field initialisers and instance blocks, in SOURCE ORDER
+    3. the constructor's own body
+
+    STEP 2 IS THE ONE PEOPLE FORGET. Field initialisers do not run "with the field"; they run
+    immediately after `super()` returns and BEFORE your constructor body. If a constructor delegates
+    with `this(...)`, step 2 runs only in the constructor that eventually calls `super` — so field
+    initialisers run exactly once per object, not once per constructor in the chain.
+
+THE CONSEQUENCE THAT CAUSES REAL BUGS — a superclass constructor calling an overridable method:
+
+    Parent's constructor runs at step 4 of the overall order. The Child's field initialisers are step 5.
+    So if Parent's constructor calls a method the Child overrides, THE OVERRIDE RUNS WITH EVERY CHILD
+    FIELD STILL AT ITS DEFAULT — null, 0, false — including `final` fields. Dynamic dispatch is working
+    perfectly; the object simply does not exist yet from the Child's point of view.
+
+THE INITIALIZATION-ON-DEMAND HOLDER IDIOM, which turns the `<clinit>` guarantee into a feature:
+
+    class Singleton {
+        private Singleton() { }
+        private static class Holder { static final Singleton INSTANCE = new Singleton(); }
+        static Singleton get() { return Holder.INSTANCE; }
+    }
+
+    `Holder` is not initialised until `get()` touches `Holder.INSTANCE`. At that moment the JVM's
+    per-class lock guarantees `new Singleton()` runs exactly once, even under concurrent access. LAZY,
+    THREAD-SAFE, AND NOT ONE LINE OF SYNCHRONISATION — because the JVM already had to solve this
+    problem for `<clinit>`.
+
+ENUMS use the same machinery: the constants are created in the enum's `<clinit>`, which is why
+`enum Singleton { INSTANCE }` is thread-safe, serialization-safe and reflection-safe for free.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — A `static final` PRIMITIVE OR STRING CONSTANT CHANGED IN A LIBRARY. Callers keep the old value
+baked into their class files until they are recompiled. Nothing errors; the behaviour is just stale.
+
+CASE 2 — `ExceptionInInitializerError`, THEN `NoClassDefFoundError` FOREVER. Initialisation is attempted
+once; failure marks the class erroneous for the life of the JVM. The second message is the one you see
+and it names the wrong problem.
+
+CASE 3 — A STATIC BLOCK OVERWRITTEN BY A LATER DECLARATION. Source order is the only order; a block
+above a field initialiser loses.
+
+CASE 4 — ILLEGAL FORWARD REFERENCE. A static block may assign a field declared later but may not read
+it by simple name. Compile error.
+
+CASE 5 — A SUPERCLASS CONSTRUCTOR CALLING AN OVERRIDABLE METHOD. The override runs before the subclass's
+field initialisers, so it sees nulls and zeros — including in `final` fields.
+
+CASE 6 — CLASS INITIALISATION DEADLOCK. Two classes whose static initialisers reference each other,
+touched from two threads simultaneously. Each holds one class's init lock and wants the other's. The
+thread dump shows threads blocked in `<clinit>` and `jstack` will not call it a deadlock, because the
+locks are internal to the JVM.
+
+CASE 7 — CIRCULAR STATIC INITIALISATION IN ONE THREAD. `A.<clinit>` reads `B.X`, and `B.<clinit>` reads
+`A.Y`. No deadlock — the JVM sees the same thread already initialising `A` and lets it proceed — so one
+of the values is simply the DEFAULT. Silent, and it produces a null or a zero that no code explains.
+
+CASE 8 — `new Foo[10]` DOES NOT INITIALISE `Foo`. Array creation is not a trigger, so a static block
+you expected to have run has not.
+
+CASE 9 — `Class.forName(name, false, loader)` DOES NOT INITIALISE either. The two-argument versus
+three-argument difference matters when a driver registers itself in a static block.
+
+CASE 10 — EXPENSIVE WORK IN A STATIC BLOCK. It runs while holding the class init lock, on whichever
+thread touched the class first — often an unlucky request thread. Loading a 50 MB file there stalls
+everything that needs the class.
+
+CASE 11 — A STATIC BLOCK WITH SIDE EFFECTS OUTSIDE THE CLASS. Registering with a global registry from
+`<clinit>` means the registration happens only if something else touched the class first, which is not
+a property you control.
+
+CASE 12 — CONSTRUCTOR CHAINING WITH `this(...)`. Field initialisers run ONCE, in the constructor that
+reaches `super`, not in each constructor in the chain.
+
+CASE 13 — INSTANCE INITIALISER BLOCKS IN ANONYMOUS CLASSES (the "double brace" idiom,
+`new ArrayList<>() {{ add("a"); }}`). It creates a SUBCLASS holding a `this$0` reference to the
+enclosing instance, so it leaks and it breaks serialization.""",
+
+"""5. THE ALTERNATIVES — how to avoid needing to know the order
+
+CONSTRUCTOR PARAMETERS OVER INITIALISATION CEREMONY. If every field is assigned in the constructor from
+arguments, there is no order to reason about. Records take this to its conclusion.
+
+STATIC FACTORY METHODS instead of static blocks that build complicated state. A named method is
+testable, can fail with a normal exception rather than an `ExceptionInInitializerError`, and runs when
+you call it rather than when someone happens to touch the class.
+
+THE INITIALIZATION-ON-DEMAND HOLDER for lazy singletons — lazy, thread-safe, lock-free, and it works
+because `<clinit>` already guarantees it.
+
+`enum Singleton { INSTANCE; }` — Effective Java's preferred singleton. Thread-safe, serialization-safe,
+and immune to the reflection attack that breaks a private constructor.
+
+EXPLICIT LIFECYCLE over static initialisation for anything with real setup: a dependency injection
+container, a `@PostConstruct`, an explicit `init()` called from `main`. YOU CONTROL WHEN IT RUNS, WHAT
+THREAD IT RUNS ON, AND WHAT HAPPENS WHEN IT FAILS — none of which is true of a static block.
+
+`final` FIELDS ASSIGNED EXACTLY ONCE, in the declaration or in every constructor. This removes the "did
+it get initialised" question entirely and gives you the JMM's final-field freeze guarantee for safe
+publication.
+
+FOR CONSTANTS THAT MAY CHANGE: avoid `static final` primitives and Strings in a library's public API if
+callers compile against it separately, because inlining makes them unchangeable without a full rebuild.
+A static ACCESSOR METHOD returning the value is not inlined and stays correct.
+
+`Objects.requireNonNull` IN THE CONSTRUCTOR to fail loudly at construction rather than with a mysterious
+NPE later.
+
+DO NOT CALL OVERRIDABLE METHODS FROM A CONSTRUCTOR. If subclasses must contribute, take the value as a
+constructor parameter, or use a static factory that constructs then configures.
+
+WHAT TO SAY: "Statics before instance, parent before child, and within each, source order. I would avoid
+depending on it: constructor parameters or a record for state, a static factory or an explicit lifecycle
+instead of static blocks, and the holder idiom for a lazy singleton — which works precisely because the
+JVM already guarantees `<clinit>` runs once under a class lock."
+
+""",
+
+"""6. HOW TO REASON ABOUT IT — numbered steps
+
+STEP 1 — REMEMBER THE SIX-STEP ORDER: parent statics, child statics, parent instance initialisers,
+parent constructor, child instance initialisers, child constructor.
+
+STEP 2 — WITHIN A CATEGORY, IT IS SOURCE ORDER. A static block above a field declaration runs before
+that declaration's initialiser, and can be overwritten by it.
+
+STEP 3 — REMEMBER FIELD INITIALISERS RUN AFTER `super()` AND BEFORE THE CONSTRUCTOR BODY. Not "with the
+field".
+
+STEP 4 — NEVER CALL AN OVERRIDABLE METHOD FROM A CONSTRUCTOR. The override sees the subclass's fields at
+their defaults.
+
+STEP 5 — KEEP STATIC BLOCKS TINY AND INFALLIBLE. They run under a class lock, on an arbitrary thread,
+and a failure poisons the class for the life of the JVM.
+
+STEP 6 — WHEN YOU SEE `NoClassDefFoundError: Could not initialize class X`, SEARCH THE LOG FOR THE
+FIRST `ExceptionInInitializerError`. That is the real error; this one is its echo.
+
+STEP 7 — AVOID PUBLIC `static final` PRIMITIVE AND STRING CONSTANTS IN A LIBRARY whose callers compile
+separately. They are inlined and cannot be changed without recompiling everyone.
+
+STEP 8 — USE THE HOLDER IDIOM FOR LAZY SINGLETONS, or an enum for eager ones. Not double-checked
+locking.
+
+STEP 9 — DO NOT LET TWO CLASSES' STATIC INITIALISERS REFERENCE EACH OTHER. One thread gives you a silent
+default value; two threads give you a deadlock `jstack` cannot name.
+
+STEP 10 — REMEMBER `new Foo[10]` AND `Class.forName(n, false, cl)` DO NOT INITIALISE. If a static block
+must run, touch a non-constant static member.
+
+STEP 11 — PREFER AN EXPLICIT `init()` OR A DI CONTAINER for anything with real setup, so you control the
+timing, the thread and the failure mode.
+
+STEP 12 — AVOID THE DOUBLE-BRACE INITIALISATION IDIOM. It creates an anonymous subclass with a `this$0`
+back-reference, so it leaks and breaks serialization.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'There are two initialisations and people mix them up. CLASS initialisation happens once ever, the first
+time the class is actually used — it runs the static field initialisers and static blocks in source
+order, and the JVM calls that <clinit>. INSTANCE initialisation happens on every `new` — superclass
+first, then this class's instance field initialisers and blocks in source order, then the constructor
+body, and that's <init>.
+
+So for `new Child()` with nothing loaded yet: Parent statics, Child statics, Parent instance
+initialisers, Parent constructor, Child instance initialisers, Child constructor. All statics before any
+instance, all parent before any child. That's the whole rule.
+
+The bit people forget is that field initialisers don't run "with the field" — they run right after
+super() returns and BEFORE your constructor body. Which is what makes the classic bug: if a superclass
+constructor calls a method the subclass overrides, the override runs before the subclass's field
+initialisers, so it sees nulls and zeros — including in final fields. Dynamic dispatch is working
+perfectly; the object just doesn't exist yet from the subclass's point of view.
+
+Now, "the first time the class is used" hides two things that are genuinely load-bearing.
+
+The first is a deployment bug. A `static final` primitive or String initialised with a constant
+expression is a COMPILE-TIME CONSTANT, and its value gets copied into the CALLER's class file. So
+reading it doesn't touch the declaring class at all, and its static block never runs. Change the
+constant, rebuild only the library, and every already-compiled caller still has the old literal baked
+in. The library says 200, the application behaves as 100, and nothing anywhere is wrong. The fix is a
+full rebuild.
+
+The second is the most confusing error message in Java. If a static initialiser throws, you get
+ExceptionInInitializerError — and the class is permanently marked ERRONEOUS. Initialisation is attempted
+exactly ONCE. So every subsequent use, for the life of the JVM, throws "NoClassDefFoundError: Could not
+initialize class Foo". The message says the class can't be found and the class is right there. People
+spend hours on classpath theories. Always look for the FIRST occurrence in the log, not the one you're
+staring at — and it's often in another thread, often already swallowed.
+
+The third thing about <clinit> is that the JVM guarantees it runs exactly once and takes a per-class
+lock to do it. That's a free thread-safety guarantee, and it's what the initialization-on-demand HOLDER
+idiom exploits: a private static nested Holder class whose static field creates the instance. It isn't
+initialised until someone touches it, and the class lock makes that exactly-once. Lazy, thread-safe,
+zero synchronisation you wrote. Enums get the same guarantee, which is why `enum Singleton { INSTANCE }`
+is the recommended singleton.
+
+Practically, I'd avoid depending on any of this. Constructor parameters or a record for state, a static
+factory instead of a complicated static block — because a static block runs on an arbitrary thread,
+under a lock, and a failure poisons the class permanently.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── SOURCE ORDER IS THE ONLY ORDER ──────────────────────────────────
+    class Config {
+        static int a = 1;
+        static { a = 2; b = 5; }          // ← may ASSIGN b, declared below
+        static int b = 3;                 // ← RUNS NOW, and OVERWRITES the 5
+        static { System.out.println(b); } // ← prints 3
+    }
+    // A block above a declaration LOSES to that declaration's initialiser. And a
+    // block may assign a later field but may NOT READ it by simple name — "illegal
+    // forward reference", a compile error. Writing is harmless; reading would observe
+    // a default that looks like a bug.
+
+    // ── THE SIX-STEP ORDER ──────────────────────────────────────────────
+    class Parent {
+        static { print("1 parent static"); }
+        { print("3 parent instance block"); }
+        Parent() { print("4 parent constructor"); }
+    }
+    class Child extends Parent {
+        static { print("2 child static"); }
+        { print("5 child instance block"); }
+        Child() { print("6 child constructor"); }
+    }
+    new Child();   // 1, 2, 3, 4, 5, 6 — then a SECOND `new Child()` prints only 3,4,5,6
+    //                                    because statics run ONCE, ever.
+
+    // ── WHAT THE COMPILER EMITS FOR A CONSTRUCTOR ───────────────────────
+    Child() {
+        super();                    // ← 1. implicit if you write neither super nor this
+        /* all instance field initialisers and blocks, in SOURCE ORDER */  // ← 2.
+        print("6 child constructor");                                     // ← 3.
+    }
+    // Step 2 is what people forget. And with `this(...)` delegation, step 2 runs ONLY
+    // in the constructor that eventually reaches super — once per OBJECT, not once
+    // per constructor in the chain.
+
+    // ── THE BUG THAT ORDER CAUSES ───────────────────────────────────────
+    class Parent { Parent() { init(); } void init() { } }
+    class Child extends Parent {
+        private final List<String> items = new ArrayList<>();
+        @Override void init() { items.add("x"); }   // ← NullPointerException
+    //                          ^^^^^ Parent's constructor is step 4; this field
+    //   initialiser is step 5. The override runs with `items` STILL NULL — and it is
+    //   a `final` field, which makes it look impossible.
+    }
+
+    // ── THE DEPLOYMENT BUG ──────────────────────────────────────────────
+    // library:      public static final int MAX = 100;
+    // application:  if (n > Library.MAX) { ... }
+    //
+    // `MAX` is a COMPILE-TIME CONSTANT (a static final primitive with a constant
+    // initialiser), so the value 100 is COPIED INTO THE APPLICATION'S CLASS FILE.
+    // Reading it never touches Library — its static block never runs.
+    // Change MAX to 200, rebuild ONLY the library: the app still behaves as 100.
+    // Nothing errors. The fix is a FULL REBUILD.
+    public static int max() { return MAX; }        // ← a method is NOT inlined
+
+    // ── THE ERROR MESSAGE THAT NAMES THE WRONG PROBLEM ──────────────────
+    class Registry { static final Config C = load(); }   // load() throws
+    Registry.C;   // 1st use → ExceptionInInitializerError, caused by the real failure
+    Registry.C;   // EVERY LATER USE → NoClassDefFoundError: Could not initialize
+    //                                 class Registry
+    // Initialisation is attempted exactly ONCE; failure marks the class ERRONEOUS for
+    // the life of the JVM. The second message says the class cannot be found and the
+    // class is right there. FIND THE FIRST ExceptionInInitializerError IN THE LOG.
+
+    // ── THE GUARANTEE, TURNED INTO A FEATURE ────────────────────────────
+    class Singleton {
+        private Singleton() { }
+        private static class Holder { static final Singleton INSTANCE = new Singleton(); }
+        static Singleton get() { return Holder.INSTANCE; }
+    //                                  ^^^^^^^^^^^^^^^ Holder is not initialised until
+    //   THIS LINE runs. The JVM's per-class init lock makes `new Singleton()` happen
+    //   exactly once even under concurrent access. LAZY, THREAD-SAFE, AND NOT ONE LINE
+    //   OF SYNCHRONISATION — because the JVM already had to solve this for <clinit>.
+    }
+    enum Better { INSTANCE }   // same guarantee, plus serialization- and
+    //                            reflection-safety. Effective Java's preferred form.""",
+
+"""9. THE TRACE — three programs, three different lessons
+
+PROGRAM 1 — THE FULL ORDER. `new Child(); new Child();`
+
+    call        what runs                              why
+    ---------------------------------------------------------------------------------
+    first new   Parent.<clinit>                         Child's init forces Parent's
+                Child.<clinit>                          the class is being used
+                Parent instance blocks                  step 2 of Parent's <init>
+                Parent constructor body                 step 3
+                Child instance blocks                   step 2 of Child's <init>
+                Child constructor body                  step 3
+    second new  Parent instance blocks                  <clinit> ALREADY RAN — statics
+                Parent constructor body                 are once, ever, per class
+                Child instance blocks                   loader
+                Child constructor body
+    ---------------------------------------------------------------------------------
+    THE SECOND `new` SKIPS BOTH STATIC SECTIONS ENTIRELY. That is the one asymmetry to hold on to:
+    statics are once per class, everything else is once per object.
+
+PROGRAM 2 — THE CONSTANT THAT WAS NOT THERE.
+
+    step                                        what happens
+    ---------------------------------------------------------------------------------
+    compile App against Library v1 (MAX = 100)  javac copies the literal 100 INTO
+                                                App.class. No reference to Library
+                                                remains for that read.
+    ship Library v2 (MAX = 200), do not         App.class still contains 100
+    recompile App
+    run                                         App behaves as 100. Library.<clinit>
+                                                never runs for this read at all.
+    inspect Library.MAX in a debugger           200. It genuinely is 200.
+    ---------------------------------------------------------------------------------
+    NOTHING IS BROKEN AND NOTHING WILL TELL YOU. The value in the source, the value in the jar and the
+    value in the running program disagree, and each is individually correct. A full rebuild fixes it;
+    a static accessor method would have prevented it, because method calls are not inlined across a
+    compilation boundary.
+
+PROGRAM 3 — THE ERROR THAT NAMES THE WRONG PROBLEM.
+
+    time  what happens                                  what is logged
+    ---------------------------------------------------------------------------------
+    t0    a background thread touches Registry           ExceptionInInitializerError
+          Registry.<clinit> throws (config file          Caused by: FileNotFoundException
+          missing)
+    t1    that thread's catch(Exception) SWALLOWS it     nothing — an Error is not an
+          — except it does not, because Error is not     Exception, so it propagates and
+          an Exception. It propagates and kills the      is logged by the thread's
+          thread.                                        default handler, possibly to
+                                                         stderr nobody reads
+    t2    a request thread touches Registry              NoClassDefFoundError: Could
+                                                         not initialize class Registry
+    t3    every subsequent request                       the same, forever
+    ---------------------------------------------------------------------------------
+    THE ONLY MESSAGE ANYONE SEES SAYS "CANNOT FIND THE CLASS", AND THE CLASS IS IN THE JAR. The real
+    cause — a missing config file — appeared once, at t0, in a different thread, possibly hours
+    earlier. THE DIAGNOSTIC RULE IS THEREFORE: grep the whole log for the FIRST
+    `ExceptionInInitializerError` and read its `Caused by`.
+
+AND THE CIRCULAR-STATICS TRACE, which is the quiet one:
+
+    ONE THREAD                                   TWO THREADS
+    ---------------------------------------------------------------------------------
+    A.<clinit> starts, reads B.X                 T1 starts A.<clinit>, holds A's lock
+    → B.<clinit> starts, reads A.Y               T2 starts B.<clinit>, holds B's lock
+    → A is ALREADY BEING INITIALISED BY THIS     T1 needs B's lock → blocks
+      THREAD, so the JVM lets the read           T2 needs A's lock → blocks
+      proceed → A.Y is its DEFAULT (0/null)      DEADLOCK
+    → B finishes with a wrong value              jstack shows both threads in <clinit>
+    → A finishes                                 and does NOT report a deadlock, because
+    NO ERROR. NO WARNING.                        the locks are internal to the JVM
+    ---------------------------------------------------------------------------------
+    The single-threaded column is worse in practice: a field is silently zero, no exception is thrown,
+    and nothing in the source explains it.
+
+WHAT PRODUCED WHAT:
+    LAZY, ONCE-EVER <clinit>   produced program 1's asymmetry and the holder idiom.
+    CONSTANT INLINING          produced program 2 — a compile-time decision surviving into runtime.
+    ERRONEOUS CLASS STATE      produced program 3's misleading message.
+    THE PER-CLASS INIT LOCK    produced both the free thread safety and the deadlock.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Order: parent statics → child statics → parent instance initialisers → parent constructor → child
+    instance initialisers → child constructor. Within each group, SOURCE ORDER.
+    Statics run ONCE per class per class loader. Instance initialisation runs on every `new`.
+    `<clinit>` runs under a per-class JVM lock — free, exactly-once, thread-safe.
+    Triggers: `new`, a static method call, a NON-CONSTANT static field access, `Class.forName(name)`,
+    subclass initialisation.
+    NOT triggers: array creation, a compile-time constant read, `Class.forName(n, false, cl)`.
+    A failed `<clinit>` marks the class erroneous PERMANENTLY; later uses throw `NoClassDefFoundError`.
+
+THE #1 MISTAKE: calling an overridable method from a constructor. The override runs before the
+subclass's field initialisers and sees nulls and zeros, `final` fields included.
+
+THE #2 MISTAKE: assuming field initialisers run "with the field". They run after `super()` and before
+the constructor body.
+
+THE #3 MISTAKE: chasing a classpath problem when you see `NoClassDefFoundError: Could not initialize
+class X`. Find the earlier `ExceptionInInitializerError`.
+
+THE #4 MISTAKE: public `static final` primitive or String constants in a library compiled separately
+from its callers. They are inlined and cannot be changed without a full rebuild.
+
+THE #5 MISTAKE: real work in a static block. It runs under a class lock, on whichever thread arrived
+first, and a failure is permanent.
+
+THE #6 MISTAKE: mutual references between two classes' static initialisers. One thread gives a silent
+default; two threads deadlock in a way `jstack` will not name.
+
+THE #7 MISTAKE: expecting `new Foo[10]` to run `Foo`'s static block. Array creation is not a trigger.
+
+THE #8 MISTAKE: `Class.forName(name, false, loader)` where a driver registers itself in `<clinit>`.
+
+THE #9 MISTAKE: interleaving static blocks and static field declarations. A later declaration silently
+overwrites an earlier block's assignment.
+
+THE #10 MISTAKE: double-checked locking for a lazy singleton. The holder idiom is simpler, lock-free and
+correct by construction.
+
+THE #11 MISTAKE: double-brace initialisation. It creates an anonymous subclass carrying a `this$0`
+back-reference — a leak and a serialization failure.
+
+ONE-SENTENCE TAKEAWAY: statics run ONCE, ever, the first time a class is genuinely used, and instance
+initialisation runs on every `new` in the order super-call → field initialisers and instance blocks →
+constructor body — which is why a superclass constructor calling an overridable method sees the
+subclass's `final` fields still null; "genuinely used" excludes array creation and COMPILE-TIME
+CONSTANTS, whose values are copied into the caller's class file and therefore go stale until a full
+rebuild, and a static initialiser that throws marks the class erroneous permanently, so the message you
+actually see is `NoClassDefFoundError: Could not initialize class X` for a class that is plainly present
+— always hunt for the first `ExceptionInInitializerError` instead; and the JVM's per-class
+initialisation lock is a free exactly-once thread-safety guarantee, which is exactly what the
+holder-class singleton idiom is built on.""",
+]
+
+
+DEEP["finally, try-with-resources, and the return that eats an exception"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — code that runs no matter what happens
+
+`finally` is the block that runs whether the `try` succeeded, threw, or returned. It exists for cleanup:
+close the file, release the lock, restore the state, stop the timer.
+
+    IT RUNS ON EVERY EXIT PATH. Normal completion, a `return`, a `break`, a `continue`, or an exception
+    propagating outward. That is a strong guarantee, and it is why `lock()` / `try` / `finally
+    { unlock() }` is the only safe shape for an explicit lock.
+
+    THE FOUR THINGS THAT DEFEAT IT: `System.exit()`, the JVM crashing or being killed, an infinite loop
+    or deadlock inside the `try`, and a daemon thread being terminated at shutdown. Everything else runs
+    the block.
+
+AND YET `finally` IS ALSO WHERE TWO OF THE MOST DESTRUCTIVE BUGS IN JAVA LIVE, both of which SILENTLY
+DELETE INFORMATION:
+
+    A `return` INSIDE `finally` DISCARDS AN IN-FLIGHT EXCEPTION. Not "logs it" — deletes it. The method
+    returns normally, with no evidence that anything went wrong. It also discards any earlier `return`
+    value.
+
+    A `finally` BLOCK THAT THROWS REPLACES THE ORIGINAL EXCEPTION. So a `close()` failing during cleanup
+    hides the actual error that caused the failure, and you are left debugging "connection already
+    closed" instead of the real cause.
+
+    THAT SECOND ONE IS SO COMMON THAT THE LANGUAGE ADDED A FEATURE TO FIX IT. try-with-resources (Java
+    7) closes resources automatically, in reverse order, and if both the body and `close()` throw, THE
+    BODY'S EXCEPTION WINS and `close()`'s is attached to it as a SUPPRESSED exception. Nothing is lost.
+
+THE EVERYDAY VERSION: `finally` is "turn the lights off on your way out, whatever happened". The bug is
+turning the lights off and, in the process, throwing away the note explaining why the building had to be
+evacuated — so the next person finds a dark, tidy room and no idea what occurred.
+
+TERMS AS THEY APPEAR:
+- SUPPRESSED EXCEPTION: a secondary failure attached to the primary one instead of replacing it.
+- `AutoCloseable`: the interface try-with-resources requires. `close()` may throw anything.
+- `Closeable`: the older subinterface whose `close()` throws only `IOException`.""",
+
+"""2. THE INTUITION — why `return` in `finally` deletes things
+
+THE RULE IS SIMPLE ONCE STATED: `finally` COMPLETES LAST, AND WHATEVER WAY IT COMPLETES WINS.
+
+    If the `try` block is propagating an exception and the `finally` block completes NORMALLY, the
+    exception continues. Good.
+    If the `finally` block completes ABRUPTLY — by returning, throwing, breaking or continuing — THAT
+    ABRUPT COMPLETION REPLACES WHATEVER THE `try` WAS DOING. The original is discarded, silently and
+    completely.
+
+    So `try { throw new IOException("disk full"); } finally { return 42; }` returns 42. The
+    IOException is not logged, not wrapped, not chained. It ceases to exist. THE COMPILER WARNS, AND
+    THE CODE COMPILES AND RUNS.
+
+THE SECOND SUBTLETY IS ABOUT THE RETURN VALUE, and it catches people who think `finally` runs "before"
+the return:
+
+    int f() { int x = 1; try { return x; } finally { x = 99; } }   // returns 1
+
+    THE RETURN VALUE IS COMPUTED AND STASHED BEFORE `finally` RUNS. `return x` evaluates `x` to 1, puts
+    that 1 aside, then runs the `finally`, then returns the stashed 1. Mutating the variable afterwards
+    changes nothing.
+
+    BUT `try { return list; } finally { list.add("x"); }` DOES include the added element — because what
+    was stashed is the REFERENCE, and the object it points at was mutated. The value is frozen; the
+    object is not. Both behaviours follow from the same rule and look contradictory until you see it.
+
+WHY try-with-resources HAD TO EXIST — look at what correct manual cleanup actually requires:
+
+    InputStream in = null;
+    try { in = open(); use(in); }
+    finally { if (in != null) in.close(); }
+
+    THAT IS STILL WRONG. If `use(in)` throws AND `close()` throws, the close exception replaces the real
+    one. You lose the cause and keep the symptom.
+
+    AND WITH TWO RESOURCES IT GETS WORSE: `finally { in.close(); out.close(); }` never closes `out` if
+    `in.close()` throws. The genuinely correct manual version is a nested try-finally with a saved
+    primary exception and an `addSuppressed` call — about fifteen lines, which nobody wrote correctly,
+    which is precisely why the JDK's own code was full of this bug before Java 7.
+
+    try-with-resources GENERATES THAT CORRECT CODE. Resources close in REVERSE order of declaration
+    (because later ones may depend on earlier ones), each close is guarded, the body's exception is
+    primary, and every close failure is attached via `addSuppressed`. NOTHING IS LOST AND NOTHING IS
+    LEAKED.""",
+
+"""3. THE MECHANISM — what the compiler generates, and where suppression lives
+
+`try (var in = open(); var out = create()) { body(); }` EXPANDS TO ROUGHLY:
+
+    var in = open();
+    Throwable primary = null;
+    try {
+        var out = create();
+        try {
+            body();
+        } catch (Throwable t) { primary = t; throw t; }
+        finally {
+            if (primary != null) { try { out.close(); } catch (Throwable s) { primary.addSuppressed(s); } }
+            else out.close();
+    //      ^^^^ NOTE THE ASYMMETRY: if nothing went wrong, a close() failure is thrown
+    //           NORMALLY, because there is no primary exception to attach it to.
+        }
+    } ... the same again for `in` ...
+
+    THREE THINGS TO READ OUT OF THAT:
+    RESOURCES CLOSE IN REVERSE ORDER — `out` before `in` — because a later resource typically wraps an
+    earlier one, and closing the wrapper first is the only correct order.
+    A CLOSE FAILURE NEVER REPLACES A BODY FAILURE. It is attached with `addSuppressed`, retrievable via
+    `getSuppressed()`, and printed by the default stack trace printer under "Suppressed:".
+    IF THE BODY SUCCEEDED, A CLOSE FAILURE IS THE ONLY EXCEPTION and propagates normally — which is
+    correct, because a failed `close()` on a writer means your data may not have been flushed.
+
+`AutoCloseable` vs `Closeable`:
+    `AutoCloseable.close() throws Exception` — the general interface, added in Java 7 for
+    try-with-resources.
+    `Closeable extends AutoCloseable`, narrowing `close()` to `throws IOException`, and its contract
+    says close is IDEMPOTENT — calling it twice is harmless. `AutoCloseable` makes no such promise, and
+    implementations are strongly encouraged to be idempotent anyway.
+
+JAVA 9 IMPROVEMENT: a resource that is already an EFFECTIVELY FINAL variable can be used directly —
+`try (existingResource) { ... }` — instead of the Java 7 requirement to re-declare it, which produced
+pointless `try (var r2 = r1)` lines.
+
+WHAT `finally` COMPILES TO: before Java 6 the bytecode used `jsr`/`ret` subroutines; modern compilers
+DUPLICATE the finally block into every exit path plus a catch-all handler. That duplication is why a
+large `finally` block inflates method size and can push a method past the JIT's inlining threshold — a
+small, real reason to keep them short.
+
+TWO PLACES try-with-resources DOES NOT APPLY, where `finally` remains the answer:
+    LOCKS. `lock.lock(); try { ... } finally { lock.unlock(); }` — a `Lock` is not `AutoCloseable`.
+    (You can write a tiny `AutoCloseable` wrapper, and some teams do.)
+    RESTORING STATE — a thread name, an MDC entry, a `ThreadLocal`, a system property, an interrupt
+    flag. Anything where cleanup is "put it back" rather than "close it".""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `return` INSIDE `finally`. Discards any in-flight exception AND any earlier return value. The
+method reports success and there is no trace of the failure anywhere.
+
+CASE 2 — `finally` THAT THROWS. Replaces the original exception. The classic instance is a `close()`
+that fails during cleanup, hiding the error that caused the failure.
+
+CASE 3 — TWO RESOURCES IN ONE `finally`. `finally { in.close(); out.close(); }` never closes `out` if
+`in.close()` throws. A resource leak hiding inside cleanup code.
+
+CASE 4 — `break` OR `continue` INSIDE `finally`. Same as `return` — abrupt completion of the `finally`
+wins, and the exception is discarded.
+
+CASE 5 — EXPECTING `finally` TO SEE MUTATIONS AFFECT THE RETURN VALUE. `try { return x; } finally
+{ x = 99; }` returns the OLD x. The value was stashed before the block ran.
+
+CASE 6 — AND THE OPPOSITE. `try { return list; } finally { list.add("x"); }` DOES include the addition,
+because the stashed thing is the reference and the object was mutated.
+
+CASE 7 — `System.exit()` INSIDE `try`. `finally` does not run. Neither does it on a JVM crash, a
+`SIGKILL`, an infinite loop, or a daemon thread killed at shutdown.
+
+CASE 8 — SWALLOWING `InterruptedException` IN A `finally`. Clears the interrupt flag, so the thread can
+never be cancelled again.
+
+CASE 9 — DECLARING THE RESOURCE OUTSIDE THE `try` PARENTHESES. `var in = open(); try (in) { }` on Java 8
+does not compile; before Java 9 you had to re-declare it inside.
+
+CASE 10 — A CONSTRUCTOR THAT THROWS AFTER OPENING THE FIRST RESOURCE.
+`try (var a = openA(); var b = openB())` — if `openB()` throws, `a` IS still closed. The generated code
+handles it. The equivalent hand-written version usually does not.
+
+CASE 11 — IGNORING SUPPRESSED EXCEPTIONS IN LOGS. They print under "Suppressed:" and people skim past
+them. A suppressed `IOException` on close can mean unflushed data.
+
+CASE 12 — A `close()` THAT FAILS ON A SUCCESSFUL BODY. It propagates as the primary exception, which is
+correct and surprises people — a failed close on a buffered writer means the data may never have
+reached the disk.
+
+CASE 13 — A HUGE `finally` BLOCK. It is duplicated into every exit path in the bytecode, inflating the
+method and potentially pushing it past the JIT's inlining threshold.
+
+CASE 14 — NESTED try-with-resources WHERE ONE WRAPS ANOTHER.
+`try (var r = new BufferedReader(new FileReader(f)))` — if the `BufferedReader` constructor throws, the
+`FileReader` is NEVER CLOSED, because it was never assigned to a resource variable. Declare both.""",
+
+"""5. THE ALTERNATIVES — what to use for which kind of cleanup
+
+try-with-resources FOR ANYTHING `AutoCloseable`. Streams, readers, writers, sockets, JDBC connections,
+statements and result sets, `ExecutorService` (Java 19+), locks via a wrapper, `Scanner`, `ZipFile`.
+This is the default and there is essentially no reason to hand-write the equivalent.
+
+`finally` FOR STATE RESTORATION, which is not closing:
+    `lock.unlock()` — a `Lock` is not `AutoCloseable`;
+    restoring a thread name, an MDC context, a `ThreadLocal` (`remove()` in a finally, always);
+    restoring a system property or a `Locale` in a test;
+    stopping a timer or emitting a metric on every path.
+
+`Cleaner` (Java 9) instead of `finalize()` for native-resource safety nets. `finalize` is deprecated for
+removal: it runs on an unspecified thread at an unspecified time, can RESURRECT the object, and delays
+collection by at least one extra GC cycle. A `Cleaner` is a backstop for the case where a caller forgot
+to close — NEVER the primary mechanism.
+
+A `PhantomReference` + reference queue if you need to build that backstop yourself. `Cleaner` is built on
+exactly this.
+
+CONNECTION AND OBJECT POOLS, where `close()` means RETURN TO THE POOL rather than destroy. HikariCP works
+this way, which is why try-with-resources on a pooled `Connection` is correct and cheap — and why
+forgetting it exhausts the pool rather than leaking a socket.
+
+STRUCTURED LIFETIMES over manual cleanup where the language offers them: `StructuredTaskScope` for
+tasks, `ExecutorService` as `AutoCloseable` since Java 19, `Arena` in the Foreign Function & Memory API
+for off-heap memory. THE PATTERN IS THE SAME EVERY TIME — bind the lifetime to a syntactic block so
+the compiler enforces the cleanup instead of the reviewer.
+
+AND THE ALTERNATIVE THAT IS OFTEN BEST: DO NOT ACQUIRE A RESOURCE THAT NEEDS CLEANUP.
+`Files.readString(path)` and `Files.lines(path)` (the latter still needs closing) hide the stream
+entirely. A method that returns a `List` rather than an open `Stream` has no lifetime for the caller to
+get wrong.
+
+WHAT TO SAY: "try-with-resources for anything closeable — it closes in reverse order and attaches a
+close failure as SUPPRESSED rather than letting it replace the real exception, which the hand-written
+version almost never got right. `finally` for restoring state, like unlocking or clearing a ThreadLocal.
+And never a `return` inside a `finally`, because it silently deletes an in-flight exception."
+
+""",
+
+"""6. HOW TO WRITE CLEANUP CORRECTLY — numbered steps
+
+STEP 1 — USE try-with-resources FOR EVERY `AutoCloseable`. There is no situation where the hand-written
+version is better.
+
+STEP 2 — DECLARE EVERY RESOURCE SEPARATELY, EVEN WHEN NESTED. `try (var f = new FileReader(p); var b =
+new BufferedReader(f))`. If you wrap them in one expression and the outer constructor throws, the inner
+one is never closed.
+
+STEP 3 — NEVER `return`, `break` OR `continue` FROM A `finally`. Abrupt completion of the block replaces
+whatever the `try` was doing, including an exception.
+
+STEP 4 — NEVER LET A `finally` THROW. If cleanup can fail, catch and log inside it, or let
+try-with-resources handle the suppression for you.
+
+STEP 5 — USE `finally` ONLY FOR STATE RESTORATION: unlocking, clearing a `ThreadLocal`, restoring a
+thread name or an MDC entry, stopping a timer.
+
+STEP 6 — PUT `lock.lock()` IMMEDIATELY BEFORE THE `try`, NEVER INSIDE IT. If `lock()` throws and it was
+inside, the `finally` calls `unlock()` on a lock you never acquired.
+
+STEP 7 — READ THE "Suppressed:" SECTION OF A STACK TRACE. A suppressed `IOException` from `close()` on a
+writer can mean your data never reached the disk.
+
+STEP 8 — REMEMBER A SUCCESSFUL BODY WITH A FAILING `close()` STILL THROWS. That is correct, and code
+that assumes "the body worked, so we are fine" is not.
+
+STEP 9 — RESTORE THE INTERRUPT FLAG rather than swallowing `InterruptedException` in a `finally`.
+
+STEP 10 — KEEP `finally` BLOCKS SHORT. They are duplicated into every exit path in the bytecode.
+
+STEP 11 — TREAT `Cleaner` AS A BACKSTOP, NEVER THE MECHANISM. And never use `finalize()`, which is
+deprecated for removal.
+
+STEP 12 — PREFER AN API THAT HAS NO LIFETIME TO MANAGE. `Files.readString` over an open stream, whenever
+the data fits.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`finally` runs on every exit path — normal completion, a return, a break, an exception propagating
+outward. Four things defeat it: System.exit, the JVM dying, an infinite loop or deadlock inside the try,
+and a daemon thread killed at shutdown. Everything else runs it.
+
+The rule that explains all the surprising behaviour is: `finally` completes LAST, and however it
+completes WINS. If the try is propagating an exception and the finally completes normally, the exception
+continues. But if the finally completes ABRUPTLY — returns, throws, breaks — that replaces whatever the
+try was doing. Silently and completely.
+
+So `try { throw new IOException("disk full"); } finally { return 42; }` returns 42. The exception isn't
+logged, wrapped or chained. It ceases to exist, and the method reports success. The compiler warns and
+the code runs.
+
+There's a second subtlety about return VALUES. `int f() { int x = 1; try { return x; } finally { x = 99;
+} }` returns 1 — the value is computed and stashed BEFORE finally runs, so mutating the variable
+afterwards changes nothing. But `try { return list; } finally { list.add("x"); }` DOES include the added
+element, because what was stashed is the REFERENCE and the object was mutated. Both follow from the same
+rule and look contradictory until you see it.
+
+The reason try-with-resources had to exist is that correct manual cleanup is genuinely hard. The obvious
+version — a null check and a close in finally — is still wrong: if the body throws AND close throws, the
+close exception REPLACES the real one, so you lose the cause and keep the symptom. And with two
+resources, `finally { in.close(); out.close(); }` never closes out if in.close() throws. The genuinely
+correct hand-written version is a nested try-finally with a saved primary exception and an addSuppressed
+call — about fifteen lines that nobody wrote correctly, which is why the JDK's own code was full of this
+bug before Java 7.
+
+try-with-resources generates that correct code. Resources close in REVERSE order of declaration, because
+a later one usually wraps an earlier one. Each close is guarded. The body's exception is primary, and
+any close failure is attached with addSuppressed, so nothing is lost — you see it in the stack trace
+under "Suppressed:".
+
+Two things worth knowing on top. If the body SUCCEEDED and close throws, that propagates as the primary
+exception — which is correct, because a failed close on a buffered writer means your data may never have
+reached the disk. And you should declare every resource SEPARATELY even when nested: `try (var r = new
+BufferedReader(new FileReader(f)))` never closes the FileReader if the BufferedReader constructor throws,
+because it was never assigned to a resource variable.
+
+`finally` still has a job — state RESTORATION rather than closing. Unlocking a Lock, which isn't
+AutoCloseable. Clearing a ThreadLocal. Restoring a thread name or an MDC entry. And the lock() call goes
+immediately before the try, never inside it, or the finally unlocks something you never acquired.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE RETURN THAT DELETES AN EXCEPTION ────────────────────────────
+    int f() {
+        try { throw new IOException("disk full"); }
+        finally { return 42; }
+    //           ^^^^^^^^^ ABRUPT COMPLETION OF finally WINS. The IOException is not
+    //   logged, not wrapped, not chained — it CEASES TO EXIST. The method reports
+    //   success. The compiler warns; the code compiles and runs.
+    }
+
+    // ── THE VALUE IS STASHED BEFORE finally RUNS ────────────────────────
+    int g() { int x = 1; try { return x; } finally { x = 99; } }
+    // returns 1. `return x` evaluates x to 1, PUTS THAT 1 ASIDE, runs the finally,
+    // then returns the stashed 1.
+    List<String> h() { var l = new ArrayList<String>(); try { return l; }
+                       finally { l.add("x"); } }
+    // returns ["x"]. What was stashed is the REFERENCE; the OBJECT was mutated.
+    // Same rule, opposite-looking outcome.
+
+    // ── WHY THE MANUAL PATTERN IS WRONG ─────────────────────────────────
+    InputStream in = null;
+    try { in = open(); use(in); }
+    finally { if (in != null) in.close(); }
+    //                        ^^^^^^^^^^ if use(in) threw AND close() throws, THE
+    //   CLOSE EXCEPTION REPLACES THE REAL ONE. You keep the symptom ("stream already
+    //   closed") and lose the cause.
+
+    try { ... } finally { in.close(); out.close(); }
+    //                    ^^^^^^^^^^ if THIS throws, `out` IS NEVER CLOSED.
+    //   A resource leak hiding inside the cleanup code.
+
+    // ── WHAT try-with-resources GENERATES FOR YOU ───────────────────────
+    try (var in = open(); var out = create()) { body(); }
+    // roughly:
+    //   Throwable primary = null;
+    //   try { body(); }
+    //   catch (Throwable t) { primary = t; throw t; }
+    //   finally {
+    //       if (primary != null) { try { out.close(); }
+    //                              catch (Throwable s) { primary.addSuppressed(s); } }
+    //       else out.close();          // ← no primary to attach to, so it propagates
+    //   }                              //   NORMALLY — and that is correct
+    //   ... the same again for `in` ...
+    //
+    // CLOSES IN REVERSE ORDER (out before in) because a later resource usually WRAPS
+    // an earlier one. A close failure is SUPPRESSED, never a replacement.
+
+    // ── READING THE RESULT ──────────────────────────────────────────────
+    // java.lang.IllegalStateException: the real problem      ← PRIMARY
+    //     at Service.process(Service.java:42)
+    //     Suppressed: java.io.IOException: disk full         ← the close failure,
+    //         at java.io.BufferedWriter.close(...)              NOT lost
+    catch (Exception e) { for (Throwable s : e.getSuppressed()) log.warn("close", s); }
+
+    // ── THE NESTING TRAP ────────────────────────────────────────────────
+    try (var r = new BufferedReader(new FileReader(f))) { ... }
+    //                              ^^^^^^^^^^^^^^^^^ if the BufferedReader
+    //   constructor throws (out of memory, for instance), THE FileReader IS NEVER
+    //   CLOSED — it was never assigned to a resource variable.
+    try (var f1 = new FileReader(f); var r = new BufferedReader(f1)) { ... }
+    //   ^ declare BOTH. Now both are closed, in reverse order.
+
+    // ── WHERE finally IS STILL THE ANSWER ───────────────────────────────
+    lock.lock();                       // ← IMMEDIATELY BEFORE the try, never inside:
+    try { ... }                        //   if lock() threw and it were inside, the
+    finally { lock.unlock(); }         //   finally would unlock a lock you never took
+    String old = Thread.currentThread().getName();
+    Thread.currentThread().setName("job-" + id);
+    try { ... } finally { Thread.currentThread().setName(old); }
+    try { ... } finally { CONTEXT.remove(); }   // ← ThreadLocal in a pooled thread""",
+
+"""9. THE TRACE — one failing body, four cleanup strategies
+
+THE SETUP: `body()` throws `IllegalStateException("real problem")`, and `close()` on the writer throws
+`IOException("disk full")` because the buffer cannot be flushed.
+
+    STRATEGY 1 — MANUAL finally
+    step  what happens                                what the caller sees
+    ---------------------------------------------------------------------------------
+    1     body() throws IllegalStateException          —
+    2     finally runs                                 —
+    3     close() throws IOException                   the IOException REPLACES the
+                                                       IllegalStateException
+    4     propagates                                   IOException: disk full
+                                                       at BufferedWriter.close(...)
+    ---------------------------------------------------------------------------------
+    THE REAL PROBLEM IS GONE. Not logged, not chained — the object was discarded when the second
+    exception was thrown out of the finally block. The team debugs a disk-space issue for a day.
+
+    STRATEGY 2 — MANUAL finally WITH A return
+    step  what happens                                what the caller sees
+    ---------------------------------------------------------------------------------
+    1     body() throws IllegalStateException          —
+    2     finally { return DEFAULT; }                  —
+    3     abrupt completion of finally WINS            a normal return of DEFAULT
+    ---------------------------------------------------------------------------------
+    WORSE. No exception at all. The method reports success, the caller carries on with a default value,
+    and the failure has left no trace anywhere in the system. This is the shape that produces "the data
+    is silently wrong in production and nothing in the logs mentions it".
+
+    STRATEGY 3 — try-with-resources
+    step  what happens                                what the caller sees
+    ---------------------------------------------------------------------------------
+    1     body() throws IllegalStateException          captured as `primary`
+    2     generated finally sees primary != null       —
+    3     close() throws IOException                   caught, and attached with
+                                                       primary.addSuppressed(io)
+    4     primary is rethrown                          IllegalStateException: real
+                                                         problem
+                                                         at Service.process:42
+                                                         Suppressed: IOException:
+                                                           disk full
+    ---------------------------------------------------------------------------------
+    BOTH FAILURES SURVIVE, in the right priority order. And the disk-full information is genuinely
+    valuable — it means the write may not have completed — so losing it in strategy 1 was bad in two
+    directions at once.
+
+    STRATEGY 4 — try-with-resources, BODY SUCCEEDS
+    step  what happens                                what the caller sees
+    ---------------------------------------------------------------------------------
+    1     body() returns normally                      primary is null
+    2     close() throws IOException                   nothing to attach it to
+    3     it propagates as the ONLY exception          IOException: disk full
+    ---------------------------------------------------------------------------------
+    THIS SURPRISES PEOPLE AND IS CORRECT. The body "worked", but a failed close on a buffered writer
+    means the buffered data may never have reached the disk. Code that assumes success because the body
+    returned is wrong.
+
+NOW THE TWO-RESOURCE TRACE, showing the leak the manual version hides:
+
+    finally { in.close(); out.close(); }
+    step  what happens
+    ---------------------------------------------------------------------------------
+    1     in.close() throws
+    2     the finally block completes ABRUPTLY
+    3     out.close() IS NEVER REACHED                 ← A LEAKED FILE HANDLE, inside
+                                                         the code written to prevent
+                                                         leaks
+    ---------------------------------------------------------------------------------
+    try (var in = ...; var out = ...) { }
+    1     out.close() runs first (REVERSE order — out usually wraps in)
+    2     it throws → suppressed
+    3     in.close() STILL RUNS, in its own guarded block
+    4     both failures attached to the primary
+    ---------------------------------------------------------------------------------
+
+AND THE RETURN-VALUE TRACE, which explains the apparent contradiction:
+
+    int f() { int x = 1; try { return x; } finally { x = 99; } }
+    step  what the bytecode does                       stack / locals
+    ---------------------------------------------------------------------------------
+    1     iload x                                      stack: [1]
+    2     istore into a hidden temp                    temp = 1     ← THE STASH
+    3     run the finally block: x = 99                x = 99, temp = 1
+    4     iload temp; ireturn                          returns 1
+    ---------------------------------------------------------------------------------
+    List<String> h() { ... try { return l; } finally { l.add("x"); } }
+    2     the stash holds THE REFERENCE                temp = @0x1000
+    3     l.add("x") mutates the object AT @0x1000
+    4     returns @0x1000 — which now contains "x"
+    ---------------------------------------------------------------------------------
+    THE VALUE IS FROZEN; THE OBJECT IS NOT. One rule, two outcomes, and it is only confusing if you
+    think `finally` runs "before the return" rather than "after the return value is computed".
+
+WHAT PRODUCED WHAT:
+    ABRUPT COMPLETION WINS   produced strategies 1 and 2 — one loses a cause, the other loses
+                             everything.
+    addSuppressed            produced strategy 3, and is the entire reason the feature exists.
+    THE STASHED RETURN VALUE produced the last table, and the apparent contradiction between its two
+                             halves.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `finally` runs on every exit path except `System.exit`, a JVM crash or kill, an infinite loop or
+    deadlock in the `try`, and a daemon thread terminated at shutdown.
+    Abrupt completion of `finally` — return, throw, break, continue — REPLACES whatever the `try` was
+    doing.
+    The return value is computed and stashed BEFORE `finally` runs; the object it references is not
+    frozen.
+    try-with-resources closes in REVERSE declaration order, guards each close, makes the body's
+    exception primary, and attaches close failures via `addSuppressed`.
+    A close failure on a SUCCESSFUL body propagates as the primary exception. That is correct.
+    `finally` blocks are duplicated into every exit path in the bytecode, so large ones inflate methods.
+
+THE #1 MISTAKE: `return` inside `finally`. It silently deletes an in-flight exception and any earlier
+return value.
+
+THE #2 MISTAKE: a `finally` that can throw. It replaces the original exception — you keep the symptom
+and lose the cause.
+
+THE #3 MISTAKE: closing two resources in one `finally`. If the first close throws, the second never
+happens. A leak inside the leak-prevention code.
+
+THE #4 MISTAKE: hand-writing resource cleanup at all. The correct version is fifteen lines with a saved
+primary and `addSuppressed`, and essentially nobody wrote it correctly before Java 7.
+
+THE #5 MISTAKE: `try (var r = new BufferedReader(new FileReader(f)))`. If the outer constructor throws,
+the inner resource is never closed. Declare both.
+
+THE #6 MISTAKE: assuming a mutation in `finally` changes the returned value. Primitives and references
+are stashed; objects can still be mutated.
+
+THE #7 MISTAKE: `lock.lock()` inside the `try`. If it throws, the `finally` unlocks a lock you never
+acquired.
+
+THE #8 MISTAKE: ignoring the "Suppressed:" section of a stack trace. A suppressed close failure can mean
+unflushed data.
+
+THE #9 MISTAKE: assuming a successful body means success. A failing `close()` still throws, and it means
+something.
+
+THE #10 MISTAKE: swallowing `InterruptedException` in a `finally`. It clears the flag and makes the
+thread uncancellable.
+
+THE #11 MISTAKE: forgetting `ThreadLocal.remove()` in a `finally` on a pooled thread. The thread never
+dies, so the value never goes.
+
+THE #12 MISTAKE: `finalize()` as a cleanup safety net. Deprecated for removal; use `Cleaner`, and only
+as a backstop.
+
+ONE-SENTENCE TAKEAWAY: `finally` runs on every exit path and COMPLETES LAST — so however it completes
+WINS, which is why a `return` inside it silently deletes an in-flight exception and why a `finally` that
+throws replaces the real cause with the cleanup symptom; try-with-resources exists because the correct
+hand-written version is a nested try-finally with a saved primary exception and an `addSuppressed` call
+that almost nobody wrote, and it closes resources in REVERSE declaration order with each close guarded
+and every close failure attached as SUPPRESSED rather than substituted — leaving `finally` for state
+restoration (unlocking, clearing a `ThreadLocal`, restoring a thread name) where "put it back" is the
+cleanup rather than "close it".""",
+]
