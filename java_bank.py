@@ -1344,8 +1344,10 @@ anywhere a silently wrong number would cost money.""",
 #  identically wherever an entry is written.
 # ─────────────────────────────────────────────────────────────────────
 from java_bank_core import build as _build_core
+from java_bank_advanced import build as _build_advanced
 
 ENTRIES.extend(_build_core(Q))
+ENTRIES.extend(_build_advanced(Q))
 
 
 # ─────────────────────────────────────────────────────────────────────
