@@ -205663,6 +205663,3304 @@ against `['','','a','','b','','']` on the same input), and the O(1)-space follow
 reversal: reverse the whole string, then reverse each word.""",
 ]
 
+_EX_P1AO["Backpropagation"] = [
+    """1. THE GOAL - working out who is to blame.
+
+A network makes a guess. The guess is wrong by some amount. Now you must decide, for every
+single weight in the network - possibly billions of them - HOW MUCH THIS PARTICULAR WEIGHT
+CONTRIBUTED TO THAT ERROR, and therefore which way and how far to move it.
+
+That is the only job backpropagation does. It is not the learning rule - the sibling entry
+"HOW GRADIENT DESCENT WORKS" owns the update step, w minus learning-rate times gradient. This
+page owns where the gradient COMES FROM.
+
+    forward:   inputs  ->  layer 1  ->  layer 2  ->  output  ->  loss
+    backward:  loss    ->  who caused this?  <-  <-  <-  <-  <-
+
+The name says it exactly: the error propagates BACKWARD through the layers, and each layer
+hands its share of the blame to the layer beneath it.
+
+And the mechanism is nothing more exotic than the CHAIN RULE from calculus:
+
+    the loss changed because the output changed
+    the output changed because the pre-activation changed
+    the pre-activation changed because this weight changed
+
+Multiply those three sensitivities together and you have how much the loss changes with that
+weight. That is the whole idea. The cleverness is not in the calculus, it is in the ORDER:
+computing backward lets every intermediate result be reused, which is why training a
+billion-parameter network costs about the same as two forward passes rather than a billion of
+them. Section 5 proves that.""",
+
+    """2. THE INTUITION - blame flowing backward through a chain.
+
+Take the smallest possible network - one neuron, two inputs - and follow the chain both ways.
+
+    FORWARD:
+
+        x1 = 2.0 --\\
+                    w1 = 0.5
+                       \\
+                        (+) --> z = -0.4 --> [sigmoid] --> a = 0.4013 --> loss = 0.913
+                       /                                     (target y = 1)
+                    w2 = -0.5
+        x2 = 3.0 --/
+                          bias b = 0.1
+
+    BACKWARD - the same path, in reverse, carrying blame:
+
+        how much does the loss change if a changes?         dL/da = -2.4917
+        how much does a change if z changes?                da/dz =  0.2403
+        so how much does the loss change if z changes?      dL/dz = -0.5987
+        how much does z change if w1 changes?               dz/dw1 = x1 = 2.0
+        so how much does the loss change if w1 changes?     dL/dw1 = -1.1974
+
+Each arrow backward is a MULTIPLICATION by one local sensitivity. Nothing more.
+
+The quantity that matters most is the middle one, dL/dz - the blame attached to a neuron's
+PRE-ACTIVATION. It has a name, DELTA, and once you have it for a layer, the weight gradients
+are almost free:
+
+    gradient for a weight  =  (the input that weight multiplied)  x  (this neuron's delta)
+
+Which makes intuitive sense: a weight is more to blame when the input it was multiplying was
+large. A weight sitting on an input of 0 could not have affected anything, and indeed its
+gradient is 0.
+
+    dL/dw1 = x1 x delta = 2.0 x (-0.5987) = -1.1974
+    dL/dw2 = x2 x delta = 3.0 x (-0.5987) = -1.7961
+
+Note w2's gradient is larger, purely because x2 was larger. Same delta, different share of the
+blame.
+
+For a deeper network, delta for one layer is computed from the delta of the layer ABOVE it -
+blame flows down through the weights and then through the activation's slope. That recursion
+is the whole algorithm, and section 8 writes it out.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FORWARD PASS. Running inputs through the network to produce an output and a loss.
+
+BACKWARD PASS. Working out every weight's gradient, starting from the loss and moving toward
+the inputs.
+
+PRE-ACTIVATION (z). The weighted sum plus bias, BEFORE the activation function.
+
+ACTIVATION (a). The value after the activation function. This is what the next layer receives.
+
+ACTIVATION FUNCTION. The non-linear bend applied to z - sigmoid, ReLU, tanh. Without one, a
+stack of layers collapses into a single linear layer, so it is what makes depth meaningful.
+
+SIGMOID. 1 / (1 + e-to-the-minus-z). Squashes anything into (0, 1). Its derivative is
+a x (1 - a), which peaks at 0.25 - a number that turns out to matter enormously (section 5).
+
+ReLU. max(0, z). Its derivative is exactly 1 for positive z and 0 otherwise. That exact 1 is
+the single biggest reason deep networks became trainable.
+
+LOSS. One number saying how wrong the output is.
+
+GRADIENT. The derivative of the loss with respect to something. "How much would the loss
+change if I nudged this?"
+
+CHAIN RULE. If a depends on b and b depends on c, then how a changes with c is (how a changes
+with b) times (how b changes with c). Backprop is this, applied repeatedly.
+
+DELTA. The gradient of the loss with respect to a layer's PRE-ACTIVATION. The central quantity
+- once you have it, weight gradients are one multiplication away.
+
+PARTIAL DERIVATIVE, written dL/dw. How much L changes per unit change in w, holding everything
+else fixed.
+
+CACHED ACTIVATIONS. The intermediate values the forward pass stores because the backward pass
+needs them. This is why TRAINING uses far more memory than INFERENCE, and section 10 quantifies
+it.
+
+VANISHING GRADIENT. Gradients shrinking toward zero as they travel back through many layers,
+so early layers stop learning. Section 5 puts a number on it.
+
+EXPLODING GRADIENT. The opposite - gradients growing until the weights become NaN. Fixed by
+gradient clipping.
+
+GRADIENT CHECKING. Verifying a hand-written gradient against a numerical estimate. How you
+debug a custom layer.
+
+AUTOMATIC DIFFERENTIATION (AUTOGRAD). What PyTorch and TensorFlow do: build a graph of
+operations during the forward pass and apply these rules automatically. You will rarely write
+backprop by hand - but you will be asked to explain it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE THAT KILLED DEEP LEARNING FOR TWENTY YEARS: VANISHING GRADIENTS.
+
+Sigmoid's derivative is a(1 - a), which is at most 0.25 - and that maximum only occurs at
+a = 0.5, right at the middle. Away from there it is far smaller.
+
+Now stack ten sigmoid layers. The gradient reaching layer 1 has been multiplied by that
+derivative once per layer:
+
+    0.25 to the power of 10  =  0.00000095  -  about one in a million
+
+    even in the BEST case, at every layer's most favourable point
+
+So the first layer receives a gradient a million times weaker than the last. It effectively
+does not learn at all, while the top layers train normally. The network appears to be training
+- the loss goes down - and its early layers, which are supposed to learn the basic features
+everything else builds on, are frozen.
+
+THE FIX, and why it worked: ReLU's derivative is EXACTLY 1 for positive inputs. Ten layers
+multiply by 1 ten times, which is 1. Nothing shrinks. That single change - along with residual
+connections, which give gradients a path that skips layers entirely - is the main reason
+networks went from about 5 layers to hundreds.
+
+TRAP 2: pairing sigmoid with squared error. The gradient dL/dz then carries an extra factor of
+the sigmoid's slope, which collapses toward zero exactly when the model is most confidently
+wrong. With cross-entropy that factor CANCELS and dL/dz becomes simply (a - y). Section 9 shows
+the cancellation happening in the trace. The logistic regression sibling quantifies it - about
+203 times weaker at z = -6.
+
+TRAP 3: forgetting that the forward pass must CACHE its activations. The weight gradient for a
+layer is "that layer's INPUT times its delta" - so you need the input, which is the previous
+layer's activation, computed during the forward pass. That is why training a model needs far
+more memory than running it, and why batch size is limited by memory rather than by principle.
+
+TRAP 4: initialising all weights to zero. Every neuron in a layer then computes the same thing,
+receives the same gradient, and updates identically - forever. They stay identical, so the layer
+has the effective capacity of one neuron. Small random values break the symmetry. (Note this is
+the opposite of linear and logistic regression, where zero initialisation is perfectly safe
+because there is no symmetry to break.)
+
+TRAP 5: thinking backprop is the learning algorithm. It computes gradients. Gradient descent
+uses them. Adam, momentum and RMSProp are all variations on the USE, not the computation - so
+"we use Adam instead of backprop" is a confusion worth avoiding out loud.
+
+TRAP 6: not gradient-checking a hand-written layer. The numerical estimate
+(loss(w + eps) - loss(w - eps)) / (2 x eps) should match your analytic gradient to about seven
+digits. If it does not, your derivative is wrong, and a wrong gradient does not crash - it
+trains slowly to a worse answer, which is far harder to notice.""",
+
+    """5. THE NAIVE METHOD FIRST, THEN THE REAL ONE - AND WHY BACKWARD.
+
+THE NAIVE VERSION - NUMERICAL DIFFERENTIATION. Nudge each weight and see what happens.
+
+    for each weight:
+        add a tiny amount to it
+        run the whole network forward and record the loss
+        subtract the tiny amount instead, run forward again
+        the gradient is (loss_up - loss_down) / (2 x tiny amount)
+
+This is completely correct, and it is what gradient checking uses. It is also unusable for
+training, and the arithmetic shows why:
+
+    a network with 1,000,000 weights
+    each gradient needs 2 forward passes
+    -> 2,000,000 forward passes to compute ONE gradient step
+
+    if a forward pass takes 10 milliseconds, that is 20,000 seconds - about 5.5 HOURS
+    for a single update. And you need thousands of updates.
+
+BACKPROPAGATION COMPUTES ALL 1,000,000 GRADIENTS IN ROUGHLY ONE FORWARD PASS'S WORTH OF EXTRA
+WORK - typically about twice the cost of a forward pass. Call it 30 milliseconds instead of
+20,000 seconds, a speed-up of around 600,000 times.
+
+WHY GOING BACKWARD IS WHAT BUYS THAT - the argument, because this is the actual content of the
+algorithm:
+
+Consider a chain: the loss depends on layer 3, which depends on layer 2, which depends on layer
+1. To get the gradient for a weight in layer 1, you need the product of every sensitivity along
+the path from that weight up to the loss.
+
+    GOING FORWARD, you would start at each weight and multiply your way up to the loss. Every
+    weight's path passes through layers 2 and 3, so you recompute those same upper sensitivities
+    once per weight. A million weights means a million recomputations of the same numbers.
+
+    GOING BACKWARD, you start at the loss and compute the sensitivity of the loss to layer 3
+    ONCE. Then to layer 2 once. Then to layer 1 once. Every weight in layer 1 reuses the same
+    already-computed chain, and only needs its own final multiplication by its input.
+
+THE SHARED PART IS COMPUTED ONCE INSTEAD OF ONCE PER WEIGHT. That is the whole efficiency
+argument, and it is why the algorithm has "back" in its name - the direction is not
+incidental, it is the entire point.
+
+THE RECURSION THAT MAKES IT WORK. Define delta for a layer as the gradient of the loss with
+respect to that layer's pre-activation. Then:
+
+    delta for the last layer  =  comes directly from the loss function
+    delta for layer L         =  (the layer above's delta, sent back through the weights)
+                                 times (this layer's activation slope)
+
+    and once you have delta:      weight gradient  =  this layer's INPUT  x  delta
+                                  bias gradient    =  delta
+
+Two multiplications per layer, reusing everything from the layer above.
+
+THE UPGRADE THAT MADE IT PRACTICAL AT DEPTH: choosing activations whose slope is 1 rather than
+at most 0.25 (ReLU), and adding residual connections so gradients have a direct path that skips
+layers entirely. Both attack the multiplication chain from trap 1.""",
+
+    """6. HOW TO DO IT - the steps, in plain English.
+
+The one sentence that holds the whole idea: RUN FORWARD KEEPING EVERY INTERMEDIATE VALUE, THEN
+WALK BACKWARD MULTIPLYING BY ONE LOCAL SENSITIVITY PER STEP, SO THAT EACH LAYER'S BLAME IS
+COMPUTED ONCE AND REUSED BY EVERY WEIGHT BENEATH IT.
+
+THE LOOP HERE IS THE WALK BACKWARD THROUGH THE LAYERS, and it is worth being precise:
+
+  - It is not recursion in the call-stack sense, though it is often written that way. It is a
+    fixed walk from the last layer to the first.
+  - Each step consumes the delta from the layer ABOVE and produces the delta for the layer
+    BELOW. Nothing else crosses between steps.
+  - WHAT MAKES IT STOP: reaching the input layer. There is nothing below it to blame, and the
+    inputs are not parameters. The trip count is exactly the number of layers - known in
+    advance, so termination is guaranteed.
+  - WHAT IT NEEDS FROM THE FORWARD PASS: every layer's input. If those were not cached, the
+    weight gradients cannot be formed and you would have to recompute the forward pass, which
+    is exactly the trade some memory-saving techniques make deliberately.
+
+THE STEPS:
+
+  1. FORWARD PASS. For each layer in order: compute the weighted sum plus bias, apply the
+     activation, pass it on. CACHE each layer's input and pre-activation as you go - the
+     backward pass needs them.
+
+  2. COMPUTE THE LOSS from the final output and the target.
+
+  3. START THE BACKWARD PASS at the output: work out how much the loss changes with the final
+     pre-activation. For the standard pairings - sigmoid with binary cross-entropy, softmax with
+     cross-entropy - this collapses to simply (prediction minus target), which is why those
+     pairings are used everywhere.
+
+  4. FOR EACH LAYER, FROM LAST TO FIRST:
+
+     a. FORM THE WEIGHT GRADIENTS: this layer's cached INPUT times this layer's delta. That is
+        the whole formula, and it says a weight is blamed in proportion to the input it was
+        multiplying.
+
+     b. FORM THE BIAS GRADIENT: just the delta, since the bias multiplies a constant 1.
+
+     c. SEND THE BLAME DOWN: multiply the delta by this layer's weights, which distributes the
+        blame across the neurons below in proportion to how strongly each was connected.
+
+     d. PASS IT THROUGH THE ACTIVATION: multiply by the slope of the layer below's activation
+        at its cached pre-activation. This is where vanishing gradients happen - if that slope
+        is small, everything below shrinks.
+
+     e. That product is the layer below's delta. Continue.
+
+  5. HAND EVERY GRADIENT TO THE OPTIMISER, which does the actual updating - the gradient
+     descent sibling.
+
+  6. IF YOU WROTE THE LAYER BY HAND, GRADIENT-CHECK IT before trusting it. A wrong gradient does
+     not crash; it silently trains to a worse answer.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A parcel arrives at a customer three days late. A manager wants to know who needs to change
+what.
+
+The naive way: go to every single person in the chain - all thousand of them - and for each,
+ask "if you had worked slightly faster, how much earlier would the parcel have arrived?" To
+answer even one of those, you would have to re-run the entire delivery in your head from that
+person all the way to the customer. A thousand people, a thousand full re-runs. It would take
+longer than the delivery did.
+
+The clever way runs backward, once.
+
+Start at the customer. Three days late. Ask the final courier: how much of this was yours? She
+says one day was hers - and, crucially, she can also say how much of the remaining two days
+came from each of the three depots that fed her, in proportion to how much she depended on
+each.
+
+So each depot receives its share of the blame. Now each depot does the same thing for its own
+suppliers, dividing its share among them.
+
+Each person in the chain is asked exactly ONCE. And here is the saving: when a depot works out
+its own share, it does not need to re-run the rest of the journey to the customer, because the
+courier already worked that part out and handed the number down. The expensive shared part of
+the calculation was done once, at the top, and everybody below inherits it.
+
+Two details that come straight from the story.
+
+To answer "how much was yours", each person has to remember what they were handed and when.
+If nobody kept records of the delivery, you would have to re-run it just to ask. That is why
+training keeps every intermediate value in memory, and why it needs so much more memory than
+simply making a delivery.
+
+And there is a way this goes wrong. Suppose every person in the chain, when passing blame
+down, keeps three-quarters of it and passes only a quarter. After ten links, the person at the
+very start receives about a millionth of the original blame - effectively nothing. They never
+learn they were part of the problem, and they keep doing exactly what they were doing. Fixing
+that meant finding links that pass blame down undiminished.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    x = np.array([2.0, 3.0]); w = np.array([0.5, -0.5]); b = 0.1; y = 1.0
+
+Two inputs, two weights, one bias, and a target of 1. Small enough that every number below can
+be checked by hand, which is the point of the example.
+
+    # FORWARD
+    z = w @ x + b                      # 0.5*2 + (-0.5)*3 + 0.1 = -0.4
+
+The PRE-ACTIVATION: the dot product of weights and inputs, plus the bias. z can be any number
+- it is not yet a probability. This value must be REMEMBERED, because the backward pass needs
+it.
+
+    a = 1 / (1 + np.exp(-z))           # sigmoid(-0.4) = 0.4013
+
+The ACTIVATION: squash z into (0, 1). The neuron's output. Also cached.
+
+    loss = -(y * np.log(a) + (1 - y) * np.log(1 - a))     # 0.9130
+
+Binary cross-entropy. With y = 1 the second term vanishes, so the loss is just -log(a). The
+model said 0.4013 for something that was 1, and is charged 0.913 for it.
+
+    # BACKWARD - three chain-rule links
+    dL_da = -(y / a) + (1 - y) / (1 - a)      # dLoss/da   = -2.4917
+
+LINK ONE: how much does the loss change if the OUTPUT changes? Differentiating -log(a) gives
+-1/a, which at a = 0.4013 is -2.4917. Negative, meaning increasing a would DECREASE the loss -
+correct, since the target is 1 and we are below it.
+
+    da_dz = a * (1 - a)                       # dsigmoid   =  0.2403
+
+LINK TWO: how much does the output change if the pre-activation changes? The sigmoid's
+derivative has the tidy form a(1-a) - one reason sigmoid was popular. Note the value: 0.2403,
+already below the theoretical maximum of 0.25, and this is a SINGLE layer. Trap 1 is this
+number raised to the power of the depth.
+
+    dL_dz = dL_da * da_dz                     # = a - y    = -0.5987  <- the shortcut
+
+LINK THREE, and the most important line here. Multiply the two sensitivities - the chain rule -
+and you get the DELTA: how much the loss changes with the pre-activation.
+
+But look at the comment: the answer equals (a - y). That is not a coincidence, it is an exact
+cancellation. The -1/a from the logarithm cancels against the a(1-a) from the sigmoid, leaving
+(a - y). Verified in section 9.
+
+THAT CANCELLATION IS WHY SIGMOID IS PAIRED WITH CROSS-ENTROPY. With squared error the a(1-a)
+factor survives, and it collapses toward zero exactly when the model is most confidently wrong.
+The same cancellation happens for softmax with cross-entropy, which is why that pairing is
+universal.
+
+    dL_dw = dL_dz * x                         # [-1.1974, -1.7961]
+
+THE WEIGHT GRADIENTS: delta times the INPUT. One line, and it carries the whole idea of blame
+assignment - w2's gradient is larger only because x2 (3.0) was larger than x1 (2.0). A weight
+that multiplied a bigger input had more influence, so it gets more blame.
+
+    dL_db = dL_dz                             # -0.5987
+
+The bias multiplies a constant 1, so its gradient IS the delta. No input factor.
+
+    w_new = w - 0.1 * dL_dw                   # [0.6197, -0.3204]
+    b_new = b - 0.1 * dL_db                   # 0.1599
+
+The update - and note this is the gradient descent sibling's rule, not backprop's. Backprop's
+job finished when the gradients were computed.
+
+    def backward_layer(dz_next, W_next, z, activation_grad, a_prev):
+        da   = dz_next @ W_next.T              # blame flows back through the weights
+
+THE RECURSION, one step. dz_next is the delta of the layer ABOVE. Multiplying by that layer's
+weights transposed distributes its blame down to this layer's outputs, in proportion to how
+strongly each connection carried influence upward.
+
+        dz   = da * activation_grad(z)         # through the activation
+
+Then through this layer's activation slope, evaluated at the CACHED pre-activation z. This
+single multiplication is where vanishing gradients occur - if activation_grad returns 0.25
+here, everything below is quartered.
+
+        dW   = a_prev.T @ dz                   # INPUT to this layer times its delta
+
+The same rule as the single neuron: input times delta. a_prev is the cached activation of the
+layer below, which is this layer's input - the reason the forward pass had to store it.
+
+        db   = dz.sum(axis=0)
+
+Summed over the batch, because every example in the batch contributes to the same bias.
+
+    relu_grad = lambda z: (z > 0).astype(float)
+
+ReLU's derivative: exactly 1 where z is positive, 0 elsewhere. That EXACT 1 is the fix for trap
+1 - ten layers multiply by 1 ten times and nothing shrinks.
+
+    def softmax_ce_grad(logits, y_onehot):
+        e = np.exp(logits - logits.max(axis=1, keepdims=True))   # stable softmax
+
+Subtracting the row maximum before exponentiating prevents overflow and provably does not change
+the result - the common factor cancels top and bottom. The self-attention sibling proves it.
+
+        return (probs - y_onehot) / len(logits)      # that is the WHOLE gradient
+
+The multi-class version of the same cancellation: predictions minus one-hot targets, averaged
+over the batch. No activation-derivative factor anywhere. This is why softmax and cross-entropy
+are always used together.
+
+    0.25 ** 10
+
+Vanishing gradients as a single expression: 9.5e-7. Section 9.""",
+
+    """9. TRACED WITH REAL NUMBERS.
+
+THE COMPLETE SINGLE-NEURON UPDATE.
+
+    SETUP:  x = [2.0, 3.0],  w = [0.5, -0.5],  b = 0.1,  target y = 1
+            sigmoid activation, binary cross-entropy loss, learning rate 0.1
+
+    FORWARD:
+
+        z = 0.5 x 2.0 + (-0.5) x 3.0 + 0.1
+          = 1.0 - 1.5 + 0.1
+          = -0.4
+
+        a = 1 / (1 + e-to-the-0.4) = 1 / (1 + 1.49182) = 1 / 2.49182 = 0.401312
+
+        loss = -[1 x ln(0.401312) + 0 x ln(0.598688)]
+             = -ln(0.401312)
+             = 0.913081
+
+    BACKWARD:
+
+        dL/da = -(y/a) = -(1 / 0.401312) = -2.491825
+
+        da/dz = a(1 - a) = 0.401312 x 0.598688 = 0.240262
+
+        dL/dz = -2.491825 x 0.240262 = -0.598690
+
+    THE CANCELLATION, CHECKED:
+
+        a - y = 0.401312 - 1 = -0.598688
+
+        The chain-rule product gave -0.598690; the shortcut gives -0.598688. Identical to five
+        decimal places, the difference being rounding in the intermediate values. The -1/a and
+        the a(1-a) cancelled exactly, as they must.
+
+    WEIGHT GRADIENTS:
+
+        dL/dw1 = dL/dz x x1 = -0.598688 x 2.0 = -1.197376
+        dL/dw2 = dL/dz x x2 = -0.598688 x 3.0 = -1.796064
+        dL/db  = dL/dz                        = -0.598688
+
+        w2's gradient is exactly 1.5 times w1's, because x2 is 1.5 times x1. Same delta,
+        blame split by input size.
+
+    UPDATE, learning rate 0.1:
+
+        w1_new = 0.5  - 0.1 x (-1.197376) = 0.5  + 0.119738 = 0.619738
+        w2_new = -0.5 - 0.1 x (-1.796064) = -0.5 + 0.179606 = -0.320394
+        b_new  = 0.1  - 0.1 x (-0.598688) = 0.1  + 0.059869 = 0.159869
+
+    DID IT HELP? Run the forward pass again with the new parameters:
+
+        z_new = 0.619738 x 2.0 + (-0.320394) x 3.0 + 0.159869
+              = 1.239476 - 0.961182 + 0.159869
+              = 0.438163
+
+        a_new = 1 / (1 + e-to-the-minus-0.438163) = 1 / (1 + 0.645244) = 0.607813
+
+        loss_new = -ln(0.607813) = 0.497948
+
+    The output moved from 0.4013 to 0.6078 - toward the target of 1 - and the loss fell from
+    0.9131 to 0.4979, roughly halving in a single step. (Note the pre-activation crossed zero,
+    from -0.4 to +0.438, so this one step flipped the prediction from "class 0" to "class 1".)
+
+VANISHING GRADIENTS, QUANTIFIED - why depth was impossible for so long:
+
+    sigmoid's derivative a(1-a), at its very best, is 0.25 (at a = 0.5). Through a stack:
+
+        1 layer:    0.25                       gradient reduced 4x
+        2 layers:   0.0625                     16x
+        5 layers:   0.000977                   about 1,000x
+        10 layers:  0.00000095                 about 1,000,000x
+        20 layers:  0.00000000000091           about a trillion x
+
+    And that is the BEST case. In the trace above the derivative was 0.2403, already below the
+    maximum, and a neuron sitting at a = 0.9 has a derivative of 0.09 - which through ten layers
+    gives 3.5e-11.
+
+    THE FIX, in the same units:
+
+        ReLU's derivative is exactly 1 for positive inputs.
+
+        1 layer:    1
+        10 layers:  1
+        100 layers: 1
+
+    NOTHING SHRINKS. That is the entire reason the field moved from sigmoid to ReLU, and it is
+    a one-line comparison worth being able to produce.
+
+THE EFFICIENCY ARGUMENT, in the same style:
+
+    a network with 1,000,000 weights, forward pass 10 milliseconds
+
+        NUMERICAL:  2 forward passes per weight
+                    = 2,000,000 passes x 10 ms = 20,000 seconds = about 5.5 HOURS per update
+
+        BACKPROP:   about 2 forward passes TOTAL
+                    = roughly 30 ms per update
+
+        Ratio: about 600,000 times faster - and the gap widens with every weight you add,
+        because numerical differentiation scales with the parameter count while backprop does
+        not.
+
+GRADIENT CHECKING, the numbers to expect:
+
+    numerical estimate = (loss(w + 1e-5) - loss(w - 1e-5)) / (2 x 1e-5)
+
+    Compare with the analytic gradient using RELATIVE error:
+
+        |analytic - numerical| / (|analytic| + |numerical|)
+
+        below 1e-7   ->  correct
+        around 1e-5  ->  suspicious, possibly a subtle bug
+        above 1e-3   ->  your derivative is wrong
+
+    Use it on a tiny network only - it costs two forward passes per weight, which is exactly
+    what makes it unusable for training and perfectly fine for debugging.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - TIME: the backward pass is roughly twice the forward pass, so a training step is about
+    three times an inference step. Crucially this is INDEPENDENT of the parameter count in the
+    sense that matters - it does not scale with the number of weights the way numerical
+    differentiation does.
+  - MEMORY: this is the real cost, and it follows directly from the algorithm. The weight
+    gradient for a layer is "that layer's INPUT times its delta", so every layer's input must
+    be kept alive from the forward pass until the backward pass reaches it. Training therefore
+    holds activations for the entire depth, for every example in the batch.
+
+    THIS IS WHY TRAINING NEEDS FAR MORE MEMORY THAN INFERENCE, and why batch size is capped by
+    memory rather than by any principle. Inference can discard each layer's output as soon as
+    the next layer has consumed it; training cannot.
+
+  - GRADIENT CHECKPOINTING is the standard trade: cache only some layers' activations and
+    recompute the rest during the backward pass. Roughly 30% more time for a large memory
+    saving - and knowing this trade exists is a good signal in an interview.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why is it computed backward rather than forward?" Because the sensitivities near the output
+    are shared by every weight below them. Backward computes each shared piece once; forward
+    would recompute it once per weight. Section 5 has the 600,000x arithmetic.
+  - "What causes vanishing gradients and how do you fix them?" Multiplying by activation slopes
+    at every layer. Sigmoid's peaks at 0.25, so ten layers give 0.25^10, about one in a million.
+    Fix with ReLU (slope exactly 1), residual connections (a path that skips layers entirely),
+    and normalisation layers.
+  - "Why does training use more memory than inference?" Cached activations, needed because each
+    weight gradient is input times delta.
+  - "Why softmax with cross-entropy?" The gradient collapses to (predictions minus one-hot),
+    with no activation-derivative factor to vanish. The same cancellation as sigmoid with binary
+    cross-entropy, demonstrated in section 9.
+  - "How would you debug a custom layer?" Gradient checking against the numerical estimate, with
+    relative error below 1e-7.
+  - "Is backprop how the brain learns?" No, and it is worth saying so plainly - it requires
+    symmetric weights for the backward path and a global error signal, neither of which biology
+    appears to have. It is an efficient algorithm, not a model of neuroscience.
+
+WHERE THIS SITS: backprop COMPUTES the gradients; "HOW GRADIENT DESCENT WORKS" owns what is done
+with them, including learning rates and Adam. The logistic regression sibling owns why the
+sigmoid/cross-entropy pairing matters, quantified.
+
+THE #1 MISTAKE: confusing backpropagation with gradient descent, and saying things like "we use
+Adam rather than backprop". Backprop produces the gradients; Adam consumes them. They are
+different stages, and every optimiser in existence still needs backprop underneath.
+
+RUNNER-UP: initialising all weights to zero, which makes every neuron in a layer identical
+forever, since identical weights receive identical gradients and update identically.
+
+TAKEAWAY: backpropagation is the chain rule walked backward so that each layer's blame is
+computed once and reused by every weight beneath it - which turns a calculation that would take
+hours per step into one costing about two forward passes.""",
+]
+
+_EX_P1AO["Confusion matrix"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - four numbers, and every classification metric comes from them
+
+A binary classifier makes a prediction and reality has an answer. There are exactly four possible
+outcomes, and every metric you have ever heard of is an arithmetic combination of their counts.
+
+                          PREDICTED positive     PREDICTED negative
+     ACTUALLY positive    TRUE POSITIVE  (TP)    FALSE NEGATIVE (FN)
+     ACTUALLY negative    FALSE POSITIVE (FP)    TRUE NEGATIVE  (TN)
+
+THE NAMING RULE THAT STOPS ALL THE CONFUSION: the SECOND word is what the MODEL SAID, and the FIRST
+word is whether it was RIGHT. "False positive" = the model said positive and was wrong. Once you have
+that, you never have to look it up again.
+
+THE FOUR METRICS THAT MATTER:
+
+    ACCURACY   = (TP + TN) / everything      how often you were right. USUALLY USELESS - see below.
+    PRECISION  = TP / (TP + FP)              of the things you FLAGGED, how many were real?
+    RECALL     = TP / (TP + FN)              of the things that were REAL, how many did you catch?
+    F1         = harmonic mean of the two    a single number when you must have one.
+
+THE EVERYDAY VERSION: a smoke alarm. PRECISION is "when it goes off, how often is there a fire?" -
+low precision means you stop believing it. RECALL is "when there is a fire, how often does it go off?"
+- low recall means the house burns down. YOU CANNOT MAXIMISE BOTH, and which one you care about is a
+property of the problem, not of the model.
+
+TERMS AS THEY APPEAR:
+- SENSITIVITY = recall = true positive rate. Three names for one quantity.
+- SPECIFICITY = TN / (TN + FP) = recall for the negative class.
+- THRESHOLD: the score above which you predict positive. Every metric here depends on it.""",
+
+    """2. THE INTUITION - the accuracy trap, measured
+
+I built one detector - 80% recall, 2% false-positive rate - and ran it at four different class
+balances. The DETECTOR IS IDENTICAL IN EVERY ROW; only the prevalence of positives changes:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+THREE THINGS TO READ OUT OF THAT TABLE, AND EACH ONE IS A REAL LESSON.
+
+FIRST: AT 0.1% POSITIVES, "ALWAYS PREDICT ZERO" SCORES 99.90% ACCURACY. A model that never fires, has
+no code in it, and catches nothing. If accuracy is your metric, that model wins.
+
+SECOND, AND IT IS THE ONE THAT SHOULD DISTURB YOU: AT 1% AND 0.1% POSITIVES, THE USELESS MODEL HAS
+HIGHER ACCURACY THAN THE REAL DETECTOR. 98.98% against 97.82%, and 99.90% against 97.98%. OPTIMISING
+ACCURACY WOULD ACTIVELY SELECT THE MODEL THAT DOES NOTHING.
+
+THIRD: LOOK AT THE PRECISION COLUMN FOR THE DETECTOR. 97.5%, then 81.4%, then 29.3%, then 3.6%. THE
+DETECTOR NEVER CHANGED. Its recall stayed at ~80% and its false-positive rate at 2% throughout. Only
+the world changed. PRECISION IS A PROPERTY OF THE MODEL AND THE POPULATION TOGETHER, and this is
+exactly why a fraud model that looked fine in testing produces thousands of false alarms in production
+where fraud is rarer.
+
+NOTE ALSO THAT BALANCED ACCURACY AND RECALL ARE STABLE across all four rows, because they are
+per-class rates. AND F1 AND MCC COLLAPSE, because they involve precision. WHICH METRIC YOU CHOOSE
+DETERMINES WHETHER YOU BELIEVE THE MODEL DEGRADED.""",
+
+    """3. THE THRESHOLD - the other thing that makes a single number meaningless
+
+Almost every classifier outputs a SCORE, not a class. The class comes from comparing that score to a
+threshold, and moving the threshold moves every metric. I swept it on a fixed set of 20,000 scores
+with 10% positives:
+
+     threshold      TP      FP      FN      TN     precision     recall        F1
+          -1.0   1,958  15,113      23   2,906         11.5%      98.8%     0.206
+           0.0   1,765   8,954     216   9,065         16.5%      89.1%     0.278
+           0.5   1,530   5,521     451  12,498         21.7%      77.2%     0.339
+           1.0   1,174   2,787     807  15,232         29.6%      59.3%     0.395
+           1.5     763   1,178   1,218  16,841         39.3%      38.5%     0.389
+           2.5     191     117   1,790  17,902         62.0%       9.6%     0.167
+
+THE MODEL DID NOT CHANGE ONCE ACROSS THAT TABLE. THE SCORES ARE IDENTICAL IN EVERY ROW. Precision goes
+from 11.5% to 62.0% and recall from 98.8% to 9.6%, purely by moving a number.
+
+SO "OUR MODEL HAS 90% PRECISION" IS NOT A CLAIM. It is a claim about a threshold, and without the
+recall at that threshold it means nothing - I can give you 100% precision on any model by setting the
+threshold high enough to fire once.
+
+ALWAYS QUOTE A PAIR: "precision 29.6% at recall 59.3%", or "recall 89.1% at precision 16.5%".
+
+HOW TO CHOOSE THE THRESHOLD - and it is a BUSINESS decision, not a modelling one:
+
+    WHEN A FALSE NEGATIVE IS EXPENSIVE (cancer screening, fraud, security):
+        maximise RECALL. Accept the false positives; you have a second stage - a human, a
+        confirmatory test - to filter them. Threshold LOW.
+
+    WHEN A FALSE POSITIVE IS EXPENSIVE (spam filtering, auto-blocking accounts, sending an alert
+    that wakes someone at 3am):
+        maximise PRECISION. A missed spam is an annoyance; a legitimate email in the spam folder is a
+        lost contract. Threshold HIGH.
+
+    WHEN YOU HAVE A CAPACITY CONSTRAINT (a review team that can process 500 cases a day):
+        set the threshold so the volume matches the capacity, and report PRECISION AT THAT VOLUME.
+        THIS IS THE MOST COMMON REAL SITUATION AND IT IS ALMOST NEVER TAUGHT.
+
+    F1 assumes precision and recall matter EQUALLY, which is rarely true. F-beta lets you weight them:
+    beta > 1 favours recall, beta < 1 favours precision.""",
+
+    """4. THE OTHER METRICS, AND WHEN EACH ONE IS RIGHT
+
+    metric                formula                                stable under imbalance?
+    ------------------------------------------------------------------------------------
+    accuracy              (TP+TN)/N                              NO - dominated by the majority
+    precision             TP/(TP+FP)                             no - depends on prevalence
+    recall / sensitivity  TP/(TP+FN)                             YES - a per-class rate
+    specificity           TN/(TN+FP)                             yes - a per-class rate
+    balanced accuracy     (recall + specificity)/2               YES
+    F1                    2PR/(P+R)                              no - contains precision
+    MCC                   (TP*TN - FP*FN) / sqrt(...)            partly - uses all four cells
+
+BALANCED ACCURACY is the one to reach for when classes are imbalanced and both classes matter. It
+averages the two per-class recalls, so "always predict 0" scores exactly 0.500 - measured in every row
+of the table above - which is what you want a useless model to score.
+
+MATTHEWS CORRELATION COEFFICIENT is the most honest single number, and the reason is that it is THE
+ONLY COMMON METRIC THAT USES ALL FOUR CELLS. F1 ignores TN entirely - swap the two classes and F1
+changes, which for a symmetric problem is absurd. MCC ranges from -1 to +1, and 0 means "no better
+than random" regardless of the class balance. Measured: 0.000 for "always predict 0" at every
+prevalence.
+
+WHY F1 IS SO POPULAR DESPITE THAT: it is a single number, it is well understood, and for
+information-retrieval-shaped problems - where true negatives are enormous and uninteresting - ignoring
+TN is exactly right. THE CRITICISM OF F1 IS REALLY A CRITICISM OF USING IT WHERE TRUE NEGATIVES
+MATTER.
+
+THE MULTI-CLASS CASE. The matrix becomes k x k, and you get a choice of averaging:
+    MACRO   - compute the metric per class, then average. Every class counts equally, so RARE CLASSES
+              MATTER AS MUCH AS COMMON ONES. Usually what you want.
+    MICRO   - pool all the TP/FP/FN across classes, then compute. Dominated by the common classes,
+              and for single-label classification micro-F1 EQUALS accuracy.
+    WEIGHTED- macro, weighted by class frequency. A compromise that mostly behaves like micro.
+    THE CHOICE BETWEEN MACRO AND MICRO IS THE SAME QUESTION AS THE ACCURACY TRAP, one level up.
+
+AND THE ONE THAT IS ALWAYS WORTH DOING: LOOK AT THE ACTUAL MATRIX. In multi-class problems the
+off-diagonal cells tell you WHICH classes are being confused with WHICH, and that is usually more
+actionable than any scalar. "It confuses class 3 with class 7" is a fixable finding; "macro-F1 is
+0.71" is not.""",
+
+    """5. THE PRACTICAL PITFALLS
+
+PITFALL 1 - REPORTING ACCURACY ON IMBALANCED DATA. Measured: 99.90% for a model that predicts nothing,
+and HIGHER than the real detector's 97.98%.
+
+PITFALL 2 - REPORTING A SINGLE PRECISION OR RECALL NUMBER. Measured: 11.5% to 62.0% precision from one
+model by moving a threshold. Always quote the pair.
+
+PITFALL 3 - TUNING THE THRESHOLD ON THE TEST SET. The threshold is a parameter; choosing it on test
+data makes your test score optimistic. Tune on validation.
+
+PITFALL 4 - EVALUATING AT A DIFFERENT CLASS BALANCE FROM PRODUCTION. If your test set is balanced 50/50
+by resampling and production is 1% positive, your measured precision is meaningless. Measured: 97.5%
+precision at 50% prevalence and 3.6% at 0.1%, for the SAME MODEL.
+
+PITFALL 5 - RESAMPLING AND FORGETTING TO CORRECT. Undersampling the majority class to train is
+reasonable; reporting metrics on the resampled distribution is not.
+
+PITFALL 6 - IGNORING THE COST ASYMMETRY. A false negative in cancer screening and a false positive in
+cancer screening are not the same event, and no symmetric metric can represent that. If you can
+estimate the costs, EXPECTED COST is the right objective and F1 is a proxy for it.
+
+PITFALL 7 - AVERAGING F1 ACROSS FOLDS BY AVERAGING THE F1s. F1 is a ratio; the correct aggregate is to
+pool the confusion matrices and then compute F1 once. Averaging ratios is not the same number.
+
+PITFALL 8 - NOT LOOKING AT THE MATRIX ITSELF IN MULTI-CLASS PROBLEMS. The off-diagonal structure is
+where the actionable information is.
+
+PITFALL 9 - CONFUSING PRECISION WITH ACCURACY IN CONVERSATION. They are different numbers with
+different denominators and people say the wrong one constantly. Precision's denominator is what you
+PREDICTED positive; accuracy's is everything.""",
+
+    """6. HOW TO DO IT - numbered steps
+
+STEP 1 - COMPUTE THE FOUR CELLS FIRST, and print them. Not the metrics - the raw TP, FP, FN, TN. Every
+metric is derivable, and the raw counts tell you the sample sizes behind each one.
+
+STEP 2 - CHECK THE CLASS BALANCE BEFORE CHOOSING A METRIC. If positives are under a few percent,
+accuracy is disqualified.
+
+STEP 3 - DECIDE WHICH ERROR IS MORE EXPENSIVE, in the actual problem. That decides whether you are
+optimising precision or recall, and it is a conversation with a stakeholder, not a modelling
+decision.
+
+STEP 4 - SWEEP THE THRESHOLD AND PLOT PRECISION AGAINST RECALL. One model gives you the entire curve.
+Measured: precision 11.5% to 62.0%, recall 98.8% to 9.6%.
+
+STEP 5 - PICK THE OPERATING POINT ON VALIDATION DATA, using the cost asymmetry or the capacity
+constraint.
+
+STEP 6 - REPORT THE PAIR AT THAT POINT, plus the threshold. "Precision 29.6% at recall 59.3%,
+threshold 1.0."
+
+STEP 7 - REPORT BALANCED ACCURACY OR MCC ALONGSIDE, so a reader can tell whether the model beats
+"always predict the majority". Measured: both are exactly 0.500 and 0.000 for that baseline.
+
+STEP 8 - EVALUATE AT THE PRODUCTION CLASS BALANCE. If you resampled for training, do not evaluate on
+the resampled distribution.
+
+STEP 9 - IN MULTI-CLASS, PRINT THE MATRIX and read the off-diagonals. Then choose macro or micro
+deliberately and say which.
+
+STEP 10 - ALWAYS INCLUDE A BASELINE. "Always predict the majority" and "predict at random with the
+class prior". If your model does not beat both, you have not learned anything.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A confusion matrix is four numbers - true positives, false positives, false negatives, true negatives
+- and every classification metric is an arithmetic combination of them. The naming rule that stops the
+confusion is that the second word is what the MODEL said and the first word is whether it was right,
+so a false positive means the model said positive and was wrong.
+
+Precision is, of the things you flagged, how many were real - TP over TP plus FP. Recall is, of the
+things that were real, how many you caught - TP over TP plus FN. They trade against each other and
+which one you care about is a property of the problem.
+
+The thing I'd lead with is the accuracy trap, because I measured it and the numbers are worse than
+people expect. I took one detector - 80% recall, 2% false-positive rate - and ran it at four class
+balances. At 0.1% positives, "always predict zero" scores 99.90% accuracy. And more disturbingly, at
+both 1% and 0.1% positives the USELESS model has HIGHER accuracy than the real detector - 99.90%
+against 97.98%. So optimising accuracy would actively select the model that does nothing.
+
+The other half of that measurement is that the detector's precision went 97.5%, 81.4%, 29.3%, 3.6%
+across those four rows - and the detector never changed. Its recall stayed at 80% and its
+false-positive rate at 2% throughout. Only the prevalence changed. Precision is a property of the
+model AND the population together, which is exactly why a fraud model that looked fine in testing
+produces thousands of false alarms in production where fraud is rarer.
+
+The third thing is the threshold. I swept it on one fixed set of scores: precision went from 11.5% to
+62.0% and recall from 98.8% to 9.6%. The model was identical in every row. So "our model has 90%
+precision" isn't a claim - I can give you 100% precision on any model by setting the threshold high
+enough that it fires once. Always quote the pair: precision 29.6% at recall 59.3%.
+
+So what I'd report: the four raw counts, precision and recall as a pair with the threshold, and
+balanced accuracy or MCC alongside so a reader can tell whether it beats the majority baseline - both
+of those score exactly 0.500 and 0.000 for "always predict zero" at every prevalence, which is what
+you want a useless model to score.
+
+And I'd choose the operating point from the cost asymmetry: for cancer screening or fraud, a false
+negative is expensive so you threshold low and accept false positives because there's a second stage.
+For spam or auto-blocking accounts, a false positive is expensive so you threshold high. And very
+often the real constraint is capacity - a review team that can handle 500 cases a day - in which case
+you set the threshold to match the volume and report precision at that volume.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE MATRIX - four counters, and worth writing by hand once:
+
+    def confusion(y_true, y_pred):
+        tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+        fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 1)
+        fn = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 0)
+        tn = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 0)
+        return tp, fp, fn, tn
+    # ^ note the pattern: the FIRST condition is the truth, the SECOND is the prediction.
+    #   Writing them in that order every time is how you stop transposing FP and FN.
+
+EVERY METRIC, DERIVED:
+
+    def metrics(tp, fp, fn, tn):
+        n = tp + fp + fn + tn
+        accuracy    = (tp + tn) / n
+        precision   = tp / (tp + fp) if tp + fp else 0.0
+        #                    ^^^^^^^  THE GUARD MATTERS: a model that predicts nothing has
+        #                             tp + fp == 0 and precision is UNDEFINED, not 0. Most
+        #                             libraries return 0 with a warning; know which
+        #                             convention yours uses before comparing numbers.
+        recall      = tp / (tp + fn) if tp + fn else 0.0
+        specificity = tn / (tn + fp) if tn + fp else 0.0
+        f1          = 2 * precision * recall / (precision + recall) \\
+                      if precision + recall else 0.0
+        #             ^ the HARMONIC mean, not the arithmetic one. That is deliberate: it
+        #               punishes imbalance. Precision 1.0 and recall 0.0 gives F1 = 0, where
+        #               the arithmetic mean would give 0.5.
+        balanced    = (recall + specificity) / 2
+        #             ^ 0.500 for ANY constant classifier, at ANY class balance. Measured.
+        mcc_den     = math.sqrt((tp+fp) * (tp+fn) * (tn+fp) * (tn+fn)) or 1.0
+        mcc         = (tp*tn - fp*fn) / mcc_den
+        #             ^ THE ONLY ONE THAT USES ALL FOUR CELLS. F1 never touches tn, which
+        #               is why swapping the class labels changes F1 and does not change MCC.
+        return accuracy, precision, recall, f1, balanced, mcc
+
+THE THRESHOLD SWEEP, which is the thing you should actually produce:
+
+    def sweep(scores, labels, thresholds):
+        for t in thresholds:
+            pred = [1 if s >= t else 0 for s in scores]
+            tp, fp, fn, tn = confusion(labels, pred)
+            a, p, r, f, b, m = metrics(tp, fp, fn, tn)
+            print(f"{t:6.2f} {tp:6} {fp:6} {fn:6} {tn:6} {p:7.3f} {r:7.3f} {f:7.3f}")
+    # ^ ONE MODEL, ONE SET OF SCORES, AN ENTIRE CURVE. Measured: precision 11.5% -> 62.0%,
+    #   recall 98.8% -> 9.6%. Reporting one row of this table without the threshold is the
+    #   single most common way to mislead about a classifier.
+
+THE MULTI-CLASS VERSION, and the averaging choice:
+
+    def confusion_k(y_true, y_pred, k):
+        M = [[0] * k for _ in range(k)]
+        for t, p in zip(y_true, y_pred):
+            M[t][p] += 1               # rows = TRUTH, columns = PREDICTION
+        return M                       # ^ the convention differs between libraries. CHECK,
+                                       #   because a transposed matrix swaps precision and
+                                       #   recall silently.
+
+    # macro-F1: per-class F1, then average. Rare classes count as much as common ones.
+    # micro-F1: pool all TP/FP/FN, then compute. For single-label problems this EQUALS
+    #           accuracy, so reporting "micro-F1" on such a problem is reporting accuracy
+    #           under a more impressive name.
+
+THE BASELINES YOU MUST ALWAYS INCLUDE:
+
+    always_majority = [most_common(y_true)] * len(y_true)
+    random_prior    = [1 if random.random() < prevalence else 0 for _ in y_true]
+    # if your model does not clearly beat BOTH, on the metric you chose, you have not
+    # demonstrated anything.""",
+
+    """9. A TRACE - one detector, four worlds, and one threshold sweep
+
+A FIXED DETECTOR: 80% recall (it catches 4 of every 5 real positives) and a 2% false-positive rate (it
+fires on 2 of every 100 negatives). ITS BEHAVIOUR NEVER CHANGES. Only the population does.
+
+AT 10% POSITIVES, in a sample of 200,000:
+    actual positives  = 20,000     ->  TP = 16,000   FN = 4,000
+    actual negatives  = 180,000    ->  FP =  3,600   TN = 176,400
+    precision = 16,000 / 19,600 = 81.6%      recall = 80.0%      accuracy = 96.2%
+
+AT 0.1% POSITIVES, in the same sample of 200,000:
+    actual positives  = 200        ->  TP =    160   FN =    40
+    actual negatives  = 199,800    ->  FP =  3,996   TN = 195,804
+    precision = 160 / 4,156 = 3.9%           recall = 80.0%      accuracy = 98.0%
+
+    THE FALSE POSITIVES BARELY CHANGED (3,600 -> 3,996) BECAUSE THE 2% RATE IS APPLIED TO A SLIGHTLY
+    LARGER NEGATIVE POOL. The TRUE positives fell from 16,000 to 160, because there are a hundred times
+    fewer of them. PRECISION IS TP/(TP+FP) AND THE NUMERATOR COLLAPSED WHILE THE DENOMINATOR DID NOT.
+
+    THAT SINGLE PARAGRAPH IS THE ENTIRE REASON RARE-EVENT DETECTION IS HARD, and it is why a 2%
+    false-positive rate that sounds excellent produces 25 false alarms for every real catch.
+
+THE FULL MEASURED TABLE:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+AND THE THRESHOLD SWEEP, on ONE fixed set of 20,000 scores at 10% positives:
+
+     threshold      TP      FP      FN      TN     precision     recall        F1
+          -1.0   1,958  15,113      23   2,906         11.5%      98.8%     0.206
+           0.5   1,530   5,521     451  12,498         21.7%      77.2%     0.339
+           1.0   1,174   2,787     807  15,232         29.6%      59.3%     0.395
+           2.5     191     117   1,790  17,902         62.0%       9.6%     0.167
+
+THE LINE-BY-LINE MAPPING - which quantity produced which column:
+
+    the 80% recall rate
+            produced the recall column, which is FLAT at ~80% across all four prevalences. Recall is
+            TP/(TP+FN) and both terms scale with the number of positives, so the ratio is invariant.
+            THAT INVARIANCE IS WHY RECALL AND SPECIFICITY ARE THE STABLE METRICS.
+    the 2% false-positive rate applied to the NEGATIVE pool
+            produced FP = 3,600 at 10% and 3,996 at 0.1% - almost unchanged, because the negative pool
+            barely grew. This is the numerator/denominator asymmetry in one line.
+    `tp / (tp + fp)`
+            produced the precision collapse from 97.5% to 3.6%. Neither the model nor the threshold
+            moved; only the ratio of positives to negatives in the world did.
+    `(tp + tn) / n`
+            produced 99.90% for the do-nothing classifier. TN dominates the numerator when negatives
+            dominate the population, which is the whole trap.
+    `(recall + specificity) / 2`
+            produced exactly 0.500 for "always predict 0" in every row. That is the property you want
+            from a metric: a useless model scores the useless value regardless of prevalence.
+    `(tp*tn - fp*fn) / sqrt(...)`
+            produced 0.000 for the do-nothing model and 0.790 down to 0.166 for the detector. It falls
+            with prevalence because it contains precision-like information, but it never rewards the
+            degenerate classifier.
+    the threshold in the sweep
+            produced every column of the second table from one unchanged set of scores. That is the
+            argument for never quoting a single precision figure.""",
+
+    """10. THE FORMULAS, THE MISTAKES, AND THE TAKEAWAY
+
+    accuracy    = (TP + TN) / N
+    precision   = TP / (TP + FP)                of what I FLAGGED, how much was real
+    recall      = TP / (TP + FN)                of what was REAL, how much did I catch
+    specificity = TN / (TN + FP)
+    F1          = 2PR / (P + R)                 harmonic mean; ignores TN entirely
+    balanced    = (recall + specificity) / 2    0.500 for any constant classifier
+    MCC         = (TP*TN - FP*FN) / sqrt((TP+FP)(TP+FN)(TN+FP)(TN+FN))    uses all four cells
+
+    MEASURED, one detector (80% recall, 2% FPR) at four prevalences:
+        50%:   accuracy 88.85%, precision 97.5%, F1 0.878, MCC 0.790
+        10%:   accuracy 96.20%, precision 81.4%, F1 0.810, MCC 0.788
+         1%:   accuracy 97.82%, precision 29.3%, F1 0.431, MCC 0.480
+       0.1%:   accuracy 97.98%, precision  3.6%, F1 0.069, MCC 0.166
+    "always predict 0" scored 49.84%, 89.96%, 98.98% and 99.90% accuracy - BEATING the real detector
+    at the two rarest prevalences - with F1 0.000 and MCC 0.000 throughout.
+    MEASURED, one model, threshold swept: precision 11.5% -> 62.0%, recall 98.8% -> 9.6%.
+
+THE #1 MISTAKE: reporting accuracy on imbalanced data. Measured 99.90% for a model that predicts
+nothing, and higher than the real detector's.
+
+THE #2 MISTAKE: quoting precision or recall alone. Measured 11.5% to 62.0% precision from one model by
+moving a threshold. Quote the pair AND the threshold.
+
+THE #3 MISTAKE: evaluating at a different class balance from production. The same detector went from
+97.5% to 3.6% precision with no change to itself.
+
+THE #4 MISTAKE: transposing FP and FN. The second word is the prediction; the first is whether it was
+right.
+
+THE #5 MISTAKE: tuning the threshold on the test set. It is a parameter. Tune it on validation.
+
+THE #6 MISTAKE: using F1 where true negatives matter. F1 never touches TN, so it is asymmetric in the
+classes. Use MCC or balanced accuracy when both classes are real.
+
+THE #7 MISTAKE: averaging F1 across folds. F1 is a ratio; pool the matrices and compute once.
+
+THE #8 MISTAKE: choosing macro or micro averaging by accident. For single-label multi-class problems,
+micro-F1 IS accuracy.
+
+THE #9 MISTAKE: not reporting a baseline. "Always predict the majority" scores 99.90% accuracy on rare
+events and 0.000 MCC; without it a reader cannot tell which of those your number resembles.
+
+ONE-SENTENCE TAKEAWAY: every classification metric comes from four counts, and the two facts that make
+them meaningful are that ACCURACY IS DISQUALIFIED UNDER IMBALANCE - measured, a do-nothing model scored
+99.90% and beat a real detector - and that PRECISION AND RECALL ARE PROPERTIES OF A THRESHOLD, sweeping
+from 11.5%/98.8% to 62.0%/9.6% on one unchanged model, so report the four cells, quote precision and
+recall as a pair with the threshold, and put balanced accuracy or MCC beside them so a reader can see
+you beat the trivial baseline.""",
+]
+
+_EX_P1AO["Gradient Descent"] = [
+    """1. THE GOAL - walking downhill without being able to see the valley.
+
+A model has parameters. Some settings of those parameters predict well, most predict badly.
+Training means finding good ones.
+
+You cannot simply solve for them - for anything beyond the simplest models there is no
+formula. What you CAN do, at any particular setting, is work out which direction makes the
+error worse fastest. Then step the other way.
+
+    w  <-  w  -  learning_rate x gradient
+
+That single line is gradient descent. Read it in words: MOVE EACH PARAMETER A LITTLE WAY IN
+THE DIRECTION THAT MOST REDUCES THE ERROR, AND REPEAT.
+
+    error
+      |  \\
+      |   \\                              you are here
+      |    \\                                  |
+      |     \\                                 v
+      |      \\___                          .
+      |          \\____                  ./
+      |               \\______      ___./
+      |                      \\____/
+      +---------------------------------------> parameter
+                              ^
+                        where you want to be
+
+You cannot see the whole curve - you only ever know the slope where you are standing. So you
+feel the ground, step downhill, and feel again.
+
+Two things then have to be decided, and they are what this entry is about:
+
+    HOW BIG A STEP?     The LEARNING RATE. Section 9 shows one problem with four learning
+                        rates producing four completely different outcomes - including
+                        landing exactly on the answer in a single step, and flying off to
+                        infinity.
+
+    HOW MUCH DATA PER STEP?  All of it (BATCH), one example (STOCHASTIC), or a small group
+                        (MINI-BATCH). This decides how accurate each step is and how many
+                        steps you get.
+
+WHAT THIS ENTRY OWNS: the optimisation LOOP - the update rule, the learning rate, and the
+batch-size choice. Its sibling "BACKPROPAGATION WORKED BY HAND" owns how the gradient is
+COMPUTED in a network with layers. Here we take the gradient as given.""",
+
+    """2. THE INTUITION - three ways to decide which way is downhill.
+
+You are on a foggy hillside and want to reach the bottom. You cannot see anything; you can
+only feel the slope under your feet. The question is how much ground to survey before each
+step.
+
+    BATCH GRADIENT DESCENT - survey the ENTIRE hillside before every step.
+
+        Perfectly accurate direction. Also enormously slow: with 60,000 data points you do
+        60,000 measurements to take ONE step.
+
+            step 1 ------------------------> (after surveying all 60,000)
+            step 2 ------------------------> (after surveying all 60,000 again)
+
+    STOCHASTIC GRADIENT DESCENT (SGD) - feel the ground at ONE point and step immediately.
+
+        The direction is rough - one data point is not the whole picture - but you take
+        60,000 steps in the time batch took one.
+
+            step 1 -> step 2 -> step 3 -> ... -> step 60,000
+
+        Drawn as a path, batch walks a smooth line and SGD staggers:
+
+            batch:  \\___                    SGD:  \\  /\\
+                        \\___                       \\/  \\  /\\
+                            \\___                        \\/  \\/\\___
+
+        The staggering looks like a defect. Section 5 shows it is sometimes the reason SGD
+        finds a better answer than batch does.
+
+    MINI-BATCH - feel the ground at, say, 128 points, then step.
+
+        Direction accurate enough, steps frequent enough, and - the decisive point - modern
+        hardware measures 128 points in barely more time than 1, because it does them
+        simultaneously. This is why mini-batch is the default everywhere.
+
+The trade in one line:
+
+    accuracy of each step:   batch  >  mini-batch  >  SGD
+    number of steps:         SGD    >  mini-batch  >  batch
+    use of the hardware:     mini-batch  >  batch  >  SGD
+
+Mini-batch wins the third row outright, which is why it wins in practice.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PARAMETER / WEIGHT (w). A number the model learns. Training adjusts these.
+
+LOSS / COST. A single number saying how badly the model is doing. Lower is better. Training
+minimises it.
+
+GRADIENT. For each parameter, how much the loss would increase if that parameter increased
+slightly. It points UPHILL, which is why the update subtracts it.
+
+LEARNING RATE (lr, or alpha). How far to step. The most important hyperparameter in
+training, and section 9 shows why.
+
+EPOCH. One complete pass through the training data.
+
+ITERATION / STEP / UPDATE. One application of the update rule. The number of iterations per
+epoch depends entirely on the batch size, and confusing epochs with iterations is a common
+source of muddle.
+
+BATCH GRADIENT DESCENT. One update per epoch, using all the data.
+
+STOCHASTIC GRADIENT DESCENT (SGD). One update per EXAMPLE. Strictly, "stochastic" means
+batch size 1 - though in practice everyone says "SGD" for mini-batch too.
+
+MINI-BATCH. A small group, typically 32 to 512 examples, used for one update.
+
+BATCH SIZE. How many examples per update.
+
+CONVERGENCE. The loss settling and stopping improving.
+
+DIVERGENCE. The loss growing without bound because the steps are too big. Section 9 shows
+it happening and gives the exact threshold.
+
+LOCAL MINIMUM. A dip that is lower than everything nearby but not the lowest overall.
+Gradient descent can stop in one, because the slope there is zero.
+
+SADDLE POINT. A place where the slope is zero but it is not a minimum - downhill in some
+directions, uphill in others. In high dimensions these are far more common than local
+minima, and they are what most often stalls training.
+
+MOMENTUM. Keeping a running average of recent gradients and stepping with that instead, so
+consistent directions build speed and oscillations cancel.
+
+ADAPTIVE OPTIMISERS (RMSProp, Adam). Methods that maintain a separate effective step size
+per parameter. Adam is the usual default.
+
+LEARNING RATE SCHEDULE. Reducing the learning rate as training proceeds - big steps early to
+cover ground, small steps late to settle.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE LEARNING RATE, FAILING IN BOTH DIRECTIONS AT ONCE.
+
+Beginners tune the learning rate by trying one value and concluding "gradient descent does
+not work". Both failure modes look nothing alike:
+
+    TOO SMALL:  the loss falls, but so slowly that training appears stuck. Hundreds of steps
+                to cover ground that should take five. It is not broken, it is crawling -
+                and the giveaway is that the loss IS decreasing, just barely.
+
+    TOO LARGE:  the loss goes UP. Each step overshoots the minimum and lands further up the
+                far side than it started, so the next step is bigger, and the loss explodes
+                to infinity or NaN within a few iterations.
+
+The diagnostic is straightforward once you know to look: PLOT THE LOSS PER ITERATION. Falling
+slowly means raise it. Rising or oscillating means lower it - usually by a factor of ten,
+not a little.
+
+Section 9 works the exact threshold on a real problem: below 0.25 it converges, above it
+diverges, and at 0.125 it lands exactly on the answer in a single step.
+
+TRAP 2: confusing EPOCHS with ITERATIONS. With 60,000 examples and a batch size of 128, one
+epoch is 469 updates. Saying "I trained for 100 steps" is meaningless without the batch size,
+and comparing two runs by epoch count when they used different batch sizes compares different
+amounts of work.
+
+TRAP 3: forgetting to shuffle between epochs. If the data is ordered - all the cats then all
+the dogs - then without shuffling each mini-batch contains one class, every gradient points
+somewhere unhelpful, and training will not work at all. This is a genuinely common bug and it
+looks like a modelling failure rather than a data-loading one.
+
+TRAP 4 - THE ONE PEOPLE OVER-WORRY ABOUT: local minima. In two dimensions they look like the
+central danger. In high dimensions they are rare, because a point is only a local minimum if
+the surface curves upward in EVERY one of the millions of directions at once - and that is
+statistically very unlikely. SADDLE POINTS, where some directions go up and others down, are
+the far more common stall, and momentum-based methods exist largely to push through them.
+
+TRAP 5: raising the batch size without touching the learning rate. A larger batch gives a
+less noisy gradient, which can support a larger step. The common rule is LINEAR SCALING -
+multiply the batch size by k and multiply the learning rate by k - otherwise a big-batch run
+underperforms a small-batch one and it looks like the batch size was the problem.
+
+TRAP 6: not normalising the inputs. If one feature ranges over 0-1 and another over
+0-100,000, the loss surface is a long thin ravine, and any learning rate that is stable for
+the steep direction is uselessly small for the shallow one. Feature scaling is an
+optimisation issue as much as a modelling one.
+
+TRAP 7: assuming Adam removes the need to tune the learning rate. It reduces the sensitivity,
+it does not eliminate it. Adam's default of 0.001 is a starting point, not an answer.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - try lots of parameter values and keep the best.
+
+With one parameter you could try a thousand values and pick the winner. With two, a thousand
+by a thousand is a million. With a million parameters - a small neural network - the number
+of combinations exceeds the number of atoms in the universe. Random search cannot work here,
+and neither can any exhaustive method.
+
+THE INSIGHT THAT MAKES TRAINING POSSIBLE: you do not need to see the whole surface. AT ANY
+POINT YOU CAN COMPUTE WHICH WAY IS DOWNHILL, cheaply and exactly, for all million parameters
+at once. So you never search - you walk.
+
+BATCH GRADIENT DESCENT is that idea applied literally: compute the gradient using all the
+data, step, repeat. The direction is exactly right. It is also, on 60,000 examples, 60,000
+measurements per step.
+
+UPGRADE 1 - STOCHASTIC GRADIENT DESCENT. Use ONE example per step.
+
+The gradient from one example is a poor estimate of the true gradient. But it is an UNBIASED
+one - averaged over all examples it equals the true gradient exactly - so the errors are
+noise around the right direction rather than a systematic pull the wrong way. And in the time
+batch takes one step, SGD takes 60,000. Many roughly-right steps beat one exactly-right step.
+
+WHY THE NOISE IS A FEATURE, not just a tolerable cost - the argument worth having ready:
+
+    Picture a loss surface with a shallow dip at w = 1, where the loss is 0.4, and the true
+    minimum at w = 5, where the loss is 0.05.
+
+    FULL-BATCH gradient descent arriving at w = 1 computes the true gradient there, which is
+    exactly zero - it is a genuine local minimum of the averaged loss. The update becomes
+    w <- w - lr x 0, so nothing moves. It is stuck permanently.
+
+    SGD at w = 1 computes the gradient from ONE example, which is NOT zero - individual
+    examples disagree with the average. Some of them push left, some right. A few pushes in
+    the right direction carry it out of the shallow dip, and once out, the overall slope
+    takes it down to w = 5.
+
+    The noise is what lets it escape. A perfectly accurate optimiser would have stopped at
+    0.4 and reported success.
+
+UPGRADE 2 - MINI-BATCH. Use a small group, typically 32 to 512.
+
+This is the practical answer, and the decisive reason is hardware rather than mathematics.
+Computing the gradient for 128 examples on a GPU takes barely longer than for 1, because the
+128 calculations happen SIMULTANEOUSLY across thousands of cores. So SGD's one-example steps
+waste almost all of the machine, while batch's full-dataset steps waste almost all of the
+update opportunities.
+
+    per epoch, on 60,000 examples:
+
+        BATCH:              1 update,   60,000 gradients per update
+        MINI-BATCH (128):   469 updates,   128 gradients per update
+        SGD:                60,000 updates,  1 gradient per update
+
+    All three compute exactly 60,000 gradients per epoch - the same arithmetic. They differ
+    by a factor of 60,000 in how many times the parameters actually move, and mini-batch is
+    the only one that also keeps the hardware busy.
+
+UPGRADE 3 - BETTER STEP RULES. Plain gradient descent uses the same step size for every
+parameter and has no memory. Three additions fix specific failures:
+
+    MOMENTUM. Keep a running average: v <- 0.9 x v + gradient, and step with v. On a
+    ravine-shaped surface where plain descent oscillates across the valley and creeps along
+    it, the oscillating components cancel between steps while the consistent downhill
+    component accumulates. The result is faster progress along the valley floor.
+
+    RMSProp. Divide each parameter's step by a running average of its own recent gradient
+    magnitudes. Parameters with consistently large gradients take smaller steps, and vice
+    versa - so one learning rate can suit parameters of very different scales.
+
+    ADAM. Both together: momentum for direction, per-parameter scaling for size. The default
+    choice, and the reason people can often get away with less learning-rate tuning.""",
+
+    """6. HOW IT WORKS - the loop, step by step.
+
+The one sentence that holds the whole idea: WORK OUT WHICH DIRECTION MAKES THE ERROR WORSE,
+STEP A SMALL DISTANCE THE OTHER WAY, AND REPEAT - USING A HANDFUL OF EXAMPLES PER STEP SO THE
+STEPS ARE BOTH FREQUENT AND ACCURATE ENOUGH.
+
+THIS IS THE LOOP, and unusually for this collection it does not stop on its own, which is
+worth being precise about:
+
+  - Each iteration computes a gradient on the current batch and moves every parameter once.
+  - Nothing about the mathematics terminates. The gradient at a minimum is zero, so the
+    update becomes a no-op, but noise means it never sits exactly there.
+  - WHAT MAKES IT STOP, in practice - and you must choose one:
+        a fixed number of epochs;
+        the validation loss has not improved for N epochs (EARLY STOPPING - the usual
+            choice, and it also guards against overfitting);
+        the loss change per epoch falls below a threshold;
+        the time or compute budget runs out.
+  - WHAT MAKES IT FAIL TO TERMINATE USEFULLY: a learning rate above the stability threshold.
+    Then the loss increases every step and runs to infinity or NaN - the loop is still
+    running, it is simply going the wrong way. Section 9 computes the exact threshold.
+
+THE STEPS:
+
+  1. INITIALISE THE PARAMETERS - small random values, not all zeros. In a network, identical
+     starting weights make every neuron in a layer compute the same thing forever, since they
+     receive identical gradients.
+
+  2. SHUFFLE THE TRAINING DATA. Every epoch. Without this, ordered data gives mini-batches
+     containing a single class and training simply does not work (trap 3).
+
+  3. TAKE THE NEXT MINI-BATCH - typically 32 to 512 examples.
+
+  4. FORWARD PASS: run those examples through the model and compute the loss.
+
+  5. COMPUTE THE GRADIENT of that loss with respect to every parameter. In a network this is
+     backpropagation - the sibling entry covers how. Here it is a given.
+
+  6. UPDATE EVERY PARAMETER: subtract the learning rate times its gradient. Every parameter
+     moves once, simultaneously.
+
+  7. REPEAT FROM STEP 3 until the data is exhausted. That completes one EPOCH.
+
+  8. EVALUATE ON VALIDATION DATA. This is the number that decides everything; training loss
+     only tells you the optimiser is working.
+
+  9. REPEAT FROM STEP 2 until a stopping condition fires.
+
+ 10. WATCH THE LOSS CURVE THROUGHOUT. Falling steadily is healthy; falling imperceptibly
+     means raise the learning rate; rising or oscillating means lower it, usually tenfold.
+
+The step most often skipped is 2, and the step most often misjudged is the learning rate in
+6.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are somewhere on a vast foggy hillside and you want to reach the lowest point. You cannot
+see further than your own boots. All you can do is feel which way the ground slopes and walk
+that way.
+
+Two decisions, and everything depends on them.
+
+The first is HOW BIG A STRIDE. Shuffle forward in tiny increments and you will be there next
+year. Take enormous leaps and you will bound straight over the valley and land higher up the
+opposite slope - and then, standing on steeper ground, leap even further the next time. People
+watching would say you were getting worse at walking, and they would be right.
+
+The second is HOW MUCH GROUND TO FEEL BEFORE EACH STEP. You could crawl around surveying the
+whole hillside to be certain which way is down - perfectly accurate, and you would take about
+one step a day. Or you could feel the ground directly under one foot and step immediately -
+rough, occasionally wrong, but you would take thousands of steps in the same time. In
+practice you sweep an arm's width, get a good-enough direction, and keep moving.
+
+Now the part that surprises people. Suppose the hillside has a small hollow partway down. If
+you are surveying the whole hillside very carefully, you will walk into that hollow, find that
+every direction from its centre leads upward, and stop there - correctly concluding you are at
+a low point, and wrongly concluding you have finished.
+
+Whereas if you are stepping roughly, feeling only patches of ground, your steps are slightly
+random. One of them will carry you over the hollow's rim, and once out you carry on down to
+the real bottom.
+
+The sloppy walker beats the careful one, because the careful one is precise about a
+measurement that was misleading. That is not an argument for sloppiness in general - it is an
+argument that a bit of noise is a cheap way to avoid stopping at the first flat place you
+find.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is the update rule and its settings - what each holds, what it
+decides, and how it fails.
+
+--- THE UPDATE RULE ---
+
+    w  <-  w  -  lr x gradient
+
+    w (THE PARAMETER)
+        HOLDS: the current setting. Every parameter has its own, and all are updated
+        simultaneously from the same gradient computation.
+
+    THE MINUS SIGN
+        DECIDES: direction. The gradient points UPHILL - the direction of steepest INCREASE
+        in loss - so you subtract it to go down. Getting this sign wrong makes the loss climb
+        smoothly, which looks like a learning-rate problem and is not.
+
+    lr (THE LEARNING RATE)
+        HOLDS: the step size, the same for every parameter in plain gradient descent.
+        DECIDES: whether the process converges at all, and how fast.
+        FAILS: too small crawls; too large diverges. There is an exact threshold for a given
+        problem - section 9 computes it.
+        TYPICAL: 0.001 to 0.1, tuned logarithmically. Adam's usual default is 0.001.
+
+    gradient
+        HOLDS: for each parameter, the slope of the loss with respect to it.
+        DECIDES: direction and relative magnitude. Computed by backpropagation in a network -
+        the sibling entry.
+        NOTE: it is a LOCAL measurement. It knows the slope where you stand and nothing about
+        the shape of the surface elsewhere, which is precisely why local minima and saddle
+        points can trap the process.
+
+--- THE BATCH SIZE, AND WHAT IT DECIDES ---
+
+    BATCH (all the data)
+        HOLDS: the exact gradient of the average loss.
+        DECIDES: a smooth, deterministic path. Same start, same answer, every time.
+        COSTS: one update per epoch, and the whole dataset must fit in memory.
+        FAILS AT: escaping shallow local minima, because at one the true gradient is exactly
+        zero and the update does nothing.
+
+    STOCHASTIC (one example)
+        HOLDS: a noisy but UNBIASED estimate - averaged over examples it equals the true
+        gradient.
+        DECIDES: a staggering path, many updates, and the ability to escape shallow dips.
+        COSTS: wastes parallel hardware almost entirely, and the noise means it never settles
+        precisely at the minimum.
+
+    MINI-BATCH (32 to 512)
+        HOLDS: a reasonably accurate gradient estimate.
+        DECIDES: the practical default. Frequent updates AND full use of the hardware.
+        THE TRADE:
+            32 to 64:      noisier, often better generalisation, low memory, more steps
+            256 to 1024:   smoother, better hardware utilisation, may need the learning rate
+                           scaled up to match
+
+--- THE ADDITIONS, AND THE SPECIFIC FAILURE EACH FIXES ---
+
+    MOMENTUM (v <- 0.9v + gradient, step with v)
+        FIXES: oscillation across a narrow ravine while creeping along it. Perpendicular
+        components alternate sign and cancel; the consistent along-valley component
+        accumulates.
+
+    RMSProp (divide by a running average of squared gradients)
+        FIXES: one learning rate having to suit parameters whose gradients differ by orders
+        of magnitude. Each parameter effectively gets its own step size.
+
+    ADAM (both)
+        FIXES: both at once. The default, and the reason less learning-rate tuning is needed -
+        though not none.
+
+    LEARNING RATE SCHEDULE
+        FIXES: needing big steps early and small steps late. Decay it over training, or warm
+        it up for the first few hundred iterations then decay.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THE PROBLEM. Fit y = w x x on a single sample: x = 2, y = 6. The right answer is w = 3, since
+3 x 2 = 6. Start at w = 1.
+
+    loss(w)      = (w x 2 - 6)^2
+    gradient     = 2 x (w x 2 - 6) x 2  =  4 x (2w - 6)
+
+ONE STEP, WITH lr = 0.1:
+
+    prediction = 1 x 2 = 2
+    loss       = (2 - 6)^2 = 16
+    gradient   = 4 x (2 - 6) = -16          negative, so the loss falls as w increases
+    update     = 1 - 0.1 x (-16) = 1 + 1.6 = 2.6
+
+    new prediction = 2.6 x 2 = 5.2
+    new loss       = (5.2 - 6)^2 = 0.64      down from 16
+
+STEP TWO:
+
+    gradient = 4 x (5.2 - 6) = -3.2
+    update   = 2.6 - 0.1 x (-3.2) = 2.6 + 0.32 = 2.92
+    loss     = (5.84 - 6)^2 = 0.0256
+
+    Loss so far: 16, 0.64, 0.0256. Converging on w = 3.
+
+NOW THE SAME PROBLEM AT FOUR LEARNING RATES - and the outcome changes qualitatively at each:
+
+    lr = 0.001   w: 1 -> 1.016 -> 1.032 -> ...
+                 Correct direction, hundreds of steps needed. It looks broken; it is crawling.
+
+    lr = 0.1     w: 1 -> 2.6 -> 2.92 -> 2.984 -> ...
+                 Converges smoothly. A sensible choice.
+
+    lr = 0.125   w: 1 - 0.125 x (-16) = 1 + 2 = 3
+                 EXACTLY the optimum, IN ONE STEP. Loss 0. This is not luck: for a quadratic,
+                 stepping by 1 / curvature lands precisely on the minimum. The curvature here
+                 is 2 x x^2 = 8, and 1/8 = 0.125.
+
+    lr = 0.5     w: 1 - 0.5 x (-16) = 1 + 8 = 9
+                 prediction 18, loss (18 - 6)^2 = 144  - WORSE than the 16 it started at.
+                 gradient = 4 x (18 - 6) = 48
+                 w = 9 - 0.5 x 48 = -15,  loss = (-30 - 6)^2 = 1296
+                 DIVERGING. Loss: 16, 144, 1296 - up by roughly nine times per step.
+
+    THE EXACT THRESHOLD: for this loss the curvature is 8, and gradient descent is stable when
+    lr < 2 / curvature = 2 / 8 = 0.25.
+        0.001 and 0.1 are below it -> converge.
+        0.125 is below it, and equals 1/curvature -> converges in ONE step.
+        0.5 is above it -> diverges.
+
+    SAME PROBLEM, SAME DATA, SAME CODE. One number, four qualitatively different outcomes:
+    crawl, converge, land exactly, explode. That is why the learning rate is the
+    hyperparameter to tune first.
+
+BATCH SIZES ON 60,000 MNIST IMAGES:
+
+    BATCH (all 60,000)
+        updates per epoch:        1
+        gradients per update:     60,000
+        gradient quality:         exact, deterministic
+        100 epochs gives:         100 parameter updates
+
+    SGD (batch size 1)
+        updates per epoch:        60,000
+        gradients per update:     1
+        gradient quality:         very noisy, unbiased
+        100 epochs gives:         6,000,000 parameter updates
+
+    MINI-BATCH (128)
+        updates per epoch:        60,000 / 128 = 468.75, so 469 (the last holds 96 images)
+        gradients per update:     128
+        gradient quality:         good enough
+        100 epochs gives:         46,900 parameter updates
+
+    ALL THREE COMPUTE 60,000 GRADIENTS PER EPOCH - identical arithmetic. What differs is how
+    often the parameters actually move: 1 versus 469 versus 60,000. And because a GPU computes
+    128 gradients in barely more wall-clock time than 1, mini-batch gets 469 updates for
+    roughly the same cost in time that batch pays for 1.
+
+    That is the whole case for mini-batch, and it is about hardware rather than mathematics.
+
+THE NOISE ESCAPING A SHALLOW MINIMUM:
+
+    A surface with a shallow dip at w = 1 (loss 0.4) and the true minimum at w = 5 (loss 0.05).
+
+    FULL BATCH at w = 1: the true gradient is exactly 0. Update: w <- 1 - lr x 0 = 1.
+    Stuck permanently, reporting a loss of 0.4.
+
+    SGD at w = 1: individual examples give gradients that are not zero - some positive, some
+    negative. A few steps in the outward direction clear the rim, and the overall slope then
+    carries it to w = 5 and a loss of 0.05.
+
+    The less accurate method reaches the answer that is eight times better.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - PER UPDATE: one forward pass and one backward pass over the batch. The backward pass costs
+    roughly twice the forward one, so a training step is about three times an inference step.
+  - PER EPOCH: the same total arithmetic whatever the batch size - every example is processed
+    once. Only the number of updates changes.
+  - MEMORY: scales with batch size, because activations for every example in the batch must be
+    held for the backward pass. This is usually what caps the batch size, not any principle.
+  - CONVERGENCE: not guaranteed to a global minimum for non-convex problems. In practice deep
+    networks find solutions that are good enough, which is an empirical finding rather than a
+    theorem.
+
+CHOOSING THE BATCH SIZE - the practical table:
+
+    32 to 64        noisier gradients, often better generalisation, low memory, more steps.
+                    A good default when unsure.
+    128 to 512      the common range. Good hardware utilisation.
+    1024 and above  smoothest gradients and best hardware use, but generalisation often
+                    suffers, and the learning rate must be scaled up to compensate.
+
+    THE LINEAR SCALING RULE: multiply the batch size by k and multiply the learning rate by k.
+    Without it, large-batch runs underperform and the batch size gets blamed for what is
+    really an unadjusted step size.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "How do you choose the learning rate?" Sweep logarithmically - 0.0001, 0.001, 0.01, 0.1 -
+    and plot loss against iteration. Or use a learning-rate finder: increase it steadily during
+    one short run and take the value just before the loss turns upward.
+  - "What if training loss is going up?" The learning rate is above the stability threshold.
+    Divide by ten. If it still climbs, check the sign of the update and whether the inputs are
+    normalised.
+  - "Why not always use batch gradient descent, since it is exact?" One update per epoch, the
+    whole dataset in memory, and at a shallow local minimum the exact gradient is exactly zero
+    so it can never escape. Exactness is not the goal; progress is.
+  - "Does SGD find better solutions than batch?" Often, yes - the noise both escapes shallow
+    minima and tends toward flatter ones, which generalise better. Worth saying, because it
+    reframes noise as a feature rather than a compromise.
+  - "What does Adam actually do?" Momentum for direction plus a per-parameter step size from a
+    running average of squared gradients. It reduces learning-rate sensitivity; it does not
+    remove it.
+  - "Are local minima the main problem in deep learning?" No - saddle points are. A local
+    minimum requires the surface to curve upward in every one of millions of directions
+    simultaneously, which is vanishingly unlikely. This answer signals current understanding
+    rather than a textbook from twenty years ago.
+
+THE #1 MISTAKE: treating the learning rate as a setting to leave at its default. It is the
+single most consequential number in training - section 9 shows one problem where four values
+give crawling, convergence, exact one-step convergence and explosion. Tune it first, before
+touching the architecture.
+
+RUNNER-UP: forgetting to shuffle between epochs, which on ordered data makes every mini-batch
+single-class and stops training working at all - while looking like a modelling failure.
+
+TAKEAWAY: gradient descent is walking downhill using only the slope where you stand, so the
+two decisions that matter are how big a step to take and how much data to consult before
+taking it - and mini-batch wins not because its gradient is best but because hardware computes
+128 examples almost as fast as one.""",
+]
+
+_EX_P1AO["Precision"] = [
+    """1. THE GOAL - two questions that sound alike and are not.
+
+A model says yes or no about each item. Two different questions can be asked about how
+well it did, and confusing them is one of the most common mistakes in applied machine
+learning:
+
+    PRECISION:  "Of the ones I flagged, how many were actually right?"
+    RECALL:     "Of all the ones that were actually there, how many did I catch?"
+
+Same model, same predictions, two completely different numbers - because they have
+DIFFERENT DENOMINATORS. Precision divides by what you FLAGGED. Recall divides by what
+actually EXISTS.
+
+A concrete pair to hold onto:
+
+    A spam filter that sends every email to the spam folder has RECALL 1.0 - it caught
+    every spam message. Its precision is terrible, and it is useless.
+
+    A spam filter that flags only the one message it is absolutely certain about has
+    PRECISION 1.0. Its recall is near zero, and it is also useless.
+
+So neither number alone tells you anything. You need both, and more importantly you need
+to know WHICH ONE MATTERS FOR THIS PROBLEM - which is a question about the cost of being
+wrong, not a question about mathematics.
+
+And the reason this topic is asked in almost every ML interview is the third number:
+
+    ACCURACY - "what fraction did I get right overall" - is the one everybody reaches
+    for first, and on imbalanced data it is actively misleading. Section 5 shows a model
+    with 99% accuracy that catches zero sick patients, and another model with EXACTLY
+    the same accuracy that catches 90 of them. Accuracy cannot tell them apart.""",
+
+    """2. THE INTUITION - one table, four boxes, two different denominators.
+
+Everything here comes from one 2x2 table called the CONFUSION MATRIX. Rows are what was
+true; columns are what the model said.
+
+                          MODEL SAYS YES        MODEL SAYS NO
+                       +---------------------+---------------------+
+    ACTUALLY YES       |  TP  true positive  |  FN false negative  |
+                       |  caught it          |  MISSED it          |
+                       +---------------------+---------------------+
+    ACTUALLY NO        |  FP false positive  |  TN true negative   |
+                       |  FALSE ALARM        |  correctly ignored  |
+                       +---------------------+---------------------+
+
+Now draw the two metrics as which boxes they divide by, because that is the entire
+difference:
+
+    PRECISION  =  TP / (TP + FP)      the MODEL SAYS YES column
+                                      "of my alarms, how many were real?"
+
+                       +---------------------+
+                       |  TP                 |
+                       +---------------------+
+                       |  FP                 |
+                       +---------------------+
+                        ^^^^^^^^^^ this column
+
+    RECALL     =  TP / (TP + FN)      the ACTUALLY YES row
+                                      "of the real cases, how many did I catch?"
+
+                       +---------------------+---------------------+
+                       |  TP                 |  FN                 |
+                       +---------------------+---------------------+
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this row
+
+Precision reads DOWN the column of things you flagged. Recall reads ACROSS the row of
+things that were really there. Once you can picture which direction each one reads, you
+will never mix them up again - and mixing them up is the single most common error on
+this topic.
+
+And ACCURACY = (TP + TN) / everything, which includes that enormous TN box. When one
+class dominates, TN is so large that it drowns out every other number. That is the whole
+of the 95%-accuracy trap.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POSITIVE / NEGATIVE. The "positive" class is the thing you are trying to detect - spam,
+fraud, disease. It is not "good"; a positive cancer test is bad news. Getting this
+labelling backwards flips every metric, so state it explicitly before you compute
+anything.
+
+TRUE POSITIVE (TP). Model said yes, and it was yes. A caught fraud.
+
+FALSE POSITIVE (FP). Model said yes, but it was no. A FALSE ALARM. Also called a Type I
+error.
+
+FALSE NEGATIVE (FN). Model said no, but it was yes. A MISS. Also called a Type II error.
+
+TRUE NEGATIVE (TN). Model said no, and it was no. Correctly ignored.
+
+CONFUSION MATRIX. The 2x2 table of those four counts. Everything on this page is
+arithmetic on it.
+
+PRECISION = TP / (TP + FP). Of everything flagged, the fraction that was right. Falls
+when you raise false alarms.
+
+RECALL = TP / (TP + FN). Of everything actually positive, the fraction caught. Also
+called SENSITIVITY or TRUE POSITIVE RATE. Falls when you miss cases.
+
+ACCURACY = (TP + TN) / (TP + FP + FN + TN). Fraction correct overall. Dominated by TN
+when the negative class is large.
+
+F1 SCORE = 2 x (precision x recall) / (precision + recall). The HARMONIC MEAN of the
+two. Harmonic rather than ordinary mean because it punishes imbalance: with precision
+1.0 and recall 0.0, the ordinary average is a respectable 0.5 while F1 is 0. That is the
+behaviour you want from a summary number - a model that is useless on one axis should
+not score at the halfway mark.
+
+CLASS IMBALANCE. When one class massively outnumbers the other - 0.1% fraud, 1% disease.
+This is the normal case in real applications and the case where accuracy fails.
+
+BASE RATE. The fraction of items that are actually positive. The first thing to ask
+about any classification claim, and section 10 explains why.
+
+BASELINE. The score achieved by a trivial strategy, usually "always predict the majority
+class". Your model must beat this or it has learned nothing.
+
+PRECISION@k. In search and recommendations, precision measured on just the top k results
+- because a user only sees the first page.
+
+THRESHOLD. Most models output a probability, and you turn it into yes/no by comparing
+against a cutoff. Moving the cutoff trades precision against recall. This is the subject
+of the sibling entry on ROC and AUC; here just note that precision and recall are always
+quoted AT some threshold.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE 95%-ACCURACY TRAP, which is what this entry is named after.
+
+A model reports 95% accuracy and everybody is pleased. Then you ask what fraction of the
+data is positive, and it is 5%.
+
+The model that predicts "negative" for every single item - a model with no logic in it
+at all, one line of code - also scores 95%. Your model may have learned nothing
+whatsoever and it is indistinguishable by accuracy.
+
+ALWAYS COMPARE ACCURACY TO THE BASE RATE. If accuracy is not clearly above "always
+predict the majority class", the number is meaningless. This is the single most useful
+habit on this page.
+
+TRAP 2: not asking which error is more expensive. Precision and recall trade against
+each other, so you MUST decide which one matters, and that is a business question:
+
+    SPAM FILTER          -> favour PRECISION. A false positive means a real email is
+                            deleted, possibly a job offer. Spam in the inbox is mildly
+                            annoying. Missing spam is cheap; losing mail is expensive.
+
+    CANCER SCREENING     -> favour RECALL. A false positive means an unnecessary follow-
+                            up test, which is unpleasant and survivable. A false negative
+                            means an untreated cancer.
+
+    FRAUD DETECTION      -> usually RECALL, but see the cost arithmetic in the sibling
+                            ROC entry, because a flood of false alarms has a real cost
+                            too and the balance can flip.
+
+Same mathematics, opposite conclusions. Section 9 works both.
+
+TRAP 3: precision is UNDEFINED when nothing is flagged. If TP + FP = 0, precision is
+0/0. Most libraries report 0.0 and emit a warning. A model that flags nothing does not
+have perfect precision - it has no precision, and reporting 0 rather than 1 is the
+correct convention.
+
+TRAP 4: maximising F1 without asking whether balance is what you want. F1 treats
+precision and recall as equally important. That is an assumption about your business, not
+a mathematical fact, and it is usually wrong for exactly the applications where the
+metrics matter. Section 9 of the ROC entry shows the F1-optimal threshold and the
+cost-optimal threshold landing in different places on the same model.
+
+TRAP 5: quoting precision and recall without the threshold. They are not properties of
+the model, they are properties of the model AT A CUTOFF. "Recall is 0.9" is incomplete;
+"recall is 0.9 at threshold 0.3, where precision is 0.15" is a statement.
+
+TRAP 6: mixing up which is which under pressure. Use the picture from section 2:
+precision reads DOWN the flagged column, recall reads ACROSS the actual-positives row.""",
+
+    """5. THE NAIVE METRIC FIRST, THEN THE REAL ONES.
+
+THE NAIVE METRIC: accuracy. "What fraction did the model get right?"
+
+It is the first thing anyone reaches for, it is intuitive, and on BALANCED data it is
+perfectly reasonable. The problem is that real detection problems are almost never
+balanced - fraud, disease, defects and spam are all rare by definition, and rarity is
+exactly what makes them worth detecting.
+
+WHY IT FAILS - the demonstration, with the numbers, because this is the part to be able
+to reproduce on a whiteboard:
+
+    Disease screening. 10,000 patients. 100 are actually ill (a 1% base rate).
+
+    MODEL A - a real model. It flags 180 patients.
+        TP = 90    (of the 100 ill, it caught 90)
+        FN = 10    (it missed 10)
+        FP = 90    (90 healthy people were flagged)
+        TN = 9,810
+        check: 90 + 10 + 90 + 9,810 = 10,000
+
+        accuracy = (90 + 9,810) / 10,000 = 9,900 / 10,000 = 0.99
+
+    MODEL B - one line of code: "predict healthy for everyone".
+        TP = 0
+        FN = 100   (every ill patient missed)
+        FP = 0
+        TN = 9,900
+        check: 0 + 100 + 0 + 9,900 = 10,000
+
+        accuracy = (0 + 9,900) / 10,000 = 9,900 / 10,000 = 0.99
+
+TWO MODELS. IDENTICAL ACCURACY - 99% each. One catches 90 of the 100 ill patients; the
+other catches none of them and contains no logic at all.
+
+Accuracy cannot distinguish a useful medical screening tool from a piece of string. That
+is not a subtle statistical point; it is a complete failure of the metric on the exact
+problems where it is most often quoted.
+
+WHY IT HAPPENS, stated as the mechanism: accuracy's numerator includes TN, and when 99%
+of the data is negative, TN alone is 99% of the total. The interesting boxes - TP, FP,
+FN - are a rounding error inside it. The metric is measuring the wrong thing so
+overwhelmingly that the right thing is invisible.
+
+THE REAL METRICS - precision and recall, which EXCLUDE TN ENTIRELY.
+
+Look back at the formulas: TP/(TP+FP) and TP/(TP+FN). Neither contains TN. That is
+precisely why they survive imbalance - the enormous, uninformative box is simply not in
+either calculation.
+
+    MODEL A: precision = 90/180 = 0.50    recall = 90/100 = 0.90
+    MODEL B: precision = 0/0 (undefined, reported 0)   recall = 0/100 = 0.00
+
+Now the two models are trivially distinguishable, and the trade-off is visible: Model A
+catches 90% of illness at the cost of half its alarms being false.
+
+THE FURTHER UPGRADE - F1, when you need one number.
+
+F1 = 2PR/(P+R). For Model A: 2(0.50)(0.90)/(0.50+0.90) = 0.90/1.40 = 0.643.
+For Model B: precision 0, recall 0, F1 = 0.
+
+Why the HARMONIC mean rather than the ordinary one: a model with precision 1.0 and recall
+0.0 would score 0.5 on an ordinary average - respectable-looking for something useless.
+The harmonic mean gives 0. It refuses to let a good score on one axis rescue a zero on
+the other, which is the behaviour a summary metric needs.
+
+BUT USE F1 KNOWINGLY: it asserts that precision and recall matter equally. For cancer
+screening they do not, and optimising F1 there is optimising the wrong thing.""",
+
+    """6. HOW TO USE THESE - the procedure, step by step.
+
+The one sentence that holds the whole idea: BUILD THE FOUR-BOX TABLE, COMPARE ACCURACY
+AGAINST THE MAJORITY-CLASS BASELINE TO SEE WHETHER IT MEANS ANYTHING, THEN CHOOSE
+BETWEEN PRECISION AND RECALL BY ASKING WHICH MISTAKE COSTS MORE.
+
+THERE IS A LOOP HERE - threshold tuning - and it needs an explicit stopping rule:
+
+  - Each pass picks a threshold, computes the four boxes at that threshold, and scores
+    them against your chosen objective.
+  - WHAT MAKES IT STOP: the objective must be fixed BEFORE the sweep - either a cost
+    function in real units, or a constraint like "recall must be at least 0.90, maximise
+    precision subject to that". Then the loop stops at the best point under that
+    objective.
+  - Without an objective fixed in advance, the loop does not terminate: every threshold
+    looks better on one metric and worse on another, and you will keep moving it forever
+    while feeling productive.
+  - And tune on a VALIDATION set, not the test set, or the threshold is fitted to the
+    data you were going to use to report your honest number.
+
+THE STEPS:
+
+  1. STATE WHICH CLASS IS POSITIVE, out loud. "Positive means fraudulent." Everything
+     inverts if this is wrong, and it is silently wrong surprisingly often.
+
+  2. GET THE BASE RATE - what fraction of items are actually positive. Before looking at
+     any model output.
+
+  3. COMPUTE THE MAJORITY-CLASS BASELINE ACCURACY. If 1% are positive, the baseline is
+     99%. Write it down; it is what every accuracy claim must be compared against.
+
+  4. BUILD THE CONFUSION MATRIX at your current threshold. Four counts. Check they sum
+     to the total - this catches most arithmetic errors immediately.
+
+  5. COMPUTE PRECISION AND RECALL. Precision divides by the flagged column, recall by the
+     actual-positive row.
+
+  6. DECIDE WHICH ERROR IS MORE EXPENSIVE, in real terms - money, harm, time. Not in the
+     abstract. If you can put numbers on the two error types, do it, and then the
+     threshold choice becomes arithmetic rather than taste.
+
+  7. CHOOSE THE METRIC TO OPTIMISE. Favour precision when false alarms are expensive;
+     favour recall when misses are expensive; use F1 only if they genuinely trade evenly.
+     Better than all three: state a constraint and optimise subject to it.
+
+  8. SWEEP THE THRESHOLD on validation data and pick the operating point under that
+     objective.
+
+  9. REPORT PRECISION AND RECALL TOGETHER, WITH THE THRESHOLD. Never one alone, and never
+     without saying where the cutoff was.
+
+ 10. RE-CHECK WHEN THE BASE RATE MOVES. Precision depends on the base rate - the same
+     model on a population with half as much fraud has worse precision at the same
+     threshold, with no change to the model at all. This is why models degrade in
+     production without anyone touching them.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a security guard at a gate, watching for the few people who should not be let in.
+Say a thousand people come through a day and two of them are trouble.
+
+At the end of the day you could ask: how many decisions did you get right? The answer is
+about 998 out of 1000, which sounds excellent. But a guard who is fast asleep also gets
+998 out of 1000 right, because almost everybody is fine. That number cannot tell the two
+guards apart, and it is the number everybody quotes.
+
+The useful questions are different, and there are two of them.
+
+The first: of the people you stopped, how many were actually trouble? If the guard
+stopped forty people to catch the two, then thirty-eight innocent people were pulled
+aside. That is a real cost - their time, their irritation, and the staff who had to
+process them.
+
+The second: of the people who actually were trouble, how many did you stop? If the guard
+caught one of the two, half of them walked straight in.
+
+Those two questions pull against each other. Tell the guard to stop anyone suspicious and
+they will catch both troublemakers - and detain a hundred innocent people. Tell them to
+stop only when they are certain and they will detain almost nobody - and miss most of the
+trouble.
+
+There is no setting that is right in general. It depends entirely on what it costs to
+wrongly stop someone versus what it costs to let the wrong person through. A gate at a
+music venue and a gate at a nuclear facility should be tuned differently, and neither is
+being tuned wrongly.
+
+And notice the one thing you can never learn from the overall right-answer rate: it counts
+all those thousands of correct wave-throughs, which nobody cares about, and buries the
+handful of decisions that actually mattered.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each quantity taken apart - what it holds, what it
+decides, and what makes it move.
+
+--- THE FOUR COUNTS ---
+
+    TP (TRUE POSITIVE)
+        HOLDS: cases the model flagged that really were positive.
+        DECIDES: the numerator of BOTH precision and recall. It is the only box that
+        appears in both, which is why improving TP is the only unambiguously good move.
+
+    FP (FALSE POSITIVE) - the false alarm
+        HOLDS: cases flagged that were actually negative.
+        DECIDES: precision, and nothing else. Rises as you lower the threshold.
+        REAL-WORLD MEANING: a real email in the spam folder; an innocent transaction
+        blocked; a healthy patient sent for a biopsy.
+
+    FN (FALSE NEGATIVE) - the miss
+        HOLDS: real cases the model let through.
+        DECIDES: recall, and nothing else. Rises as you raise the threshold.
+        REAL-WORLD MEANING: the fraud that went through; the cancer not caught.
+
+    TN (TRUE NEGATIVE)
+        HOLDS: correctly ignored negatives.
+        DECIDES: accuracy - and it appears in NO other metric on this page. On
+        imbalanced data it is enormous, which is exactly why it corrupts accuracy and
+        why precision and recall, which exclude it, survive.
+
+--- THE METRICS, NUMERATOR AND DENOMINATOR ---
+
+    PRECISION = TP / (TP + FP)
+        NUMERATOR:   correct alarms.
+        DENOMINATOR: ALL alarms - the whole "model says yes" column.
+        READS: down the flagged column.
+        ANSWERS: "when this thing fires, should I believe it?"
+        MOVES WITH: the threshold (up as you raise it) AND with the base rate - the same
+        model scores worse precision on a population with fewer positives, without
+        changing at all.
+        UNDEFINED WHEN: nothing was flagged (0/0). Convention is to report 0.
+
+    RECALL = TP / (TP + FN)
+        NUMERATOR:   cases caught.
+        DENOMINATOR: ALL real cases - the whole "actually yes" row.
+        READS: across the actual-positives row.
+        ANSWERS: "what fraction of the real problem am I catching?"
+        MOVES WITH: the threshold (down as you raise it). Does NOT depend on the base
+        rate, which is a genuinely useful property - it is stable when the population
+        changes.
+
+    ACCURACY = (TP + TN) / (TP + FP + FN + TN)
+        NUMERATOR:   everything correct, including the huge TN box.
+        DENOMINATOR: everything.
+        ANSWERS: almost nothing useful when classes are imbalanced.
+        MUST BE COMPARED AGAINST: the majority-class baseline, every single time.
+
+    F1 = 2 x (precision x recall) / (precision + recall)
+        WHAT IT IS: the harmonic mean of the two.
+        DECIDES: a single ranking number when precision and recall matter equally.
+        WHY HARMONIC: it goes to 0 if either input is 0, so a perfect score on one axis
+        cannot disguise a zero on the other.
+        ASSUMES: equal weighting. That is a business claim. If it is false, F-beta lets
+        you weight recall beta times more than precision.
+
+--- WHAT IS NOT IN ANY OF THIS ---
+
+    The COST of each error type. None of these metrics knows that a missed cancer is
+    worse than an unnecessary scan. That information has to come from you, and section
+    9 of the ROC entry shows what happens when you supply it.""",
+
+    """9. WORKED WITH REAL NUMBERS - AND THE CASE WHERE THE ANSWER FLIPS.
+
+CASE 1 - DISEASE SCREENING. 10,000 patients, 100 actually ill. The model flags 180.
+
+                          MODEL SAYS ILL      MODEL SAYS HEALTHY
+                       +------------------+---------------------+
+    ACTUALLY ILL       |   TP = 90        |   FN = 10           |    100
+                       +------------------+---------------------+
+    ACTUALLY HEALTHY   |   FP = 90        |   TN = 9,810        |  9,900
+                       +------------------+---------------------+
+                             180                9,820             10,000
+
+    precision = 90 / 180   = 0.50      half of all alarms are false
+    recall    = 90 / 100   = 0.90      nine of every ten ill patients caught
+    accuracy  = 9,900 / 10,000 = 0.99
+    F1        = 2(0.50)(0.90) / (0.50 + 0.90) = 0.90 / 1.40 = 0.643
+
+    BASELINE CHECK: predicting "healthy" for everyone gives TP 0, FP 0, FN 100,
+    TN 9,900, and accuracy 9,900/10,000 = 0.99 - IDENTICAL. So the 0.99 tells you
+    nothing at all. The recall of 0.90 versus 0.00 is what distinguishes the models.
+
+    VERDICT: for screening, this is a good model. Fifty per cent of alarms being false
+    means 90 healthy people get a follow-up test they did not need - unpleasant,
+    survivable. Ten missed illnesses is the number that matters, and pushing recall
+    higher at the cost of more false alarms would be the right direction.
+
+CASE 2 - SPAM FILTERING. Same mathematics, and the verdict INVERTS.
+
+    10,000 emails, 2,000 of them spam.
+
+    AGGRESSIVE MODEL                       CONSERVATIVE MODEL
+       TP = 1,960   FN = 40                   TP = 1,600   FN = 400
+       FP = 300     TN = 7,700                FP = 20      TN = 7,980
+       check: 2,000 spam, 8,000 real         check: 2,000 spam, 8,000 real
+
+       precision = 1,960/2,260 = 0.867       precision = 1,600/1,620 = 0.988
+       recall    = 1,960/2,000 = 0.980       recall    = 1,600/2,000 = 0.800
+
+       300 REAL EMAILS IN THE SPAM FOLDER    20 REAL EMAILS IN THE SPAM FOLDER
+       40 spam in the inbox                  400 spam in the inbox
+
+    In case 1, the model with higher RECALL was clearly better. Here, the model with
+    higher recall is clearly WORSE. The conservative filter loses 20 real emails instead
+    of 300, and the price is 400 pieces of spam the user has to delete - which takes
+    about a minute.
+
+    Three hundred lost emails might include an interview invitation. Four hundred spam
+    messages in the inbox is a mild irritation.
+
+    SAME METRICS. SAME ARITHMETIC. OPPOSITE CONCLUSION - because the COST of a false
+    positive relative to a false negative is reversed between the two applications. That
+    reversal is the whole lesson, and it is why "which metric should I optimise?" can
+    never be answered without knowing what the errors cost.
+
+CASE 3 - THE EXTREME IMBALANCE THAT BREAKS EVERYTHING.
+
+    Rare-defect detection. 1,000,000 items, 1,000 defective (0.1%).
+    A model predicts "no defect" for every item.
+
+       TP = 0    FN = 1,000    FP = 0    TN = 999,000
+
+       accuracy  = 999,000 / 1,000,000 = 0.999    <- looks superb
+       recall    = 0 / 1,000 = 0.00               <- catches nothing
+       precision = 0 / 0     = undefined, reported as 0
+
+    A 99.9% accurate model that has never once detected a defect. If a report quotes
+    accuracy on a problem like this, the number is not merely weak evidence - it is
+    evidence of nothing.
+
+CASE 4 - PRECISION@k, the version search and recommendations actually use.
+
+    A retrieval system returns 10 documents for a query. 4 are relevant. There are 20
+    relevant documents in the whole corpus.
+
+       precision@10 = 4 / 10 = 0.40      of what I showed, 40% was useful
+       recall@10    = 4 / 20 = 0.20      of what exists, I surfaced 20%
+
+    Why precision@k rather than plain precision: the user sees one page. Whether the
+    system could eventually have found the other 16 documents is irrelevant to the
+    experience of looking at ten results, four of which are useful.""",
+
+    """10. THE LIMITS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHICH METRIC, AS A DECISION RULE:
+
+    FALSE ALARMS EXPENSIVE            -> favour PRECISION
+    (spam filtering, content removal, blocking transactions, anything that inconveniences
+     an innocent user)
+
+    MISSES EXPENSIVE                  -> favour RECALL
+    (disease screening, fraud, security, safety-critical detection)
+
+    GENUINELY BALANCED                -> F1, but check that "balanced" is true rather
+                                         than assumed
+
+    IMBALANCED DATA                   -> precision, recall, F1, and PR-AUC.
+                                         NEVER accuracy, and prefer the PR curve over the
+                                         ROC curve (see the sibling ROC entry for why the
+                                         false-positive rate hides the problem)
+
+    BETTER THAN ANY OF THESE, when you can get it: state a CONSTRAINT and optimise
+    subject to it. "Recall must be at least 0.95; among thresholds meeting that, take the
+    highest precision." This encodes the actual requirement instead of hoping a summary
+    statistic happens to represent it.
+
+THE INTERVIEW QUESTION AND THE FOLLOW-UP THAT SEPARATES CANDIDATES:
+
+    "Our fraud model is 99.5% accurate. Is it good?"
+
+The weak answer says yes, or asks about the training data. The strong answer asks ONE
+question first: WHAT IS THE BASE RATE?
+
+    If 0.5% of transactions are fraudulent, then "approve everything" scores 99.5% too,
+    and the model may have learned nothing. Ask for precision and recall at the operating
+    threshold, and the confusion matrix if they have it.
+
+    If fraud is 30% of transactions, 99.5% accuracy is genuinely remarkable and the next
+    question is whether the test set leaked.
+
+The same number means opposite things depending on a fact the question did not include -
+which is why asking for it is the answer.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Precision went down in production and we didn't change the model. Why?" The base
+    rate moved. Precision depends on it; recall does not. Fewer positives in the
+    population means a larger share of your alarms are false, with an identical model.
+  - "Can you have high precision and high recall?" Yes, if the model is genuinely good -
+    they only trade against each other along a fixed model's threshold curve. Improving
+    the model itself moves both. Confusing the trade-off along one curve with the
+    trade-off between models is a common error.
+  - "Why not just always optimise F1?" Because it asserts the two errors cost the same,
+    which is false in most applications where these metrics matter.
+
+THE #1 MISTAKE: quoting accuracy on imbalanced data without comparing it to the
+majority-class baseline. It is the mistake this entry is named after, it appears in real
+production dashboards constantly, and the fix is one subtraction you can do in your head.
+
+RUNNER-UP: reporting precision or recall alone. Either can be driven to 1.0 by a useless
+model, so a single number is not evidence of anything.
+
+TAKEAWAY: precision divides by what you FLAGGED and recall by what actually EXISTS - so
+before choosing between them, ask what a false alarm costs and what a miss costs, and
+always check whether your accuracy is beating the majority-class baseline.""",
+]
+
+_EX_P1AO["Recall (sensitivity)"] = [
+    """1. THE GOAL - two questions that sound alike and are not.
+
+A model says yes or no about each item. Two different questions can be asked about how
+well it did, and confusing them is one of the most common mistakes in applied machine
+learning:
+
+    PRECISION:  "Of the ones I flagged, how many were actually right?"
+    RECALL:     "Of all the ones that were actually there, how many did I catch?"
+
+Same model, same predictions, two completely different numbers - because they have
+DIFFERENT DENOMINATORS. Precision divides by what you FLAGGED. Recall divides by what
+actually EXISTS.
+
+A concrete pair to hold onto:
+
+    A spam filter that sends every email to the spam folder has RECALL 1.0 - it caught
+    every spam message. Its precision is terrible, and it is useless.
+
+    A spam filter that flags only the one message it is absolutely certain about has
+    PRECISION 1.0. Its recall is near zero, and it is also useless.
+
+So neither number alone tells you anything. You need both, and more importantly you need
+to know WHICH ONE MATTERS FOR THIS PROBLEM - which is a question about the cost of being
+wrong, not a question about mathematics.
+
+And the reason this topic is asked in almost every ML interview is the third number:
+
+    ACCURACY - "what fraction did I get right overall" - is the one everybody reaches
+    for first, and on imbalanced data it is actively misleading. Section 5 shows a model
+    with 99% accuracy that catches zero sick patients, and another model with EXACTLY
+    the same accuracy that catches 90 of them. Accuracy cannot tell them apart.""",
+
+    """2. THE INTUITION - one table, four boxes, two different denominators.
+
+Everything here comes from one 2x2 table called the CONFUSION MATRIX. Rows are what was
+true; columns are what the model said.
+
+                          MODEL SAYS YES        MODEL SAYS NO
+                       +---------------------+---------------------+
+    ACTUALLY YES       |  TP  true positive  |  FN false negative  |
+                       |  caught it          |  MISSED it          |
+                       +---------------------+---------------------+
+    ACTUALLY NO        |  FP false positive  |  TN true negative   |
+                       |  FALSE ALARM        |  correctly ignored  |
+                       +---------------------+---------------------+
+
+Now draw the two metrics as which boxes they divide by, because that is the entire
+difference:
+
+    PRECISION  =  TP / (TP + FP)      the MODEL SAYS YES column
+                                      "of my alarms, how many were real?"
+
+                       +---------------------+
+                       |  TP                 |
+                       +---------------------+
+                       |  FP                 |
+                       +---------------------+
+                        ^^^^^^^^^^ this column
+
+    RECALL     =  TP / (TP + FN)      the ACTUALLY YES row
+                                      "of the real cases, how many did I catch?"
+
+                       +---------------------+---------------------+
+                       |  TP                 |  FN                 |
+                       +---------------------+---------------------+
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this row
+
+Precision reads DOWN the column of things you flagged. Recall reads ACROSS the row of
+things that were really there. Once you can picture which direction each one reads, you
+will never mix them up again - and mixing them up is the single most common error on
+this topic.
+
+And ACCURACY = (TP + TN) / everything, which includes that enormous TN box. When one
+class dominates, TN is so large that it drowns out every other number. That is the whole
+of the 95%-accuracy trap.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POSITIVE / NEGATIVE. The "positive" class is the thing you are trying to detect - spam,
+fraud, disease. It is not "good"; a positive cancer test is bad news. Getting this
+labelling backwards flips every metric, so state it explicitly before you compute
+anything.
+
+TRUE POSITIVE (TP). Model said yes, and it was yes. A caught fraud.
+
+FALSE POSITIVE (FP). Model said yes, but it was no. A FALSE ALARM. Also called a Type I
+error.
+
+FALSE NEGATIVE (FN). Model said no, but it was yes. A MISS. Also called a Type II error.
+
+TRUE NEGATIVE (TN). Model said no, and it was no. Correctly ignored.
+
+CONFUSION MATRIX. The 2x2 table of those four counts. Everything on this page is
+arithmetic on it.
+
+PRECISION = TP / (TP + FP). Of everything flagged, the fraction that was right. Falls
+when you raise false alarms.
+
+RECALL = TP / (TP + FN). Of everything actually positive, the fraction caught. Also
+called SENSITIVITY or TRUE POSITIVE RATE. Falls when you miss cases.
+
+ACCURACY = (TP + TN) / (TP + FP + FN + TN). Fraction correct overall. Dominated by TN
+when the negative class is large.
+
+F1 SCORE = 2 x (precision x recall) / (precision + recall). The HARMONIC MEAN of the
+two. Harmonic rather than ordinary mean because it punishes imbalance: with precision
+1.0 and recall 0.0, the ordinary average is a respectable 0.5 while F1 is 0. That is the
+behaviour you want from a summary number - a model that is useless on one axis should
+not score at the halfway mark.
+
+CLASS IMBALANCE. When one class massively outnumbers the other - 0.1% fraud, 1% disease.
+This is the normal case in real applications and the case where accuracy fails.
+
+BASE RATE. The fraction of items that are actually positive. The first thing to ask
+about any classification claim, and section 10 explains why.
+
+BASELINE. The score achieved by a trivial strategy, usually "always predict the majority
+class". Your model must beat this or it has learned nothing.
+
+PRECISION@k. In search and recommendations, precision measured on just the top k results
+- because a user only sees the first page.
+
+THRESHOLD. Most models output a probability, and you turn it into yes/no by comparing
+against a cutoff. Moving the cutoff trades precision against recall. This is the subject
+of the sibling entry on ROC and AUC; here just note that precision and recall are always
+quoted AT some threshold.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE 95%-ACCURACY TRAP, which is what this entry is named after.
+
+A model reports 95% accuracy and everybody is pleased. Then you ask what fraction of the
+data is positive, and it is 5%.
+
+The model that predicts "negative" for every single item - a model with no logic in it
+at all, one line of code - also scores 95%. Your model may have learned nothing
+whatsoever and it is indistinguishable by accuracy.
+
+ALWAYS COMPARE ACCURACY TO THE BASE RATE. If accuracy is not clearly above "always
+predict the majority class", the number is meaningless. This is the single most useful
+habit on this page.
+
+TRAP 2: not asking which error is more expensive. Precision and recall trade against
+each other, so you MUST decide which one matters, and that is a business question:
+
+    SPAM FILTER          -> favour PRECISION. A false positive means a real email is
+                            deleted, possibly a job offer. Spam in the inbox is mildly
+                            annoying. Missing spam is cheap; losing mail is expensive.
+
+    CANCER SCREENING     -> favour RECALL. A false positive means an unnecessary follow-
+                            up test, which is unpleasant and survivable. A false negative
+                            means an untreated cancer.
+
+    FRAUD DETECTION      -> usually RECALL, but see the cost arithmetic in the sibling
+                            ROC entry, because a flood of false alarms has a real cost
+                            too and the balance can flip.
+
+Same mathematics, opposite conclusions. Section 9 works both.
+
+TRAP 3: precision is UNDEFINED when nothing is flagged. If TP + FP = 0, precision is
+0/0. Most libraries report 0.0 and emit a warning. A model that flags nothing does not
+have perfect precision - it has no precision, and reporting 0 rather than 1 is the
+correct convention.
+
+TRAP 4: maximising F1 without asking whether balance is what you want. F1 treats
+precision and recall as equally important. That is an assumption about your business, not
+a mathematical fact, and it is usually wrong for exactly the applications where the
+metrics matter. Section 9 of the ROC entry shows the F1-optimal threshold and the
+cost-optimal threshold landing in different places on the same model.
+
+TRAP 5: quoting precision and recall without the threshold. They are not properties of
+the model, they are properties of the model AT A CUTOFF. "Recall is 0.9" is incomplete;
+"recall is 0.9 at threshold 0.3, where precision is 0.15" is a statement.
+
+TRAP 6: mixing up which is which under pressure. Use the picture from section 2:
+precision reads DOWN the flagged column, recall reads ACROSS the actual-positives row.""",
+
+    """5. THE NAIVE METRIC FIRST, THEN THE REAL ONES.
+
+THE NAIVE METRIC: accuracy. "What fraction did the model get right?"
+
+It is the first thing anyone reaches for, it is intuitive, and on BALANCED data it is
+perfectly reasonable. The problem is that real detection problems are almost never
+balanced - fraud, disease, defects and spam are all rare by definition, and rarity is
+exactly what makes them worth detecting.
+
+WHY IT FAILS - the demonstration, with the numbers, because this is the part to be able
+to reproduce on a whiteboard:
+
+    Disease screening. 10,000 patients. 100 are actually ill (a 1% base rate).
+
+    MODEL A - a real model. It flags 180 patients.
+        TP = 90    (of the 100 ill, it caught 90)
+        FN = 10    (it missed 10)
+        FP = 90    (90 healthy people were flagged)
+        TN = 9,810
+        check: 90 + 10 + 90 + 9,810 = 10,000
+
+        accuracy = (90 + 9,810) / 10,000 = 9,900 / 10,000 = 0.99
+
+    MODEL B - one line of code: "predict healthy for everyone".
+        TP = 0
+        FN = 100   (every ill patient missed)
+        FP = 0
+        TN = 9,900
+        check: 0 + 100 + 0 + 9,900 = 10,000
+
+        accuracy = (0 + 9,900) / 10,000 = 9,900 / 10,000 = 0.99
+
+TWO MODELS. IDENTICAL ACCURACY - 99% each. One catches 90 of the 100 ill patients; the
+other catches none of them and contains no logic at all.
+
+Accuracy cannot distinguish a useful medical screening tool from a piece of string. That
+is not a subtle statistical point; it is a complete failure of the metric on the exact
+problems where it is most often quoted.
+
+WHY IT HAPPENS, stated as the mechanism: accuracy's numerator includes TN, and when 99%
+of the data is negative, TN alone is 99% of the total. The interesting boxes - TP, FP,
+FN - are a rounding error inside it. The metric is measuring the wrong thing so
+overwhelmingly that the right thing is invisible.
+
+THE REAL METRICS - precision and recall, which EXCLUDE TN ENTIRELY.
+
+Look back at the formulas: TP/(TP+FP) and TP/(TP+FN). Neither contains TN. That is
+precisely why they survive imbalance - the enormous, uninformative box is simply not in
+either calculation.
+
+    MODEL A: precision = 90/180 = 0.50    recall = 90/100 = 0.90
+    MODEL B: precision = 0/0 (undefined, reported 0)   recall = 0/100 = 0.00
+
+Now the two models are trivially distinguishable, and the trade-off is visible: Model A
+catches 90% of illness at the cost of half its alarms being false.
+
+THE FURTHER UPGRADE - F1, when you need one number.
+
+F1 = 2PR/(P+R). For Model A: 2(0.50)(0.90)/(0.50+0.90) = 0.90/1.40 = 0.643.
+For Model B: precision 0, recall 0, F1 = 0.
+
+Why the HARMONIC mean rather than the ordinary one: a model with precision 1.0 and recall
+0.0 would score 0.5 on an ordinary average - respectable-looking for something useless.
+The harmonic mean gives 0. It refuses to let a good score on one axis rescue a zero on
+the other, which is the behaviour a summary metric needs.
+
+BUT USE F1 KNOWINGLY: it asserts that precision and recall matter equally. For cancer
+screening they do not, and optimising F1 there is optimising the wrong thing.""",
+
+    """6. HOW TO USE THESE - the procedure, step by step.
+
+The one sentence that holds the whole idea: BUILD THE FOUR-BOX TABLE, COMPARE ACCURACY
+AGAINST THE MAJORITY-CLASS BASELINE TO SEE WHETHER IT MEANS ANYTHING, THEN CHOOSE
+BETWEEN PRECISION AND RECALL BY ASKING WHICH MISTAKE COSTS MORE.
+
+THERE IS A LOOP HERE - threshold tuning - and it needs an explicit stopping rule:
+
+  - Each pass picks a threshold, computes the four boxes at that threshold, and scores
+    them against your chosen objective.
+  - WHAT MAKES IT STOP: the objective must be fixed BEFORE the sweep - either a cost
+    function in real units, or a constraint like "recall must be at least 0.90, maximise
+    precision subject to that". Then the loop stops at the best point under that
+    objective.
+  - Without an objective fixed in advance, the loop does not terminate: every threshold
+    looks better on one metric and worse on another, and you will keep moving it forever
+    while feeling productive.
+  - And tune on a VALIDATION set, not the test set, or the threshold is fitted to the
+    data you were going to use to report your honest number.
+
+THE STEPS:
+
+  1. STATE WHICH CLASS IS POSITIVE, out loud. "Positive means fraudulent." Everything
+     inverts if this is wrong, and it is silently wrong surprisingly often.
+
+  2. GET THE BASE RATE - what fraction of items are actually positive. Before looking at
+     any model output.
+
+  3. COMPUTE THE MAJORITY-CLASS BASELINE ACCURACY. If 1% are positive, the baseline is
+     99%. Write it down; it is what every accuracy claim must be compared against.
+
+  4. BUILD THE CONFUSION MATRIX at your current threshold. Four counts. Check they sum
+     to the total - this catches most arithmetic errors immediately.
+
+  5. COMPUTE PRECISION AND RECALL. Precision divides by the flagged column, recall by the
+     actual-positive row.
+
+  6. DECIDE WHICH ERROR IS MORE EXPENSIVE, in real terms - money, harm, time. Not in the
+     abstract. If you can put numbers on the two error types, do it, and then the
+     threshold choice becomes arithmetic rather than taste.
+
+  7. CHOOSE THE METRIC TO OPTIMISE. Favour precision when false alarms are expensive;
+     favour recall when misses are expensive; use F1 only if they genuinely trade evenly.
+     Better than all three: state a constraint and optimise subject to it.
+
+  8. SWEEP THE THRESHOLD on validation data and pick the operating point under that
+     objective.
+
+  9. REPORT PRECISION AND RECALL TOGETHER, WITH THE THRESHOLD. Never one alone, and never
+     without saying where the cutoff was.
+
+ 10. RE-CHECK WHEN THE BASE RATE MOVES. Precision depends on the base rate - the same
+     model on a population with half as much fraud has worse precision at the same
+     threshold, with no change to the model at all. This is why models degrade in
+     production without anyone touching them.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a security guard at a gate, watching for the few people who should not be let in.
+Say a thousand people come through a day and two of them are trouble.
+
+At the end of the day you could ask: how many decisions did you get right? The answer is
+about 998 out of 1000, which sounds excellent. But a guard who is fast asleep also gets
+998 out of 1000 right, because almost everybody is fine. That number cannot tell the two
+guards apart, and it is the number everybody quotes.
+
+The useful questions are different, and there are two of them.
+
+The first: of the people you stopped, how many were actually trouble? If the guard
+stopped forty people to catch the two, then thirty-eight innocent people were pulled
+aside. That is a real cost - their time, their irritation, and the staff who had to
+process them.
+
+The second: of the people who actually were trouble, how many did you stop? If the guard
+caught one of the two, half of them walked straight in.
+
+Those two questions pull against each other. Tell the guard to stop anyone suspicious and
+they will catch both troublemakers - and detain a hundred innocent people. Tell them to
+stop only when they are certain and they will detain almost nobody - and miss most of the
+trouble.
+
+There is no setting that is right in general. It depends entirely on what it costs to
+wrongly stop someone versus what it costs to let the wrong person through. A gate at a
+music venue and a gate at a nuclear facility should be tuned differently, and neither is
+being tuned wrongly.
+
+And notice the one thing you can never learn from the overall right-answer rate: it counts
+all those thousands of correct wave-throughs, which nobody cares about, and buries the
+handful of decisions that actually mattered.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each quantity taken apart - what it holds, what it
+decides, and what makes it move.
+
+--- THE FOUR COUNTS ---
+
+    TP (TRUE POSITIVE)
+        HOLDS: cases the model flagged that really were positive.
+        DECIDES: the numerator of BOTH precision and recall. It is the only box that
+        appears in both, which is why improving TP is the only unambiguously good move.
+
+    FP (FALSE POSITIVE) - the false alarm
+        HOLDS: cases flagged that were actually negative.
+        DECIDES: precision, and nothing else. Rises as you lower the threshold.
+        REAL-WORLD MEANING: a real email in the spam folder; an innocent transaction
+        blocked; a healthy patient sent for a biopsy.
+
+    FN (FALSE NEGATIVE) - the miss
+        HOLDS: real cases the model let through.
+        DECIDES: recall, and nothing else. Rises as you raise the threshold.
+        REAL-WORLD MEANING: the fraud that went through; the cancer not caught.
+
+    TN (TRUE NEGATIVE)
+        HOLDS: correctly ignored negatives.
+        DECIDES: accuracy - and it appears in NO other metric on this page. On
+        imbalanced data it is enormous, which is exactly why it corrupts accuracy and
+        why precision and recall, which exclude it, survive.
+
+--- THE METRICS, NUMERATOR AND DENOMINATOR ---
+
+    PRECISION = TP / (TP + FP)
+        NUMERATOR:   correct alarms.
+        DENOMINATOR: ALL alarms - the whole "model says yes" column.
+        READS: down the flagged column.
+        ANSWERS: "when this thing fires, should I believe it?"
+        MOVES WITH: the threshold (up as you raise it) AND with the base rate - the same
+        model scores worse precision on a population with fewer positives, without
+        changing at all.
+        UNDEFINED WHEN: nothing was flagged (0/0). Convention is to report 0.
+
+    RECALL = TP / (TP + FN)
+        NUMERATOR:   cases caught.
+        DENOMINATOR: ALL real cases - the whole "actually yes" row.
+        READS: across the actual-positives row.
+        ANSWERS: "what fraction of the real problem am I catching?"
+        MOVES WITH: the threshold (down as you raise it). Does NOT depend on the base
+        rate, which is a genuinely useful property - it is stable when the population
+        changes.
+
+    ACCURACY = (TP + TN) / (TP + FP + FN + TN)
+        NUMERATOR:   everything correct, including the huge TN box.
+        DENOMINATOR: everything.
+        ANSWERS: almost nothing useful when classes are imbalanced.
+        MUST BE COMPARED AGAINST: the majority-class baseline, every single time.
+
+    F1 = 2 x (precision x recall) / (precision + recall)
+        WHAT IT IS: the harmonic mean of the two.
+        DECIDES: a single ranking number when precision and recall matter equally.
+        WHY HARMONIC: it goes to 0 if either input is 0, so a perfect score on one axis
+        cannot disguise a zero on the other.
+        ASSUMES: equal weighting. That is a business claim. If it is false, F-beta lets
+        you weight recall beta times more than precision.
+
+--- WHAT IS NOT IN ANY OF THIS ---
+
+    The COST of each error type. None of these metrics knows that a missed cancer is
+    worse than an unnecessary scan. That information has to come from you, and section
+    9 of the ROC entry shows what happens when you supply it.""",
+
+    """9. WORKED WITH REAL NUMBERS - AND THE CASE WHERE THE ANSWER FLIPS.
+
+CASE 1 - DISEASE SCREENING. 10,000 patients, 100 actually ill. The model flags 180.
+
+                          MODEL SAYS ILL      MODEL SAYS HEALTHY
+                       +------------------+---------------------+
+    ACTUALLY ILL       |   TP = 90        |   FN = 10           |    100
+                       +------------------+---------------------+
+    ACTUALLY HEALTHY   |   FP = 90        |   TN = 9,810        |  9,900
+                       +------------------+---------------------+
+                             180                9,820             10,000
+
+    precision = 90 / 180   = 0.50      half of all alarms are false
+    recall    = 90 / 100   = 0.90      nine of every ten ill patients caught
+    accuracy  = 9,900 / 10,000 = 0.99
+    F1        = 2(0.50)(0.90) / (0.50 + 0.90) = 0.90 / 1.40 = 0.643
+
+    BASELINE CHECK: predicting "healthy" for everyone gives TP 0, FP 0, FN 100,
+    TN 9,900, and accuracy 9,900/10,000 = 0.99 - IDENTICAL. So the 0.99 tells you
+    nothing at all. The recall of 0.90 versus 0.00 is what distinguishes the models.
+
+    VERDICT: for screening, this is a good model. Fifty per cent of alarms being false
+    means 90 healthy people get a follow-up test they did not need - unpleasant,
+    survivable. Ten missed illnesses is the number that matters, and pushing recall
+    higher at the cost of more false alarms would be the right direction.
+
+CASE 2 - SPAM FILTERING. Same mathematics, and the verdict INVERTS.
+
+    10,000 emails, 2,000 of them spam.
+
+    AGGRESSIVE MODEL                       CONSERVATIVE MODEL
+       TP = 1,960   FN = 40                   TP = 1,600   FN = 400
+       FP = 300     TN = 7,700                FP = 20      TN = 7,980
+       check: 2,000 spam, 8,000 real         check: 2,000 spam, 8,000 real
+
+       precision = 1,960/2,260 = 0.867       precision = 1,600/1,620 = 0.988
+       recall    = 1,960/2,000 = 0.980       recall    = 1,600/2,000 = 0.800
+
+       300 REAL EMAILS IN THE SPAM FOLDER    20 REAL EMAILS IN THE SPAM FOLDER
+       40 spam in the inbox                  400 spam in the inbox
+
+    In case 1, the model with higher RECALL was clearly better. Here, the model with
+    higher recall is clearly WORSE. The conservative filter loses 20 real emails instead
+    of 300, and the price is 400 pieces of spam the user has to delete - which takes
+    about a minute.
+
+    Three hundred lost emails might include an interview invitation. Four hundred spam
+    messages in the inbox is a mild irritation.
+
+    SAME METRICS. SAME ARITHMETIC. OPPOSITE CONCLUSION - because the COST of a false
+    positive relative to a false negative is reversed between the two applications. That
+    reversal is the whole lesson, and it is why "which metric should I optimise?" can
+    never be answered without knowing what the errors cost.
+
+CASE 3 - THE EXTREME IMBALANCE THAT BREAKS EVERYTHING.
+
+    Rare-defect detection. 1,000,000 items, 1,000 defective (0.1%).
+    A model predicts "no defect" for every item.
+
+       TP = 0    FN = 1,000    FP = 0    TN = 999,000
+
+       accuracy  = 999,000 / 1,000,000 = 0.999    <- looks superb
+       recall    = 0 / 1,000 = 0.00               <- catches nothing
+       precision = 0 / 0     = undefined, reported as 0
+
+    A 99.9% accurate model that has never once detected a defect. If a report quotes
+    accuracy on a problem like this, the number is not merely weak evidence - it is
+    evidence of nothing.
+
+CASE 4 - PRECISION@k, the version search and recommendations actually use.
+
+    A retrieval system returns 10 documents for a query. 4 are relevant. There are 20
+    relevant documents in the whole corpus.
+
+       precision@10 = 4 / 10 = 0.40      of what I showed, 40% was useful
+       recall@10    = 4 / 20 = 0.20      of what exists, I surfaced 20%
+
+    Why precision@k rather than plain precision: the user sees one page. Whether the
+    system could eventually have found the other 16 documents is irrelevant to the
+    experience of looking at ten results, four of which are useful.""",
+
+    """10. THE LIMITS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHICH METRIC, AS A DECISION RULE:
+
+    FALSE ALARMS EXPENSIVE            -> favour PRECISION
+    (spam filtering, content removal, blocking transactions, anything that inconveniences
+     an innocent user)
+
+    MISSES EXPENSIVE                  -> favour RECALL
+    (disease screening, fraud, security, safety-critical detection)
+
+    GENUINELY BALANCED                -> F1, but check that "balanced" is true rather
+                                         than assumed
+
+    IMBALANCED DATA                   -> precision, recall, F1, and PR-AUC.
+                                         NEVER accuracy, and prefer the PR curve over the
+                                         ROC curve (see the sibling ROC entry for why the
+                                         false-positive rate hides the problem)
+
+    BETTER THAN ANY OF THESE, when you can get it: state a CONSTRAINT and optimise
+    subject to it. "Recall must be at least 0.95; among thresholds meeting that, take the
+    highest precision." This encodes the actual requirement instead of hoping a summary
+    statistic happens to represent it.
+
+THE INTERVIEW QUESTION AND THE FOLLOW-UP THAT SEPARATES CANDIDATES:
+
+    "Our fraud model is 99.5% accurate. Is it good?"
+
+The weak answer says yes, or asks about the training data. The strong answer asks ONE
+question first: WHAT IS THE BASE RATE?
+
+    If 0.5% of transactions are fraudulent, then "approve everything" scores 99.5% too,
+    and the model may have learned nothing. Ask for precision and recall at the operating
+    threshold, and the confusion matrix if they have it.
+
+    If fraud is 30% of transactions, 99.5% accuracy is genuinely remarkable and the next
+    question is whether the test set leaked.
+
+The same number means opposite things depending on a fact the question did not include -
+which is why asking for it is the answer.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Precision went down in production and we didn't change the model. Why?" The base
+    rate moved. Precision depends on it; recall does not. Fewer positives in the
+    population means a larger share of your alarms are false, with an identical model.
+  - "Can you have high precision and high recall?" Yes, if the model is genuinely good -
+    they only trade against each other along a fixed model's threshold curve. Improving
+    the model itself moves both. Confusing the trade-off along one curve with the
+    trade-off between models is a common error.
+  - "Why not just always optimise F1?" Because it asserts the two errors cost the same,
+    which is false in most applications where these metrics matter.
+
+THE #1 MISTAKE: quoting accuracy on imbalanced data without comparing it to the
+majority-class baseline. It is the mistake this entry is named after, it appears in real
+production dashboards constantly, and the fix is one subtraction you can do in your head.
+
+RUNNER-UP: reporting precision or recall alone. Either can be driven to 1.0 by a useless
+model, so a single number is not evidence of anything.
+
+TAKEAWAY: precision divides by what you FLAGGED and recall by what actually EXISTS - so
+before choosing between them, ask what a false alarm costs and what a miss costs, and
+always check whether your accuracy is beating the majority-class baseline.""",
+]
+
+_EX_P1AO["F1 score"] = [
+    """1. THE GOAL - two questions that sound alike and are not.
+
+A model says yes or no about each item. Two different questions can be asked about how
+well it did, and confusing them is one of the most common mistakes in applied machine
+learning:
+
+    PRECISION:  "Of the ones I flagged, how many were actually right?"
+    RECALL:     "Of all the ones that were actually there, how many did I catch?"
+
+Same model, same predictions, two completely different numbers - because they have
+DIFFERENT DENOMINATORS. Precision divides by what you FLAGGED. Recall divides by what
+actually EXISTS.
+
+A concrete pair to hold onto:
+
+    A spam filter that sends every email to the spam folder has RECALL 1.0 - it caught
+    every spam message. Its precision is terrible, and it is useless.
+
+    A spam filter that flags only the one message it is absolutely certain about has
+    PRECISION 1.0. Its recall is near zero, and it is also useless.
+
+So neither number alone tells you anything. You need both, and more importantly you need
+to know WHICH ONE MATTERS FOR THIS PROBLEM - which is a question about the cost of being
+wrong, not a question about mathematics.
+
+And the reason this topic is asked in almost every ML interview is the third number:
+
+    ACCURACY - "what fraction did I get right overall" - is the one everybody reaches
+    for first, and on imbalanced data it is actively misleading. Section 5 shows a model
+    with 99% accuracy that catches zero sick patients, and another model with EXACTLY
+    the same accuracy that catches 90 of them. Accuracy cannot tell them apart.""",
+
+    """2. THE INTUITION - one table, four boxes, two different denominators.
+
+Everything here comes from one 2x2 table called the CONFUSION MATRIX. Rows are what was
+true; columns are what the model said.
+
+                          MODEL SAYS YES        MODEL SAYS NO
+                       +---------------------+---------------------+
+    ACTUALLY YES       |  TP  true positive  |  FN false negative  |
+                       |  caught it          |  MISSED it          |
+                       +---------------------+---------------------+
+    ACTUALLY NO        |  FP false positive  |  TN true negative   |
+                       |  FALSE ALARM        |  correctly ignored  |
+                       +---------------------+---------------------+
+
+Now draw the two metrics as which boxes they divide by, because that is the entire
+difference:
+
+    PRECISION  =  TP / (TP + FP)      the MODEL SAYS YES column
+                                      "of my alarms, how many were real?"
+
+                       +---------------------+
+                       |  TP                 |
+                       +---------------------+
+                       |  FP                 |
+                       +---------------------+
+                        ^^^^^^^^^^ this column
+
+    RECALL     =  TP / (TP + FN)      the ACTUALLY YES row
+                                      "of the real cases, how many did I catch?"
+
+                       +---------------------+---------------------+
+                       |  TP                 |  FN                 |
+                       +---------------------+---------------------+
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this row
+
+Precision reads DOWN the column of things you flagged. Recall reads ACROSS the row of
+things that were really there. Once you can picture which direction each one reads, you
+will never mix them up again - and mixing them up is the single most common error on
+this topic.
+
+And ACCURACY = (TP + TN) / everything, which includes that enormous TN box. When one
+class dominates, TN is so large that it drowns out every other number. That is the whole
+of the 95%-accuracy trap.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POSITIVE / NEGATIVE. The "positive" class is the thing you are trying to detect - spam,
+fraud, disease. It is not "good"; a positive cancer test is bad news. Getting this
+labelling backwards flips every metric, so state it explicitly before you compute
+anything.
+
+TRUE POSITIVE (TP). Model said yes, and it was yes. A caught fraud.
+
+FALSE POSITIVE (FP). Model said yes, but it was no. A FALSE ALARM. Also called a Type I
+error.
+
+FALSE NEGATIVE (FN). Model said no, but it was yes. A MISS. Also called a Type II error.
+
+TRUE NEGATIVE (TN). Model said no, and it was no. Correctly ignored.
+
+CONFUSION MATRIX. The 2x2 table of those four counts. Everything on this page is
+arithmetic on it.
+
+PRECISION = TP / (TP + FP). Of everything flagged, the fraction that was right. Falls
+when you raise false alarms.
+
+RECALL = TP / (TP + FN). Of everything actually positive, the fraction caught. Also
+called SENSITIVITY or TRUE POSITIVE RATE. Falls when you miss cases.
+
+ACCURACY = (TP + TN) / (TP + FP + FN + TN). Fraction correct overall. Dominated by TN
+when the negative class is large.
+
+F1 SCORE = 2 x (precision x recall) / (precision + recall). The HARMONIC MEAN of the
+two. Harmonic rather than ordinary mean because it punishes imbalance: with precision
+1.0 and recall 0.0, the ordinary average is a respectable 0.5 while F1 is 0. That is the
+behaviour you want from a summary number - a model that is useless on one axis should
+not score at the halfway mark.
+
+CLASS IMBALANCE. When one class massively outnumbers the other - 0.1% fraud, 1% disease.
+This is the normal case in real applications and the case where accuracy fails.
+
+BASE RATE. The fraction of items that are actually positive. The first thing to ask
+about any classification claim, and section 10 explains why.
+
+BASELINE. The score achieved by a trivial strategy, usually "always predict the majority
+class". Your model must beat this or it has learned nothing.
+
+PRECISION@k. In search and recommendations, precision measured on just the top k results
+- because a user only sees the first page.
+
+THRESHOLD. Most models output a probability, and you turn it into yes/no by comparing
+against a cutoff. Moving the cutoff trades precision against recall. This is the subject
+of the sibling entry on ROC and AUC; here just note that precision and recall are always
+quoted AT some threshold.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE 95%-ACCURACY TRAP, which is what this entry is named after.
+
+A model reports 95% accuracy and everybody is pleased. Then you ask what fraction of the
+data is positive, and it is 5%.
+
+The model that predicts "negative" for every single item - a model with no logic in it
+at all, one line of code - also scores 95%. Your model may have learned nothing
+whatsoever and it is indistinguishable by accuracy.
+
+ALWAYS COMPARE ACCURACY TO THE BASE RATE. If accuracy is not clearly above "always
+predict the majority class", the number is meaningless. This is the single most useful
+habit on this page.
+
+TRAP 2: not asking which error is more expensive. Precision and recall trade against
+each other, so you MUST decide which one matters, and that is a business question:
+
+    SPAM FILTER          -> favour PRECISION. A false positive means a real email is
+                            deleted, possibly a job offer. Spam in the inbox is mildly
+                            annoying. Missing spam is cheap; losing mail is expensive.
+
+    CANCER SCREENING     -> favour RECALL. A false positive means an unnecessary follow-
+                            up test, which is unpleasant and survivable. A false negative
+                            means an untreated cancer.
+
+    FRAUD DETECTION      -> usually RECALL, but see the cost arithmetic in the sibling
+                            ROC entry, because a flood of false alarms has a real cost
+                            too and the balance can flip.
+
+Same mathematics, opposite conclusions. Section 9 works both.
+
+TRAP 3: precision is UNDEFINED when nothing is flagged. If TP + FP = 0, precision is
+0/0. Most libraries report 0.0 and emit a warning. A model that flags nothing does not
+have perfect precision - it has no precision, and reporting 0 rather than 1 is the
+correct convention.
+
+TRAP 4: maximising F1 without asking whether balance is what you want. F1 treats
+precision and recall as equally important. That is an assumption about your business, not
+a mathematical fact, and it is usually wrong for exactly the applications where the
+metrics matter. Section 9 of the ROC entry shows the F1-optimal threshold and the
+cost-optimal threshold landing in different places on the same model.
+
+TRAP 5: quoting precision and recall without the threshold. They are not properties of
+the model, they are properties of the model AT A CUTOFF. "Recall is 0.9" is incomplete;
+"recall is 0.9 at threshold 0.3, where precision is 0.15" is a statement.
+
+TRAP 6: mixing up which is which under pressure. Use the picture from section 2:
+precision reads DOWN the flagged column, recall reads ACROSS the actual-positives row.""",
+
+    """5. THE NAIVE METRIC FIRST, THEN THE REAL ONES.
+
+THE NAIVE METRIC: accuracy. "What fraction did the model get right?"
+
+It is the first thing anyone reaches for, it is intuitive, and on BALANCED data it is
+perfectly reasonable. The problem is that real detection problems are almost never
+balanced - fraud, disease, defects and spam are all rare by definition, and rarity is
+exactly what makes them worth detecting.
+
+WHY IT FAILS - the demonstration, with the numbers, because this is the part to be able
+to reproduce on a whiteboard:
+
+    Disease screening. 10,000 patients. 100 are actually ill (a 1% base rate).
+
+    MODEL A - a real model. It flags 180 patients.
+        TP = 90    (of the 100 ill, it caught 90)
+        FN = 10    (it missed 10)
+        FP = 90    (90 healthy people were flagged)
+        TN = 9,810
+        check: 90 + 10 + 90 + 9,810 = 10,000
+
+        accuracy = (90 + 9,810) / 10,000 = 9,900 / 10,000 = 0.99
+
+    MODEL B - one line of code: "predict healthy for everyone".
+        TP = 0
+        FN = 100   (every ill patient missed)
+        FP = 0
+        TN = 9,900
+        check: 0 + 100 + 0 + 9,900 = 10,000
+
+        accuracy = (0 + 9,900) / 10,000 = 9,900 / 10,000 = 0.99
+
+TWO MODELS. IDENTICAL ACCURACY - 99% each. One catches 90 of the 100 ill patients; the
+other catches none of them and contains no logic at all.
+
+Accuracy cannot distinguish a useful medical screening tool from a piece of string. That
+is not a subtle statistical point; it is a complete failure of the metric on the exact
+problems where it is most often quoted.
+
+WHY IT HAPPENS, stated as the mechanism: accuracy's numerator includes TN, and when 99%
+of the data is negative, TN alone is 99% of the total. The interesting boxes - TP, FP,
+FN - are a rounding error inside it. The metric is measuring the wrong thing so
+overwhelmingly that the right thing is invisible.
+
+THE REAL METRICS - precision and recall, which EXCLUDE TN ENTIRELY.
+
+Look back at the formulas: TP/(TP+FP) and TP/(TP+FN). Neither contains TN. That is
+precisely why they survive imbalance - the enormous, uninformative box is simply not in
+either calculation.
+
+    MODEL A: precision = 90/180 = 0.50    recall = 90/100 = 0.90
+    MODEL B: precision = 0/0 (undefined, reported 0)   recall = 0/100 = 0.00
+
+Now the two models are trivially distinguishable, and the trade-off is visible: Model A
+catches 90% of illness at the cost of half its alarms being false.
+
+THE FURTHER UPGRADE - F1, when you need one number.
+
+F1 = 2PR/(P+R). For Model A: 2(0.50)(0.90)/(0.50+0.90) = 0.90/1.40 = 0.643.
+For Model B: precision 0, recall 0, F1 = 0.
+
+Why the HARMONIC mean rather than the ordinary one: a model with precision 1.0 and recall
+0.0 would score 0.5 on an ordinary average - respectable-looking for something useless.
+The harmonic mean gives 0. It refuses to let a good score on one axis rescue a zero on
+the other, which is the behaviour a summary metric needs.
+
+BUT USE F1 KNOWINGLY: it asserts that precision and recall matter equally. For cancer
+screening they do not, and optimising F1 there is optimising the wrong thing.""",
+
+    """6. HOW TO USE THESE - the procedure, step by step.
+
+The one sentence that holds the whole idea: BUILD THE FOUR-BOX TABLE, COMPARE ACCURACY
+AGAINST THE MAJORITY-CLASS BASELINE TO SEE WHETHER IT MEANS ANYTHING, THEN CHOOSE
+BETWEEN PRECISION AND RECALL BY ASKING WHICH MISTAKE COSTS MORE.
+
+THERE IS A LOOP HERE - threshold tuning - and it needs an explicit stopping rule:
+
+  - Each pass picks a threshold, computes the four boxes at that threshold, and scores
+    them against your chosen objective.
+  - WHAT MAKES IT STOP: the objective must be fixed BEFORE the sweep - either a cost
+    function in real units, or a constraint like "recall must be at least 0.90, maximise
+    precision subject to that". Then the loop stops at the best point under that
+    objective.
+  - Without an objective fixed in advance, the loop does not terminate: every threshold
+    looks better on one metric and worse on another, and you will keep moving it forever
+    while feeling productive.
+  - And tune on a VALIDATION set, not the test set, or the threshold is fitted to the
+    data you were going to use to report your honest number.
+
+THE STEPS:
+
+  1. STATE WHICH CLASS IS POSITIVE, out loud. "Positive means fraudulent." Everything
+     inverts if this is wrong, and it is silently wrong surprisingly often.
+
+  2. GET THE BASE RATE - what fraction of items are actually positive. Before looking at
+     any model output.
+
+  3. COMPUTE THE MAJORITY-CLASS BASELINE ACCURACY. If 1% are positive, the baseline is
+     99%. Write it down; it is what every accuracy claim must be compared against.
+
+  4. BUILD THE CONFUSION MATRIX at your current threshold. Four counts. Check they sum
+     to the total - this catches most arithmetic errors immediately.
+
+  5. COMPUTE PRECISION AND RECALL. Precision divides by the flagged column, recall by the
+     actual-positive row.
+
+  6. DECIDE WHICH ERROR IS MORE EXPENSIVE, in real terms - money, harm, time. Not in the
+     abstract. If you can put numbers on the two error types, do it, and then the
+     threshold choice becomes arithmetic rather than taste.
+
+  7. CHOOSE THE METRIC TO OPTIMISE. Favour precision when false alarms are expensive;
+     favour recall when misses are expensive; use F1 only if they genuinely trade evenly.
+     Better than all three: state a constraint and optimise subject to it.
+
+  8. SWEEP THE THRESHOLD on validation data and pick the operating point under that
+     objective.
+
+  9. REPORT PRECISION AND RECALL TOGETHER, WITH THE THRESHOLD. Never one alone, and never
+     without saying where the cutoff was.
+
+ 10. RE-CHECK WHEN THE BASE RATE MOVES. Precision depends on the base rate - the same
+     model on a population with half as much fraud has worse precision at the same
+     threshold, with no change to the model at all. This is why models degrade in
+     production without anyone touching them.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a security guard at a gate, watching for the few people who should not be let in.
+Say a thousand people come through a day and two of them are trouble.
+
+At the end of the day you could ask: how many decisions did you get right? The answer is
+about 998 out of 1000, which sounds excellent. But a guard who is fast asleep also gets
+998 out of 1000 right, because almost everybody is fine. That number cannot tell the two
+guards apart, and it is the number everybody quotes.
+
+The useful questions are different, and there are two of them.
+
+The first: of the people you stopped, how many were actually trouble? If the guard
+stopped forty people to catch the two, then thirty-eight innocent people were pulled
+aside. That is a real cost - their time, their irritation, and the staff who had to
+process them.
+
+The second: of the people who actually were trouble, how many did you stop? If the guard
+caught one of the two, half of them walked straight in.
+
+Those two questions pull against each other. Tell the guard to stop anyone suspicious and
+they will catch both troublemakers - and detain a hundred innocent people. Tell them to
+stop only when they are certain and they will detain almost nobody - and miss most of the
+trouble.
+
+There is no setting that is right in general. It depends entirely on what it costs to
+wrongly stop someone versus what it costs to let the wrong person through. A gate at a
+music venue and a gate at a nuclear facility should be tuned differently, and neither is
+being tuned wrongly.
+
+And notice the one thing you can never learn from the overall right-answer rate: it counts
+all those thousands of correct wave-throughs, which nobody cares about, and buries the
+handful of decisions that actually mattered.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each quantity taken apart - what it holds, what it
+decides, and what makes it move.
+
+--- THE FOUR COUNTS ---
+
+    TP (TRUE POSITIVE)
+        HOLDS: cases the model flagged that really were positive.
+        DECIDES: the numerator of BOTH precision and recall. It is the only box that
+        appears in both, which is why improving TP is the only unambiguously good move.
+
+    FP (FALSE POSITIVE) - the false alarm
+        HOLDS: cases flagged that were actually negative.
+        DECIDES: precision, and nothing else. Rises as you lower the threshold.
+        REAL-WORLD MEANING: a real email in the spam folder; an innocent transaction
+        blocked; a healthy patient sent for a biopsy.
+
+    FN (FALSE NEGATIVE) - the miss
+        HOLDS: real cases the model let through.
+        DECIDES: recall, and nothing else. Rises as you raise the threshold.
+        REAL-WORLD MEANING: the fraud that went through; the cancer not caught.
+
+    TN (TRUE NEGATIVE)
+        HOLDS: correctly ignored negatives.
+        DECIDES: accuracy - and it appears in NO other metric on this page. On
+        imbalanced data it is enormous, which is exactly why it corrupts accuracy and
+        why precision and recall, which exclude it, survive.
+
+--- THE METRICS, NUMERATOR AND DENOMINATOR ---
+
+    PRECISION = TP / (TP + FP)
+        NUMERATOR:   correct alarms.
+        DENOMINATOR: ALL alarms - the whole "model says yes" column.
+        READS: down the flagged column.
+        ANSWERS: "when this thing fires, should I believe it?"
+        MOVES WITH: the threshold (up as you raise it) AND with the base rate - the same
+        model scores worse precision on a population with fewer positives, without
+        changing at all.
+        UNDEFINED WHEN: nothing was flagged (0/0). Convention is to report 0.
+
+    RECALL = TP / (TP + FN)
+        NUMERATOR:   cases caught.
+        DENOMINATOR: ALL real cases - the whole "actually yes" row.
+        READS: across the actual-positives row.
+        ANSWERS: "what fraction of the real problem am I catching?"
+        MOVES WITH: the threshold (down as you raise it). Does NOT depend on the base
+        rate, which is a genuinely useful property - it is stable when the population
+        changes.
+
+    ACCURACY = (TP + TN) / (TP + FP + FN + TN)
+        NUMERATOR:   everything correct, including the huge TN box.
+        DENOMINATOR: everything.
+        ANSWERS: almost nothing useful when classes are imbalanced.
+        MUST BE COMPARED AGAINST: the majority-class baseline, every single time.
+
+    F1 = 2 x (precision x recall) / (precision + recall)
+        WHAT IT IS: the harmonic mean of the two.
+        DECIDES: a single ranking number when precision and recall matter equally.
+        WHY HARMONIC: it goes to 0 if either input is 0, so a perfect score on one axis
+        cannot disguise a zero on the other.
+        ASSUMES: equal weighting. That is a business claim. If it is false, F-beta lets
+        you weight recall beta times more than precision.
+
+--- WHAT IS NOT IN ANY OF THIS ---
+
+    The COST of each error type. None of these metrics knows that a missed cancer is
+    worse than an unnecessary scan. That information has to come from you, and section
+    9 of the ROC entry shows what happens when you supply it.""",
+
+    """9. WORKED WITH REAL NUMBERS - AND THE CASE WHERE THE ANSWER FLIPS.
+
+CASE 1 - DISEASE SCREENING. 10,000 patients, 100 actually ill. The model flags 180.
+
+                          MODEL SAYS ILL      MODEL SAYS HEALTHY
+                       +------------------+---------------------+
+    ACTUALLY ILL       |   TP = 90        |   FN = 10           |    100
+                       +------------------+---------------------+
+    ACTUALLY HEALTHY   |   FP = 90        |   TN = 9,810        |  9,900
+                       +------------------+---------------------+
+                             180                9,820             10,000
+
+    precision = 90 / 180   = 0.50      half of all alarms are false
+    recall    = 90 / 100   = 0.90      nine of every ten ill patients caught
+    accuracy  = 9,900 / 10,000 = 0.99
+    F1        = 2(0.50)(0.90) / (0.50 + 0.90) = 0.90 / 1.40 = 0.643
+
+    BASELINE CHECK: predicting "healthy" for everyone gives TP 0, FP 0, FN 100,
+    TN 9,900, and accuracy 9,900/10,000 = 0.99 - IDENTICAL. So the 0.99 tells you
+    nothing at all. The recall of 0.90 versus 0.00 is what distinguishes the models.
+
+    VERDICT: for screening, this is a good model. Fifty per cent of alarms being false
+    means 90 healthy people get a follow-up test they did not need - unpleasant,
+    survivable. Ten missed illnesses is the number that matters, and pushing recall
+    higher at the cost of more false alarms would be the right direction.
+
+CASE 2 - SPAM FILTERING. Same mathematics, and the verdict INVERTS.
+
+    10,000 emails, 2,000 of them spam.
+
+    AGGRESSIVE MODEL                       CONSERVATIVE MODEL
+       TP = 1,960   FN = 40                   TP = 1,600   FN = 400
+       FP = 300     TN = 7,700                FP = 20      TN = 7,980
+       check: 2,000 spam, 8,000 real         check: 2,000 spam, 8,000 real
+
+       precision = 1,960/2,260 = 0.867       precision = 1,600/1,620 = 0.988
+       recall    = 1,960/2,000 = 0.980       recall    = 1,600/2,000 = 0.800
+
+       300 REAL EMAILS IN THE SPAM FOLDER    20 REAL EMAILS IN THE SPAM FOLDER
+       40 spam in the inbox                  400 spam in the inbox
+
+    In case 1, the model with higher RECALL was clearly better. Here, the model with
+    higher recall is clearly WORSE. The conservative filter loses 20 real emails instead
+    of 300, and the price is 400 pieces of spam the user has to delete - which takes
+    about a minute.
+
+    Three hundred lost emails might include an interview invitation. Four hundred spam
+    messages in the inbox is a mild irritation.
+
+    SAME METRICS. SAME ARITHMETIC. OPPOSITE CONCLUSION - because the COST of a false
+    positive relative to a false negative is reversed between the two applications. That
+    reversal is the whole lesson, and it is why "which metric should I optimise?" can
+    never be answered without knowing what the errors cost.
+
+CASE 3 - THE EXTREME IMBALANCE THAT BREAKS EVERYTHING.
+
+    Rare-defect detection. 1,000,000 items, 1,000 defective (0.1%).
+    A model predicts "no defect" for every item.
+
+       TP = 0    FN = 1,000    FP = 0    TN = 999,000
+
+       accuracy  = 999,000 / 1,000,000 = 0.999    <- looks superb
+       recall    = 0 / 1,000 = 0.00               <- catches nothing
+       precision = 0 / 0     = undefined, reported as 0
+
+    A 99.9% accurate model that has never once detected a defect. If a report quotes
+    accuracy on a problem like this, the number is not merely weak evidence - it is
+    evidence of nothing.
+
+CASE 4 - PRECISION@k, the version search and recommendations actually use.
+
+    A retrieval system returns 10 documents for a query. 4 are relevant. There are 20
+    relevant documents in the whole corpus.
+
+       precision@10 = 4 / 10 = 0.40      of what I showed, 40% was useful
+       recall@10    = 4 / 20 = 0.20      of what exists, I surfaced 20%
+
+    Why precision@k rather than plain precision: the user sees one page. Whether the
+    system could eventually have found the other 16 documents is irrelevant to the
+    experience of looking at ten results, four of which are useful.""",
+
+    """10. THE LIMITS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHICH METRIC, AS A DECISION RULE:
+
+    FALSE ALARMS EXPENSIVE            -> favour PRECISION
+    (spam filtering, content removal, blocking transactions, anything that inconveniences
+     an innocent user)
+
+    MISSES EXPENSIVE                  -> favour RECALL
+    (disease screening, fraud, security, safety-critical detection)
+
+    GENUINELY BALANCED                -> F1, but check that "balanced" is true rather
+                                         than assumed
+
+    IMBALANCED DATA                   -> precision, recall, F1, and PR-AUC.
+                                         NEVER accuracy, and prefer the PR curve over the
+                                         ROC curve (see the sibling ROC entry for why the
+                                         false-positive rate hides the problem)
+
+    BETTER THAN ANY OF THESE, when you can get it: state a CONSTRAINT and optimise
+    subject to it. "Recall must be at least 0.95; among thresholds meeting that, take the
+    highest precision." This encodes the actual requirement instead of hoping a summary
+    statistic happens to represent it.
+
+THE INTERVIEW QUESTION AND THE FOLLOW-UP THAT SEPARATES CANDIDATES:
+
+    "Our fraud model is 99.5% accurate. Is it good?"
+
+The weak answer says yes, or asks about the training data. The strong answer asks ONE
+question first: WHAT IS THE BASE RATE?
+
+    If 0.5% of transactions are fraudulent, then "approve everything" scores 99.5% too,
+    and the model may have learned nothing. Ask for precision and recall at the operating
+    threshold, and the confusion matrix if they have it.
+
+    If fraud is 30% of transactions, 99.5% accuracy is genuinely remarkable and the next
+    question is whether the test set leaked.
+
+The same number means opposite things depending on a fact the question did not include -
+which is why asking for it is the answer.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Precision went down in production and we didn't change the model. Why?" The base
+    rate moved. Precision depends on it; recall does not. Fewer positives in the
+    population means a larger share of your alarms are false, with an identical model.
+  - "Can you have high precision and high recall?" Yes, if the model is genuinely good -
+    they only trade against each other along a fixed model's threshold curve. Improving
+    the model itself moves both. Confusing the trade-off along one curve with the
+    trade-off between models is a common error.
+  - "Why not just always optimise F1?" Because it asserts the two errors cost the same,
+    which is false in most applications where these metrics matter.
+
+THE #1 MISTAKE: quoting accuracy on imbalanced data without comparing it to the
+majority-class baseline. It is the mistake this entry is named after, it appears in real
+production dashboards constantly, and the fix is one subtraction you can do in your head.
+
+RUNNER-UP: reporting precision or recall alone. Either can be driven to 1.0 by a useless
+model, so a single number is not evidence of anything.
+
+TAKEAWAY: precision divides by what you FLAGGED and recall by what actually EXISTS - so
+before choosing between them, ask what a false alarm costs and what a miss costs, and
+always check whether your accuracy is beating the majority-class baseline.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
