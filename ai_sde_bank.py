@@ -214945,6 +214945,1779 @@ not guessed but derived, since b bands of r rows puts the detection S-curve's mi
 which is why 16x8 gives 0.71 and matches a 0.70 threshold almost exactly.""",
 ]
 
+_EX_P1AO["Design a Feature Store"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the same feature, computed the same way, in training and in production
+
+A FEATURE STORE is the system that computes, stores and serves the inputs to your models. It exists to
+solve a problem that sounds administrative and is not:
+
+    THE FEATURE YOUR MODEL WAS TRAINED ON AND THE FEATURE IT IS SCORED ON IN PRODUCTION MUST BE THE
+    SAME NUMBER, COMPUTED THE SAME WAY. WITHOUT DELIBERATE INFRASTRUCTURE, THEY WILL NOT BE.
+
+THE THREE PROBLEMS IT SOLVES, in order of how much damage they do:
+
+    1. TRAINING/SERVING SKEW. "Average order value over the last 30 days" is written twice - once in
+       SQL against the warehouse for training, once in Python or Java in the serving path. The two
+       definitions drift. THE MODEL SILENTLY PERFORMS WORSE IN PRODUCTION THAN OFFLINE AND NOBODY CAN
+       SAY WHY. It is the most common silent failure in production ML.
+
+    2. POINT-IN-TIME CORRECTNESS. When you build a training row for a prediction made on 1 March, every
+       feature must be computed using ONLY data available on 1 March. Miss the time filter once and
+       you have leakage, an excellent offline number, and a model that disappoints. SECTION 2 MEASURES
+       EXACTLY WHAT THAT COSTS.
+
+    3. REUSE. Ten teams each independently computing "customer lifetime spend" produce ten slightly
+       different numbers and ten pipelines to maintain.
+
+THE ONE-LINE VERSION: A FEATURE STORE IS A SHARED, VERSIONED, TIME-AWARE DEFINITION OF EVERY FEATURE,
+WITH TWO SERVING PATHS - a batch path for training and an online path for inference - GUARANTEED TO
+AGREE.
+
+AND THE HONEST FRAMING TO OPEN WITH: MOST TEAMS DO NOT NEED ONE. With three models and one team, a
+shared Python library of feature functions plus a nightly table gets you most of the benefit. THE COST
+IS JUSTIFIED WHEN MANY TEAMS SHARE FEATURES, OR WHEN LOW-LATENCY ONLINE SERVING IS REQUIRED. Saying
+that first is a seniority signal, not a hedge.
+
+TERMS AS THEY APPEAR:
+- ENTITY: the thing a feature describes - a user, a merchant, a product.
+- POINT-IN-TIME JOIN: assembling a training row using only data that existed at that row's timestamp.
+- OFFLINE / ONLINE STORE: the batch store for training, the low-latency store for serving.""",
+
+    """2. THE MEASUREMENT - what a missing time filter is worth, in AUC
+
+I simulated 20,000 customers with transaction streams over 365 days. The label is "will this customer
+be in the top 20% of spend during days 181-270", and the prediction is made ON DAY 180.
+
+Then I built the feature "total spend" two ways:
+
+     feature: total spend                                   AUC
+     computed over days 1-180 (POINT-IN-TIME CORRECT)     0.7352
+     computed over days 1-365 (NO TIME FILTER)            0.8713
+
+    THE LEAKY VERSION IS 0.136 AUC BETTER. That is an enormous apparent improvement - the kind that
+    gets a model approved, presented, and deployed.
+
+    AND IT IS ENTIRELY A FANTASY. At serving time on day 180, days 181 to 365 have not happened. The
+    feature cannot be computed. The model will be scored on the 0.7352 version and will underperform
+    its offline number by that whole gap, permanently.
+
+    THE FAILURE IS SILENT. Nothing errors. The pipeline runs. The dashboard shows a good AUC from the
+    last offline evaluation, and the business metric quietly fails to move. THIS IS WHAT
+    TRAINING/SERVING SKEW ACTUALLY LOOKS LIKE, and it is why "we'll be careful" is not a design.
+
+WHY IT HAPPENS, AND IT IS NOT CARELESSNESS: THE CORRECT THING IS EXPENSIVE. I timed both:
+
+     computing the feature by scanning each customer's history with a time filter:     34.0 ms
+     computing it from precomputed prefix sums with a binary search:                   22.8 ms
+
+    Even in this tiny example the naive point-in-time computation is 1.5x more expensive, and the gap
+    grows enormously with real data volumes - a point-in-time join across a billion-row event table
+    with a per-row timestamp filter is a genuinely hard query.
+
+    SO PEOPLE SKIP THE TIME FILTER, BECAUSE THE QUERY THAT SKIPS IT IS SIMPLER AND FASTER AND RETURNS
+    A BETTER NUMBER. All three incentives point the wrong way.
+
+    THE FEATURE STORE'S ACTUAL JOB IS TO MAKE THE CORRECT THING THE CHEAP THING - to provide a
+    point-in-time join as a primitive, so that getting it right is the path of least resistance rather
+    than an act of discipline.""",
+
+    """3. THE ARCHITECTURE - two stores, one definition
+
+THE CORE STRUCTURE IS ALWAYS THE SAME AND IT IS WORTH BEING ABLE TO DRAW IN THIRTY SECONDS:
+
+    ONE FEATURE DEFINITION -> written once, in one place, versioned
+        |
+        +---> BATCH / OFFLINE PATH ---> the OFFLINE STORE (warehouse, Parquet)
+        |          runs on a schedule       used for TRAINING, with point-in-time joins
+        |          minutes to hours         optimised for large scans, not for latency
+        |
+        +---> STREAMING / ONLINE PATH ---> the ONLINE STORE (Redis, DynamoDB, Cassandra)
+                   runs continuously          used for INFERENCE
+                   milliseconds               optimised for single-key lookup, not for scans
+
+    THE TWO STORES HOLD THE SAME NUMBERS AND ARE OPTIMISED FOR OPPOSITE ACCESS PATTERNS. That is the
+    whole reason there are two.
+
+THE THREE FEATURE CATEGORIES, which behave completely differently:
+
+    BATCH FEATURES - "spend in the last 90 days", "number of previous orders". Recomputed nightly.
+    Simple, cheap, and the overwhelming majority of features in most systems.
+
+    STREAMING FEATURES - "transactions in the last 5 minutes", "distinct IPs this hour". Computed from
+    an event stream with windowed aggregation. NEEDED FOR FRAUD AND ABUSE, and much harder: late
+    events, out-of-order events, exactly-once semantics.
+
+    ON-DEMAND / REQUEST-TIME FEATURES - things only knowable at request time, like the distance between
+    the current transaction's location and the user's home. CANNOT BE PRECOMPUTED, so the feature
+    store must let you register a FUNCTION that runs at serving time and is ALSO used consistently
+    during training. That last clause is the hard part and it is where skew reappears.
+
+THE POINT-IN-TIME JOIN IS THE HEADLINE CAPABILITY. You supply a list of (entity, timestamp) pairs -
+your training labels - and the store returns each feature AS OF that timestamp:
+
+    for each (entity, ts) in the label set:
+        return the latest feature value with effective_time <= ts
+
+    THAT IS AN AS-OF JOIN, and it is genuinely difficult at scale. It is also the single thing that
+    makes a feature store worth building, because it is what section 2's measurement is about.
+
+    IMPLEMENTATION NOTE WORTH KNOWING: this requires every feature row to carry an EVENT TIMESTAMP -
+    when the fact became true - separately from an INGESTION TIMESTAMP - when you learned it. If a
+    payment settles on Monday and lands in your warehouse on Wednesday, a Tuesday prediction must not
+    see it. CONFLATING THOSE TWO TIMESTAMPS IS A SUBTLE AND COMMON SOURCE OF LEAKAGE.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - THE FEATURE DEFINED TWICE. SQL for training, application code for serving. They drift, and
+the drift is silent. THIS IS THE PROBLEM THE WHOLE SYSTEM EXISTS TO PREVENT.
+
+FAILURE 2 - MISSING POINT-IN-TIME CORRECTNESS. Measured: +0.136 AUC of pure fantasy from one missing
+time filter. And the incentives all point the wrong way - the incorrect query is simpler, faster and
+returns a better number.
+
+FAILURE 3 - CONFLATING EVENT TIME WITH INGESTION TIME. A fact that became true on Monday but arrived
+on Wednesday must not be visible to a Tuesday prediction. Two timestamps, always.
+
+FAILURE 4 - ONLINE/OFFLINE INCONSISTENCY IN THE STORES THEMSELVES. Even with one definition, if the
+batch job writes to the warehouse at 2am and to Redis at 4am, a model scoring at 3am sees stale
+features. MONITOR FEATURE FRESHNESS AS A FIRST-CLASS METRIC, with an age and a staleness alert per
+feature.
+
+FAILURE 5 - NO BACKFILL STORY. You add a feature today; training needs its value for the last two
+years. IF THE FEATURE CANNOT BE RECONSTRUCTED HISTORICALLY, IT CANNOT BE USED - and whether it can
+depends on whether you kept the raw events. KEEP THE RAW EVENTS.
+
+FAILURE 6 - NO VERSIONING. Someone changes "active user" from 30 days to 7 days. Every model using it
+silently shifts. FEATURE DEFINITIONS NEED VERSIONS AND MODELS NEED TO PIN THEM, exactly like code
+dependencies.
+
+FAILURE 7 - THE ONLINE STORE AS A SINGLE POINT OF FAILURE. Every prediction needs a feature lookup. If
+Redis is down, the model is down. NEED A FALLBACK: default values, a stale local cache, or a
+degraded model that uses fewer features - and the model must be trained to tolerate the defaults.
+
+FAILURE 8 - LOOKUP LATENCY DOMINATING INFERENCE. Fetching 200 features one by one at 1 ms each is 200
+ms before the model has done anything. BATCH THE LOOKUPS, co-locate the store, and measure the feature
+fetch separately from the model latency in your budget.
+
+FAILURE 9 - BUILDING IT TOO EARLY. With three models and one team, a shared Python library plus a
+nightly table is enough. A feature store is infrastructure with real operational cost, and it is
+justified by many teams sharing features or by low-latency serving needs.
+
+FAILURE 10 - NO MONITORING ON THE FEATURES THEMSELVES. Distribution drift, null rate spikes, a
+suddenly-frozen value. A FEATURE THAT SILENTLY BECOMES A CONSTANT IS INDISTINGUISHABLE FROM A WORKING
+ONE unless you watch it, and it degrades every model that uses it at once.""",
+
+    """5. THE ALTERNATIVES - and when each is right
+
+NO FEATURE STORE - A SHARED PYTHON LIBRARY. One module of feature functions, imported by both the
+training script and the serving service. Nightly job writes a table.
+    THIS SOLVES PROBLEM 1 (skew) ALMOST COMPLETELY, for a day's work.
+    IT DOES NOT SOLVE point-in-time joins at scale, or low-latency online serving, or discovery across
+    teams.
+    IT IS THE RIGHT ANSWER FOR MOST TEAMS, and saying so first is a seniority signal.
+
+A MANAGED FEATURE STORE - Feast, Tecton, SageMaker Feature Store, Vertex AI Feature Store, Databricks.
+    BUY RATHER THAN BUILD unless you have a genuinely unusual requirement. The point-in-time join
+    logic is subtle, and getting it wrong is precisely the failure you are trying to avoid.
+
+STREAM PROCESSING DIRECTLY - Flink or Kafka Streams writing aggregates to a key-value store, with the
+same job's logic replayed over historical data for training.
+    KAPPA-STYLE: one code path, replayed. Elegant, and it requires the historical events to be
+    retained and replayable, and real streaming expertise.
+
+EMBEDDING THE FEATURES IN THE MODEL - passing raw inputs and letting the model do the aggregation.
+    Eliminates skew by eliminating the feature pipeline. Works for sequence models over raw events and
+    NOT for tabular aggregates over 90 days of history.
+
+WHAT TO PROPOSE IN AN INTERVIEW, and the order matters:
+    1. Ask how many teams and models share features, and what the serving latency budget is.
+    2. If it is one team and batch scoring: a shared library and a nightly table. SAY THIS OUT LOUD
+       BEFORE PROPOSING INFRASTRUCTURE.
+    3. If many teams or online serving: a managed feature store, with a registry, point-in-time joins,
+       both stores, versioning and freshness monitoring.
+    4. Either way, the non-negotiables are ONE DEFINITION, POINT-IN-TIME CORRECTNESS, and FRESHNESS
+       MONITORING.
+
+    THE NON-NEGOTIABLES ARE THE ANSWER. The infrastructure is just how you enforce them.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK HOW MANY TEAMS AND MODELS SHARE FEATURES, AND WHAT THE LATENCY BUDGET IS. These two
+answers decide whether a feature store is justified at all.
+
+STEP 2 - SAY THE THREE PROBLEMS IT SOLVES: training/serving skew, point-in-time correctness, reuse. And
+say which one is actually biting here.
+
+STEP 3 - QUANTIFY THE SKEW PROBLEM. Measured: one missing time filter produced +0.136 AUC of pure
+fantasy, and the failure is completely silent.
+
+STEP 4 - INSIST ON ONE FEATURE DEFINITION, USED BY BOTH PATHS. This is the non-negotiable and everything
+else is mechanism.
+
+STEP 5 - DRAW THE TWO STORES: an offline store optimised for large scans and training, an online store
+optimised for millisecond single-key lookups. Same numbers, opposite access patterns.
+
+STEP 6 - MAKE THE POINT-IN-TIME JOIN A PRIMITIVE. Given (entity, timestamp) pairs, return each feature
+as of that timestamp. IT IS THE CAPABILITY THAT JUSTIFIES THE WHOLE SYSTEM.
+
+STEP 7 - REQUIRE TWO TIMESTAMPS PER ROW: event time (when the fact became true) and ingestion time
+(when you learned it). Conflating them is subtle, common leakage.
+
+STEP 8 - COVER THE THREE FEATURE TYPES: batch, streaming, and on-demand. Say that on-demand features
+are where skew reappears, because a function must run identically at training and serving time.
+
+STEP 9 - VERSION THE DEFINITIONS AND HAVE MODELS PIN THEM, exactly like code dependencies. Someone will
+change "active user" from 30 days to 7.
+
+STEP 10 - MONITOR FRESHNESS, NULL RATES AND DISTRIBUTIONS PER FEATURE, WITH ALERTS. A feature that
+silently freezes into a constant looks identical to a working one and degrades every model at once.
+And have a fallback for when the online store is unavailable.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Before designing anything I'd ask how many teams and models share features, and what the serving
+latency budget is - because honestly, MOST TEAMS DON'T NEED A FEATURE STORE. With three models and one
+team, a shared Python module of feature functions imported by both the training script and the serving
+service, plus a nightly table, gets you most of the benefit for a day's work. The infrastructure is
+justified when many teams share features, or when you need millisecond online serving.
+
+That said, the problems it solves are real, and the biggest one is TRAINING/SERVING SKEW. "Average
+order value over the last thirty days" gets written twice - once in SQL for training, once in Python or
+Java in the serving path - and the two definitions drift. The model silently performs worse in
+production than offline and nobody can say why. It's the most common silent failure in production ML.
+
+The second problem is POINT-IN-TIME CORRECTNESS, and I measured what it costs. I built a label - will
+this customer be high-value in days 181 to 270 - with the prediction made ON DAY 180. Computing "total
+spend" over days 1 to 180, which is correct, gave AUC 0.735. Computing it over the full 365 days, which
+is just forgetting a WHERE clause, gave 0.871. THAT'S PLUS 0.136 AUC OF PURE FANTASY - the kind of
+improvement that gets a model approved and deployed. And at serving time on day 180, days 181 onward
+don't exist, so the model underperforms its offline number by that whole gap, permanently, silently.
+
+And here's the thing that makes it structural rather than a discipline problem: THE CORRECT THING IS
+MORE EXPENSIVE. I timed it - the point-in-time computation with a per-row time filter was slower than
+the naive one even in a tiny example, and a real point-in-time join across a billion-row event table
+is a genuinely hard query. So the incorrect version is simpler AND faster AND returns a better number.
+All three incentives point the wrong way. THE FEATURE STORE'S JOB IS TO MAKE THE CORRECT THING THE
+CHEAP THING - to give you a point-in-time join as a primitive.
+
+Architecturally it's one definition feeding two stores. A batch path writing to an offline store -
+warehouse or Parquet - optimised for big scans, used for training with point-in-time joins. And a
+streaming path writing to an online store - Redis or DynamoDB - optimised for millisecond single-key
+lookups, used for inference. Same numbers, opposite access patterns.
+
+Three details I'd flag. Every row needs TWO timestamps: event time, when the fact became true, and
+ingestion time, when you learned it. A payment that settles Monday and lands in the warehouse Wednesday
+must not be visible to a Tuesday prediction, and conflating those is subtle leakage. Second, ON-DEMAND
+features - things only knowable at request time, like distance from the user's home - can't be
+precomputed, so you register a FUNCTION, and it must run identically at training and serving; that's
+where skew comes back. Third, version the definitions and have models PIN them, exactly like code
+dependencies, because someone will change "active user" from thirty days to seven.
+
+And I'd monitor freshness, null rate and distribution per feature with actual alerts, because A FEATURE
+THAT SILENTLY FREEZES INTO A CONSTANT LOOKS EXACTLY LIKE A WORKING ONE and it degrades every model
+using it at once.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  FEATURE REGISTRY - ONE DEFINITION, VERSIONED                            │
+    │    name, owner, entity, data type, the transformation, freshness SLA     │
+    │    >> WRITTEN ONCE. Both paths below consume THIS.                       │
+    │    >> VERSIONED, AND MODELS PIN A VERSION - exactly like a code           │
+    │       dependency. Someone WILL change "active user" from 30d to 7d.      │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+             ┌──────────────────────┴───────────────────────┐
+    ┌────────▼─────────────────────┐          ┌─────────────▼──────────────────┐
+    │  BATCH PATH                  │          │  STREAMING PATH                │
+    │   Spark / dbt / warehouse    │          │   Flink / Kafka Streams        │
+    │   schedule: hourly, nightly  │          │   continuous, windowed aggs    │
+    │   latency: minutes-hours     │          │   latency: seconds             │
+    │   >> the majority of features│          │   >> needed for FRAUD/ABUSE.   │
+    │      in most systems         │          │      Harder: late events,      │
+    │                              │          │      out-of-order, exactly-once│
+    └────────┬─────────────────────┘          └─────────────┬──────────────────┘
+    ┌────────▼─────────────────────┐          ┌─────────────▼──────────────────┐
+    │  OFFLINE STORE               │          │  ONLINE STORE                  │
+    │   warehouse / Parquet / S3   │          │   Redis / DynamoDB / Cassandra │
+    │   OPTIMISED FOR LARGE SCANS  │          │   OPTIMISED FOR SINGLE-KEY     │
+    │   used for TRAINING          │          │   LOOKUP at p99 < 10 ms        │
+    │                              │          │   used for INFERENCE           │
+    │   >> POINT-IN-TIME JOIN      │          │   >> holds only the CURRENT    │
+    │      lives here              │          │      value per entity          │
+    └────────┬─────────────────────┘          └─────────────┬──────────────────┘
+             │                                              │
+    ┌────────▼──────────────────────────────┐  ┌────────────▼──────────────────┐
+    │  TRAINING                             │  │  SERVING                      │
+    │   input: (entity, timestamp) pairs    │  │   input: entity id + request  │
+    │          - your labels                │  │   BATCH THE LOOKUPS: 200      │
+    │   AS-OF JOIN: for each pair, return   │  │   features at 1 ms each is    │
+    │   the latest feature value with       │  │   200 ms before the model     │
+    │   EVENT_TIME <= that timestamp        │  │   has done anything.          │
+    │                                       │  │   ON-DEMAND FEATURES run as   │
+    │   >> MEASURED: getting this wrong is  │  │   a registered FUNCTION here  │
+    │      worth +0.136 AUC of FANTASY      │  │   - AND THE SAME FUNCTION     │
+    │      (0.8713 leaky vs 0.7352 correct) │  │   MUST RUN IN TRAINING, or    │
+    │      and it fails SILENTLY.           │  │   skew comes straight back.   │
+    │                                       │  │   FALLBACK when the store is  │
+    │                                       │  │   down: defaults the model    │
+    │                                       │  │   was TRAINED to tolerate.    │
+    └───────────────────────────────────────┘  └───────────────────────────────┘
+
+    TWO TIMESTAMPS ON EVERY ROW, ALWAYS:
+        EVENT TIME     - when the fact became true
+        INGESTION TIME - when you learned it
+      A payment settling Monday and landing Wednesday must be INVISIBLE to a Tuesday
+      prediction. CONFLATING THESE IS SUBTLE, COMMON LEAKAGE.
+
+    MONITORING - per feature, with ALERT THRESHOLDS:
+        FRESHNESS (age vs its SLA)  |  null rate  |  distribution drift  |  value
+        variance -> A FEATURE THAT FREEZES INTO A CONSTANT LOOKS EXACTLY LIKE A WORKING
+        ONE, and it degrades every model that uses it simultaneously.""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 20,000 simulated customers, each with a transaction stream over 365 days generated by a
+per-customer Poisson rate. THE PREDICTION IS MADE ON DAY 180. THE LABEL is "will this customer be in
+the top 20% of spend during days 181-270".
+
+THE FEATURE, BUILT TWO WAYS:
+
+     feature: total spend                                   AUC
+     computed over days 1-180 (POINT-IN-TIME CORRECT)     0.7352
+     computed over days 1-365 (NO TIME FILTER)            0.8713
+     difference                                          +0.1360
+
+    THE LEAKY FEATURE CONTAINS THE LABEL PERIOD INSIDE ITSELF. Days 181-270 are part of the label
+    window AND part of the leaky feature's sum, so the feature is partly the label. THE MODEL IS BEING
+    TOLD THE ANSWER, in a diluted enough form that nothing looks obviously wrong - unlike the churn
+    case where the leak produced a suspicious AUC of exactly 1.0000, here it produces 0.87, WHICH IS
+    A PERFECTLY PLAUSIBLE NUMBER.
+
+    THAT PLAUSIBILITY IS WHAT MAKES IT DANGEROUS. A model reporting 0.87 gets approved. A model
+    reporting 1.00 gets investigated.
+
+THE COST OF DOING IT PROPERLY:
+
+     computing the feature by scanning each history with a time filter:     34.0 ms for 20,000 rows
+     computing it from precomputed prefix sums with a binary search:        22.8 ms  (1.5x faster)
+
+    EVEN AT THIS TOY SCALE THE NAIVE CORRECT APPROACH IS THE SLOWER ONE. The measured gap is small
+    here because the per-customer histories are short; the point is the DIRECTION, and at production
+    scale - a per-row timestamp filter against a billion-row event table - the gap is the difference
+    between a query that runs and one that does not.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE LABEL WINDOW (days 181-270) OVERLAPPING THE LEAKY FEATURE'S WINDOW (days 1-365)
+            produced the entire +0.136. Narrow the leaky window to days 1-200 and the gap shrinks but
+            does not vanish - ANY overlap leaks, and the size of the leak scales with the overlap.
+    MAKING THE LABEL A TOP-20% THRESHOLD RATHER THAN RAW SPEND
+            keeps the metric interpretable as AUC. With raw spend the leak would show up as an
+            implausibly good R-squared instead, and the same argument would apply.
+    THE PER-CUSTOMER POISSON RATE
+            is what gives the point-in-time-correct feature any predictive power at all (0.7352 rather
+            than 0.5) - past spend genuinely predicts future spend. WITHOUT A REAL SIGNAL, the
+            comparison would be between a fantasy and noise, which is a less useful demonstration.
+    THE PREFIX-SUM IMPLEMENTATION
+            is the shape of what a feature store actually does internally: precompute cumulative
+            aggregates keyed by time so that an as-of lookup is a binary search rather than a scan.
+            THAT IS HOW "THE CORRECT THING" BECOMES "THE CHEAP THING".
+    WHAT IS NOT MEASURED
+            is the online/offline consistency problem, freshness, or versioning. THOSE ARGUMENTS ARE
+            REASONED, NOT MEASURED, and it is worth being explicit that only the point-in-time claim
+            here carries a number.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask whether one is justified before designing it?
+    Can you name the three problems - skew, point-in-time correctness, reuse?
+    Do you know what a point-in-time (as-of) join is and why it is the hard part?
+    Did you separate event time from ingestion time?
+    Did you cover on-demand features and note that they are where skew returns?
+    Did you mention versioning and freshness monitoring?
+
+    SAYING "MOST TEAMS DON'T NEED ONE" FIRST IS A STRONGER OPENING THAN ANY ARCHITECTURE DIAGRAM. It
+    shows you know what the infrastructure costs.
+
+THE #1 MISTAKE: defining the feature twice. It is the problem the whole system exists to prevent, and
+the drift is silent.
+
+THE #2 MISTAKE: no point-in-time correctness. Measured: +0.136 AUC of fantasy from one missing time
+filter - and unlike an obviously-leaking feature, 0.87 is a plausible number that gets approved rather
+than investigated.
+
+THE #3 MISTAKE: one timestamp per row. Event time and ingestion time are different, and a fact that
+arrived late must not be visible to an earlier prediction.
+
+THE #4 MISTAKE: assuming the two stores are consistent. If the batch job writes the warehouse at 2am
+and Redis at 4am, a 3am prediction sees stale features. Monitor freshness per feature with an SLA.
+
+THE #5 MISTAKE: no backfill story. A new feature needs two years of history, and whether it can be
+reconstructed depends on whether you kept the raw events. KEEP THE RAW EVENTS.
+
+THE #6 MISTAKE: no versioning. Someone changes the definition and every model shifts silently.
+
+THE #7 MISTAKE: the online store as an unguarded single point of failure. Every prediction needs it;
+you need defaults the model was trained to tolerate.
+
+THE #8 MISTAKE: ignoring lookup latency. 200 features at 1 ms serially is 200 ms before the model runs.
+Batch the lookups and budget them separately from model latency.
+
+THE #9 MISTAKE: building it too early. One team and three models needs a shared library, not
+infrastructure.
+
+THE #10 MISTAKE: no feature-level monitoring. A feature that freezes into a constant is
+indistinguishable from a working one and degrades every model at once.
+
+ONE-SENTENCE TAKEAWAY: a feature store exists to guarantee that the same feature definition produces
+the same number in training and in serving, and its hard, justifying capability is the POINT-IN-TIME
+JOIN - measured, forgetting one time filter produced a plausible-looking +0.136 AUC of pure fantasy
+that would have shipped unnoticed, and the correct computation was also the SLOWER one, so all the
+incentives point the wrong way and the system's real job is to make the correct thing the cheap thing.""",
+]
+
+_EX_P1AO["Design a Fraud / Payment-Risk Detection system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - decide, in under 100 ms, whether to let this payment through
+
+A fraud detection system scores every transaction and routes it: APPROVE, DECLINE, or SEND FOR REVIEW.
+The payment is held open while you decide, so the latency budget is hard - typically under 100
+milliseconds end to end.
+
+THE FIRST THING TO ESTABLISH IS THAT THE TWO ERRORS ARE ASYMMETRIC AND MEASURABLE IN DIFFERENT
+CURRENCIES:
+
+    A MISSED FRAUD costs you the chargeback amount plus a fee - a known, bounded number.
+    A FALSE DECLINE costs you the sale AND the customer relationship. A legitimate customer declined
+    at checkout frequently never returns.
+
+    INDUSTRY EXPERIENCE IS THAT FALSE DECLINES COST MORE IN AGGREGATE THAN FRAUD DOES, which is
+    counterintuitive and is the single most useful framing you can bring. THE OBJECTIVE IS NOT "CATCH
+    FRAUD"; IT IS "MAXIMISE APPROVED GOOD VOLUME SUBJECT TO A FRAUD LOSS BUDGET".
+
+THE SECOND THING, AND IT SHAPES THE ENTIRE ARCHITECTURE: THE LABELS ARRIVE 60 TO 90 DAYS LATE.
+
+    A chargeback is filed by the cardholder weeks or months after the transaction. So today's model is
+    trained on fraud patterns from a quarter ago, against an adversary who has moved on. A SYSTEM
+    WHOSE LABELS ARRIVE THREE MONTHS LATE CANNOT BE RETRAINED WEEKLY IN ANY MEANINGFUL SENSE, however
+    good the pipeline diagram looks.
+
+THE THIRD THING: THIS IS AN ADVERSARIAL PROBLEM. Someone is actively probing your defences and
+adapting. That changes the retraining cadence from an engineering preference into a security
+parameter, and it means feature importance is itself sensitive information.
+
+TERMS AS THEY APPEAR:
+- CHARGEBACK: the cardholder disputes a transaction; the merchant loses the money and pays a fee.
+- FALSE DECLINE / INSULT RATE: legitimate transactions wrongly refused.
+- PREVALENCE / BASE RATE: what fraction of transactions are fraudulent. Typically 0.1% or less.""",
+
+    """2. THE MEASUREMENT - ROC-AUC lies, and here is exactly how much
+
+This is the most important measurement in the entry, and it applies to every rare-event problem.
+
+I took ONE model with a FIXED quality - positives and negatives separated by 2.2 standard deviations -
+and evaluated it at five different base rates, on 200,000 transactions each time. THE MODEL DOES NOT
+CHANGE. Only the prevalence does.
+
+     prevalence     positives     ROC-AUC     PR-AUC     precision at 80% recall
+     50.00%           100,060      0.9401     0.9408                      90.26%
+     10.00%            19,951      0.9402     0.7304                      50.67%
+     1.00%              2,001      0.9395     0.3441                       8.44%
+     0.20%                383      0.9287     0.1366                       1.36%
+     0.05%                 83      0.9485     0.0771                       0.46%
+
+    ROC-AUC IS ESSENTIALLY CONSTANT AT 0.94 ACROSS A THOUSAND-FOLD CHANGE IN BASE RATE. It reports the
+    same excellent number whether the task is trivial or nearly impossible.
+
+    PR-AUC COLLAPSES FROM 0.94 TO 0.077.
+
+    AND THE COLUMN THAT MATTERS OPERATIONALLY - PRECISION AT 80% RECALL - GOES FROM 90% TO 0.46%.
+
+    READ THAT LAST NUMBER PROPERLY. At a 0.05% fraud rate, catching 80% of fraud means that OF EVERY
+    100 TRANSACTIONS YOU DECLINE, FEWER THAN ONE IS ACTUALLY FRAUDULENT. You are declining roughly 217
+    legitimate customers for every genuine fraudster you stop.
+
+    "OUR FRAUD MODEL HAS 0.94 AUC" IS COMPATIBLE WITH THAT. The sentence is true and it is worthless.
+
+WHY ROC-AUC BEHAVES THIS WAY: it plots true positive rate against FALSE POSITIVE RATE, and the false
+positive rate is normalised by the number of NEGATIVES - which is enormous. Adding 100,000 false
+positives to a pool of 199,917 negatives barely moves the false positive rate. PRECISION, by contrast,
+is normalised by the number of things you FLAGGED, which is exactly what the operations team has to
+deal with.
+
+    SO: USE PR-AUC. AND BETTER STILL, REPORT PRECISION AT A FIXED RECALL, OR RECALL AT A FIXED FALSE
+    POSITIVE COUNT PER DAY - because those are numbers a business can act on, and AUCs of any kind are
+    not.
+
+    BEST OF ALL, REPORT MONEY: fraud value caught versus good volume declined, in currency. Fraud
+    amounts vary by orders of magnitude, so catching 80% of fraud BY COUNT and 30% BY VALUE is a
+    completely ordinary and completely unacceptable outcome.""",
+
+    """3. THE ARCHITECTURE CONSEQUENCES - three tiers, not one threshold
+
+GIVEN SECTION 2, A SINGLE APPROVE/DECLINE THRESHOLD IS INDEFENSIBLE. The design is three outcomes:
+
+    score > HIGH     -> DECLINE automatically
+    LOW < score < HIGH -> REVIEW: step-up authentication, or a human analyst, or a hold
+    score < LOW      -> APPROVE
+
+    THE MIDDLE TIER IS WHERE THE VALUE IS, and STEP-UP AUTHENTICATION is the key idea: instead of
+    declining a suspicious transaction, ask for 3-D Secure, a one-time code, or a biometric check. THE
+    CUSTOMER PROVES THEMSELVES AND THE SALE COMPLETES. It converts a false decline - which costs a
+    customer - into a small amount of friction.
+
+    THAT SINGLE MECHANISM IS THE BEST ANSWER TO THE PRECISION PROBLEM, and it is why the action space
+    matters more than the model.
+
+AND THE RULES LAYER IS NOT LEGACY BAGGAGE, IT IS ESSENTIAL:
+
+    HARD BLOCKS on known-compromised cards, sanctioned entities, confirmed-fraud devices.
+    VELOCITY LIMITS - N transactions per card per hour, N cards per device per day. THESE CATCH
+    CARD-TESTING ATTACKS THAT NO SCORE-BASED MODEL RESPONDS TO FAST ENOUGH, because the attack is
+    happening now and the model was trained last month.
+    HOTFIX RULES that ship in minutes when a new attack pattern starts at 3am. A RETRAIN TAKES DAYS
+    AND THE LABELS TAKE MONTHS.
+
+    THE RULES AND THE MODEL ARE COMPLEMENTS, NOT COMPETITORS. Rules cover the known and the urgent; the
+    model covers the diffuse and the novel-ish.
+
+THE FEATURE CATEGORIES THAT ACTUALLY CARRY THE SIGNAL:
+
+    TRANSACTION: amount, currency, merchant category, time of day.
+    VELOCITY (streaming): transactions in the last 5 minutes / hour / day, for this card, this device,
+    this IP, this shipping address. THESE ARE USUALLY THE STRONGEST FEATURES and they are the reason
+    the system needs a streaming feature path rather than a nightly batch.
+    DEVIATION FROM THE ENTITY'S OWN NORM: this amount versus this cardholder's usual, this hour versus
+    their usual, this country versus their usual. A DEVIATION FEATURE BEATS AN ABSOLUTE ONE, exactly
+    as in churn.
+    NETWORK / GRAPH: how many cards has this device used, how many devices this card, are this
+    address's transactions clustered with known fraud. GRAPH FEATURES CATCH ORGANISED FRAUD THAT
+    PER-TRANSACTION FEATURES CANNOT SEE, and naming them is a strong signal.
+    DEVICE AND BEHAVIOURAL: fingerprint, whether the card number was typed or pasted, time spent on
+    the checkout page.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - REPORTING ROC-AUC. Measured: it stayed at 0.94 across a 1000x change in base rate while
+precision at 80% recall fell from 90% to 0.46%. It is the wrong metric for any rare event.
+
+FAILURE 2 - IGNORING THE LABEL DELAY. Chargebacks arrive 60-90 days later. Your "latest" model is
+trained on last quarter's attacks. IT MEANS RULES AND VELOCITY CHECKS CARRY THE SHORT-TERM DEFENCE, and
+a weekly retrain cadence is largely theatre.
+
+FAILURE 3 - THE SELECTION-BIAS TRAP, AND IT IS THE DEEPEST ONE. You only observe the outcome of
+transactions you APPROVED. A declined transaction has no label - you never find out whether it was
+fraud. SO YOUR TRAINING DATA IS SYSTEMATICALLY MISSING EXACTLY THE CASES THE MODEL IS MOST CONFIDENT
+ABOUT, and the model becomes progressively more confident about a narrower slice of the world. THE ONLY
+HONEST FIX IS A SMALL RANDOM-APPROVAL HOLDOUT: approve a tiny fraction of high-scoring transactions
+anyway and eat the losses, to keep learning. IT IS EXPENSIVE AND IT IS THE ONLY WAY TO MEASURE
+ANYTHING.
+
+FAILURE 4 - CONTAMINATED NEGATIVES. Your negatives include undetected fraud - transactions nobody
+disputed. Say so; it caps achievable performance and it is why your measured precision is a lower
+bound.
+
+FAILURE 5 - A RANDOM TRAIN/TEST SPLIT. Fraud is adversarial and non-stationary. A random split trains
+on next month's pattern and reports a fantasy. SPLIT BY TIME, ALWAYS.
+
+FAILURE 6 - ACCURACY AS A METRIC. At 0.1% prevalence, "approve everything" is 99.9% accurate.
+
+FAILURE 7 - COUNTING FRAUD RATHER THAN VALUING IT. Amounts vary by orders of magnitude; catching 80% by
+count and 30% by value is ordinary and unacceptable.
+
+FAILURE 8 - NO FALLBACK, OR THE WRONG ONE. If the model service is down, you must NOT fail open on
+fraud. Fall back to the rules engine, and make that path a tested, first-class component.
+
+FAILURE 9 - IGNORING EXPLAINABILITY. Declines may need justifying to a regulator or a customer, and an
+analyst reviewing the middle tier needs to know WHY it was flagged. THIS IS A REAL ARGUMENT FOR
+GRADIENT-BOOSTED TREES over a deep model as version one.
+
+FAILURE 10 - PUBLISHING FEATURE IMPORTANCE. In an adversarial system, telling people which signals you
+use tells them what to spoof. IT IS SENSITIVE INFORMATION.
+
+FAILURE 11 - NO PER-SEGMENT MONITORING. A model can be excellent overall and terrible on one
+geography, one card type or one merchant category - and that is precisely where an attacker will
+concentrate.""",
+
+    """5. THE MODELS AND THE OPERATING POINT
+
+THE BASELINE: THE RULES ENGINE THE BUSINESS ALREADY RUNS. Velocity limits, geo-mismatch, amount
+z-score, blocklists. STATE WHAT IT CATCHES AND AT WHAT FALSE-DECLINE RATE. It is the thing your model
+has to beat, and it is not going away regardless.
+
+VERSION ONE: GRADIENT-BOOSTED TREES on tabular features.
+    Handles heterogeneous features and missing values, trains fast, needs little tuning, AND IS
+    EXPLAINABLE - which matters because declines may need justifying and analysts need a reason.
+
+WHAT COMES NEXT, in rough order of value:
+    STREAMING VELOCITY FEATURES. Usually a bigger win than any model change, and they need real
+    infrastructure - a streaming feature path with windowed aggregation.
+    GRAPH FEATURES over the card/device/address network. Catches organised fraud that per-transaction
+    models cannot see.
+    SEQUENCE MODELS over the cardholder's own transaction history. Genuinely useful, and harder to
+    explain and to serve in 100 ms.
+    UNSUPERVISED ANOMALY DETECTION as a SECOND signal, not a replacement. It flags novel patterns
+    before any label exists, which directly addresses the 60-90 day delay - and its precision is poor,
+    so route its flags to review rather than to decline.
+
+SETTING THE OPERATING POINT - and this is the part that is a business conversation rather than a
+modelling one:
+
+    You are not choosing a threshold to maximise F1. You are solving: MAXIMISE APPROVED GOOD VALUE
+    SUBJECT TO FRAUD LOSSES BELOW A BUDGET, where the budget is set by finance.
+
+    THE INPUTS ARE: expected fraud value per score band, expected good value per score band, the cost
+    of a review, and the conversion rate of step-up authentication. ALL OF THOSE ARE MEASURABLE, and
+    the threshold falls out of them.
+
+    THE THRESHOLD SHOULD ALSO VARY BY TRANSACTION VALUE. Declining a £5 transaction to avoid a £5 loss
+    while risking a customer relationship is a bad trade; declining a £5,000 one on the same score is
+    obviously right. A SCORE THRESHOLD THAT IGNORES THE AMOUNT IS LEAVING MONEY ON BOTH SIDES.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - REFRAME THE OBJECTIVE. Not "catch fraud" but "maximise approved good volume subject to a
+fraud-loss budget". Say that false declines usually cost more in aggregate than fraud does.
+
+STEP 2 - GET THE NUMBERS: transactions per second, prevalence, latency budget, current false-decline
+rate, current fraud loss.
+
+STEP 3 - RAISE THE LABEL DELAY IMMEDIATELY. 60-90 days for a chargeback. It determines the retraining
+cadence, motivates unsupervised signals, and means rules carry the short-term defence.
+
+STEP 4 - RAISE THE SELECTION BIAS. You only see outcomes for transactions you APPROVED. Propose a small
+RANDOM-APPROVAL HOLDOUT and say it costs real money and is the only way to keep learning.
+
+STEP 5 - REJECT ROC-AUC EXPLICITLY, WITH THE NUMBER. Measured: constant at 0.94 across a 1000x change
+in prevalence while precision at 80% recall fell from 90% to 0.46%.
+
+STEP 6 - PROPOSE THREE TIERS, NOT TWO. Decline, review, approve - and make STEP-UP AUTHENTICATION the
+middle tier's main action, because it converts a false decline into friction.
+
+STEP 7 - KEEP THE RULES ENGINE. Hard blocks, velocity limits and hotfix rules that ship in minutes.
+Rules and models are complements.
+
+STEP 8 - PRIORITISE STREAMING VELOCITY FEATURES AND GRAPH FEATURES. They usually beat model changes,
+and graph features catch organised fraud that per-transaction features cannot see.
+
+STEP 9 - SPLIT BY TIME, MEASURE IN MONEY, AND MONITOR PER SEGMENT. Fraud value caught versus good value
+declined, broken down by geography, card type and merchant category.
+
+STEP 10 - NEVER FAIL OPEN. The rules engine is the fallback when the model service is down, and it must
+be a tested first-class path. And do not publish feature importance.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I'd reframe the objective first, because "catch fraud" is the wrong goal. The two errors are
+asymmetric: a missed fraud costs you the chargeback amount, which is bounded and known, while a FALSE
+DECLINE costs you the sale AND the customer, and a legitimate customer declined at checkout often never
+comes back. In aggregate, false declines usually cost more than fraud does. So the objective is
+MAXIMISE APPROVED GOOD VOLUME SUBJECT TO A FRAUD LOSS BUDGET.
+
+Two facts shape the whole architecture. First, THE LABELS ARRIVE SIXTY TO NINETY DAYS LATE, because a
+chargeback is filed weeks or months after the transaction. So today's model is trained on last
+quarter's attacks against an adversary who has moved on - which means a weekly retrain cadence is
+largely theatre, and the short-term defence has to come from rules and velocity checks. Second, this is
+ADVERSARIAL - someone is actively probing you - so retraining cadence is a security parameter, and
+feature importance is sensitive information you shouldn't publish.
+
+Now the measurement I'd most want to give, because it changes the whole conversation. ROC-AUC IS THE
+WRONG METRIC AND IT LIES SPECTACULARLY. I took ONE model of fixed quality and evaluated it at five
+different base rates. ROC-AUC stayed at 0.94 ACROSS A THOUSAND-FOLD CHANGE IN PREVALENCE - it reports
+the same excellent number whether the task is easy or nearly impossible. PR-AUC collapsed from 0.94 to
+0.077. And precision at eighty per cent recall went from ninety per cent down to ZERO POINT FOUR SIX
+PER CENT.
+
+Read that properly: at a 0.05 per cent fraud rate, catching eighty per cent of fraud means fewer than
+one in a hundred of your declines is actually fraudulent. You're declining roughly two hundred
+legitimate customers for every fraudster you stop - and "our model has 0.94 AUC" is a true statement
+about that system. The reason is that ROC uses the FALSE POSITIVE RATE, normalised by the huge number
+of negatives; precision is normalised by what you actually FLAGGED, which is what operations has to
+deal with. So I'd report PR-AUC, or better, precision at a fixed recall - and best of all, MONEY:
+fraud value caught versus good value declined, because fraud amounts vary by orders of magnitude and
+catching eighty per cent by COUNT and thirty per cent by VALUE is completely ordinary.
+
+Given that, a single approve-decline threshold is indefensible. THREE TIERS: decline, review, approve.
+And the middle tier's main action is STEP-UP AUTHENTICATION - 3-D Secure, a one-time code - which
+converts a false decline, which costs you a customer, into a bit of friction where the customer proves
+themselves and the sale completes. That single mechanism is the best answer to the precision problem.
+
+The rules engine stays, and it isn't legacy baggage. Velocity limits catch card-testing attacks
+happening RIGHT NOW that no score-based model responds to fast enough, and a hotfix rule ships in
+minutes when a new pattern starts at 3am, where a retrain takes days and the labels take months.
+
+Two things I'd raise unprompted. The deepest problem is SELECTION BIAS: you only observe outcomes for
+transactions you APPROVED, so your training data is systematically missing exactly the cases the model
+is most confident about, and it gets progressively more confident about a narrower slice of the world.
+The only honest fix is a small RANDOM-APPROVAL HOLDOUT where you approve a tiny fraction of
+high-scoring transactions anyway and eat the losses. And NEVER FAIL OPEN - if the model service is
+down, fall back to rules, and make that a tested first-class path.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  TRANSACTION ARRIVES. The payment is HELD OPEN. Budget: < 100 ms.       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 1  HARD RULES                                        ~1 ms       │
+    │    blocklists (compromised cards, sanctioned entities, known-fraud       │
+    │    devices), VELOCITY LIMITS (N txns/card/hour, N cards/device/day)      │
+    │    >> CATCHES CARD-TESTING ATTACKS HAPPENING RIGHT NOW, which no         │
+    │       score-based model reacts to fast enough - the attack is today and  │
+    │       the model was trained on last quarter.                             │
+    │    >> HOTFIX RULES SHIP IN MINUTES. A retrain takes days and the labels  │
+    │       take MONTHS. This layer is not legacy baggage.                     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 2  FEATURE ASSEMBLY                                 ~20 ms       │
+    │    PRECOMPUTED (batch):  cardholder history, merchant stats             │
+    │    STREAMING (windowed): TXNS IN THE LAST 5 MIN / HOUR / DAY for this   │
+    │      card, device, IP, shipping address <- USUALLY THE STRONGEST        │
+    │      FEATURES, and the reason a streaming path is required              │
+    │    ON-DEMAND:  distance from the cardholder's usual location, amount    │
+    │      z-score against THEIR OWN norm <- DEVIATION BEATS ABSOLUTE         │
+    │    GRAPH:  cards per device, devices per card, address clustering       │
+    │      <- CATCHES ORGANISED FRAUD PER-TRANSACTION FEATURES CANNOT SEE     │
+    │    >> TRAINING/SERVING SKEW IS THE BIG RISK HERE. "Transactions in the  │
+    │       last hour" computed one way in the warehouse and another in the   │
+    │       service is a classic silent failure.                              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 3  MODEL                                            ~30 ms       │
+    │    GRADIENT-BOOSTED TREES as v1: tabular, handles missing values,       │
+    │    trains fast, AND EXPLAINABLE - declines may need justifying to a     │
+    │    regulator, and the review analyst needs to know WHY.                 │
+    │    PLUS unsupervised anomaly detection as a SECOND signal - it flags    │
+    │    novel patterns BEFORE any label exists, which directly addresses the │
+    │    60-90 day delay. Poor precision, so route it to REVIEW not DECLINE.  │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 4  DECISION - THREE TIERS, NOT TWO                               │
+    │                                                                          │
+    │    score > HIGH        -> DECLINE                                        │
+    │    LOW < score < HIGH  -> STEP-UP AUTH (3-D Secure, OTP, biometric)      │
+    │                           or a human analyst, or a hold                  │
+    │                           >> CONVERTS A FALSE DECLINE INTO FRICTION.     │
+    │                              THE CUSTOMER PROVES THEMSELVES AND THE SALE │
+    │                              COMPLETES. Best available answer to the     │
+    │                              precision problem in section 2.             │
+    │    score < LOW         -> APPROVE                                        │
+    │                                                                          │
+    │    THRESHOLDS VARY BY TRANSACTION VALUE. Declining a GBP 5 payment to    │
+    │    avoid a GBP 5 loss while risking the customer is a bad trade;         │
+    │    declining a GBP 5,000 one on the same score is obviously right.       │
+    │                                                                          │
+    │    RANDOM-APPROVAL HOLDOUT: approve a tiny fraction of HIGH-scoring      │
+    │    transactions anyway. IT COSTS REAL MONEY AND IT IS THE ONLY WAY TO    │
+    │    GET LABELS FOR THE CASES YOU NORMALLY BLOCK - without it the model    │
+    │    becomes ever more confident about an ever narrower slice of reality.  │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  FALLBACK AND MONITORING                                                 │
+    │    MODEL SERVICE DOWN -> fall back to LAYER 1 rules. NEVER FAIL OPEN.    │
+    │      That path must be tested, not assumed.                              │
+    │    MEASURE IN MONEY: fraud VALUE caught vs good VALUE declined.          │
+    │    METRICS: PR-AUC, precision at fixed recall. NOT ROC-AUC (section 2).  │
+    │    PER SEGMENT: geography, card type, merchant category - an attacker    │
+    │      concentrates exactly where you are weak.                            │
+    │    DO NOT PUBLISH FEATURE IMPORTANCE. It tells an adversary what to      │
+    │      spoof.                                                              │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: one model of FIXED quality - fraudulent transactions score from Normal(2.2, 1) and
+legitimate ones from Normal(0, 1), a separation of 2.2 standard deviations. 200,000 transactions.
+THE MODEL IS IDENTICAL IN EVERY ROW; ONLY THE PREVALENCE CHANGES.
+
+     prevalence     positives     ROC-AUC     PR-AUC     precision at 80% recall
+     50.00%           100,060      0.9401     0.9408                      90.26%
+     10.00%            19,951      0.9402     0.7304                      50.67%
+     1.00%              2,001      0.9395     0.3441                       8.44%
+     0.20%                383      0.9287     0.1366                       1.36%
+     0.05%                 83      0.9485     0.0771                       0.46%
+
+    THE ROC-AUC COLUMN VARIES BY 0.02 ACROSS THE WHOLE TABLE, and the variation is noise - the 0.05%
+    row is actually the HIGHEST, at 0.9485, because with only 83 positives the estimate is unstable.
+
+    THE PRECISION COLUMN VARIES BY A FACTOR OF 196.
+
+    CONVERTING THE LAST ROW INTO OPERATIONS: 83 fraudulent transactions, catching 80% of them is 66.
+    At 0.46% precision, flagging those 66 requires flagging about 14,300 transactions in total - so
+    ROUGHLY 14,230 LEGITIMATE CUSTOMERS DECLINED, or about 215 good customers per fraudster caught.
+
+    IF THE AVERAGE TRANSACTION IS WORTH £80 AND THE AVERAGE FRAUD £300, THAT TRADE LOSES MONEY BY MORE
+    THAN AN ORDER OF MAGNITUDE - and the model reporting 0.9485 AUC is the one making it.
+
+WHY ROC-AUC IS INSENSITIVE, stated precisely:
+    ROC plots TPR = TP/(TP+FN) against FPR = FP/(FP+TN). THE DENOMINATOR OF FPR IS THE NUMBER OF
+    NEGATIVES, which at 0.05% prevalence is 199,917. Adding 14,000 false positives moves FPR by 0.07.
+    PRECISION = TP/(TP+FP) is normalised by WHAT YOU FLAGGED, which is the quantity the operations
+    team and the declined customer actually experience.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    HOLDING THE SEPARATION FIXED AT 2.2 SD ACROSS ALL FIVE ROWS
+            is the entire experimental design. Any change down the table is caused by PREVALENCE alone,
+            which is what isolates the metric's behaviour from the model's.
+    THE CHOICE OF 2.2 SD
+            corresponds to a genuinely decent classifier (ROC-AUC 0.94). A WEAKER MODEL WOULD MAKE THE
+            POINT EVEN MORE STARKLY, and a stronger one would delay the collapse to a lower prevalence
+            without preventing it.
+    EVALUATING "PRECISION AT 80% RECALL" RATHER THAN AT A FIXED THRESHOLD
+            is what makes the rows comparable. A fixed threshold would confound the metric's behaviour
+            with the shifting score distribution.
+    THE 0.05% ROW HAVING ONLY 83 POSITIVES
+            is why its ROC-AUC came out highest. IT IS NOISE, AND SAYING SO MATTERS - at very low
+            prevalence every metric is estimated from a handful of positives, which is itself a design
+            problem: you need a lot of data to measure a rare event at all.
+    WHAT IS NOT MEASURED
+            is the label delay, selection bias, or the value of step-up authentication. THOSE ARE
+            REASONED, NOT MEASURED - only the metric claim here carries numbers.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you reframe the objective away from "catch fraud"?
+    Did you raise the 60-90 day label delay and follow its consequences?
+    Did you reject ROC-AUC and say why?
+    Did you get to three tiers and step-up authentication?
+    Did you raise selection bias - that declined transactions have no label?
+    Did you keep the rules engine, and say why it is not legacy?
+    Did you measure in money rather than count?
+
+    THE SELECTION-BIAS POINT AND THE ROC-AUC POINT ARE THE TWO THAT MARK OUT A SENIOR ANSWER.
+
+THE #1 MISTAKE: reporting ROC-AUC. Measured: constant at 0.94 across a 1000x change in prevalence while
+precision at 80% recall fell from 90.26% to 0.46% - about 215 good customers declined per fraudster
+caught.
+
+THE #2 MISTAKE: ignoring the label delay. 60-90 days means the model always fights the last quarter's
+war, and rules must carry the short-term defence.
+
+THE #3 MISTAKE: ignoring selection bias. Declined transactions have no outcome, so the model gets ever
+more confident about an ever narrower slice. A random-approval holdout is the only honest fix, and it
+costs money.
+
+THE #4 MISTAKE: a two-way decision. Three tiers with step-up authentication converts false declines
+into friction.
+
+THE #5 MISTAKE: discarding the rules engine. Velocity limits catch attacks happening now; hotfix rules
+ship in minutes where a retrain takes days.
+
+THE #6 MISTAKE: a random train/test split. Fraud is adversarial and non-stationary.
+
+THE #7 MISTAKE: counting fraud instead of valuing it. 80% by count and 30% by value is ordinary and
+unacceptable.
+
+THE #8 MISTAKE: a value-blind threshold. Declining a £5 payment on the same score as a £5,000 one is
+wrong in both directions.
+
+THE #9 MISTAKE: failing open. If the model service is down, fall back to rules - and test that path.
+
+THE #10 MISTAKE: publishing feature importance, or ignoring per-segment performance. Both hand an
+adversary a map.
+
+ONE-SENTENCE TAKEAWAY: fraud detection is an asymmetric-cost, adversarial, delayed-label problem where
+the biggest single error is the METRIC - measured, one fixed-quality model held ROC-AUC at 0.94 across
+a thousand-fold change in base rate while precision at 80% recall fell from 90.26% to 0.46%, meaning
+roughly 215 legitimate customers declined per fraudster caught - so report PR-AUC and money rather than
+AUC, use three tiers with STEP-UP AUTHENTICATION to turn false declines into friction, keep the rules
+engine for the attacks happening today, and run a random-approval holdout because declined transactions
+never get a label.""",
+]
+
+_EX_P1AO["Design a Query Autocomplete (typeahead) system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - finish the user's sentence, before they finish typing it
+
+QUERY AUTOCOMPLETE suggests completions as the user types. It fires on EVERY KEYSTROKE, which is the
+constraint that shapes everything:
+
+    THE LATENCY BUDGET IS ABOUT 100 MILLISECONDS END TO END, INCLUDING THE NETWORK. If the suggestion
+    arrives after the user has typed the next character, it is worthless - and worse than worthless,
+    because a suggestion list that lags and jumps is actively unpleasant.
+
+    THE QUERY RATE IS ROUGHLY THE NUMBER OF CHARACTERS TYPED, NOT THE NUMBER OF SEARCHES. A user
+    typing a 20-character query generates up to 20 requests. YOUR AUTOCOMPLETE QPS IS AN ORDER OF
+    MAGNITUDE HIGHER THAN YOUR SEARCH QPS, and that is the first number to state.
+
+THE PROBLEM STATEMENT IS: GIVEN A PREFIX, RETURN THE TOP k COMPLETIONS RANKED BY SOMETHING - usually
+historical query frequency, adjusted for recency and personalisation.
+
+THE NAIVE APPROACH AND WHY IT FAILS: scan every term in the corpus, keep the ones starting with the
+prefix, sort by score, return the top 10. Correct, and section 2 measures how catastrophically slow it
+is.
+
+THE CORE INSIGHT, AND IT IS THE WHOLE DESIGN: THE SET OF POSSIBLE PREFIXES IS FINITE AND KNOWN IN
+ADVANCE. You do not have to compute anything at query time. YOU CAN PRECOMPUTE THE ANSWER FOR EVERY
+PREFIX.
+
+    MOVE THE WORK FROM QUERY TIME TO BUILD TIME. That sentence is the design, and section 2 measures
+    what it is worth.
+
+TERMS AS THEY APPEAR:
+- TRIE / PREFIX TREE: a tree where each path from the root spells a prefix.
+- TOP-k CACHING: storing the best k completions AT each trie node.
+- HEAD / TAIL: the small number of very common queries versus the long tail of rare ones.""",
+
+    """2. THE MEASUREMENT - 27,000x, and where it comes from
+
+I built a corpus of 199,426 terms with random popularity weights and implemented three ways of
+answering "top 10 completions for this prefix":
+
+     method                            microseconds per query     vs full scan
+     full scan of all terms                        28,402.1                1x
+     binary search on a sorted list                   808.8               35x
+     TRIE WITH CACHED TOP-10                            1.0           27,437x
+
+     the trie's results matched the full scan on 200/200 queries.
+     build cost: 3,335 ms to construct the trie + 461 ms to prune each node to its top 10.
+
+    THE TRIE ANSWERS IN ONE MICROSECOND. The full scan takes twenty-eight MILLISECONDS - which is
+    already a quarter of the entire latency budget, before the network, on a corpus of only 200,000
+    terms. A real search engine has hundreds of millions of distinct queries.
+
+    THE MIDDLE ROW IS WORTH DWELLING ON. Binary search on a sorted list is a 35x improvement and it is
+    NOT ENOUGH, because after finding the prefix range you still have to SCORE AND SORT everything in
+    it. A popular one-character prefix matches a large fraction of the corpus, so the range is huge.
+    SOLVING THE LOOKUP WITHOUT SOLVING THE RANKING SOLVES NOTHING.
+
+    THE TRIE'S 27,000x DOES NOT COME FROM THE TREE STRUCTURE. It comes from THE CACHED TOP-10 AT EVERY
+    NODE. Walking the tree to the prefix is what the binary search already did; what makes it a
+    microsecond is that THE ANSWER IS ALREADY SITTING THERE and there is nothing to score or sort.
+
+    THAT DISTINCTION IS THE thing to say in an interview. "A trie" is the wrong answer on its own; "a
+    trie with the top-k precomputed at each node" is the right one.
+
+THE COST IS PAID AT BUILD TIME AND IN MEMORY:
+
+    3.3 seconds to build and 0.5 seconds to prune, for 200,000 terms - so a full rebuild of a
+    hundred-million-term index is a batch job measured in hours, not a live update.
+    AND THE MEMORY: before pruning, every node holds every completion beneath it, which is why the
+    prune step exists. AFTER PRUNING each node holds at most 10 entries, which is what makes the
+    structure fit in RAM at all.
+
+    SO THE ARCHITECTURE IS: BUILD OFFLINE, SERVE FROM MEMORY, REBUILD ON A SCHEDULE - with a separate,
+    faster path for anything that must be fresh.""",
+
+    """3. THE RANKING - which is the actual product problem
+
+The retrieval is solved by section 2. THE INTERESTING QUESTION IS WHAT "TOP 10" MEANS, and it is where
+the product lives.
+
+RANKING SIGNALS, in rough order of value:
+
+    QUERY FREQUENCY over some window. The baseline, and it is most of the value.
+    RECENCY-WEIGHTED FREQUENCY. A query that was popular last year and is dead now should not outrank
+    one trending today. AN EXPONENTIALLY DECAYED COUNT is the standard, cheap answer.
+    TRENDING / VELOCITY. A query whose rate has jumped in the last hour should surge. THIS IS A
+    SEPARATE, STREAMING PATH - the batch-built trie cannot see it, and this is why real systems merge
+    two sources at query time.
+    PERSONALISATION. The user's own history is a strong signal and it must be handled carefully -
+    people are startled and sometimes distressed to see their private searches suggested back to them,
+    particularly on a shared device.
+    LOCATION AND LANGUAGE. "restaurants near" means something different in two cities.
+    CONVERSION, NOT JUST CLICKS. Which suggestions led to a search that led to a result the user
+    actually engaged with? RANKING ON CLICKS ALONE OPTIMISES FOR CURIOSITY, NOT SATISFACTION.
+
+AND THE FEEDBACK LOOP, WHICH IS ACUTE HERE: suggested queries get typed, which makes them more
+frequent, which makes them more suggested. AUTOCOMPLETE IS AN UNUSUALLY DIRECT CASE OF THIS because the
+system literally writes the words the user then submits. Without deliberate exploration or decay, the
+suggestion list ossifies around whatever was popular when you launched.
+
+THE SAFETY LAYER IS NOT OPTIONAL AND IT IS THE PART CANDIDATES FORGET:
+
+    AUTOCOMPLETE PUTS WORDS IN THE USER'S MOUTH, and it does so in the product's voice. A suggestion
+    that completes a person's name with a defamatory phrase, or a neutral prefix with a slur, is
+    published content that the company appears to endorse.
+    THIS HAS PRODUCED REAL LAWSUITS AND REAL REGULATORY ACTION. It is not a hypothetical.
+    SO: a blocklist, a classifier over suggestions, per-entity rules (no suggestions completing a
+    named person with an accusation), and a fast manual takedown path with an audit trail.
+    AND SUPPRESSING A SUGGESTION IS CHEAP - the user can still type whatever they want. THE ASYMMETRY
+    STRONGLY FAVOURS CAUTION HERE, unlike content moderation where removal has a real cost.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - COMPUTING THE RANKING AT QUERY TIME. Measured: 28.4 ms for a full scan on only 200,000
+terms, against 1.0 microsecond for a precomputed top-10. The lookup is not the expensive part; the
+scoring and sorting is.
+
+FAILURE 2 - SOLVING RETRIEVAL WITHOUT SOLVING RANKING. Measured: binary search on a sorted list is 35x
+faster than a scan and still 800x slower than the trie, because you still sort the matched range - and
+for a one-character prefix that range is most of the corpus.
+
+FAILURE 3 - NO TYPO TOLERANCE. Users misspell constantly, and a prefix tree matches exactly. The
+answer is a separate fuzzy path - edit-distance-1 variants of the prefix, or an n-gram index - merged
+with the exact results. IT IS A LOT OF THE PERCEIVED QUALITY.
+
+FAILURE 4 - NOT HANDLING MID-WORD AND MULTI-WORD PREFIXES. "york" should suggest "new york". A
+character trie on whole queries cannot do that; you need to index every word position, which multiplies
+the index size and must be a deliberate decision.
+
+FAILURE 5 - NO FRESHNESS PATH. The trie is a batch artefact. Measured, a 200,000-term build took 3.3
+seconds, so a hundred-million-term rebuild is hours. Breaking news needs a separate streaming layer
+merged at query time.
+
+FAILURE 6 - THE COLD PREFIX. A prefix nobody has typed has no completions. Fall back to spell
+correction, to related terms, or to nothing - and returning nothing gracefully is better than
+returning noise.
+
+FAILURE 7 - IGNORING THE REQUEST RATE. Every keystroke is a request, so autocomplete QPS is an order of
+magnitude above search QPS. DEBOUNCE ON THE CLIENT (wait ~50-150 ms after the last keystroke), cancel
+in-flight requests, and cache aggressively at the edge - the top prefixes are hugely repetitive across
+users.
+
+FAILURE 8 - NO SAFETY LAYER. Autocomplete publishes text in the product's voice; this has produced real
+lawsuits.
+
+FAILURE 9 - PERSONALISATION WITHOUT CARE. Showing a user's own private searches back to them on a
+shared device is a genuine harm, not a UX quibble.
+
+FAILURE 10 - THE FEEDBACK LOOP. Suggestions become queries become suggestions. Without decay or
+exploration the list ossifies.
+
+FAILURE 11 - RANKING ON CLICKS ALONE. It optimises for curiosity rather than satisfaction; use
+downstream engagement.""",
+
+    """5. THE ALTERNATIVES - and what each costs
+
+TRIE WITH CACHED TOP-k. Measured at 1.0 microsecond per query.
+    COST: memory. Every node stores k entries plus its children map. For a large corpus this is the
+    binding constraint, and it is why compression matters.
+    THE STANDARD COMPRESSIONS: a RADIX TREE (collapse single-child chains into one edge) cuts node
+    count enormously on real vocabularies; and a DAWG / FSA shares common SUFFIXES as well as
+    prefixes, which is what production spell-checkers and keyboards use.
+
+A SORTED ARRAY PLUS BINARY SEARCH. Measured at 808 microseconds.
+    Simple, compact, and 800x slower than the trie because the ranking still has to happen.
+    FINE FOR A SMALL CORPUS - a few thousand product names in a dropdown does not need a trie.
+
+AN INVERTED INDEX / SEARCH ENGINE (Elasticsearch completion suggester, Lucene FST).
+    What most teams actually use, because it is already deployed and it handles multi-word and fuzzy
+    matching. THE HONEST ANSWER TO "how would you build this" IS OFTEN "with the search infrastructure
+    we already have".
+
+N-GRAM OR FUZZY INDEXES for typo tolerance. A separate structure, merged with the exact-match results.
+
+A LANGUAGE MODEL generating completions.
+    Genuinely better for long-tail and novel prefixes, and it can complete a prefix nobody has ever
+    typed. COST: latency far above 100 ms without heavy engineering, cost per request at keystroke
+    volume, and the ability to hallucinate a suggestion that has no basis in real queries - WHICH IS
+    EXACTLY THE SAFETY PROBLEM IN SECTION 3, MADE WORSE.
+    USE IT FOR THE TAIL, CACHED, NOT ON THE HOT PATH.
+
+WHAT TO PROPOSE:
+    A batch-built trie (or FST) with cached top-k, held in memory, serving the head - THAT IS THE
+    27,000x. A streaming layer for trending queries, merged at query time. A fuzzy path for typos. A
+    safety filter over everything. Edge caching, because the top prefixes repeat across users. And
+    client-side debouncing, because the cheapest request is the one you never send.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - STATE THE TWO NUMBERS THAT DRIVE EVERYTHING: a ~100 ms budget INCLUDING network, and a request
+rate roughly equal to characters typed - an order of magnitude above search QPS.
+
+STEP 2 - SAY THE CORE INSIGHT: the set of prefixes is finite and known, so the answer can be
+precomputed. MOVE THE WORK FROM QUERY TIME TO BUILD TIME.
+
+STEP 3 - PROPOSE A TRIE WITH THE TOP-k CACHED AT EVERY NODE, and be precise that the cached top-k is
+where the speed comes from, not the tree.
+
+STEP 4 - QUANTIFY IT. Measured: 1.0 microsecond versus 28,402 for a full scan on 200,000 terms - and
+the full scan alone would eat a quarter of the latency budget.
+
+STEP 5 - EXPLAIN WHY A SORTED ARRAY IS NOT ENOUGH. Measured 808 microseconds: you still have to score
+and sort the matched range, which for a short prefix is most of the corpus.
+
+STEP 6 - COVER MEMORY AND COMPRESSION. Radix trees collapse single-child chains; DAWGs/FSTs share
+suffixes too. Memory is the binding constraint at scale.
+
+STEP 7 - ADD A STREAMING LAYER FOR TRENDING QUERIES, merged at query time, because the trie is a batch
+artefact. Measured: 3.3 s to build 200,000 terms means a hundred million is hours.
+
+STEP 8 - ADD A FUZZY PATH FOR TYPOS and decide explicitly about mid-word matching, because indexing
+every word position multiplies the index.
+
+STEP 9 - RANK ON RECENCY-WEIGHTED FREQUENCY PLUS PERSONALISATION AND LOCATION, and evaluate on
+downstream engagement rather than clicks on the suggestion.
+
+STEP 10 - SPECIFY THE SAFETY LAYER AND THE CLIENT BEHAVIOUR. Blocklist, classifier, per-entity rules,
+fast takedown with an audit trail; and client-side debouncing plus edge caching, because the top
+prefixes are enormously repetitive across users.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Two numbers drive this whole design. The latency budget is about a hundred milliseconds INCLUDING the
+network, because it fires on every keystroke and a suggestion that arrives after the next character is
+worthless. And the request rate is roughly the number of characters typed, not the number of searches -
+so autocomplete QPS is an order of magnitude above search QPS.
+
+The core insight is that THE SET OF POSSIBLE PREFIXES IS FINITE AND KNOWN IN ADVANCE, so you don't have
+to compute anything at query time. You can precompute the answer for every prefix. MOVE THE WORK FROM
+QUERY TIME TO BUILD TIME.
+
+Concretely: a trie where every node caches the top ten completions beneath it. A query is then just a
+walk down the tree - no scoring, no sorting, nothing.
+
+I measured this on two hundred thousand terms. Full scan: twenty-eight THOUSAND microseconds - that's
+28 milliseconds, a quarter of the entire budget, on a corpus that's tiny compared to a real search
+engine. Binary search on a sorted list: 808 microseconds. Trie with cached top-ten: ONE microsecond.
+That's twenty-seven thousand times faster than the scan, and it matched the scan's results on all two
+hundred test queries.
+
+The middle number is the instructive one. Binary search is a 35x improvement and it's NOT ENOUGH,
+because after you find the prefix range you still have to score and sort everything in it - and for a
+one- or two-character prefix that range is most of the corpus. SOLVING RETRIEVAL WITHOUT SOLVING
+RANKING SOLVES NOTHING. So the twenty-seven-thousand-x doesn't come from the tree structure; it comes
+from the CACHED TOP-TEN. "Use a trie" is the wrong answer on its own.
+
+The cost is build time and memory. Two hundred thousand terms took 3.3 seconds to build plus half a
+second to prune each node to its top ten - so a hundred-million-term index is a batch job measured in
+hours, not a live update. And the pruning is what makes it fit in RAM at all. So: build offline, serve
+from memory, rebuild on a schedule - with a separate STREAMING path for trending queries merged at
+query time, because breaking news can't wait for the next rebuild.
+
+Beyond that: a fuzzy path for typos, because a prefix tree matches exactly and users misspell
+constantly, and that's a lot of the perceived quality. Client-side DEBOUNCING - wait fifty to a hundred
+and fifty milliseconds after the last keystroke - because the cheapest request is the one you never
+send. And edge caching, because the top prefixes are enormously repetitive across users.
+
+For ranking I'd use recency-weighted frequency as the base, plus trending, location and careful
+personalisation - careful because showing a user their own private searches back on a shared device is
+a genuine harm. And I'd evaluate on downstream engagement rather than clicks on the suggestion, because
+clicks optimise for curiosity rather than satisfaction.
+
+The last thing, which candidates always forget: AUTOCOMPLETE PUBLISHES TEXT IN THE PRODUCT'S VOICE. A
+suggestion that completes someone's name with an accusation is content the company appears to endorse,
+and that has produced real lawsuits. So there's a blocklist, a classifier over suggestions, per-entity
+rules, and a fast takedown path with an audit trail. And note the asymmetry favours caution - suppressing
+a suggestion costs almost nothing, because the user can still type whatever they want.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  CLIENT                                                                  │
+    │    DEBOUNCE 50-150 ms after the last keystroke                           │
+    │    CANCEL in-flight requests when a new character arrives                 │
+    │    cache locally per session                                              │
+    │    >> THE CHEAPEST REQUEST IS THE ONE YOU NEVER SEND. Every keystroke is  │
+    │       a potential request, so autocomplete QPS is ~10x search QPS.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  EDGE CACHE / CDN                                                        │
+    │    the top prefixes are ENORMOUSLY repetitive across users - "a", "am",   │
+    │    "ama" are typed constantly. A short-TTL cache absorbs most traffic.    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SERVING - MERGE THREE SOURCES, budget ~20 ms                            │
+    │                                                                          │
+    │  ┌─────────────────────────┐ ┌───────────────────┐ ┌───────────────────┐ │
+    │  │ TRIE WITH CACHED TOP-k  │ │ TRENDING (stream) │ │ PERSONAL (user's  │ │
+    │  │ batch-built, in memory  │ │ last-hour velocity│ │ own history)      │ │
+    │  │                         │ │                   │ │                   │ │
+    │  │ MEASURED 1.0 us/query   │ │ the trie is a     │ │ HANDLE WITH CARE: │ │
+    │  │ vs 28,402 us for a full │ │ BATCH artefact -  │ │ a private search  │ │
+    │  │ scan = 27,437x          │ │ 3.3 s to build    │ │ suggested back on │ │
+    │  │                         │ │ 200k terms means  │ │ a shared device   │ │
+    │  │ >> THE SPEED IS THE     │ │ 100M is HOURS.    │ │ is a real harm.   │ │
+    │  │    CACHED TOP-k, NOT    │ │ Breaking news     │ │                   │ │
+    │  │    THE TREE. A binary   │ │ cannot wait for   │ │                   │ │
+    │  │    search still costs   │ │ the next rebuild. │ │                   │ │
+    │  │    808 us because the   │ │                   │ │                   │ │
+    │  │    RANKING remains.     │ │                   │ │                   │ │
+    │  └─────────────────────────┘ └───────────────────┘ └───────────────────┘ │
+    │                        + FUZZY PATH for typos                            │
+    │                          (edit-distance-1 prefix variants, or an n-gram  │
+    │                           index) - users misspell constantly and a trie  │
+    │                           matches EXACTLY. A lot of perceived quality.   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  RANKING - recency-weighted frequency + trending + location + personal   │
+    │    EVALUATE ON DOWNSTREAM ENGAGEMENT, not clicks on the suggestion.      │
+    │    Clicks optimise for curiosity; engagement optimises for satisfaction. │
+    │    FEEDBACK LOOP IS ACUTE HERE - the system literally writes the words   │
+    │    the user then submits. Decay old counts, or the list ossifies.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SAFETY FILTER - NOT OPTIONAL                                            │
+    │    blocklist | classifier over suggestions | per-entity rules (never     │
+    │    complete a named person with an accusation) | fast manual takedown    │
+    │    with an AUDIT TRAIL                                                   │
+    │    >> AUTOCOMPLETE PUBLISHES TEXT IN THE PRODUCT'S VOICE. Real lawsuits  │
+    │       and real regulatory action have followed. And the asymmetry        │
+    │       favours caution: suppressing a suggestion costs ~nothing, since    │
+    │       the user can still type whatever they like.                        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  OFFLINE BUILD (scheduled)                                               │
+    │    query logs -> normalise -> aggregate with recency decay -> safety     │
+    │    filter -> build trie -> PRUNE EACH NODE TO TOP-k -> ship to serving   │
+    │    MEASURED on 200k terms: 3,335 ms build + 461 ms prune.                │
+    │    THE PRUNE IS WHAT MAKES IT FIT IN RAM - before it, every node holds   │
+    │    every completion beneath it.                                          │
+    │    COMPRESSION: RADIX TREE (collapse single-child chains) and DAWG/FST   │
+    │    (share suffixes too) are the standard next steps when memory binds.   │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 199,426 distinct terms of 4-12 characters, each with a random popularity weight. Three
+implementations of "return the top 10 completions for a prefix", evaluated on 200 prefixes of 1-4
+characters drawn from real terms.
+
+     method                            microseconds per query     vs full scan
+     full scan of all terms                        28,402.1                1x
+     binary search on a sorted list                   808.8               35x
+     trie with cached top-10                            1.0           27,437x
+
+     correctness: the trie matched the full scan on 200/200 queries
+     build: 3,335 ms to construct + 461 ms to prune every node to its top 10
+
+    THE THREE ROWS DIFFER IN EXACTLY ONE WAY EACH, and tracing that is the point:
+
+    FULL SCAN -> BINARY SEARCH removes the need to TOUCH every term. It finds the prefix range in
+    log(n) and only looks at what matches. THAT IS WORTH 35x.
+
+    BINARY SEARCH -> TRIE removes the need to SCORE AND SORT the matched range. THAT IS WORTH ANOTHER
+    800x, and it is the bigger win by far.
+
+    SO THE LESSON IS NOT "TRIES ARE FAST". It is that FOR A SHORT PREFIX THE MATCHED RANGE IS ENORMOUS,
+    so any design that ranks at query time is doing work proportional to the corpus no matter how
+    cleverly it finds the range. THE ONLY WAY OUT IS TO HAVE RANKED IN ADVANCE.
+
+CONVERTING TO THE LATENCY BUDGET:
+
+    28.4 ms for the full scan is 28% of a 100 ms budget, on a corpus of 200,000 terms, with zero
+    network time and no other work. A real search engine has 100-1000x more distinct queries.
+    THE FULL SCAN IS NOT SLIGHTLY TOO SLOW; IT IS OFF BY SEVERAL ORDERS OF MAGNITUDE.
+
+    1.0 microsecond leaves the entire budget for network, safety filtering, merging the trending and
+    personal sources, and serialisation - which is exactly where it should go.
+
+THE LINE-BY-LINE MAPPING - which implementation detail produced which number:
+
+    `n.top.append(...)` DURING CONSTRUCTION, at every node along each term's path
+            is what makes the build 3.3 seconds and what makes the memory large before pruning. Every
+            node accumulates every completion beneath it.
+    `n.top = sorted(n.top, reverse=True)[:10]` IN THE PRUNE PASS
+            costs 461 ms and IS THE ENTIRE REASON THE QUERY IS ONE MICROSECOND. Remove it and the
+            query has to sort at runtime, collapsing back towards the binary-search number.
+    THE QUERY BEING `walk to the node, return n.top`
+            has no loop over candidates at all. THAT is the 27,437x - not the tree traversal, which is
+            at most 4 dictionary lookups for a 4-character prefix.
+    USING PREFIXES OF 1-4 CHARACTERS in the benchmark
+            is deliberately the hard case. LONGER PREFIXES WOULD FLATTER THE SCAN AND THE BINARY SEARCH
+            enormously, because the matched range shrinks - and short prefixes are exactly where the
+            user is at the start of typing, which is when suggestions matter most.
+    THE RANDOM 4-12 CHARACTER TERMS OVER A 26-LETTER ALPHABET
+            give a fairly balanced trie. REAL QUERY VOCABULARIES ARE FAR MORE SKEWED - a handful of
+            prefixes match millions of terms - which makes the scan and binary-search numbers WORSE in
+            practice, not better. THE MEASURED GAP IS A LOWER BOUND.
+    WHAT IS NOT MEASURED
+            is memory footprint, the trending merge, fuzzy matching or safety filtering. THOSE
+            SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you state the latency budget and the request rate up front?
+    Did you get to "precompute the top-k at every prefix" rather than just "use a trie"?
+    Can you say WHY a sorted array plus binary search is insufficient?
+    Did you separate the batch index from a freshness path?
+    Did you cover typos, debouncing and caching?
+    Did you raise the SAFETY problem unprompted?
+
+    THE DISTINCTION BETWEEN "A TRIE" AND "A TRIE WITH CACHED TOP-k" IS THE STRONGEST SIGNAL HERE.
+    Measured, it is the difference between 808 microseconds and 1.
+
+THE #1 MISTAKE: ranking at query time. Measured: 28.4 ms for a full scan on 200,000 terms - a quarter
+of the whole budget before any network.
+
+THE #2 MISTAKE: proposing a trie without the cached top-k. The tree walk is not what makes it fast;
+measured, the caching is worth 800x on its own.
+
+THE #3 MISTAKE: no freshness path. The trie is a batch artefact - 3.3 s for 200,000 terms means hours
+for a real corpus, and breaking news cannot wait.
+
+THE #4 MISTAKE: no typo tolerance. A prefix tree matches exactly, users misspell constantly, and this
+is a large share of perceived quality.
+
+THE #5 MISTAKE: ignoring the request rate. Every keystroke is a request; debounce on the client and
+cache at the edge.
+
+THE #6 MISTAKE: no safety layer. Autocomplete publishes text in the product's voice and this has
+produced real lawsuits - and suppression is nearly free, so the asymmetry favours caution.
+
+THE #7 MISTAKE: careless personalisation. A private search suggested back on a shared device is a real
+harm.
+
+THE #8 MISTAKE: ranking on suggestion clicks alone. That optimises for curiosity; use downstream
+engagement.
+
+THE #9 MISTAKE: ignoring memory. Every node holding k entries plus a children map is the binding
+constraint at scale, which is what radix trees and FSTs exist to fix.
+
+THE #10 MISTAKE: ignoring the feedback loop. The system writes the words the user then submits, so
+without decay the suggestion list ossifies around whatever was popular at launch.
+
+ONE-SENTENCE TAKEAWAY: autocomplete fires on every keystroke inside a ~100 ms budget, so the answer is
+to PRECOMPUTE - a batch-built trie caching the top-k at EVERY node, measured at 1.0 microsecond per
+query against 28,402 for a full scan (27,437x) and 808 for a binary search, where that last comparison
+is the important one because it shows the win comes from having RANKED IN ADVANCE rather than from the
+tree - with a streaming layer merged in for trending, a fuzzy path for typos, client-side debouncing,
+and a safety filter, because autocomplete publishes text in the product's voice.""",
+]
+
+_EX_P1AO["Design a Fraud Detection System"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - decide, in under 100 ms, whether to let this payment through
+
+A fraud detection system scores every transaction and routes it: APPROVE, DECLINE, or SEND FOR REVIEW.
+The payment is held open while you decide, so the latency budget is hard - typically under 100
+milliseconds end to end.
+
+THE FIRST THING TO ESTABLISH IS THAT THE TWO ERRORS ARE ASYMMETRIC AND MEASURABLE IN DIFFERENT
+CURRENCIES:
+
+    A MISSED FRAUD costs you the chargeback amount plus a fee - a known, bounded number.
+    A FALSE DECLINE costs you the sale AND the customer relationship. A legitimate customer declined
+    at checkout frequently never returns.
+
+    INDUSTRY EXPERIENCE IS THAT FALSE DECLINES COST MORE IN AGGREGATE THAN FRAUD DOES, which is
+    counterintuitive and is the single most useful framing you can bring. THE OBJECTIVE IS NOT "CATCH
+    FRAUD"; IT IS "MAXIMISE APPROVED GOOD VOLUME SUBJECT TO A FRAUD LOSS BUDGET".
+
+THE SECOND THING, AND IT SHAPES THE ENTIRE ARCHITECTURE: THE LABELS ARRIVE 60 TO 90 DAYS LATE.
+
+    A chargeback is filed by the cardholder weeks or months after the transaction. So today's model is
+    trained on fraud patterns from a quarter ago, against an adversary who has moved on. A SYSTEM
+    WHOSE LABELS ARRIVE THREE MONTHS LATE CANNOT BE RETRAINED WEEKLY IN ANY MEANINGFUL SENSE, however
+    good the pipeline diagram looks.
+
+THE THIRD THING: THIS IS AN ADVERSARIAL PROBLEM. Someone is actively probing your defences and
+adapting. That changes the retraining cadence from an engineering preference into a security
+parameter, and it means feature importance is itself sensitive information.
+
+TERMS AS THEY APPEAR:
+- CHARGEBACK: the cardholder disputes a transaction; the merchant loses the money and pays a fee.
+- FALSE DECLINE / INSULT RATE: legitimate transactions wrongly refused.
+- PREVALENCE / BASE RATE: what fraction of transactions are fraudulent. Typically 0.1% or less.""",
+
+    """2. THE MEASUREMENT - ROC-AUC lies, and here is exactly how much
+
+This is the most important measurement in the entry, and it applies to every rare-event problem.
+
+I took ONE model with a FIXED quality - positives and negatives separated by 2.2 standard deviations -
+and evaluated it at five different base rates, on 200,000 transactions each time. THE MODEL DOES NOT
+CHANGE. Only the prevalence does.
+
+     prevalence     positives     ROC-AUC     PR-AUC     precision at 80% recall
+     50.00%           100,060      0.9401     0.9408                      90.26%
+     10.00%            19,951      0.9402     0.7304                      50.67%
+     1.00%              2,001      0.9395     0.3441                       8.44%
+     0.20%                383      0.9287     0.1366                       1.36%
+     0.05%                 83      0.9485     0.0771                       0.46%
+
+    ROC-AUC IS ESSENTIALLY CONSTANT AT 0.94 ACROSS A THOUSAND-FOLD CHANGE IN BASE RATE. It reports the
+    same excellent number whether the task is trivial or nearly impossible.
+
+    PR-AUC COLLAPSES FROM 0.94 TO 0.077.
+
+    AND THE COLUMN THAT MATTERS OPERATIONALLY - PRECISION AT 80% RECALL - GOES FROM 90% TO 0.46%.
+
+    READ THAT LAST NUMBER PROPERLY. At a 0.05% fraud rate, catching 80% of fraud means that OF EVERY
+    100 TRANSACTIONS YOU DECLINE, FEWER THAN ONE IS ACTUALLY FRAUDULENT. You are declining roughly 217
+    legitimate customers for every genuine fraudster you stop.
+
+    "OUR FRAUD MODEL HAS 0.94 AUC" IS COMPATIBLE WITH THAT. The sentence is true and it is worthless.
+
+WHY ROC-AUC BEHAVES THIS WAY: it plots true positive rate against FALSE POSITIVE RATE, and the false
+positive rate is normalised by the number of NEGATIVES - which is enormous. Adding 100,000 false
+positives to a pool of 199,917 negatives barely moves the false positive rate. PRECISION, by contrast,
+is normalised by the number of things you FLAGGED, which is exactly what the operations team has to
+deal with.
+
+    SO: USE PR-AUC. AND BETTER STILL, REPORT PRECISION AT A FIXED RECALL, OR RECALL AT A FIXED FALSE
+    POSITIVE COUNT PER DAY - because those are numbers a business can act on, and AUCs of any kind are
+    not.
+
+    BEST OF ALL, REPORT MONEY: fraud value caught versus good volume declined, in currency. Fraud
+    amounts vary by orders of magnitude, so catching 80% of fraud BY COUNT and 30% BY VALUE is a
+    completely ordinary and completely unacceptable outcome.""",
+
+    """3. THE ARCHITECTURE CONSEQUENCES - three tiers, not one threshold
+
+GIVEN SECTION 2, A SINGLE APPROVE/DECLINE THRESHOLD IS INDEFENSIBLE. The design is three outcomes:
+
+    score > HIGH     -> DECLINE automatically
+    LOW < score < HIGH -> REVIEW: step-up authentication, or a human analyst, or a hold
+    score < LOW      -> APPROVE
+
+    THE MIDDLE TIER IS WHERE THE VALUE IS, and STEP-UP AUTHENTICATION is the key idea: instead of
+    declining a suspicious transaction, ask for 3-D Secure, a one-time code, or a biometric check. THE
+    CUSTOMER PROVES THEMSELVES AND THE SALE COMPLETES. It converts a false decline - which costs a
+    customer - into a small amount of friction.
+
+    THAT SINGLE MECHANISM IS THE BEST ANSWER TO THE PRECISION PROBLEM, and it is why the action space
+    matters more than the model.
+
+AND THE RULES LAYER IS NOT LEGACY BAGGAGE, IT IS ESSENTIAL:
+
+    HARD BLOCKS on known-compromised cards, sanctioned entities, confirmed-fraud devices.
+    VELOCITY LIMITS - N transactions per card per hour, N cards per device per day. THESE CATCH
+    CARD-TESTING ATTACKS THAT NO SCORE-BASED MODEL RESPONDS TO FAST ENOUGH, because the attack is
+    happening now and the model was trained last month.
+    HOTFIX RULES that ship in minutes when a new attack pattern starts at 3am. A RETRAIN TAKES DAYS
+    AND THE LABELS TAKE MONTHS.
+
+    THE RULES AND THE MODEL ARE COMPLEMENTS, NOT COMPETITORS. Rules cover the known and the urgent; the
+    model covers the diffuse and the novel-ish.
+
+THE FEATURE CATEGORIES THAT ACTUALLY CARRY THE SIGNAL:
+
+    TRANSACTION: amount, currency, merchant category, time of day.
+    VELOCITY (streaming): transactions in the last 5 minutes / hour / day, for this card, this device,
+    this IP, this shipping address. THESE ARE USUALLY THE STRONGEST FEATURES and they are the reason
+    the system needs a streaming feature path rather than a nightly batch.
+    DEVIATION FROM THE ENTITY'S OWN NORM: this amount versus this cardholder's usual, this hour versus
+    their usual, this country versus their usual. A DEVIATION FEATURE BEATS AN ABSOLUTE ONE, exactly
+    as in churn.
+    NETWORK / GRAPH: how many cards has this device used, how many devices this card, are this
+    address's transactions clustered with known fraud. GRAPH FEATURES CATCH ORGANISED FRAUD THAT
+    PER-TRANSACTION FEATURES CANNOT SEE, and naming them is a strong signal.
+    DEVICE AND BEHAVIOURAL: fingerprint, whether the card number was typed or pasted, time spent on
+    the checkout page.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - REPORTING ROC-AUC. Measured: it stayed at 0.94 across a 1000x change in base rate while
+precision at 80% recall fell from 90% to 0.46%. It is the wrong metric for any rare event.
+
+FAILURE 2 - IGNORING THE LABEL DELAY. Chargebacks arrive 60-90 days later. Your "latest" model is
+trained on last quarter's attacks. IT MEANS RULES AND VELOCITY CHECKS CARRY THE SHORT-TERM DEFENCE, and
+a weekly retrain cadence is largely theatre.
+
+FAILURE 3 - THE SELECTION-BIAS TRAP, AND IT IS THE DEEPEST ONE. You only observe the outcome of
+transactions you APPROVED. A declined transaction has no label - you never find out whether it was
+fraud. SO YOUR TRAINING DATA IS SYSTEMATICALLY MISSING EXACTLY THE CASES THE MODEL IS MOST CONFIDENT
+ABOUT, and the model becomes progressively more confident about a narrower slice of the world. THE ONLY
+HONEST FIX IS A SMALL RANDOM-APPROVAL HOLDOUT: approve a tiny fraction of high-scoring transactions
+anyway and eat the losses, to keep learning. IT IS EXPENSIVE AND IT IS THE ONLY WAY TO MEASURE
+ANYTHING.
+
+FAILURE 4 - CONTAMINATED NEGATIVES. Your negatives include undetected fraud - transactions nobody
+disputed. Say so; it caps achievable performance and it is why your measured precision is a lower
+bound.
+
+FAILURE 5 - A RANDOM TRAIN/TEST SPLIT. Fraud is adversarial and non-stationary. A random split trains
+on next month's pattern and reports a fantasy. SPLIT BY TIME, ALWAYS.
+
+FAILURE 6 - ACCURACY AS A METRIC. At 0.1% prevalence, "approve everything" is 99.9% accurate.
+
+FAILURE 7 - COUNTING FRAUD RATHER THAN VALUING IT. Amounts vary by orders of magnitude; catching 80% by
+count and 30% by value is ordinary and unacceptable.
+
+FAILURE 8 - NO FALLBACK, OR THE WRONG ONE. If the model service is down, you must NOT fail open on
+fraud. Fall back to the rules engine, and make that path a tested, first-class component.
+
+FAILURE 9 - IGNORING EXPLAINABILITY. Declines may need justifying to a regulator or a customer, and an
+analyst reviewing the middle tier needs to know WHY it was flagged. THIS IS A REAL ARGUMENT FOR
+GRADIENT-BOOSTED TREES over a deep model as version one.
+
+FAILURE 10 - PUBLISHING FEATURE IMPORTANCE. In an adversarial system, telling people which signals you
+use tells them what to spoof. IT IS SENSITIVE INFORMATION.
+
+FAILURE 11 - NO PER-SEGMENT MONITORING. A model can be excellent overall and terrible on one
+geography, one card type or one merchant category - and that is precisely where an attacker will
+concentrate.""",
+
+    """5. THE MODELS AND THE OPERATING POINT
+
+THE BASELINE: THE RULES ENGINE THE BUSINESS ALREADY RUNS. Velocity limits, geo-mismatch, amount
+z-score, blocklists. STATE WHAT IT CATCHES AND AT WHAT FALSE-DECLINE RATE. It is the thing your model
+has to beat, and it is not going away regardless.
+
+VERSION ONE: GRADIENT-BOOSTED TREES on tabular features.
+    Handles heterogeneous features and missing values, trains fast, needs little tuning, AND IS
+    EXPLAINABLE - which matters because declines may need justifying and analysts need a reason.
+
+WHAT COMES NEXT, in rough order of value:
+    STREAMING VELOCITY FEATURES. Usually a bigger win than any model change, and they need real
+    infrastructure - a streaming feature path with windowed aggregation.
+    GRAPH FEATURES over the card/device/address network. Catches organised fraud that per-transaction
+    models cannot see.
+    SEQUENCE MODELS over the cardholder's own transaction history. Genuinely useful, and harder to
+    explain and to serve in 100 ms.
+    UNSUPERVISED ANOMALY DETECTION as a SECOND signal, not a replacement. It flags novel patterns
+    before any label exists, which directly addresses the 60-90 day delay - and its precision is poor,
+    so route its flags to review rather than to decline.
+
+SETTING THE OPERATING POINT - and this is the part that is a business conversation rather than a
+modelling one:
+
+    You are not choosing a threshold to maximise F1. You are solving: MAXIMISE APPROVED GOOD VALUE
+    SUBJECT TO FRAUD LOSSES BELOW A BUDGET, where the budget is set by finance.
+
+    THE INPUTS ARE: expected fraud value per score band, expected good value per score band, the cost
+    of a review, and the conversion rate of step-up authentication. ALL OF THOSE ARE MEASURABLE, and
+    the threshold falls out of them.
+
+    THE THRESHOLD SHOULD ALSO VARY BY TRANSACTION VALUE. Declining a £5 transaction to avoid a £5 loss
+    while risking a customer relationship is a bad trade; declining a £5,000 one on the same score is
+    obviously right. A SCORE THRESHOLD THAT IGNORES THE AMOUNT IS LEAVING MONEY ON BOTH SIDES.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - REFRAME THE OBJECTIVE. Not "catch fraud" but "maximise approved good volume subject to a
+fraud-loss budget". Say that false declines usually cost more in aggregate than fraud does.
+
+STEP 2 - GET THE NUMBERS: transactions per second, prevalence, latency budget, current false-decline
+rate, current fraud loss.
+
+STEP 3 - RAISE THE LABEL DELAY IMMEDIATELY. 60-90 days for a chargeback. It determines the retraining
+cadence, motivates unsupervised signals, and means rules carry the short-term defence.
+
+STEP 4 - RAISE THE SELECTION BIAS. You only see outcomes for transactions you APPROVED. Propose a small
+RANDOM-APPROVAL HOLDOUT and say it costs real money and is the only way to keep learning.
+
+STEP 5 - REJECT ROC-AUC EXPLICITLY, WITH THE NUMBER. Measured: constant at 0.94 across a 1000x change
+in prevalence while precision at 80% recall fell from 90% to 0.46%.
+
+STEP 6 - PROPOSE THREE TIERS, NOT TWO. Decline, review, approve - and make STEP-UP AUTHENTICATION the
+middle tier's main action, because it converts a false decline into friction.
+
+STEP 7 - KEEP THE RULES ENGINE. Hard blocks, velocity limits and hotfix rules that ship in minutes.
+Rules and models are complements.
+
+STEP 8 - PRIORITISE STREAMING VELOCITY FEATURES AND GRAPH FEATURES. They usually beat model changes,
+and graph features catch organised fraud that per-transaction features cannot see.
+
+STEP 9 - SPLIT BY TIME, MEASURE IN MONEY, AND MONITOR PER SEGMENT. Fraud value caught versus good value
+declined, broken down by geography, card type and merchant category.
+
+STEP 10 - NEVER FAIL OPEN. The rules engine is the fallback when the model service is down, and it must
+be a tested first-class path. And do not publish feature importance.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I'd reframe the objective first, because "catch fraud" is the wrong goal. The two errors are
+asymmetric: a missed fraud costs you the chargeback amount, which is bounded and known, while a FALSE
+DECLINE costs you the sale AND the customer, and a legitimate customer declined at checkout often never
+comes back. In aggregate, false declines usually cost more than fraud does. So the objective is
+MAXIMISE APPROVED GOOD VOLUME SUBJECT TO A FRAUD LOSS BUDGET.
+
+Two facts shape the whole architecture. First, THE LABELS ARRIVE SIXTY TO NINETY DAYS LATE, because a
+chargeback is filed weeks or months after the transaction. So today's model is trained on last
+quarter's attacks against an adversary who has moved on - which means a weekly retrain cadence is
+largely theatre, and the short-term defence has to come from rules and velocity checks. Second, this is
+ADVERSARIAL - someone is actively probing you - so retraining cadence is a security parameter, and
+feature importance is sensitive information you shouldn't publish.
+
+Now the measurement I'd most want to give, because it changes the whole conversation. ROC-AUC IS THE
+WRONG METRIC AND IT LIES SPECTACULARLY. I took ONE model of fixed quality and evaluated it at five
+different base rates. ROC-AUC stayed at 0.94 ACROSS A THOUSAND-FOLD CHANGE IN PREVALENCE - it reports
+the same excellent number whether the task is easy or nearly impossible. PR-AUC collapsed from 0.94 to
+0.077. And precision at eighty per cent recall went from ninety per cent down to ZERO POINT FOUR SIX
+PER CENT.
+
+Read that properly: at a 0.05 per cent fraud rate, catching eighty per cent of fraud means fewer than
+one in a hundred of your declines is actually fraudulent. You're declining roughly two hundred
+legitimate customers for every fraudster you stop - and "our model has 0.94 AUC" is a true statement
+about that system. The reason is that ROC uses the FALSE POSITIVE RATE, normalised by the huge number
+of negatives; precision is normalised by what you actually FLAGGED, which is what operations has to
+deal with. So I'd report PR-AUC, or better, precision at a fixed recall - and best of all, MONEY:
+fraud value caught versus good value declined, because fraud amounts vary by orders of magnitude and
+catching eighty per cent by COUNT and thirty per cent by VALUE is completely ordinary.
+
+Given that, a single approve-decline threshold is indefensible. THREE TIERS: decline, review, approve.
+And the middle tier's main action is STEP-UP AUTHENTICATION - 3-D Secure, a one-time code - which
+converts a false decline, which costs you a customer, into a bit of friction where the customer proves
+themselves and the sale completes. That single mechanism is the best answer to the precision problem.
+
+The rules engine stays, and it isn't legacy baggage. Velocity limits catch card-testing attacks
+happening RIGHT NOW that no score-based model responds to fast enough, and a hotfix rule ships in
+minutes when a new pattern starts at 3am, where a retrain takes days and the labels take months.
+
+Two things I'd raise unprompted. The deepest problem is SELECTION BIAS: you only observe outcomes for
+transactions you APPROVED, so your training data is systematically missing exactly the cases the model
+is most confident about, and it gets progressively more confident about a narrower slice of the world.
+The only honest fix is a small RANDOM-APPROVAL HOLDOUT where you approve a tiny fraction of
+high-scoring transactions anyway and eat the losses. And NEVER FAIL OPEN - if the model service is
+down, fall back to rules, and make that a tested first-class path.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  TRANSACTION ARRIVES. The payment is HELD OPEN. Budget: < 100 ms.       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 1  HARD RULES                                        ~1 ms       │
+    │    blocklists (compromised cards, sanctioned entities, known-fraud       │
+    │    devices), VELOCITY LIMITS (N txns/card/hour, N cards/device/day)      │
+    │    >> CATCHES CARD-TESTING ATTACKS HAPPENING RIGHT NOW, which no         │
+    │       score-based model reacts to fast enough - the attack is today and  │
+    │       the model was trained on last quarter.                             │
+    │    >> HOTFIX RULES SHIP IN MINUTES. A retrain takes days and the labels  │
+    │       take MONTHS. This layer is not legacy baggage.                     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 2  FEATURE ASSEMBLY                                 ~20 ms       │
+    │    PRECOMPUTED (batch):  cardholder history, merchant stats             │
+    │    STREAMING (windowed): TXNS IN THE LAST 5 MIN / HOUR / DAY for this   │
+    │      card, device, IP, shipping address <- USUALLY THE STRONGEST        │
+    │      FEATURES, and the reason a streaming path is required              │
+    │    ON-DEMAND:  distance from the cardholder's usual location, amount    │
+    │      z-score against THEIR OWN norm <- DEVIATION BEATS ABSOLUTE         │
+    │    GRAPH:  cards per device, devices per card, address clustering       │
+    │      <- CATCHES ORGANISED FRAUD PER-TRANSACTION FEATURES CANNOT SEE     │
+    │    >> TRAINING/SERVING SKEW IS THE BIG RISK HERE. "Transactions in the  │
+    │       last hour" computed one way in the warehouse and another in the   │
+    │       service is a classic silent failure.                              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 3  MODEL                                            ~30 ms       │
+    │    GRADIENT-BOOSTED TREES as v1: tabular, handles missing values,       │
+    │    trains fast, AND EXPLAINABLE - declines may need justifying to a     │
+    │    regulator, and the review analyst needs to know WHY.                 │
+    │    PLUS unsupervised anomaly detection as a SECOND signal - it flags    │
+    │    novel patterns BEFORE any label exists, which directly addresses the │
+    │    60-90 day delay. Poor precision, so route it to REVIEW not DECLINE.  │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 4  DECISION - THREE TIERS, NOT TWO                               │
+    │                                                                          │
+    │    score > HIGH        -> DECLINE                                        │
+    │    LOW < score < HIGH  -> STEP-UP AUTH (3-D Secure, OTP, biometric)      │
+    │                           or a human analyst, or a hold                  │
+    │                           >> CONVERTS A FALSE DECLINE INTO FRICTION.     │
+    │                              THE CUSTOMER PROVES THEMSELVES AND THE SALE │
+    │                              COMPLETES. Best available answer to the     │
+    │                              precision problem in section 2.             │
+    │    score < LOW         -> APPROVE                                        │
+    │                                                                          │
+    │    THRESHOLDS VARY BY TRANSACTION VALUE. Declining a GBP 5 payment to    │
+    │    avoid a GBP 5 loss while risking the customer is a bad trade;         │
+    │    declining a GBP 5,000 one on the same score is obviously right.       │
+    │                                                                          │
+    │    RANDOM-APPROVAL HOLDOUT: approve a tiny fraction of HIGH-scoring      │
+    │    transactions anyway. IT COSTS REAL MONEY AND IT IS THE ONLY WAY TO    │
+    │    GET LABELS FOR THE CASES YOU NORMALLY BLOCK - without it the model    │
+    │    becomes ever more confident about an ever narrower slice of reality.  │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  FALLBACK AND MONITORING                                                 │
+    │    MODEL SERVICE DOWN -> fall back to LAYER 1 rules. NEVER FAIL OPEN.    │
+    │      That path must be tested, not assumed.                              │
+    │    MEASURE IN MONEY: fraud VALUE caught vs good VALUE declined.          │
+    │    METRICS: PR-AUC, precision at fixed recall. NOT ROC-AUC (section 2).  │
+    │    PER SEGMENT: geography, card type, merchant category - an attacker    │
+    │      concentrates exactly where you are weak.                            │
+    │    DO NOT PUBLISH FEATURE IMPORTANCE. It tells an adversary what to      │
+    │      spoof.                                                              │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: one model of FIXED quality - fraudulent transactions score from Normal(2.2, 1) and
+legitimate ones from Normal(0, 1), a separation of 2.2 standard deviations. 200,000 transactions.
+THE MODEL IS IDENTICAL IN EVERY ROW; ONLY THE PREVALENCE CHANGES.
+
+     prevalence     positives     ROC-AUC     PR-AUC     precision at 80% recall
+     50.00%           100,060      0.9401     0.9408                      90.26%
+     10.00%            19,951      0.9402     0.7304                      50.67%
+     1.00%              2,001      0.9395     0.3441                       8.44%
+     0.20%                383      0.9287     0.1366                       1.36%
+     0.05%                 83      0.9485     0.0771                       0.46%
+
+    THE ROC-AUC COLUMN VARIES BY 0.02 ACROSS THE WHOLE TABLE, and the variation is noise - the 0.05%
+    row is actually the HIGHEST, at 0.9485, because with only 83 positives the estimate is unstable.
+
+    THE PRECISION COLUMN VARIES BY A FACTOR OF 196.
+
+    CONVERTING THE LAST ROW INTO OPERATIONS: 83 fraudulent transactions, catching 80% of them is 66.
+    At 0.46% precision, flagging those 66 requires flagging about 14,300 transactions in total - so
+    ROUGHLY 14,230 LEGITIMATE CUSTOMERS DECLINED, or about 215 good customers per fraudster caught.
+
+    IF THE AVERAGE TRANSACTION IS WORTH £80 AND THE AVERAGE FRAUD £300, THAT TRADE LOSES MONEY BY MORE
+    THAN AN ORDER OF MAGNITUDE - and the model reporting 0.9485 AUC is the one making it.
+
+WHY ROC-AUC IS INSENSITIVE, stated precisely:
+    ROC plots TPR = TP/(TP+FN) against FPR = FP/(FP+TN). THE DENOMINATOR OF FPR IS THE NUMBER OF
+    NEGATIVES, which at 0.05% prevalence is 199,917. Adding 14,000 false positives moves FPR by 0.07.
+    PRECISION = TP/(TP+FP) is normalised by WHAT YOU FLAGGED, which is the quantity the operations
+    team and the declined customer actually experience.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    HOLDING THE SEPARATION FIXED AT 2.2 SD ACROSS ALL FIVE ROWS
+            is the entire experimental design. Any change down the table is caused by PREVALENCE alone,
+            which is what isolates the metric's behaviour from the model's.
+    THE CHOICE OF 2.2 SD
+            corresponds to a genuinely decent classifier (ROC-AUC 0.94). A WEAKER MODEL WOULD MAKE THE
+            POINT EVEN MORE STARKLY, and a stronger one would delay the collapse to a lower prevalence
+            without preventing it.
+    EVALUATING "PRECISION AT 80% RECALL" RATHER THAN AT A FIXED THRESHOLD
+            is what makes the rows comparable. A fixed threshold would confound the metric's behaviour
+            with the shifting score distribution.
+    THE 0.05% ROW HAVING ONLY 83 POSITIVES
+            is why its ROC-AUC came out highest. IT IS NOISE, AND SAYING SO MATTERS - at very low
+            prevalence every metric is estimated from a handful of positives, which is itself a design
+            problem: you need a lot of data to measure a rare event at all.
+    WHAT IS NOT MEASURED
+            is the label delay, selection bias, or the value of step-up authentication. THOSE ARE
+            REASONED, NOT MEASURED - only the metric claim here carries numbers.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you reframe the objective away from "catch fraud"?
+    Did you raise the 60-90 day label delay and follow its consequences?
+    Did you reject ROC-AUC and say why?
+    Did you get to three tiers and step-up authentication?
+    Did you raise selection bias - that declined transactions have no label?
+    Did you keep the rules engine, and say why it is not legacy?
+    Did you measure in money rather than count?
+
+    THE SELECTION-BIAS POINT AND THE ROC-AUC POINT ARE THE TWO THAT MARK OUT A SENIOR ANSWER.
+
+THE #1 MISTAKE: reporting ROC-AUC. Measured: constant at 0.94 across a 1000x change in prevalence while
+precision at 80% recall fell from 90.26% to 0.46% - about 215 good customers declined per fraudster
+caught.
+
+THE #2 MISTAKE: ignoring the label delay. 60-90 days means the model always fights the last quarter's
+war, and rules must carry the short-term defence.
+
+THE #3 MISTAKE: ignoring selection bias. Declined transactions have no outcome, so the model gets ever
+more confident about an ever narrower slice. A random-approval holdout is the only honest fix, and it
+costs money.
+
+THE #4 MISTAKE: a two-way decision. Three tiers with step-up authentication converts false declines
+into friction.
+
+THE #5 MISTAKE: discarding the rules engine. Velocity limits catch attacks happening now; hotfix rules
+ship in minutes where a retrain takes days.
+
+THE #6 MISTAKE: a random train/test split. Fraud is adversarial and non-stationary.
+
+THE #7 MISTAKE: counting fraud instead of valuing it. 80% by count and 30% by value is ordinary and
+unacceptable.
+
+THE #8 MISTAKE: a value-blind threshold. Declining a £5 payment on the same score as a £5,000 one is
+wrong in both directions.
+
+THE #9 MISTAKE: failing open. If the model service is down, fall back to rules - and test that path.
+
+THE #10 MISTAKE: publishing feature importance, or ignoring per-segment performance. Both hand an
+adversary a map.
+
+ONE-SENTENCE TAKEAWAY: fraud detection is an asymmetric-cost, adversarial, delayed-label problem where
+the biggest single error is the METRIC - measured, one fixed-quality model held ROC-AUC at 0.94 across
+a thousand-fold change in base rate while precision at 80% recall fell from 90.26% to 0.46%, meaning
+roughly 215 legitimate customers declined per fraudster caught - so report PR-AUC and money rather than
+AUC, use three tiers with STEP-UP AUTHENTICATION to turn false declines into friction, keep the rules
+engine for the attacks happening today, and run a random-approval holdout because declined transactions
+never get a label.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
