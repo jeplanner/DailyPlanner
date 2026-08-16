@@ -1763,6 +1763,7 @@
           data-date="{{ date.isoformat() }}"
           placeholder="Three small things, or one big one…"
           rows="3"
+          oninput="scheduleGratitudeSave()"
           onblur="saveGratitude()"
         >{{ data.gratitude or '' }}</textarea>
         {% else %}
@@ -3916,28 +3917,51 @@ document.addEventListener("keydown", (e) => {
     if (el) _reflectionLastSaved = el.value;
   });
 
-  /* ── Gratitude autosave ──────────────────────────────────────── */
+  /* ── Gratitude autosave ──────────────────────────────────────────
+   * Same debounce-on-input plus save-on-blur as the reflection field
+   * above. Blur alone loses the entry if the tab is closed while the
+   * textarea still has focus, which is the normal way of finishing a
+   * gratitude note (type, then close). Shares the card's status pill:
+   * both fields live in one <details> and only one can be focused. */
+  let _gratitudeTimer = null;
   let _gratitudeLastSaved = "";
+
+  function scheduleGratitudeSave() {
+    if (_gratitudeTimer) clearTimeout(_gratitudeTimer);
+    _setReflectionStatus("Editing…", null);
+    _gratitudeTimer = setTimeout(() => saveGratitude(), 800);
+  }
+
   async function saveGratitude() {
     const el = document.getElementById("gratitude-input");
     if (!el) return;
     const txt = el.value.trim();
-    if (txt === _gratitudeLastSaved) return;
+    if (txt === _gratitudeLastSaved) return;      // nothing changed
+    if (_gratitudeTimer) { clearTimeout(_gratitudeTimer); _gratitudeTimer = null; }
+
+    _setReflectionStatus("Saving…", null);
     try {
       const r = await fetch("/api/v2/daily-gratitude", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ plan_date: el.dataset.date, gratitude: txt }),
       });
       if (!r.ok) throw new Error("HTTP " + r.status);
       _gratitudeLastSaved = txt;
+      _setReflectionStatus("Saved", "saved");
     } catch (e) {
+      _setReflectionStatus("Save failed — retry on next edit", "error");
       console.error("gratitude save failed:", e);
     }
   }
+
+  // Store the TRIMMED server value: saveGratitude() compares against the
+  // trimmed input, so keeping the raw one here would make the first blur
+  // on an untouched field look like a change and fire a pointless save.
   document.addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById("gratitude-input");
-    if (el) _gratitudeLastSaved = el.value;
+    if (el) _gratitudeLastSaved = el.value.trim();
   });
 
   /* ── Weekly Review autosave ──────────────────────────────────────
