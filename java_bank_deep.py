@@ -1786,3 +1786,892 @@ and the practical consequences are that a violated promise surfaces as a ClassCa
 you never wrote, sometimes inside a synthetic BRIDGE METHOD, while the Signature attribute keeps just
 enough for reflection to read a FIELD's generic type even though an OBJECT can never report its own.""",
 ]
+
+
+DEEP["Streams — laziness, one-shot use, and when a loop is better"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — describing the work, then doing it once
+
+A stream is not a collection. It holds no data. It is a DESCRIPTION of a pipeline — filter these, map
+those, collect the rest — and writing that description does nothing at all. The work only starts when
+you ask for a result at the end, and then all the steps happen together, one element at a time.
+
+    THE TWO CONSEQUENCES THAT SURPRISE PEOPLE:
+
+    A PIPELINE WITH NO ENDING DOES NOTHING. `list.stream().map(x -> save(x))` looks like it saves
+    everything and saves nothing. There is no terminal operation, so the description was built and
+    thrown away. The compiler does not warn.
+
+    THE ELEMENTS DO NOT GO THROUGH STAGE BY STAGE. It is not "filter everything, then map everything".
+    Each element is pulled through the WHOLE pipeline before the next one starts. Which is why a
+    stream over an infinite source plus `limit(5)` terminates, and why `findFirst` on a million
+    elements can touch exactly one.
+
+THE EVERYDAY VERSION: a recipe versus cooking. Writing "chop the onions, fry them, add stock" produces
+no dinner. And when you do cook, you do not chop every vegetable in the kitchen before frying anything
+— you take one thing through the steps that apply to it.
+
+    A STREAM IS ALSO SINGLE-USE. Once consumed it is spent, like a queue rather than a list. Operating
+    on it again throws IllegalStateException, which is the API refusing to pretend it can rewind.
+
+TERMS AS THEY APPEAR:
+- INTERMEDIATE operation: returns another stream. Lazy. filter, map, sorted, distinct, limit, peek.
+- TERMINAL operation: produces a result or a side effect, and TRIGGERS EVERYTHING. collect, forEach,
+  reduce, count, anyMatch, findFirst.
+- SHORT-CIRCUITING: a terminal that may finish without consuming the whole source.""",
+
+"""2. THE INTUITION — the pull model, and what laziness buys
+
+The natural mental model is that each stage runs to completion and hands a collection to the next.
+That would be a PUSH model, it would allocate an intermediate collection per stage, and it could never
+handle an infinite source.
+
+    STREAMS ARE A PULL MODEL INSTEAD. The terminal operation asks for one element; the request travels
+    UP the pipeline to the source; the element comes back down through every stage in turn; and only
+    then is the next one requested.
+
+    THAT SINGLE DESIGN DECISION BUYS FOUR THINGS AT ONCE:
+
+    NO INTERMEDIATE COLLECTIONS. A filter-map-collect over a million elements allocates one result,
+    not three million-element lists. This is called STAGE FUSION, and it is why a long pipeline is not
+    proportionally slower than a short one.
+
+    SHORT-CIRCUITING BECOMES POSSIBLE. `findFirst` stops asking after the first match; `anyMatch`
+    after the first true; `limit(5)` after five. On a million-element source that can be a million-fold
+    saving, and it is impossible in a push model because the earlier stages have already run.
+
+    INFINITE SOURCES BECOME USABLE. `Stream.iterate(1, n -> n * 2).limit(10)` is fine, because nothing
+    is produced until something asks.
+
+    AND THE ORDER OF OPERATIONS STARTS TO MATTER. `filter(...).map(expensive)` maps only what survives
+    the filter; `map(expensive).filter(...)` maps everything. Identical results, and one may be ten
+    times the work — which is a real optimisation you can perform by reading, without measuring.
+
+THE ONE PLACE LAZINESS BREAKS DOWN — and it is the detail worth knowing:
+
+    STATEFUL INTERMEDIATE OPERATIONS. `sorted()` cannot emit its first element until it has seen the
+    LAST one, so it is a full barrier: everything upstream runs to completion, is buffered, and only
+    then does anything downstream begin. `distinct()` must remember everything seen so far.
+
+    WHICH MEANS `sorted().limit(3)` STILL SORTS EVERYTHING. The limit cannot short-circuit through the
+    sort. If you want the three smallest of a million elements, a bounded priority queue is O(n log 3)
+    and the sort is O(n log n) — the stream reads better and does far more work.""",
+
+"""3. THE MECHANISM — Spliterator, fusion, and what parallel actually does
+
+UNDERNEATH EVERY STREAM IS A SPLITERATOR, which is an iterator that can also split itself:
+
+    tryAdvance(action)   process one element. The pull.
+    trySplit()           hand back a Spliterator covering roughly half, keeping the rest. The parallel.
+    estimateSize()       how many are left, for deciding whether splitting is worth it.
+    characteristics()    SIZED, ORDERED, DISTINCT, SORTED, IMMUTABLE, NONNULL, CONCURRENT.
+
+    THE CHARACTERISTICS ARE NOT DECORATION — the pipeline reads them and skips work. A stream already
+    marked DISTINCT skips `distinct()` entirely. A SIZED stream can pre-allocate the result array. A
+    stream that is not ORDERED may let `findFirst` behave like `findAny`.
+
+    AND trySplit IS WHY SOME SOURCES PARALLELISE AND OTHERS DO NOT. An ArrayList or an array splits in
+    O(1) into two exact halves, because it knows its size and can index. A LinkedList must WALK to
+    find its middle, and a stream from a BufferedReader or an Iterator cannot split meaningfully at
+    all — it hands back null and the "parallel" stream runs on one thread with extra overhead.
+
+STAGE FUSION. The intermediate operations are composed into a single chain of Consumers before
+anything runs, so `filter(p).map(f).forEach(c)` becomes roughly one nested call per element rather than
+three passes over three collections.
+
+PARALLEL STREAMS. `.parallel()` splits the source recursively via trySplit, processes the pieces on the
+COMMON ForkJoinPool, and combines the results.
+
+    THREE THINGS ARE WORTH KNOWING AND ARE ROUTINELY MISSED:
+
+    THE POOL IS SHARED BY THE ENTIRE JVM. ForkJoinPool.commonPool() is sized to availableProcessors()
+    MINUS ONE, and every parallel stream, every CompletableFuture that omitted an executor, and every
+    library doing the same all use it. A blocking operation inside a parallel stream stalls unrelated
+    code elsewhere in the process.
+
+    THE COMBINE STEP IS REAL WORK. Splitting is cheap; merging results is not always. Collecting into
+    a HashMap in parallel merges maps, which can cost more than the parallelism saved.
+
+    ORDER SURVIVES BUT COSTS. `forEachOrdered` preserves encounter order and serialises the tail of the
+    pipeline; `forEach` does not and is faster. `findFirst` must respect order, `findAny` need not —
+    which is precisely why both exist.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — NO TERMINAL OPERATION. The pipeline is built and discarded. Nothing runs, nothing warns, and
+the symptom is "my forEach isn't executing" from someone who wrote `.map(x -> sideEffect(x))` and
+never terminated the chain.
+
+CASE 2 — REUSING A CONSUMED STREAM. IllegalStateException: "stream has already been operated upon or
+closed". Assign the SOURCE to a variable, not the stream.
+
+CASE 3 — `sorted().limit(n)` EXPECTING A SHORT-CIRCUIT. Sorting is a full barrier; limit cannot reach
+through it. For the top-n of a large source use a bounded priority queue.
+
+CASE 4 — MODIFYING THE SOURCE DURING THE STREAM. Explicitly undefined behaviour, and it usually
+manifests as ConcurrentModificationException from the terminal operation — a stack trace pointing at
+`collect` rather than at the mutation.
+
+CASE 5 — `Collectors.toMap` ON DUPLICATE KEYS. Throws IllegalStateException rather than overwriting.
+Supply a merge function: `toMap(k, v, (a, b) -> b)`. AND toMap THROWS ON A NULL VALUE, where a HashMap
+would accept one — a real difference when replacing a loop with a stream.
+
+CASE 6 — `peek()` FOR ANYTHING BUT DEBUGGING. The Javadoc says debugging only, and implementations may
+SKIP it when the result is not needed — a `count()` on a SIZED stream may not traverse at all, so the
+peek never fires.
+
+CASE 7 — SIDE EFFECTS IN A LAMBDA. `stream.forEach(x -> list.add(x))` is not thread-safe in parallel
+and defeats the point in serial. Use a collector.
+
+CASE 8 — PARALLEL ON A SOURCE THAT WILL NOT SPLIT. A LinkedList, an Iterator, a BufferedReader: you
+pay the coordination cost and get one thread's throughput.
+
+CASE 9 — PARALLEL WITH A SMALL N. The fork/join overhead dominates below roughly ten thousand elements
+of real work, and often far above that.
+
+CASE 10 — `Stream.toList()` vs `collect(Collectors.toList())`. Java 16's `toList()` returns an
+UNMODIFIABLE list; the collector traditionally returns an ArrayList. Swapping one for the other turns
+a later `.add()` into an UnsupportedOperationException, and it is a genuine migration hazard.
+
+CASE 11 — BOXING. `list.stream().map(x -> x.getCount()).reduce(0, Integer::sum)` boxes every value.
+`mapToInt(...).sum()` does not, and the difference is large on a hot path.""",
+
+"""5. THE ALTERNATIVES — and when a loop is simply better
+
+A PLAIN for LOOP. Faster on primitives, debuggable with a breakpoint on any line, and it can `break`,
+`continue`, and `return` from the middle. A STREAM CANNOT RETURN FROM THE ENCLOSING METHOD, cannot
+carry a checked exception out of a lambda, and produces stack traces full of internal frames.
+
+    USE A LOOP WHEN: the body is imperative, you need early return, you are working on primitives in a
+    hot path, or the pipeline would need more than about three stages to express.
+
+AN ENHANCED for OVER A COLLECTION. The same, with less index arithmetic.
+
+`Collection.removeIf(predicate)`. One pass, no iterator management, and on an ArrayList it COMPACTS in
+a single pass rather than shifting per removal — so it beats both a stream and a manual loop.
+
+PRIMITIVE STREAMS — IntStream, LongStream, DoubleStream. All the readability with no boxing.
+`mapToInt`, `sum`, `average`, `summaryStatistics`. USE THESE WHENEVER THE VALUES ARE PRIMITIVES; the
+difference against `Stream<Integer>` is not marginal.
+
+COLLECTORS, which are the part of the API worth learning properly. A Collector is four functions:
+
+    supplier      make a new empty container
+    accumulator   fold one element into a container
+    combiner      merge two containers  ← ONLY used in parallel, and the usual source of bugs
+    finisher      convert the container to the final result
+
+    groupingBy, partitioningBy, joining, counting, summingInt, mapping, teeing (Java 12), and
+    groupingBy with a DOWNSTREAM collector, which is where the real expressiveness lives:
+    `groupingBy(Person::dept, counting())`.
+
+PARALLEL STREAMS. Worth it only when ALL of: the source splits well, N is large, the per-element work
+is CPU-bound and substantial, there is no shared mutable state, and you have measured it. THAT IS FIVE
+CONDITIONS, and failing any one usually makes it slower.
+
+WHAT TO SAY: "Streams for readability on collection transformations, primitive streams whenever the
+values are primitives, a loop when the body is imperative or needs early exit, and parallel only after
+measuring."
+
+""",
+
+"""6. HOW TO USE THEM WELL — numbered steps
+
+STEP 1 — END EVERY PIPELINE WITH A TERMINAL OPERATION. If nothing happened, this is why.
+
+STEP 2 — PUT `filter` BEFORE `map`. Mapping only what survives is free to arrange and can be an
+order-of-magnitude difference.
+
+STEP 3 — USE PRIMITIVE STREAMS FOR PRIMITIVES. `mapToInt(...).sum()` rather than
+`map(...).reduce(0, Integer::sum)`.
+
+STEP 4 — DO NOT PUT SIDE EFFECTS IN LAMBDAS. Collect a result instead; a stream that mutates external
+state is a loop wearing a costume.
+
+STEP 5 — REMEMBER `sorted()` AND `distinct()` ARE BARRIERS. Nothing downstream starts until everything
+upstream finishes, so `sorted().limit(3)` sorts the whole source.
+
+STEP 6 — SUPPLY A MERGE FUNCTION TO `toMap`. It throws on duplicate keys, and it throws on null
+values, where the equivalent loop with a HashMap would not.
+
+STEP 7 — LEARN `groupingBy` WITH A DOWNSTREAM COLLECTOR. It is where most of the expressiveness is,
+and it replaces the most tedious loops you write.
+
+STEP 8 — TREAT `peek` AS DEBUG-ONLY. It may legitimately never run.
+
+STEP 9 — BEFORE `parallel()`, CHECK ALL FIVE CONDITIONS: splittable source, large N, CPU-bound work,
+no shared state, and a measurement. And remember the common pool is shared with the whole JVM.
+
+STEP 10 — WHEN A PIPELINE PASSES ABOUT THREE STAGES OR NEEDS A COMMENT TO EXPLAIN IT, WRITE THE LOOP.
+Readability was the reason to use a stream; past a point it stops being the readable option.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'A stream isn't a collection — it holds no data. It's a DESCRIPTION of a pipeline, and building that
+description does nothing. The work only starts when you write a terminal operation at the end.
+
+Which means a pipeline with no terminal operation does NOTHING AT ALL, silently. That usually shows up
+as "my forEach isn't running" from someone who wrote map with a side effect and never ended the chain,
+and the compiler won't warn you.
+
+The second surprise is that elements don't go through stage by stage. It's not "filter everything then
+map everything" — each element is pulled through the WHOLE pipeline before the next one starts. It's a
+PULL model: the terminal asks for an element, the request travels up to the source, and the element
+comes back down through every stage.
+
+That one decision buys four things. No intermediate collections — a filter-map-collect over a million
+elements allocates one result, not three million-element lists. Short-circuiting becomes possible, so
+findFirst can touch exactly one element out of a million. Infinite sources become usable, because
+nothing is produced until something asks. And the ORDER of your operations starts to matter:
+filter-then-map maps only what survives, map-then-filter maps everything. Same result, potentially ten
+times the work, and you can fix it by reading rather than measuring.
+
+The place laziness breaks down is STATEFUL operations. `sorted()` can't emit its first element until
+it's seen the LAST one, so it's a full barrier — everything upstream runs to completion and is
+buffered. Which means `sorted().limit(3)` still sorts everything. If you want the three smallest of a
+million, a bounded priority queue is O(n log 3) and the sort is O(n log n) — the stream reads better
+and does far more work.
+
+Underneath it all is a SPLITERATOR — an iterator that can also split itself in half. That's what makes
+parallel possible, and it's also why some sources parallelise and others don't: an ArrayList or array
+splits in constant time into exact halves, while a LinkedList has to walk to find its middle and an
+Iterator or a BufferedReader can't split at all. Those hand back null and your "parallel" stream runs
+on one thread with extra overhead.
+
+On parallel generally — I'd want five conditions before reaching for it: the source splits well, N is
+large, the work is CPU-bound and substantial, there's no shared mutable state, and I've measured it.
+And the pool is ForkJoinPool.commonPool, sized to cores minus one and shared by the WHOLE JVM, so
+anything blocking inside a parallel stream stalls unrelated code.
+
+Two practical things. Use primitive streams whenever the values are primitives — mapToInt then sum,
+rather than map then reduce with Integer::sum, which boxes every value. And Collectors.toMap throws on
+duplicate keys AND on null values, where the equivalent loop with a HashMap would happily accept both
+— which catches people converting a loop to a stream.
+
+And I'd say plainly: streams are for READABILITY, not speed. On a simple loop over primitives they're
+slower. When a pipeline passes about three stages or needs a comment, the loop was the readable
+option.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── NOTHING HAPPENS HERE. No terminal operation. ────────────────────
+    Stream.of("a", "b", "c").filter(s -> {
+        System.out.println("filtering " + s);
+        return true;
+    });
+    // ^ The pipeline is CONSTRUCTED and discarded. The println never runs, the
+    //   compiler does not warn, and the symptom is "my code isn't executing".
+
+    // ── ONE ELEMENT AT A TIME, THROUGH THE WHOLE CHAIN ──────────────────
+    List<String> out = Stream.of("a", "b", "c")
+        .peek(s  -> System.out.println("filter " + s))
+        .map (s  -> { System.out.println("  map " + s); return s.toUpperCase(); })
+        .collect(Collectors.toList());
+    //   ^^^^^^^ THE TERMINAL. Everything above ran because of this line.
+    //
+    //   The output INTERLEAVES — filter a, map a, filter b, map b — because the
+    //   stages are FUSED into one chain of Consumers and each element is pulled
+    //   all the way through before the next is requested. A push model would
+    //   print all three filters and then all three maps.
+
+    // ── SHORT-CIRCUITING: one element out of three is touched ───────────
+    Stream.of("x", "y", "z")
+        .peek(s -> System.out.println("touched " + s))
+        .findFirst();
+    // ^ prints "touched x" and stops. On a million-element source this is a
+    //   million-fold saving, and it is IMPOSSIBLE in a push model because the
+    //   earlier stage would already have run to completion.
+
+    // ── ORDER MATTERS, AND IT IS FREE TO FIX ────────────────────────────
+    people.stream().filter(p -> p.age() > 60).map(Person::expensiveReport)
+    // ^ maps only the survivors.
+    people.stream().map(Person::expensiveReport).filter(r -> r.age() > 60)
+    // ^ maps EVERYONE. Same result. Potentially ten times the work.
+
+    // ── THE BARRIER. limit cannot reach through sorted. ─────────────────
+    million.stream().sorted().limit(3).toList();
+    //                ^^^^^^^^ CANNOT emit anything until it has seen the LAST
+    //   element, so the entire source is buffered and sorted — O(n log n) —
+    //   and only then does limit take three. A bounded PriorityQueue is
+    //   O(n log 3). The stream reads better and does far more work.
+
+    // ── PRIMITIVE STREAMS: the boxing difference ────────────────────────
+    int total = items.stream().mapToInt(Item::count).sum();
+    //                         ^^^^^^^^^ IntStream — no Integer objects at all.
+    // int total = items.stream().map(Item::count).reduce(0, Integer::sum);
+    //                            ^^^ boxes EVERY value. Same answer, and on a
+    //   hot path the difference is not marginal.
+
+    // ── toMap's TWO SURPRISES ───────────────────────────────────────────
+    // .collect(Collectors.toMap(Person::name, Person::age))
+    //   ^ throws IllegalStateException on a DUPLICATE KEY (a HashMap would
+    //     overwrite) AND NullPointerException on a null VALUE (a HashMap would
+    //     accept it). Both bite when converting a loop to a stream.
+    .collect(Collectors.toMap(Person::name, Person::age, (a, b) -> b));
+    //                                                   ^^^^^^^^^^ the merge
+    //   function. Supply it unless you genuinely want the exception.""",
+
+"""9. THE TRACE — pull, fuse, short-circuit
+
+THE PIPELINE:
+
+    Stream.of("a", "b", "c")
+          .peek(s -> print("filter " + s))
+          .map (s -> { print("  map " + s); return s.toUpperCase(); })
+          .collect(toList());
+
+WHAT A PUSH MODEL WOULD PRINT — stage by stage, and this is what people expect:
+
+    filter a
+    filter b
+    filter c
+      map a
+      map b
+      map c
+
+WHAT ACTUALLY PRINTS — element by element, because the stages are FUSED:
+
+    filter a
+      map a
+    filter b
+      map b
+    filter c
+      map c
+
+    THE DIFFERENCE IS NOT COSMETIC. In the push model, stage one has fully materialised a collection
+    before stage two begins — so an intermediate list exists, an infinite source hangs, and
+    short-circuiting is impossible because the work is already done.
+
+THE SHORT-CIRCUIT, traced:
+
+    step   what the terminal asks           what the source does        printed
+    ---------------------------------------------------------------------------------
+    1      findFirst: "give me one"         emits "x"                   touched x
+    2      an element arrived → DONE        never asked again           —
+
+    TWO ELEMENTS NEVER TOUCHED. The pull direction is what makes this possible: the terminal controls
+    how many requests are made, so it can simply stop asking.
+
+THE BARRIER, traced — `sorted().limit(3)` over a million elements:
+
+    stage         behaviour                                   elements processed
+    -------------------------------------------------------------------------------
+    source        emits                                       1,000,000
+    sorted        BUFFERS EVERYTHING, cannot emit until the    1,000,000 buffered
+                  last element has arrived                     + O(n log n) compares
+    limit(3)      takes 3 and stops asking                     3
+    toList        collects                                     3
+
+    LIMIT SHORT-CIRCUITS AND IT SHORT-CIRCUITS TOO LATE. It stops the stage ABOVE it from being asked
+    for a fourth element — and that stage is `sorted`, which has already done all the work. The
+    laziness is real and it cannot reach past a stateful operation.
+
+PARALLEL SPLITTING, and why the source decides:
+
+    source            trySplit()                        result
+    -------------------------------------------------------------------------------
+    ArrayList         O(1), exact halves, SIZED         splits cleanly, scales
+    int[]             O(1), exact halves, SIZED         the best case
+    HashMap.keySet    splits by table range             reasonable
+    LinkedList        must WALK to find the middle      splits poorly
+    BufferedReader    returns null                      NO SPLIT — one thread,
+                                                        plus fork/join overhead
+
+WHICH DESIGN DECISION PRODUCED WHICH ROW:
+
+    THE PULL MODEL             produced the interleaved output, the short-circuit, and the ability to
+                               consume an infinite source. All three are the same fact.
+    STAGE FUSION               produced "one result allocated, not three collections" — the reason a
+                               five-stage pipeline is not five passes.
+    STATEFULNESS OF `sorted`   produced the barrier table. It is a property of the OPERATION, not of
+                               streams — `distinct` and `limit`-after-`sorted` behave the same way.
+    Spliterator.trySplit       produced the parallel table. Parallelism is a property of the SOURCE
+                               first and of your code second.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    A stream adds allocation and a virtual call per element per stage. For a simple loop over
+    primitives it is typically SLOWER than a for loop; for multi-stage transformations over objects
+    the difference is usually noise. USE THEM FOR CLARITY.
+    Stage fusion means an n-stage pipeline is ONE pass, not n passes.
+    Short-circuiting terminals can turn O(n) into O(1) on the lucky element.
+    `sorted()` is O(n log n) and a FULL BARRIER; `distinct()` is O(n) time and O(n) space.
+    Primitive streams remove boxing entirely — the largest single win available in stream code.
+    Parallel needs a splittable source, large N, CPU-bound work, no shared state, and a measurement.
+
+THE #1 MISTAKE: no terminal operation. The pipeline is built and discarded, silently, with no warning.
+
+THE #2 MISTAKE: expecting stage-by-stage execution. Elements go through the whole chain one at a time,
+which is why short-circuiting and infinite sources work at all.
+
+THE #3 MISTAKE: `sorted().limit(n)` for a top-n. The sort is a barrier and limit cannot reach through
+it. Use a bounded priority queue.
+
+THE #4 MISTAKE: `map` before `filter`. Free to fix by reading, and potentially an order of magnitude.
+
+THE #5 MISTAKE: `Stream<Integer>` where `IntStream` belongs. Every value boxed.
+
+THE #6 MISTAKE: `Collectors.toMap` without a merge function. It throws on duplicate keys and on null
+values, unlike the HashMap loop it replaced.
+
+THE #7 MISTAKE: side effects in lambdas. Not thread-safe in parallel, and pointless in serial.
+
+THE #8 MISTAKE: `peek` for anything real. Debug-only by specification, and it may never run.
+
+THE #9 MISTAKE: `parallel()` as a performance button. Five conditions must hold, the pool is shared
+with the entire JVM, and a blocking call inside one stalls unrelated code.
+
+THE #10 MISTAKE: reusing a consumed stream. Keep a reference to the SOURCE, not to the stream.
+
+THE #11 MISTAKE: assuming `Stream.toList()` and `collect(toList())` are interchangeable. The first is
+UNMODIFIABLE since Java 16, and a later `.add()` throws.
+
+ONE-SENTENCE TAKEAWAY: a stream is a lazily-evaluated DESCRIPTION of a pipeline that does nothing until
+a terminal operation pulls elements through the whole fused chain ONE AT A TIME — which is what makes
+short-circuiting, infinite sources and single-pass execution possible, and what makes `filter` before
+`map` a free optimisation — with the laziness breaking down at stateful operations like `sorted()`,
+which buffers everything and means `sorted().limit(3)` still sorts a million elements; use primitive
+streams for primitives, reach for a loop when the body is imperative or needs an early exit, and treat
+`parallel()` as five conditions to verify rather than a button to press.""",
+]
+
+
+DEEP["The JIT — why your first benchmark is always wrong"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — code that gets faster while it runs
+
+Java starts by INTERPRETING your program — reading each instruction and doing what it says, one at a
+time, which is slow. While it does that it also WATCHES: which methods run often, which branches are
+taken, which actual types show up at each call. Once a method looks hot, a compiler translates it to
+machine code, using everything that was observed to make choices it could never make ahead of time.
+
+    SO THE SAME METHOD RUNS AT SEVERAL DIFFERENT SPEEDS DURING ONE PROGRAM. The first few hundred calls
+    are interpreted. Later calls run compiled but conservatively. Later still they run through an
+    aggressive compiler that has a behavioural profile to work from. Speedups of ten to a hundred times
+    between the first call and the steady state are ordinary, not exotic.
+
+    WHICH IS WHY YOUR FIRST BENCHMARK IS ALWAYS WRONG. If you time a method the first time it runs,
+    you have measured the interpreter. If you time it in a loop with no warm-up, you have measured a
+    blend of interpreter, half-optimised and optimised code, weighted by whichever phase happened to
+    take longest. Neither number describes the code that will run in production.
+
+THE EVERYDAY VERSION: a new employee reading the manual for every task, while a supervisor takes notes.
+After a week the supervisor writes a one-page cheat sheet based on what this person ACTUALLY does —
+"you always get the blue form, so here it is pre-filled" — and the job gets much faster. Time them on
+day one and you have measured the manual, not the job.
+
+TERMS AS THEY APPEAR:
+- JIT: just-in-time compiler. Compiles at RUN time, from observed behaviour.
+- AOT: ahead-of-time. Compiles before the program runs, from source alone.
+- PROFILE: the counters and type records collected while interpreting.
+- SPECULATION: compiling on an assumption the profile supports but cannot prove.
+- DEOPTIMISATION: throwing away compiled code when a speculation turns out to be false.
+- WARM-UP: running code enough times to reach its steady state before you measure it.""",
+
+"""2. THE INTUITION — why running late beats running early
+
+An ahead-of-time compiler must produce code that is CORRECT FOR EVERY POSSIBLE EXECUTION. It sees a
+call through an interface and must emit a dynamic dispatch, because any implementation might arrive.
+It sees a branch and must compile both sides. It sees a field read and must actually read it.
+
+    A JIT KNOWS WHAT ACTUALLY HAPPENED. Not what could happen — what did. And in real programs the gap
+    between those is enormous:
+
+    THE CALL THAT LOOKS POLYMORPHIC IS USUALLY MONOMORPHIC. A `List` variable in a real application is
+    an ArrayList at 99% of call sites, every single time. The JIT observes one type, INLINES that
+    implementation directly, and leaves a cheap class check in front of it. AOT cannot do this
+    honestly, because the code must survive the case it never sees.
+
+    HALF THE BRANCHES ARE NEVER TAKEN. Null checks that never fire, error paths, feature flags that
+    are off. The JIT compiles the taken path densely and replaces the untaken side with a TRAP — an
+    instruction that means "if control ever arrives here, abandon this compiled code and fall back to
+    the interpreter". Zero cost while the assumption holds.
+
+    INLINING IS THE ENABLER, NOT AN OPTIMISATION. On its own, inlining just removes a call. But once
+    the callee's body sits inside the caller, every other optimisation can see across the old boundary:
+    constants fold through it, redundant null checks collapse, and the escape analyser can finally
+    prove that an object never leaves. MOST OF WHAT THE JIT WINS IS DOWNSTREAM OF INLINING — which is
+    why a method too large to inline is a performance cliff, not a gentle slope.
+
+THE PRICE, and it is the honest half of the story:
+
+    COMPILATION COSTS TIME AND IT COSTS IT AT RUN TIME. A JVM spends its first seconds slow, competing
+    with your application for CPU while it compiles. Startup is worse than a native binary and always
+    will be. A short-lived process — a CLI tool, a lambda invocation — may EXIT before it ever reaches
+    the fast code it paid for.
+
+    AND EVERY SPECULATION IS A DEBT. Load a second implementation of that interface and the inlined
+    call is invalidated, the compiled method is discarded, execution falls back to the interpreter, and
+    the whole thing recompiles more conservatively. Normally invisible. Occasionally the cause of a
+    latency spike nobody can explain.""",
+
+"""3. THE MECHANISM — tiers, inlining, escape analysis, and deoptimisation
+
+TIERED COMPILATION, which is the default and explains the shape of every warm-up curve:
+
+    TIER 0   the INTERPRETER. Slow, but it collects the profile.
+    TIER 1   C1, no profiling. For trivial methods that will never benefit from more.
+    TIER 2   C1, limited profiling. A short-lived stage used when the C2 queue is backed up.
+    TIER 3   C1, FULL profiling. Fast-ish code that still counts branches and records types.
+             This is where most hot code lives on its way up, and it is deliberately slower than
+             tier 1 because it is carrying instrumentation.
+    TIER 4   C2. The aggressive optimiser. No profiling — it CONSUMES the profile instead.
+
+    THE USUAL PATH IS 0 → 3 → 4. Roughly a couple of hundred invocations to leave the interpreter and
+    on the order of ten thousand to reach C2, though the thresholds are adaptive and depend on how
+    busy the compiler queues are. Two runs of the same program can compile at different points.
+
+ON-STACK REPLACEMENT (OSR). A method called ONCE that contains a million-iteration loop would never
+reach the invocation threshold. So loop back-edges are counted too, and when the count trips, the JVM
+compiles the method and SWAPS THE RUNNING FRAME for the compiled version mid-loop. This is why `main`
+with one big loop still gets fast, and why OSR code is often slightly worse than normally-compiled code
+— it had to be entered at an awkward point.
+
+INLINING, with the two thresholds that decide it:
+    a small method (roughly ≤ 35 bytes of bytecode) is inlined almost anywhere;
+    a HOT method gets a much larger budget (roughly ≤ 325 bytes);
+    a huge method is never inlined, and everything downstream of that decision is lost.
+    -XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining tells you which, and why not.
+
+INLINE CACHES — how a virtual call gets inlined at all:
+    MONOMORPHIC   one type ever seen → inline it behind a single class-pointer compare. Nearly free.
+    BIMORPHIC     two types → inline both behind a two-way check. Still good.
+    MEGAMORPHIC   three or more → give up, fall back to a vtable/itable lookup, INLINING IS LOST,
+                  and with it every optimisation that depended on it.
+    THAT CLIFF IS THE REASON A CALL SITE'S HISTORY MATTERS. The same code is fast in a service that
+    only ever passes one implementation and slow in one that passes four.
+
+ESCAPE ANALYSIS. If the JIT can prove an object never leaves the compiled region, it can SCALAR
+REPLACE it — the object is never allocated at all, its fields become registers. This is why "avoid
+allocation" advice is often obsolete: the allocation may not exist. Inlining is what makes the proof
+possible, which is the dependency again.
+
+DEOPTIMISATION. Every speculation is guarded. When a guard fails — a second implementation is loaded,
+a never-taken branch is taken, a null finally arrives — the compiled method is marked NOT ENTRANT, the
+running frame is rebuilt as an interpreter frame, and execution continues correctly, slowly, until a
+new compilation arrives. Correctness is never at risk. Predictable timing is.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — DEAD CODE ELIMINATION EATS THE BENCHMARK. If the result is never used, C2 can prove the whole
+computation is unobservable and delete it. The loop becomes nothing. The classic tell is a number that
+is PHYSICALLY IMPOSSIBLE — a fraction of a nanosecond per operation, faster than one memory access.
+
+CASE 2 — CONSTANT FOLDING. If the inputs are `static final` or otherwise compile-time constants, the
+answer is computed once at compile time and the "loop" returns a literal. You measured a return.
+
+CASE 3 — LOOP HOISTING. A computation that does not depend on the loop variable is moved OUT of the
+loop and done once, so a million iterations become one.
+
+CASE 4 — NO WARM-UP AT ALL. The whole measurement is interpreter time. Typically ten to a hundred
+times slower than the truth, which is why microbenchmarks so often "prove" the wrong option wins.
+
+CASE 5 — MEASURING DURING THE CLIMB. A loop that runs long enough to trip compilation MID-MEASUREMENT
+gives you a weighted average of three different implementations, and the weights depend on the machine.
+
+CASE 6 — PROFILE POLLUTION, the subtlest of all. Running two implementations of the same interface in
+ONE JVM makes the shared call site BIMORPHIC or MEGAMORPHIC, so both are measured worse than either
+would be alone — and the one measured second may inherit the first one's profile. This is precisely
+why JMH forks a fresh JVM per benchmark by default.
+
+CASE 7 — A DEOPTIMISATION STORM. Code compiled on an assumption that keeps breaking recompiles
+repeatedly. Symptom: throughput that oscillates rather than settling.
+
+CASE 8 — CLASS LOADING INVALIDATES INLINING LATE. A method inlined because it had exactly one
+implementation is discarded the moment a second is loaded — potentially hours in, when a plugin, a
+lazily-initialised path, or a proxy first appears.
+
+CASE 9 — SHORT-LIVED PROCESSES NEVER GET THERE. CLI tools, serverless invocations, tests. They pay the
+compilation cost and exit before collecting.
+
+CASE 10 — THE CODE CACHE FILLS UP. Compiled code lives in a fixed-size region. When it fills, the JVM
+prints a warning and STOPS COMPILING ENTIRELY — the application quietly reverts toward interpreted
+speed and stays there.
+
+CASE 11 — TIMING WITH `System.currentTimeMillis()`. It is wall-clock, subject to NTP adjustment, and
+its granularity can be milliseconds. Use `System.nanoTime()`, which is monotonic — and even then only
+for durations, never as a timestamp.
+
+CASE 12 — ONE MEASUREMENT. GC, the OS scheduler, another tenant on the box, CPU frequency scaling.
+A single number carries no information about its own variance.""",
+
+"""5. THE ALTERNATIVES — and what to reach for instead of a hand-rolled timer
+
+JMH (Java Microbenchmark Harness), written by the people who wrote the JIT, and the only honest answer
+for anything at method scale. What it does that your loop does not:
+
+    RETURNING THE VALUE, or handing it to a Blackhole, so dead code elimination cannot fire.
+    @State OBJECTS the compiler cannot fold to constants.
+    @Fork — a FRESH JVM per benchmark, which is the fix for profile pollution.
+    @Warmup ITERATIONS run and DISCARDED, so you measure the steady state.
+    Many measurement iterations, reported with a confidence interval rather than one number.
+    It also warns you when your benchmark looks suspicious.
+
+ASYNC-PROFILER or JFR for anything at APPLICATION scale. A microbenchmark answers "which of these two
+methods is faster"; a profiler answers "does this method matter at all", which is almost always the
+question you actually had. MOST MICROBENCHMARKS OPTIMISE SOMETHING THAT IS 0.3% OF THE PROFILE.
+
+-XX:+PrintCompilation — a live log of what is being compiled, at which tier, and what is being thrown
+away. `%` marks OSR, `s` synchronized, `!` an exception handler, and `made not entrant` is a
+deoptimisation. Reading this once teaches more about warm-up than any article.
+
+-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining — why a method was or was not inlined. "too big",
+"hot method too big", "callee is too large". This is the flag for the "why is this slow when the
+identical smaller version is fast" question.
+
+-Xint (interpreter only) and -XX:-TieredCompilation (C2 only) — as EXPERIMENTS, to see how much of a
+result is compilation.
+
+GraalVM NATIVE IMAGE — AOT compilation to a native binary. Millisecond startup, low memory, no warm-up
+— and a LOWER PEAK than a warmed JIT, because it never sees the profile. It also requires a closed
+world: reflection and dynamic loading must be declared. THE TRADE IS EXPLICIT: it is the right choice
+for short-lived processes and the wrong one for a long-running server.
+
+CLASS DATA SHARING and the JVM's profile-replay options reduce startup without giving up peak.
+
+WHAT TO SAY: "For method-scale questions, JMH — nothing hand-rolled is trustworthy. For real
+performance questions, a profiler first, because the method I was about to micro-optimise is usually
+not in the top twenty."
+
+""",
+
+"""6. HOW TO BENCHMARK WITHOUT LYING TO YOURSELF — numbered steps
+
+STEP 1 — ASK WHETHER IT MATTERS. Profile the application first. A microbenchmark of a method that is
+0.3% of the profile is a correct answer to a question nobody asked.
+
+STEP 2 — USE JMH. Not a loop with nanoTime. Every failure mode in section 4 is one it already handles.
+
+STEP 3 — CONSUME THE RESULT. Return it from the benchmark method or pass it to a Blackhole, or dead
+code elimination will delete the thing you are measuring.
+
+STEP 4 — KEEP THE INPUTS OUT OF REACH OF CONSTANT FOLDING. Put them in an @State object; never in a
+`static final`.
+
+STEP 5 — WARM UP AND DISCARD. Several seconds of iterations, thrown away, before anything counts.
+
+STEP 6 — FORK A FRESH JVM PER BENCHMARK. This is the profile-pollution fix, and it is the one that
+looks unnecessary until it silently reverses a result.
+
+STEP 7 — REPORT VARIANCE, NOT A NUMBER. If the intervals overlap, you have not shown a difference.
+
+STEP 8 — WHEN THE RESULT LOOKS TOO GOOD, DISBELIEVE IT. Under about a nanosecond per operation, assume
+the loop was eliminated until you have proved otherwise.
+
+STEP 9 — READ -XX:+PrintCompilation ONCE ON YOUR ACTUAL WORKLOAD. Watch the tiers climb and watch
+`made not entrant` scroll past. It makes warm-up concrete in a way no description does.
+
+STEP 10 — IF SOMETHING IS INEXPLICABLY SLOW, CHECK INLINING. -XX:+PrintInlining, and look for "too
+big" and for a call site that has gone megamorphic.
+
+STEP 11 — FOR SERVICES, WARM UP IN PRODUCTION TOO. Send synthetic traffic before taking a new instance
+into the load balancer, or the first real users pay for your compilation.
+
+STEP 12 — MEASURE ON THE HARDWARE THAT WILL RUN IT. Core count, cache sizes and frequency scaling all
+move these numbers.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Java starts by INTERPRETING — reading each instruction and doing what it says. While it does that it's
+also watching: which methods run often, which branches get taken, which actual types show up at each
+call. Once a method looks hot, it gets compiled to machine code using everything that was observed.
+
+So the same method runs at several different speeds during one program. First few hundred calls,
+interpreted. Then compiled but conservatively, with instrumentation still attached. Then compiled
+aggressively by C2 with a real behavioural profile. Ten to a hundred times between the first call and
+the steady state is ordinary.
+
+Which is why the first benchmark is always wrong. Time it once and you measured the interpreter. Time
+it in a loop with no warm-up and you measured a blend of three different implementations, weighted by
+whichever phase happened to take longest on that machine. Neither number describes production.
+
+The reason a JIT can beat ahead-of-time compilation at all is that it knows what ACTUALLY happened, not
+what could. A List variable is an ArrayList at basically every call site, every time — so the JIT
+inlines that implementation directly behind a cheap class check. An AOT compiler can't do that
+honestly, because its code has to survive the case it never sees.
+
+And inlining is the ENABLER, not the optimisation. On its own it just removes a call. But once the
+callee's body is inside the caller, everything else can see across the old boundary — constants fold
+through, null checks collapse, and escape analysis can finally prove an object never leaves, so it's
+never allocated at all. Most of what the JIT wins is downstream of inlining, which is why a method too
+big to inline is a cliff rather than a slope.
+
+The cost is that every speculation is a debt. If a second implementation of that interface gets loaded,
+the inlined call is invalidated — the compiled code is marked not entrant, the running frame is rebuilt
+as an interpreter frame, and it recompiles more conservatively. Correctness is never at risk. Predictable
+timing is. And that can happen hours in, when some plugin or lazy path first loads a class.
+
+The failure mode I'd watch for most in a hand-rolled benchmark is DEAD CODE ELIMINATION. If nothing
+uses the result, C2 proves the computation is unobservable and deletes it. The tell is a number that's
+physically impossible — a fraction of a nanosecond per operation, faster than a single memory access.
+The subtler one is PROFILE POLLUTION: measuring two implementations of the same interface in one JVM
+makes the shared call site megamorphic, so both look worse than either would alone. That's exactly why
+JMH forks a fresh JVM per benchmark by default.
+
+So: JMH for anything at method scale, nothing hand-rolled. Consume the result, keep the inputs in a
+@State object so they can't fold to constants, warm up and discard, fork per benchmark, and report a
+confidence interval rather than a number. And honestly — profile the application first, because the
+method I was about to micro-optimise is usually not in the top twenty.'""",
+
+"""8. THE CODE, LINE BY LINE — a benchmark that measures nothing
+
+    // ── THE VERSION EVERYONE WRITES FIRST ───────────────────────────────
+    long start = System.currentTimeMillis();
+    //           ^^^^^^^^^^^^^^^^^^^^^^^^ WALL CLOCK. Subject to NTP stepping,
+    //           and its granularity can be milliseconds. nanoTime is monotonic.
+    for (int i = 0; i < 1_000_000; i++) {
+        expensiveCalculation(i);
+    //  ^ THE RESULT IS DISCARDED. C2 can prove the call has no observable
+    //    effect and delete the entire loop. Not "optimise" — DELETE.
+    }
+    System.out.println(System.currentTimeMillis() - start + " ms");
+    // ^ Prints 0. Which is not a fast result; it is the absence of a result.
+    //   And even if the loop survived, the first ~10,000 iterations were
+    //   INTERPRETED, so the average is mostly warm-up.
+
+    // ── THE THREE WAYS THE COMPILER CAN CHEAT ───────────────────────────
+    static final int N = 1000;              // ← CONSTANT FOLDING: the compiler
+    int r = 0;                              //   knows N, so the whole sum can be
+    for (int i = 0; i < N; i++) r += i;     //   computed at compile time and
+    // the loop becomes `r = 499500;`       //   replaced with a literal.
+
+    for (int i = 0; i < n; i++) sum += list.size() * factor;
+    //                                ^^^^^^^^^^^^^^^^^^^^ LOOP HOISTING: nothing
+    //   here depends on i, so it is computed ONCE and the loop just adds.
+
+    for (int i = 0; i < n; i++) hash(data);
+    //                          ^^^^^^^^^^ DEAD CODE ELIMINATION: unused result,
+    //   no side effect, no loop.
+
+    // ── THE HONEST VERSION ──────────────────────────────────────────────
+    @State(Scope.Benchmark)                 // ← inputs live in an object the
+    public static class Input {             //   compiler cannot fold to constants
+        int[] data = randomArray(10_000);
+    }
+
+    @Benchmark
+    @Fork(value = 3)                        // ← THREE FRESH JVMs. This is the
+    //                                          profile-pollution fix: measuring
+    //                                          two impls in ONE JVM makes the
+    //                                          shared call site megamorphic and
+    //                                          slows BOTH.
+    @Warmup(iterations = 5, time = 1)       // ← run and DISCARD. You are waiting
+    //                                          for tier 4, not measuring tier 0.
+    @Measurement(iterations = 10, time = 1)
+    public int sum(Input in) {
+        int s = 0;
+        for (int v : in.data) s += v;
+        return s;
+    //  ^^^^^^^^ RETURNING IT is what stops dead code elimination. JMH consumes
+    //  the return value; for multiple results, Blackhole.consume(x).
+    }
+
+    // ── THE FLAGS THAT SHOW YOU WHAT HAPPENED ───────────────────────────
+    // -XX:+PrintCompilation
+    //     3    java.lang.String::hashCode (55 bytes)      ← tier 3, C1+profiling
+    //     4 %  Main::sum @ 12 (43 bytes)                  ← % means OSR
+    //     3    Main::sum   made not entrant               ← A DEOPTIMISATION.
+    // -XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining
+    //     @ 7  Main::helper (312 bytes)  hot method too big  ← the cliff, named.""",
+
+"""9. THE TRACE — one method, four speeds
+
+THE SAME METHOD, timed at four points in one JVM's life. Numbers are ILLUSTRATIVE SHAPES, not measured
+constants — the ratios are what matters, and they are the ratios people actually observe:
+
+    invocation      what is executing                              relative time
+    ---------------------------------------------------------------------------------
+    1               tier 0, INTERPRETER. Every bytecode dispatched  ~100x
+                    through a switch. The profile starts filling.
+    ~500            tier 3, C1 WITH FULL PROFILING. Real machine    ~8x
+                    code, but carrying counters — deliberately
+                    slower than tier 1, because it is paying to
+                    learn.
+    ~12,000         tier 4, C2. Profile consumed. The hot path      ~1x
+                    inlined, the untaken branches replaced by
+                    traps, the escaping-nowhere object never
+                    allocated at all.
+    later           a second implementation is loaded → the guard   ~100x briefly,
+                    fails → MADE NOT ENTRANT → back to the           then ~1.4x
+                    interpreter → recompile, this time with a
+                    bimorphic call and no scalar replacement.
+
+    THE LAST ROW IS THE ONE THAT SURPRISES PEOPLE. Nothing was wrong, nothing was misconfigured, and no
+    code changed. A class was loaded, an assumption became false, and the JVM did the only correct
+    thing — which cost a latency spike and a permanently slightly-slower steady state.
+
+WHY EACH DROP HAPPENED — mapping the row to the mechanism:
+
+    100x → 8x       LEAVING THE INTERPRETER. Bytecode dispatch removed. This is the largest single
+                    step and it is why an unwarmed measurement is not off by a bit, it is off by
+                    two orders of magnitude.
+    8x → 1x         INLINING, and everything downstream of it: constant folding across the old call
+                    boundary, dead branch removal via uncommon traps, and scalar replacement removing
+                    the allocation entirely.
+    1x → 1.4x       THE CALL SITE WENT BIMORPHIC. Inlining survived but with a two-way guard, and
+                    escape analysis could no longer prove the object was confined.
+
+NOW THE NAIVE BENCHMARK, traced against that table:
+
+    what you wrote                          what you measured
+    ---------------------------------------------------------------------------------
+    time one call                           the interpreter. ~100x too slow.
+    loop 1,000 times, no warm-up            mostly interpreter, some tier 3. ~30x too slow.
+    loop 1,000,000, no warm-up              a weighted average that DEPENDS ON THE MACHINE,
+                                            because the thresholds are adaptive.
+    result unused                           0 ms. The loop does not exist.
+    inputs are `static final`               0 ms. The answer is a literal in the class file.
+    two impls, one JVM, no fork             both slower than either alone, and possibly REVERSED
+                                            in ranking. This is the one that survives review.
+
+    THE SHAPE OF THE WHOLE THING: every single row above is a case of the measurement disturbing what
+    it measures. The JIT optimises for what it observes, and a benchmark is a strange, unrepresentative
+    thing to observe. JMH's entire design is a list of defences against exactly this table.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Interpreted → C2 steady state is commonly 10–100x. This is the number that makes unwarmed
+    measurements worthless rather than merely imprecise.
+    Roughly a couple of hundred invocations to leave the interpreter; on the order of ten thousand to
+    reach C2 — ADAPTIVE, so two runs of the same program compile at different points.
+    Inlining budget: about 35 bytes of bytecode cold, about 325 hot. Past that, a cliff.
+    Inline caches: 1 type is nearly free, 2 is fine, 3+ loses inlining and everything downstream.
+    Deoptimisation is correct, cheap in aggregate, and occasionally the unexplained latency spike.
+    Compilation competes with your application for CPU during startup — this is real, and it is why a
+    native image starts in milliseconds and a JVM does not.
+
+THE #1 MISTAKE: no warm-up. You measured the interpreter, and it is not close.
+
+THE #2 MISTAKE: discarding the result. Dead code elimination deletes the loop; the tell is a time that
+is physically impossible.
+
+THE #3 MISTAKE: `static final` inputs. Constant-folded to a literal at compile time.
+
+THE #4 MISTAKE: measuring two implementations in one JVM. Profile pollution can slow both and REVERSE
+the ranking. Fork per benchmark.
+
+THE #5 MISTAKE: `System.currentTimeMillis()`. Wall clock, NTP-adjustable, coarse. Use `nanoTime`, and
+only for durations.
+
+THE #6 MISTAKE: one measurement, no variance. Overlapping intervals are not a result.
+
+THE #7 MISTAKE: microbenchmarking before profiling. The method usually is not in the top twenty.
+
+THE #8 MISTAKE: believing a suspiciously good number. Under a nanosecond per operation, assume the work
+was eliminated.
+
+THE #9 MISTAKE: expecting a short-lived process to reach peak. CLI tools and serverless invocations pay
+for compilation and exit before collecting; that is a native-image case, not a tuning case.
+
+THE #10 MISTAKE: forgetting the code cache can fill. When it does, the JVM stops compiling and quietly
+drifts back toward interpreted speed — with a warning nobody reads.
+
+THE #11 MISTAKE: assuming allocation costs what it used to. Escape analysis may have removed the object
+entirely — but only if the enclosing method was inlined, which is why the advice is conditional.
+
+ONE-SENTENCE TAKEAWAY: the JVM interprets first while PROFILING, then compiles hot code using what it
+actually observed — inlining monomorphic calls, replacing never-taken branches with traps, and removing
+allocations it can prove never escape — so the same method runs 10–100x apart between its first call
+and its steady state, every one of those optimisations is a SPECULATION that can be deoptimised when a
+class loads or a branch finally fires, and consequently any benchmark without warm-up, without
+consuming its result, without non-constant inputs, and without a forked JVM is measuring the harness
+rather than the code.""",
+]
