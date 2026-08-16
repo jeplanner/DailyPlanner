@@ -6428,3 +6428,978 @@ which is why straight-line `+` should be left alone) but it is scoped to an EXPR
 a loop boundary, so the fix is to hoist a `StringBuilder` out of the loop and pre-size it — or better,
 for large output, to stream it to a writer and never build the string at all.""",
 ]
+
+
+DEEP["ConcurrentModificationException — why removing inside a for-each throws"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the exception with the misleading name
+
+    for (String s : list) {
+        if (s.isEmpty()) list.remove(s);
+    }
+    →  ConcurrentModificationException
+
+    THERE IS ONE THREAD. Nothing is concurrent. The name is about CONCURRENT MODIFICATION AND
+    ITERATION — two things happening to the same collection at overlapping times — not about threads,
+    and that misnaming sends people looking for a threading bug that does not exist.
+
+WHY IT IS NOT SIMPLY ALLOWED. An iterator holds a POSITION in the collection — for an ArrayList, an
+index. Remove an element and everything after it shifts down by one. The iterator's index now points
+one place further along than it did logically, so the NEXT element is skipped. Add an element and
+something may be visited twice, or the index may run off the end.
+
+    THE COLLECTION COULD JUST LET THAT HAPPEN AND RETURN WRONG ANSWERS SILENTLY. Instead it keeps a
+    counter of structural changes, the iterator records what that counter was when it started, and it
+    checks on every step. A mismatch means "the ground moved under you", and it throws.
+
+    SO THE EXCEPTION IS A FEATURE. It converts a silent wrong answer into a loud stack trace pointing
+    at the exact line. THE ALTERNATIVE IS NOT "IT WORKS" — the alternative is a loop that quietly
+    skipped half your data.
+
+THE EVERYDAY VERSION: reading down a numbered list while someone removes rows above your finger. You
+are on line 7; a row is deleted; what was line 8 is now line 7, and moving to line 8 skips it entirely.
+The list is not corrupt and your finger is not wrong — the two are just no longer talking to each other.
+
+TERMS AS THEY APPEAR:
+- STRUCTURAL MODIFICATION: a change to the SIZE — adding or removing. Replacing a value is not one.
+- FAIL-FAST: detect the problem immediately rather than producing wrong results.
+- modCount: the collection's counter of structural modifications.
+- expectedModCount: the snapshot the iterator took when it was created.""",
+
+"""2. THE INTUITION — fail-fast is a bug detector, not a guarantee
+
+THE MECHANISM IS FOUR LINES OF CODE, and knowing them removes all the mystery:
+
+    IN THE COLLECTION:   `protected transient int modCount;`  incremented by every add and remove.
+    IN THE ITERATOR:     `int expectedModCount = modCount;`   captured at creation.
+    IN `next()`:         `if (modCount != expectedModCount) throw new ConcurrentModificationException();`
+    IN `Iterator.remove()`: performs the removal AND THEN sets `expectedModCount = modCount`.
+
+    THAT LAST LINE IS THE WHOLE REASON `Iterator.remove()` IS THE LEGAL WAY TO DO THIS. It is not a
+    special case in the checking; it is the one removal path that also updates the iterator's idea of
+    the world, because it is the only one that knows how to fix the cursor too.
+
+NOW THE PART THAT MATTERS MOST AND IS ALMOST NEVER SAID: FAIL-FAST IS EXPLICITLY BEST-EFFORT.
+
+    The Javadoc says so directly: "this behaviour cannot be guaranteed... Fail-fast iterators throw
+    ConcurrentModificationException ON A BEST-EFFORT BASIS. Therefore, it would be wrong to write a
+    program that depended on this exception for its correctness: IT SHOULD BE USED ONLY TO DETECT BUGS."
+
+    SO IT IS A DEBUGGING AID, NOT A SAFETY MECHANISM. Which has a sharp consequence: there are cases
+    where you modify during iteration and NOTHING THROWS, and you get the silent wrong answer after
+    all.
+
+AND HERE IS THE BEST EXAMPLE OF THAT, WHICH IS ALSO THE SINGLE MOST USEFUL FACT IN THIS ENTRY:
+
+    REMOVING THE SECOND-TO-LAST ELEMENT OF AN ArrayList IN A FOR-EACH DOES NOT THROW.
+
+    Because `ArrayList.Itr.hasNext()` is `return cursor != size;` — it does not call
+    `checkForComodification`. Walk through a three-element list removing element index 1: after the
+    removal, `size` is 2 and `cursor` is 2, so `hasNext()` returns FALSE, the loop ends normally, and
+    the last element WAS NEVER VISITED. No exception. No warning. An element silently skipped.
+
+    THAT IS THE WHOLE ARGUMENT AGAINST TREATING THE EXCEPTION AS YOUR SAFETY NET. The check runs in
+    `next()`, and the loop can exit without ever calling `next()` again. `list.remove(x)` in a for-each
+    is a bug whether or not it throws — and on the exact input where it does not throw, it is worse.
+
+THE DESIGN TRADE-OFF BEHIND ALL OF THIS: a truly correct check would cost synchronisation on every
+access, which is far too expensive for a collection that is usually used by one thread. So the JDK
+chose a cheap heuristic that catches the common cases loudly and misses the rare ones. KNOWING WHICH
+ONES IT MISSES IS WHAT SEPARATES UNDERSTANDING FROM MEMORISING.""",
+
+"""3. THE MECHANISM — what counts as structural, and what the alternatives actually do
+
+WHAT INCREMENTS `modCount` — the answer is narrower than people assume:
+
+    ADDING an element                            YES
+    REMOVING an element                          YES
+    `clear()`                                    YES
+    `list.set(i, x)` — REPLACING a value         NO. Size unchanged, no structural modification.
+    `map.put(EXISTING_KEY, newValue)`            NO — in HashMap, replacing a value does not touch
+                                                 modCount, so this IS legal during iteration.
+    `map.put(NEW_KEY, value)`                    YES — it adds an entry.
+    `entry.setValue(v)` during map iteration     NO. This is the SUPPORTED way to modify values while
+                                                 iterating a map, and it is underused.
+
+    THAT DISTINCTION IS WORTH KNOWING PRECISELY, because "you can't modify a collection while iterating
+    it" is the folk version and it is wrong. You cannot STRUCTURALLY modify it. Updating values in
+    place is fine and always was.
+
+FOR-EACH IS AN ITERATOR. The syntax hides it, which is why the exception seems to come from nowhere:
+
+    for (String s : list) { ... }
+    // compiles to exactly:
+    for (Iterator<String> it = list.iterator(); it.hasNext(); ) {
+        String s = it.next();          // ← the check lives HERE
+        ...
+    }
+
+    Once you see that, `it.remove()` stops looking like an obscure API and starts looking like the
+    obvious one: you already have the iterator, you just could not see it.
+
+THE ALTERNATIVES, and what each one really does:
+
+    `Iterator.remove()`         removes AND resynchronises expectedModCount AND fixes the cursor. The
+                                classical answer. O(n) per removal on an ArrayList.
+    `removeIf(predicate)`       ONE compacting pass. It marks survivors in a bit set, then moves them
+                                down once, then bumps modCount once. O(n) TOTAL regardless of how many
+                                are removed — algorithmically better than an iterator loop, and
+                                clearer. THE MODERN ANSWER.
+    ITERATE A COPY              `for (String s : new ArrayList<>(list)) list.remove(s);` — the iterator
+                                walks the copy, so no check fires. Correct, and it allocates.
+    COLLECT-THEN-REMOVE         gather the doomed elements in one pass, `list.removeAll(doomed)` after.
+                                Clear, and `removeAll` on a large list is O(n·m) unless the argument is
+                                a Set.
+    A REVERSE INDEXED LOOP      `for (int i = size-1; i >= 0; i--)`. No iterator, so no check, and going
+                                backwards means removals do not disturb the indices ahead of you.
+    CONCURRENT COLLECTIONS      see the next paragraph — they never throw at all.
+
+WHY `ConcurrentHashMap` AND `CopyOnWriteArrayList` NEVER THROW THIS:
+
+    `CopyOnWriteArrayList` iterates a SNAPSHOT of the array taken when the iterator was created. Later
+    writes replace the array wholesale, so the iterator simply does not see them — and `it.remove()`
+    throws `UnsupportedOperationException`, because there is nothing meaningful to remove from a
+    snapshot.
+    `ConcurrentHashMap` iterators are WEAKLY CONSISTENT: they never throw, they reflect the state at
+    some point at or after creation, and they may or may not show changes made during iteration. YOU
+    TRADE A GUARANTEE FOR THE ABSENCE OF AN EXCEPTION, which is the right trade for concurrent code and
+    the wrong one for finding a bug in single-threaded code.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `list.remove(x)` INSIDE A FOR-EACH. The canonical case. Throws on the next `next()`.
+
+CASE 2 — REMOVING THE SECOND-TO-LAST ELEMENT. DOES NOT THROW, and silently skips the last element,
+because `hasNext()` is `cursor != size` and does not check. The most important edge case here.
+
+CASE 3 — REMOVING THE LAST ELEMENT. Also does not throw, for the same reason — the loop just ends.
+
+CASE 4 — ADDING DURING ITERATION. Throws the same exception, and `Iterator` has no `add`. `ListIterator`
+does, and it is the supported route.
+
+CASE 5 — `map.put(existingKey, v)` DURING ITERATION IS LEGAL for HashMap; `map.put(newKey, v)` is not.
+Two lines that look identical behave differently based on the data.
+
+CASE 6 — MODIFYING A `subList` OR THE LIST BEHIND IT. `subList` is a VIEW; structurally modifying the
+parent invalidates the view, and the next use throws — often far from the line that caused it.
+
+CASE 7 — `Collections.unmodifiableList(x)` DOES NOT COPY. It is a view. Someone still holding the
+original can modify it, and your iteration over the "unmodifiable" wrapper will throw.
+
+CASE 8 — TWO THREADS, ONE PLAIN COLLECTION. This is what the name suggests and it is the case the
+mechanism handles WORST: `modCount` is not volatile, so the check may or may not fire, and the real
+problem is that an unsynchronised `ArrayList` under concurrent write can corrupt internally in ways no
+exception describes.
+
+CASE 9 — A STREAM OVER A LIST YOU THEN MODIFY. Streams are lazy: the source is not touched until the
+terminal operation, so the exception surfaces from `collect` or `forEach` and the stack trace points
+nowhere near the mutation.
+
+CASE 10 — REMOVING FROM `keySet()` OR `entrySet()` DURING ITERATION. Those are views onto the map, so
+`it.remove()` on the view is legal and correct, while `map.remove(k)` in the same loop is not.
+
+CASE 11 — NESTED ITERATION OVER THE SAME LIST, where the inner loop modifies. The outer iterator throws
+later, at a line that looks innocent.
+
+CASE 12 — RELYING ON THE EXCEPTION. The Javadoc explicitly says not to. It is for detecting bugs, never
+for program logic.""",
+
+"""5. THE ALTERNATIVES — how to actually remove things
+
+`removeIf(predicate)` — THE DEFAULT ANSWER on Java 8+:
+
+    list.removeIf(String::isEmpty);
+    map.values().removeIf(v -> v.isExpired());
+    map.entrySet().removeIf(e -> e.getKey().startsWith("tmp"));
+
+    One pass, correct by construction, and on an `ArrayList` it compacts once rather than shifting per
+    removal — so it is O(n) total where an iterator loop is O(n·k). It reads as the intent rather than
+    as the mechanism.
+
+`Iterator.remove()` — when the decision needs more than a predicate, or you need to do something else
+with the removed element on the way out.
+
+`ListIterator` — when you need to ADD or REPLACE during the walk, not just remove. It is the only
+supported way to insert while iterating.
+
+A REVERSE INDEXED LOOP — no iterator exists, so nothing can be invalidated, and removals do not disturb
+the indices you have not reached yet. Ugly, and genuinely the simplest correct thing in some code.
+
+COLLECT-THEN-ACT — two passes, and often the clearest for a complex condition:
+    `var doomed = list.stream().filter(...).collect(toSet()); list.removeAll(doomed);`
+    Make the argument a `Set`, or `removeAll` is O(n·m).
+
+A NEW COLLECTION INSTEAD OF MUTATION — `list.stream().filter(...).toList()`. Often the best answer,
+because the original never changes and there is nothing to invalidate. IF NOTHING ELSE HOLDS A
+REFERENCE TO THE OLD LIST, THIS IS SIMPLER THAN EVERY OPTION ABOVE.
+
+CONCURRENT COLLECTIONS, when the modification genuinely comes from another thread:
+    `ConcurrentHashMap` — weakly consistent iterators, never throws, and `compute`/`merge` do
+    read-modify-write atomically.
+    `CopyOnWriteArrayList` — snapshot iterators. Perfect for listener lists, terrible for write-heavy
+    use, since every write copies the whole array.
+    `ConcurrentLinkedQueue`, `ConcurrentSkipListMap` — the same philosophy for other shapes.
+    NOTE WHAT YOU GIVE UP: these do not throw because they do not promise a consistent view. If you are
+    single-threaded, switching to one of these to silence the exception hides a real bug.
+
+WHAT TO SAY: "`removeIf` in almost every case — one pass, O(n) on an ArrayList, and it states the
+intent. `Iterator.remove` when the condition is more involved, and a filtered copy when nothing else
+holds the original. I would not switch to a concurrent collection just to stop the exception: if it is
+single-threaded, that exception was telling the truth."
+
+""",
+
+"""6. HOW TO HANDLE IT — numbered steps
+
+STEP 1 — CHECK WHETHER IT IS ACTUALLY MULTI-THREADED. The name says concurrent; ninety percent of the
+time there is one thread and the fix is local.
+
+STEP 2 — USE `removeIf`. One line, one pass, and correct by construction.
+
+STEP 3 — IF THE LOGIC IS TOO COMPLEX FOR A PREDICATE, USE `Iterator.remove()` EXPLICITLY. Write the
+`while (it.hasNext())` loop rather than the for-each, so the iterator is visible.
+
+STEP 4 — IF YOU NEED TO ADD OR REPLACE, USE A `ListIterator`. `Iterator` has no `add`.
+
+STEP 5 — FOR MAPS, REMEMBER `entry.setValue(v)` IS LEGAL during iteration, and so is
+`map.put(existingKey, v)`. Only adding a NEW key is structural.
+
+STEP 6 — CONSIDER BUILDING A NEW COLLECTION INSTEAD. `stream().filter(...).toList()` avoids the whole
+class of problem when nothing else holds the original.
+
+STEP 7 — DO NOT SWITCH TO A CONCURRENT COLLECTION TO SILENCE IT. In single-threaded code that hides the
+bug rather than fixing it.
+
+STEP 8 — IF IT IS GENUINELY MULTI-THREADED, PICK A REAL STRATEGY: `ConcurrentHashMap`,
+`CopyOnWriteArrayList`, or external synchronisation across the WHOLE iteration —
+`Collections.synchronizedList` locks individual methods, NOT the loop.
+
+STEP 9 — TREAT A NON-THROWING MODIFICATION AS EQUALLY BROKEN. Removing the second-to-last element
+silently skips the last. Absence of the exception is not evidence of correctness.
+
+STEP 10 — WATCH FOR VIEWS. `subList`, `keySet`, `values`, `unmodifiableList` all alias the original, and
+the exception can surface far from the mutation.
+
+STEP 11 — WITH STREAMS, REMEMBER LAZINESS. The exception comes from the terminal operation, so read the
+whole pipeline rather than the line in the trace.
+
+STEP 12 — NEVER WRITE LOGIC THAT DEPENDS ON THE EXCEPTION. The Javadoc says it is best-effort and for
+bug detection only.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'First, the name is misleading. There's usually one thread. "Concurrent" here means concurrent
+MODIFICATION AND ITERATION — two things happening to the collection at overlapping times — not
+threading. People go hunting for a race that doesn't exist.
+
+The reason it can't just be allowed: an iterator holds a POSITION. For an ArrayList that's an index.
+Remove an element and everything after it shifts down one, so the iterator's index now points one
+further along than it did logically, and the next element gets skipped. The collection could let that
+happen and hand you wrong answers silently. Instead it keeps a counter of structural changes, the
+iterator snapshots that counter when it's created, and next() compares them.
+
+So the exception is a FEATURE. It turns a silent wrong answer into a stack trace pointing at the exact
+line. The alternative isn't "it works" — it's a loop that quietly skipped half your data.
+
+The mechanism is four lines. modCount on the collection, expectedModCount on the iterator, a comparison
+in next(), and Iterator.remove() updating expectedModCount after it removes. That last one is the whole
+reason Iterator.remove is the legal path — it's not special-cased in the check, it's just the only
+removal that also fixes the iterator's view and the cursor.
+
+Now the thing I'd make sure to say, because it's the difference between understanding it and having
+memorised it: fail-fast is explicitly BEST-EFFORT. The Javadoc says outright that you must not write a
+program depending on this exception for correctness — it exists only to detect bugs.
+
+And the example that proves it: removing the SECOND-TO-LAST element of an ArrayList in a for-each does
+NOT throw. Because hasNext() is just "cursor != size" and doesn't check anything. Remove index 1 of a
+three-element list: size becomes 2, cursor is 2, hasNext returns false, the loop ends normally — and
+the last element was never visited. No exception, no warning, an element silently skipped. Which means
+list.remove(x) inside a for-each is a bug whether or not it throws, and on the exact input where it
+doesn't throw, it's worse.
+
+One precision point people get wrong: it's not "you can't modify while iterating", it's you can't
+STRUCTURALLY modify. list.set(i, x) is fine. entry.setValue(v) during map iteration is fine and is the
+supported way to update values. And map.put on an EXISTING key doesn't touch modCount, so that's legal
+too — while put on a new key isn't. Two lines that look identical, differing on the data.
+
+Practically I'd reach for removeIf. One pass, and on an ArrayList it compacts once rather than shifting
+per removal, so it's O(n) total where an iterator loop is O(n·k). Iterator.remove when the condition is
+more involved, ListIterator if I need to add. And I would NOT switch to ConcurrentHashMap just to make
+the exception go away — those don't throw because they don't promise a consistent view, so in
+single-threaded code that's hiding the bug rather than fixing it.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHAT FOR-EACH ACTUALLY IS ───────────────────────────────────────
+    for (String s : list) { if (s.isEmpty()) list.remove(s); }
+    // compiles to:
+    for (Iterator<String> it = list.iterator(); it.hasNext(); ) {
+        String s = it.next();        // ← THE CHECK LIVES HERE, and only here
+        if (s.isEmpty()) list.remove(s);   // ← bumps modCount behind the iterator's back
+    }
+    // Once you see the iterator, `it.remove()` stops looking obscure.
+
+    // ── THE ENTIRE MECHANISM, FOUR LINES ────────────────────────────────
+    // In ArrayList:
+    protected transient int modCount;          // ++ on every add and remove
+    // In ArrayList.Itr:
+    int expectedModCount = modCount;           // snapshot at iterator creation
+    final void checkForComodification() {
+        if (modCount != expectedModCount) throw new ConcurrentModificationException();
+    }
+    public void remove() {
+        ArrayList.this.remove(lastRet);
+        cursor = lastRet;                      // ← fix the CURSOR too
+        expectedModCount = modCount;           // ← RESYNCHRONISE. This is the whole
+    }                                          //   reason it.remove() is legal.
+
+    // ── THE CASE THAT DOES NOT THROW — and is worse ─────────────────────
+    public boolean hasNext() { return cursor != size; }
+    //                                ^^^^^^^^^^^^^^ NO checkForComodification.
+    var list = new ArrayList<>(List.of("a", "b", "c"));
+    for (String s : list) { if (s.equals("b")) list.remove(s); }
+    System.out.println(list);        // [a, c] — and "c" WAS NEVER VISITED
+    //   after removing "b": size = 2, cursor = 2 → hasNext() is false → loop ends
+    //   NO EXCEPTION. NO WARNING. An element silently skipped. This is why the
+    //   absence of the exception proves nothing.
+
+    // ── WHAT IS AND IS NOT "STRUCTURAL" ─────────────────────────────────
+    for (var e : map.entrySet()) {
+        e.setValue(e.getValue() + 1);        // ✓ LEGAL — updates a value in place
+        map.put(e.getKey(), 99);             // ✓ LEGAL — existing key, no modCount++
+        map.put("brandNewKey", 1);           // ✗ THROWS — adds an entry
+        map.remove(e.getKey());              // ✗ THROWS — use it.remove()
+    }
+    for (int i = 0; i < list.size(); i++) list.set(i, list.get(i) + "!");  // ✓ fine
+    // "You can't modify while iterating" is the folk version. STRUCTURALLY is the word.
+
+    // ── THE FOUR CORRECT FIXES ──────────────────────────────────────────
+    list.removeIf(String::isEmpty);
+    // ^ ONE compacting pass: marks survivors in a bit set, moves them down once,
+    //   bumps modCount once. O(n) TOTAL. An iterator loop is O(n) PER removal.
+
+    var it = list.iterator();
+    while (it.hasNext()) { if (complexCheck(it.next())) it.remove(); }
+
+    for (int i = list.size() - 1; i >= 0; i--)      // backwards: removals never
+        if (bad(list.get(i))) list.remove(i);       // disturb the indices ahead
+
+    List<String> kept = list.stream().filter(s -> !s.isEmpty()).toList();
+    // ^ often the best: the original is never mutated, so nothing can be invalidated
+
+    // ── AND WHAT THE CONCURRENT COLLECTIONS TRADE AWAY ──────────────────
+    var chm = new ConcurrentHashMap<>(map);
+    for (var e : chm.entrySet()) chm.put("new", 1);   // never throws
+    // ^ WEAKLY CONSISTENT: it reflects the state at SOME point at or after creation,
+    //   and may or may not show your change. It does not throw because it does not
+    //   PROMISE a consistent view. In single-threaded code that hides the bug.""",
+
+"""9. THE TRACE — three removals, three different outcomes
+
+LIST = ["a", "b", "c", "d"], for-each, removing one element. Follow `cursor`, `size` and `modCount`:
+
+    REMOVING "a" (index 0) — the throwing case
+    step  call            cursor  size  modCount  expected  outcome
+    ---------------------------------------------------------------------------------
+    1     hasNext()       0       4     0         0         0 != 4 → true
+    2     next() → "a"    1       4     0         0         check passes
+    3     list.remove     1       3     1         0         ← THE GROUND MOVED
+    4     hasNext()       1       3     1         0         1 != 3 → true
+    5     next()          —       —     1         0         1 != 0 → THROWS
+    ---------------------------------------------------------------------------------
+    LOUD, IMMEDIATE, AND POINTING AT THE RIGHT LINE. This is the mechanism working.
+
+    REMOVING "c" (the SECOND-TO-LAST) — the silent case
+    step  call            cursor  size  modCount  expected  outcome
+    ---------------------------------------------------------------------------------
+    1-4   ... reaches "c" 3       4     0         0         check passes
+    5     list.remove     3       3     1         0         ground moved
+    6     hasNext()       3       3     1         0         3 != 3 → FALSE
+    7     loop EXITS      —       —     —         —         NO CHECK EVER RUNS
+    ---------------------------------------------------------------------------------
+    "d" WAS NEVER VISITED. No exception, no warning, the list is ["a","b","d"] and one element was
+    silently skipped. `hasNext()` does not call `checkForComodification`, and the loop ended without
+    calling `next()` again — so the detector never fired.
+
+    REMOVING "d" (the LAST) — loud again, and that is the point
+    ---------------------------------------------------------------------------------
+    next() returns "d" and leaves cursor at 4. The removal drops size to 3. Now
+    hasNext() is 4 != 3 → TRUE, so next() IS called, the check runs, and it THROWS.
+    Removing the last element throws; removing the one before it does not. WHETHER
+    YOU GET AN EXCEPTION DEPENDS ON WHICH ELEMENT YOU REMOVED.
+
+    THE POINT OF THE THREE TRACES TOGETHER: the same mistake produces a loud exception, a silent skip,
+    or a loud exception again, depending entirely on the position of the element. THAT IS WHY THE
+    JAVADOC SAYS NOT TO DEPEND ON IT. It is a smoke alarm that works most of the time, and "the alarm
+    did not go off" is not a fire safety certificate.
+
+NOW THE CORRECT VERSIONS, traced:
+
+    Iterator.remove() on "b"
+    step  call             cursor  size  modCount  expected  outcome
+    ---------------------------------------------------------------------------------
+    1     next() → "b"     2       4     0         0         ok
+    2     it.remove()      1       3     1         1         ← BOTH updated. cursor
+                                                              moved BACK to lastRet,
+                                                              expected resynchronised
+    3     hasNext()        1       3     1         1         continues correctly
+    4     next() → "c"     2       3     1         1         NOTHING SKIPPED
+    ---------------------------------------------------------------------------------
+    Two things were fixed, not one. The counter AND the cursor. That is the difference.
+
+    removeIf(pred) over a 1,000-element list removing 500
+    ---------------------------------------------------------------------------------
+    pass 1   evaluate the predicate for each element, record survivors in a BitSet
+    pass 2   shift survivors down in ONE arraycopy-driven compaction
+    then     modCount++ ONCE
+    total    O(n). An iterator loop would be O(n) per removal — 500 × O(n) = O(n·k).
+    ---------------------------------------------------------------------------------
+    So `removeIf` is not merely tidier. It is asymptotically better on an ArrayList, which is the part
+    that usually goes unmentioned.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    The check is one integer comparison in `next()`. Effectively free.
+    `Iterator.remove()` on an ArrayList: O(n) per call, so O(n·k) for k removals.
+    `removeIf` on an ArrayList: O(n) TOTAL for any number of removals — one compacting pass.
+    `LinkedList` + `Iterator.remove()`: O(1) per removal, though the walk still dominates.
+    `CopyOnWriteArrayList`: iteration never throws; every WRITE copies the whole array.
+    `ConcurrentHashMap`: weakly consistent iteration, never throws, no consistent-view promise.
+    `modCount` is not volatile — so across threads the check is unreliable in both directions.
+
+THE #1 MISTAKE: reading the name as "threading problem". Usually one thread.
+
+THE #2 MISTAKE: believing the absence of the exception means the code is correct. Removing the
+second-to-last element silently skips the last.
+
+THE #3 MISTAKE: "you cannot modify a collection while iterating". You cannot STRUCTURALLY modify it —
+`set`, `entry.setValue` and `put` on an existing key are all fine.
+
+THE #4 MISTAKE: switching to a concurrent collection to make the exception stop. In single-threaded
+code that hides a real bug behind a weaker guarantee.
+
+THE #5 MISTAKE: an iterator-remove loop where `removeIf` belongs. O(n·k) instead of O(n).
+
+THE #6 MISTAKE: expecting `Iterator.add`. It does not exist; `ListIterator` has it.
+
+THE #7 MISTAKE: forgetting that `subList`, `keySet`, `values` and `unmodifiableList` are VIEWS. The
+exception can appear far from the mutation.
+
+THE #8 MISTAKE: `Collections.synchronizedList` for concurrent iteration. It locks individual methods,
+not the loop; you must synchronise on the list across the whole iteration yourself.
+
+THE #9 MISTAKE: modifying the source of a stream. Laziness means the exception surfaces from the
+terminal operation, pointing away from the cause.
+
+THE #10 MISTAKE: `map.remove(k)` inside an `entrySet()` loop. Use `it.remove()` on the view, or
+`entrySet().removeIf(...)`.
+
+THE #11 MISTAKE: writing logic that catches and depends on it. Explicitly documented as best-effort and
+for bug detection only.
+
+ONE-SENTENCE TAKEAWAY: the collection counts structural modifications and every iterator snapshots that
+counter, so `next()` can refuse to continue once the ground has moved — turning a silently skipped
+element into a loud stack trace — but the check runs ONLY in `next()`, which is why removing the
+second-to-last element of an ArrayList ends the loop without throwing and silently skips the last one;
+fail-fast is documented as best-effort and for detecting bugs, never for logic, so the fix is
+`removeIf` (one compacting pass, O(n) total rather than O(n·k)), `Iterator.remove` when the condition
+is complex, or building a filtered copy — and never a concurrent collection chosen merely to make the
+exception stop.""",
+]
+
+
+DEEP["Checked vs unchecked — and why the distinction is contested"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the one thing the compiler forces you to think about
+
+Java splits failures in two. For SOME of them the compiler will not let you ignore the possibility: you
+must either catch it, or declare that your method can throw it too. For the rest, you may ignore it
+entirely and the code compiles.
+
+    CHECKED — `IOException`, `SQLException`, `InterruptedException`. The compiler enforces "catch or
+    specify". These are things that can go wrong even when your code is perfect: the network is down,
+    the disk is full, the file was deleted between checking and opening.
+
+    UNCHECKED — `NullPointerException`, `IllegalArgumentException`, `IndexOutOfBoundsException` and
+    everything else extending `RuntimeException`. No enforcement. These are meant to signal a BUG:
+    something the caller could have prevented by not passing null, not indexing past the end, not
+    calling `next()` on an exhausted iterator.
+
+    THE INTENDED RULE IS THEREFORE ABOUT WHO IS AT FAULT AND WHAT THEY CAN DO. Checked = "the world
+    misbehaved, and you might reasonably recover — retry, fall back, tell the user". Unchecked = "the
+    program is wrong, and there is nothing to recover; fix the code".
+
+    AND THE HONEST ANSWER TO THE INTERVIEW QUESTION IS THAT THIS IS A CONTESTED DESIGN, not settled
+    knowledge. Java is the ONLY mainstream language that has checked exceptions. C#, Kotlin, Scala,
+    Python, Go, Rust, JavaScript, Swift — every one of them looked at the idea and declined. That is
+    worth being able to explain rather than recite.
+
+THE EVERYDAY VERSION: a form with a mandatory field. It guarantees the box is filled in. It does not
+guarantee it is filled in THOUGHTFULLY — and if the box is mandatory on hundreds of forms, most people
+will start writing "n/a". `catch (IOException e) { }` is the "n/a" of Java, and it exists in enormous
+quantities.
+
+TERMS AS THEY APPEAR:
+- CATCH OR SPECIFY: the compiler rule for checked exceptions.
+- `Throwable` → `Error` (unchecked) and `Exception` → `RuntimeException` (unchecked) plus everything
+  else under `Exception` (checked).
+- STACK TRACE: the record of where it happened, captured at construction, not at throw.""",
+
+"""2. THE INTUITION — the argument for, and the two arguments against
+
+THE ARGUMENT FOR, and it is a good one: A CHECKED EXCEPTION IS COMPILER-ENFORCED DOCUMENTATION.
+
+    `Files.readString(path)` declares `throws IOException`, so you cannot write code that forgets the
+    disk might fail. The failure mode is in the TYPE, not in a comment nobody reads. Nothing else in
+    Java makes a caller acknowledge a possibility. Contrast C#, where any method might throw anything
+    and you find out in production.
+
+THE FIRST ARGUMENT AGAINST — THEY DO NOT COMPOSE, and this one is decisive in modern Java:
+
+    `Function<T, R>` declares `R apply(T t)` — no `throws`. So a lambda passed to `map` CANNOT throw a
+    checked exception. Neither can one passed to `forEach`, `Optional.map`, `CompletableFuture.thenApply`,
+    or any other functional interface in the JDK.
+
+    THE RESULT IS THE UGLIEST CODE IN MODERN JAVA:
+        list.stream().map(p -> { try { return Files.readString(p); }
+                                 catch (IOException e) { throw new UncheckedIOException(e); } })
+    A try/catch inside a lambda whose entire purpose is to convert a checked exception into an
+    unchecked one so it can escape. THE LANGUAGE ADDED `UncheckedIOException` TO THE JDK SPECIFICALLY
+    TO MAKE THIS POSSIBLE — which is the standard library conceding the point.
+
+THE SECOND ARGUMENT AGAINST — VERSIONING:
+
+    Adding a checked exception to an existing method BREAKS EVERY CALLER. It is a source-incompatible
+    change. So library authors, quite rationally, never add one — and instead either use unchecked
+    exceptions from the start or declare an over-broad one early "just in case". Anders Hejlsberg made
+    exactly this argument when explaining why C# has none.
+
+AND THE EMPIRICAL ARGUMENT, which is the one that actually persuades people: LOOK AT WHAT DEVELOPERS DO
+WHEN FORCED.
+
+    `catch (IOException e) { }` — the empty catch. The compiler demanded a decision; the developer did
+    not want to make one; the worst possible answer satisfies the compiler. THE ENFORCEMENT PRODUCED A
+    SILENTLY SWALLOWED FAILURE, which is strictly worse than no enforcement, because now the stack
+    trace is gone too.
+    `catch (Exception e) { throw new RuntimeException(e); }` — the reflexive wrap, which erases the
+    type distinction the mechanism existed to create.
+    `throws Exception` on every method — the checked-exception equivalent of `Object`.
+
+WHERE THE CONSENSUS LANDED IN PRACTICE. Spring wraps every `SQLException` into an unchecked
+`DataAccessException` hierarchy, and considers this one of its selling points. Hibernate did the same.
+Kotlin has checked exceptions in the type system for interoperability but ENFORCES NOTHING. THE
+ECOSYSTEM VOTED, over about twenty years, and it voted against enforcement while keeping the idea that
+exception TYPES should be meaningful.""",
+
+"""3. THE MECHANISM — the hierarchy, the rules, and what a throw actually costs
+
+THE HIERARCHY, which is the thing to be able to draw:
+
+    Throwable
+    ├── Error                    UNCHECKED. The JVM is in trouble: OutOfMemoryError,
+    │                            StackOverflowError, NoClassDefFoundError. Do not catch.
+    └── Exception                CHECKED (everything except the branch below)
+        ├── IOException, SQLException, InterruptedException, ClassNotFoundException...
+        └── RuntimeException     UNCHECKED. NullPointerException, IllegalArgumentException,
+                                 IllegalStateException, IndexOutOfBoundsException,
+                                 ClassCastException, NumberFormatException, ArithmeticException
+
+    THE RULE IS PURELY STRUCTURAL: unchecked means "is an `Error` or a `RuntimeException`". Everything
+    else under `Throwable` is checked. There is no annotation and no keyword — it is inheritance.
+
+THE COMPILER RULES:
+    A method must DECLARE any checked exception it can throw, or catch it.
+    An OVERRIDING method may declare FEWER or NARROWER checked exceptions than the one it overrides —
+    never more. Which is why `Runnable.run()`, declaring none, cannot be implemented by anything that
+    throws a checked exception.
+    UNREACHABLE CATCH IS A COMPILE ERROR for checked exceptions — catching `IOException` where none can
+    be thrown does not compile. Catching `Exception` or an unchecked type always does.
+
+THREE FEATURES WORTH KNOWING BY NAME:
+
+    MULTI-CATCH (Java 7): `catch (IOException | SQLException e)`. The variable is implicitly final and
+    its static type is the least upper bound.
+    MORE PRECISE RETHROW (Java 7): if you `catch (Exception e) { throw e; }` and the try block can only
+    throw `IOException`, the compiler INFERS that and lets you declare `throws IOException` rather than
+    `throws Exception`.
+    SUPPRESSED EXCEPTIONS: in try-with-resources, if the body throws AND `close()` throws, the body's
+    exception propagates and `close()`'s is attached via `addSuppressed`. Before Java 7, the manual
+    finally-block version LOST the original exception entirely — this is the single most valuable thing
+    try-with-resources fixed.
+
+WHAT A THROW ACTUALLY COSTS, because "exceptions are slow" is half-true and the half matters:
+
+    THE EXPENSIVE PART IS `fillInStackTrace()`, called by the `Throwable` CONSTRUCTOR — it walks the
+    entire stack. Throwing and catching, once the object exists, is comparable to a branch.
+    So an exception constructed and thrown from deep in a call stack costs microseconds; a
+    pre-allocated exception, or one created with the four-argument constructor and
+    `writableStackTrace = false`, costs almost nothing.
+    THE JIT ALSO OPTIMISES REPEATED IMPLICIT EXCEPTIONS: after enough NullPointerExceptions from the
+    same site, HotSpot may recompile it to throw a PRE-ALLOCATED exception with NO STACK TRACE AT ALL.
+    That is the origin of the mystifying production log showing `java.lang.NullPointerException` with
+    an empty trace — the JVM optimised the trace away because the site was hot.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — THE EMPTY CATCH BLOCK. `catch (IOException e) { }`. The failure is now invisible AND the stack
+trace is destroyed. The single most damaging pattern in Java error handling, and checked exceptions are
+what pressure people into it.
+
+CASE 2 — WRAPPING WITHOUT THE CAUSE. `throw new RuntimeException("failed")` instead of
+`throw new RuntimeException("failed", e)`. The original stack trace is gone and the log says only
+"failed". ALWAYS PASS THE CAUSE.
+
+CASE 3 — SWALLOWING `InterruptedException`. Catching it clears the interrupt flag, so the thread can
+never be cancelled. Rethrow, or restore with `Thread.currentThread().interrupt()`. THIS ONE BREAKS
+`shutdownNow` AND EVERY CANCELLATION MECHANISM IN THE JDK.
+
+CASE 4 — `catch (Exception e)` THAT ALSO CATCHES RUNTIME EXCEPTIONS. Your handler written for I/O
+failure now also swallows every NullPointerException in the block, turning a bug into a "handled error".
+
+CASE 5 — `catch (Throwable t)`. Now you have caught `OutOfMemoryError` and `StackOverflowError` too,
+and the JVM continues in an undefined state.
+
+CASE 6 — `return` INSIDE `finally`. It DISCARDS an in-flight exception and any earlier return value.
+The exception simply disappears. Compilers warn; the code still runs.
+
+CASE 7 — A `finally` BLOCK THAT THROWS. Same effect: it replaces the original exception. This is why
+try-with-resources uses `addSuppressed` rather than letting `close()` win.
+
+CASE 8 — CHECKED EXCEPTIONS IN LAMBDAS. Not possible; the functional interfaces do not declare them. The
+whole ecosystem of "unchecked function" wrappers exists because of this.
+
+CASE 9 — `throws Exception` ON A PUBLIC API. Conveys nothing, forces every caller to catch everything,
+and prevents more-precise rethrow from helping.
+
+CASE 10 — CATCHING A SUPERCLASS BEFORE A SUBCLASS. `catch (Exception e)` before `catch (IOException e)`
+is a compile error for exactly this reason — but with unchecked types the ordering mistake compiles and
+the second block silently never runs.
+
+CASE 11 — EXCEPTIONS FOR CONTROL FLOW. `catch (NumberFormatException e) { return default; }` inside a
+tight loop costs a stack walk per iteration. Use a check, or a parser that returns an `Optional`.
+
+CASE 12 — AN EMPTY STACK TRACE IN PRODUCTION. Not a logging bug — the JIT optimised a hot implicit
+exception into a pre-allocated one. `-XX:-OmitStackTraceInFastThrow` restores it while diagnosing.
+
+CASE 13 — SNEAKY THROWS. A generics trick (or Lombok's `@SneakyThrows`) lets you throw a checked
+exception without declaring it, because erasure means the cast is unchecked at runtime. It compiles, it
+works, and it defeats the entire mechanism — which is itself an argument about how load-bearing the
+mechanism really is.""",
+
+"""5. THE ALTERNATIVES — how other languages and modern Java handle it
+
+WHAT EVERY OTHER LANGUAGE DID:
+    C#            no checked exceptions. Hejlsberg's stated reasons: VERSIONING (adding one breaks
+                  callers) and SCALABILITY (in a deep call stack, most intermediate methods can do
+                  nothing but re-declare).
+    KOTLIN        has the types for Java interop, ENFORCES NOTHING.
+    SCALA         same. `@throws` exists only for Java callers.
+    PYTHON, JS, RUBY   no static exception checking at all.
+    GO            errors are RETURN VALUES: `if err != nil`. Explicit, verbose, impossible to ignore
+                  silently — though the compiler does let you discard it with `_`.
+    RUST          `Result<T, E>` in the type system, with `?` for propagation. THE STRONGEST VERSION OF
+                  THE IDEA JAVA WAS REACHING FOR: the failure is in the return type, so it composes
+                  with generics and closures, which is precisely what checked exceptions cannot do.
+
+    THE PATTERN ACROSS ALL OF THEM: the industry kept the goal — make failure visible in the signature —
+    and rejected the mechanism — a second, separate channel the type system cannot carry.
+
+IN MODERN JAVA:
+    `Optional<T>` for "absent" — a missing value is not an exceptional condition and should never have
+    been an exception.
+    A RESULT TYPE — a sealed interface with `Success` and `Failure` records, matched with a `switch`
+    pattern. This is Rust's approach, expressible in Java 21, and it composes with streams because it
+    is just a value.
+    `CompletableFuture` carries failures as VALUES through `exceptionally`, `handle` and `whenComplete`,
+    which is why async code sidesteps the checked/unchecked distinction almost entirely.
+    `UncheckedIOException`, `UncheckedExecutionException` — the JDK's own escape hatches.
+    Spring's `DataAccessException` hierarchy — unchecked, but with a meaningful TYPE per failure, which
+    is arguably the design people actually wanted: informative types, no enforcement.
+
+WHEN A CHECKED EXCEPTION IS STILL RIGHT:
+    THE CALLER CAN GENUINELY DO SOMETHING DIFFERENT — retry, fall back to a cache, prompt the user —
+    AND you are confident they will not just be re-declaring it for ten frames. That is a narrow set,
+    and it is the set the original design had in mind.
+
+WHAT TO SAY: "I would use unchecked exceptions by default with meaningful types, wrap
+infrastructure failures with the CAUSE preserved, and reserve checked exceptions for the narrow case
+where the immediate caller has a real alternative action. And I would note that this is contested
+design, not settled: no other mainstream language adopted it, and the reason is that checked exceptions
+do not compose with lambdas or generics."
+
+""",
+
+"""6. HOW TO DESIGN ERROR HANDLING — numbered steps
+
+STEP 1 — DECIDE WHETHER THE CALLER CAN ACT. If there is a genuine alternative — retry, fall back, ask
+the user — a checked exception may be right. If not, unchecked.
+
+STEP 2 — NEVER LEAVE A CATCH BLOCK EMPTY. If you truly intend to ignore it, log it and write the reason
+in a comment. Silent swallowing destroys the only evidence.
+
+STEP 3 — ALWAYS PASS THE CAUSE WHEN WRAPPING. `new ServiceException("loading user " + id, e)`. Without
+the cause the original trace is gone.
+
+STEP 4 — ADD CONTEXT WHEN YOU WRAP. The stack trace says where; the message should say what you were
+doing and with which inputs.
+
+STEP 5 — RESTORE THE INTERRUPT FLAG. `catch (InterruptedException e) { Thread.currentThread().interrupt();
+... }`. Otherwise the thread is uncancellable for the rest of its life.
+
+STEP 6 — CATCH THE NARROWEST TYPE THAT MAKES SENSE, and never `Throwable`. `catch (Exception e)` in a
+block that also does real work will swallow your own bugs.
+
+STEP 7 — USE try-with-resources FOR EVERYTHING CLOSEABLE. It preserves the primary exception and
+attaches the close failure as SUPPRESSED, which the manual version silently discards.
+
+STEP 8 — NEVER `return` FROM A `finally`. It discards in-flight exceptions.
+
+STEP 9 — USE `Optional` FOR ABSENCE, NOT AN EXCEPTION. "Not found" is a normal outcome.
+
+STEP 10 — DO NOT USE EXCEPTIONS FOR CONTROL FLOW IN HOT CODE. The cost is the stack walk in the
+constructor; a check is orders of magnitude cheaper.
+
+STEP 11 — AT SYSTEM BOUNDARIES, TRANSLATE. Convert infrastructure exceptions into domain ones, so
+callers depend on your vocabulary rather than on your database driver's.
+
+STEP 12 — HAVE EXACTLY ONE TOP-LEVEL HANDLER that logs with full context and returns something sane.
+Most methods should not be catching anything at all.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Java splits failures in two. Checked ones — IOException, SQLException, InterruptedException — the
+compiler forces you to catch or declare. Unchecked ones — everything under RuntimeException — you can
+ignore entirely.
+
+The intended rule is about fault and recourse. Checked means the WORLD misbehaved and you might
+reasonably recover: retry, fall back, tell the user. Unchecked means the PROGRAM is wrong — you passed
+null, you indexed past the end — and there's nothing to recover; fix the code. The structural rule is
+just inheritance: unchecked is Error or RuntimeException, everything else under Throwable is checked.
+
+But the honest answer is that this is contested design, not settled knowledge, and I think that's the
+more interesting thing to say. Java is the only mainstream language with checked exceptions. C#,
+Kotlin, Scala, Python, Go, Rust — every one of them looked at the idea and declined.
+
+The argument FOR is genuinely good: a checked exception is compiler-enforced documentation. The failure
+mode is in the TYPE rather than in a comment nobody reads, and nothing else in Java makes a caller
+acknowledge a possibility.
+
+The argument against that I find decisive is that they don't COMPOSE. Function.apply doesn't declare
+throws, so a lambda passed to map can't throw a checked exception. Neither can one passed to forEach,
+or Optional.map, or thenApply. Which produces the ugliest code in modern Java — a try/catch inside a
+lambda whose only purpose is converting a checked exception into an unchecked one so it can escape. And
+the JDK added UncheckedIOException specifically to make that possible, which is the standard library
+conceding the point.
+
+The second argument is versioning: adding a checked exception to an existing method breaks every
+caller, so library authors rationally never add one. That's Hejlsberg's stated reason C# has none.
+
+And then the empirical argument, which is the one that actually persuades me — look at what people do
+when forced. `catch (IOException e) { }`. The compiler demanded a decision, the developer didn't want
+to make one, and the worst possible answer satisfies it. The enforcement produced a silently swallowed
+failure with the stack trace destroyed, which is strictly worse than no enforcement.
+
+Where the ecosystem landed is telling: Spring wraps every SQLException into an unchecked
+DataAccessException hierarchy and considers that a selling point. So the vote was against ENFORCEMENT
+while keeping the idea that exception TYPES should be meaningful. And Rust's Result type is the
+strongest version of what Java was reaching for — the failure is in the RETURN type, so it composes
+with generics and closures, which is exactly what checked exceptions can't do.
+
+Practically: unchecked by default with meaningful types, always wrap with the CAUSE preserved and
+context added, restore the interrupt flag on InterruptedException, try-with-resources for anything
+closeable so the close failure comes back as suppressed rather than replacing the real one, and reserve
+checked exceptions for the narrow case where the immediate caller has a real alternative action.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHAT THE COMPILER ENFORCES ──────────────────────────────────────
+    void read() { Files.readString(path); }        // ✗ DOES NOT COMPILE
+    //            ^ unreported exception IOException; must be caught or declared
+    void read() throws IOException { Files.readString(path); }     // ✓ specify
+    void read() { try { Files.readString(path); }                  // ✓ catch
+                  catch (IOException e) { log.error("read", e); } }
+    void oops() { Objects.requireNonNull(null); }   // ✓ compiles. Unchecked.
+
+    // ── THE PATTERN THE ENFORCEMENT ACTUALLY PRODUCES ───────────────────
+    try { save(data); } catch (IOException e) { }
+    //                                       ^^^ THE COMPILER IS SATISFIED and the
+    //   failure is now invisible AND the stack trace is destroyed. Strictly worse
+    //   than no enforcement. This is in every large Java codebase, in quantity.
+
+    try { save(data); } catch (IOException e) { throw new RuntimeException(e); }
+    //   ^ the reflexive wrap — which erases the distinction the mechanism created.
+
+    // ── WHY THEY DO NOT COMPOSE ─────────────────────────────────────────
+    paths.stream().map(Files::readString)          // ✗ DOES NOT COMPILE
+    //                 ^ Function.apply() declares NO throws, so no lambda anywhere
+    //                   in the JDK's functional interfaces may throw a checked one.
+    paths.stream().map(p -> {
+        try { return Files.readString(p); }
+        catch (IOException e) { throw new UncheckedIOException(e); }
+    //                                     ^^^^^^^^^^^^^^^^^^^^ a class the JDK
+    //   ADDED specifically so this workaround would be possible. The standard
+    //   library conceding the point.
+    })
+
+    // ── WRAPPING: the one line that decides whether you can debug it ────
+    catch (SQLException e) { throw new ServiceException("loading user " + id); }
+    //                                                  ^ NO CAUSE. The original
+    //   trace is gone and the log says only "loading user 42".
+    catch (SQLException e) { throw new ServiceException("loading user " + id, e); }
+    //                                                                       ^ ALWAYS
+
+    // ── THE ONE THAT BREAKS CANCELLATION ────────────────────────────────
+    try { queue.take(); } catch (InterruptedException e) { }
+    // ^ catching it CLEARS the interrupt flag, so this thread can never be
+    //   cancelled again — shutdownNow() and every JDK cancellation stops working.
+    try { queue.take(); }
+    catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+    //                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ restore it
+
+    // ── finally THAT EATS THE EXCEPTION ─────────────────────────────────
+    try { throw new IOException("real"); } finally { return 42; }
+    // ^ returns 42. THE EXCEPTION SIMPLY DISAPPEARS — no log, no trace, no evidence.
+
+    // ── SUPPRESSED: what try-with-resources fixed ───────────────────────
+    try (var in = new FileInputStream(f)) { throw new IllegalStateException("body"); }
+    // body throws AND close() throws → the BODY's exception propagates and close()'s
+    // is attached via addSuppressed(). The pre-Java-7 manual finally version LOST the
+    // original entirely — the close failure replaced the real cause.
+
+    // ── WHY "EXCEPTIONS ARE SLOW" IS HALF TRUE ──────────────────────────
+    new RuntimeException("x");           // ← THE EXPENSIVE PART: the CONSTRUCTOR
+    //                                        calls fillInStackTrace(), walking the
+    //                                        whole stack. Throwing/catching is cheap.
+    super(msg, cause, false, false);     // suppression off, WRITABLE STACK TRACE OFF
+    //                                      → a nearly free exception, for control flow
+
+    // ── THE EMPTY STACK TRACE IN PRODUCTION ─────────────────────────────
+    // "java.lang.NullPointerException" with NO frames is not a logging bug: after
+    // enough throws from one site, HotSpot recompiles it to throw a PRE-ALLOCATED
+    // exception with no trace. -XX:-OmitStackTraceInFastThrow to get it back.""",
+
+"""9. THE TRACE — one failure, four handling strategies
+
+A `SQLException` IS THROWN THREE LAYERS DOWN, in `UserRepository.findById`. Follow what the operator
+sees in each strategy:
+
+    STRATEGY 1 — SWALLOW
+    layer                what happens                          what ops sees
+    ---------------------------------------------------------------------------------
+    repository           catch (SQLException e) { }            —
+    service              receives null                         —
+    controller           NullPointerException on user.name()   NPE at Controller:52
+    ---------------------------------------------------------------------------------
+    THE STACK TRACE POINTS AT THE CONTROLLER. The database was down and the report says a null
+    pointer in the view layer. Two hours of the wrong investigation, and the evidence is unrecoverable
+    because the original exception object no longer exists.
+
+    STRATEGY 2 — WRAP WITHOUT THE CAUSE
+    layer                what happens                          what ops sees
+    ---------------------------------------------------------------------------------
+    repository           throw new ServiceException("db")      —
+    controller           500                                   ServiceException: db
+                                                                at Repository:31
+    ---------------------------------------------------------------------------------
+    Better — the right LAYER is named. But "db" is the entire diagnosis: no SQL state, no vendor code,
+    no indication of whether it was a timeout, a constraint violation or a dead connection.
+
+    STRATEGY 3 — WRAP WITH THE CAUSE AND CONTEXT
+    layer                what happens                          what ops sees
+    ---------------------------------------------------------------------------------
+    repository           throw new ServiceException(           ServiceException: loading
+                           "loading user " + id, e)            user 4471
+    controller           500 + log                               at Repository:31
+                                                               Caused by: SQLException:
+                                                                 connection timed out
+                                                                 at OracleDriver:…
+    ---------------------------------------------------------------------------------
+    THE CAUSED-BY CHAIN IS THE WHOLE DIFFERENCE. One extra argument, `e`, and the log now contains the
+    layer, the operation, the identifier, and the underlying driver-level reason.
+
+    STRATEGY 4 — LET IT PROPAGATE AS A CHECKED EXCEPTION ALL THE WAY UP
+    layer                what happens
+    ---------------------------------------------------------------------------------
+    repository           throws SQLException
+    service              throws SQLException     ← re-declared, does nothing with it
+    controller           throws SQLException     ← re-declared, does nothing with it
+    framework            catch (Exception e)
+    ---------------------------------------------------------------------------------
+    THIS IS HEJLSBERG'S SCALABILITY ARGUMENT, made concrete. Two intermediate layers were forced to
+    mention a database exception they have no opinion about, coupling the service and controller
+    signatures to the persistence technology. Change to a NoSQL store and every signature changes.
+
+NOW THE COST TRACE — where the time actually goes:
+
+    operation                                    relative cost
+    ---------------------------------------------------------------------------------
+    `new RuntimeException("x")` at depth 50      ~1000x   ← fillInStackTrace walks 50 frames
+    the same at depth 5                          ~100x    ← DEPTH-DEPENDENT
+    `super(msg, cause, false, false)`            ~1x      ← no stack trace captured
+    throw + catch, object already built          ~1x      ← comparable to a branch
+    an `if` check instead                        ~0.01x
+    ---------------------------------------------------------------------------------
+    "EXCEPTIONS ARE SLOW" IS ABOUT THE CONSTRUCTOR, NOT THE THROW. Which is why the JIT's response to a
+    hot implicit exception is to stop capturing the trace — and why you sometimes see a bare
+    `NullPointerException` with no frames at all in a production log. That is an optimisation, not a
+    logging failure.
+
+WHAT PRODUCED WHAT:
+    THE EMPTY CATCH        produced strategy 1's misleading trace. The compiler was satisfied.
+    THE MISSING `e`        produced strategy 2's uselessness. One argument.
+    RE-DECLARATION         produced strategy 4's coupling — the scalability argument.
+    fillInStackTrace       produced the entire cost table, and the empty traces in production.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Unchecked = `Error` or `RuntimeException` and their subclasses. Checked = everything else under
+    `Throwable`. Purely structural — inheritance, not annotation.
+    An overriding method may declare fewer or narrower checked exceptions, never more.
+    The cost of an exception is `fillInStackTrace()` in the CONSTRUCTOR, proportional to stack depth.
+    Throwing and catching an existing object is comparable to a branch.
+    `super(msg, cause, false, false)` gives a nearly free exception with no stack trace.
+    try-with-resources: the body's exception wins, `close()`'s is attached via `addSuppressed`.
+    HotSpot may replace a hot implicit exception with a pre-allocated, trace-less one.
+
+THE #1 MISTAKE: the empty catch block. The compiler is satisfied, the failure is invisible, and the
+evidence is destroyed. It is what enforcement pressures people into.
+
+THE #2 MISTAKE: wrapping without the cause. One missing argument turns a diagnosable failure into a
+one-word log line.
+
+THE #3 MISTAKE: swallowing `InterruptedException`. Clears the flag and makes the thread uncancellable
+for the rest of its life.
+
+THE #4 MISTAKE: `catch (Exception e)` around code that also does real work. It swallows your own
+NullPointerExceptions and reports them as handled errors.
+
+THE #5 MISTAKE: `catch (Throwable t)`. Now you have caught `OutOfMemoryError` and continue in an
+undefined state.
+
+THE #6 MISTAKE: `return` in a `finally`. Discards the in-flight exception silently.
+
+THE #7 MISTAKE: `throws Exception` on a public API. Conveys nothing and forces everyone to catch
+everything.
+
+THE #8 MISTAKE: exceptions for control flow in hot code. The stack walk per construction is the cost.
+
+THE #9 MISTAKE: using an exception for "not found". That is `Optional`, and it is a normal outcome.
+
+THE #10 MISTAKE: declaring a checked exception through layers that cannot act on it. That coupling is
+the scalability argument against the whole feature.
+
+THE #11 MISTAKE: reading a trace-less production `NullPointerException` as a logging bug. It is the JIT
+optimising a hot throw site.
+
+THE #12 MISTAKE: treating the checked/unchecked split as settled best practice. It is a design Java
+alone adopted, and being able to say why the rest of the industry declined is the actual answer.
+
+ONE-SENTENCE TAKEAWAY: checked exceptions are compiler-enforced documentation for failures the caller
+might reasonably recover from, and unchecked ones signal bugs — a genuinely good idea whose mechanism
+DOES NOT COMPOSE, because no functional interface in the JDK declares `throws`, so lambdas cannot carry
+them and the JDK had to add `UncheckedIOException` as an escape hatch, and because adding one to an
+existing method breaks every caller, which is why no other mainstream language adopted the feature and
+why Java itself drifted to unchecked-with-meaningful-types (Spring's `DataAccessException`); use
+unchecked by default, always wrap WITH the cause and added context, restore the interrupt flag, prefer
+try-with-resources so a failing `close()` is suppressed rather than replacing the real exception, and
+reserve checked exceptions for the narrow case where the immediate caller has a real alternative
+action.""",
+]
