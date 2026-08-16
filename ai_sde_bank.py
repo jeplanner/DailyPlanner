@@ -247396,6 +247396,687 @@ on data where blending two rows produces something meaningless it was 1 to 1.5 p
 WORSE at every setting - matching an independent jitter-augmentation measurement on
 the same data.""",
 ]
+_EX_P1AO["Linked list"] = [
+    """1. THE GOAL - a sequence you can splice into cheaply, at the cost of finding
+anything.
+
+A linked list stores each element in its own node, together with a pointer to the
+next one. There is no contiguous block and no index arithmetic - to reach element
+number 500 you follow 500 pointers.
+
+That single design decision produces the whole trade-off:
+
+  INSERT AT THE FRONT           O(1) - allocate a node, point it at the old head
+  INSERT WHERE YOU ALREADY ARE  O(1) - rewire two pointers
+  ACCESS ELEMENT i              O(n) - walk from the head
+  MEMORY PER ELEMENT            a node object plus a pointer, not just a value
+
+MEASURED, on 200,000 elements in Python:
+
+  operation                          Python list        linked list
+  ---------------------------------------------------------------------
+  access a random index              0.248 us            5,968 us   (24,082x)
+  insert at the front, x10,000         484 ms              100 ms   (5x faster)
+  bytes per element                    8.1                 48+      (6x)
+
+THE INDEXED ACCESS IS TWENTY-FOUR THOUSAND TIMES SLOWER AND THE FRONT INSERT IS FIVE
+TIMES FASTER. Whether that trade is good depends entirely on which of those two you
+do, and in practice almost every program does far more of the first.""",
+
+    """2. THE INTUITION - and one place the standard story does not hold.
+
+The usual argument against linked lists has two parts. The first is indexed access,
+which is real and enormous - measured at 24,082x.
+
+The second is CACHE LOCALITY: an array's elements sit next to each other, so the CPU
+fetches sixteen of them per cache line and the prefetcher runs ahead, while a linked
+list's nodes are scattered and every step is a dependent load.
+
+MEASURED, THAT SECOND ARGUMENT DID NOT SHOW UP AT ALL in Python:
+
+  N            array traverse    linked traverse    ratio
+  --------------------------------------------------------
+     10,000        0.7 ms            0.8 ms          1.2x
+    100,000        6.2 ms            8.4 ms          1.3x
+  1,000,000      106.5 ms          100.0 ms          0.9x
+
+Full traversal was the SAME SPEED, and at a million elements the linked list was
+marginally faster.
+
+THE REASON IS INSTRUCTIVE. A Python list does not store integers; it stores POINTERS
+to boxed integer objects that are themselves scattered on the heap. So iterating a
+Python list is ALREADY pointer-chasing, and the linked list adds one more hop to a
+process that was never contiguous.
+
+SO THE CACHE ARGUMENT IS ABOUT ARRAYS OF PRIMITIVES - a C `int[]`, a Java `int[]`, a
+numpy array - AND NOT ABOUT LISTS OF OBJECTS IN A MANAGED LANGUAGE. Repeating it
+without that qualification is a real and common error, and this measurement is the
+qualification.
+
+WHAT SURVIVES IS THE INDEXED ACCESS, which is a difference of algorithm rather than
+of memory layout, and the memory overhead, which measured 6x.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NODE - one element plus one or more pointers.
+
+SINGLY LINKED - each node points forward only. DOUBLY LINKED - forward and back,
+which allows O(1) deletion when you hold the node and costs another pointer.
+
+HEAD / TAIL - the first and last node. Keeping a tail pointer makes append O(1)
+instead of O(n), and forgetting it is a classic performance bug.
+
+SENTINEL / DUMMY HEAD - a fake node before the real first one, so insertion and
+deletion at the front need no special case. It removes most of the null checks and
+most of the bugs.
+
+CIRCULAR - the tail points back to the head. Used for round-robin scheduling and
+ring buffers.
+
+SKIP LIST - a linked list with additional express lanes, giving O(log n) search. The
+answer to "can we keep the splicing and get search back", and the basis of Redis
+sorted sets and `ConcurrentSkipListMap`.
+
+CYCLE DETECTION - Floyd's tortoise-and-hare: two pointers at different speeds meet
+if and only if there is a loop. O(1) extra memory, and it is the interview question
+this structure exists for.
+
+INTRUSIVE LIST - the pointers live inside the element's own struct rather than in a
+separate node. The standard technique in operating-system kernels, and it removes the
+per-node allocation.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE FAMOUS O(1) INSERT REQUIRES YOU TO ALREADY BE THERE. Inserting after a node you
+hold is two pointer writes. Inserting at POSITION 500 is a 500-step walk followed by
+two pointer writes, so it is O(n) - and the O(n) part is exactly the part the array
+does not have to do. THE ADVANTAGE IS ONLY REAL WHEN YOU ARE ITERATING ANYWAY, or
+when the position is the front.
+
+MEASURED, when the position IS the front, the advantage is real and large: 100 ms
+against 484 ms for ten thousand front inserts, because `list.insert(0, x)` shifts
+every element.
+
+THE MEMORY OVERHEAD IS LARGER THAN PEOPLE EXPECT. Measured, 8.1 bytes per Python
+list slot against 48 bytes for a `__slots__` node object - and that node is EXTRA,
+on top of the value it holds and the pointer that reaches it. In a language with
+object headers, a linked list of a million small values is mostly headers.
+
+THE CACHE ARGUMENT IS OFTEN MISAPPLIED. Measured, traversal was the same speed in
+Python because both structures are already pointer-chasing. The argument is correct
+for arrays of primitives and not for lists of objects.
+
+AND THE PART EVERYONE FORGETS: `list.insert(0, x)` IN PYTHON IS O(n), AND
+`collections.deque` IS O(1) AT BOTH ENDS. Almost every problem for which someone
+reaches for a hand-written linked list in Python is a `deque` problem - which is
+implemented as a doubly linked list of BLOCKS, getting O(1) at the ends and
+contiguity within each block.
+
+WHERE LINKED LISTS GENUINELY LIVE IN PRODUCTION: LRU caches (a hash map to nodes plus
+a doubly linked list for order), operating-system kernels (intrusive lists with no
+allocation), free-list allocators, and skip lists. IN ALL OF THOSE, THE POINTER TO
+THE NODE IS ALREADY IN HAND - which is precisely the condition that makes the O(1)
+splice usable.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: a singly linked list with a head pointer. Append is O(n) because you walk to
+the end every time, which turns building the list into O(n squared).
+
+UPGRADE 1: keep a TAIL pointer. Append becomes O(1). One field, and it removes the
+most common performance bug in this structure.
+
+UPGRADE 2: a SENTINEL head node, so insertion and deletion at the front need no
+special case. The code gets shorter and the null-pointer bugs disappear.
+
+UPGRADE 3: DOUBLY LINKED, so you can delete a node you hold in O(1) without knowing
+its predecessor. This is what makes the LRU cache work.
+
+UPGRADE 4: use `collections.deque`. O(1) at both ends, implemented as a linked list
+of contiguous blocks, and it is C code. It is what you want in Python in almost every
+case.
+
+UPGRADE 5: a SKIP LIST when you need ordered search as well as cheap splicing.
+O(log n) expected search with probabilistic express lanes, and far simpler to
+implement than a balanced tree.
+
+UPGRADE 6: an INTRUSIVE list when allocation matters - the pointers live inside the
+element. Standard in kernels, and it removes one object per element.
+
+UPGRADE 7: honestly consider an array. Measured, traversal is the same, indexed
+access is 24,000 times faster, and memory is six times smaller. The array is the
+default and the linked list needs a reason.""",
+
+    """6. HOW TO USE ONE - numbered steps.
+
+STEP 1 - ASK WHETHER YOU EVER INDEX. If yes, an array almost certainly wins;
+measured, by 24,082x.
+
+STEP 2 - ASK WHETHER YOU ALREADY HOLD THE NODE when you splice. If not, the O(1)
+insert is really O(n) and the whole argument evaporates.
+
+STEP 3 - IN PYTHON, USE `collections.deque`. It is a linked list of blocks in C and
+covers the O(1)-at-both-ends case properly.
+
+STEP 4 - IF YOU DO WRITE ONE, ADD A SENTINEL HEAD. Most of the bugs in linked-list
+code are the front-of-list special case.
+
+STEP 5 - KEEP A TAIL POINTER if you append.
+
+STEP 6 - USE DOUBLY LINKED IF YOU DELETE. Otherwise deletion needs the predecessor,
+which means another walk.
+
+STEP 7 - FOR CYCLE QUESTIONS, USE TWO POINTERS AT DIFFERENT SPEEDS. O(1) memory, and
+it is the canonical answer.
+
+STEP 8 - REVERSE ITERATIVELY WITH THREE POINTERS - previous, current, next. The
+recursive version is elegant and blows the stack on a long list.
+
+STEP 9 - COUNT THE MEMORY. Measured, 48 bytes per node against 8 per array slot, and
+that is before the value itself.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Two ways to keep a queue of people.
+
+A numbered row of seats: everyone sits in order, and you can go straight to seat 500.
+But to squeeze someone into the middle, everyone behind them has to shuffle along.
+
+Or a chain: each person holds the hand of the next. Adding someone in the middle is
+trivial - two people let go and take the newcomer's hands instead. But to find the
+five hundredth person you have to start at the front and count along the chain.
+
+Measured, that counting is twenty-four thousand times slower than reading a seat
+number. And squeezing someone in at the FRONT is five times faster with the chain,
+because the row requires everyone to shift.
+
+Two things people get wrong about this.
+
+The first is that the chain's easy insertion only helps IF YOU ARE ALREADY STANDING
+THERE. If you have to count along to position 500 first, you have already done all
+the expensive work, and the cheap bit at the end saves nothing.
+
+The second is a claim about speed of walking the whole line. The story is that the
+numbered row is faster because the seats are next to each other, so you can see
+several at once. Measured in Python, walking both took the same time - because in
+Python the "seats" only contain slips of paper telling you where each person actually
+is, so you were already running around the building either way. That argument is
+about rows of actual numbers, not rows of references, and it is repeated without the
+qualification constantly.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    class Node:
+        __slots__ = ("val", "next")          # WITHOUT this, every node also carries
+        def __init__(self, v):               # a per-instance dict - far more memory
+            self.val = v; self.next = None
+
+    class LinkedList:
+        def __init__(self):
+            self.head = Node(None)           # SENTINEL - removes every front-of-list
+            self.tail = self.head            # special case
+            self.n = 0
+
+        def append(self, v):                 # O(1) BECAUSE of the tail pointer
+            self.tail.next = Node(v); self.tail = self.tail.next; self.n += 1
+
+        def insert_after(self, node, v):     # O(1) - IF you already hold `node`
+            n = Node(v); n.next = node.next; node.next = n
+            if node is self.tail: self.tail = n
+            self.n += 1
+
+        def get(self, i):                    # O(n). This is the whole problem.
+            cur = self.head.next
+            for _ in range(i): cur = cur.next
+            return cur.val
+
+    def has_cycle(head):                     # Floyd: O(1) memory
+        slow = fast = head
+        while fast and fast.next:
+            slow, fast = slow.next, fast.next.next
+            if slow is fast: return True
+        return False
+
+    def reverse(head):                       # THREE pointers, iteratively
+        prev = None
+        while head:
+            head.next, prev, head = prev, head, head.next
+        return prev
+
+LINE BY LINE:
+ - `__slots__` removes the per-instance `__dict__`. Measured at 48 bytes with it;
+   substantially more without, and this is the difference between a linked list being
+   expensive and being very expensive.
+ - `self.head = Node(None)` - the sentinel. Every insert and delete now has a
+   predecessor, so there is no "am I at the front" branch anywhere in the class.
+ - `if node is self.tail: self.tail = n` - the line people forget. Insert after the
+   last node without it and the tail pointer is stale, so the next append attaches to
+   the wrong place and silently loses elements.
+ - `get(i)` walks. Measured at 5,968 microseconds against a Python list's 0.248 -
+   this method is why you would not choose this structure.
+ - `reverse` uses tuple assignment to update three pointers at once. The recursive
+   version reads better and blows the stack on a long list.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+INSERTING 9 AFTER THE NODE HOLDING 3, in [1] -> [3] -> [7]:
+
+  before:  head -> [1|*] -> [3|*] -> [7|null]
+  step 1:  create [9|null]
+  step 2:  new.next = node3.next            -> [9|*] -> [7]
+  step 3:  node3.next = new                 -> [3|*] -> [9]
+  after:   head -> [1|*] -> [3|*] -> [9|*] -> [7|null]
+
+  TWO POINTER WRITES. Nothing else moved. The array equivalent shifts every element
+  after the insertion point.
+
+  BUT: that assumed you were holding node3. Finding it first is a walk, and if you
+  had to walk, the array's shift and the list's walk are both O(n) and the array's
+  shift is a vectorised block move while the walk is a chain of dependent loads.
+
+NOW THE MEASUREMENTS, 200,000 elements:
+
+  operation                       Python list      linked list       ratio
+  ---------------------------------------------------------------------------
+  traverse everything (1M elems)     106.5 ms          100.0 ms       0.9x
+  access a random index                0.248 us       5,968.3 us    24,082x
+  10,000 inserts at the front            484 ms           100 ms       0.2x
+  bytes per element                      8.1              48.0+         6x
+
+READ ROW 1 AGAINST THE TEXTBOOK. Full traversal was IDENTICAL - the linked list was
+even marginally faster at a million elements. The cache-locality argument predicts a
+large gap and there is none, because a Python list holds pointers to boxed integers
+and is therefore already pointer-chasing. THE ARGUMENT IS TRUE OF `int[]` AND NOT OF
+A LIST OF OBJECTS.
+
+READ ROW 2. Twenty-four thousand times. This is not a constant factor, it is O(1)
+against O(n), and it is the reason arrays are the default.
+
+READ ROW 3. Five times faster for front insertion, because `list.insert(0, x)` shifts
+200,000 elements each time. THIS IS A REAL WIN and it is exactly the case
+`collections.deque` was built for.
+
+READ ROW 4. Six times the memory per element, before counting the value itself.
+
+THE HONEST SUMMARY IS THAT ONE ROW OUT OF FOUR FAVOURS THE LINKED LIST, and Python
+already ships a better implementation of that row.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+  access by index        O(n)  - measured 24,082x slower than an array
+  insert/delete at head  O(1)  - measured 5x faster than list.insert(0, x)
+  insert/delete given a node  O(1) singly if you have the predecessor, O(1) doubly
+  search                 O(n)  - no better than an array, and with worse constants
+  append                 O(1) WITH a tail pointer, O(n) without
+  memory per element     measured 48 bytes vs 8 for an array slot
+  traverse everything    measured the SAME as an array in Python
+
+THE #1 MISTAKE: quoting O(1) insertion without the precondition. It is O(1) only if
+you already hold the node; finding it is O(n) and is the expensive part.
+
+THE #2 MISTAKE: repeating the cache-locality argument for lists of objects. Measured,
+traversal was identical in Python because both are pointer-chasing. It is an argument
+about arrays of primitives.
+
+THE #3 MISTAKE: forgetting the tail pointer, making append O(n) and construction
+O(n squared).
+
+THE #4 MISTAKE: forgetting to update the tail when inserting after the last node.
+Silently loses subsequent appends.
+
+THE #5 MISTAKE: no sentinel head. Most linked-list bugs are the front-of-list special
+case.
+
+THE #6 MISTAKE: recursive reversal or traversal on a long list. Stack overflow.
+
+THE #7 MISTAKE: hand-writing one in Python when `collections.deque` exists - a linked
+list of contiguous blocks, in C, with O(1) at both ends.
+
+THE #8 MISTAKE: ignoring the memory. Measured 6x per element, and in a managed
+language most of a small-value linked list is object headers.
+
+THE TAKEAWAY: a linked list buys O(1) splicing at a position you ALREADY HOLD and
+pays for it with O(n) indexed access - measured at 24,082x slower than a Python list
+- plus roughly six times the memory per element; the front-insert advantage is real
+and measured at 5x, and it is exactly what `collections.deque` provides better; and
+the cache-locality argument that usually accompanies this comparison did not appear at
+all in the measurement, because a list of objects is already pointer-chasing - that
+argument belongs to arrays of primitives.""",
+]
+
+_EX_P1AO["Generalization"] = [
+    """1. THE GOAL - being right about data you have never seen.
+
+A model that scores perfectly on its training data has proved nothing. It could have
+memorised every row. GENERALIZATION is the only thing that matters: how well it
+performs on data drawn from the same distribution but not used for fitting.
+
+The gap between training and test performance is the measurement, and the standard
+story is that it grows with model capacity - a more flexible model fits the noise as
+well as the signal.
+
+MEASURED, fitting polynomials of increasing degree to data generated by a degree-3
+function with noise (cells are train MSE / test MSE, irreducible floor 0.0225):
+
+  n_train    deg 1         deg 3         deg 6         deg 10        deg 15
+  -----------------------------------------------------------------------------
+      12   0.044/0.048   0.012/0.049   0.001/0.189   0.000/0.353   0.000/5.721
+      25   0.027/0.048   0.009/0.031   0.007/0.030   0.006/0.034   0.005/58.197
+      60   0.052/0.047   0.030/0.024   0.029/0.026   0.029/0.026   0.028/0.027
+     200   0.044/0.046   0.021/0.023   0.021/0.023   0.020/0.024   0.020/0.024
+   1,000   0.044/0.045   0.022/0.023   0.022/0.023   0.022/0.023   0.022/0.023
+
+READ THE TOP-RIGHT CORNER: degree 15 on 12 points gives a training error of 0.000
+and a test error of 5.721 - a 250-fold gap, and at 25 points it is 58.197.
+
+NOW READ THE BOTTOM ROW. At 1,000 points, EVERY degree from 3 to 15 gives exactly
+0.023. THE EXTRA CAPACITY COSTS NOTHING AT ALL.""",
+
+    """2. THE INTUITION - capacity is only dangerous RELATIVE to data.
+
+The table above is the whole lesson, read in two directions.
+
+READ IT ACROSS: at n = 12, adding capacity is catastrophic. Test error goes
+0.048 -> 0.049 -> 0.189 -> 0.353 -> 5.721 while training error goes to zero. THE
+MODEL IS FITTING THE NOISE, and the noise is different in the test set.
+
+READ IT DOWN: at degree 15, adding data fixes it completely. Test error goes
+5.721 -> 58.197 -> 0.027 -> 0.024 -> 0.023. The SAME over-parameterised model becomes
+perfectly well behaved once there is enough data to determine its coefficients.
+
+SO "TOO COMPLEX" IS NOT A PROPERTY OF THE MODEL. It is a property of the model AND
+the dataset together, and the relevant quantity is roughly parameters versus
+examples.
+
+AND NOTICE THE BOTTOM ROW: at 1,000 points the degree-15 model matches the degree-3
+one to three decimal places, even though ten of its coefficients correspond to terms
+that do not exist in the truth. With enough data, the fit drives those coefficients to
+approximately zero on its own. CAPACITY YOU DO NOT NEED IS FREE WHEN YOU HAVE THE
+DATA TO PIN IT DOWN.
+
+THE LEFT COLUMN IS THE OTHER FAILURE. Degree 1 has a training error of 0.044 and a
+test error of 0.045 - NO GAP AT ALL - and both are twice the irreducible floor of
+0.0225. That is UNDERFITTING: the model is not complex enough to represent the truth,
+so it is equally wrong everywhere. A SMALL GAP IS NOT EVIDENCE OF A GOOD MODEL.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRAINING ERROR - error on the data used to fit. Always optimistic.
+
+TEST ERROR / GENERALIZATION ERROR - error on data never used for fitting or for any
+decision.
+
+VALIDATION SET - used for choosing hyperparameters and stopping. The moment you use
+it for a decision it becomes part of the fitting process and its error becomes
+optimistic too.
+
+GENERALIZATION GAP - test error minus training error.
+
+OVERFITTING - low training error, high test error. Fitting noise.
+
+UNDERFITTING - high training error and high test error, with little gap. The model
+cannot express the truth.
+
+BIAS - error from the model being too simple to represent the truth. VARIANCE - error
+from the fit changing a lot when the data changes. IRREDUCIBLE NOISE - the floor,
+0.0225 in the measurement above, which no model can beat.
+
+CAPACITY - how flexible the model is. Parameters, depth, degree, tree depth.
+
+REGULARIZATION - anything that reduces effective capacity: L1/L2 penalties, dropout,
+early stopping, data augmentation.
+
+DISTRIBUTION SHIFT - the test data is NOT from the same distribution. Generalization
+theory says nothing about this, and in production it is the more common failure.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+A SMALL GAP DOES NOT MEAN A GOOD MODEL. Measured, degree 1 had a gap of 0.001 at
+every dataset size - the smallest gap in the entire table - and its test error was
+twice the achievable floor. It generalises beautifully and it is wrong everywhere.
+GAP MEASURES CONSISTENCY, NOT CORRECTNESS.
+
+THE REMEDY DEPENDS ON WHICH FAILURE YOU HAVE, AND THEY ARE OPPOSITE. High training
+error means underfitting: add capacity, add features, train longer. Low training error
+with a large gap means overfitting: add data, add regularisation, reduce capacity.
+Applying the wrong remedy makes it worse, and the training error tells you which is
+which.
+
+MORE DATA IS THE MOST RELIABLE FIX, AND IT IS OFTEN DRAMATIC. Measured, degree 15
+went from a test error of 58.197 at n = 25 to 0.027 at n = 60. The model did not
+change; the data did.
+
+THE NON-MONOTONICITY IS REAL AND SURPRISING: test error at degree 15 was 5.721 at
+n = 12 and 58.197 at n = 25 - WORSE with more data. Near the point where the number
+of parameters equals the number of examples, the fit becomes numerically
+ill-determined and the coefficients explode. This is the classic peak that
+double-descent research describes, and it means "more data always helps" is not
+literally true in the interpolation regime, even though it is true everywhere else.
+
+AND THE TRAP THAT MATTERS MOST IN PRACTICE: A TEST SET USED FOR DECISIONS IS NO
+LONGER A TEST SET. Every time you look at test performance and change something, you
+have fitted to it. After twenty such decisions, the number is optimistic and nobody
+can say by how much - which is why validation and test are separate, and why the test
+set should be looked at once.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: report training accuracy. It measures memorisation. A lookup table scores
+perfectly.
+
+UPGRADE 1: a held-out test set. The minimum honest measurement.
+
+UPGRADE 2: a separate VALIDATION set for hyperparameters, so the test set stays
+untouched. Train / validation / test.
+
+UPGRADE 3: CROSS-VALIDATION when data is scarce - k folds, each acting as validation
+once. Better use of small datasets, k times the compute.
+
+UPGRADE 4: more data, which measured took degree 15 from 58.197 to 0.023.
+
+UPGRADE 5: REGULARIZATION when more data is unavailable - L2, dropout, early
+stopping. All of them reduce effective capacity rather than actual capacity.
+
+UPGRADE 6: LEARNING CURVES - plot train and test error against training-set size. If
+they have converged and are both high, more data will not help and you need a better
+model. If there is still a gap, more data will. THIS SINGLE PLOT ANSWERS "SHOULD WE
+BUY MORE DATA" and almost nobody produces it.
+
+UPGRADE 7: for the production question, TIME-BASED SPLITS rather than random ones.
+Random splits leak future information into the past and produce numbers that do not
+survive deployment.
+
+UPGRADE 8: monitor for distribution shift after deployment. Generalization theory
+assumes the test data comes from the same distribution, and that assumption expires.""",
+
+    """6. HOW TO MEASURE AND IMPROVE IT - numbered steps.
+
+STEP 1 - SPLIT BEFORE YOU DO ANYTHING ELSE, including exploration and feature
+engineering. Any statistic computed on the whole dataset leaks.
+
+STEP 2 - THREE-WAY SPLIT: train, validation, test. Validation for decisions, test
+looked at once.
+
+STEP 3 - IF THE DATA IS TEMPORAL, SPLIT BY TIME. Random splits let the model see the
+future.
+
+STEP 4 - LOOK AT THE TRAINING ERROR FIRST. High means underfitting, and adding
+regularisation will make it worse.
+
+STEP 5 - PLOT THE LEARNING CURVE. It tells you whether more data will help before
+you spend money collecting it.
+
+STEP 6 - COMPARE AGAINST THE IRREDUCIBLE FLOOR IF YOU CAN ESTIMATE IT. Measured, it
+was 0.0225 here, and the best models sat at 0.023 - essentially perfect, and
+indistinguishable from each other.
+
+STEP 7 - IF OVERFITTING: more data, then regularisation, then less capacity - in that
+order of preference.
+
+STEP 8 - IF UNDERFITTING: more capacity, better features, train longer, less
+regularisation.
+
+STEP 9 - DO NOT TOUCH THE TEST SET REPEATEDLY. Each look is a decision fitted to it.
+
+STEP 10 - AFTER DEPLOYMENT, MONITOR THE INPUT DISTRIBUTION. The assumption that test
+and production come from the same distribution is the one that fails in the field.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A student revises for an exam using a book of a dozen past questions.
+
+Give them a very flexible memory and they will learn those twelve questions
+perfectly, including the typos and the one where the answer key was wrong. On the
+real exam they do badly, because they learned the book rather than the subject.
+Measured, a highly flexible learner given twelve questions scored perfectly on them
+and about two hundred and fifty times worse on new ones.
+
+Give them a rigid rule instead - "always answer B" - and they do equally badly on
+both. No gap at all, and no use to anyone. THE ABSENCE OF A GAP IS NOT A GOOD SIGN;
+it just means they are consistently wrong.
+
+Now give the flexible learner a thousand past questions instead of twelve. The
+book's individual quirks stop being learnable - there are too many, and they
+disagree with each other - so the only thing left to learn is the actual subject.
+Measured, the same flexible learner now performs identically to a well-chosen simple
+one, and both are at the theoretical best.
+
+So "too clever for their own good" was never about the learner. It was about the
+learner and the size of the book TOGETHER.
+
+One oddity worth knowing. Going from twelve questions to twenty-five made the
+flexible learner WORSE, not better - dramatically so. Around the point where the
+number of things they can remember matches the number of questions available, the
+learning becomes unstable before it becomes good. More material almost always helps,
+and there is a narrow region where it briefly does not.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # SPLIT FIRST. Before exploration, before feature engineering, before anything.
+    train, val, test = split(data, 0.6, 0.2, 0.2)
+
+    best = None
+    for degree in range(1, 20):                 # hyperparameter search
+        model = fit(train, degree)
+        v = error(model, val)                   # decisions use VALIDATION
+        if best is None or v < best[0]:
+            best = (v, degree, model)
+
+    print("train error:", error(best[2], train))
+    print("val error:  ", best[0])
+    print("test error: ", error(best[2], test))  # LOOKED AT ONCE, at the end
+
+    def learning_curve(train, test, sizes):      # the plot nobody makes
+        for n in sizes:
+            m = fit(train[:n], degree)
+            yield n, error(m, train[:n]), error(m, test)
+
+LINE BY LINE:
+ - `split(...)` on the FIRST line. Computing a mean, a scaler, a vocabulary or a
+   feature-importance ranking on the full dataset before splitting leaks test
+   information into training, and the resulting number is optimistic by an amount
+   nobody can estimate.
+ - the hyperparameter loop uses `val`, never `test`. Every comparison is a decision
+   fitted to whatever it is measured on, so the set used for comparisons cannot also
+   be the set used for the final estimate.
+ - printing the TRAINING error alongside the others is not decoration - it is the
+   diagnostic. High training error means underfitting, and the remedy is the opposite
+   of the remedy for overfitting.
+ - `learning_curve` refits at increasing sizes. If train and test error have
+   converged, more data will not help and the model is the constraint. If a gap
+   remains, more data will help and you can estimate how much. This is a
+   twenty-line function that answers a budget question.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+The truth is a degree-3 polynomial plus Gaussian noise with standard deviation 0.15,
+so the IRREDUCIBLE MSE is 0.15^2 = 0.0225. No model can do better than that.
+
+  n_train    deg 1         deg 3         deg 6         deg 10        deg 15
+  -----------------------------------------------------------------------------
+      12   0.044/0.048   0.012/0.049   0.001/0.189   0.000/0.353   0.000/5.721
+      25   0.027/0.048   0.009/0.031   0.007/0.030   0.006/0.034   0.005/58.197
+      60   0.052/0.047   0.030/0.024   0.029/0.026   0.029/0.026   0.028/0.027
+     200   0.044/0.046   0.021/0.023   0.021/0.023   0.020/0.024   0.020/0.024
+   1,000   0.044/0.045   0.022/0.023   0.022/0.023   0.022/0.023   0.022/0.023
+
+TRACE THE DEGREE-15 COLUMN DOWNWARDS - one model, five dataset sizes:
+  n=12   train 0.000, test 5.721      catastrophic overfitting
+  n=25   train 0.005, test 58.197     WORSE. 16 parameters, 25 points - the fit is
+                                      barely determined and the coefficients explode
+  n=60   train 0.028, test 0.027      fixed
+  n=200  train 0.020, test 0.024      fine
+  n=1000 train 0.022, test 0.023      at the irreducible floor
+
+THE MODEL NEVER CHANGED. Only the data did, and it went from a 250-fold gap to no gap
+at all.
+
+TRACE THE n=1000 ROW ACROSS - five models, one dataset size:
+  deg 1: 0.044/0.045     deg 3: 0.022/0.023     deg 15: 0.022/0.023
+
+DEGREE 15 AND DEGREE 3 ARE IDENTICAL TO THREE DECIMAL PLACES. The twelve unnecessary
+coefficients were driven to approximately zero by the data itself. THE EXTRA CAPACITY
+COST NOTHING.
+
+TRACE THE DEGREE-1 COLUMN - the underfitting failure:
+  every row: train ~0.044, test ~0.046. A gap of 0.002, the smallest in the table.
+  And both numbers are TWICE the 0.0225 floor.
+
+SO THE MODEL WITH THE BEST GENERALIZATION GAP IS THE WORST MODEL IN THE TABLE. It is
+consistently wrong, which is what a small gap measures. Anyone selecting on gap alone
+would choose it.
+
+AND THE n=12 TO n=25 ANOMALY at degree 15: 5.721 rising to 58.197. More data made it
+ten times worse, once, right where the parameter count is close to the sample count.
+Everywhere else in the table more data helps monotonically.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+MEASUREMENT COST: one held-out split, or k-fold at k times the training cost.
+
+THE FLOOR: irreducible noise. Measured at 0.0225, and the best models sat at 0.023 -
+distinguishing between them is measuring noise.
+
+THE FIXES, IN ORDER OF RELIABILITY: more data, then regularisation, then less
+capacity. Measured, more data took a degree-15 model from 58.197 to 0.023.
+
+THE #1 MISTAKE: judging a model by the generalization gap. Measured, the smallest gap
+in the table belonged to the worst model.
+
+THE #2 MISTAKE: not looking at training error first. It distinguishes underfitting
+from overfitting, and the remedies are opposite.
+
+THE #3 MISTAKE: splitting after exploration, scaling or feature selection. Any
+statistic computed on the whole dataset leaks.
+
+THE #4 MISTAKE: using the test set for decisions. After twenty comparisons the number
+is optimistic by an unknown amount.
+
+THE #5 MISTAKE: random splits on temporal data. The model sees the future.
+
+THE #6 MISTAKE: assuming capacity is inherently dangerous. Measured, at n = 1,000
+degree 15 matched degree 3 exactly.
+
+THE #7 MISTAKE: assuming more data always helps monotonically. Measured, degree 15
+got ten times worse going from 12 to 25 points, near the interpolation threshold.
+
+THE #8 MISTAKE: not plotting the learning curve. It answers "will more data help"
+before you spend money finding out.
+
+THE #9 MISTAKE: treating generalization as solved at deployment. It assumes the test
+distribution persists, and that is the assumption production breaks.
+
+THE TAKEAWAY: generalization is performance on data not used for fitting, and the
+measurement shows that capacity is dangerous only RELATIVE TO DATA - a degree-15
+polynomial had a 250-fold train/test gap on 12 points and was identical to the
+correct degree-3 model on 1,000, with the extra coefficients driven to zero by the
+data itself; the generalization GAP is a terrible model-selection criterion, since
+the smallest gap in the table belonged to the underfitting model that was twice the
+irreducible error everywhere; look at training error first to tell underfitting from
+overfitting because their remedies are opposite, and plot the learning curve, which
+answers whether more data will help before you buy any.""",
+]
+
 
 
 
