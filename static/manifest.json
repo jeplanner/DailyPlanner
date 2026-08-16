@@ -10,7 +10,7 @@
   "categories": ["productivity", "lifestyle", "utilities"],
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#f7f8fa",
   "theme_color": "#6366f1",
   "prefer_related_applications": false,
