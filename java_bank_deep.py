@@ -5472,3 +5472,959 @@ ordering and holding a lock while calling code you do not own, the symptom is to
 an error, and `jstack` will name the threads and lines for you — but only when the hang is an actual
 lock cycle, not a latch, a Future, or an exhausted pool.""",
 ]
+
+
+DEEP["Why == sometimes works on Strings, and why you must never rely on it"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the comparison that works until it doesn't
+
+    String a = "hello";
+    String b = "hello";
+    a == b                          →  true
+
+    String c = new String("hello");
+    a == c                          →  false
+
+    String d = "hel";
+    String e = d + "lo";
+    a == e                          →  false
+
+    THREE STRINGS THAT ALL CONTAIN "hello", AND `==` GIVES A DIFFERENT ANSWER EACH TIME.
+
+`==` ON OBJECTS ASKS "ARE THESE THE SAME OBJECT?" — the same address, the same identity. It has never
+asked about content. `equals` asks "do these hold the same characters?" and for a String that is
+almost always the question you meant.
+
+    SO WHY DOES THE FIRST ONE WORK? Because Java keeps a POOL of string literals. When the class is
+    loaded, `"hello"` is placed in that pool once, and every literal `"hello"` anywhere in the program
+    refers to THE SAME OBJECT. So `a == b` is true — not because the contents match, but because there
+    is genuinely only one object.
+
+    AND THAT IS EXACTLY WHY IT IS DANGEROUS. The comparison appears to work. It works in your unit
+    test, where the strings are literals. It fails in production, where the string came from a request
+    parameter, a database row, a JSON parser, or a concatenation — none of which are pooled. THE BUG IS
+    INVISIBLE UNTIL THE DATA STOPS BEING A LITERAL, and by then the code has been reviewed and shipped.
+
+THE EVERYDAY VERSION: two people both holding a copy of the same book. "Is it the same book?" and "does
+it say the same thing?" are different questions. If the library only ever lends one physical copy, both
+questions happen to give the same answer — and someone will conclude the first question is a fine way
+to ask the second. Then a photocopier arrives.
+
+TERMS AS THEY APPEAR:
+- STRING POOL (string constant pool): a JVM-wide table of unique string instances.
+- INTERNING: putting a string into that pool, or looking up the pooled instance.
+- CONSTANT EXPRESSION: something javac can fully evaluate at compile time.
+- IMMUTABLE: the contents can never change after construction — which is what makes all this safe.""",
+
+"""2. THE INTUITION — why a pool exists at all, and what it buys
+
+STRINGS ARE THE MOST COMMON OBJECT IN ALMOST EVERY JAVA PROGRAM. Class names, field names, map keys,
+configuration values, log messages, HTTP headers. Heap dumps of real applications routinely show
+strings and their backing arrays as 20–40% of live memory, and a large fraction of them are duplicates.
+
+    SO THE JVM KEEPS A TABLE OF UNIQUE STRINGS. Every literal in every class file is interned when the
+    class is loaded. Ten thousand classes containing the literal `"UTF-8"` share ONE object.
+
+    THE SAVING IS REAL. And there is a second one people miss: comparing two pooled strings for
+    equality can short-circuit on reference identity, so `equals` starts with `if (this == other)
+    return true` and that check succeeds constantly on pooled data.
+
+BUT THE POOL ONLY CONTAINS WHAT WAS PUT THERE:
+
+    LITERALS IN SOURCE CODE                    → pooled, automatically
+    COMPILE-TIME CONSTANT EXPRESSIONS          → FOLDED by javac into a literal, then pooled.
+                                                 `"hel" + "lo"` becomes `"hello"` in the class file.
+                                                 So does `"a" + FINAL_CONSTANT`, if the constant is a
+                                                 `static final String` initialised with a literal.
+    ANYTHING COMPUTED AT RUNTIME               → a NEW object, not pooled. Concatenation with a
+                                                 variable, `substring`, `toUpperCase`, `split`,
+                                                 `StringBuilder.toString`, a JSON parser, a JDBC driver.
+    `new String("x")`                          → EXPLICITLY a new object, always. The literal is pooled;
+                                                 the `new` makes a second, unpooled copy of it. This is
+                                                 why the constructor is essentially never useful.
+    `.intern()`                                → asks the pool for the canonical instance, adding it
+                                                 if absent.
+
+    NOW THE THREE RESULTS FROM SECTION 1 EXPLAIN THEMSELVES: `a == b` is true because both are the same
+    pooled literal. `a == c` is false because `new` forced a second object. `a == e` is false because
+    `d + "lo"` was computed at runtime from a VARIABLE, so the folding could not happen.
+
+WHY THE POOL IS EVEN POSSIBLE — and this is the fact underneath the whole topic:
+
+    STRINGS ARE IMMUTABLE. If one class could modify a shared `"hello"`, sharing it across ten thousand
+    call sites would be catastrophic. IMMUTABILITY IS WHAT MAKES SHARING SAFE, and it is also what
+    makes strings safe as HashMap keys, safe to pass between threads with no synchronisation, and safe
+    to cache their hashCode — which `String` does, in a field, computing it once.
+
+    IT IS ALSO A SECURITY PROPERTY. A `String` passed to a file-open or a SQL call cannot be changed by
+    another thread between the security check and the use. That class of attack — time-of-check to
+    time-of-use — is simply unavailable.""",
+
+"""3. THE MECHANISM — where the pool lives, what a String is made of, and interning
+
+WHERE THE POOL LIVES. Before Java 7 it was in PermGen, a fixed-size region, so aggressive `intern()`
+could throw `OutOfMemoryError: PermGen space`. SINCE JAVA 7 IT IS IN THE NORMAL HEAP, so pooled strings
+are garbage-collectable when nothing references them, and the size limit is the heap. The table itself
+is a fixed-bucket hash table sized by `-XX:StringTableSize` (default 65536 in recent JDKs), and a
+badly-oversubscribed table degrades `intern()` from constant time to a list walk.
+
+WHAT A STRING IS MADE OF — and it changed in Java 9:
+
+    BEFORE JAVA 9:   private final char[] value;      // 2 bytes per character, ALWAYS
+    JAVA 9 ONWARDS:  private final byte[] value;
+                     private final byte coder;        // LATIN1 or UTF16
+
+    COMPACT STRINGS. If every character fits in one byte — which is true of essentially all ASCII text,
+    so most identifiers, headers, JSON keys and English content — the string is stored one byte per
+    character. THAT HALVED STRING MEMORY FOR MOST APPLICATIONS, and it was one of the largest
+    across-the-board wins in a JDK release. It is invisible in the API and shows up only as a
+    fifteen-percent heap reduction after upgrading.
+
+    Also: `private int hash;` — the cached hashCode, computed on first use. A value of 0 means "not yet
+    computed", so a string that genuinely hashes to 0 (including `""`) recomputed every time until
+    Java 13 added a `hashIsZero` flag.
+
+`intern()` — what it actually does and when it helps:
+
+    Returns the canonical pooled instance, adding this string if the pool does not have it. The point
+    is DEDUPLICATION: if you are parsing a million records with a hundred distinct category names, the
+    naive result is a million String objects; interning gives you a hundred.
+    THE COSTS ARE REAL: a native call, a hash-table lookup under contention, and pool growth you cannot
+    easily observe. A `HashMap<String,String>` used as your own canonicalisation map is often faster
+    and always more controllable.
+
+`-XX:+UseStringDeduplication` — a G1 feature that does something related but different: a background GC
+thread finds Strings with identical contents and points them at ONE SHARED BYTE ARRAY. The String
+objects stay distinct — so `==` is unaffected and no semantics change — but the arrays, which are the
+bulk of the memory, are shared. IT REQUIRES NO CODE CHANGES AT ALL, which makes it strictly easier than
+interning for the memory problem.
+
+`switch` ON A STRING, since Java 7, compiles to a `hashCode()` lookup followed by an `equals()` check —
+never `==`. Which is why switching on a runtime-computed string works correctly and switching with `==`
+would not.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `==` THAT PASSES EVERY TEST. Literals in tests, runtime data in production. The classic shape:
+`if (status == "ACTIVE")` works until the status arrives from JSON.
+
+CASE 2 — `"hel" + "lo" == "hello"` IS TRUE. Both are compile-time constants, folded by javac into the
+same literal. Which makes the rule look inconsistent and encourages exactly the wrong conclusion.
+
+CASE 3 — `final String X = "hel"; X + "lo" == "hello"` IS ALSO TRUE, because a `final` local initialised
+with a literal is a compile-time constant. Remove the `final` and it becomes false. A ONE-KEYWORD
+CHANGE FLIPS THE RESULT.
+
+CASE 4 — `new String("hello")` IS ALWAYS A DISTINCT OBJECT. There is no reason to write it except to
+demonstrate this, or to force a copy of a substring in very old JDKs.
+
+CASE 5 — `s1.equals(s2)` WITH `s1` NULL throws. `Objects.equals(s1, s2)` is null-safe both ways, and
+`"literal".equals(variable)` is the Yoda form that avoids it.
+
+CASE 6 — `equalsIgnoreCase` VS `toLowerCase().equals(...)`. The second allocates and is LOCALE
+SENSITIVE — see the next case.
+
+CASE 7 — THE TURKISH I. `"TITLE".toLowerCase()` in a Turkish default locale gives `"tıtle"` with a
+dotless ı, so `"TITLE".toLowerCase().equals("title")` is FALSE on a machine in Istanbul. This has broken
+real authentication and routing code. USE `toLowerCase(Locale.ROOT)` for anything that is a protocol
+token rather than human text.
+
+CASE 8 — SUBSTRING AND MEMORY, historically. Before Java 7u6, `substring` SHARED the backing array, so
+a two-character substring of a ten-megabyte string retained all ten megabytes. Since 7u6 it copies —
+O(n) instead of O(1), and no leak.
+
+CASE 9 — `String.valueOf(null)` IS AMBIGUOUS. It binds to the `char[]` overload and throws NPE, while
+`String.valueOf((Object) null)` returns `"null"`.
+
+CASE 10 — `synchronized` ON A STRING LITERAL. Interned, therefore SHARED PROCESS-WIDE. Unrelated code
+can hold "your" lock.
+
+CASE 11 — PASSWORDS IN A `String`. Immutable, so you cannot zero it, and it may be interned, so it
+lingers in the heap until collected — and shows up in a heap dump. `char[]` exists so you can wipe it.
+
+CASE 12 — `split("")` AND TRAILING EMPTIES. `"a,b,,".split(",")` gives 2 elements, not 4; the trailing
+empties are dropped unless you pass a negative limit.
+
+CASE 13 — `==` ON A `Character` OR BOXED TYPE FOR THE SAME REASON. The Integer cache from −128 to 127
+is the same phenomenon wearing a different hat.""",
+
+"""5. THE ALTERNATIVES — comparing, canonicalising, and saving memory
+
+FOR COMPARISON:
+    `equals`                     content, exact. The default answer.
+    `Objects.equals(a, b)`       null-safe on both sides. Use it whenever either might be null.
+    `equalsIgnoreCase`           case-insensitive without allocating, and without the locale trap.
+    `compareTo`                  lexicographic ordering by UTF-16 code unit — note that this is NOT
+                                 alphabetical for non-English text.
+    `Collator`                   locale-correct comparison and sorting for HUMAN-FACING text. "ö" sorts
+                                 differently in German and Swedish, and `compareTo` knows nothing about
+                                 that.
+    `String.CASE_INSENSITIVE_ORDER`  a ready-made comparator.
+    `contentEquals(CharSequence)`    compare a String to a StringBuilder without materialising it.
+
+FOR CANONICALISATION — deduplicating repeated values:
+    `intern()`                   simple, JVM-wide, but a native call with a shared table.
+    YOUR OWN `HashMap<String,String>` or a Guava `Interner`. Usually faster, bounded, observable, and
+    discardable when the parse finishes. THE PREFERRED ANSWER IN MOST REAL SYSTEMS.
+    `-XX:+UseStringDeduplication` with G1. Shares the backing ARRAYS in the background with no code
+    change at all. The right first move for a memory problem.
+    AN ENUM. If the set of values is closed — statuses, types, currencies — then it was never really a
+    string. `==` becomes correct, exhaustive `switch` becomes available, and typos become compile
+    errors.
+
+FOR BUILDING:
+    `StringBuilder` for loops, `String.join` and `Collectors.joining` for delimited output,
+    `StringJoiner` when you need a prefix and suffix, text blocks for multi-line literals, and
+    `String.format` / `formatted` when readability matters more than the parsing cost.
+
+FOR SECRETS: `char[]`, so it can be zeroed. A `String` cannot be cleared and may be interned.
+
+FOR CASE AND NORMALISATION: `toLowerCase(Locale.ROOT)` for protocol tokens; `Normalizer.normalize(s,
+Form.NFC)` before comparing user-entered text, because "é" has two distinct Unicode encodings that look
+identical and are not `equals`.
+
+WHAT TO SAY: "`equals` always, `Objects.equals` when null is possible, and an enum the moment the value
+set is closed. `==` on strings is a bug that passes its own tests, so I would treat any instance of it
+as a defect regardless of whether it currently works."
+
+""",
+
+"""6. HOW TO WORK WITH STRING EQUALITY — numbered steps
+
+STEP 1 — USE `equals`, ALWAYS. There is no case where `==` on strings is the right expression of
+intent, even when it happens to return the right answer.
+
+STEP 2 — USE `Objects.equals(a, b)` WHEN EITHER SIDE MIGHT BE NULL. Null-safe in both directions.
+
+STEP 3 — PUT THE LITERAL FIRST when you do use `equals` directly: `"ACTIVE".equals(status)` cannot NPE.
+
+STEP 4 — IF THE VALUE SET IS CLOSED, USE AN ENUM. Statuses, types, currencies. It converts a runtime
+string comparison into a compile-time check and makes `==` genuinely correct.
+
+STEP 5 — TURN ON A STATIC ANALYSIS RULE FOR REFERENCE COMPARISON OF STRINGS. SpotBugs `ES_COMPARING_STRINGS_WITH_EQ`,
+ErrorProne `ReferenceEquality`. This is a bug class a tool can eliminate entirely.
+
+STEP 6 — USE `equalsIgnoreCase` RATHER THAN LOWERCASING BOTH SIDES. No allocation, no locale trap.
+
+STEP 7 — WHEN YOU MUST CHANGE CASE FOR A PROTOCOL TOKEN, PASS `Locale.ROOT`. The Turkish dotless ı is a
+real production bug, not a curiosity.
+
+STEP 8 — NORMALISE USER-ENTERED TEXT BEFORE COMPARING. `Normalizer.normalize(s, Form.NFC)`; identical-
+looking accented characters have multiple encodings.
+
+STEP 9 — DO NOT REACH FOR `intern()` AS A MEMORY FIX. Try `-XX:+UseStringDeduplication` first — no code
+change — and your own map if you need control.
+
+STEP 10 — NEVER `synchronized` ON A STRING. Interned literals are shared process-wide.
+
+STEP 11 — KEEP SECRETS IN `char[]`. A String cannot be wiped and may outlive its use in the pool and in
+heap dumps.
+
+STEP 12 — WHEN A COMPARISON "WORKS ON MY MACHINE", CHECK WHETHER BOTH SIDES ARE LITERALS. That is
+almost always the explanation, and it is a warning rather than a result.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`==` on objects asks "are these the same object" — same address, same identity. It has never asked
+about content. `equals` asks about the characters, which is what you meant.
+
+So why does it seem to work? Because Java keeps a POOL of string literals. Every literal in every class
+file is interned when the class loads, so ten thousand classes containing "UTF-8" share one object.
+Two literals with the same text ARE the same object, so `==` returns true — not because the contents
+match, but because there genuinely is only one object.
+
+And that's exactly what makes it dangerous. The comparison appears to work. It works in the unit test,
+where the strings are literals. It fails in production, where the string came from a request parameter,
+a database row, or a JSON parser — none of which are pooled. The bug is invisible until the data stops
+being a literal, and by then it's been reviewed and shipped.
+
+The pool only contains what was put there. Literals, and compile-time CONSTANT expressions, because
+javac folds those — "hel" + "lo" is literally the string "hello" in the class file. Anything computed
+at runtime is a fresh object: concatenation with a variable, substring, toUpperCase, a parser. And
+`new String("hello")` is always a distinct object by definition, which is why that constructor is
+essentially never useful.
+
+There's a detail that shows how brittle this is. `final String x = "hel"; x + "lo" == "hello"` is TRUE,
+because a final local initialised with a literal is a compile-time constant and gets folded. Drop the
+`final` and it becomes false. A one-keyword change flips the result — which is a good argument that no
+one should be reasoning about this at all.
+
+The reason a pool is even possible is that strings are IMMUTABLE. If one class could modify a shared
+"hello", sharing it across ten thousand call sites would be catastrophic. Immutability is what makes
+sharing safe — and it's also what makes strings safe as HashMap keys, safe to pass between threads with
+no synchronisation, and safe to cache the hashCode, which String does in a field.
+
+Two things worth knowing beyond the basics. Java 9 changed the internal representation from char[] to
+byte[] plus a coder flag — compact strings — so ASCII text is one byte per character instead of two.
+That halved string memory for most applications and it's invisible in the API; it just shows up as a
+heap reduction after upgrading. And if you have a duplicate-strings memory problem, the first move is
+-XX:+UseStringDeduplication under G1, which shares the backing ARRAYS in the background with no code
+change. Not intern(), which is a native call into a shared table.
+
+Practically: equals always, Objects.equals when null is possible, literal first so it can't NPE, and an
+ENUM the moment the value set is closed — statuses, types, currencies. If it's an enum, `==` becomes
+correct, switch becomes exhaustive, and typos become compile errors. I'd treat any `==` on strings as a
+defect even when it currently returns the right answer, because it's a bug that passes its own tests.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE THREE ANSWERS ───────────────────────────────────────────────
+    String a = "hello";                 // pooled at class load
+    String b = "hello";                 // THE SAME OBJECT. Not a copy.
+    System.out.println(a == b);         // true  ← identity, not content
+
+    String c = new String("hello");     // the literal is pooled; `new` makes a
+    System.out.println(a == c);         // false    SECOND, unpooled copy of it
+    System.out.println(a.equals(c));    // true  ← the question you meant
+
+    String d = "hel";
+    String e = d + "lo";                // computed at RUNTIME from a variable
+    System.out.println(a == e);         // false
+    System.out.println(a == e.intern());// true  ← intern() returns the pooled one
+
+    // ── THE ONE-KEYWORD FLIP ────────────────────────────────────────────
+    final String F = "hel";
+    System.out.println("hello" == F + "lo");   // TRUE
+    //                            ^ a `final` local initialised with a literal is a
+    //   COMPILE-TIME CONSTANT, so javac folds the whole expression into "hello".
+    String G = "hel";                          // remove `final` ...
+    System.out.println("hello" == G + "lo");   // FALSE
+    //   ... and it is a runtime concatenation. SAME CODE, OPPOSITE ANSWER.
+
+    // ── THE BUG THAT PASSES ITS OWN TESTS ───────────────────────────────
+    if (status == "ACTIVE") { ... }
+    // ^ In the unit test, `status` is the literal "ACTIVE" → the same pooled object
+    //   → TRUE → the test passes. In production `status` came from Jackson, JDBC or
+    //   a request parameter → a fresh object → FALSE → the branch never runs and
+    //   nothing throws. The test suite actively certified the bug.
+    if ("ACTIVE".equals(status)) { ... }       // correct, and null-safe
+    if (status == Status.ACTIVE) { ... }       // better: it was never a string
+
+    // ── THE LOCALE TRAP ─────────────────────────────────────────────────
+    "TITLE".toLowerCase().equals("title")
+    // ^ FALSE on a machine with a Turkish default locale: the uppercase I lowercases
+    //   to a DOTLESS ı. This has broken real authentication code.
+    "TITLE".toLowerCase(Locale.ROOT).equals("title")   // correct for protocol tokens
+    "TITLE".equalsIgnoreCase("title")                  // better: no allocation either
+
+    // ── WHAT A STRING IS, SINCE JAVA 9 ──────────────────────────────────
+    private final byte[] value;        // was char[] — 2 bytes per char, ALWAYS
+    private final byte coder;          // LATIN1 (1 byte/char) or UTF16
+    private int hash;                  // cached. 0 means "not computed yet", which
+    //                                    is why "" recomputed forever until Java 13
+    //                                    added a hashIsZero flag.
+    // COMPACT STRINGS halved string memory for most applications, invisibly.
+
+    // ── DEDUPLICATION: three tools, different trade-offs ────────────────
+    s.intern();                        // JVM-wide pool. Native call, shared table.
+    myMap.computeIfAbsent(s, x -> x);  // your own canonical map: faster, bounded,
+    //                                    observable, discardable. Usually better.
+    // -XX:+UseStringDeduplication     // G1 shares the backing byte[] in the
+    //                                    background. NO CODE CHANGE. `==` unaffected
+    //                                    because the String objects stay distinct.
+
+    // ── AND THE LOCK THAT IS SECRETLY GLOBAL ────────────────────────────
+    synchronized ("lock") { ... }      // interned → SHARED PROCESS-WIDE → unrelated
+    //                                    code can be holding it. Never do this.""",
+
+"""9. THE TRACE — following four "hello"s through the JVM
+
+CLASS LOAD. The class file's constant pool contains the literal `"hello"` once. On loading, the JVM
+interns it:
+
+    string pool:  { ... , "hello" @0x1000 }
+
+RUNTIME, statement by statement:
+
+    statement                    what is created                  reference     == a ?
+    ------------------------------------------------------------------------------------
+    String a = "hello";          nothing new — POOL LOOKUP        @0x1000       —
+    String b = "hello";          nothing new — the same lookup    @0x1000       TRUE
+    String c = new String("h..") pool lookup, THEN a new object   @0x2000       false
+                                 copying its contents
+    String d = "hel";            pool lookup                      @0x3000       —
+    String e = d + "lo";         StringBuilder → new String       @0x4000       false
+    e.intern()                   pool lookup: contents match      @0x1000       TRUE
+                                 the existing entry, so the
+                                 POOLED reference is returned
+    ------------------------------------------------------------------------------------
+    FOUR DISTINCT OBJECTS. All containing 'h','e','l','l','o'. `equals` is true for every pair;
+    `==` is true for exactly two of them, for reasons that have nothing to do with the text.
+
+WHAT javac DID BEFORE ANY OF THIS RAN — the compile-time half:
+
+    source                       class file contains            why
+    ------------------------------------------------------------------------------------
+    "hel" + "lo"                 the single literal "hello"     both operands are
+                                                                compile-time constants
+    final String F = "hel";      the literal "hello"            a final local with a
+    F + "lo"                                                    constant initialiser IS
+                                                                a constant expression
+    String G = "hel";            invokedynamic makeConcat...    G is a VARIABLE, so the
+    G + "lo"                                                    value is unknown until
+                                                                runtime
+    ------------------------------------------------------------------------------------
+    THE FOLDING IS WHY THE RULE LOOKS INCONSISTENT. Two expressions that are textually identical
+    compile to completely different things, and the difference is one `final` keyword.
+
+AND THE PRODUCTION TRACE — the same code in two environments:
+
+    environment    where `status` came from             identity      `status == "ACTIVE"`
+    ------------------------------------------------------------------------------------
+    unit test      the literal "ACTIVE" in the test     pooled        TRUE  → test passes
+    integration    an enum's name(), also folded        pooled        TRUE  → still passes
+    production     Jackson parsed it from a byte[]      fresh object  FALSE → branch never
+                                                                              runs, silently
+    ------------------------------------------------------------------------------------
+    THE TEST SUITE CERTIFIED THE BUG. Not by accident — by construction. Test data is written as
+    literals, and literals are exactly the case where the broken comparison works. This is the reason
+    the rule is "never use `==` on strings" rather than "understand when `==` is safe": the
+    understanding does not survive contact with a different data source.
+
+WHAT PRODUCED WHAT:
+    THE POOL                produced `a == b`, and therefore produced the false confidence.
+    CONSTANT FOLDING        produced the `final` flip — a compile-time decision showing up as a
+                            runtime identity.
+    RUNTIME CONCATENATION   produced every `false`, and it is what production data always is.
+    IMMUTABILITY            is why the pool is safe to exist at all, and why none of these four
+                            objects can be corrupted by sharing.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `==` is one reference comparison. `equals` is O(n) in the worst case, with a `this == other`
+    fast path first — which succeeds constantly on pooled data.
+    `hashCode` is O(n) once, then cached in a field.
+    Literals and compile-time constant expressions: pooled. Everything computed at runtime: not.
+    `intern()`: a native call plus a hash lookup on a shared table (`-XX:StringTableSize`, default
+    65536).
+    Compact strings (Java 9+): 1 byte per character for Latin-1 content, halving string memory for
+    most applications.
+    Since Java 7 the pool lives in the heap, so pooled strings can be collected.
+    `substring` copies since Java 7u6: O(n) rather than O(1), and no retained-array leak.
+
+THE #1 MISTAKE: `==` on strings. It passes its own tests, because test data is literals, and fails on
+production data, which is not.
+
+THE #2 MISTAKE: concluding from `"hel" + "lo" == "hello"` that concatenation is safe. That is constant
+FOLDING, and adding or removing one `final` reverses it.
+
+THE #3 MISTAKE: `new String("x")`. Always a distinct object; essentially never useful.
+
+THE #4 MISTAKE: `variable.equals(literal)` when the variable can be null. Put the literal first, or use
+`Objects.equals`.
+
+THE #5 MISTAKE: `toLowerCase()` with no locale on a protocol token. The Turkish dotless ı breaks real
+comparisons.
+
+THE #6 MISTAKE: comparing user-entered text without Unicode normalisation. Identical-looking accented
+characters have multiple encodings and are not `equals`.
+
+THE #7 MISTAKE: `intern()` as the first response to a memory problem. `-XX:+UseStringDeduplication`
+needs no code change and shares the arrays, which is where the memory actually is.
+
+THE #8 MISTAKE: `synchronized` on a String. Interned literals are process-wide locks.
+
+THE #9 MISTAKE: passwords in a `String`. Immutable, so unwipeable, and visible in a heap dump.
+
+THE #10 MISTAKE: leaving a closed set of values as strings. An enum makes `==` correct, `switch`
+exhaustive, and typos compile errors.
+
+THE #11 MISTAKE: assuming `compareTo` sorts alphabetically. It orders by UTF-16 code unit; human
+ordering needs a `Collator`.
+
+ONE-SENTENCE TAKEAWAY: `==` asks whether two references point at the SAME OBJECT, and it returns true
+for string literals only because the JVM interns every literal into a shared pool — a fact that has
+nothing to do with the characters, that constant folding extends to expressions like `"hel" + "lo"` and
+even to `final` locals, and that evaporates the moment the value is computed at runtime, which is what
+all production data is; so the comparison passes every test written with literals and silently fails on
+the first request parameter, and the rule is `equals` (or `Objects.equals`, or better an enum when the
+value set is closed) with no exceptions, because the understanding of when `==` is safe does not survive
+a change of data source.""",
+]
+
+
+DEEP["String concatenation in a loop — why it is O(n²) and what to use instead"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the one-line change that is 10,000x
+
+    String result = "";
+    for (String row : rows) {
+        result += row;        // ← this line
+    }
+
+That loop looks linear. It is quadratic, and at any real size it is catastrophic — not "a bit slow", but
+minutes instead of milliseconds.
+
+    THE REASON IS THAT STRINGS ARE IMMUTABLE. `result += row` cannot append to `result`, because
+    nothing can modify a String. What it actually does is: ALLOCATE A NEW STRING BIG ENOUGH FOR BOTH,
+    COPY EVERYTHING ALREADY IN `result` INTO IT, copy `row` on the end, and point `result` at the new
+    object. The old one becomes garbage.
+
+    SO EVERY ITERATION COPIES THE ENTIRE ACCUMULATED RESULT. Iteration 1 copies 10 characters,
+    iteration 1,000 copies 10,000, iteration 100,000 copies a million. Add those up and you have copied
+    roughly n²/2 characters to build a string of length n.
+
+THE ARITHMETIC, because it is more persuasive than any adjective. Appending a 10-character row 100,000
+times produces a 1,000,000-character string:
+
+    `+=` in a loop        about 50,000,000,000 characters copied   (and that is the optimistic count)
+    StringBuilder         about       2,000,000 characters copied
+    ratio                 roughly 25,000 to 1
+
+    THAT IS NOT AN OPTIMISATION. Changing one line takes an operation from "the request times out" to
+    "the request completes", and it is probably the single most common genuine performance defect in
+    production Java.
+
+THE EVERYDAY VERSION: writing a shopping list where the pen cannot add to an existing sheet. To add one
+item you must copy the whole list onto a fresh sheet and then write the new item. Ten items is fine.
+Ten thousand items means you have written about fifty million lines to produce a list of ten thousand.
+
+TERMS AS THEY APPEAR:
+- IMMUTABLE: cannot be changed after creation. The property that causes all of this.
+- StringBuilder: a MUTABLE character buffer. Appending writes into spare capacity in place.
+- AMORTISED: the average cost per operation once you spread out the occasional expensive one.""",
+
+"""2. THE INTUITION — why the compiler's help stops at the loop boundary
+
+HERE IS THE PART THAT CONFUSES PEOPLE, AND IT IS WORTH GETTING EXACTLY RIGHT: `javac` DOES OPTIMISE
+STRING CONCATENATION. It has since Java 1.0. `"a" + b + "c"` does not create two intermediate strings —
+the compiler rewrites it into a single buffered build.
+
+    ON JAVA 8 AND EARLIER it becomes `new StringBuilder().append("a").append(b).append("c").toString()`.
+    ON JAVA 9 AND LATER it becomes a single `invokedynamic` to `StringConcatFactory`, which generates a
+    method handle chain on first execution — one that can compute the exact final length up front and
+    allocate the result array ONCE. For a fixed set of operands this often BEATS hand-written
+    StringBuilder code.
+
+    SO WHY IS THE LOOP STILL QUADRATIC? BECAUSE THE OPTIMISATION IS PER-EXPRESSION, AND THE EXPRESSION
+    IS INSIDE THE LOOP.
+
+    Each iteration is its own `result + row` expression, so each iteration gets its own fresh builder,
+    which starts EMPTY, which means the entire accumulated `result` must be copied into it before `row`
+    can be appended. Then `toString()` copies the whole thing out again into the new String.
+
+    TWO FULL COPIES OF THE ACCUMULATED TEXT, PER ITERATION. The compiler cannot hoist the builder out
+    of the loop, because between iterations `result` is an ordinary String that other code could
+    legally read.
+
+THE FIX IS THEREFORE STRUCTURAL, NOT A TRICK: HOIST THE BUFFER OUT OF THE LOOP YOURSELF.
+
+    StringBuilder sb = new StringBuilder();
+    for (String row : rows) sb.append(row);
+    String result = sb.toString();
+
+    NOW THERE IS ONE BUFFER FOR THE WHOLE LOOP. Appending writes into spare capacity in place — no copy
+    at all in the common case. When capacity runs out the buffer GROWS by roughly doubling, which
+    copies, but doubling means the total copying across all growths is O(n), not O(n²). One final copy
+    in `toString()`.
+
+WHY DOUBLING MAKES IT LINEAR — the argument worth being able to give:
+
+    growing to 16, 34, 70, 142, ... each growth copies what is currently there. The total copied is
+    16 + 34 + 70 + ... which is a geometric series summing to less than 2n. SO THE WHOLE BUILD COPIES
+    UNDER 2n CHARACTERS regardless of how many appends there were. Geometric growth is the reason
+    `ArrayList.add` is amortised O(1) too — it is the same trick.
+
+AND THE ONE-LINE IMPROVEMENT ON TOP: `new StringBuilder(expectedSize)` removes every growth and every
+copy but the final one. When you know the size, this is free.""",
+
+"""3. THE MECHANISM — what StringBuilder is, and what indy concat does
+
+StringBuilder IS A MUTABLE CHARACTER BUFFER — since Java 9 a `byte[]` plus a `coder` flag, exactly like
+String, but with the array NOT final and a `count` of how much is used:
+
+    byte[] value;      // the buffer, with SPARE CAPACITY at the end
+    int count;         // how much is actually used
+    byte coder;        // LATIN1 or UTF16
+
+    append(x)          copies x's characters into value[count..], bumps count. NO other copying.
+    ensureCapacity     when the buffer is full, allocate `value.length * 2 + 2` and copy once.
+    toString()         ONE copy of the used region into a new String's array.
+
+    NOTE THE `* 2 + 2`. The `+2` exists so that growth still works from a zero-length buffer. Default
+    capacity is 16 characters, or 16 + the length of the string if you use the `StringBuilder(String)`
+    constructor.
+
+StringBuffer IS THE SAME CLASS WITH `synchronized` ON EVERY METHOD. It predates `StringBuilder`
+(which arrived in Java 5) and it is essentially always the wrong choice: a builder is a local variable
+in almost every program that exists, so the locking protects nothing. AND EVEN WHEN SHARED IT IS
+USUALLY NOT ENOUGH — `sb.append(a).append(b)` is two separate locks, so another thread can interleave
+between them. Per-method synchronisation rarely gives you the atomicity you actually wanted.
+
+INVOKEDYNAMIC CONCATENATION (Java 9+), because it explains why the modern answer is subtler:
+
+    `"user=" + name + " id=" + id` compiles to ONE `invokedynamic` instruction naming
+    `StringConcatFactory.makeConcatWithConstants`. On first execution, that bootstrap builds a
+    MethodHandle chain specialised to those exact operand types, and the JIT then inlines the whole
+    thing.
+
+    WHAT THAT BUYS: the length of every operand can be computed FIRST, so the result array is allocated
+    exactly once at exactly the right size — no builder, no growth, no intermediate copy. For a fixed
+    list of operands this beats writing StringBuilder by hand, which is why "always use StringBuilder"
+    is outdated advice for straight-line code.
+
+    WHAT IT CANNOT DO: span a loop. The instruction is inside the loop body, so it runs afresh every
+    iteration on the whole accumulated string. THE QUADRATIC PROBLEM IS UNAFFECTED, and it is the only
+    problem that matters.
+
+`String.format` AND `formatted` PARSE THE FORMAT STRING ON EVERY CALL — a scan, a `Formatter` object,
+and boxing of every argument. Roughly an order of magnitude slower than concatenation. That is
+irrelevant in a log line and very relevant in a loop.
+
+`String.concat(s)` is a plain two-way copy with no builder at all. Marginally faster than `+` for
+exactly two strings on old JDKs, and it NPEs rather than printing "null".""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `+=` IN A LOOP. The headline. Quadratic, and it is usually written by someone who knows about
+StringBuilder but did not notice the loop.
+
+CASE 2 — CONCATENATION INSIDE `append`. `sb.append("a" + x + "b")` builds a temporary string and then
+copies it in. Use three appends; the chained form allocates nothing extra.
+
+CASE 3 — UNGUARDED CONCATENATION IN A LOG CALL. `log.debug("state " + expensive())` builds the string
+and calls `expensive()` EVEN WHEN DEBUG IS OFF, because arguments are evaluated before the call. Use
+parameterised logging: `log.debug("state {}", value)`. THIS IS A REAL HOT-PATH COST IN PRODUCTION
+SYSTEMS and it hides behind a disabled log level.
+
+CASE 4 — `String.format` IN A HOT LOOP. Parses the format string every call. Fine for messages, wrong
+for bulk output.
+
+CASE 5 — NOT PRE-SIZING WHEN THE SIZE IS KNOWN. Building a 1 MB string from the default 16-character
+capacity performs about 17 growth-and-copy cycles.
+
+CASE 6 — SHARING A `StringBuilder` ACROSS THREADS. Not thread-safe; you get interleaved or corrupted
+output, or an `ArrayIndexOutOfBoundsException` from `count` and `value` disagreeing.
+
+CASE 7 — `StringBuffer` "FOR SAFETY". Per-method locking that protects nothing in a local variable,
+and does not give atomicity across chained appends even when shared.
+
+CASE 8 — `sb.append(null)` APPENDS THE TEXT "null" — four characters — rather than throwing. So does
+`+`. `String.concat(null)` throws instead. Three different behaviours for the same idea.
+
+CASE 9 — `sb + ""` OR `"" + x` TO CONVERT TO A STRING. Works, allocates, and obscures intent.
+`String.valueOf(x)` is clearer and handles null.
+
+CASE 10 — REUSING A BUILDER WITH `setLength(0)` AND EXPECTING THE MEMORY BACK. The backing array stays
+at its high-water mark. Usually that is what you want (no regrowth); occasionally it is a leak.
+
+CASE 11 — BUILDING A DELIMITED LIST WITH A TRAILING-SEPARATOR FIX-UP. The `sb.setLength(sb.length()-1)`
+pattern. `String.join` or `Collectors.joining` does it correctly and reads better.
+
+CASE 12 — ASSUMING "ALWAYS USE StringBuilder". For straight-line concatenation on Java 9+, invokedynamic
+concat is usually FASTER than a hand-written builder, because it can size the result exactly. The rule
+is about LOOPS, not about `+`.
+
+CASE 13 — CONCATENATING IN A `Stream.reduce`. `reduce("", String::concat)` is the same quadratic
+behaviour wearing a functional hat. `Collectors.joining()` is linear.""",
+
+"""5. THE ALTERNATIVES — pick by shape, not by habit
+
+STRAIGHT-LINE CONCATENATION OF A FIXED SET OF OPERANDS — just use `+`. On Java 9+ it compiles to
+invokedynamic and sizes the result exactly. It is the most readable option AND usually the fastest.
+Writing StringBuilder by hand here makes the code worse for no gain.
+
+A LOOP — `StringBuilder`, hoisted out of the loop, pre-sized when you know the size. This is the case
+the whole entry exists for.
+
+A DELIMITED LIST — never build it by hand:
+    `String.join(", ", list)`                        simplest, for a collection of strings
+    `list.stream().map(...).collect(joining(", "))`  when elements need transforming
+    `new StringJoiner(", ", "[", "]")`               when you need a prefix, suffix, and an
+                                                     "empty value" for the zero-element case
+    ALL THREE HANDLE THE SEPARATOR CORRECTLY, which is where the hand-rolled version usually has a
+    trailing-comma fix-up bug.
+
+MULTI-LINE LITERAL TEXT — TEXT BLOCKS (Java 15+), delimited by three double-quotes, with the
+    incidental indentation stripped for you.
+Replaces the `"line\\n" + "line\\n"` pattern entirely, and `.formatted(...)` fills in placeholders.
+
+STREAMING OUTPUT — if the result goes to a file, a socket, or an HTTP response, DO NOT BUILD THE STRING
+AT ALL. Write to a `BufferedWriter` or an `OutputStream` as you go. A 500 MB report built in memory is
+an OutOfMemoryError; the same report streamed is a constant-memory operation. THE BEST FIX FOR A LARGE
+CONCATENATION IS OFTEN TO NOT CONCATENATE.
+
+FORMATTING — `String.format` / `"...".formatted(...)` when readability matters, `MessageFormat` for
+localised text with plurals and ordering, and PARAMETERISED LOGGING (`log.debug("x {}", v)`) always, so
+disabled levels cost nothing.
+
+CHARACTER-LEVEL WORK — `char[]` or a pre-sized `StringBuilder` with `setCharAt`, when you are doing
+transformations rather than appends.
+
+`StringBuffer` — legacy. If you genuinely need a shared mutable buffer you need external
+synchronisation for atomicity anyway, so the per-method locking buys nothing.
+
+WHAT TO SAY: "`+` for straight-line concatenation, because on Java 9+ invokedynamic sizes the result
+exactly and beats a hand-written builder. StringBuilder the moment there is a LOOP, pre-sized when I
+know the size. `String.join` or `Collectors.joining` for delimited output. And if the result is going
+to a stream, I would not build the string at all."
+
+""",
+
+"""6. HOW TO GET THIS RIGHT — numbered steps
+
+STEP 1 — LOOK FOR `+=` ON A STRING INSIDE A LOOP. That single pattern is the defect. Everything else in
+this entry is refinement.
+
+STEP 2 — HOIST A `StringBuilder` OUT OF THE LOOP. One buffer for the whole loop, `toString()` once at
+the end.
+
+STEP 3 — PRE-SIZE IT WHEN YOU KNOW ROUGHLY HOW BIG THE RESULT IS. `new StringBuilder(rows.size() * 40)`
+removes every growth and copy but the last.
+
+STEP 4 — DO NOT REWRITE STRAIGHT-LINE `+` INTO A BUILDER. On Java 9+ that makes it slower and less
+readable. The rule is about loops.
+
+STEP 5 — USE `String.join` OR `Collectors.joining` FOR DELIMITED OUTPUT. It removes the trailing-
+separator bug class entirely.
+
+STEP 6 — USE PARAMETERISED LOGGING, ALWAYS. `log.debug("x {}", v)` costs nothing when the level is off;
+`log.debug("x " + v)` builds the string and evaluates the arguments regardless.
+
+STEP 7 — CHAIN `append` CALLS INSTEAD OF CONCATENATING INSIDE ONE. `append(a).append(b)`, not
+`append(a + b)`.
+
+STEP 8 — KEEP `String.format` OUT OF HOT LOOPS. It parses the format string on every call.
+
+STEP 9 — IF THE OUTPUT IS GOING SOMEWHERE, STREAM IT. A `BufferedWriter` turns an unbounded memory
+requirement into a constant one.
+
+STEP 10 — USE A TEXT BLOCK FOR MULTI-LINE LITERALS. It is both faster (one constant) and far more
+readable than a chain of `+ "\n"`.
+
+STEP 11 — NEVER SHARE A `StringBuilder` BETWEEN THREADS. And do not reach for `StringBuffer` as the
+fix — it does not give you atomicity across chained calls anyway.
+
+STEP 12 — IF YOU MEASURE, MEASURE AT A REALISTIC SIZE. At 100 iterations the quadratic version looks
+fine; the whole problem is that the cost grows with the square, so small tests actively mislead.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`result += row` in a loop looks linear and is quadratic. Strings are immutable, so `+=` cannot append
+to the existing string — it allocates a new one big enough for both, copies everything already there
+into it, copies the new piece on the end, and rebinds the variable.
+
+So every iteration copies the whole accumulated result. Iteration one copies 10 characters, iteration
+a thousand copies ten thousand, iteration a hundred thousand copies a million. Add those up and you've
+copied about n²/2 characters to build a string of length n. Concretely: appending a 10-character row
+100,000 times copies roughly fifty billion characters, where a StringBuilder copies about two million.
+That's four orders of magnitude, and it turns a request that completes into a request that times out.
+
+Now the part people get wrong in both directions. javac DOES optimise concatenation — it has since 1.0.
+`"a" + b + "c"` doesn't build intermediates; on Java 8 it becomes a StringBuilder chain, and on Java 9+
+it becomes a single invokedynamic into StringConcatFactory, which builds a method handle chain that
+computes every operand's length FIRST and allocates the result array exactly once. For straight-line
+concatenation that actually beats a hand-written StringBuilder, so "always use StringBuilder" is
+outdated advice.
+
+The reason the loop is still quadratic is that the optimisation is PER-EXPRESSION and the expression is
+inside the loop. Each iteration gets its own fresh builder, starting empty, so the whole accumulated
+result has to be copied into it before the new piece can be appended — and then toString copies it all
+out again. Two full copies per iteration. And the compiler can't hoist the builder out, because between
+iterations `result` is an ordinary String that other code could legally read.
+
+Which makes the fix structural rather than a trick: hoist the buffer out yourself. Then there's one
+buffer for the whole loop, appends write into spare capacity in place, and when it runs out it grows by
+roughly doubling. Doubling is what makes it linear — the growths copy 16, then 34, then 70, a geometric
+series that sums to under 2n. Same reason ArrayList.add is amortised O(1).
+
+So my actual rule is: `+` for straight-line concatenation, because it's the most readable AND usually
+the fastest on a modern JDK. StringBuilder the moment there's a loop, pre-sized if I know the size.
+String.join or Collectors.joining for anything delimited, because the hand-rolled version always has
+the trailing-comma fix-up. And parameterised logging always — `log.debug("x " + v)` builds the string
+and evaluates the arguments even when debug is off, which is a real hot-path cost hiding behind a
+disabled log level.
+
+One more: if the result is going to a file or an HTTP response, I'd push back on building the string at
+all. Streaming to a BufferedWriter turns an unbounded memory requirement into a constant one, and a
+500 MB report built in memory is an OutOfMemoryError.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE DEFECT ──────────────────────────────────────────────────────
+    String result = "";
+    for (String row : rows) {
+        result += row;
+    //  ^^^^^^^^^^^^^ Strings are IMMUTABLE, so this cannot append. It:
+    //    1. allocates a StringBuilder (a fresh one, this iteration only)
+    //    2. copies ALL of `result` into it              ← the whole accumulated text
+    //    3. appends `row`
+    //    4. toString() — copies it ALL out again        ← a second full copy
+    //    5. the previous `result` becomes garbage
+    //  TWO FULL COPIES PER ITERATION, of a string that grows every time.
+    }
+
+    // ── WHY THE COMPILER CANNOT SAVE YOU ────────────────────────────────
+    // javac DOES optimise concatenation — this is not a naive compiler:
+    //   Java 8:  new StringBuilder().append(a).append(b).toString()
+    //   Java 9+: invokedynamic → StringConcatFactory.makeConcatWithConstants
+    //            which sizes the result array EXACTLY and allocates once.
+    // But the optimisation is PER EXPRESSION, and the expression is INSIDE the loop.
+    // Between iterations `result` is an ordinary String other code could read, so
+    // the builder cannot be hoisted. THE OPTIMISATION IS REAL AND IRRELEVANT HERE.
+
+    // ── THE FIX: hoist the buffer yourself ──────────────────────────────
+    StringBuilder sb = new StringBuilder(rows.size() * 40);
+    //                                   ^^^^^^^^^^^^^^^^ pre-size when you can:
+    //   removes every growth-and-copy but the final toString().
+    for (String row : rows) sb.append(row);
+    //                         ^^^^^^ writes into SPARE CAPACITY in place. No copy.
+    String result = sb.toString();      // exactly ONE copy, at the end
+
+    // ── WHY DOUBLING MAKES IT LINEAR ────────────────────────────────────
+    // ensureCapacity: newLength = value.length * 2 + 2   (the +2 lets a 0-length
+    //                                                     buffer still grow)
+    // growths copy 16, then 34, then 70, then 142 ... a geometric series that sums
+    // to UNDER 2n. So the whole build copies < 2n characters no matter how many
+    // appends. Same trick as ArrayList.add being amortised O(1).
+
+    // ── THE STRAIGHT-LINE CASE: do NOT "fix" this ───────────────────────
+    String s = "user=" + name + " id=" + id;        // ← CORRECT and usually FASTEST
+    // On Java 9+ this is one invokedynamic that computes every operand's length
+    // first and allocates the result once. Rewriting it as a StringBuilder chain
+    // makes it slower AND less readable. The rule is about LOOPS.
+
+    // ── CONCATENATION INSIDE AN APPEND ──────────────────────────────────
+    sb.append("name=" + n + ";");     // builds a TEMPORARY string, then copies it in
+    sb.append("name=").append(n).append(';');   // ← nothing extra allocated
+    //                                 ^^^ note the CHAR literal: append(char) skips
+    //                                 the string-length-and-copy path entirely.
+
+    // ── THE LOG LINE THAT COSTS YOU WHEN DEBUG IS OFF ───────────────────
+    log.debug("state " + expensive());
+    // ^ ARGUMENTS ARE EVALUATED BEFORE THE CALL. The concatenation runs and
+    //   expensive() runs, then the method returns immediately because debug is
+    //   disabled. A real hot-path cost hiding behind a disabled log level.
+    log.debug("state {}", value);      // ← formats ONLY if the level is enabled
+
+    // ── DELIMITED OUTPUT: never hand-roll it ────────────────────────────
+    for (String x : list) { sb.append(x).append(", "); }
+    sb.setLength(sb.length() - 2);     // ← and this throws on an EMPTY list
+    String.join(", ", list);                                  // correct, one line
+    list.stream().map(X::name).collect(Collectors.joining(", "));  // with transform
+    new StringJoiner(", ", "[", "]").setEmptyValue("[]");     // prefix/suffix/empty
+
+    // ── AND THE FIX THAT IS BETTER THAN ANY OF THEM ─────────────────────
+    try (var out = new BufferedWriter(new FileWriter(f))) {
+        for (String row : rows) out.write(row);
+    }   // ^ CONSTANT MEMORY. A 500 MB report built in a String is an OOM; streamed,
+        //   it is a non-event. The best fix for a big concatenation is not to do it.""",
+
+"""9. THE TRACE — the same build, three ways
+
+APPENDING A 10-CHARACTER ROW 100,000 TIMES, producing a 1,000,000-character string. Counting characters
+copied, which is arithmetic rather than a measurement:
+
+    `+=` IN A LOOP
+    iteration   accumulated length   characters copied this iteration
+    ---------------------------------------------------------------------------
+    1           0                    10        (copy 0 in, append 10, copy 10 out)
+    1,000       10,000               ~20,000
+    10,000      100,000              ~200,000
+    100,000     1,000,000            ~2,000,000
+    ---------------------------------------------------------------------------
+    TOTAL ≈ 2 × Σ(10i) for i = 1..100,000 ≈ 100,000,000,000 characters copied,
+    plus ~200,000 objects allocated, to produce 1,000,000 characters of output.
+
+    StringBuilder, PRE-SIZED
+    ---------------------------------------------------------------------------
+    100,000 appends, each writing 10 characters into spare capacity   1,000,000
+    one toString() copy                                               1,000,000
+    TOTAL = 2,000,000 characters copied. Two objects allocated.
+
+    StringBuilder, DEFAULT CAPACITY
+    ---------------------------------------------------------------------------
+    the same 1,000,000 appended, plus growth copies of
+    16 + 34 + 70 + 142 + ... + ~1,048,576                            ≈ 2,000,000
+    one toString() copy                                               1,000,000
+    TOTAL ≈ 4,000,000. Still linear — the geometric series sums to under 2n.
+
+    THE RATIO BETWEEN ROW 1 AND ROW 2 IS ABOUT 50,000 TO 1. And notice the shape: the quadratic version
+    is not "slower per character", it is doing a fundamentally different amount of work, and the gap
+    WIDENS with n. At 1,000 iterations it is 500x; at 100,000 it is 50,000x. WHICH IS WHY A SMALL
+    BENCHMARK ACTIVELY MISLEADS.
+
+WHAT THE COMPILER PRODUCED, per Java version — the part that explains why the optimisation does not
+help:
+
+    source                     Java 8 bytecode              Java 9+ bytecode
+    ---------------------------------------------------------------------------------
+    "a" + b + "c"              ONE StringBuilder chain      ONE invokedynamic, exact
+    (straight line)            for the whole expression     size, single allocation
+    result += row              a NEW StringBuilder,         a NEW invokedynamic call,
+    (inside a loop)            EVERY ITERATION              EVERY ITERATION
+    ---------------------------------------------------------------------------------
+    BOTH ROWS ARE THE SAME OPTIMISATION. It is scoped to an expression, and the loop creates a new
+    expression evaluation each time round. Nothing in either compiler can carry the buffer across
+    iterations, because `result` is observable between them.
+
+AND THE MEMORY TRACE, which is the failure people actually hit:
+
+    approach                    peak heap for a 500 MB report
+    ---------------------------------------------------------------------------------
+    `+=` in a loop              ~1 GB live at the end (old + new during the last copy),
+                                plus ~500 GB of cumulative garbage churned through GC
+    StringBuilder               ~1 GB (the buffer plus the toString copy)
+    stream to a BufferedWriter  ~8 KB
+    ---------------------------------------------------------------------------------
+    THE THIRD ROW IS THE REAL ANSWER FOR LARGE OUTPUT. StringBuilder fixes the time complexity and
+    leaves the space complexity at O(n); writing as you go fixes both. The best version of this
+    optimisation is noticing that the string never needed to exist.
+
+WHAT PRODUCED WHAT:
+    IMMUTABILITY             produced the copy-per-iteration, and therefore the whole problem.
+    PER-EXPRESSION SCOPING   produced "the compiler optimises this and it does not help".
+    GEOMETRIC GROWTH         produced the linear total in rows 2 and 3 — the same reason
+                             `ArrayList.add` is amortised O(1).""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `+=` in a loop: O(n²) time in characters copied, O(n) garbage objects.
+    `StringBuilder`: O(n) total, amortised O(1) per append; growth is `len * 2 + 2`, default
+    capacity 16.
+    Pre-sized `StringBuilder`: exactly one copy, in `toString()`.
+    Straight-line `+` on Java 9+: one `invokedynamic`, result array sized exactly, one allocation —
+    typically FASTER than a hand-written builder.
+    `String.format`: parses the format string per call, roughly an order of magnitude slower than `+`.
+    `String.join` / `Collectors.joining`: linear, and correct about separators.
+    Streaming to a writer: O(1) space.
+
+THE #1 MISTAKE: `+=` on a String inside a loop. Quadratic, and it is the most common genuine
+performance defect in production Java.
+
+THE #2 MISTAKE: concluding the compiler will fix it. It optimises the EXPRESSION, and the expression is
+inside the loop.
+
+THE #3 MISTAKE: over-correcting and rewriting straight-line `+` into StringBuilder. On Java 9+ that is
+slower and less readable.
+
+THE #4 MISTAKE: not pre-sizing when the size is known. About 17 growth cycles to reach a megabyte.
+
+THE #5 MISTAKE: `sb.append(a + b)`. Builds a temporary and copies it in. Chain the appends.
+
+THE #6 MISTAKE: unguarded concatenation in a log call. The string is built and the arguments evaluated
+even when the level is disabled. Parameterised logging.
+
+THE #7 MISTAKE: `String.format` in a hot loop.
+
+THE #8 MISTAKE: hand-rolling delimited output and fixing up the trailing separator — which also throws
+on an empty list. `String.join` or `Collectors.joining`.
+
+THE #9 MISTAKE: `reduce("", String::concat)` in a stream. The same quadratic behaviour in functional
+clothing. `Collectors.joining()`.
+
+THE #10 MISTAKE: sharing a `StringBuilder` across threads, or reaching for `StringBuffer` as the fix —
+per-method locking gives no atomicity across chained appends.
+
+THE #11 MISTAKE: building a huge string in memory when it is going straight to a stream. Fixing the
+time complexity while leaving the space complexity at O(n) is only half the fix.
+
+THE #12 MISTAKE: benchmarking at a small n. The gap grows with n, so a small test says "it's fine" about
+something that is not.
+
+ONE-SENTENCE TAKEAWAY: strings are immutable, so `result += row` cannot append — it copies the entire
+accumulated string into a fresh buffer and then out again, twice per iteration, making the loop O(n²)
+and turning a hundred thousand appends into roughly a hundred billion character copies; the compiler's
+concatenation optimisation is real (and on Java 9+ an `invokedynamic` that sizes the result exactly,
+which is why straight-line `+` should be left alone) but it is scoped to an EXPRESSION and cannot cross
+a loop boundary, so the fix is to hoist a `StringBuilder` out of the loop and pre-size it — or better,
+for large output, to stream it to a writer and never build the string at all.""",
+]
