@@ -18598,3 +18598,983 @@ T[n]` is forbidden outright, since covariance plus erasure would produce unsound
 check possible at all, which is why `ArrayList` holds an `Object[]` behind an unchecked cast and why
 `toArray()` hands you an `Object[]`.""",
 ]
+
+
+DEEP["replace vs replaceAll — one takes a regex and one does not"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the names describe the wrong difference
+
+    "a.b.c".replace(".", "-")       →  "a-b-c"
+    "a.b.c".replaceAll(".", "-")    →  "-----"
+
+    THE SECOND ONE REPLACED EVERY CHARACTER, INCLUDING THE LETTERS. Not because it replaced "all" and
+    the first replaced one — BOTH REPLACE EVERY OCCURRENCE. The difference is that `replaceAll` treats
+    its first argument as a REGULAR EXPRESSION, and in a regex `.` means "any character".
+
+    SO THE NAMES ARE THE TRAP. "replace" versus "replaceAll" sounds like one-versus-many. It is
+    literal-versus-regex, and both replace everything.
+
+THE FOUR METHODS, WITH WHAT THEY ACTUALLY DO:
+
+    `replace(char, char)`                    LITERAL. Every occurrence.
+    `replace(CharSequence, CharSequence)`    LITERAL. Every occurrence.
+    `replaceAll(String regex, String)`       REGEX. Every match.
+    `replaceFirst(String regex, String)`     REGEX. The first match only.
+
+    THE ONE THAT REPLACES ONLY ONE THING IS CALLED `replaceFirst`, AND IT IS ALSO THE REGEX ONE. So the
+    naming gives you no reliable signal at all: if the argument is a regex, the method name ends in
+    `All` or `First`; if it is a literal, the method is called `replace`.
+
+    A USEFUL MNEMONIC: THE METHOD WHOSE NAME MENTIONS HOW MANY IS THE REGEX ONE.
+
+AND THERE IS A SECOND, LESS FAMOUS TRAP IN THE REPLACEMENT ARGUMENT. For `replaceAll` and
+`replaceFirst`, the REPLACEMENT string is also special: `$1` means "group 1" and `\\` escapes. So
+replacing text with something containing a `$` — a price, a shell variable, a template placeholder —
+either throws or silently inserts a capture group.
+
+THE EVERYDAY VERSION: two "find and replace" boxes that look identical, except one interprets what you
+type as a search PATTERN and the other takes it literally. Type a full stop into the pattern box and it
+matches every character on the page. Nothing warned you which box you were in.
+
+TERMS AS THEY APPEAR:
+- REGEX: a pattern language where characters like `. * + ? [ ] ( ) { } ^ $ | \\` have special meanings.
+- METACHARACTER: one of those special characters.
+- CAPTURE GROUP: a parenthesised part of a pattern, referable as `$1` in a replacement.""",
+
+"""2. THE INTUITION — twelve characters that change meaning, and where they appear
+
+REGULAR EXPRESSIONS GIVE SPECIAL MEANING TO: `. ^ $ * + ? ( ) [ ] { } | \\`
+
+    ANY OF THOSE IN A STRING YOU PASS TO `replaceAll`, `replaceFirst`, `split` OR `matches` IS
+    INTERPRETED, NOT MATCHED. And several of them are extremely common in real data:
+
+    `.`  in file names, hostnames, version numbers, decimal numbers, sentences
+    `$`  in prices, shell variables, template placeholders, and jQuery
+    `|`  in pipe-delimited data — the exact case you would use split for
+    `(` `)` `[` `]`  in log lines, arrays printed with `toString`, phone numbers
+    `+`  in phone numbers, URL-encoded spaces, arithmetic in text
+    `*`  in globs, footnote markers, wildcards
+    `?`  in URLs
+
+    SO THE DATA THAT MOST OFTEN NEEDS SPLITTING OR REPLACING IS EXACTLY THE DATA MOST LIKELY TO CONTAIN
+    A METACHARACTER. That is not bad luck; it is because delimiters are chosen for visibility, and
+    regexes claimed the visible punctuation.
+
+THE FAILURE MODES DIFFER IN HOW LOUD THEY ARE, WHICH IS WHAT MAKES THIS WORTH KNOWING:
+
+    `"a.b".replaceAll(".", "-")` → `"---"`. WRONG ANSWER, NO ERROR. The nastiest kind.
+    `"a[b".replaceAll("[", "-")` → `PatternSyntaxException`. LOUD, and therefore harmless.
+    `"cost".replaceAll("cost", "$5")` → `IndexOutOfBoundsException: No group 5`. Loud, and confusing
+    because nothing in the source looks like a group reference.
+
+    THE LOUD ONES ARE THE LUCKY ONES. `.` and `|` produce silent wrong answers, and they are the two
+    most common delimiters in the world.
+
+THE THIRD PIECE — THE REPLACEMENT STRING IS ALSO A MINI-LANGUAGE for the regex methods:
+
+    `$1`, `$2` …  insert capture group 1, 2 …
+    `\\$`          a literal dollar sign
+    `\\\\`          a literal backslash
+
+    So `replaceAll("x", userSuppliedText)` is unsafe if the user's text contains `$` or `\\`. THE FIX IS
+    `Matcher.quoteReplacement(text)`, which is the mirror of `Pattern.quote` for the pattern side. Almost
+    nobody knows both exist, and needing both is the clearest sign you wanted `replace` all along.
+
+AND A PERFORMANCE NOTE THAT MATTERS MORE THAN IT SOUNDS: `replaceAll` COMPILES THE PATTERN ON EVERY
+CALL. In a loop over a million rows, that is a million regex compilations. `Pattern.compile` once,
+outside the loop, and reuse it. `replace` does a straightforward scan and has nothing to compile — which
+is the second reason to prefer it when you only want a literal.""",
+
+"""3. THE MECHANISM — what each method actually does
+
+`replace(CharSequence, CharSequence)` since Java 9 is a direct scan: find the target, copy up to it,
+append the replacement, continue. No pattern machinery at all.
+
+    A HISTORICAL DETAIL WORTH KNOWING: IN JAVA 8 AND EARLIER, `String.replace` WAS IMPLEMENTED USING
+    REGEX INTERNALLY — `Pattern.compile(target, Pattern.LITERAL).matcher(this).replaceAll(
+    Matcher.quoteReplacement(replacement))`. It used `LITERAL` and `quoteReplacement` to get literal
+    semantics, so the behaviour was always correct, but it paid for a regex compilation on every call.
+    Java 9 rewrote it as a plain scan, and the speedup for the common case was substantial. SO "replace
+    is the cheap one" is true today and was not always true.
+
+`replaceAll(String regex, String replacement)` is exactly:
+
+    Pattern.compile(regex).matcher(this).replaceAll(replacement)
+
+    — WHICH MAKES THE COST OBVIOUS: a fresh `Pattern.compile` on every invocation. Compiling a regex
+    builds a node tree and is far from free.
+
+`replaceFirst` is the same with `.replaceFirst(...)`, and `matches(regex)` is
+`Pattern.matches(regex, this)` — which, note, requires the WHOLE string to match, unlike
+`Matcher.find()`. That asymmetry catches people: `"hello world".matches("hello")` is FALSE.
+
+THE ESCAPE HATCHES, one per side:
+
+    `Pattern.quote(s)`               wraps `s` in `\\Q…\\E` so every character is literal. For the
+                                     PATTERN.
+    `Matcher.quoteReplacement(s)`    escapes `$` and `\\`. For the REPLACEMENT.
+    `Pattern.compile(s, Pattern.LITERAL)`  the same as `quote`, expressed as a flag.
+
+    IF YOU FIND YOURSELF NEEDING BOTH, YOU WANTED `replace`.
+
+WHEN YOU GENUINELY NEED A REGEX IN A LOOP:
+
+    private static final Pattern WS = Pattern.compile("\\\\s+");
+    ...
+    WS.matcher(line).replaceAll(" ");
+
+    A `Pattern` is IMMUTABLE AND THREAD-SAFE, so a `static final` field is correct. A `Matcher` is NOT
+    thread-safe and is cheap to create — one per use, never shared, never a field.
+
+AND THE SECURITY DIMENSION, since regexes accept untrusted input in many systems: CATASTROPHIC
+BACKTRACKING. A pattern with nested quantifiers over alternation — the classic `(a+)+b` — can take
+exponential time on a non-matching input. A user-supplied regex, or a user-supplied INPUT against a
+badly-written pattern, is a denial-of-service vector. Java's regex engine is backtracking, so it is
+vulnerable; `possessive quantifiers` (`a++`) and atomic groups `(?>...)` are the mitigations, and not
+accepting user regexes at all is better.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `"a.b.c".replaceAll(".", "-")` GIVES `"-----"`. `.` matches any character. A silent wrong
+answer, and the most common instance of this bug.
+
+CASE 2 — `"a|b".replaceAll("|", "-")` behaves bizarrely. `|` is alternation between two empty
+alternatives, so it matches a zero-width position everywhere.
+
+CASE 3 — `replaceAll("[", "-")` THROWS `PatternSyntaxException`. Loud, and therefore the lucky case.
+
+CASE 4 — A `$` IN THE REPLACEMENT. `replaceAll("cost", "$5")` throws
+`IndexOutOfBoundsException: No group 5`, and `"$"` alone throws too. Nothing in the source looks like a
+group reference.
+
+CASE 5 — A BACKSLASH IN THE REPLACEMENT. `replaceAll("x", "C:\\\\temp")` needs the backslashes escaped for
+the REPLACEMENT parser as well as for the Java string literal — two levels of escaping.
+
+CASE 6 — DOUBLE ESCAPING IN THE PATTERN. A literal dot is `\\.` in regex, which is `"\\\\."` in Java
+source. Every backslash is written twice, and the count is where mistakes live.
+
+CASE 7 — `replaceAll` IN A LOOP. A fresh `Pattern.compile` per call. Hoist a `static final Pattern` out.
+
+CASE 8 — `matches()` REQUIRING A FULL MATCH. `"hello world".matches("hello")` is FALSE. Use
+`Pattern.compile("hello").matcher(s).find()` for a substring test — or `s.contains("hello")`.
+
+CASE 9 — `replace` ASSUMED TO REPLACE ONLY THE FIRST. It replaces every occurrence. The method that
+replaces one is `replaceFirst`, and that one is the regex flavour.
+
+CASE 10 — `replaceAll` WITH A USER-SUPPLIED PATTERN. Catastrophic backtracking makes it a denial-of-
+service vector.
+
+CASE 11 — CASE SENSITIVITY. All four are case-sensitive; regex needs `(?i)` or
+`Pattern.CASE_INSENSITIVE`, and for non-ASCII you also want `UNICODE_CASE`.
+
+CASE 12 — REPLACING IN A LOOP EXPECTING TO STRIP REPEATS. `"aaa".replace("aa", "a")` gives `"aa"`, not
+`"a"` — the scan does not revisit what it just wrote. A regex with a quantifier, or a loop until stable,
+is needed.
+
+CASE 13 — `replaceAll("\\\\s+", " ")` AND NON-BREAKING SPACES. `\\s` does not match U+00A0 by default. Use
+`\\p{Zs}` or `(?U)\\s` for Unicode whitespace.
+
+CASE 14 — ASSUMING `replace` RETURNS A NEW STRING ALWAYS. If nothing matched it may return `this` —
+harmless, since Strings are immutable, and occasionally surprising if you were comparing identities.""",
+
+"""5. THE ALTERNATIVES — pick literal by default
+
+`replace(CharSequence, CharSequence)` IS THE DEFAULT. If you want a literal replacement — which is most
+of the time — use it. No metacharacters, no compilation, no replacement-string parsing, and it cannot
+throw a syntax exception.
+
+`Pattern.quote(input)` WHEN A LITERAL MUST GO INTO A REGEX METHOD, and
+`Matcher.quoteReplacement(text)` when a literal must go into a regex REPLACEMENT. NEEDING EITHER IS A
+SIGNAL: if you need both, you wanted `replace`.
+
+A PRECOMPILED `static final Pattern` FOR ANY REGEX USED MORE THAN ONCE. `Pattern` is immutable and
+thread-safe; `Matcher` is neither, so create one per use.
+
+`Matcher.appendReplacement` / `appendTail`, or `replaceAll(Function<MatchResult,String>)` (Java 9+),
+when the replacement depends on what was matched. Far clearer than building a replacement string with
+`$` references.
+
+FOR STRUCTURED TEXT, DO NOT USE STRING METHODS AT ALL:
+    CSV → a real CSV library. Quoted fields with embedded commas and newlines are not a regex problem,
+    and `split(",")` on a CSV file is a bug that works on the first hundred rows.
+    JSON/XML/HTML → a parser. The famous answer about parsing HTML with regex is famous for a reason:
+    these are not regular languages.
+    PATHS → `java.nio.file.Path`. URLs → `java.net.URI`.
+    A recursive or nested format cannot be handled by a regular expression, by definition.
+
+FOR SIMPLE CHECKS, PREFER THE PLAIN METHODS: `contains`, `startsWith`, `endsWith`, `indexOf`. They are
+literal, faster, and cannot be misread.
+
+FOR CASE-INSENSITIVE WORK: `equalsIgnoreCase` for equality, `(?i)` or `Pattern.CASE_INSENSITIVE` (plus
+`UNICODE_CASE` for non-ASCII) for patterns. Avoid `toLowerCase()` without a `Locale` — the Turkish
+dotless ı breaks it.
+
+WHEN A REGEX IS GENUINELY RIGHT: validation of a well-defined format, tokenising with a real pattern,
+extracting groups, normalising whitespace with `\\s+`. USE IT DELIBERATELY, PRECOMPILED, AND WITH A
+COMMENT SAYING WHAT IT MATCHES — regexes are write-only otherwise.
+
+WHAT TO SAY: "`replace` is literal and `replaceAll` is regex — both replace every occurrence, so the
+names describe the wrong difference. The one that replaces a single occurrence is `replaceFirst`, and it
+is also a regex method. I default to `replace`, precompile a `static final Pattern` when I genuinely
+need a regex, and remember that the REPLACEMENT string is special too — `$1` is a group reference, so
+`Matcher.quoteReplacement` exists for the same reason `Pattern.quote` does."
+
+""",
+
+"""6. HOW TO GET IT RIGHT — numbered steps
+
+STEP 1 — DEFAULT TO `replace`. If you want literal text replaced, it is the right method and it replaces
+every occurrence.
+
+STEP 2 — REMEMBER THE DIFFERENCE IS LITERAL-VERSUS-REGEX, NOT ONE-VERSUS-MANY. The single-occurrence
+method is `replaceFirst`.
+
+STEP 3 — IF THE PATTERN CONTAINS `. ^ $ * + ? ( ) [ ] { } | \\`, EITHER YOU MEANT A REGEX OR YOU HAVE A
+BUG. Decide explicitly.
+
+STEP 4 — WRAP A LITERAL IN `Pattern.quote(...)` when it must go into a regex method.
+
+STEP 5 — WRAP A REPLACEMENT IN `Matcher.quoteReplacement(...)` when it may contain `$` or `\\`.
+
+STEP 6 — PRECOMPILE ANY REGEX USED MORE THAN ONCE into a `static final Pattern`. `replaceAll` compiles
+on every call.
+
+STEP 7 — NEVER SHARE A `Matcher`. It is stateful and not thread-safe; create one per use.
+
+STEP 8 — REMEMBER `matches()` REQUIRES THE WHOLE STRING. Use `find()` for a substring, or `contains` if
+it is literal.
+
+STEP 9 — DO NOT PARSE STRUCTURED FORMATS WITH REGEX. CSV, JSON, XML and HTML all have real parsers, and
+none of them is a regular language.
+
+STEP 10 — COMMENT EVERY NON-TRIVIAL PATTERN with what it matches and one example. Regexes are write-only
+otherwise.
+
+STEP 11 — NEVER ACCEPT A USER-SUPPLIED REGEX. Catastrophic backtracking is a denial-of-service vector,
+and Java's engine backtracks.
+
+STEP 12 — FOR CASE-INSENSITIVE MATCHING, USE `(?i)` OR THE FLAG, plus `UNICODE_CASE` for non-ASCII. Not
+`toLowerCase()` without a `Locale`.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`"a.b.c".replace(".", "-")` gives "a-b-c". `"a.b.c".replaceAll(".", "-")` gives five dashes — it
+replaced every CHARACTER, including the letters.
+
+And the reason isn't that one replaces all and the other replaces one. BOTH replace every occurrence.
+The difference is that replaceAll treats its first argument as a REGULAR EXPRESSION, and in a regex `.`
+means "any character". So the names describe the wrong difference entirely.
+
+There are four methods. `replace(char,char)` and `replace(CharSequence,CharSequence)` are literal and
+replace everything. `replaceAll` is regex and replaces every match. `replaceFirst` is regex and replaces
+one. So the method that replaces a SINGLE occurrence is the one called replaceFirst — and it's also a
+regex method. The naming gives you no reliable signal. The mnemonic I use is: the method whose name
+mentions HOW MANY is the regex one.
+
+The characters that get reinterpreted are `. ^ $ * + ? ( ) [ ] { } |` and backslash. And the thing worth
+noticing is that the data which most often needs splitting or replacing is exactly the data most likely
+to contain one of those — dots in filenames and hostnames and version numbers, pipes in pipe-delimited
+data, dollars in prices, parentheses in log lines. That's not bad luck: delimiters get chosen for
+visibility, and regexes claimed the visible punctuation.
+
+The failure modes differ in how loud they are, and that's what makes it worth knowing. `[` gives you a
+PatternSyntaxException — loud, and therefore harmless. `.` and `|` give you a silently wrong answer, and
+those are the two most common delimiters in the world.
+
+There's a second trap most people don't know: for the regex methods, the REPLACEMENT string is special
+too. `$1` means capture group one, and backslash escapes. So replacing something with a price, or a
+shell variable, or a template placeholder either throws or silently inserts a group. `replaceAll("cost",
+"$5")` throws IndexOutOfBoundsException: No group 5, and nothing in the source looks like a group
+reference. The fix is Matcher.quoteReplacement, which is the mirror of Pattern.quote for the pattern
+side — and if you need both, you wanted `replace` all along.
+
+One performance note that matters more than it sounds: replaceAll compiles the pattern on EVERY call.
+Over a million rows that's a million regex compilations. Hoist a static final Pattern out of the loop —
+Pattern is immutable and thread-safe, Matcher is neither, so one Matcher per use and never a field.
+
+And a historical detail I like: in Java 8 and earlier, String.replace was implemented USING regex
+internally, with the LITERAL flag and quoteReplacement to get literal semantics. Correct, but it paid
+for a compilation every call. Java 9 rewrote it as a plain scan. So "replace is the cheap one" is true
+today and wasn't always.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE HEADLINE ────────────────────────────────────────────────────
+    "a.b.c".replace(".", "-")        // "a-b-c"   ← LITERAL
+    "a.b.c".replaceAll(".", "-")     // "-----"   ← REGEX: `.` matches ANY character,
+    //                                               including the letters
+    // BOTH replace every occurrence. The difference is literal-versus-regex.
+
+    // ── THE FOUR METHODS ────────────────────────────────────────────────
+    replace(char, char)                    // LITERAL, every occurrence
+    replace(CharSequence, CharSequence)    // LITERAL, every occurrence
+    replaceAll(String regex, String)       // REGEX,   every match
+    replaceFirst(String regex, String)     // REGEX,   the FIRST match
+    // The method that replaces ONE thing is replaceFirst — and it is the regex one.
+    // MNEMONIC: the method whose name mentions HOW MANY is the regex one.
+
+    // ── THE TWELVE CHARACTERS THAT CHANGE MEANING ───────────────────────
+    // . ^ $ * + ? ( ) [ ] { } |     //
+    // and where they show up in real data:
+    //   .  filenames, hostnames, version numbers, decimals, sentences
+    //   |  pipe-delimited data — THE case you would reach for split on
+    //   $  prices, shell variables, template placeholders
+    //   () log lines, arrays printed with toString, phone numbers
+    //   +  phone numbers, URL-encoded spaces
+    // The data most likely to need replacing is the data most likely to contain one.
+
+    // ── LOUD FAILURES ARE THE LUCKY ONES ────────────────────────────────
+    "a[b".replaceAll("[", "-")       // → PatternSyntaxException. LOUD. Harmless.
+    "a.b".replaceAll(".", "-")       // → "---". SILENT. WRONG. The dangerous one.
+
+    // ── THE REPLACEMENT STRING IS ALSO A MINI-LANGUAGE ──────────────────
+    "cost".replaceAll("cost", "$5")
+    // → IndexOutOfBoundsException: No group 5
+    //   `$5` is a CAPTURE GROUP REFERENCE in the replacement. Nothing in the source
+    //   looks like one.
+    "cost".replaceAll("cost", Matcher.quoteReplacement("$5"))   // → "$5"
+    "cost".replace("cost", "$5")                                // → "$5". Simpler.
+    //
+    // In the replacement:  $1 = group 1     \\$ = a literal $     \\ = a backslash
+    // Pattern.quote(s)             makes a literal PATTERN   (wraps in \\Q...\\E)
+    // Matcher.quoteReplacement(s)  makes a literal REPLACEMENT
+    // NEEDING BOTH MEANS YOU WANTED replace().
+
+    // ── replaceAll COMPILES EVERY CALL ──────────────────────────────────
+    // it is literally:
+    //   Pattern.compile(regex).matcher(this).replaceAll(replacement)
+    for (String line : millionLines) line.replaceAll("\\\\s+", " ");
+    //                                    ^^^^^^^^^^ A MILLION regex compilations.
+    private static final Pattern WS = Pattern.compile("\\\\s+");   // ← hoist it
+    for (String line : millionLines) WS.matcher(line).replaceAll(" ");
+    // Pattern is IMMUTABLE and THREAD-SAFE → a static final field is correct.
+    // Matcher is NEITHER → one per use, never shared, never a field.
+
+    // ── A HISTORICAL DETAIL ─────────────────────────────────────────────
+    // Java 8 and earlier, String.replace(CharSequence, CharSequence) was:
+    //   Pattern.compile(target, Pattern.LITERAL)
+    //          .matcher(this)
+    //          .replaceAll(Matcher.quoteReplacement(replacement))
+    // Correct literal semantics — via the regex engine, paying a compilation per
+    // call. Java 9 rewrote it as a plain scan. "replace is the cheap one" is true
+    // TODAY and was not always.
+
+    // ── matches() NEEDS THE WHOLE STRING ────────────────────────────────
+    "hello world".matches("hello")             // FALSE — matches() anchors both ends
+    "hello world".contains("hello")            // true  ← literal, and what you meant
+    Pattern.compile("hello").matcher(s).find() // true  ← regex substring search
+
+    // ── AND ONE THAT SURPRISES ──────────────────────────────────────────
+    "aaa".replace("aa", "a")         // "aa", NOT "a"
+    // The scan does not revisit what it just wrote. To collapse repeats you need a
+    // quantifier — "aaa".replaceAll("a+", "a") → "a" — or a loop until stable.""",
+
+"""9. THE TRACE — the same intent, four spellings
+
+INTENT: turn `"1.2.3"` into `"1-2-3"`.
+
+    call                                   engine        what happens             result
+    ---------------------------------------------------------------------------------
+    replace(".", "-")                       literal scan  finds each ".",           "1-2-3" ✓
+                                                          substitutes
+    replaceAll(".", "-")                    REGEX         `.` = any char, so every  "-----" ✗
+                                                          character matches          SILENT
+    replaceAll("\\\\.", "-")                REGEX         `\\.` = a literal dot   "1-2-3" ✓
+                                                          (written "\\\\." in Java)
+    replaceAll(Pattern.quote("."), "-")     REGEX         `\\Q.\\E` = literal          "1-2-3" ✓
+    ---------------------------------------------------------------------------------
+    THREE OF FOUR ARE CORRECT AND THE INCORRECT ONE IS THE SHORTEST AND MOST NATURAL-LOOKING. Row 2 is
+    what someone writes when they half-remember that "replaceAll replaces all of them", and it produces
+    no error of any kind.
+
+NOW THE ESCAPING COUNT, which is where rows 3's correctness actually lives:
+
+    what you want            regex needs      Java source needs
+    ---------------------------------------------------------------------------------
+    a literal dot            \\.               "\\\\."
+    a literal backslash      \\\\               "\\\\\\\\"
+    a literal dollar         \\$               "\\\\$"
+    whitespace               \\s               "\\\\s"
+    ---------------------------------------------------------------------------------
+    EVERY BACKSLASH IS WRITTEN TWICE, because the Java string literal consumes one level before the
+    regex engine sees anything. A literal backslash needs FOUR characters in source. This is where most
+    regex-in-Java mistakes actually are, and `Pattern.quote` sidesteps the whole count.
+
+THE REPLACEMENT-SIDE TRACE, which is the half people do not know:
+
+    call                                              what the replacement parser sees   result
+    ---------------------------------------------------------------------------------
+    replaceAll("cost", "$5")                           group reference 5                 THROWS
+                                                                                         "No group 5"
+    replaceAll("(a)(b)", "$2$1")                       groups 2 then 1                   swaps them ✓
+    replaceAll("cost", "\\$5")                         an escaped $, then "5"            "$5" ✓
+    replaceAll("cost", Matcher.quoteReplacement("$5")) escaped for you                    "$5" ✓
+    replace("cost", "$5")                              nothing is parsed at all          "$5" ✓
+    ---------------------------------------------------------------------------------
+    ROW 1 IS A RUNTIME EXCEPTION FROM A LINE CONTAINING NO REGEX METACHARACTERS IN THE PATTERN. The
+    pattern `"cost"` is perfectly literal; it is the REPLACEMENT that is special, and that is the half
+    nobody expects. The last row is why `replace` is the right default.
+
+AND THE COST TRACE, over a million lines:
+
+    approach                                     regex compilations   relative time
+    ---------------------------------------------------------------------------------
+    line.replace(" ", "_")                        0                    1x
+    line.replaceAll("\\\\s+", " ")                1,000,000            slow
+    WS.matcher(line).replaceAll(" ")              1 (at class init)     much faster
+      where WS is a static final Pattern
+    ---------------------------------------------------------------------------------
+    ROWS 2 AND 3 DO IDENTICAL WORK PER LINE. The only difference is where `Pattern.compile` lives, and
+    hoisting it out of the loop is a one-line change with a large effect — the same shape as hoisting a
+    `StringBuilder` out of a concatenation loop.
+
+WHAT PRODUCED WHAT:
+    THE NAMES                     produced the confusion — they describe count, and the difference is
+                                  language.
+    REGEX METACHARACTERS OVERLAPPING  produced the silent failures, and produced them for exactly the
+    COMMON DELIMITERS             most common delimiters.
+    THE REPLACEMENT PARSER        produced the `$` trap, on a line whose pattern is entirely literal.
+    COMPILATION PER CALL          produced the cost table, and the reason to hoist a Pattern.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `replace`: a linear scan. No compilation. Since Java 9 a direct implementation; before that it used
+    the regex engine with the LITERAL flag.
+    `replaceAll` / `replaceFirst`: `Pattern.compile` on EVERY call, then a match.
+    Regex metacharacters: `. ^ $ * + ? ( ) [ ] { } | \\`
+    Replacement metacharacters: `$` (group reference) and `\\` (escape).
+    `Pattern` is immutable and thread-safe; `Matcher` is neither.
+    `matches()` anchors both ends; `find()` does not.
+    Java's regex engine BACKTRACKS, so a pathological pattern can take exponential time.
+
+THE #1 MISTAKE: reading the difference as one-versus-all. It is literal-versus-regex, and both replace
+everything.
+
+THE #2 MISTAKE: `replaceAll(".", x)`. `.` matches every character, and nothing warns.
+
+THE #3 MISTAKE: `replaceAll("|", x)` on pipe-delimited data. Alternation between two empty alternatives.
+
+THE #4 MISTAKE: a `$` in the replacement of a regex method. It is a group reference, and it throws — on
+a line whose pattern is entirely literal.
+
+THE #5 MISTAKE: miscounting backslashes. A literal backslash needs four characters in Java source.
+`Pattern.quote` avoids the count entirely.
+
+THE #6 MISTAKE: `replaceAll` in a loop. A regex compilation per call; hoist a `static final Pattern`.
+
+THE #7 MISTAKE: sharing a `Matcher` across threads. It is stateful. Create one per use.
+
+THE #8 MISTAKE: `matches()` for a substring test. It requires the whole string to match.
+
+THE #9 MISTAKE: `"aaa".replace("aa","a")` expecting `"a"`. The scan does not revisit its own output;
+use a quantifier.
+
+THE #10 MISTAKE: parsing CSV, JSON, XML or HTML with string methods or regex. None is a regular
+language, and all have real parsers.
+
+THE #11 MISTAKE: accepting a user-supplied regex. Catastrophic backtracking is a denial-of-service
+vector.
+
+THE #12 MISTAKE: `\\s` expected to match a non-breaking space. It does not by default; use `\\p{Zs}` or
+the Unicode flag.
+
+ONE-SENTENCE TAKEAWAY: `replace` is LITERAL and `replaceAll` is REGEX, and both replace every occurrence
+— so the names describe count when the real difference is language, and the method that replaces a
+single occurrence is `replaceFirst`, which is also a regex method; the metacharacters `. ^ $ * + ? ( ) [
+] { } | \\` are precisely the punctuation people use as delimiters, so `replaceAll(".", "-")` silently
+replaces every character while `replaceAll("[", "-")` at least throws, and the REPLACEMENT string is a
+mini-language too where `$5` is a capture-group reference that throws on a line whose pattern is entirely
+literal — default to `replace`, reach for `Pattern.quote` and `Matcher.quoteReplacement` when a literal
+must enter a regex method (needing both means you wanted `replace`), and hoist any repeated pattern into
+a `static final Pattern`, because `replaceAll` compiles on every call.""",
+]
+
+
+DEEP["split() silently drops trailing empty strings"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — an array that is shorter than the data
+
+    "a,b,,".split(",")        →  ["a", "b"]           length 2, not 4
+    ",,a".split(",")          →  ["", "", "a"]        length 3 — LEADING empties KEPT
+    ",,,,".split(",")         →  []                   length ZERO
+    "".split(",")             →  [""]                 length ONE, containing ""
+
+    FOUR CALLS, FOUR DIFFERENT AND SURPRISING SHAPES. Trailing empty strings are removed and leading
+    ones are kept, an empty string splits into an array of one empty string rather than an empty array,
+    and a string of nothing but delimiters produces an array of NOTHING.
+
+    THE ASYMMETRY IS THE WHOLE ENTRY: LEADING EMPTIES SURVIVE AND TRAILING ONES DO NOT.
+
+WHY IT MATTERS: THIS IS DATA LOSS THAT LOOKS LIKE TIDINESS. A CSV row `"Alice,,,"` — a name and three
+blank fields — becomes a one-element array, so column indices shift and every downstream read is off by
+however many trailing blanks there were. NOTHING THROWS. The row is simply shorter than the header, and
+the failure appears as a mysterious `ArrayIndexOutOfBoundsException` two methods later, or worse, as
+correct-looking data in the wrong columns.
+
+    AND IT IS FIXED BY ONE ARGUMENT: `split(",", -1)` keeps every trailing empty. A NEGATIVE LIMIT MEANS
+    "NO LIMIT, AND KEEP EVERYTHING". That is not obvious from the name `limit`, which is exactly why it
+    is not the default anyone reaches for.
+
+`split` ALSO TAKES A REGULAR EXPRESSION, sharing the trap of `replaceAll`: `"a.b".split(".")` returns an
+EMPTY ARRAY, because `.` matches every character, so every piece is empty and every empty is trailing.
+
+THE EVERYDAY VERSION: a form scanner that returns the filled-in boxes and quietly discards blank ones at
+the END of the row, while keeping blank ones at the start. Row four has three trailing blanks, so it
+comes back with fewer columns than every other row — and nothing says so.
+
+TERMS AS THEY APPEAR:
+- LIMIT: `split`'s second argument, controlling both the piece count and whether trailing empties
+  survive.
+- ZERO-WIDTH MATCH: a pattern matching an empty position between characters.
+- TRAILING EMPTY: an empty string produced at the end of the result.""",
+
+"""2. THE INTUITION — three limits, three behaviours, and only one is intuitive
+
+`split(regex)` IS EXACTLY `split(regex, 0)`, and the limit has THREE distinct regimes:
+
+    limit  > 0    at most `limit` pieces. The last piece keeps everything left over, delimiters
+                  INCLUDED. TRAILING EMPTIES ARE KEPT.
+    limit == 0    unlimited pieces, and TRAILING EMPTIES ARE REMOVED.       ← THE DEFAULT
+    limit  < 0    unlimited pieces, and TRAILING EMPTIES ARE KEPT.
+
+    SO THE ONLY WAY TO GET "ALL THE PIECES, INCLUDING THE EMPTY ONES" IS A NEGATIVE LIMIT. `-1` is
+    conventional; any negative value does the same thing.
+
+    THE DEFAULT — REMOVE TRAILING EMPTIES — IS THE ODD ONE OUT, and it exists because the common
+    interactive case is splitting a sentence on spaces, where a trailing space producing a phantom empty
+    word is unhelpful. FOR STRUCTURED DATA IT IS EXACTLY WRONG, and structured data is what people
+    actually split.
+
+WHY LEADING EMPTIES SURVIVE AND TRAILING ONES DO NOT — the rule is mechanical, not aesthetic:
+
+    `split` scans left to right, emitting the text between matches. `",,a"` produces `""`, `""`, `"a"`
+    in that order, and only AFTER the whole scan does it walk BACKWARDS removing empties. There is no
+    forward equivalent, so leading empties are never candidates for removal.
+
+    THAT ALSO EXPLAINS `",,,,".split(",")` GIVING A ZERO-LENGTH ARRAY: it produced five empty pieces,
+    all of them trailing by the backward walk, and removed every one.
+
+AND `"".split(",")` GIVING `[""]` IS THE ONE THAT BREAKS LOOPS:
+
+    An empty input has no delimiter, so there is ONE piece — the whole (empty) input. It is not trailing
+    in the removal sense, because the rule never strips the result down to nothing when there was no
+    match at all.
+    SO `for (String s : line.split(","))` ON AN EMPTY LINE ITERATES ONCE, WITH `""`. Every parser that
+    assumed "an empty line yields no fields" processes one blank field instead — and blank-line handling
+    is exactly the case people forget to test.
+
+THE `limit > 0` REGIME IS THE USEFUL ONE PEOPLE DO NOT KNOW:
+
+    `"key=value=with=equals".split("=", 2)` → `["key", "value=with=equals"]`
+
+    THE LAST PIECE KEEPS ITS DELIMITERS. That is the correct way to parse a `key=value` line whose value
+    may contain the delimiter, an HTTP header, or a `name:rest` prefix — and it is far better than
+    `indexOf` plus two `substring` calls.""",
+
+"""3. THE MECHANISM — the regex, the fast path, and the Java 8 change
+
+`String.split(regex, limit)` IS `Pattern.compile(regex).split(this, limit)` — WITH ONE IMPORTANT
+EXCEPTION.
+
+    THE FAST PATH: if the pattern is a SINGLE character that is not a regex metacharacter (or a
+    two-character escape of one, like `"\\\\."`), `String.split` does the split DIRECTLY with `indexOf`,
+    never compiling a regex at all. This is why `split(",")` is cheap and `split("[,;]")` is not.
+    IT IS ALSO WHY PEOPLE BELIEVE `split` IS NOT A REGEX METHOD — the case they use most often never
+    reaches the regex engine, so the metacharacter behaviour never shows up until the day the delimiter
+    is a dot or a pipe.
+
+THE METACHARACTER CONSEQUENCES, which are the same twelve characters as `replaceAll`:
+
+    `"a.b.c".split(".")`   → `[]`. Every character matches, every piece is empty, all are trailing.
+    `"a|b".split("|")`     → `["a", "|", "b"]`. `|` is alternation between two EMPTY alternatives, so it
+                             matches a zero-width position everywhere.
+    `"a[b".split("[")`     → `PatternSyntaxException`. Loud, and therefore the lucky one.
+    `"a$b".split("$")`     → `["a$b"]`. `$` is end-of-input, so it matches once, at the end.
+
+    THE FIX IS `Pattern.quote(delimiter)` OR AN EXPLICIT ESCAPE — `split("\\\\.")` for a dot,
+    `split("\\\\|")` for a pipe.
+
+THE JAVA 8 CHANGE, worth knowing because it moved behaviour under people's feet:
+
+    `"abc".split("")` gives `["a", "b", "c"]` on Java 8 and later, and gave `["", "a", "b", "c"]` on
+    Java 7. The rule added was: a ZERO-WIDTH MATCH AT THE BEGINNING OF THE INPUT NEVER PRODUCES A LEADING
+    EMPTY STRING. It made splitting into characters behave sensibly, and it is a genuine behaviour change
+    between versions — one of very few in `String`.
+
+FOR REPEATED USE, PRECOMPILE:
+
+    private static final Pattern COMMA = Pattern.compile(",");
+    COMMA.split(line, -1);
+    COMMA.splitAsStream(line);        // Java 8+, lazy, no array allocated
+
+    `Pattern.splitAsStream` is worth knowing: it produces a `Stream<String>` without materialising the
+    array, which matters when you only want the first field of a very wide row.
+
+AND THE INVERSE OPERATION: `String.join(",", parts)` and `Collectors.joining(",")` — both of which handle
+empty elements correctly, so a round trip through `split(",", -1)` and `join(",")` is lossless while a
+round trip through the default `split(",")` is not.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — TRAILING EMPTIES SILENTLY DROPPED. `"a,b,,".split(",")` has length 2. A CSV row with blank
+trailing columns comes back short, and column indices shift.
+
+CASE 2 — `"".split(",")` RETURNS AN ARRAY OF ONE EMPTY STRING, not an empty array. Every loop over the
+result of splitting a blank line runs once.
+
+CASE 3 — `",,,,".split(",")` RETURNS A ZERO-LENGTH ARRAY. All pieces were empty and all were trailing.
+
+CASE 4 — LEADING EMPTIES ARE KEPT. `",,a".split(",")` has length 3. The asymmetry is mechanical: removal
+walks backwards only.
+
+CASE 5 — `split(".")` RETURNS AN EMPTY ARRAY. `.` matches every character. The single most common
+instance of the regex half of this trap.
+
+CASE 6 — `split("|")` SPLITS INTO CHARACTERS. `|` is alternation between empty alternatives, matching a
+zero-width position everywhere.
+
+CASE 7 — `split("$")` DOES NOTHING VISIBLE. `$` is end-of-input.
+
+CASE 8 — `split("[")` THROWS `PatternSyntaxException`. Loud, and therefore harmless.
+
+CASE 9 — USING `split` FOR CSV. Quoted fields containing commas and embedded newlines are not a regex
+problem. It works for the first hundred rows and then does not.
+
+CASE 10 — A POSITIVE LIMIT MISUNDERSTOOD. `split(",", 2)` gives at most two pieces and the SECOND KEEPS
+ITS DELIMITERS. That is the feature, not a bug — it is how you parse `key=value`.
+
+CASE 11 — `split` IN A HOT LOOP WITH A MULTI-CHARACTER PATTERN. A `Pattern.compile` per call. The
+single-character fast path hides this until the delimiter changes.
+
+CASE 12 — THE JAVA 7 → 8 BEHAVIOUR CHANGE. `"abc".split("")` gained or lost a leading empty depending on
+the version.
+
+CASE 13 — `split` ON A `null` STRING. `NullPointerException`, obviously — but note `String.valueOf(null)`
+tricks and `Objects.toString(s, "")` are the usual guards.
+
+CASE 14 — ASSUMING `split(",", -1)` FIXES EVERYTHING. It preserves trailing empties; it does not make
+the delimiter literal, and it does not handle quoting.""",
+
+"""5. THE ALTERNATIVES — parse structured data with a parser
+
+`split(regex, -1)` WHENEVER THE DATA IS STRUCTURED. Delimited files, protocol lines, anything where the
+field COUNT matters. Make it the habit, and treat the no-limit form as the exception.
+
+`Pattern.quote(delimiter)` when the delimiter is data rather than a pattern — a user-configured
+separator, a character from a config file. `split(Pattern.quote(sep), -1)` is the safe general form.
+
+A PRECOMPILED `static final Pattern` for anything used more than once, and `splitAsStream` when you want
+the fields lazily.
+
+`split(regex, 2)` FOR PREFIX PARSING. `"key=value=x".split("=", 2)` gives the key and the whole rest. Far
+better than `indexOf` plus two `substring` calls, and it handles the "no delimiter present" case
+gracefully by returning one element.
+
+FOR CSV — A REAL CSV LIBRARY. Apache Commons CSV, OpenCSV, univocity. Quoted fields containing commas,
+embedded newlines inside quotes, escaped quotes, and BOM handling are all specified in RFC 4180 and none
+of them is expressible as a split. `split(",")` ON A CSV FILE IS A BUG THAT PASSES ITS FIRST HUNDRED
+ROWS.
+
+FOR OTHER FORMATS — the same principle: `java.net.URI` for URLs, a JSON parser for JSON, `Properties` for
+properties files, `java.nio.file.Path` for paths. If the format has an escaping rule, `split` cannot
+express it.
+
+`Scanner` OR `BufferedReader` for streaming line-and-token work over large input, so you never hold the
+whole thing.
+
+`String.join(",", parts)` AND `Collectors.joining(",")` FOR THE INVERSE. A round trip through
+`split(",", -1)` and `join(",")` is lossless; through the default `split(",")` it is not — which is a
+neat way to demonstrate the data loss to someone who does not believe it.
+
+`s.isEmpty()` CHECKED BEFORE SPLITTING, if an empty input should mean zero fields rather than one blank
+field. The library will not do it for you.
+
+WHAT TO SAY: "`split` drops TRAILING empty strings and keeps LEADING ones, because removal walks
+backwards from the end — so a delimited row with blank trailing fields comes back short and every column
+index after it shifts, with nothing thrown. `split(",", -1)` is the fix, and I make that the default for
+structured data. It also takes a REGEX, so a dot or a pipe as a delimiter needs `Pattern.quote`. And for
+CSV I would use a CSV library, because quoted fields with embedded commas are not expressible as a
+split at all."
+
+""",
+
+"""6. HOW TO USE IT — numbered steps
+
+STEP 1 — USE `split(regex, -1)` FOR STRUCTURED DATA. Always. The default silently changes the field
+count.
+
+STEP 2 — REMEMBER LEADING EMPTIES SURVIVE AND TRAILING ONES DO NOT. The asymmetry is mechanical, not a
+bug.
+
+STEP 3 — HANDLE THE EMPTY INPUT EXPLICITLY. `"".split(",")` gives one blank field, not zero fields.
+Check `isEmpty()` first if that matters.
+
+STEP 4 — REMEMBER THE ARGUMENT IS A REGEX. `Pattern.quote(delimiter)` when the delimiter is data, or
+escape it: `"\\\\."` for a dot, `"\\\\|"` for a pipe.
+
+STEP 5 — USE `split(regex, 2)` FOR PREFIX PARSING. The second piece keeps its delimiters, which is
+exactly what `key=value` needs.
+
+STEP 6 — DO NOT PARSE CSV WITH `split`. Quoted fields with embedded commas and newlines are specified in
+RFC 4180 and are not a regex problem.
+
+STEP 7 — PRECOMPILE A `static final Pattern` for repeated use, and `splitAsStream` when you only need the
+first few fields.
+
+STEP 8 — VALIDATE THE FIELD COUNT after splitting. `if (parts.length != EXPECTED) reject(line)` turns a
+silent column shift into a clear rejection.
+
+STEP 9 — REMEMBER THE SINGLE-CHARACTER FAST PATH. `split(",")` never touches the regex engine, which is
+why the metacharacter behaviour stays hidden until the delimiter changes.
+
+STEP 10 — WATCH FOR THE JAVA 7 → 8 CHANGE IF YOU SPLIT ON `""`. A leading zero-width match no longer
+produces a leading empty.
+
+STEP 11 — USE `String.join` FOR THE INVERSE, and remember a round trip is lossless only with `-1`.
+
+STEP 12 — WHEN A ROW "HAS THE WRONG NUMBER OF COLUMNS", CHECK FOR TRAILING BLANKS FIRST. It is almost
+always this.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`"a,b,,".split(",")` gives you an array of length TWO, not four. Trailing empty strings are removed. But
+`",,a".split(",")` gives length three — leading empties are KEPT. And `",,,,".split(",")` gives a
+ZERO-length array, while `"".split(",")` gives an array of ONE empty string.
+
+Four calls, four surprising shapes, and the asymmetry is the whole thing: leading empties survive and
+trailing ones don't.
+
+Why that matters is that it's data loss that looks like tidiness. A CSV row like "Alice,,," — a name and
+three blank fields — becomes a one-element array, so every column index after it shifts. Nothing throws.
+The failure shows up as an ArrayIndexOutOfBounds two methods later, or worse, as correct-looking data in
+the wrong columns.
+
+The mechanism explains the asymmetry: split scans left to right emitting text between matches, and only
+AFTER the scan does it walk BACKWARDS removing empties. There's no forward equivalent, so leading empties
+are never candidates. That also explains the all-delimiters case giving zero length — five empty pieces
+produced, all trailing by the backward walk, all removed.
+
+The fix is one argument, and the semantics of it are worth knowing properly. The limit has three
+regimes. Positive means at most that many pieces, and the LAST piece keeps its delimiters. Zero — the
+default — means unlimited pieces with trailing empties REMOVED. And NEGATIVE means unlimited pieces with
+trailing empties KEPT. So `split(",", -1)` is the only way to get everything, and that's not obvious from
+a parameter called "limit", which is exactly why nobody reaches for it.
+
+The positive-limit case is the useful one people don't know: `"key=value=with=equals".split("=", 2)`
+gives you the key and the whole rest, delimiters intact. That's the right way to parse a key=value line
+whose value contains the delimiter, and it's better than indexOf plus two substrings.
+
+The other half is that split takes a REGEX. `"a.b.c".split(".")` returns an EMPTY array, because dot
+matches every character so every piece is empty and every empty is trailing. `split("|")` splits into
+individual characters, because pipe is alternation between two empty alternatives. And there's a reason
+people don't realise it's a regex: String.split has a FAST PATH for a single non-metacharacter, which
+does the split with indexOf and never compiles anything. So `split(",")` — the case everyone uses — never
+touches the regex engine, and the metacharacter behaviour stays hidden until the day the delimiter is a
+dot or a pipe.
+
+Practically: `split(regex, -1)` as the habit for structured data, `Pattern.quote` when the delimiter is
+data rather than a pattern, validate the field count after splitting, and for CSV use a CSV library —
+quoted fields with embedded commas and newlines are RFC 4180 and simply aren't expressible as a split.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── FOUR CALLS, FOUR SURPRISING SHAPES ──────────────────────────────
+    "a,b,,".split(",")      // ["a", "b"]        length 2 — TRAILING empties DROPPED
+    ",,a".split(",")        // ["", "", "a"]     length 3 — LEADING empties KEPT
+    ",,,,".split(",")       // []                length ZERO
+    "".split(",")           // [""]              length ONE, containing ""
+    // The asymmetry is the whole entry: leading survive, trailing do not.
+
+    // ── WHY: REMOVAL WALKS BACKWARDS ────────────────────────────────────
+    // split scans LEFT TO RIGHT emitting the text between matches:
+    //   ",,a"   → "", "", "a"
+    // and only AFTER the whole scan walks BACKWARDS removing empties. There is no
+    // forward equivalent, so leading empties are never candidates.
+    //   ",,,,"  → "", "", "", "", ""   → all five are "trailing" → all removed → []
+
+    // ── THE THREE LIMIT REGIMES ─────────────────────────────────────────
+    split(regex)      ==  split(regex, 0)
+    // limit  > 0   at most `limit` pieces; the LAST keeps its delimiters;
+    //              trailing empties KEPT
+    // limit == 0   unlimited pieces; trailing empties REMOVED     ← THE DEFAULT
+    // limit  < 0   unlimited pieces; trailing empties KEPT
+    "a,b,,".split(",", -1)  // ["a", "b", "", ""]   ← ALL FOUR. The fix, one argument.
+    // "-1" is conventional; any negative value behaves the same.
+
+    // ── THE POSITIVE LIMIT IS THE USEFUL ONE NOBODY KNOWS ───────────────
+    "key=value=with=equals".split("=", 2)
+    // → ["key", "value=with=equals"]
+    //            ^^^^^^^^^^^^^^^^^^ THE LAST PIECE KEEPS ITS DELIMITERS.
+    // The right way to parse a key=value line whose value contains the delimiter,
+    // an HTTP header, or a "name:rest" prefix. Better than indexOf + two substrings,
+    // and it returns ONE element gracefully when there is no delimiter at all.
+
+    // ── THE LOOP THAT RUNS WHEN IT SHOULD NOT ───────────────────────────
+    for (String field : line.split(",")) { process(field); }
+    // On a BLANK line this runs ONCE with "". An empty input has no delimiter, so
+    // there is one piece — the whole (empty) input — and the removal rule never
+    // strips the result to nothing when nothing matched.
+    if (!line.isEmpty()) for (String f : line.split(",", -1)) { ... }   // ← guard it
+
+    // ── AND IT IS A REGEX ───────────────────────────────────────────────
+    "a.b.c".split(".")      // []           `.` matches EVERY char → all empty →
+    //                                       all trailing → all removed
+    "a|b".split("|")        // ["a","|","b"] `|` = alternation of two EMPTY
+    //                                       alternatives → a zero-width match
+    //                                       everywhere
+    "a$b".split("$")        // ["a$b"]      `$` = end of input
+    "a[b".split("[")        // PatternSyntaxException — LOUD, therefore harmless
+    "a.b.c".split("\\\\.")   // ["a","b","c"]   ← escaped
+    "a|b".split(Pattern.quote("|"))   // ["a","b"]  ← when the delimiter is DATA
+
+    // ── WHY PEOPLE DO NOT REALISE IT IS A REGEX ─────────────────────────
+    // String.split has a FAST PATH: a single character that is not a metacharacter
+    // (or a two-character escape of one) is split with indexOf, NEVER compiling a
+    // regex. So split(",") — the case everyone uses — never touches the engine, and
+    // the metacharacter behaviour stays hidden until the delimiter becomes a dot.
+    private static final Pattern SEMI = Pattern.compile("[,;]");   // ← NOT the fast
+    SEMI.split(line, -1);                                          //   path: hoist it
+    SEMI.splitAsStream(line);          // Java 8+: lazy, no array allocated
+
+    // ── THE ROUND TRIP THAT PROVES THE DATA LOSS ────────────────────────
+    String row = "a,b,,";
+    String.join(",", row.split(","))       // "a,b"     ← LOSSY
+    String.join(",", row.split(",", -1))   // "a,b,,"   ← lossless
+
+    // ── AND A GENUINE VERSION DIFFERENCE ────────────────────────────────
+    "abc".split("")     // Java 8+: ["a","b","c"]      Java 7: ["","a","b","c"]
+    // Java 8 added: a zero-width match at the START never produces a leading empty.
+    // One of very few behaviour changes in String.""",
+
+"""9. THE TRACE — one CSV file, and one delimiter
+
+TRACE 1 — A FOUR-COLUMN FILE, ROW BY ROW:
+
+    header: name,email,phone,notes                    → 4 fields
+    row                          split(",")            length   what happens
+    ---------------------------------------------------------------------------------
+    "Alice,a@x.com,555,hi"        [Alice,a@x,555,hi]    4        fine
+    "Bob,b@x.com,,"               [Bob, b@x.com]        2        ← TWO FIELDS LOST
+    ",,,"                         []                    0        ← ALL FOUR LOST
+    ""                            [""]                  1        ← one BLANK field
+                                                                 where there are none
+    ---------------------------------------------------------------------------------
+    ROW 2 IS THE DANGEROUS ONE. `parts[2]` throws `ArrayIndexOutOfBoundsException`, in whatever method
+    reads the phone column — not here. And if the code defensively does
+    `parts.length > 2 ? parts[2] : ""`, it "works", and the notes column is silently never read for any
+    row with a blank phone.
+
+    NOW THE SAME FILE WITH `split(",", -1)`:
+    "Bob,b@x.com,,"               [Bob, b@x.com, "", ""]  4      correct
+    ",,,"                         ["", "", "", ""]        4      correct
+    ""                            [""]                    1      STILL one — the empty
+                                                                 input case is not
+                                                                 about trailing empties
+    ---------------------------------------------------------------------------------
+    THE LIMIT FIXES THREE OF THE FOUR ROWS. The empty-input case is a separate rule and needs an
+    explicit `isEmpty()` guard, which is worth separating in your head from the trailing-empty question.
+
+TRACE 2 — WHY THE ASYMMETRY EXISTS, step by step for `",,a,,"`:
+
+    step  what split does                                       pieces so far
+    ---------------------------------------------------------------------------------
+    1     scan left to right, emit text between matches          "", "", "a", "", ""
+    2     limit == 0, so walk BACKWARDS from the end removing
+          empty pieces
+    3       last piece ""     → remove                           "", "", "a", ""
+    4       next     ""       → remove                           "", "", "a"
+    5       next     "a"      → NOT empty → STOP                 "", "", "a"
+    ---------------------------------------------------------------------------------
+    THE WALK ONLY GOES BACKWARDS, AND IT STOPS AT THE FIRST NON-EMPTY. There is no forward pass, so the
+    two leading empties were never even considered. The asymmetry is not a policy about leading versus
+    trailing — it is that only one direction is scanned.
+
+TRACE 3 — THE DELIMITER THAT IS A METACHARACTER:
+
+    input        call                    what the regex means           result
+    ---------------------------------------------------------------------------------
+    "1.2.3"      split(".")               any character                  []      ✗ SILENT
+    "1.2.3"      split("\\\\.")            a literal dot                  [1,2,3] ✓
+    "1.2.3"      split(Pattern.quote(".")) a literal dot                  [1,2,3] ✓
+    "a|b"        split("|")                empty OR empty → zero-width    [a,|,b] ✗ SILENT
+    "a|b"        split("\\\\|")             a literal pipe                 [a,b]   ✓
+    "a[b"        split("[")                an unterminated class          THROWS  ✓ loud
+    ---------------------------------------------------------------------------------
+    THE TWO SILENT FAILURES ARE THE TWO MOST COMMON DELIMITERS AFTER THE COMMA. And the loud one is the
+    rarest. THE FAILURE MODE IS INVERSELY CORRELATED WITH HOW OFTEN THE CHARACTER IS USED.
+
+TRACE 4 — WHY THE REGEX NATURE STAYS HIDDEN:
+
+    call              takes the fast path?   compiles a regex?   metacharacters apply?
+    ---------------------------------------------------------------------------------
+    split(",")        YES — single char,     no                  never observed
+                      not a metacharacter
+    split(";")        yes                    no                  never observed
+    split("\\\\.")     yes — a two-char        no                  correctly literal
+                      escape of a
+                      metacharacter
+    split("[,;]")     NO                     YES                 fully
+    split(".")        NO                     YES                 fully — and silently
+    ---------------------------------------------------------------------------------
+    THE THREE MOST COMMON CALLS NEVER REACH THE REGEX ENGINE. Which is exactly why "split takes a regex"
+    is surprising to people who have used it a thousand times: their thousand uses were all on the fast
+    path, and the first time it matters is the first time the delimiter is punctuation the regex engine
+    cares about.
+
+WHAT PRODUCED WHAT:
+    A BACKWARD-ONLY REMOVAL PASS   produced the leading/trailing asymmetry — mechanical, not a policy.
+    limit == 0 AS THE DEFAULT       produced the data loss, and it was chosen for splitting sentences
+                                    rather than records.
+    THE SINGLE-CHARACTER FAST PATH  produced the widespread belief that `split` is not a regex method.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `split(regex)` is `split(regex, 0)`.
+    limit > 0: at most that many pieces, last keeps its delimiters, trailing empties KEPT.
+    limit == 0: unlimited, trailing empties REMOVED. The default.
+    limit < 0: unlimited, trailing empties KEPT.
+    Leading empties are always kept — removal walks backwards only.
+    `"".split(anything)` returns a one-element array containing `""`.
+    Fast path: a single non-metacharacter, or a two-character escape, is split with `indexOf` and never
+    compiles a regex.
+    Java 8+: a zero-width match at the start no longer produces a leading empty.
+
+THE #1 MISTAKE: the default limit on structured data. Trailing blank fields vanish and every later column
+index shifts, silently.
+
+THE #2 MISTAKE: expecting `"".split(",")` to be empty. It has one element.
+
+THE #3 MISTAKE: expecting the leading/trailing behaviour to be symmetric. Only the backward pass exists.
+
+THE #4 MISTAKE: `split(".")`. Returns an empty array. The most common regex instance of this trap.
+
+THE #5 MISTAKE: `split("|")` on pipe-delimited data. Splits into characters.
+
+THE #6 MISTAKE: not escaping a delimiter that is data. `Pattern.quote(sep)` is the general fix.
+
+THE #7 MISTAKE: `split` for CSV. Quoted fields with embedded commas and newlines are RFC 4180 and not
+expressible as a split.
+
+THE #8 MISTAKE: not knowing about a positive limit. `split("=", 2)` is the right way to parse
+`key=value`.
+
+THE #9 MISTAKE: `split` with a multi-character pattern in a hot loop. A `Pattern.compile` per call;
+hoist it.
+
+THE #10 MISTAKE: defensively reading `parts.length > i ? parts[i] : ""`. It converts a loud failure into
+a silent one — those columns are now never read.
+
+THE #11 MISTAKE: not validating the field count. One `if (parts.length != EXPECTED)` turns a column
+shift into a clear rejection.
+
+THE #12 MISTAKE: assuming a `split`/`join` round trip is lossless. It is only with a negative limit.
+
+ONE-SENTENCE TAKEAWAY: `split` removes TRAILING empty strings and keeps LEADING ones — not as a policy
+but because the removal pass only walks BACKWARDS from the end — so a delimited row ending in blank
+fields comes back short, every column index after it shifts, and nothing throws until some unrelated
+method indexes past the end; the limit argument has three regimes where only a NEGATIVE value means "all
+the pieces, empties included" and a POSITIVE one means "at most n, and the last keeps its delimiters"
+(which is the correct way to parse `key=value`), `"".split(",")` returns a ONE-element array containing
+`""` so every loop over a blank line runs once, and because `split` takes a REGEX whose single-character
+fast path hides that fact from almost everyone, `split(".")` returns an empty array and `split("|")`
+splits into characters — use `split(regex, -1)` for structured data, `Pattern.quote` when the delimiter
+is data, and a real CSV library for CSV.""",
+]
