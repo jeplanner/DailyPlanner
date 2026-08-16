@@ -77,6 +77,12 @@ header{
 .ico:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 .ico.wide{width:auto; padding:0 calc(var(--u) * .6);
           font-size:calc(var(--u) * .95); font-weight:650}
+/* Pinned state has to be visible at a glance from across the room, or the
+   toggle is a coin flip every time you look at it. */
+.ico[aria-pressed="true"]{
+  color:var(--ok); border-color:var(--ok);
+  background:color-mix(in srgb, var(--ok) 14%, transparent);
+}
 /* The native date input sits invisibly on top of the calendar button, so a
    tap opens the OS picker on every platform — no showPicker() support needed
    and no custom calendar widget to maintain. */
@@ -216,8 +222,9 @@ li.done .txt{text-decoration:line-through}
       <!-- Android will not let a web app draw over other apps, so the
            notification shade is the only surface this board can occupy while
            you are in a different app. This pins the next thing there. -->
-      <button class="ico" id="pin" aria-label="Pin today to notifications"
-              title="Pin today's summary to your notifications — visible while you are in other apps">&#128204;</button>
+      <button class="ico" id="pin" aria-pressed="false"
+              aria-label="Pin today to notifications"
+              title="Pin today's summary to your notifications — it refreshes itself when the day changes">&#128204;</button>
       {% endif %}
     </div>
 
@@ -492,19 +499,43 @@ li.done .txt{text-decoration:line-through}
   });
 
   // ── PIN TO NOTIFICATIONS ────────────────────────────────────────────
-  bind("pin", function () {
-    var btn = document.getElementById("pin");
-    btn.disabled = true;
-    fetch("/api/day-board/pin", {method: "POST", credentials: "same-origin"})
-      .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
-      .then(function (res) {
-        if (!res.ok)            toast("Could not pin — is push enabled?");
-        else if (!res.j.sent)   toast("No device is subscribed to push yet");
-        else                    toast("Pinned: " + res.j.title);
-      })
-      .catch(function () { toast("Could not reach the server"); })
-      .then(function () { btn.disabled = false; });
-  });
+  // A toggle, not a fire-and-forget button: once pinned, the server keeps it
+  // refreshed through the day, so the user needs to be able to see that it is
+  // on and to turn it off.
+  var pinBtn = document.getElementById("pin");
+
+  function setPinned(on) {
+    if (pinBtn) pinBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  if (pinBtn) {
+    // Reflect the server's state on load — otherwise the button lies after a
+    // refresh, which is worse than having no state at all.
+    fetch("/api/day-board/pin", {credentials: "same-origin"})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j) setPinned(j.active); })
+      .catch(function () { /* leave it unpressed */ });
+
+    pinBtn.addEventListener("click", function () {
+      var turningOff = pinBtn.getAttribute("aria-pressed") === "true";
+      pinBtn.disabled = true;
+      fetch(turningOff ? "/api/day-board/unpin" : "/api/day-board/pin",
+            {method: "POST", credentials: "same-origin"})
+        .then(function (r) {
+          return r.json().then(function (j) { return {ok: r.ok, j: j}; });
+        })
+        .then(function (res) {
+          if (!res.ok) { toast("Could not reach the server"); return; }
+          if (turningOff) { setPinned(false); toast("Unpinned"); return; }
+          setPinned(true);
+          if (!res.j.sent)          toast("Pinned — but no device is subscribed to push yet");
+          else if (!res.j.persisted) toast("Sent once. Run MIGRATION_DAY_BOARD_PIN.sql to keep it fresh");
+          else                       toast("Pinned: " + res.j.title + " — refreshes itself");
+        })
+        .catch(function () { toast("Could not reach the server"); })
+        .then(function () { pinBtn.disabled = false; });
+    });
+  }
 
   var toastTimer;
   function toast(msg) {

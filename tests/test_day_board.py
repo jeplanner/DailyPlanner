@@ -300,3 +300,79 @@ def test_summary_never_counts_done_tasks_as_outstanding():
     s = _summary([], tasks, [], 8 * 60)
     assert s["counts"]["open_tasks"] == 1
     assert "done one" not in s["body"]
+
+
+# ── the pinned notification's refresh logic ─────────────────────────────
+def test_signature_ignores_changes_the_user_would_not_see():
+    """The scheduler refreshes on CONTENT CHANGE rather than on a timer, so
+    the signature must track exactly what is rendered — no more, no less."""
+    a = {"title": "Now: Standup", "body": "To do: x"}
+    b = {"title": "Now: Standup", "body": "To do: x"}
+    c = {"title": "Now: Standup", "body": "To do: y"}
+    assert db.signature(a) == db.signature(b)
+    assert db.signature(a) != db.signature(c)
+
+
+def test_signature_is_stable_across_calls():
+    s = {"title": "t", "body": "b"}
+    assert db.signature(s) == db.signature(s)
+
+
+def test_ambient_flags_never_alert():
+    """A notification that refreshes itself must not buzz. If any of these
+    flips, the pin becomes unusable within a day and the user turns off
+    notifications for the whole app."""
+    assert db.AMBIENT["silent"] is True
+    assert db.AMBIENT["renotify"] is False
+    assert db.AMBIENT["vibrate"] == []
+    assert db.AMBIENT["requireInteraction"] is True
+
+
+def test_pin_uses_one_replaceable_tag():
+    """Without a stable tag every refresh stacks a new row in the shade."""
+    assert db.PIN_TAG == "day-board"
+
+
+def test_scheduler_refresh_respects_the_window_and_signature():
+    """Exercise the scheduler's decision logic directly: it must stay silent
+    when nothing has changed, and speak when something has."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from unittest.mock import patch
+    import services.push_scheduler as ps
+
+    tz = ZoneInfo("Asia/Kolkata")
+    summary = {"title": "Now: Standup", "body": "x", "counts": {}}
+    sig = db.signature(summary)
+
+    def run(pin_row, hour):
+        sent = []
+        with patch.object(ps, "get", return_value=[pin_row]), \
+             patch.object(ps, "update") as upd, \
+             patch.object(db, "build_summary", return_value=summary), \
+             patch.object(db, "send_pin",
+                          side_effect=lambda u, s: (sent.append(s), (1, 0))[1]):
+            ps._refresh_day_board_pins(
+                "u", datetime(2026, 8, 16, hour, 0, tzinfo=tz))
+        return sent, upd
+
+    base = {"user_id": "u", "is_active": True, "start_hour": 7,
+            "end_hour": 22, "min_interval_minutes": 10,
+            "last_signature": sig, "last_sent_at": None,
+            "pinned_date": "2026-08-16"}
+
+    # unchanged content, inside the window -> stays quiet
+    sent, _ = run(dict(base), 10)
+    assert sent == [], "an unchanged day must not push a notification"
+
+    # content changed -> sends
+    sent, _ = run(dict(base, last_signature="something-else"), 10)
+    assert len(sent) == 1
+
+    # outside the window -> silent even though the content changed
+    sent, _ = run(dict(base, last_signature="something-else"), 3)
+    assert sent == [], "must not refresh at 3am"
+
+    # a new day forces a send even when the text matches yesterday's
+    sent, _ = run(dict(base, pinned_date="2026-08-15"), 8)
+    assert len(sent) == 1, "the first refresh of a new morning must land"

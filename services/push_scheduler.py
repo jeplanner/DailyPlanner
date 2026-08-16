@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from requests.exceptions import HTTPError
 
 from services import push_service
-from supabase_client import get, post
+from supabase_client import get, post, update
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +218,67 @@ def _claim_send_slot(item_id, user_id, sent_date, reminder_time):
         return False
 
 
+def _refresh_day_board_pins(user_id, now_local):
+    """Refresh a pinned Day Board summary — but only when it would actually
+    look different.
+
+    THE OBVIOUS DESIGN IS A TIMER, AND IT IS THE WRONG ONE. "Re-send every 15
+    minutes" pushes an identical notification most of the time, because a day
+    does not change every quarter hour, and each of those costs battery and
+    push quota to tell the user nothing. So this hashes the summary TEXT and
+    sends only when the hash moves — when an event starts, when a task is
+    ticked, when the next thing becomes the current thing.
+
+    Three guards on top of that:
+      * a WINDOW, because a summary that refreshes at 3am is a notification
+        that wakes you to say nothing;
+      * a THROTTLE FLOOR, so ticking five checklist items in a row is one
+        refresh rather than five;
+      * a DATE ROLLOVER force-send, so the first refresh of a new morning
+        always lands even if today's text happens to match yesterday's.
+    """
+    from routes import day_board
+
+    rows = get("day_board_pins",
+               {"user_id": f"eq.{user_id}", "is_active": "eq.true"}) or []
+    if not rows:
+        return
+    pin = rows[0]
+
+    start_h = pin.get("start_hour", 7)
+    end_h = pin.get("end_hour", 22)
+    if not (start_h <= now_local.hour <= end_h):
+        return
+
+    today = now_local.date()
+    rolled_over = (pin.get("pinned_date") or "") != today.isoformat()
+
+    # Throttle floor — checked before doing any of the query work below.
+    last_sent = pin.get("last_sent_at")
+    if last_sent and not rolled_over:
+        try:
+            prev = datetime.fromisoformat(str(last_sent).replace("Z", "+00:00"))
+            gap = (now_local - prev.astimezone(now_local.tzinfo)).total_seconds() / 60
+            if gap < (pin.get("min_interval_minutes") or 10):
+                return
+        except (ValueError, TypeError):
+            pass                      # unparseable timestamp: treat as due
+
+    summary = day_board.build_summary(
+        user_id, today, now_minutes=now_local.hour * 60 + now_local.minute)
+    sig = day_board.signature(summary)
+
+    if sig == pin.get("last_signature") and not rolled_over:
+        return                        # nothing the user would see has changed
+
+    sent, _failed = day_board.send_pin(user_id, summary)
+    if sent:
+        update("day_board_pins", params={"user_id": f"eq.{user_id}"},
+               json={"last_signature": sig,
+                     "last_sent_at": now_local.isoformat(),
+                     "pinned_date": today.isoformat()})
+
+
 def tick():
     """Called every minute. Safe to call manually for debugging."""
     try:
@@ -236,6 +297,15 @@ def tick():
             hhmm = now_local.strftime("%H:%M")
             weekday = now_local.weekday()  # Mon=0..Sun=6
             today = now_local.date().isoformat()
+
+            # Pinned Day Board first, and in its own try: a failure here
+            # (missing table, bad row) must not stop the checklist reminders
+            # below, which are the notifications with an actual deadline.
+            try:
+                _refresh_day_board_pins(user_id, now_local)
+            except Exception:
+                logger.debug("Day Board pin refresh skipped for %s", user_id,
+                             exc_info=True)
 
             fires = _due_fires_for_user(user_id, hhmm, weekday, today)
             for it, rt in fires:

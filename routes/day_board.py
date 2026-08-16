@@ -314,6 +314,75 @@ def build_summary(user_id, plan_date, now_minutes=None):
     }
 
 
+#: The notification's payload flags. Ambient, not alerting: it refreshes
+#: itself, so buzzing on every update would make the pin unusable within a
+#: day. Kept here so the manual pin and the scheduled refresh cannot drift
+#: apart — two places sending "the same" notification differently is exactly
+#: the sort of thing nobody notices until the phone starts vibrating at 3pm.
+AMBIENT = {"silent": True, "renotify": False, "vibrate": [],
+           "requireInteraction": True}
+
+PIN_TAG = "day-board"      # one row in the shade, replaced — never a stack
+
+
+def signature(summary):
+    """A stable hash of what the user would SEE.
+
+    The scheduler re-sends when this changes rather than on a timer, so an
+    unchanged day costs nothing. Hashing the rendered text rather than the
+    underlying rows is deliberate: a task being reordered, or an event's
+    description being edited, does not change the notification and should not
+    produce one.
+    """
+    import hashlib
+    raw = f"{summary['title']}\n{summary['body']}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def send_pin(user_id, summary):
+    """Push the summary. Returns (sent, failed)."""
+    from services import push_service
+    return push_service.send_to_user(
+        user_id,
+        title=summary["title"],
+        body=summary["body"],
+        url="/day-board",
+        tag=PIN_TAG,
+        extra=AMBIENT,
+        urgency="low",          # let the push service batch it and save battery
+    )
+
+
+def _pin_row(user_id):
+    rows = get("day_board_pins", {"user_id": f"eq.{user_id}"}) or []
+    return rows[0] if rows else None
+
+
+@day_board_bp.route("/api/day-board/pin", methods=["GET"])
+@login_required
+def pin_status():
+    row = _pin_row(session["user_id"]) or {}
+    return jsonify({
+        "active": bool(row.get("is_active")),
+        "start_hour": row.get("start_hour", 7),
+        "end_hour": row.get("end_hour", 22),
+    })
+
+
+@day_board_bp.route("/api/day-board/unpin", methods=["POST"])
+@login_required
+def unpin():
+    """Stop refreshing. The row is kept so the window and cadence survive a
+    toggle — losing your settings because you turned something off for an
+    afternoon is a small betrayal."""
+    from supabase_client import update as sb_update
+    user_id = session["user_id"]
+    if _pin_row(user_id):
+        sb_update("day_board_pins", params={"user_id": f"eq.{user_id}"},
+                  json={"is_active": False})
+    return jsonify({"active": False})
+
+
 @day_board_bp.route("/api/day-board/pin", methods=["POST"])
 @login_required
 def pin_to_notifications():
@@ -330,25 +399,42 @@ def pin_to_notifications():
     lets the push service batch delivery and spare the battery, which is the
     right trade for a status update and the wrong one for a reminder.
     """
-    from services import push_service
+    from supabase_client import post as sb_post, update as sb_update
 
     user_id = session["user_id"]
     plan_date = user_today()
     now = user_now()
     summary = build_summary(user_id, plan_date,
                             now_minutes=now.hour * 60 + now.minute)
+    sent, failed = send_pin(user_id, summary)
 
-    sent, failed = push_service.send_to_user(
-        user_id,
-        title=summary["title"],
-        body=summary["body"],
-        url="/day-board",
-        tag="day-board",                # one row, replaced — never a stack
-        extra={"silent": True, "renotify": False, "vibrate": [],
-               "requireInteraction": True},
-        urgency="low",
-    )
-    return jsonify({"sent": sent, "failed": failed, **summary})
+    # Record it so the scheduler takes over from here. Written even if the
+    # send failed: the pin is the user's INTENT, and a push that failed
+    # because the phone was offline should still be refreshed later rather
+    # than silently forgotten.
+    state = {
+        "is_active": True,
+        "last_signature": signature(summary),
+        "last_sent_at": now.isoformat(),
+        "pinned_date": plan_date.isoformat(),
+    }
+    try:
+        if _pin_row(user_id):
+            sb_update("day_board_pins", params={"user_id": f"eq.{user_id}"},
+                      json=state)
+        else:
+            sb_post("day_board_pins", {"user_id": user_id, **state})
+    except Exception:
+        # A missing table must not break the button — the notification was
+        # already sent, it just will not auto-refresh until the migration is
+        # applied. Say so rather than failing the request.
+        logger.warning("day_board_pins unavailable — pin sent but will not "
+                       "auto-refresh (run MIGRATION_DAY_BOARD_PIN.sql)")
+        return jsonify({"sent": sent, "failed": failed, "active": False,
+                        "persisted": False, **summary})
+
+    return jsonify({"sent": sent, "failed": failed, "active": True,
+                    "persisted": True, **summary})
 
 
 @day_board_bp.route("/day-board")
