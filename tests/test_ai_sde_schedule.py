@@ -417,3 +417,26 @@ def test_the_card_offers_the_button_and_defaults_to_no_time(auth_client):
     # would hand back yesterday all evening west of Greenwich.
     assert "function todayISO" in html
     assert "toISOString" not in html.split("function todayISO")[1][:400]
+
+
+def test_the_button_is_reachable_without_opening_a_card(auth_client):
+    """It shipped buried at the bottom of the card body, past a ten-section
+    deep dive and a dozen worked examples — several screens of scrolling
+    down, on a page where opening the card fetches all of that first. She
+    looked for it and did not find it.
+
+    Two fixes, both asserted here: a 📅 in the card HEADER, which renders
+    with the list and needs no card opened at all; and the panel moved to
+    the TOP of the body, above the prep-time line, rather than down beside
+    the PDF link."""
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    assert "data-sched-head" in html, "no scheduler affordance in the card header"
+    # The header button sits in the same markup as the studied checkbox,
+    # which is what renders for every row of the list.
+    head = html.split('class="q-prac"')[1][:400]
+    assert "data-sched-head" in head, "the 📅 is not in the row header"
+    # ...and inside the body, the panel comes before the prep-time section
+    # rather than after the follow-ups.
+    body = html.split("function bodyHTML")[1]
+    assert body.index("schedulerHTML()") < body.index('fld("plan"'), \
+        "the scheduler is buried below the card content again"

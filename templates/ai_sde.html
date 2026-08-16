@@ -193,6 +193,13 @@
   .sched-msg.ok  { color: #047857; font-weight: 700; }
   .sched-msg.err { color: #b91c1c; font-weight: 700; }
   html.dark .sched-msg.ok { color: #6ee7b7; } html.dark .sched-msg.err { color: #fca5a5; }
+  /* The 📅 in the card header — the one that lets her plan a week without
+     opening a single card. Sized as a thumb target, not a chip. */
+  .q-sched-btn { flex: none; font-size: 15px; line-height: 1; background: none;
+                 border: 1px solid transparent; border-radius: 8px; padding: 4px 5px;
+                 cursor: pointer; opacity: .55; }
+  .q-sched-btn:hover, .q-sched-btn:focus-visible { opacity: 1; border-color: var(--color-border); }
+  .q-card.open .q-sched-btn { opacity: 1; }
   /* Its phone rules live in the single @media block below, not in one of
      their own — the page has exactly one mobile block by convention. */
 
@@ -525,7 +532,11 @@
             {open: cls === "answer"})
       : "";
     return `
-      <div class="secbar"><button type="button" class="btn sm" data-expand>Expand all</button></div>
+      <div class="secbar">
+        <button type="button" class="btn sm" data-expand>Expand all</button>
+        <button class="btn sm" type="button" data-sched-open>📅 Schedule this</button>
+      </div>
+      ${schedulerHTML()}
       ${fld("plan","Prep time & priority",
             `${e.prep_label||""} to learn properly · stack rank #${e.rank} of ${BANK.total}`
             + (e.priority_label ? ` · ${e.priority_label} in its band` : "")
@@ -562,17 +573,27 @@
       ${fld("pitfall","Common pitfalls",b.pitfalls)}
       ${fld("follow","Follow-up questions",b.followups)}
       ${b.tags&&b.tags.length ? `<div class="tags">${b.tags.map(t=>`<button class="tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : ""}
-      <div class="q-actions">
-        <a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a>
-        <button class="btn sm" type="button" data-sched-open>📅 Schedule this</button>
-        <div class="sched" hidden>
-          <label>Day <input type="date" class="sched-date" value="${todayISO()}"></label>
-          <label>Time <input type="time" class="sched-time"></label>
-          <button class="btn sm primary" type="button" data-sched-go>Put it on the calendar</button>
-          <span class="sched-msg">Leave the time blank and it sits at 12:00 AM, the top of that day. It lands in the AISDEPrep project, the calendar, and the Quick Bucket.</span>
-        </div>
-      </div>
+      <div class="q-actions"><a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a></div>
       ${quizHTML(e, b.quiz)}`;
+  }
+
+  /* The scheduler panel. It sits at the TOP of the card body, not down in
+     the actions row beside the PDF link where it started — these cards
+     carry a ten-section deep dive and a dozen worked examples, so the
+     bottom of one is several screens of scrolling away. An action you
+     have to hunt for is an action she won't use.
+
+     The date defaults to today and the time is left blank on purpose:
+     blank is the common case, and it means midnight, which is the top of
+     that day on the grid. */
+  function schedulerHTML(){
+    return `
+      <div class="sched" hidden>
+        <label>Day <input type="date" class="sched-date" value="${todayISO()}"></label>
+        <label>Time <input type="time" class="sched-time"></label>
+        <button class="btn sm primary" type="button" data-sched-go>Put it on the calendar</button>
+        <span class="sched-msg">Leave the time blank and it sits at 12:00 AM, the top of that day. It lands in the AISDEPrep project, the calendar, and the Quick Bucket.</span>
+      </div>`;
   }
 
 
@@ -738,6 +759,23 @@
     const d = new Date();
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+  }
+
+  /* Show or hide one card's scheduler, keeping the in-body toggle's label
+     honest about which state it is in. Scrolled into view on open because
+     the header 📅 can be pressed while the panel is off-screen — a panel
+     that opened somewhere you cannot see reads as a dead button. */
+  function showScheduler(card, open){
+    const box = card.querySelector(".sched");
+    if (!box) return;
+    if (open) box.removeAttribute("hidden"); else box.setAttribute("hidden", "");
+    const toggle = card.querySelector("[data-sched-open]");
+    if (toggle) toggle.textContent = open ? "✕ Cancel" : "📅 Schedule this";
+    if (open) {
+      box.scrollIntoView({block: "nearest", behavior: "smooth"});
+      const day = box.querySelector(".sched-date");
+      if (day) day.focus();
+    }
   }
 
   async function scheduleTopic(card, box){
@@ -925,6 +963,7 @@
       <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
+          <button class="q-sched-btn" type="button" data-sched-head title="Put this topic on a day" aria-label="Schedule this topic">📅</button>
           <span class="q-text">${esc(e.title)}</span>
           <span class="q-chips">
             ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
@@ -975,16 +1014,26 @@
       return;
     }
     // ── Schedule this topic onto a day ───────────────────────────────
-    // Both branches return before the fall-through at the bottom, which
-    // would otherwise read a press on the Add button as a card toggle
-    // and fold the card shut mid-edit.
+    // Every branch returns before the fall-through at the bottom, which
+    // would otherwise read a press on these buttons as a card toggle and
+    // fold the card shut mid-edit.
+    //
+    // The 📅 in the HEADER is the one that matters. Planning a week means
+    // scanning the list and dropping topics onto days — having to open a
+    // card first, on a page where opening a card fetches a ten-section
+    // deep dive, turns a minute of planning into ten.
+    const schedHead = e.target.closest("[data-sched-head]");
+    if (schedHead) {
+      card.classList.add("open");
+      // loadBody is a no-op once the body is in place, so this is safe to
+      // await either way — and awaiting is required, because on the first
+      // press the .sched box does not exist yet.
+      loadBody(card).then(() => showScheduler(card, true));
+      return;
+    }
     const schedOpen = e.target.closest("[data-sched-open]");
     if (schedOpen) {
-      const box = card.querySelector(".sched");
-      const opening = box.hasAttribute("hidden");
-      if (opening) box.removeAttribute("hidden"); else box.setAttribute("hidden", "");
-      schedOpen.textContent = opening ? "✕ Cancel" : "📅 Schedule this";
-      if (opening) box.querySelector(".sched-date").focus();
+      showScheduler(card, card.querySelector(".sched").hasAttribute("hidden"));
       return;
     }
     const schedGo = e.target.closest("[data-sched-go]");
