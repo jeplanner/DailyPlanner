@@ -2675,3 +2675,919 @@ class loads or a branch finally fires, and consequently any benchmark without wa
 consuming its result, without non-constant inputs, and without a forked JVM is measuring the harness
 rather than the code.""",
 ]
+
+
+DEEP["Garbage collection — the generational hypothesis, and which collector to pick"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — why nobody frees memory in Java
+
+In C you ask for memory and you give it back. Forget to give it back and the program grows until it
+dies; give it back twice, or use it after giving it back, and the program corrupts itself in a way that
+shows up somewhere else entirely, hours later. Those two bug classes have caused an enormous share of
+the security vulnerabilities of the last forty years.
+
+    JAVA REMOVES THE QUESTION. You never free anything. Periodically the JVM works out which objects
+    are still REACHABLE — meaning there is some chain of references from a running thread, a static
+    field, or a local variable to that object — and everything else is, by definition, garbage that no
+    code could ever look at again.
+
+    THE KEY WORD IS REACHABLE, NOT USED. The collector cannot tell whether you are FINISHED with an
+    object. It can only tell whether you can still GET to it. Which is why Java still has memory leaks:
+    a cache, a static list or a listener registry that holds a reference forever keeps the object alive
+    forever, and the collector is doing exactly its job while your heap fills.
+
+THE EVERYDAY VERSION: a library that never asks you to return books, but every night walks the building
+and removes any book that nobody has a note pointing to. If you leave a note in a drawer you forgot
+about, the book stays. That is a Java memory leak, and no amount of tuning fixes it.
+
+    THE SECOND SURPRISE IS THAT COLLECTION IS CHEAP IN PROPORTION TO WHAT SURVIVES, NOT TO WHAT DIED.
+    A young-generation collection copies the survivors elsewhere and then declares the entire region
+    empty in one step. Ten thousand dead objects cost NOTHING. This inverts the usual instinct:
+    creating short-lived garbage is close to free, and it is long-lived objects that are expensive.
+
+TERMS AS THEY APPEAR:
+- HEAP: where objects live. STACK: where local variables and frames live, per thread.
+- ROOT: a starting point for reachability — a thread's stack, a static field, a JNI reference.
+- STOP THE WORLD (STW): a pause where application threads are frozen so the collector can work.
+- MINOR / YOUNG GC: collects the young generation only. Frequent, short.
+- FULL GC: collects everything, usually with a long pause. Something has gone wrong if these are
+  frequent.""",
+
+"""2. THE INTUITION — the weak generational hypothesis, and what it buys
+
+One observation drives almost every collector ever shipped:
+
+    THE WEAK GENERATIONAL HYPOTHESIS: MOST OBJECTS DIE YOUNG.
+
+    It is not a theory, it is a measurement, and it holds across wildly different programs. The string
+    you built to log a line, the iterator, the boxed Integer, the intermediate list — the overwhelming
+    majority of allocations are dead within milliseconds. A smaller set — caches, connection pools,
+    the object graph of a long-lived session — lives essentially forever. VERY LITTLE LIVES A MEDIUM
+    AMOUNT OF TIME.
+
+IF THAT IS TRUE, TWO DESIGN DECISIONS FOLLOW IMMEDIATELY:
+
+    SEPARATE THE YOUNG FROM THE OLD, and collect the young region far more often. You spend your effort
+    where the garbage is, and you almost never touch the region where nothing is dying.
+
+    COLLECT THE YOUNG REGION BY COPYING, NOT BY SWEEPING. Walk the roots, copy every live object out to
+    another space, then mark the whole original region free in a single operation. THE COST IS
+    PROPORTIONAL TO THE SURVIVORS. If 98% of the region is dead — which the hypothesis says it will be
+    — you did 2% of the work of examining it object by object.
+
+    AND COPYING COMPACTS FOR FREE. Because survivors are copied out one after another, the space left
+    behind has no holes. Which means ALLOCATION becomes a pointer bump: to allocate, add the object's
+    size to a pointer. That is a handful of instructions, and it is why "object allocation is slow in
+    Java" has been wrong for about twenty years.
+
+THE MECHANISM THAT MAKES THE POINTER BUMP THREAD-SAFE WITHOUT A LOCK is worth naming: each thread gets
+its own THREAD-LOCAL ALLOCATION BUFFER (TLAB), a private slice of Eden. Allocating inside your own TLAB
+needs no synchronisation at all. Only refilling it does.
+
+THE PRICE OF THE SPLIT, and it is the part that is easy to forget: if the collector only walks the
+young region, it must still find references INTO the young region FROM the old one. It cannot scan the
+whole old generation — that would defeat the purpose. So the JVM tracks those references as they are
+created, using a WRITE BARRIER on every reference store into an old object, recording the location in a
+CARD TABLE. Every reference assignment in your program pays a tiny tax so that young collections can
+stay short. THAT TRADE — a small constant cost everywhere to buy a large saving at collection time — is
+the shape of nearly every choice in this area.""",
+
+"""3. THE MECHANISM — Eden, survivors, promotion, and what each collector does differently
+
+THE CLASSIC LAYOUT:
+
+    ┌───────────────── YOUNG ─────────────────┐  ┌──────── OLD (Tenured) ────────┐
+    │   Eden (large)   │  S0  │  S1  │           │    long-lived objects         │
+    └──────────────────┴──────┴──────┘           └───────────────────────────────┘
+
+    ALLOCATION goes into Eden, by pointer bump inside a TLAB.
+    WHEN EDEN FILLS → a MINOR GC. Live objects in Eden and in the occupied survivor space are copied
+    into the OTHER survivor space; Eden and the vacated survivor are then wholesale empty.
+    EACH SURVIVAL INCREMENTS AN AGE COUNTER in the object header. Past the TENURING THRESHOLD the
+    object is PROMOTED to the old generation instead.
+    THE OLD GENERATION is collected rarely and expensively.
+
+    NOTE WHAT THIS IMPLIES: AN OBJECT'S ADDRESS CHANGES. Repeatedly. Which is why Java has no
+    meaningful pointer arithmetic, why `identityHashCode` has to be stored once computed, and why a
+    native library holding a raw address must pin the object.
+
+THE COLLECTORS, and the ONE trade-off that distinguishes them — you may have low pause time, high
+throughput, or small footprint, and no collector gives all three:
+
+    SERIAL       one thread, stop-the-world. Small heaps, containers with one CPU. Genuinely the
+                 fastest choice below a few hundred MB, because it has no coordination cost.
+    PARALLEL     multiple threads, still fully stop-the-world. THE HIGHEST THROUGHPUT of any collector.
+                 Correct for batch jobs where a two-second pause costs nothing.
+    G1           the default since Java 9. Splits the heap into REGIONS (1–32 MB) rather than
+                 contiguous generations, and each region is designated Eden, Survivor or Old
+                 DYNAMICALLY. Marks concurrently, then evacuates the regions with the most garbage
+                 first — "garbage first" — so it can aim at a PAUSE TARGET (default 200 ms) by simply
+                 collecting fewer regions per cycle.
+    ZGC          concurrent almost everywhere, sub-millisecond pauses that are INDEPENDENT OF HEAP
+                 SIZE — the same pause at 4 GB and 4 TB. Uses coloured pointers and LOAD BARRIERS: the
+                 barrier fixes up a reference as it is read, so objects can be relocated while the
+                 application runs. Generational since Java 21. Costs some throughput and footprint.
+    SHENANDOAH   the same goal by a different route, concurrent evacuation with a forwarding pointer.
+
+TWO G1 DETAILS THAT CAUSE REAL INCIDENTS:
+
+    HUMONGOUS OBJECTS — anything larger than half a region is allocated directly into contiguous Old
+    regions and is handled poorly. A steady stream of large arrays can fragment the heap and trigger
+    full GCs on a heap that looks nowhere near full.
+    EVACUATION FAILURE — if there is no free region to copy survivors into, G1 falls back to a FULL,
+    single-threaded, compacting collection. That is the multi-second pause in the log.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — THE STATIC COLLECTION THAT ONLY GROWS. A `static Map` used as a cache with no eviction. Every
+entry is reachable, so nothing is collectable, and the leak is in your code, not the collector.
+
+CASE 2 — THE UNREGISTERED LISTENER. An object registers a callback and is never removed. The registry
+holds it, so it and everything it references live forever. THE MOST COMMON LEAK IN LONG-RUNNING JAVA
+APPLICATIONS.
+
+CASE 3 — THE INNER CLASS THAT OUTLIVES ITS OUTER. A non-static inner class holds an implicit reference
+to the enclosing instance. Hand one to a long-lived executor and the enclosing object cannot die.
+
+CASE 4 — ThreadLocal IN A POOLED THREAD. The thread is never destroyed, so the value is never cleared.
+Classic in servlet containers. Always `remove()` in a finally.
+
+CASE 5 — PROMOTION OF THINGS THAT SHOULD HAVE DIED. If the survivor spaces are too small, objects are
+promoted to the old generation prematurely, the old generation fills, and full GCs begin. THE SYMPTOM
+IS OLD-GEN GROWTH IN AN APPLICATION THAT ALLOCATES NOTHING LONG-LIVED.
+
+CASE 6 — ALLOCATION RATE AS THE REAL DIAL. If the application allocates faster than the collector can
+keep up, no tuning flag saves it. GC time is a symptom; allocation rate is usually the cause.
+
+CASE 7 — HUMONGOUS ALLOCATION UNDER G1. Large arrays fragment the region layout and force full GCs.
+
+CASE 8 — CALLING `System.gc()`. A hint, not a command. Under some collectors it forces a full
+stop-the-world collection you did not want. Production code should essentially never call it, and
+`-XX:+DisableExplicitGC` exists because libraries do.
+
+CASE 9 — FINALIZERS. Deprecated, and rightly: they run on an unspecified thread at an unspecified time,
+can resurrect the object, and DELAY collection by at least one extra cycle. Use try-with-resources for
+resources and `Cleaner` if you truly need a native-memory hook.
+
+CASE 10 — HEAP TOO LARGE. Above about 32 GB the JVM can no longer use COMPRESSED ORDINARY OBJECT
+POINTERS (4-byte references instead of 8), so every reference doubles in size and effective capacity
+can go DOWN as you raise -Xmx. A 31 GB heap can hold more objects than a 33 GB one.
+
+CASE 11 — CONTAINER MEMORY LIMITS. A JVM that does not see the cgroup limit sizes its heap from the
+HOST's memory and is killed by the OOM killer with no Java-level error at all. Modern JVMs are
+container-aware; older ones need -XX:MaxRAMPercentage.
+
+CASE 12 — MEASURING GC BY PAUSE COUNT. What matters is the percentage of wall time spent paused and
+the tail of the pause distribution, not how many collections happened.""",
+
+"""5. THE ALTERNATIVES — how to choose, and what to reach for instead of a flag
+
+CHOOSING A COLLECTOR is mostly one question: WHAT DOES A PAUSE COST YOU?
+
+    A BATCH JOB, A BUILD, AN ETL PIPELINE. Nothing is waiting. Use PARALLEL — it has the highest
+    throughput of anything available, precisely because it does not do concurrent work.
+    A WEB SERVICE WITH ORDINARY LATENCY GOALS. G1, the default. Set a pause target and leave it.
+    A LATENCY-CRITICAL SERVICE, OR A VERY LARGE HEAP. ZGC or Shenandoah. Pauses stay sub-millisecond
+    at any heap size, and you pay in throughput and footprint.
+    A SMALL CONTAINER, ONE OR TWO CPUS. SERIAL. Concurrent collectors need spare cores; without them
+    they steal from the application.
+    A PROCESS THAT EXITS BEFORE IT COLLECTS. EPSILON — a no-op collector. Genuinely useful for
+    short-lived tools and for proving how much memory a benchmark really allocates.
+
+BEFORE TUNING ANYTHING, REDUCE ALLOCATION. It is usually the larger win and it is always the more
+durable one:
+    primitive collections or arrays instead of `List<Integer>`;
+    `StringBuilder` rather than concatenation in a loop;
+    `mapToInt` rather than `Stream<Integer>`;
+    reusing buffers on genuinely hot paths.
+    AND MEASURE FIRST — escape analysis may already have removed the allocation you are worried about.
+
+REFERENCE TYPES, for the cases where you want the collector to help you:
+    SOFT       cleared only when memory is tight. A memory-sensitive cache — though in practice a
+               bounded LRU cache is easier to reason about and behaves better.
+    WEAK       cleared as soon as nothing strong points at it. This is what WeakHashMap uses, and it
+               is the right tool for keying metadata by an object you do not own.
+    PHANTOM    for cleanup after collection, via a reference queue. What `Cleaner` is built on.
+
+OFF-HEAP AND ALTERNATIVES:
+    ByteBuffer.allocateDirect and the Java 21+ Foreign Function & Memory API move data outside the
+    heap, so the collector never walks it. Right for very large caches and for I/O buffers; wrong
+    almost everywhere else, because you have reintroduced manual lifetime management.
+
+WHAT TO LOOK AT INSTEAD OF GUESSING:
+    -Xlog:gc* (Java 9+) for the log. A heap dump plus Eclipse MAT for a leak — its dominator tree
+    answers "what is keeping this alive", which is the only question that matters. JFR for allocation
+    profiling by call site.
+
+WHAT TO SAY: "Default to G1, use Parallel for batch and ZGC for latency-critical or very large heaps.
+But almost every GC problem I have actually seen was an allocation-rate problem or a retention bug, and
+neither is fixed with a flag."
+
+""",
+
+"""6. HOW TO DIAGNOSE A GC PROBLEM — numbered steps
+
+STEP 1 — ESTABLISH WHICH PROBLEM YOU HAVE. Long pauses, or growth? They have almost nothing in common.
+Pauses are a tuning and collector question; growth is a retention bug in your code.
+
+STEP 2 — TURN ON THE LOG. `-Xlog:gc*:file=gc.log:time,uptime,level,tags`. It costs almost nothing and
+you cannot reason without it.
+
+STEP 3 — READ THE PERCENTAGE, NOT THE COUNT. Time paused as a fraction of wall time, plus the p99 pause.
+Thousands of 1 ms pauses are healthy; three 4-second pauses are not.
+
+STEP 4 — CHECK WHETHER THE OLD GENERATION IS GROWING ACROSS FULL GCs. Old-gen occupancy that is higher
+after every full collection than after the last one is a LEAK, and no flag will help.
+
+STEP 5 — FOR A LEAK, TAKE A HEAP DUMP AND OPEN THE DOMINATOR TREE. `jcmd <pid> GC.heap_dump`. Ask what
+is retaining the largest object, not what is largest.
+
+STEP 6 — FOR PAUSES, LOOK AT THE ALLOCATION RATE FIRST. MB/s promoted and MB/s allocated. High
+allocation is fixed in code and only mitigated by flags.
+
+STEP 7 — CHECK FOR PREMATURE PROMOTION. Objects reaching the old generation at a low age means the
+young generation or survivor spaces are too small for the workload.
+
+STEP 8 — LOOK FOR FULL GCs AND NAME THE CAUSE. Evacuation failure, humongous allocation, metaspace, or
+an explicit `System.gc()`. Each has a different fix.
+
+STEP 9 — SET -Xms EQUAL TO -Xmx for a server. Heap resizing causes full collections, and a server will
+reach its maximum anyway.
+
+STEP 10 — CHANGE ONE FLAG AT A TIME AND MEASURE. GC tuning is where cargo-culted flag lists go to
+accumulate; most inherited flag sets contain options that are obsolete, contradictory, or no longer
+exist.
+
+STEP 11 — IN A CONTAINER, VERIFY THE JVM SEES THE LIMIT. `-XX:MaxRAMPercentage` and check the resolved
+heap size, or the OOM killer will end the process with no Java-level error.
+
+STEP 12 — BEFORE ANY OF THIS, CONSIDER ALLOCATING LESS. It is the fix that keeps working after the
+next JVM upgrade changes all the defaults.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'The collector works out which objects are still REACHABLE — meaning there's a chain of references from
+a running thread, a static field or a local variable — and everything else is garbage by definition,
+because no code could ever look at it again.
+
+The key word is reachable, not used. The collector can't tell whether you're FINISHED with an object,
+only whether you can still get to it. That's why Java still has memory leaks: a static cache, a
+listener registry, a ThreadLocal in a pooled thread. The collector is doing its job exactly right while
+the heap fills.
+
+The design is built on one measurement, the weak generational hypothesis: most objects die young. It's
+not a theory, it holds across wildly different programs. So you split the heap, collect the young part
+constantly, and collect the young part BY COPYING — walk the roots, copy the survivors out, then mark
+the whole region free in one step. The cost is proportional to what SURVIVED, not to what died. If 98%
+of the region is garbage you did 2% of the work.
+
+That inverts the usual instinct. Creating short-lived garbage is nearly free. And because copying
+leaves no holes, allocation becomes a pointer bump — a handful of instructions in a thread-local buffer
+with no synchronisation at all. "Allocation is slow in Java" has been wrong for about twenty years.
+
+The price is that if you only collect the young region, you still have to find references INTO it from
+the old one — and you can't scan the old generation, that would defeat the point. So there's a write
+barrier on every reference store into an old object, recording it in a card table. Your program pays a
+tiny tax on every reference assignment to keep young collections short. That trade — a small cost
+everywhere to buy a big saving at collection — is the shape of nearly every decision in this area.
+
+On collectors: there's one trade-off, and you get two of three. Throughput, pause time, footprint.
+Parallel is the highest throughput and fully stop-the-world, so it's right for batch. G1 is the default
+— region-based, marks concurrently, evacuates the regions with the most garbage first, which is how it
+can aim at a pause target: collect fewer regions. ZGC gives sub-millisecond pauses INDEPENDENT of heap
+size, same pause at 4 GB and 4 TB, using load barriers that fix up references as they're read so
+objects can move while the application runs. Costs throughput. And Serial genuinely wins on a
+one-CPU container, because concurrent collectors need spare cores to be concurrent in.
+
+But honestly — almost every GC problem I've actually seen was either an allocation-rate problem or a
+retention bug, and neither is fixed with a flag. So I'd separate the two questions first: long pauses,
+or growth? If old-gen occupancy is higher after every full GC than after the last one, that's a leak,
+take a heap dump and read the dominator tree. If it's pauses, look at allocation rate before touching
+any option.'""",
+
+"""8. THE CODE, LINE BY LINE — a leak, and why it is not the collector's fault
+
+    // ── THE LEAK EVERY LONG-RUNNING SERVICE HAS HAD ─────────────────────
+    public class EventBus {
+        private static final List<Listener> LISTENERS = new ArrayList<>();
+        //                   ^^^^^^ STATIC. A GC ROOT. Everything in this list is
+        //                   reachable from a root forever, by definition.
+
+        public static void register(Listener l) { LISTENERS.add(l); }
+        // ^ and no unregister. Every listener ever added lives until the JVM exits,
+        //   ALONG WITH EVERYTHING IT REFERENCES — which for an inner class is the
+        //   entire enclosing object graph.
+    }
+
+    class Session {                          // 50 MB of cached user state
+        void start() {
+            EventBus.register(e -> handle(e));
+    //                        ^^^^^^^^^^^^^ this lambda captures `this`, because
+    //      handle() is an instance method. The Session — and its 50 MB — is now
+    //      reachable from a static field. Ten thousand sessions later, OutOfMemory.
+        }
+    }
+    // THE COLLECTOR IS CORRECT AT EVERY STEP. Reachable is not the same as needed.
+
+    // ── THE OTHER CLASSIC: ThreadLocal IN A POOLED THREAD ───────────────
+    static final ThreadLocal<Context> CTX = new ThreadLocal<>();
+    void handleRequest(Request r) {
+        CTX.set(new Context(r));             // ← the POOL thread never dies, so
+        process();                           //   this value is never cleared, and
+    }                                        //   it holds the request alive.
+    // FIX: try { ... } finally { CTX.remove(); }
+
+    // ── WHY ALLOCATION IS NOT THE THING TO WORRY ABOUT ──────────────────
+    for (int i = 0; i < 1_000_000; i++) {
+        String s = "row " + i;                // a million short-lived objects
+        process(s);
+    }
+    // ^ These die in Eden. A minor GC copies only the SURVIVORS — near zero — and
+    //   declares the whole region empty. The million dead objects cost NOTHING.
+    //   Each allocation was a pointer bump inside this thread's own TLAB: no lock,
+    //   no free list, a handful of instructions. And escape analysis may have
+    //   removed some of them entirely.
+
+    // ── THE ALLOCATION THAT ACTUALLY HURTS ──────────────────────────────
+    cache.put(key, new byte[8 * 1024 * 1024]);
+    //             ^^^^^^^^^^^^^^^^^^^^^^^^^ larger than half a G1 region, so it is
+    //   a HUMONGOUS object: allocated straight into contiguous Old regions, never
+    //   young-collected, and a steady stream of them fragments the heap into full
+    //   GCs while the heap looks far from full.
+
+    // ── WHAT TO RUN, NOT WHAT TO GUESS ──────────────────────────────────
+    // -Xlog:gc*:file=gc.log:time,uptime,level,tags   the log
+    // jcmd <pid> GC.heap_info                        live occupancy
+    // jcmd <pid> GC.heap_dump /tmp/h.hprof           then MAT's dominator tree
+    // System.gc();  ← a HINT, and under some collectors a full STW pause you did
+    //                 not ask for. Production code should never call it.""",
+
+"""9. THE TRACE — one minor GC, and the cost that is not where you expect
+
+STARTING STATE. Eden 512 MB, survivors 64 MB each, old 2 GB. The application has just allocated a
+million short-lived strings and holds onto three of them.
+
+    step  what happens                                          cost
+    -----------------------------------------------------------------------------------
+    1     Eden fills. An allocation cannot bump the pointer.      —
+    2     Threads roll forward to a SAFEPOINT and stop.           the pause begins here,
+          Not instantly — a thread in a long counted loop can     and "time to safepoint"
+          take a while to reach one.                              is its own metric
+    3     Roots are scanned: every thread stack, every static
+          field, JNI references.                                  proportional to ROOTS
+    4     The CARD TABLE is consulted for old→young references.   proportional to DIRTY
+          This is why the write barrier existed.                  CARDS, not to old size
+    5     Live objects are COPIED to the empty survivor space,
+          ages incremented, anything past the tenuring
+          threshold promoted to Old.                              PROPORTIONAL TO SURVIVORS
+    6     Eden and the old survivor space are declared empty
+          wholesale. No per-object work.                          O(1)
+    7     Threads resume.                                         pause ends
+
+    THE MILLION DEAD OBJECTS APPEAR NOWHERE IN THIS TABLE. That is the whole point. Step 5 touched
+    three objects. Step 6 reclaimed 512 MB in a single operation.
+
+NOW THE SAME TRACE WITH A CACHE THAT RETAINS 400 MB OF WHAT WAS ALLOCATED:
+
+    step 5     400 MB must be COPIED, then promoted           the pause grows by orders
+    step 6     unchanged                                      of magnitude
+    old gen    grows by 400 MB every cycle                    → old fills → FULL GC
+
+    SAME ALLOCATION RATE. SAME COLLECTOR. SAME FLAGS. The difference is entirely SURVIVAL RATE, which
+    is a property of your code. This is the single most useful thing to know about GC: you tune the
+    collector, but you control the survival rate, and the survival rate is what the cost is
+    proportional to.
+
+READING THE LOG — what each line is telling you:
+
+    [gc] Pause Young (Normal) 512M->8M(2G) 4.2ms
+          ^ healthy. 512 MB in, 8 MB survived, 4 ms. Survival rate 1.5%.
+
+    [gc] Pause Young (Normal) 512M->480M(2G) 210ms
+          ^ 94% SURVIVED. Either a leak, or the young generation is too small for the
+            workload so objects that would have died are being caught mid-life.
+
+    [gc] Pause Full (G1 Evacuation Pause) 1.9G->1.8G(2G) 3400ms
+          ^ THE INCIDENT. A full, compacting collection that freed almost nothing.
+            G1 had no free region to evacuate into. The next one will be worse.
+
+    [gc] Pause Young (Concurrent Start) (G1 Humongous Allocation)
+          ^ an object larger than half a region. A steady stream of these fragments
+            the heap, and the heap will not look full when it fails.
+
+    THE DIAGNOSTIC RULE THAT COVERS MOST CASES: compare the number AFTER the arrow across successive
+    FULL collections. If it climbs every time, you have a retention bug and no flag will help. If it
+    returns to the same floor, the heap is behaving and the question is pauses, not growth.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Allocation is a pointer bump in a thread-local buffer — a handful of instructions, no lock.
+    A young collection costs O(survivors), NOT O(allocated). Dead objects are free.
+    A full collection costs O(live heap) and is the pause that shows up in incident reviews.
+    The write barrier taxes every reference store into an old object; that is what buys short young
+    pauses.
+    G1 pause target: default 200 ms, achieved by collecting FEWER REGIONS, not by working faster.
+    ZGC pauses are sub-millisecond and INDEPENDENT of heap size — 4 GB and 4 TB alike.
+    Above ~32 GB compressed oops are lost and every reference doubles in size.
+
+THE #1 MISTAKE: believing Java cannot leak. Reachable is not the same as needed, and unbounded caches,
+listener registries and ThreadLocals in pooled threads leak exactly as reliably as `malloc` without
+`free`.
+
+THE #2 MISTAKE: tuning flags for a retention bug. If old-gen occupancy after each full GC keeps
+climbing, no option helps. Take a heap dump.
+
+THE #3 MISTAKE: optimising away short-lived allocation. It is nearly free, and escape analysis may have
+removed it already. Optimise SURVIVAL, not allocation.
+
+THE #4 MISTAKE: calling `System.gc()`. A hint that can become a full stop-the-world pause you did not
+want.
+
+THE #5 MISTAKE: raising -Xmx past 32 GB without realising compressed oops are lost, so effective
+capacity can fall as the number rises.
+
+THE #6 MISTAKE: using a concurrent collector on one or two cores. It needs spare CPU to be concurrent
+in; without it, it steals from the application. Serial is genuinely correct there.
+
+THE #7 MISTAKE: judging GC health by collection count. Percentage of wall time paused and the p99
+pause are the numbers.
+
+THE #8 MISTAKE: relying on finalizers. Unspecified thread, unspecified time, and they DELAY collection
+by an extra cycle. try-with-resources, or `Cleaner`.
+
+THE #9 MISTAKE: leaving -Xms below -Xmx on a server. Heap growth triggers full collections on the way
+to a maximum the server will reach anyway.
+
+THE #10 MISTAKE: ignoring humongous allocations under G1. Large arrays fragment the region layout and
+force full GCs on a heap that looks half empty.
+
+THE #11 MISTAKE: copying an inherited flag list. Most contain options that are obsolete, mutually
+contradictory, or removed in the JVM actually running.
+
+ONE-SENTENCE TAKEAWAY: garbage collection reclaims what is UNREACHABLE — not what is unused, which is
+why Java leaks — and it is built on the measurement that most objects die young, so the heap is split
+and the young region collected by COPYING SURVIVORS OUT and freeing the rest wholesale, making the cost
+proportional to what lived rather than what died and making allocation a lock-free pointer bump; choose
+Parallel for throughput, G1 by default, ZGC when pauses matter at any heap size, and Serial on one
+core — but diagnose growth and pauses as separate problems first, because almost every real GC incident
+is a retention bug or an allocation rate, and neither is fixed with a flag.""",
+]
+
+
+DEEP["Virtual threads (Java 21) — what actually changed"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — getting blocking code back
+
+For twenty-five years a Java thread was an OPERATING SYSTEM thread. One-to-one. The OS reserved about a
+megabyte of stack for each one, switching between them meant a trip through the kernel, and the
+practical ceiling was a few thousand per process — not because Java said so, but because the OS did.
+
+    THAT CEILING SHAPED HOW EVERYONE WROTE SERVERS. The natural design — one thread per request, write
+    plain blocking code, let the thread wait — stopped working the moment you needed ten thousand
+    concurrent requests. So the industry moved to callbacks, then futures, then reactive streams: every
+    blocking call rewritten as "start this, and here is what to do when it finishes".
+
+    THE COST OF THAT MOVE WAS ENORMOUS AND MOSTLY UNCOUNTED. Stack traces became useless, because the
+    stack no longer contains the logical caller. Breakpoints stopped meaning anything. try/catch and
+    try-with-resources no longer spanned the operation. ThreadLocal stopped working. And the code
+    inverted: the sequence you wanted to express was scattered across a dozen callbacks.
+
+    VIRTUAL THREADS REMOVE THE CEILING, SO THE ORIGINAL DESIGN WORKS AGAIN. A virtual thread is
+    scheduled by the JVM, not the OS. It costs a few hundred bytes, not a megabyte. You can have
+    millions. So you go back to writing `var response = http.send(request)` on one line, blocking, in a
+    thread of its own — and your stack traces, debugger, and exception handling all work again.
+
+    THE HEADLINE IS NOT SPEED. A virtual thread does not make one request faster. It makes it cheap to
+    have a million requests in flight, WITHOUT giving up the programming model. THAT is the change.
+
+THE EVERYDAY VERSION: a restaurant where each waiter can serve exactly one table and must stand there
+while the kitchen cooks. With ten waiters you seat ten tables. The old fix was to make every waiter
+juggle twenty tables with a clipboard of half-finished orders — more throughput, far more mistakes, and
+nobody can tell you what is happening at table six. Virtual threads make waiters nearly free instead:
+one per table again, and each one can simply stand and wait.
+
+TERMS AS THEY APPEAR:
+- PLATFORM THREAD: the old kind. One OS thread each.
+- CARRIER THREAD: a platform thread that a virtual thread is currently running on.
+- MOUNT / UNMOUNT: a virtual thread being placed on, or lifted off, a carrier.
+- PINNING: a virtual thread that cannot unmount, so it holds its carrier while blocked.""",
+
+"""2. THE INTUITION — why blocking became cheap
+
+WHEN A PLATFORM THREAD BLOCKS ON I/O, the OS parks it. Its stack — up to a megabyte of reserved address
+space — sits idle, and the kernel must be involved to switch to something else. Ten thousand of those
+is ten gigabytes of reserved stack and a scheduler with ten thousand entries to manage.
+
+    A VIRTUAL THREAD'S STACK LIVES ON THE JAVA HEAP. That single fact is the whole design.
+
+    When a virtual thread blocks, the JVM COPIES ITS STACK FRAMES TO THE HEAP, lifts it off the carrier,
+    and runs a different virtual thread on that same carrier. When the I/O completes, the frames are
+    copied back onto a carrier — not necessarily the same one — and it continues from exactly where it
+    was. The Java code never notices. It called `read()`, and `read()` returned.
+
+    SO "BLOCKING" NO LONGER MEANS "OCCUPYING AN OS THREAD". It means "parking a small heap object". A
+    blocked virtual thread costs roughly what its live stack costs, which starts in the hundreds of
+    bytes and grows only as deep as the call chain actually goes.
+
+    AND THE SWITCH NEVER ENTERS THE KERNEL. The JVM schedules virtual threads itself, onto a small
+    ForkJoinPool of carriers sized by default to the number of processors. Switching is a user-space
+    operation, roughly the cost of a method call plus some copying, rather than a kernel context
+    switch.
+
+WHICH GIVES THE COMPARISON THAT MATTERS:
+
+                             platform thread          virtual thread
+    ---------------------------------------------------------------------
+    cost to create           OS syscall, ~1 MB        heap object, ~hundreds of bytes
+    practical count          a few thousand           millions
+    blocking costs           an OS thread             a parked heap object
+    context switch           kernel                   user space
+    scheduled by             the OS                   the JVM
+    CPU-BOUND THROUGHPUT     THE SAME                 THE SAME
+
+    THAT LAST ROW IS THE ONE PEOPLE MISS, AND IT IS THE MOST IMPORTANT. If your task is computing
+    rather than waiting, virtual threads do nothing whatsoever. You still have the same number of cores.
+    Virtual threads solve WAITING, and only waiting. A CPU-bound workload wants a bounded pool sized to
+    the cores, exactly as before.
+
+THE DEEPER POINT: the reason we pooled threads was that threads were expensive. POOLING WAS NEVER THE
+GOAL — it was a workaround. Remove the expense and the workaround becomes an anti-pattern, which is why
+the recommended usage is one virtual thread per task, created and discarded, with no pool at all.""",
+
+"""3. THE MECHANISM — continuations, carriers, and pinning
+
+UNDERNEATH A VIRTUAL THREAD IS A CONTINUATION — an object that can capture the current call stack, be
+put aside, and later be resumed. `Continuation.yield()` copies the frames from the carrier's stack onto
+the heap; `Continuation.run()` copies them back and jumps to where it left off.
+
+    EVERY BLOCKING OPERATION IN THE JDK WAS REWRITTEN TO YIELD INSTEAD OF BLOCK. Socket reads, file
+    channel operations, `Thread.sleep`, `BlockingQueue.take`, lock acquisition, `Future.get`. When a
+    virtual thread calls one, the JDK registers interest in the event, yields, and the carrier
+    immediately picks up another virtual thread.
+
+    THIS IS WHY IT ONLY WORKS FOR JDK BLOCKING. A blocking call inside a NATIVE library — a JNI
+    method, or an old driver doing its own socket I/O — cannot yield, because the JVM cannot copy a
+    native frame to the heap and put it back. It blocks the carrier.
+
+THE CARRIER POOL. A dedicated ForkJoinPool, in FIFO mode, with parallelism defaulting to
+`availableProcessors()`. It is NOT the common pool. Its size caps how many virtual threads can be
+RUNNING at once, which is exactly right — that number should equal your cores. What is uncapped is how
+many can be WAITING.
+
+PINNING — the one failure mode you must know:
+
+    A virtual thread CANNOT unmount while it is inside a `synchronized` block or method, or while it
+    has native frames on its stack. In those states, blocking blocks the CARRIER.
+
+    THE SYMPTOM IS A THROUGHPUT CLIFF, NOT AN ERROR. If every request holds a `synchronized` lock
+    across its database call, then on an 8-core machine you have 8 carriers, all pinned, and your
+    million virtual threads run 8 at a time. Nothing throws. The application is simply and
+    inexplicably serialised. In the worst case it DEADLOCKS: every carrier pinned, waiting on work that
+    needs a carrier to proceed.
+
+    THIS IS WHY THE STANDARD ADVICE WAS TO REPLACE `synchronized` WITH `ReentrantLock`, which is
+    virtual-thread aware and unmounts correctly. JEP 491 in JDK 24 removed the `synchronized`
+    limitation, so on a modern JDK it is largely historical — but native frames still pin, and a great
+    deal of production code still runs on 21.
+
+    DETECTING IT: the JFR event `jdk.VirtualThreadPinned`, or `-Djdk.tracePinnedThreads=full` on 21.
+
+OTHER PROPERTIES WORTH KNOWING: virtual threads are ALWAYS daemon threads, so they do not keep the JVM
+alive. Priorities are ignored. Thread groups are vestigial. And `jcmd <pid> Thread.dump_to_file
+-format=json` gives you a dump of a million of them, grouped, which is the observability story that
+callbacks never had.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — POOLING VIRTUAL THREADS. `Executors.newFixedThreadPool` of virtual threads reintroduces the
+exact limit they exist to remove. Use `newVirtualThreadPerTaskExecutor()`. THE POOL WAS THE WORKAROUND,
+NOT THE GOAL.
+
+CASE 2 — PINNING ON `synchronized` (JDK 21–23). A lock held across a blocking call pins the carrier;
+throughput collapses to the carrier count, silently. `ReentrantLock` instead, or JDK 24+.
+
+CASE 3 — PINNING ON NATIVE FRAMES. A JNI-based driver or a native crypto call cannot unmount. Still
+true on every JDK version.
+
+CASE 4 — EXPECTING CPU-BOUND WORK TO GET FASTER. It will not. You have the same cores. Virtual threads
+address waiting only.
+
+CASE 5 — THE LIMITER MOVED, AND NOBODY NOTICED. A 200-thread pool was silently rate-limiting your
+database to 200 concurrent queries. Replace it with unbounded virtual threads and the database receives
+ten thousand, and falls over. THE THREAD POOL WAS LOAD-SHEDDING INFRASTRUCTURE THAT NOBODY DOCUMENTED.
+Use a `Semaphore` to bound the resource explicitly, which is the honest version of what the pool was
+doing.
+
+CASE 6 — CONNECTION POOL EXHAUSTION AS THE NEW BOTTLENECK. Ten thousand virtual threads queueing for
+twenty connections is not progress; it is the same queue in a different place, now with ten thousand
+objects waiting in it.
+
+CASE 7 — ThreadLocal AT SCALE. It still works, but a ThreadLocal holding 1 KB across a million virtual
+threads is a gigabyte. `ScopedValue` is the designed replacement: immutable, bounded to a syntactic
+scope, and inherited by child threads cheaply.
+
+CASE 8 — LONG CPU-BOUND SECTIONS INSIDE A VIRTUAL THREAD. Nothing preempts them. A virtual thread only
+yields at a blocking point, so a tight computational loop monopolises its carrier.
+
+CASE 9 — `Thread.currentThread()` IDENTITY AS A KEY. With a thread per task, identity-keyed caches now
+have a million entries instead of two hundred.
+
+CASE 10 — MONITORING THAT COUNTS THREADS. Dashboards, alerts and thread-count-based autoscaling all
+become meaningless. Count in-flight TASKS instead.
+
+CASE 11 — STACK DEPTH. Deep recursion in a virtual thread grows a heap-allocated stack; it is not free,
+and the failure mode is memory pressure rather than a neat StackOverflowError at a familiar depth.
+
+CASE 12 — ASSUMING FRAMEWORK SUPPORT MEANS FRAMEWORK READINESS. A framework may run your handler on a
+virtual thread while its own internals still hold `synchronized` locks across I/O, giving you all of
+the migration and none of the benefit.""",
+
+"""5. THE ALTERNATIVES — and what virtual threads replaced
+
+PLATFORM THREADS WITH A BOUNDED POOL. Still exactly right for CPU-BOUND work: you want as many runnable
+tasks as cores and no more. `Executors.newFixedThreadPool(cores)` is not obsolete; it was never about
+I/O in the first place.
+
+REACTIVE — Reactor, RxJava, Mutiny. What virtual threads are largely displacing for the ordinary case:
+    THEY DELIVERED the same scalability, years earlier, on Java 8.
+    THEY COST stack traces that do not show your caller, debuggers that cannot step, exceptions that
+    escape into an error channel, ThreadLocal-based context that has to be reimplemented, and the
+    "coloured function" problem where one async call forces every caller to become async.
+    THEY STILL WIN when you genuinely need STREAM SEMANTICS — backpressure, windowing, merging, and
+    operators over an unbounded flow. Virtual threads give you cheap concurrency, not a dataflow
+    algebra. Do not rewrite a real streaming pipeline into blocking calls.
+
+ASYNCHRONOUS NIO AND CompletableFuture BY HAND. Same trade as reactive, less machinery, more
+boilerplate. `CompletableFuture` remains the right tool for COMPOSING independent operations and for
+timeouts; it is no longer needed merely to avoid blocking a thread.
+
+KOTLIN COROUTINES. The same idea — suspending instead of blocking — implemented in the compiler rather
+than the runtime, with the `suspend` keyword making the colouring explicit. Virtual threads put it in
+the JVM instead, so it works for every language and every existing library without recompilation.
+
+STRUCTURED CONCURRENCY (`StructuredTaskScope`), which is the piece that makes virtual threads a
+programming model rather than just a cheap thread:
+    tasks forked in a block CANNOT OUTLIVE the block;
+    a failure in one can cancel its siblings automatically;
+    the parent's stack trace contains the child's, so an error is traceable to its origin;
+    cancellation propagates down the tree instead of leaking.
+    It restores to concurrency what `try`/`finally` did to resources: a lifetime bounded by syntax.
+
+WHAT TO SAY: "Virtual threads for I/O-bound concurrency and thread-per-request, a bounded platform pool
+for CPU-bound work, and reactive only where I genuinely need streaming semantics rather than just
+scalability. And a Semaphore wherever the old thread pool was quietly limiting a downstream resource."
+
+""",
+
+"""6. HOW TO ADOPT THEM — numbered steps
+
+STEP 1 — CONFIRM YOUR WORKLOAD IS I/O-BOUND. If threads are computing rather than waiting, virtual
+threads change nothing and you should stop here.
+
+STEP 2 — USE `Executors.newVirtualThreadPerTaskExecutor()`. One thread per task, created and discarded.
+Do not pool them; that is the thing being removed.
+
+STEP 3 — FIND EVERY `synchronized` BLOCK THAT SPANS A BLOCKING CALL. On JDK 21–23 these pin the carrier
+and silently cap you at the core count. Convert to `ReentrantLock`, or move to JDK 24+.
+
+STEP 4 — AUDIT NATIVE CALLS. JNI-based drivers and native crypto still pin on every version.
+
+STEP 5 — REPLACE THE POOL'S IMPLICIT RATE LIMIT WITH AN EXPLICIT ONE. A `Semaphore` around the database,
+the downstream service, the disk. THIS IS THE STEP MOST MIGRATIONS SKIP, and it is what turns "we
+enabled virtual threads" into "we took down the database".
+
+STEP 6 — SIZE THE CONNECTION POOL FOR THE NEW CONCURRENCY. Ten thousand threads and twenty connections
+is the same queue, relocated.
+
+STEP 7 — REVIEW ThreadLocal USAGE. Multiply its size by the number of concurrent tasks. Move context to
+`ScopedValue` where you can.
+
+STEP 8 — TURN ON PINNING DETECTION BEFORE YOU BELIEVE IT WORKS. JFR's `jdk.VirtualThreadPinned`, or
+`-Djdk.tracePinnedThreads=full`. A pinning problem produces no error at all — only a number that is
+lower than you expected.
+
+STEP 9 — FIX YOUR MONITORING. Thread count is no longer a signal. Alert on in-flight tasks, queue depth
+at the real bottleneck, and latency.
+
+STEP 10 — USE `StructuredTaskScope` FOR FAN-OUT. Bounded lifetimes, automatic sibling cancellation, and
+child stack traces attached to the parent.
+
+STEP 11 — LOAD TEST WITH THE REAL DOWNSTREAM. The failure mode of this migration is never the JVM; it
+is whatever the JVM is now allowed to hit ten thousand times at once.
+
+STEP 12 — LEAVE CPU-BOUND WORK ON A BOUNDED PLATFORM POOL. Mixing the two is fine and expected; the
+distinction is the point.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'For twenty-five years a Java thread was an OS thread, one to one. About a megabyte of reserved stack
+each, switching went through the kernel, and you got a few thousand per process. That ceiling is why
+everyone abandoned thread-per-request and moved to callbacks and reactive.
+
+And that move cost a lot that nobody counted. Stack traces stopped containing your caller. Breakpoints
+stopped meaning anything. try-with-resources no longer spanned the operation. ThreadLocal broke. And
+one async call forces every caller to become async — the coloured function problem.
+
+A virtual thread is scheduled by the JVM instead of the OS, and its stack lives on the HEAP. That one
+fact is the whole design. When it blocks, the JVM copies its frames to the heap, lifts it off the
+carrier thread, and runs something else there. When the I/O completes the frames get copied back — not
+necessarily onto the same carrier — and it continues. The Java code never notices; it called read(),
+and read() returned.
+
+So blocking no longer means occupying an OS thread. It means parking a small heap object, a few hundred
+bytes, and the switch never enters the kernel. You can have millions.
+
+The thing people get wrong is thinking this is about speed. It is not. CPU-bound throughput is
+IDENTICAL — you still have the same cores. Virtual threads solve WAITING, and only waiting. CPU-bound
+work still wants a bounded pool sized to the cores.
+
+And the second thing: don't pool them. We pooled threads because threads were expensive. Pooling was
+never the goal, it was a workaround, so a pool of virtual threads reintroduces exactly the limit they
+remove. It's newVirtualThreadPerTaskExecutor, one per task, created and thrown away.
+
+The failure mode to know is PINNING. A virtual thread can't unmount while it's inside a synchronized
+block or has native frames on its stack — so blocking there blocks the CARRIER. And the symptom is a
+throughput cliff with no error at all: eight cores, eight carriers, all pinned, and your million
+virtual threads run eight at a time. In the worst case it deadlocks. That's why the advice on 21 was
+ReentrantLock instead of synchronized; JEP 491 in JDK 24 fixed the synchronized case, but native frames
+still pin.
+
+The operational trap I'd flag hardest, though, is that THE LIMITER MOVED. That 200-thread pool was
+silently rate-limiting your database to 200 concurrent queries — it was load-shedding infrastructure
+nobody documented. Swap in unbounded virtual threads and the database gets ten thousand and falls over.
+So you replace the pool's implicit limit with an explicit Semaphore around each downstream resource.
+That's the step migrations skip.
+
+And the piece that makes it a programming model rather than just cheap threads is structured
+concurrency — StructuredTaskScope. Forked tasks can't outlive the block, a failure cancels its
+siblings, and the child's stack trace is attached to the parent's. It does for concurrency what
+try/finally did for resources: a lifetime bounded by syntax.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE OLD CEILING, MADE CONCRETE ──────────────────────────────────
+    var pool = Executors.newFixedThreadPool(200);
+    //                                      ^^^ 200 OS threads, ~200 MB of reserved
+    //   stack, and a HARD CAP OF 200 CONCURRENT REQUESTS — not because 200 is
+    //   right, but because 10,000 OS threads is not affordable.
+
+    // ── THE NEW VERSION. Note what is NOT here: a size. ─────────────────
+    try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
+    //               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ONE VIRTUAL THREAD PER TASK.
+    //   Not a pool. Creating and discarding a virtual thread is the intended usage;
+    //   pooling them reintroduces the exact limit they exist to remove.
+        for (var req : requests) {
+            exec.submit(() -> handle(req));      // a million of these is fine
+        }
+    }   // close() waits for all tasks — the executor is an AutoCloseable barrier
+
+    String handle(Request r) {
+        var user = db.findUser(r.userId());      // BLOCKS. The virtual thread's
+        //                                          frames are copied to the heap and
+        //                                          the carrier immediately runs
+        //                                          another virtual thread.
+        var prefs = prefsService.fetch(user);    // BLOCKS again. Same story.
+        return render(user, prefs);
+    }
+    // ^ Plain, sequential, blocking code. The stack trace of any exception in here
+    //   contains handle() and its caller. A breakpoint works. try/catch spans the
+    //   whole operation. THAT is what was given up for scalability, and given back.
+
+    // ── PINNING: the bug with no error message ──────────────────────────
+    synchronized (lock) {                 // ← the carrier CANNOT be released while
+        var row = db.query(sql);          //   this frame is on the stack (JDK 21-23)
+    }
+    // ^ 8 cores → 8 carriers → all 8 pinned → your million virtual threads run
+    //   EIGHT AT A TIME. Nothing throws. Throughput is just inexplicably flat.
+    private final ReentrantLock lock = new ReentrantLock();
+    lock.lock();
+    try { var row = db.query(sql); } finally { lock.unlock(); }
+    // ^ virtual-thread aware: unmounts correctly. (JEP 491 in JDK 24 fixes the
+    //   synchronized case too — but NATIVE frames still pin on every version.)
+
+    // ── THE LIMITER MOVED. The step migrations skip. ────────────────────
+    private final Semaphore dbLimit = new Semaphore(200);
+    //                                              ^^^ the 200 that used to be the
+    //   POOL SIZE. It was rate-limiting the database all along, and nobody wrote
+    //   that down. Remove the pool without this and the database receives 10,000
+    //   concurrent queries.
+    dbLimit.acquire();
+    try { return db.query(sql); } finally { dbLimit.release(); }
+
+    // ── STRUCTURED CONCURRENCY: lifetimes bounded by syntax ─────────────
+    try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+        var user  = scope.fork(() -> userService.find(id));
+        var order = scope.fork(() -> orderService.recent(id));
+        scope.join().throwIfFailed();
+    //  ^ NEITHER TASK CAN OUTLIVE THIS BLOCK. If one fails, the other is cancelled
+    //    automatically, and the child's stack trace is attached to this one's.
+        return new Page(user.get(), order.get());
+    }
+
+    // ── WHAT DOES NOT CHANGE ────────────────────────────────────────────
+    var cpu = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    // ^ CPU-bound work. Same cores, same answer as before virtual threads existed.""",
+
+"""9. THE TRACE — one carrier, three virtual threads, and then a pin
+
+EIGHT CARRIERS ON AN 8-CORE MACHINE. Follow ONE of them while three virtual threads run on it:
+
+    time  carrier-1 is running   what happened                          carrier state
+    ------------------------------------------------------------------------------------
+    t0    VT-1                   calls db.query()                       —
+    t1    —                      VT-1's frames COPIED TO THE HEAP,      FREE, instantly
+                                 unmounted, socket read registered
+    t2    VT-2                   mounted on carrier-1, starts running   busy
+    t3    —                      VT-2 calls http.send(), unmounts       FREE
+    t4    VT-3                   mounted, runs, computes for 2 ms       busy
+    t5    VT-1                   DB responded → frames copied BACK,     busy
+                                 possibly onto a DIFFERENT carrier,
+                                 and `query()` simply returns
+    ------------------------------------------------------------------------------------
+    ONE OS THREAD SERVED THREE REQUESTS AND WAS NEVER IDLE. No callbacks were written. VT-1's stack at
+    t5 still contains `handle()` and everything that called it, because those frames were preserved
+    verbatim — that is what makes the debugger and the stack trace work.
+
+NOW THE SAME TRACE WITH `synchronized` AROUND THE QUERY (JDK 21):
+
+    t0    VT-1                   enters synchronized, calls db.query()  —
+    t1    VT-1 (BLOCKED)         CANNOT UNMOUNT — a monitor is held.    PINNED, 40 ms
+                                 The carrier is stuck waiting on I/O.
+    t2    VT-1 (BLOCKED)         VT-2 and VT-3 are runnable and CANNOT  still pinned
+                                 be scheduled here.
+    ------------------------------------------------------------------------------------
+    MULTIPLY BY 8 CARRIERS: your concurrency is 8, not a million. NOTHING THROWS. No warning, no
+    exception, no log line — only a throughput number that is lower than expected and a profile that
+    shows everything waiting. This is the single most common disappointment in a virtual-thread
+    migration, and it is invisible unless you enable `jdk.VirtualThreadPinned`.
+
+AND THE THIRD TRACE — the one that takes down the database:
+
+    before                                    after
+    ------------------------------------------------------------------------------------
+    200-thread pool                           unbounded virtual threads
+    → at most 200 concurrent DB queries       → 10,000 concurrent DB queries
+    → the pool was LOAD SHEDDING              → nothing is shedding load
+    → excess requests queued in the pool      → excess requests hit the database
+    → latency rose, the system survived       → connections exhausted, timeouts,
+                                                 cascading failure upstream
+
+    NOTHING IN THE JVM WENT WRONG. The application did exactly what it was now permitted to do. The
+    200 was never a thread-count decision; it was a concurrency budget for a downstream resource,
+    expressed in the only unit the old model had. THE FIX IS TO SAY IT OUT LOUD — a Semaphore of 200
+    around the database — which is both the correct behaviour and the first time it has ever been
+    written down.
+
+WHAT EACH TRACE PROVED:
+    TRACE 1   the stack-on-heap mechanism, and why blocking code keeps its stack trace.
+    TRACE 2   pinning: a correctness-preserving, silent, order-of-magnitude throughput loss.
+    TRACE 3   that a thread pool is TWO things — a resource pool and a rate limiter — and virtual
+              threads remove the first while leaving you responsible for the second.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Platform thread: ~1 MB reserved stack, an OS scheduling entity, a few thousand per process.
+    Virtual thread: hundreds of bytes initially, growing with real stack depth; millions per process.
+    Mount/unmount: user-space, roughly a method call plus stack copying. No kernel transition.
+    Carrier pool: a dedicated ForkJoinPool, parallelism = availableProcessors by default. It caps how
+    many run AT ONCE, which is correct; what is uncapped is how many WAIT.
+    CPU-bound throughput: UNCHANGED. Identical core count, identical result.
+    Pinned carrier: concurrency silently drops to the carrier count, with no error of any kind.
+
+THE #1 MISTAKE: pooling virtual threads. The pool was the workaround for expensive threads; keeping it
+keeps the limit. `newVirtualThreadPerTaskExecutor()`.
+
+THE #2 MISTAKE: expecting CPU-bound work to speed up. Same cores. Virtual threads address waiting only.
+
+THE #3 MISTAKE: `synchronized` across a blocking call on JDK 21–23. Pins the carrier, silently.
+`ReentrantLock`, or JDK 24+.
+
+THE #4 MISTAKE: forgetting native frames still pin, on every version.
+
+THE #5 MISTAKE — AND THE ONE THAT CAUSES OUTAGES: removing the pool without replacing the rate limit it
+was silently providing. Put a `Semaphore` around every downstream resource.
+
+THE #6 MISTAKE: leaving the connection pool at twenty. Ten thousand threads queueing for twenty
+connections is the same queue, relocated and larger.
+
+THE #7 MISTAKE: ThreadLocal at a million-thread scale. Multiply its size by the concurrency.
+`ScopedValue` instead.
+
+THE #8 MISTAKE: long CPU-bound sections inside a virtual thread. Nothing preempts them; a virtual
+thread yields only at a blocking point.
+
+THE #9 MISTAKE: monitoring thread count. It is no longer a signal. Count in-flight tasks.
+
+THE #10 MISTAKE: believing they replace reactive entirely. They replace it for SCALABILITY; reactive
+still wins where you need real stream semantics — backpressure, windowing, merging.
+
+THE #11 MISTAKE: assuming a framework running handlers on virtual threads is ready. Its internals may
+still hold monitors across I/O, giving you the migration and none of the benefit.
+
+ONE-SENTENCE TAKEAWAY: a virtual thread is scheduled by the JVM with its stack on the HEAP, so blocking
+means copying frames aside and freeing the carrier rather than occupying an OS thread — which makes
+millions of concurrent waiting tasks affordable and hands back plain blocking code with working stack
+traces, debuggers and try/finally, at the cost of exactly zero improvement to CPU-bound work; do not
+pool them, watch for pinning on `synchronized` (pre-JDK 24) and native frames where throughput
+collapses to the carrier count with no error at all, and above all replace the rate limit your old
+thread pool was silently enforcing on every downstream resource, because that limit is the reason the
+database survived.""",
+]
