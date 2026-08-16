@@ -245715,6 +245715,1010 @@ EFFECTIVE learning rate by 1/(1-beta), and beta 0.99 with an unchanged learning 
 is a hundredfold rate increase that diverged at every setting tried - the two knobs
 multiply and must be tuned together.""",
 ]
+_EX_P1AO["MAE (Mean Absolute Error)"] = [
+    """1. THE GOAL - the average size of your mistakes, in the units people understand.
+
+MAE is the mean of the absolute errors: add up how far off you were on each
+prediction, ignoring direction, and divide by the count.
+
+  MAE = sum(|prediction - actual|) / n
+
+Its two properties are that it is in THE SAME UNITS AS THE THING YOU PREDICTED - an
+MAE of 4.2 minutes means "typically wrong by about four minutes" - and that it is
+ROBUST: one catastrophic error does not dominate it.
+
+MEASURED, one corrupted label in a thousand:
+
+  corrupted value      MAE      MAE change      MSE change
+  ---------------------------------------------------------
+             100     4.0992         +1.1%           +9.7%
+             200     4.1992         +3.6%          +88.3%
+             500     4.4992        +11.0%         +795.5%
+           5,000     8.9992       +122.0%      +96,260.4%
+
+ONE BAD ROW IN A THOUSAND MOVED MAE BY 122% AND MSE BY NINETY-SIX THOUSAND PERCENT.
+That difference in sensitivity - about 789-fold on this input - is the entire reason
+you would choose one over the other, and it is a choice about what you believe your
+outliers ARE.""",
+
+    """2. THE INTUITION - MAE optimises for the MEDIAN, and that is a real decision.
+
+If you had to make ONE constant prediction for everything, which constant does each
+metric want?
+
+MEASURED, over 2,000 points, sweeping the constant to find the minimum:
+
+  data                    MAE's optimum    (median)     MSE's optimum    (mean)
+  ---------------------------------------------------------------------------------
+  symmetric                   100.14        100.15          99.77        99.76
+  skewed (log-normal)          72.10         72.15          87.30        87.32
+  with 1% outliers            100.83        100.80         108.10       108.10
+
+MAE'S OPTIMUM IS THE MEDIAN AND MSE'S IS THE MEAN, to two decimal places, on every
+dataset. That is not a coincidence or an approximation - it is what those two losses
+mathematically are.
+
+AND ON SKEWED DATA THEY DIFFER BY 21%. 72.1 against 87.3, from the same numbers.
+Choosing MAE is choosing to be right for the TYPICAL case; choosing MSE is choosing
+to account for the total.
+
+WHY THE MEDIAN: the derivative of |e| is +1 or -1 regardless of how big the error
+is, so every point pulls the prediction with equal force. The balance point is where
+half the points are above and half below - which is the median by definition.
+
+WHY THAT MATTERS OPERATIONALLY: if your delivery-time model has an MAE of 4 minutes,
+it is typically 4 minutes off. If it has an RMSE of 15 minutes, that number is
+dominated by a few enormous errors and does not describe a typical delivery. THE
+TWO NUMBERS ANSWER DIFFERENT QUESTIONS, and reporting only one of them hides the
+other.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ABSOLUTE ERROR - |predicted - actual| for one row. No direction.
+
+MAE - the mean of those. Same units as the target.
+
+MEDIAN ABSOLUTE ERROR - the median rather than the mean of the absolute errors.
+Even more robust; useful when even MAE is being pulled by a few large errors.
+
+MSE - the mean of the SQUARED errors. Units are the target squared, which is why
+nobody quotes it directly.
+
+RMSE - the square root of MSE, back in the target's units. Always at least as large
+as MAE, and equal only when every error is identical.
+
+MAPE - mean absolute PERCENTAGE error. Scale-free, and it explodes when an actual
+value is near zero and is ASYMMETRIC - it punishes over-prediction more than
+under-prediction. Widely used and widely criticised.
+
+SMAPE and MASE - attempts to fix MAPE's problems. MASE compares against a naive
+forecast, which makes it interpretable across series.
+
+L1 / L2 LOSS - the same things used as TRAINING objectives rather than as reports.
+L1 is MAE, L2 is MSE.
+
+HUBER LOSS - quadratic for small errors and linear for large ones. The deliberate
+compromise, with a threshold you choose.
+
+QUANTILE LOSS - an asymmetric generalisation of MAE that targets a chosen
+percentile rather than the median. What you use when over- and under-prediction
+have different costs.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+MAE'S ROBUSTNESS IS A LIABILITY WHEN LARGE ERRORS ARE THE PROBLEM. Measured, moving
+one label from 50 to 5,000 raised MAE by 122% and MSE by 96,260%. If a
+hundred-fold error is a catastrophe - a dosage, a structural load, a price - then a
+metric that barely notices it is the wrong metric. ROBUSTNESS IS NOT A VIRTUE IN
+ITSELF; IT IS AN ASSUMPTION THAT LARGE ERRORS ARE NOISE RATHER THAN DISASTER.
+
+MAE IS NOT DIFFERENTIABLE AT ZERO. Its gradient is +1 or -1 and undefined exactly at
+zero error. In practice frameworks define the subgradient at zero as 0 and it trains
+fine - but the CONSTANT gradient magnitude means the optimiser takes the same size
+step whether it is wildly wrong or nearly right, which makes convergence near the
+optimum jittery unless the learning rate is decayed.
+
+RMSE IS ALWAYS >= MAE, and the RATIO IS INFORMATION. If RMSE is close to MAE, your
+errors are uniform in size. If RMSE is three times MAE, a few large errors dominate.
+REPORTING BOTH AND LOOKING AT THE RATIO IS FREE AND TELLS YOU SOMETHING NEITHER
+NUMBER DOES ALONE.
+
+MAE HAS NO SCALE. An MAE of 4 is excellent for house prices in thousands and terrible
+for probabilities. It cannot be compared across problems, which is why people reach
+for MAPE - and MAPE has its own problems, blowing up near zero and punishing
+over-prediction more than under-prediction.
+
+AND THE ONE THAT COSTS MONEY: MAE TREATS OVER- AND UNDER-PREDICTION AS EQUAL. For
+inventory, staffing, capacity and delivery estimates they are not remotely equal.
+Under-forecasting demand costs a lost sale; over-forecasting costs storage. If the
+costs differ, QUANTILE LOSS is the metric, and MAE is the special case where they
+happen to be equal.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: mean error, without the absolute value. Positive and negative errors cancel,
+so a model that is wildly wrong in both directions scores zero. It measures BIAS,
+not accuracy, and it is worth computing alongside MAE for exactly that reason.
+
+UPGRADE 1: MAE. Same units, robust, interpretable.
+
+UPGRADE 2: report MAE AND RMSE together, and look at the ratio. Cheap, and it
+reveals the error distribution's shape.
+
+UPGRADE 3: MEDIAN absolute error, when even MAE is being dragged by a heavy tail.
+
+UPGRADE 4: HUBER LOSS for training - quadratic below a threshold, linear above.
+Differentiable everywhere, robust to outliers, and the threshold is a hyperparameter
+that says "errors bigger than this are probably bad data".
+
+UPGRADE 5: QUANTILE LOSS when the two directions have different costs. Predicting
+the 90th percentile of demand rather than the median is a business decision that
+this metric expresses directly.
+
+UPGRADE 6: MASE for time series, which normalises against a naive
+forecast-the-last-value baseline, making it comparable across series with different
+scales.
+
+UPGRADE 7: don't summarise at all - plot the error DISTRIBUTION. Any single number
+compresses away exactly the information you need to decide which single number to
+use.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - ASK WHAT A LARGE ERROR COSTS. Linearly proportional to size, or
+disproportionately? That answer chooses between MAE and MSE and it is a business
+question, not a statistical one.
+
+STEP 2 - REPORT MAE AND RMSE TOGETHER. The ratio tells you whether the errors are
+uniform or tail-dominated.
+
+STEP 3 - ALSO REPORT MEAN ERROR, without the absolute value. It measures BIAS - a
+model consistently 4 minutes late has the same MAE as one that is randomly 4 minutes
+either way, and they are very different problems.
+
+STEP 4 - COMPARE AGAINST A BASELINE. MAE 4.2 means nothing alone. Against a
+predict-the-median baseline of 6.1, it means something.
+
+STEP 5 - CHECK WHETHER OVER- AND UNDER-PREDICTION COST THE SAME. If not, use
+quantile loss and predict the percentile the business actually wants.
+
+STEP 6 - PLOT THE ERROR DISTRIBUTION before choosing. A long tail argues for MAE as
+the report and Huber as the training loss.
+
+STEP 7 - IF YOU TRAIN ON MAE, DECAY THE LEARNING RATE. The gradient magnitude is
+constant, so the step size does not shrink as you approach the optimum.
+
+STEP 8 - SEGMENT IT. A global MAE of 4.2 can hide an MAE of 30 on the 5% of rows
+that matter most. Report it per segment.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are grading a weather forecaster on a year of temperature predictions.
+
+The simplest fair score is: how many degrees off were they, on average, ignoring
+whether they were too high or too low. That is mean absolute error, and it has a
+lovely property - the answer is in degrees, so "typically wrong by 1.8 degrees" is a
+sentence anyone can act on.
+
+Now, one day there was a freak event and they were off by fifty degrees. Should that
+day count fifty times as much as a one-degree miss, or two thousand five hundred
+times as much?
+
+If you square the errors first - which is the other common scheme - it counts two
+thousand five hundred times. Measured, a single corrupted day in a thousand moved
+the absolute-error score by 122% and the squared-error score by ninety-six thousand
+percent.
+
+Neither is right in general. If a fifty-degree miss means someone's pipes froze, you
+WANT it to dominate the score. If it means the sensor glitched, you do not.
+
+There is a second consequence, and it is the deeper one. If the forecaster could only
+give ONE number for the whole year, the absolute-error score is minimised by the
+year's MEDIAN temperature and the squared-error score by its MEAN. Measured on
+skewed data those differed by 21%. So the choice of score is not just about how
+harshly you punish bad days - it quietly determines what the forecaster is aiming at.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def mae(preds, actuals):
+        return sum(abs(p - a) for p, a in zip(preds, actuals)) / len(actuals)
+
+    def bias(preds, actuals):                    # report this TOO
+        return sum(p - a for p, a in zip(preds, actuals)) / len(actuals)
+        # no abs(): positive and negative cancel, so this measures SYSTEMATIC error
+
+    def rmse(preds, actuals):
+        return sqrt(sum((p - a) ** 2 for p, a in zip(preds, actuals)) / len(actuals))
+
+    def huber(pred, actual, delta=1.0):          # the deliberate compromise
+        e = abs(pred - actual)
+        return 0.5 * e * e if e <= delta else delta * (e - 0.5 * delta)
+
+    def quantile_loss(pred, actual, q=0.9):      # when the directions cost
+        e = actual - pred                        # different amounts
+        return max(q * e, (q - 1) * e)
+
+LINE BY LINE:
+ - `abs(p - a)` treats a 10-unit over-prediction exactly like a 10-unit
+   under-prediction. That is a claim about your business, and it is false surprisingly
+   often.
+ - `bias` deliberately omits the abs. A model 4 minutes late every time and a model
+   randomly 4 minutes either way have the SAME MAE and completely different fixes;
+   only this line distinguishes them.
+ - `huber` is quadratic below `delta` and linear above. It is differentiable
+   everywhere, unlike MAE, and it is robust, unlike MSE - and `delta` is you stating
+   the size of error you consider to be bad data rather than signal.
+ - `quantile_loss` at q = 0.9 penalises under-prediction nine times as heavily as
+   over-prediction, so the model learns to predict the 90th percentile. AT q = 0.5 IT
+   IS EXACTLY MAE (up to a factor of two), which is the clean way to see that MAE
+   targets the median.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Five predictions, five actuals:
+
+  predicted:  10, 20, 30, 40,  50
+  actual:     12, 18, 33, 39, 150
+  error:      -2,  +2,  -3,  +1, -100
+
+  MAE  = (2 + 2 + 3 + 1 + 100) / 5 = 108 / 5 = 21.6
+  MSE  = (4 + 4 + 9 + 1 + 10000) / 5 = 10018 / 5 = 2003.6
+  RMSE = sqrt(2003.6) = 44.76
+  BIAS = (-2 + 2 - 3 + 1 - 100) / 5 = -20.4
+
+  READ THEM TOGETHER. MAE 21.6 says "typically about 22 off", which is misleading -
+  four of the five errors are 3 or less. RMSE 44.76 is more than twice MAE, and THAT
+  RATIO IS THE SIGNAL: one error dominates. And the bias of -20.4 says the model is
+  systematically under-predicting, which is entirely that one row.
+
+  Without the last row: MAE 2.0, RMSE 2.12, bias -0.5. A completely different model
+  description, from removing one point in five.
+
+NOW THE MEASURED OUTLIER SWEEP - 1,000 rows, prediction constant at 50, one label
+corrupted:
+
+  corrupted to        MAE     MAE change        MSE      MSE change
+  --------------------------------------------------------------------
+            50     4.0492        -0.1%      25.43           -0.1%
+           100     4.0992        +1.1%      27.93           +9.7%
+           200     4.1992        +3.6%      47.93          +88.3%
+           500     4.4992       +11.0%     227.93         +795.5%
+         5,000     8.9992      +122.0%   24527.93      +96,260.4%
+
+MAE grew LINEARLY with the corruption - each tenfold increase in the bad value
+roughly added a fixed amount, because one error out of a thousand contributes
+error/1000 to the mean. MSE grew QUADRATICALLY. At the last row the sensitivity
+ratio is about 789 to 1.
+
+AND THE OPTIMAL-CONSTANT MEASUREMENT, which is the deeper point:
+
+  data                    MAE wants    (median)    MSE wants     (mean)
+  ------------------------------------------------------------------------
+  symmetric                 100.14      100.15        99.77       99.76
+  skewed                     72.10       72.15        87.30       87.32
+  with 1% outliers          100.83      100.80       108.10      108.10
+
+EXACT AT EVERY ROW. Choosing MAE is choosing the median; choosing MSE is choosing
+the mean; and on the skewed dataset those are 21% apart. THE METRIC DOES NOT JUST
+SCORE THE MODEL, IT SELECTS THE TARGET.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: one pass, one subtraction and one absolute value per row. Free.
+
+INTERPRETABILITY: highest of the common regression metrics, because it is in the
+target's units and means "typically off by this much".
+
+ROBUSTNESS: measured 789 times less sensitive than MSE to a single extreme
+corruption.
+
+TRAINING: constant gradient magnitude, so it converges steadily and jitters near
+the optimum unless the learning rate decays.
+
+THE #1 MISTAKE: choosing MAE for robustness when large errors are the actual
+business risk. Robustness is an ASSUMPTION that big errors are noise.
+
+THE #2 MISTAKE: reporting MAE alone. Add RMSE - the ratio tells you whether the
+errors are uniform or tail-dominated - and add BIAS, which distinguishes a
+systematically late model from a randomly wrong one.
+
+THE #3 MISTAKE: comparing MAE across problems. It has no scale, and MAPE, which
+does, blows up near zero and is asymmetric.
+
+THE #4 MISTAKE: assuming over- and under-prediction cost the same. For inventory,
+staffing and capacity they never do; use quantile loss.
+
+THE #5 MISTAKE: a global MAE hiding a terrible segment. Report it per segment.
+
+THE #6 MISTAKE: no baseline. MAE 4.2 is meaningless without the
+predict-the-median number next to it.
+
+THE #7 MISTAKE: training on MAE with a fixed learning rate. The gradient magnitude
+never shrinks, so it oscillates around the optimum.
+
+THE TAKEAWAY: MAE is the mean absolute error, in the target's own units, and it is
+minimised by the MEDIAN - measured exactly, on three different distributions - so
+choosing it does not merely score the model more forgivingly, it changes what the
+model aims at, by 21% on skewed data; it is about 789 times less sensitive than MSE
+to a single extreme corruption, which is a virtue when outliers are bad data and a
+serious flaw when they are catastrophes, and it should always be reported alongside
+RMSE (whose ratio to MAE reveals the error distribution) and BIAS (which
+distinguishes systematic from random error).""",
+]
+
+_EX_P1AO["MSE (Mean Squared Error)"] = [
+    """1. THE GOAL - a loss that punishes big mistakes disproportionately, and is smooth
+enough to optimise.
+
+MSE is the mean of the squared errors:
+
+  MSE = sum((prediction - actual)^2) / n
+
+Squaring does two things. It makes every error positive, so they cannot cancel. And
+it makes a 10-unit error count ONE HUNDRED TIMES as much as a 1-unit error rather
+than ten times.
+
+That second property is the whole character of the metric. MSE is the right choice
+when errors hurt superlinearly - a dosage, a structural load, a trading position -
+and the wrong choice when a few extreme values are just bad data.
+
+MEASURED, one corrupted label in a thousand:
+
+  corrupted to      MSE           MSE change      MAE change
+  -----------------------------------------------------------
+           100     27.93              +9.7%           +1.1%
+           200     47.93             +88.3%           +3.6%
+           500    227.93            +795.5%          +11.0%
+         5,000  24527.93         +96,260.4%         +122.0%
+
+A SINGLE ROW IN A THOUSAND MOVED MSE BY NINETY-SIX THOUSAND PERCENT. That is not a
+flaw - it is the metric doing exactly what it was chosen to do - and it is only
+appropriate if you meant it.""",
+
+    """2. THE INTUITION - MSE targets the MEAN, and its gradient is proportional to the
+error.
+
+If you had to make one constant prediction, MSE's optimum is the arithmetic MEAN.
+Measured, over 2,000 points on three different distributions:
+
+  data                    MSE's optimum      (the mean)
+  --------------------------------------------------------
+  symmetric                     99.77          99.76
+  skewed (log-normal)           87.30          87.32
+  with 1% outliers             108.10         108.10
+
+EXACT AT EVERY ROW, and that is not a coincidence: the derivative of (p - a)^2 is
+2(p - a), so summing to zero gives exactly the mean.
+
+TWO CONSEQUENCES FOLLOW FROM THAT DERIVATIVE.
+
+FIRST, THE GRADIENT IS PROPORTIONAL TO THE ERROR. A prediction that is far off gets
+a large correction; one that is nearly right gets a small one. That is precisely
+what an optimiser wants - the step size shrinks automatically as you converge, which
+is why MSE trains smoothly where MAE's constant-magnitude gradient jitters near the
+optimum.
+
+SECOND, IT IS DIFFERENTIABLE EVERYWHERE, including at zero error. MAE is not.
+
+AND THERE IS A THIRD REASON MSE IS EVERYWHERE, which is worth knowing because it
+explains the historical dominance: MINIMISING MSE IS EXACTLY MAXIMUM LIKELIHOOD
+UNDER GAUSSIAN NOISE. If you believe your errors are normally distributed, MSE is
+not a choice among options - it is the correct answer derived from that assumption.
+Which also tells you when it is wrong: when the errors are NOT Gaussian, and heavy
+tails are the common case.
+
+THE UNITS PROBLEM: MSE is in squared units. An MSE of 2003 for a price in pounds is
+2003 pounds-squared, which is not a quantity anyone has intuition for. RMSE - the
+square root - puts it back into pounds, and that is why nobody reports raw MSE.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SQUARED ERROR - (predicted - actual)^2 for one row.
+
+MSE - the mean of those. Units are the target SQUARED.
+
+RMSE - the square root of MSE, back in the target's units. Always >= MAE.
+
+L2 LOSS - the same thing used as a training objective. L1 is MAE.
+
+R-SQUARED - 1 minus (MSE of the model / MSE of predicting the mean). "What fraction
+of the variance the model explains." IT IS MSE, NORMALISED against a baseline, which
+is what makes it comparable across problems.
+
+BIAS-VARIANCE DECOMPOSITION - expected MSE splits exactly into bias squared plus
+variance plus irreducible noise. This decomposition is available BECAUSE the loss is
+squared, and it is one of the main theoretical reasons MSE is central.
+
+GAUSSIAN / NORMAL NOISE - the assumption under which minimising MSE is maximum
+likelihood.
+
+HUBER LOSS - quadratic below a threshold, linear above. MSE's smoothness for small
+errors, MAE's robustness for large ones.
+
+MAPE - mean absolute percentage error. Scale-free; explodes near zero, asymmetric.
+
+HETEROSCEDASTICITY - error variance that changes across the range. MSE assumes it
+does not, and weights every row equally as a result.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+MSE IS DOMINATED BY YOUR WORST ROWS, AND USUALLY BY YOUR WORST LABELS. Measured, a
+single corrupted value in a thousand raised MSE by 96,260%. If that value was a data
+entry error rather than a real event, your metric - and, if you trained on it, your
+MODEL - is now being driven by a typo.
+
+THAT IS WHY OUTLIER HANDLING IS PART OF USING MSE, not a separate concern. Clip,
+winsorise, log-transform, or use Huber. Choosing MSE and not looking at the tail is
+choosing to let the tail decide.
+
+MSE'S UNITS ARE MEANINGLESS. Squared pounds, squared minutes. Always report RMSE.
+And even RMSE is not comparable across problems, which is what R-squared is for.
+
+THE RMSE/MAE RATIO IS FREE INFORMATION. RMSE is always at least MAE and they are
+equal only when every error is the same size. A ratio near 1 means uniform errors; a
+ratio of 3 means a few rows dominate. Measured on a five-row example: MAE 21.6, RMSE
+44.76 - a ratio of 2.07, from exactly one bad row out of five.
+
+THE SKEW PROBLEM IS SUBTLER THAN THE OUTLIER PROBLEM. Measured on log-normal data
+with no outliers at all, MSE's optimal constant was 87.30 and MAE's was 72.10 - 21%
+apart. On skewed data MSE aims at the mean, which is pulled up by the long tail and
+is not the typical value. FOR SKEWED TARGETS - prices, durations, counts - PREDICT
+THE LOG AND THE PROBLEM LARGELY GOES AWAY.
+
+AND THE ASSUMPTION NOBODY STATES: MSE weights every row equally, which assumes the
+error variance is constant across the range. For a model predicting house prices,
+being 10,000 off on a 50,000 house and on a 5,000,000 house are not equally serious,
+and MSE says they are.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: mean error without squaring. Positive and negative cancel; a model wildly
+wrong in both directions scores zero. Useful only as a BIAS measure alongside
+something else.
+
+UPGRADE 1: MSE. Smooth, differentiable, punishes large errors, and is maximum
+likelihood under Gaussian noise.
+
+UPGRADE 2: RMSE for reporting, so the number has units.
+
+UPGRADE 3: R-SQUARED for comparing across problems - MSE normalised by the variance
+of the target, so it answers "better than predicting the mean, and by how much".
+
+UPGRADE 4: report RMSE AND MAE, and read their ratio as a description of the error
+distribution.
+
+UPGRADE 5: HUBER LOSS for training when the tail is bad data rather than real
+signal. Quadratic below a threshold you choose, linear above.
+
+UPGRADE 6: LOG-TRANSFORM THE TARGET for skewed quantities. Predicting log(price)
+and optimising MSE there is optimising a relative error, which is usually what you
+meant, and it removes most of the skew problem at a stroke.
+
+UPGRADE 7: WEIGHTED MSE when rows genuinely differ in importance, or when the error
+variance changes across the range.
+
+UPGRADE 8: quantile loss when the two directions of error cost different amounts -
+MSE's symmetry is an assumption, not a law.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - LOOK AT THE ERROR DISTRIBUTION BEFORE CHOOSING. If the tail is real signal,
+MSE. If it is bad data, MAE or Huber, and fix the data.
+
+STEP 2 - IF THE TARGET IS SKEWED, TRANSFORM IT. Log for prices, durations and
+counts. Measured, MSE's optimum on log-normal data was 21% above MAE's, and the
+transform removes that gap.
+
+STEP 3 - REPORT RMSE, NOT MSE. Squared units are not interpretable.
+
+STEP 4 - REPORT MAE ALONGSIDE and read the ratio. Near 1 means uniform errors; 3
+means a few rows dominate.
+
+STEP 5 - REPORT R-SQUARED OR AN EXPLICIT BASELINE. RMSE 4.2 means nothing until you
+know that predicting the mean gives 9.8.
+
+STEP 6 - INSPECT THE WORST ROWS. Measured, they contribute almost everything. If the
+top ten rows are all typos, your metric is measuring your data-entry process.
+
+STEP 7 - CHECK WHETHER THE ERROR VARIANCE IS CONSTANT. If bigger targets have bigger
+errors, MSE is dominated by the large end and a relative error or a weighting is
+more appropriate.
+
+STEP 8 - IF YOU CLIP OR WINSORISE, SAY SO, and report the number of affected rows.
+Otherwise you have improved the metric rather than the model.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are judging a darts player and want a single number for how far from the
+bullseye they land.
+
+Averaging the distances is one option. Squaring the distances first and then
+averaging is another, and squaring changes the judgement completely: a throw that
+misses by ten centimetres now counts a hundred times as much as one that misses by
+one.
+
+Is that right? It depends entirely on the game. If missing by ten is a hundred times
+worse than missing by one - the dart hits someone - then yes. If a ten-centimetre
+miss is merely ten times worse, no.
+
+Measured, one bad throw in a thousand raised the squared-distance score by
+ninety-six thousand percent and the plain-distance score by a hundred and
+twenty-two. So under the squared score, one throw decides the whole assessment.
+
+There are two good reasons people use squaring anyway. It is smooth, which matters
+if you are coaching: the correction you give is proportional to how far off they
+were, so it naturally gets gentler as they improve. And if their misses scatter in
+the ordinary bell-curve way, the squared score is provably the right way to
+summarise them.
+
+And one thing to watch. Under the squared score, the single best guess for where
+they will land is the AVERAGE of their throws; under the plain-distance score it is
+the MIDDLE one. If most throws cluster low and a few land far high, the average sits
+well above the middle - measured, 21% above - so the two scores are not just
+harsher and gentler versions of each other. They are aiming at different targets.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def mse(preds, actuals):
+        return sum((p - a) ** 2 for p, a in zip(preds, actuals)) / len(actuals)
+
+    def rmse(preds, actuals):
+        return sqrt(mse(preds, actuals))          # REPORT THIS, not mse
+
+    def r2(preds, actuals):
+        mean_a = sum(actuals) / len(actuals)
+        ss_res = sum((a - p) ** 2 for p, a in zip(preds, actuals))
+        ss_tot = sum((a - mean_a) ** 2 for a in actuals)
+        return 1 - ss_res / ss_tot                # MSE normalised by the baseline
+
+    # the gradient, which is why MSE trains smoothly
+    def grad(pred, actual):
+        return 2 * (pred - actual)                # PROPORTIONAL to the error
+
+    # for a skewed target
+    loss = mse(log(preds), log(actuals))          # relative error, not absolute
+
+LINE BY LINE:
+ - `(p - a) ** 2` is the whole design decision. It makes errors positive, and it
+   makes them count quadratically, which is a claim that a 10x error is 100x as bad.
+ - `sqrt(...)` in rmse exists purely so the number has units. Raw MSE in squared
+   pounds is not a quantity anyone can reason about, and reporting it is a reliable
+   sign that nobody looked at it.
+ - `1 - ss_res / ss_tot` - R-squared is literally your MSE divided by the MSE of
+   predicting the mean, subtracted from one. That framing makes it obvious what it
+   means and why it can be NEGATIVE: a model worse than the mean scores below zero.
+ - `2 * (pred - actual)` - proportional to the error. This is the property that makes
+   MSE converge smoothly: big mistakes get big corrections, and the correction shrinks
+   automatically as the model improves. MAE's gradient is +1 or -1 regardless.
+ - `mse(log(preds), log(actuals))` - one line that converts absolute error into
+   relative error, and it is the standard fix for skewed targets.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+  predicted:  10, 20, 30, 40,  50
+  actual:     12, 18, 33, 39, 150
+  error:      -2,  +2,  -3,  +1, -100
+
+  squared:     4,   4,   9,   1, 10000
+  MSE  = 10018 / 5 = 2003.6      (units: whatever-squared)
+  RMSE = 44.76
+  MAE  = 108 / 5 = 21.6
+
+  THE LAST ROW CONTRIBUTES 10,000 OF THE 10,018 - 99.8% of the metric from 20% of
+  the data. Remove it: MSE 4.5, RMSE 2.12, MAE 2.0.
+
+  RMSE/MAE = 44.76 / 21.6 = 2.07. Anything much above 1 says the errors are uneven,
+  and 2.07 from five rows says one of them is doing all the work.
+
+NOW THE MEASURED SENSITIVITY SWEEP, 1,000 rows, one label corrupted:
+
+  corrupted to      MSE        MSE change     MAE change     ratio of sensitivities
+  ------------------------------------------------------------------------------
+           100     27.93           +9.7%          +1.1%                    8.8x
+           200     47.93          +88.3%          +3.6%                   24.5x
+           500    227.93         +795.5%         +11.0%                   72.3x
+         5,000  24527.93      +96,260.4%        +122.0%                  789.0x
+
+THE SENSITIVITY RATIO ITSELF GROWS WITH THE SIZE OF THE OUTLIER, because MSE is
+quadratic and MAE is linear. There is no fixed factor between them; the gap widens
+without bound.
+
+AND THE OPTIMAL-CONSTANT MEASUREMENT, which is the point people miss:
+
+  data                    MSE wants     (mean)     MAE wants   (median)
+  ------------------------------------------------------------------------
+  symmetric                  99.77       99.76        100.14     100.15
+  skewed (log-normal)        87.30       87.32         72.10      72.15
+  with 1% outliers          108.10      108.10        100.83     100.80
+
+MSE'S OPTIMUM IS THE MEAN, EXACTLY, ON EVERY DATASET. On the skewed data that is
+87.30 against MAE's 72.10 - 21% apart, with NO outliers involved at all. Skew alone
+is enough to make the two metrics aim at different numbers, which is why
+log-transforming a skewed target matters more than outlier handling does.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: one pass, one subtraction and one multiply per row. Free.
+
+OPTIMISATION: differentiable everywhere, gradient proportional to the error, so the
+step size shrinks automatically near the optimum. This is why it is the default
+training loss for regression.
+
+THEORY: minimising MSE is maximum likelihood under Gaussian noise, and expected MSE
+decomposes exactly into bias squared plus variance plus irreducible noise. Both of
+those are consequences of the square.
+
+SENSITIVITY: measured up to 789 times more sensitive than MAE to a single extreme
+value, and the ratio grows with the outlier's size.
+
+THE #1 MISTAKE: using MSE without inspecting the largest errors. Measured, one row
+in a thousand can be 96% of the metric, and if that row is a typo the metric is
+measuring data entry.
+
+THE #2 MISTAKE: reporting raw MSE. Squared units. Report RMSE.
+
+THE #3 MISTAKE: reporting RMSE without MAE. The ratio is free and describes the
+error distribution.
+
+THE #4 MISTAKE: using MSE on a skewed target. Measured, its optimum was 21% above
+MAE's on log-normal data with no outliers. Predict the log.
+
+THE #5 MISTAKE: reporting RMSE with no baseline. R-squared, or the
+predict-the-mean number.
+
+THE #6 MISTAKE: assuming constant error variance. MSE weights every row equally,
+which means the large end of the range dominates.
+
+THE #7 MISTAKE: clipping outliers to improve the metric and not saying so. That
+improves the number rather than the model.
+
+THE #8 MISTAKE: treating over- and under-prediction as equally costly. MSE's
+symmetry is an assumption.
+
+THE TAKEAWAY: MSE squares the errors, so a 10x mistake counts 100x - which makes it
+maximum likelihood under Gaussian noise, differentiable everywhere, and gradient-
+proportional-to-error, and also makes it up to 789 times more sensitive than MAE to a
+single bad row (measured, one corrupted label in a thousand moved it by 96,260%); it
+is minimised by the MEAN exactly, which on skewed data sits 21% above MAE's median
+with no outliers involved at all - so report RMSE rather than MSE, report MAE
+alongside it and read the ratio, and log-transform a skewed target before doing
+either.""",
+]
+
+_EX_P1AO["Mean Reciprocal Rank (MRR)"] = [
+    """1. THE GOAL - scoring a ranked list when there is one right answer.
+
+Search, question answering, autocomplete, retrieval for RAG. The system returns a
+ranked list and there is exactly one item the user wanted. How good was the ranking?
+
+MRR's answer: find the position of the correct item, take one over that position,
+and average across queries.
+
+  rank 1 -> 1.000     rank 2 -> 0.500     rank 3 -> 0.333
+  rank 5 -> 0.200     rank 10 -> 0.100    rank 100 -> 0.010
+
+THE SHAPE OF THAT CURVE IS THE METRIC'S ENTIRE OPINION. Moving from rank 2 to rank 1
+gains 0.500. Moving from rank 2 all the way to infinity loses 0.500. IN OTHER WORDS,
+GETTING IT FIRST IS WORTH AS MUCH AS EVERYTHING ELSE PUT TOGETHER.
+
+That is a strong claim about user behaviour, and it is roughly right for a
+navigational search where people click the top result or reformulate. It is quite
+wrong for a research task where a user scans ten results, and it is why MRR should
+never be the only number you report.""",
+
+    """2. THE INTUITION - reciprocal rank is a model of user attention.
+
+Every ranking metric encodes an assumption about how far down the list a user looks.
+
+  MRR:          only the FIRST relevant item matters, weighted 1/rank.
+  Recall@k:     everything in the top k counts equally, everything below counts zero.
+  MAP:          all relevant items matter, weighted by where they appear.
+  NDCG:         relevance can be graded, and the discount is logarithmic - a gentler
+                curve than 1/rank.
+
+MRR'S 1/rank CURVE FALLS FASTER THAN ATTENTION ACTUALLY DOES. NDCG's log discount
+was chosen precisely because the reciprocal was too aggressive. So MRR is the right
+metric when a single correct answer exists and the user genuinely stops at the first
+one - a lookup, a "did you mean", a retrieval step feeding one document to a model.
+
+AND IT IGNORES EVERYTHING AFTER THE FIRST HIT. If your system returns the right
+answer at rank 1 and then nine irrelevant results, MRR says 1.000. If it returns the
+right answer at rank 1 followed by nine other correct answers, MRR still says 1.000.
+FOR ANY TASK WHERE THE USER WANTS SEVERAL THINGS, MRR IS BLIND TO MOST OF THE
+SYSTEM'S BEHAVIOUR.
+
+THE OTHER STRUCTURAL FACT: what do you score when there is NO relevant item in the
+returned list? Reciprocal rank of "not found" is 0, which is the usual convention -
+and it means MRR conflates "ranked it 500th" with "did not return it at all". If
+those differ operationally, MRR will not tell you.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RECIPROCAL RANK - 1 divided by the position of the first relevant result. 0 if there
+is none in the returned list.
+
+MRR - the mean of that across queries. Between 0 and 1.
+
+RECALL@K - the fraction of queries whose relevant item appears in the top k. A step
+function: rank 1 and rank k score identically, rank k+1 scores zero.
+
+PRECISION@K - of the top k results, what fraction are relevant. Useful when there
+are many relevant items.
+
+MAP (Mean Average Precision) - averages precision at each relevant item's position,
+then averages across queries. Accounts for ALL relevant items, unlike MRR.
+
+NDCG - Normalised Discounted Cumulative Gain. Supports GRADED relevance (this is
+perfect, that is acceptable) and discounts by 1/log2(rank+1), which is gentler than
+1/rank.
+
+HIT RATE / SUCCESS@K - the same as recall@k for a single-answer task.
+
+NAVIGATIONAL vs INFORMATIONAL QUERY - "facebook login" versus "how does
+photosynthesis work". The first has one right answer and MRR fits; the second does
+not and it does not.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - MRR and recall@k pick different winners.
+
+Three retrieval systems, 5,000 queries each, measured:
+
+  system                              MRR       R@1      R@5     R@10
+  ------------------------------------------------------------------------
+  A: 50% at rank 1, rest within 3    0.7076    0.498   1.000   1.000
+  B: 30% at rank 1, rest within 10   0.4516    0.300   0.614   1.000
+  C: 55% at rank 1, long tail        0.5708    0.543   0.571   0.612
+
+READ THE COLUMNS AS THREE DIFFERENT VERDICTS.
+
+  BY R@1, SYSTEM C WINS - it puts the answer first more often than A does (0.543 vs
+  0.498).
+  BY MRR, SYSTEM A WINS by a wide margin (0.708 vs 0.571).
+  BY R@10, A AND B TIE AT A PERFECT 1.000 and C is worst by far (0.612).
+
+THREE METRICS, THREE DIFFERENT ANSWERS TO "WHICH SYSTEM IS BEST", from the same
+5,000 queries. And none of them is wrong - they encode different assumptions about
+what the user does.
+
+C is the system that is slightly better at the top and disastrous in the tail: it
+finds the answer first 54% of the time and completely fails to return it 39% of the
+time. A is the system that never fails - it always has the answer within three - and
+is marginally worse at rank 1.
+
+IF USERS SCAN A FEW RESULTS, A IS OBVIOUSLY BETTER. IF THEY ONLY EVER CLICK THE
+FIRST, C IS BETTER. THE METRIC IS THE PRODUCT DECISION, and picking MRR by default
+picks the second assumption without stating it.
+
+TWO MORE TRAPS:
+
+MRR HAS A CEILING PROBLEM WHEN THERE ARE MANY RELEVANT ITEMS. It stops at the first
+one, so a system that surfaces ten good answers scores the same as one that surfaces
+one good answer and nine bad ones.
+
+A SINGLE QUERY CAN MOVE IT A LOT. Because the range is 0 to 1 and most of the mass
+is between 0 and 0.5, MRR on a small evaluation set is noisy. Report a confidence
+interval or use enough queries.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: accuracy - did the top result match. That is exactly recall@1, and it throws
+away all information about near-misses. A system that always ranks the answer second
+scores zero.
+
+UPGRADE 1: RECALL@K. Credits anything in the top k. Simple, interpretable, and it
+treats rank 1 and rank k as identical, which is usually false.
+
+UPGRADE 2: MRR. Credits position, with a steep 1/rank discount.
+
+UPGRADE 3: REPORT MRR AND RECALL@K TOGETHER. Measured, they disagree about the
+winner, and the disagreement is the interesting part.
+
+UPGRADE 4: NDCG when relevance is GRADED rather than binary, and when the discount
+should be gentler than 1/rank. Its log discount was designed because 1/rank
+under-weights positions 2 to 5 relative to real user behaviour.
+
+UPGRADE 5: MAP when there are MULTIPLE relevant items per query and you care about
+all of them.
+
+UPGRADE 6: measure at the k YOUR INTERFACE ACTUALLY SHOWS. If the UI shows five
+results, recall@5 and MRR truncated at 5 are the honest numbers, and anything found
+at rank 40 is not found.
+
+UPGRADE 7: report the FAILURE RATE separately - the fraction of queries with no
+relevant result at all. MRR gives those a 0, which is indistinguishable from a very
+poor rank, and operationally they are completely different.
+
+UPGRADE 8: the real upgrade - measure clicks and task success in production.
+Offline ranking metrics are proxies, and which proxy correlates with your actual
+outcome is an empirical question.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - CHECK THERE IS ONE CORRECT ANSWER. If several results can be relevant, MRR
+ignores all but the first and MAP or NDCG is the right metric.
+
+STEP 2 - CHECK YOUR USERS ACTUALLY STOP AT THE FIRST RESULT. MRR's 1/rank discount
+says rank 1 is worth twice rank 2. If your interface shows ten and users scan them,
+that is far too aggressive.
+
+STEP 3 - TRUNCATE AT THE k YOUR INTERFACE SHOWS. A result at rank 40 in a five-result
+UI has not been found, and scoring it 0.025 is generous.
+
+STEP 4 - REPORT RECALL@K ALONGSIDE. Measured, they picked different winners on the
+same data.
+
+STEP 5 - REPORT THE ZERO RATE SEPARATELY. "No relevant result at all" scores 0, the
+same as an extremely bad rank, and those are different failures.
+
+STEP 6 - USE ENOUGH QUERIES, and report an interval. MRR on a hundred queries is
+noisy.
+
+STEP 7 - SEGMENT BY QUERY TYPE. Navigational queries should have a very high MRR;
+exploratory ones will not, and averaging them together hides both.
+
+STEP 8 - VALIDATE THE PROXY. Check that MRR improvements correspond to click or
+task-success improvements in production. If they do not, you are optimising the
+wrong number.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Someone asks a librarian for a specific book and the librarian hands over a stack in
+the order they think most likely. How do you score the librarian?
+
+If the right book is on top, full marks. If it is second, half marks. Third, a third.
+Tenth, a tenth.
+
+Notice how brutal that is. Going from second to first gains you half a mark. Going
+from second all the way to never finding it at all also loses you half a mark. THE
+METRIC SAYS BEING FIRST IS WORTH AS MUCH AS THE ENTIRE REST OF THE RANGE.
+
+Sometimes that is exactly right. If the person glances at the top book and walks away
+if it is wrong, then only the top position matters and the scoring should say so.
+
+Often it is not. If they will happily flick through the top five, a librarian who
+always puts the book in the top three is more useful than one who nails it first more
+often but sometimes buries it at position forty.
+
+Measured on five thousand requests, exactly that pair existed. Librarian A put the
+book first 49.8% of the time and ALWAYS had it within three. Librarian C put it first
+54.3% of the time - better - and 39% of the time did not include it at all.
+
+By "how often was it first", C wins. By the reciprocal scoring, A wins comfortably. By
+"was it in the top ten", A is perfect and C fails four times in ten.
+
+Three sensible scoring schemes, three different winners, same five thousand requests.
+Which librarian you hire depends on how your readers actually behave - and the
+scoring scheme is where you write that belief down.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def reciprocal_rank(ranked, relevant, k=None):
+        if k is not None:
+            ranked = ranked[:k]                  # truncate at what the UI SHOWS
+        for i, item in enumerate(ranked, start=1):
+            if item in relevant:
+                return 1.0 / i                   # FIRST hit only - stops here
+        return 0.0                               # not found == rank infinity
+
+    def mrr(results, k=None):
+        return sum(reciprocal_rank(r, rel, k) for r, rel in results) / len(results)
+
+    def recall_at(results, k):
+        return sum(1 for r, rel in results
+                   if any(x in rel for x in r[:k])) / len(results)
+
+    def report(results):
+        return {
+            "MRR":       mrr(results, k=10),
+            "R@1":       recall_at(results, 1),
+            "R@5":       recall_at(results, 5),
+            "R@10":      recall_at(results, 10),
+            "zero_rate": sum(1 for r, rel in results
+                             if not any(x in rel for x in r)) / len(results),
+        }
+
+LINE BY LINE:
+ - `return 1.0 / i` inside the loop - it RETURNS on the first hit. Everything after
+   that position is invisible to the metric, which is the property that makes MRR
+   wrong for multi-answer tasks.
+ - `return 0.0` at the end - "not found" scores the same as "found at rank 10,000".
+   Operationally those are different failures, which is why `zero_rate` is a separate
+   line in the report.
+ - `ranked[:k]` - truncating at the interface's k. Without it, a result at position
+   40 contributes 0.025 to a metric describing a five-result page, which is a small
+   lie that accumulates.
+ - `report` returns four numbers rather than one, deliberately. Measured, MRR and R@1
+   named different winners on the same 5,000 queries, so a single number is a choice
+   you should be making explicitly rather than by default.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+FIVE QUERIES, and where the correct answer landed:
+
+  query   rank of correct answer   reciprocal rank
+  --------------------------------------------------
+    1              1                    1.000
+    2              3                    0.333
+    3              2                    0.500
+    4         not found                 0.000
+    5              1                    1.000
+  --------------------------------------------------
+  MRR = (1.000 + 0.333 + 0.500 + 0.000 + 1.000) / 5 = 2.833 / 5 = 0.5667
+
+  R@1 = 2/5 = 0.400      R@3 = 4/5 = 0.800      zero rate = 1/5 = 0.200
+
+  NOW IMPROVE QUERY 4 FROM "not found" TO RANK 10. MRR rises to 0.5867 - a gain of
+  0.020. Now instead improve QUERY 2 FROM RANK 3 TO RANK 1. MRR rises to 0.7000 - a
+  gain of 0.133.
+
+  MOVING ONE QUERY FROM MISSING ENTIRELY TO RANK 10 IS WORTH ONE SIXTH OF MOVING
+  ANOTHER FROM RANK 3 TO RANK 1. That is MRR's opinion, stated numerically, and
+  whether it is correct is a product question.
+
+THE MEASURED THREE-SYSTEM COMPARISON, 5,000 queries each:
+
+  system                              MRR       R@1      R@5     R@10
+  ------------------------------------------------------------------------
+  A: 50% at rank 1, rest within 3    0.7076    0.498   1.000   1.000
+  B: 30% at rank 1, rest within 10   0.4516    0.300   0.614   1.000
+  C: 55% at rank 1, long tail        0.5708    0.543   0.571   0.612
+
+TRACE SYSTEM C AGAINST SYSTEM A, column by column:
+  R@1:  C 0.543 > A 0.498   -> C is BETTER at putting it first
+  MRR:  C 0.571 < A 0.708   -> A is better overall by the reciprocal weighting
+  R@5:  C 0.571 < A 1.000   -> A ALWAYS has it in the top five, C only 57% of the time
+  R@10: C 0.612 < A 1.000   -> C fails completely on 39% of queries
+
+SO C IS THE SYSTEM THAT IS SHARPER AT THE VERY TOP AND CATASTROPHIC BELOW IT. If
+your users only ever look at the first result, C is the better product. If they scan
+five, A is better by a wide margin and it is not close.
+
+THE METRIC DID NOT DISCOVER WHICH IS BETTER. IT ENCODED AN ASSUMPTION AND THEN
+REPORTED THE CONSEQUENCE, and reporting only MRR would have hidden that C wins on
+the number a click-through-obsessed team would care about most.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: one scan per query until the first hit. Free.
+
+RANGE: 0 to 1. An MRR of 0.5 corresponds roughly to "the answer is usually second".
+
+VARIANCE: high on small evaluation sets, because the per-query values are 1, 0.5,
+0.333 and 0 - a lumpy distribution with most mass at the extremes.
+
+THE #1 MISTAKE: using MRR when several results can be relevant. It stops at the
+first and is blind to everything after it.
+
+THE #2 MISTAKE: reporting MRR alone. Measured, it and R@1 named different winners
+from the same 5,000 queries.
+
+THE #3 MISTAKE: not truncating at the interface's k. A hit at rank 40 in a
+five-result page has not been found.
+
+THE #4 MISTAKE: conflating "not returned" with "ranked very low". Both score 0;
+report the zero rate separately.
+
+THE #5 MISTAKE: assuming the 1/rank discount matches user behaviour. It is steeper
+than reality, which is why NDCG uses a logarithmic discount instead.
+
+THE #6 MISTAKE: averaging navigational and exploratory queries together. They have
+completely different achievable MRRs and the mean describes neither.
+
+THE #7 MISTAKE: a small evaluation set. The per-query values are lumpy; report an
+interval.
+
+THE #8 MISTAKE: treating an offline ranking metric as the goal. Validate that it
+moves with clicks or task success, or you are optimising a proxy that does not
+correlate.
+
+THE TAKEAWAY: MRR is the mean of 1/(rank of the first relevant result), so moving
+from rank 2 to rank 1 is worth exactly as much as moving from rank 2 to never found
+at all - a strong and often-unstated claim that users stop at the top result; it
+ignores everything after the first hit, scores "missing" identically to "ranked
+10,000th", and measured on 5,000 queries it named a different best system than R@1
+did and a different one again than R@10 did - so report it with recall@k and the
+zero rate, truncated at the k your interface actually shows.""",
+]
+
 
 
 
