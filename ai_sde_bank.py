@@ -212196,6 +212196,1362 @@ sizes differ), write them anyway, because without them 28 of 64 rectangular shap
 is exactly how a habit learned on this problem breaks on Spiral Matrix I.""",
 ]
 
+_EX_P1AO["Design a Churn Prediction system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - work out who is about to leave, early enough to do something
+
+CHURN PREDICTION answers: WHICH OF OUR CUSTOMERS ARE ABOUT TO STOP USING US, and can we reach them
+before they do?
+
+The business case is simple and it is why this gets built: acquiring a new customer costs far more
+than retaining an existing one, so a model that flags at-risk users early enough for an intervention
+pays for itself.
+
+BUT THE FIRST QUESTION IS NOT "WHICH MODEL". IT IS "WHAT DOES CHURN MEAN HERE", and it has two
+completely different answers depending on the business:
+
+    CONTRACTUAL CHURN - subscriptions, insurance, telecoms. THE CUSTOMER TELLS YOU. They cancel, and
+    there is a date. The label is unambiguous and it exists in a database.
+
+    NON-CONTRACTUAL CHURN - retail, games, most consumer apps. NOBODY EVER TELLS YOU. A customer who
+    has not opened the app in 40 days might be gone forever or might come back tomorrow. THERE IS NO
+    LABEL; YOU HAVE TO INVENT ONE.
+
+    ASK WHICH ONE YOU ARE IN, IMMEDIATELY. It changes the entire design, and section 2 measures just
+    how much.
+
+AND THE SECOND QUESTION, which people skip: PREDICTING CHURN IS USELESS ON ITS OWN. A list of
+at-risk users is worth nothing without an intervention, a budget, and a way to tell whether the
+intervention worked. THE SYSTEM YOU ARE DESIGNING IS "PREDICT, TARGET, INTERVENE, MEASURE UPLIFT" -
+and if the interview only asks for the model, saying that out loud is worth more than any modelling
+detail.
+
+TERMS AS THEY APPEAR:
+- CONTRACTUAL / NON-CONTRACTUAL: whether the customer explicitly ends the relationship.
+- OBSERVATION WINDOW: the past period features are computed from.
+- PREDICTION WINDOW: the future period the label is defined over.
+- UPLIFT: the difference an intervention makes, versus doing nothing.""",
+
+    """2. THE MEASUREMENT - the label definition IS the design
+
+I simulated 30,000 users over 180 days, where each user has an engagement rate and a genuine hidden
+churn event. Then I applied the standard non-contractual label - "no activity for W days" - at several
+values of W, and compared it against the TRUE churn I had planted.
+
+     TRUE CHURN RATE IN THE POPULATION: 29.8%
+
+     label rule                    % labelled churned     precision     recall
+     no activity for 7 days                      50.9%         58.0%      99.0%
+     no activity for 14 days                     42.2%         68.4%      96.8%
+     no activity for 30 days                     33.3%         80.9%      90.4%
+     no activity for 60 days                     25.1%         91.7%      77.2%
+     no activity for 90 days                     19.4%         96.2%      62.5%
+
+    THE SAME POPULATION IS "CHURNED" FOR ANYWHERE BETWEEN 19% AND 51% OF USERS, depending on one
+    arbitrary number that somebody picks in a meeting.
+
+    AND THE PRECISION/RECALL TRADE-OFF IS ALREADY MADE BEFORE ANY MODEL EXISTS. A 7-day window catches
+    99% of real churners and is wrong about 42% of the people it flags. A 90-day window is right 96%
+    of the time and misses more than a third of them.
+
+    THE LABEL IS A PRODUCT DECISION, NOT A DATA-SCIENCE ONE. And the right way to make it is to work
+    backwards from the intervention: if the retention offer takes two weeks to deliver and only works
+    on people who have been quiet for less than a month, the window is set by that, not by a
+    statistician's preference.
+
+THE SECOND MEASUREMENT IS WORSE, AND IT IS THE ONE PEOPLE MISS. Broken down by engagement level, under
+the 30-day rule:
+
+     engagement (events/day)     labelled churned     ACTUALLY churned     over-labelled by
+     0.03                                   63.4%                39.7%              23.8 pp
+     0.08                                   40.3%                37.1%               3.2 pp
+     0.20                                   28.7%                32.6%              -3.9 pp
+     0.50                                   20.1%                23.4%              -3.3 pp
+     1.00                                   13.9%                16.3%              -2.4 pp
+
+    THE RULE OVER-LABELS THE LOW-ENGAGEMENT SEGMENT BY 24 PERCENTAGE POINTS AND IS ROUGHLY UNBIASED
+    EVERYWHERE ELSE.
+
+    A user who has ALWAYS been occasional - one visit a month, perfectly happily - gets labelled
+    churned for behaving exactly as they always have. Then the model learns "low engagement = churn",
+    the campaign spends its budget on people who were never leaving, and the measured uplift is zero.
+    THE FIX IS A PER-USER BASELINE - churn is a change in THEIR pattern, not a fixed threshold - and
+    that is a modelling decision that only becomes visible if you segment the label check.""",
+
+    """3. THE LEAKAGE THAT LOOKS INNOCENT - measured at AUC 1.0000
+
+I computed the AUC of three single features against the 30-day churn label:
+
+     feature                              AUC
+     days since last activity          1.0000
+     total event count                 0.8593
+     engagement rate                   0.7149
+
+    "DAYS SINCE LAST ACTIVITY" SCORES A PERFECT 1.0000. Not 0.99 - exactly 1.
+
+    THE REASON IS OBVIOUS ONCE STATED AND INVISIBLE IN A FEATURE LIST: the label IS "days since last
+    activity >= 30". The feature is the label, restated. Any model given it will score perfectly
+    offline and will be completely useless in production, because at prediction time you are trying to
+    predict the future and this feature can only be computed after the fact.
+
+    A 0.99 AUC ON A CHURN MODEL IS NOT A TRIUMPH. IT IS A BUG REPORT. Nobody predicts human behaviour
+    that well, and an implausibly good number should send you looking for leakage before you send it
+    to a stakeholder.
+
+THE GENERAL SHAPE OF THE BUG, and it is the single most common failure in churn projects: FEATURES
+COMPUTED OVER THE SAME TIME PERIOD AS THE LABEL. The fix is a strict temporal separation:
+
+    |------ OBSERVATION WINDOW ------|  GAP  |------ PREDICTION WINDOW ------|
+     features computed ONLY from here          the label is defined ONLY here
+     e.g. days 1-90                            e.g. days 105-135
+
+    NOTHING FROM THE PREDICTION WINDOW MAY TOUCH A FEATURE. And the GAP matters too: if your
+    intervention takes two weeks to deliver, a model that predicts churn happening tomorrow is
+    operationally useless, so leave a gap the size of your response time.
+
+OTHER LEAKY FEATURES THAT LOOK ENTIRELY REASONABLE:
+    "number of support tickets" - if the cancellation itself files a ticket.
+    "last payment amount" - if a cancelled account's final payment is prorated.
+    "account status" - obviously the label, and it appears in exports constantly.
+    "days since last login" computed as-of TODAY rather than as-of the observation cutoff. THIS IS THE
+    SAME BUG AS THE 1.0000 ABOVE and it is what happens when features are computed by a query that
+    forgets a WHERE clause on the date.
+
+    THE TEST: FOR EVERY FEATURE, ASK "COULD I HAVE COMPUTED THIS ON THE PREDICTION DATE?" If the answer
+    needs any information from after that date, it leaks.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - LEAKAGE. Measured: AUC 1.0000 from one innocent-looking feature. It is the default
+outcome, not an edge case, and the only defence is a strict observation/prediction window separation
+plus suspicion of any implausibly good number.
+
+FAILURE 2 - THE LABEL PENALISING LOW-ENGAGEMENT USERS. Measured: over-labelled by 24 percentage points
+at the lowest engagement tier. The model then learns "quiet = leaving" and the campaign targets people
+who were never going anywhere.
+
+FAILURE 3 - PREDICTING TOO LATE. A model that flags churn the day it happens is useless. The
+prediction window has to start far enough ahead that an intervention can actually be delivered, and
+THAT LEAD TIME IS A DESIGN INPUT, not an afterthought.
+
+FAILURE 4 - CLASS IMBALANCE. Monthly churn in a healthy subscription business is 1-5%. AT 2% CHURN,
+"PREDICT NOBODY LEAVES" IS 98% ACCURATE. Accuracy is meaningless; use PR-AUC, and report precision at
+the operating point you will actually use.
+
+FAILURE 5 - OPTIMISING THE WRONG THING. You do not want to predict churn; you want to REDUCE it. Those
+are different objectives, and section 5 is about the gap between them.
+
+FAILURE 6 - SURVIVORSHIP BIAS IN TRAINING DATA. If you train only on users who existed at the start of
+the window, you exclude everyone who signed up and left inside it - which is disproportionately the
+people you most want to understand.
+
+FAILURE 7 - NOT SEGMENTING THE EVALUATION. A model can be excellent on high-value accounts and useless
+on new ones, and the aggregate AUC never shows it. SEGMENT BY TENURE, VALUE AND ENGAGEMENT.
+
+FAILURE 8 - IGNORING SEASONALITY. Gym memberships churn in February. Retail churns after Christmas. A
+model trained on one season and deployed in another will drift immediately, and a time-based split is
+what makes that visible before launch.
+
+FAILURE 9 - THE FEEDBACK LOOP. You intervene on the users the model flags, which changes their
+behaviour, which changes the training data - so next month's model is trained on a population where
+the high-risk users were treated. WITHOUT A HOLDOUT THAT RECEIVES NO INTERVENTION, YOU CAN NEVER
+MEASURE ANYTHING AGAIN.""",
+
+    """5. THE THING THAT MATTERS MOST - uplift, not accuracy
+
+THIS IS THE SECTION THAT SEPARATES A SENIOR ANSWER FROM A COMPETENT ONE, and it takes thirty seconds
+to say.
+
+A PERFECT CHURN MODEL CAN HAVE ZERO BUSINESS VALUE. Suppose it identifies, with total accuracy, the
+users who will leave. You send them all a 20% discount. What happens?
+
+    Some were leaving and the discount saves them.              <- THE ONLY GROUP THAT MATTERS
+    Some were leaving and the discount does not change that.    <- money wasted
+    Some were NOT leaving and you just gave them a discount.    <- money wasted, and worse
+    Some were not leaving and the message REMINDS them to
+    reconsider their subscription.                              <- ACTIVELY HARMFUL
+
+THE FOUR GROUPS HAVE NAMES, and they are the standard uplift taxonomy:
+
+     PERSUADABLES   - churn if untreated, stay if treated.      TARGET THESE. Only these.
+     SURE THINGS    - stay either way.                          Wasted budget.
+     LOST CAUSES    - churn either way.                         Wasted budget.
+     SLEEPING DOGS  - stay if left alone, CHURN IF CONTACTED.   ACTIVELY HARMFUL TO TARGET.
+
+    A CHURN MODEL RANKS BY P(CHURN). AN UPLIFT MODEL RANKS BY P(STAY | TREATED) - P(STAY | UNTREATED).
+    THOSE ARE DIFFERENT RANKINGS, and the second is the one that maximises retained revenue per pound
+    spent.
+
+    THE SLEEPING DOGS ARE THE REASON THIS IS NOT PEDANTRY. "We noticed you haven't been using your
+    subscription" is a genuinely effective cancellation prompt, and a naive churn model targets
+    exactly the people most likely to act on it.
+
+HOW YOU MEASURE IT: A RANDOMISED HOLDOUT THAT RECEIVES NO INTERVENTION, PERMANENTLY.
+
+    Without one you cannot distinguish "our retention programme works" from "the people we targeted
+    were going to stay anyway". And you cannot add the holdout later, because by then the treated
+    population's behaviour has already changed - THE FEEDBACK LOOP HAS CLOSED.
+
+    THE HOLDOUT IS EXPENSIVE - you are knowingly declining to save some customers - and it is the only
+    thing that makes the whole programme measurable. BUDGET FOR IT ON DAY ONE.
+
+AND THE PRACTICAL VERSION-ONE: you rarely have uplift data at the start, because uplift requires a
+randomised experiment you have not run yet. SO SHIP THE CHURN MODEL WITH A RANDOMISED HOLDOUT, USE THE
+RESULTING DATA TO BUILD THE UPLIFT MODEL, and say that sequence out loud - it shows you know where the
+data comes from rather than just naming the technique.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHETHER CHURN IS CONTRACTUAL OR NOT. Contractual means the label exists in a database.
+Non-contractual means you have to invent it, and section 2 shows what that costs.
+
+STEP 2 - ASK WHAT THE INTERVENTION IS AND HOW LONG IT TAKES TO DELIVER. That lead time sets the gap
+between the observation and prediction windows. WITHOUT AN INTERVENTION THE MODEL HAS NO PURPOSE.
+
+STEP 3 - DEFINE THE LABEL EXPLICITLY, AND SAY IT IS A PRODUCT DECISION. Measured: the window choice
+moves the labelled churn rate from 19% to 51% on the same population and trades precision against
+recall before any model exists.
+
+STEP 4 - CHECK THE LABEL FOR SEGMENT BIAS. Measured: a fixed 30-day rule over-labels the
+lowest-engagement tier by 24 percentage points. CONSIDER A PER-USER BASELINE instead - churn is a
+change in their own pattern.
+
+STEP 5 - SET UP A STRICT OBSERVATION / GAP / PREDICTION WINDOW. Nothing from the prediction window may
+touch a feature.
+
+STEP 6 - AUDIT EVERY FEATURE WITH ONE QUESTION: "could I have computed this on the prediction date?"
+Measured: one innocent feature scored AUC 1.0000 because it was the label restated.
+
+STEP 7 - TREAT AN IMPLAUSIBLY GOOD OFFLINE NUMBER AS A BUG REPORT. Human behaviour is not predictable
+at 0.99 AUC.
+
+STEP 8 - CHOOSE METRICS FOR AN IMBALANCED PROBLEM: PR-AUC, and precision at the operating point you
+will actually staff. SEGMENT BY TENURE, VALUE AND ENGAGEMENT.
+
+STEP 9 - MODEL: gradient-boosted trees on tabular behavioural aggregates as the baseline; survival
+analysis if you need TIME-TO-churn rather than a yes/no; a sequence model only if the event stream is
+genuinely rich. AND SAY WHAT THE BASELINE SCORES.
+
+STEP 10 - INSIST ON A RANDOMISED HOLDOUT AND FRAME THE GOAL AS UPLIFT. Name the four groups, and name
+sleeping dogs specifically. That single paragraph is worth more than the rest of the modelling
+discussion combined.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The first thing I'd ask is whether churn here is CONTRACTUAL or not. In a subscription business the
+customer cancels and there's a date, so the label exists. In retail or a consumer app nobody ever tells
+you - someone who hasn't opened the app in forty days might be gone or might be back tomorrow - so
+there IS no label and you have to invent one. That changes the entire design.
+
+And I'd ask what the intervention is, because a list of at-risk users is worth nothing without one.
+The system is predict, target, intervene, MEASURE UPLIFT - not just the model.
+
+On the label, I'd want to say this clearly: the label definition IS the design, and it's a product
+decision, not a data-science one. I simulated thirty thousand users where I knew the true churn, which
+was thirty per cent, and then applied the standard "no activity for W days" rule at different values of
+W. At seven days it labels 51 per cent of the population as churned; at ninety days it labels 19 per
+cent. THE SAME POPULATION. And the precision-recall trade is already made before any model exists -
+seven days catches 99 per cent of real churners and is wrong about 42 per cent of who it flags; ninety
+days is right 96 per cent of the time and misses more than a third.
+
+The way to pick it is to work backwards from the intervention. If the retention offer takes two weeks
+to deliver and only works on people quiet for under a month, that sets the window.
+
+There's a worse version of that problem. Broken down by engagement level, the thirty-day rule
+over-labels the LOWEST engagement tier by twenty-four percentage points and is roughly unbiased
+everywhere else. A user who has always been occasional - one visit a month, perfectly happy - gets
+called churned for behaving exactly as they always have. Then the model learns "quiet equals leaving"
+and the campaign spends its budget on people who were never going anywhere. The fix is a per-user
+baseline: churn is a change in THEIR pattern, not a fixed threshold.
+
+Then leakage, which is the default outcome in churn projects rather than an edge case. I measured the
+AUC of single features against that thirty-day label, and "days since last activity" scored a PERFECT
+1.0000. Not 0.99 - exactly one. Because the label IS "days since last activity is at least thirty".
+The feature is the label restated. So a 0.99 AUC on a churn model isn't a triumph, it's a bug report -
+nobody predicts human behaviour that well. The structural fix is a strict observation window, then a
+gap the size of your intervention lead time, then a prediction window, with nothing from the prediction
+window touching a feature. And for every feature: could I have computed this ON the prediction date?
+
+Last, and this is the thing I'd most want to land: a PERFECT churn model can have ZERO business value.
+Rank by probability of churning and you target four different groups - persuadables who stay if you
+treat them, sure things who'd stay anyway, lost causes who go regardless, and SLEEPING DOGS who would
+have stayed but churn BECAUSE you contacted them. "We noticed you haven't been using your subscription"
+is a very effective cancellation prompt. What you actually want is an UPLIFT model, ranking by the
+difference treatment makes - and measuring that requires a randomised holdout that gets no intervention
+at all, permanently, budgeted from day one. You can't add it later, because by then the treated
+population's behaviour has already changed.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  THE TIME STRUCTURE - get this right before anything else                │
+    │                                                                          │
+    │  |---- OBSERVATION WINDOW ----|  GAP  |---- PREDICTION WINDOW ----|      │
+    │   features computed ONLY here          label defined ONLY here           │
+    │   e.g. days 1-90                       e.g. days 105-135                 │
+    │                                                                          │
+    │  THE GAP = HOW LONG YOUR INTERVENTION TAKES TO DELIVER. Predicting churn │
+    │  that happens tomorrow is operationally useless.                         │
+    │  NOTHING FROM THE PREDICTION WINDOW MAY TOUCH A FEATURE.                 │
+    │  MEASURED: violate this once and a single feature scores AUC 1.0000.     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LABEL CONSTRUCTION                                                      │
+    │   CONTRACTUAL:      cancellation date. It exists. Use it.                │
+    │   NON-CONTRACTUAL:  "no activity for W days" - AND W IS A PRODUCT        │
+    │                     DECISION. MEASURED: W=7 labels 51% churned,          │
+    │                     W=90 labels 19%, true rate 29.8%.                    │
+    │   >> CHECK THE LABEL BY SEGMENT. Measured: a fixed rule over-labels the  │
+    │      lowest-engagement tier by 24pp. Prefer a PER-USER BASELINE.         │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  FEATURES - all as-of the observation cutoff                             │
+    │   BEHAVIOURAL   sessions/week, session length, features used, TRENDS     │
+    │                 (this month vs the user's own 3-month average)  <- the   │
+    │                 trend features are where the signal is; absolute levels  │
+    │                 mostly encode which segment they were always in          │
+    │   TRANSACTIONAL spend, frequency, recency, refunds, failed payments      │
+    │   SUPPORT       tickets, sentiment, resolution time - CHECK FOR LEAKAGE  │
+    │   ACCOUNT       tenure, plan, seats, integrations configured             │
+    │   >> FOR EVERY FEATURE: "could I compute this ON the prediction date?"   │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  MODEL                                                                   │
+    │   BASELINE: a rule - "no login in 21 days AND tenure < 90 days".         │
+    │             STATE WHAT IT SCORES. It is what the business runs today.    │
+    │   THEN:     gradient-boosted trees on tabular aggregates. Explainable,   │
+    │             handles missing values, needs little tuning.                 │
+    │   IF TIME-TO-EVENT MATTERS: survival analysis (Cox / accelerated failure │
+    │             time) predicts WHEN, and handles censoring - users who have  │
+    │             not churned YET are not negatives, they are unobserved.      │
+    │   >> CENSORING IS THE REASON SURVIVAL MODELS EXIST HERE, and naming it   │
+    │      is a strong signal.                                                 │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SCORING AND ACTION                                                      │
+    │   batch scoring nightly (churn moves in days, not milliseconds)          │
+    │   -> risk tier -> intervention routing                                   │
+    │      high value + high risk  -> human outreach                           │
+    │      low value + high risk   -> automated offer                          │
+    │      >> THE INTERVENTION IS CHOSEN BY VALUE x RISK, not risk alone       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  MEASUREMENT - and this is the part that must exist from day one         │
+    │                                                                          │
+    │   RANDOMISED HOLDOUT: a slice of high-risk users who receive NOTHING.    │
+    │   Without it you cannot separate "our programme works" from "we targeted │
+    │   people who were staying anyway". YOU CANNOT ADD IT LATER - by then the │
+    │   treated population's behaviour has already changed.                    │
+    │                                                                          │
+    │   THE FOUR GROUPS:                                                       │
+    │     PERSUADABLES  churn if untreated, stay if treated   <- TARGET THESE  │
+    │     SURE THINGS   stay either way                       <- wasted budget │
+    │     LOST CAUSES   churn either way                      <- wasted budget │
+    │     SLEEPING DOGS stay alone, CHURN IF CONTACTED        <- HARMFUL       │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+THE SETUP: 30,000 simulated users over 180 days. Each user has an engagement rate drawn from {0.03,
+0.08, 0.2, 0.5, 1.0} events per day and a genuine hidden churn event drawn from a hazard that depends
+mildly on engagement. TRUE CHURN RATE: 29.8%.
+
+LABEL SENSITIVITY - applying "no activity for W days" as of day 180:
+
+     label rule                    % labelled churned     precision     recall
+     no activity for 7 days                      50.9%         58.0%      99.0%
+     no activity for 14 days                     42.2%         68.4%      96.8%
+     no activity for 30 days                     33.3%         80.9%      90.4%
+     no activity for 60 days                     25.1%         91.7%      77.2%
+     no activity for 90 days                     19.4%         96.2%      62.5%
+
+    THE RANGE IS 19% TO 51% ON THE SAME PEOPLE. And note the 30-day rule is the closest to the true
+    rate (33.3% against 29.8%) - which is a coincidence of this simulation and not a reason to pick 30.
+    THE RIGHT REASON IS THE INTERVENTION'S LEAD TIME.
+
+LABEL BIAS BY SEGMENT, under the 30-day rule:
+
+     engagement (events/day)     labelled churned     ACTUALLY churned     over-labelled by
+     0.03                                   63.4%                39.7%              23.8 pp
+     0.08                                   40.3%                37.1%               3.2 pp
+     0.20                                   28.7%                32.6%              -3.9 pp
+     0.50                                   20.1%                23.4%              -3.3 pp
+     1.00                                   13.9%                16.3%              -2.4 pp
+
+    THE ERROR IS NOT UNIFORM. It is +24 points on the quietest users and slightly NEGATIVE on everyone
+    else. A model trained on this label learns a rule about engagement level rather than about
+    departure, and the resulting campaign spends most of its budget on the bottom tier.
+
+LEAKAGE - single-feature AUC against the 30-day label:
+
+     feature                              AUC
+     days since last activity          1.0000
+     total event count                 0.8593
+     engagement rate                   0.7149
+
+     A PERFECT 1.0000. The feature is the label restated.
+
+THE LINE-BY-LINE MAPPING - which experimental choice produced which conclusion:
+
+    THE HAZARD DEPENDING ON ENGAGEMENT
+            produced the segment table's shape. If churn were independent of engagement the fixed
+            threshold would still over-label quiet users - the confound is in the LABEL RULE, not in
+            the underlying churn, and the simulation shows the two are separable.
+    THE CHOICE OF "as of day 180" AS THE OBSERVATION POINT
+            produced the precision/recall columns. A user who churned on day 175 has had only 5 days
+            of silence, so no rule catches them - which is why recall falls as W grows and why the
+            PREDICTION WINDOW must extend past the observation cutoff in a real design.
+    COMPUTING `days since last activity` FROM THE SAME 180-DAY SPAN AS THE LABEL
+            produced the 1.0000. THAT IS EXACTLY THE BUG A MISSING WHERE-CLAUSE ON A DATE CREATES in a
+            real feature pipeline, and it is why the window separation is structural rather than
+            advisory.
+    NOT SIMULATING AN INTERVENTION AT ALL
+            is this experiment's limit, and it is worth stating: it measures how the LABEL behaves,
+            not how uplift behaves. THE UPLIFT ARGUMENT IN SECTION 5 IS REASONED, NOT MEASURED, and
+            saying which is which matters.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask contractual vs non-contractual?
+    Did you treat the label definition as a decision to be justified, not a given?
+    Did you set up observation/gap/prediction windows and say why the gap exists?
+    Did you raise leakage unprompted?
+    Did you get to UPLIFT rather than stopping at prediction?
+    Did you insist on a randomised holdout?
+
+    THE UPLIFT PARAGRAPH IS THE ONE THAT DISTINGUISHES A SENIOR ANSWER. Everybody can describe a
+    binary classifier on behavioural features.
+
+THE #1 MISTAKE: leakage. MEASURED: AUC 1.0000 from one innocent-looking feature. It is the default
+outcome and the only structural defence is the window separation.
+
+THE #2 MISTAKE: treating the label as given. MEASURED: the window choice moves the labelled churn rate
+from 19% to 51% on the same population.
+
+THE #3 MISTAKE: a fixed inactivity threshold across all users. MEASURED: it over-labels the quietest
+segment by 24 percentage points, so the model learns engagement level rather than departure.
+
+THE #4 MISTAKE: stopping at prediction. A perfect churn model can have zero business value; the four
+groups and the sleeping dogs are the reason.
+
+THE #5 MISTAKE: no randomised holdout. Without it you can never distinguish a working programme from a
+well-targeted one, and you cannot add it retrospectively.
+
+THE #6 MISTAKE: predicting too late for the intervention to be delivered. The gap between windows is
+set by operational lead time.
+
+THE #7 MISTAKE: reporting accuracy. At 2% monthly churn, "nobody leaves" is 98% accurate. Use PR-AUC
+and precision at the operating point you will staff.
+
+THE #8 MISTAKE: aggregate metrics only. Segment by tenure, value and engagement, or a model that is
+useless on new accounts looks fine.
+
+THE #9 MISTAKE: treating not-yet-churned users as negatives. They are CENSORED - unobserved, not
+negative - and naming censoring is what motivates survival analysis.
+
+THE #10 MISTAKE: believing an implausibly good number. Human behaviour is not predictable at 0.99 AUC,
+and an excellent offline result is a reason to go looking for the bug.
+
+ONE-SENTENCE TAKEAWAY: churn prediction is decided by the LABEL and the MEASUREMENT rather than the
+model - the inactivity window is a product decision that moves the labelled churn rate from 19% to 51%
+on the same population and over-labels the quietest segment by 24 points, a single innocent feature
+scores AUC 1.0000 because it is the label restated, and a perfect churn model still has zero value
+without an uplift framing and a permanent randomised holdout, because the users most likely to act on
+"we noticed you haven't been using your subscription" include the ones who would have stayed.""",
+]
+
+_EX_P1AO["Design a Content Moderation / Toxicity system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - decide what stays up, at a scale no human can read
+
+CONTENT MODERATION decides, for every piece of user-generated content, whether it stays up, comes
+down, gets restricted, or goes to a human.
+
+THE SCALE IS THE PROBLEM AND IT IS WORTH STATING IN NUMBERS IMMEDIATELY. At 10 million items a day
+with a 0.2% violation rate, that is 20,000 genuine violations per day - and 9,980,000 pieces of
+perfectly fine content that must not be touched. NO HUMAN TEAM READS TEN MILLION ITEMS.
+
+THE THING THAT MAKES THIS DIFFERENT FROM EVERY OTHER CLASSIFICATION PROBLEM: BOTH KINDS OF ERROR ARE
+EXPENSIVE AND THEY ARE EXPENSIVE IN DIFFERENT CURRENCIES.
+
+    A FALSE NEGATIVE - harmful content left up - is a safety failure, a press story, and potentially a
+    regulatory one.
+    A FALSE POSITIVE - legitimate content removed - is a censorship story, a user who leaves, and a
+    creator who takes their audience elsewhere.
+
+    YOU CANNOT MINIMISE BOTH. The entire design is about WHERE you put the threshold and WHAT you do
+    with the uncertain middle, and section 2 puts numbers on exactly what that choice costs.
+
+AND THE SECOND FRAMING THAT MATTERS: THE MODEL IS NOT THE PRODUCT. The product is a PIPELINE - auto
+remove, auto allow, and a human review queue in between - plus an appeals path, a policy document, and
+a team. A candidate who spends the whole interview on the classifier has missed what is actually being
+designed.
+
+TERMS AS THEY APPEAR:
+- PREVALENCE: what fraction of content actually violates. Usually well under 1%.
+- PROACTIVE RATE: what fraction of removals happened before any user reported it.
+- APPEALS: the path by which a wrongly-removed user gets their content back.""",
+
+    """2. THE MEASUREMENT - what each threshold actually costs, per day
+
+At 10,000,000 items per day and 0.2% prevalence - 20,000 true violations - here is what different
+model operating points produce:
+
+     model recall     model precision     auto-removed/day     WRONGLY removed/day     missed/day
+     50%                          95%               10,526                     526         10,000
+     70%                          90%               15,556                   1,556          6,000
+     85%                          70%               24,286                   7,286          3,000
+     95%                          40%               47,500                  28,500          1,000
+     99%                          15%              132,000                 112,200            200
+
+    READ THE LAST ROW. To catch 99% of violations, you remove 112,200 LEGITIMATE POSTS EVERY DAY.
+    That is a hundred thousand angry users a day, every day, forever.
+
+    AND READ THE FIRST ROW. To be almost never wrong, you leave 10,000 genuine violations up daily.
+
+    THERE IS NO SETTING OF THIS DIAL THAT IS GOOD. That is the actual finding, and it is why the
+    design is not "pick a threshold" but "build a pipeline that does not have to".
+
+THE PIPELINE ANSWER: TWO THRESHOLDS, NOT ONE.
+
+    score > HIGH  -> auto-remove
+    score < LOW   -> auto-allow
+    in between    -> HUMAN REVIEW QUEUE
+
+    And now the band width becomes a staffing question. At 200 items per reviewer-hour over 8-hour
+    shifts:
+
+     auto-remove above     auto-allow below     sent to humans/day     reviewers needed
+     0.95                              0.05                200,000                  125
+     0.90                              0.10                500,000                  312
+     0.80                              0.20              1,200,000                  750
+
+    WIDENING THE HUMAN BAND FROM 2% OF TRAFFIC TO 12% TAKES THE REVIEW TEAM FROM 125 PEOPLE TO 750.
+
+    THE THRESHOLD IS A HEADCOUNT DECISION. Saying that sentence in an interview is worth more than any
+    architecture diagram, because it demonstrates that you know what actually constrains this system.
+
+    AND IT RUNS BOTH WAYS: a model improvement that tightens the uncertain band by two percentage
+    points saves you a hundred and twenty-five reviewers. THAT IS HOW YOU JUSTIFY ML INVESTMENT HERE -
+    not in AUC points but in headcount and in items left up.""",
+
+    """3. THE DESIGN CONSEQUENCES - severity tiers, and why one threshold is never right
+
+THE SINGLE MOST IMPORTANT REFINEMENT: DIFFERENT VIOLATION TYPES GET DIFFERENT THRESHOLDS, because
+their error costs differ by orders of magnitude.
+
+     violation type              cost of a false negative     cost of a false positive     policy
+     child safety                CATASTROPHIC                 high                         AGGRESSIVE
+     terrorism / incitement      catastrophic                 high                         aggressive
+     spam                        low (annoying)               low                          aggressive
+     harassment                  high                         high                         REVIEW
+     misinformation              contested                    contested                    LABEL, not
+                                                                                           remove
+     nudity / adult              medium                       medium (art, medical)        RESTRICT
+                                                                                           by audience
+
+    A SINGLE GLOBAL THRESHOLD IS ALWAYS WRONG, because it prices a child-safety miss the same as a spam
+    miss. THE TIERING IS THE DESIGN.
+
+AND THE ACTION SPACE IS WIDER THAN REMOVE/ALLOW, which is the other thing people miss:
+
+    REMOVE                  - the content is gone.
+    RESTRICT AGE / REGION   - visible to some audiences, not others. Handles most legal variation.
+    DEMOTE                  - stays up, stops being recommended. THE MOST-USED ACTION IN PRACTICE and
+                              the one candidates never mention. It is reversible, low-cost when wrong,
+                              and it addresses most of the harm from borderline content.
+    LABEL / ADD CONTEXT     - the standard answer for contested claims.
+    RATE-LIMIT THE ACCOUNT  - addresses the actor rather than the item, which is far more effective
+                              against coordinated behaviour.
+    ESCALATE                - to a specialist queue or to law enforcement.
+
+    HAVING MORE ACTIONS THAN "REMOVE" IS WHAT LETS YOU AVOID THE IMPOSSIBLE TRADE-OFF IN SECTION 2.
+    Demoting a borderline item costs almost nothing when you are wrong and removes most of the harm
+    when you are right.
+
+THE OTHER STRUCTURAL LEVER: PRIORITISE THE QUEUE BY EXPECTED HARM, NOT BY SCORE.
+
+    A borderline item with 3 views and a borderline item with 3 million views are not the same problem.
+    RANK THE HUMAN QUEUE BY score x reach x severity, and review the high-reach items first. It is the
+    cheapest large improvement available in this whole system and it requires no model change at all.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - CONTEXT COLLAPSE. The same words are a slur or a reclaimed term depending on who is
+speaking; a photo is medical or pornographic depending on where it is posted. A CLASSIFIER SEEING ONLY
+THE ITEM CANNOT KNOW. Feed it context - the account's history, the community's norms, the thread it
+sits in - or accept a permanent error floor.
+
+FAILURE 2 - LANGUAGE AND CULTURE COVERAGE. Models are far better in English than in low-resource
+languages, and the failure is silent and highly correlated with which users get harmed. MEASURE
+PER-LANGUAGE PERFORMANCE OR YOU WILL SHIP A SYSTEM THAT PROTECTS SOME USERS AND NOT OTHERS.
+
+FAILURE 3 - ADVERSARIAL EVASION. This is the only ML system in this list where an intelligent opponent
+is actively working against you. Leetspeak, homoglyphs, text baked into images, coded language,
+deliberately splitting content across posts. STATIC MODELS DECAY FAST, and the retraining cadence is a
+security parameter rather than an engineering preference.
+
+FAILURE 4 - THE APPEALS PATH BEING AN AFTERTHOUGHT. Measured: an aggressive threshold produces 112,200
+wrongful removals per day. THE APPEALS SYSTEM IS LOAD-BEARING INFRASTRUCTURE AND MUST BE SIZED
+ALONGSIDE THE THRESHOLD. It is also your best source of labelled false positives.
+
+FAILURE 5 - REVIEWER WELLBEING. Human reviewers see the worst content on the internet all day. It is a
+real, documented harm, it drives turnover, and turnover destroys label quality. IT IS A SYSTEM DESIGN
+CONSTRAINT: blur by default, rotate people off the worst queues, cap exposure time.
+
+FAILURE 6 - LABEL NOISE FROM DISAGREEING HUMANS. Reviewers disagree on borderline content constantly.
+MEASURE INTER-ANNOTATOR AGREEMENT; if humans agree only 70% of the time, no model exceeds 70% on that
+category and chasing higher offline numbers is chasing noise.
+
+FAILURE 7 - A GLOBAL THRESHOLD ACROSS VIOLATION TYPES. It prices a child-safety miss identically to a
+spam miss.
+
+FAILURE 8 - NOT LOGGING WHAT WAS ALLOWED. If you only store removals, you cannot measure recall,
+because you have no idea what you missed. THE ONLY WAY TO ESTIMATE RECALL IS A RANDOM SAMPLE OF ALLOWED
+CONTENT, HUMAN-REVIEWED. Budget for it.
+
+FAILURE 9 - IGNORING COORDINATED BEHAVIOUR. Ten accounts each posting borderline content is a campaign,
+and item-level classification cannot see it. ACCOUNT-LEVEL AND NETWORK-LEVEL SIGNALS ARE A SEPARATE
+SYSTEM.
+
+FAILURE 10 - NO POLICY DOCUMENT. If the written policy is ambiguous, reviewers disagree, labels are
+noisy, and the model learns the ambiguity. THE POLICY IS UPSTREAM OF THE DATA.""",
+
+    """5. THE ALTERNATIVES AND WHAT EACH COSTS
+
+HASH MATCHING FOR KNOWN-BAD CONTENT. PhotoDNA-style perceptual hashing against a database of confirmed
+violating media.
+    NEARLY PERFECT PRECISION, NEAR-ZERO COST PER ITEM, AND IT SHOULD BE THE FIRST STAGE OF ANY
+    PIPELINE. It catches re-uploads, which are a large fraction of the worst content.
+    LIMIT: only finds what is already known. Useless against novel content.
+
+KEYWORD AND RULE LISTS.
+    Cheap, instant, fully explainable, and easy to update the moment a new evasion appears.
+    LIMIT: trivially evaded, and high false-positive rates from context collapse ("this is a great
+    thread about the history of the word...").
+    THEY ARE STILL WORTH HAVING as a fast path and as a hotfix mechanism when a new attack starts at
+    3am and the model retrain takes a week.
+
+A FINE-TUNED TRANSFORMER CLASSIFIER, per violation type.
+    The main workhorse. Multi-label, because content violates several policies at once.
+    COST: labelled data per category per language, and retraining as evasion evolves.
+
+AN LLM AS A MODERATOR.
+    Genuinely better at CONTEXT and at nuanced policy - it can be given the policy text itself, which
+    means a policy change does not require retraining.
+    COST: latency and money at 10 million items a day. USE IT AS A SECOND STAGE ON THE UNCERTAIN BAND,
+    not on everything - which is the same retrieval-then-ranking economics as a recommender, and worth
+    naming as such.
+
+HUMAN REVIEW.
+    The highest quality and the only option for genuinely ambiguous cases.
+    COST: measured, 125 to 750 reviewers depending on band width - plus the wellbeing cost, plus
+    turnover, plus training.
+
+THE RIGHT ANSWER IS ALL OF THEM, IN A CASCADE ORDERED BY COST:
+    hash match (free) -> rules (nearly free) -> classifier (cheap) -> LLM on the uncertain band
+    (expensive) -> humans (most expensive)
+    EACH STAGE HANDLES WHAT IT CAN AND PASSES THE REST ON, and the economics of that cascade is the
+    actual design.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - GET THE NUMBERS FIRST. Items per day, prevalence, latency requirement, languages, current
+review headcount. WITHOUT THEM EVERY THRESHOLD DISCUSSION IS ARBITRARY.
+
+STEP 2 - SAY THAT BOTH ERRORS ARE EXPENSIVE AND IN DIFFERENT CURRENCIES. False negatives are a safety
+story, false positives are a censorship story.
+
+STEP 3 - QUANTIFY THE TRADE-OFF IN ITEMS PER DAY, NOT IN PERCENTAGES. Measured: 99% recall means
+112,200 wrongful removals daily; 50% recall means 10,000 violations left up daily.
+
+STEP 4 - PROPOSE TWO THRESHOLDS AND A HUMAN BAND, not one threshold. Auto-remove, auto-allow, review
+the middle.
+
+STEP 5 - PRICE THE BAND IN HEADCOUNT. Measured: 2% of traffic to humans is 125 reviewers; 12% is 750.
+THE THRESHOLD IS A STAFFING DECISION.
+
+STEP 6 - TIER BY VIOLATION TYPE. Child safety is aggressive; misinformation gets labelled rather than
+removed; spam is cheap to get wrong. A GLOBAL THRESHOLD IS ALWAYS WRONG.
+
+STEP 7 - WIDEN THE ACTION SPACE BEYOND REMOVE/ALLOW. Demote, restrict by age or region, label,
+rate-limit the account, escalate. DEMOTION IS THE MOST-USED ACTION IN PRACTICE and the one candidates
+forget.
+
+STEP 8 - PRIORITISE THE HUMAN QUEUE BY score x REACH x severity. Reviewing the high-reach borderline
+items first is the cheapest large improvement in the whole system.
+
+STEP 9 - DESIGN THE CASCADE BY COST: hash match, then rules, then classifier, then an LLM on the
+uncertain band only, then humans.
+
+STEP 10 - COVER MEASUREMENT AND APPEALS. You cannot measure recall without a human-reviewed random
+sample of ALLOWED content. And the appeals path is load-bearing infrastructure that must be sized
+alongside the threshold - it is also your best source of labelled false positives.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I'd start by getting the numbers, because every threshold discussion is arbitrary without them. Say
+ten million items a day and 0.2 per cent violating - that's twenty thousand genuine violations and
+nine point nine eight million pieces of fine content that must not be touched.
+
+The thing that makes this different from other classification problems is that BOTH errors are
+expensive, in different currencies. A false negative is a safety failure and a press story. A false
+positive is a censorship story and a creator who takes their audience elsewhere. You can't minimise
+both.
+
+So I'd put numbers on the dial rather than talking in percentages. At ninety-nine per cent recall,
+which sounds excellent, the precision collapses and you WRONGLY REMOVE ABOUT 112,000 LEGITIMATE POSTS
+EVERY DAY. At fifty per cent recall, where you're almost never wrong, you leave ten thousand real
+violations up daily. THERE IS NO SETTING OF THAT DIAL THAT IS GOOD - which is the actual finding, and
+it's why the design isn't "pick a threshold".
+
+The answer is TWO thresholds and a human band in between. Auto-remove above the high one, auto-allow
+below the low one, send the middle to human review. And then the band width becomes a STAFFING
+question: at two hundred items per reviewer-hour, sending two per cent of traffic to humans needs about
+125 reviewers, and widening it to twelve per cent needs 750. THE THRESHOLD IS A HEADCOUNT DECISION.
+That also runs backwards - a model improvement that tightens the uncertain band by two points saves you
+a hundred and twenty-five people, and that's how you justify ML investment here rather than in AUC
+points.
+
+Then I'd tier by violation type, because a single global threshold prices a child-safety miss the same
+as a spam miss. Child safety and terrorism get aggressive thresholds. Misinformation gets LABELLED
+rather than removed, because it's contested. Nudity gets restricted by audience rather than removed,
+because of art and medical content.
+
+And I'd widen the action space beyond remove-or-allow, which is the thing most people forget. DEMOTION
+- it stays up but stops being recommended - is the most-used action in practice. It's reversible, it
+costs almost nothing when you're wrong, and it removes most of the harm when you're right. That's what
+lets you avoid the impossible trade-off.
+
+Architecturally it's a cascade ordered by cost: perceptual hash matching against known-bad content
+first, which is nearly free and catches re-uploads; then keyword rules, which are trivially evaded but
+are your hotfix mechanism at 3am when a new attack starts and a retrain takes a week; then the
+classifier; then an LLM on the UNCERTAIN BAND ONLY, because it's genuinely better at context and you
+can hand it the policy text, but you can't afford it on ten million items; then humans.
+
+Two things I'd raise unprompted. First, this is the only ML system here with an INTELLIGENT ADVERSARY -
+leetspeak, homoglyphs, text baked into images - so retraining cadence is a security parameter, not an
+engineering preference. Second, you cannot measure RECALL at all unless you take a random sample of
+ALLOWED content and have humans review it, because otherwise you have no idea what you missed. And
+I'd prioritise the human queue by score times REACH times severity, because a borderline item with
+three views and one with three million are not the same problem - that's the cheapest big improvement
+available and it needs no model change.'""",
+
+    """8. THE PIPELINE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  10,000,000 items/day. Prevalence ~0.2% = 20,000 true violations.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 1  PERCEPTUAL HASH MATCH against known-bad media    ~free         │
+    │    PhotoDNA-style. NEARLY PERFECT PRECISION and it catches RE-UPLOADS,   │
+    │    which are a large fraction of the worst content. ALWAYS FIRST.        │
+    │    LIMIT: finds only what is already known.                              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 2  KEYWORD AND RULE LISTS                        ~free           │
+    │    Trivially evaded and high false-positive from context collapse - AND  │
+    │    THEY ARE YOUR HOTFIX MECHANISM. When a new evasion starts at 3am, a   │
+    │    rule ships in minutes and a retrain takes a week.                     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 3  MULTI-LABEL CLASSIFIER, per violation type       cheap        │
+    │    Multi-LABEL, not multi-class - content violates several policies at   │
+    │    once. Separate thresholds per label.                                  │
+    │    FEATURES: the item, PLUS CONTEXT - account history, community norms,  │
+    │    the thread. WITHOUT CONTEXT THERE IS A PERMANENT ERROR FLOOR, because │
+    │    the same words are a slur or a reclaimed term depending on who speaks.│
+    └────────────────────────────────┬─────────────────────────────────────────┘
+                     ┌───────────────┼───────────────┐
+        score > HIGH │               │ in the band   │ score < LOW
+    ┌────────────────▼───┐  ┌────────▼──────────┐  ┌─▼──────────────────────┐
+    │  AUTO-ACTION       │  │ STAGE 4  LLM      │  │  AUTO-ALLOW            │
+    │  by severity tier: │  │ on the UNCERTAIN  │  │                        │
+    │   child safety ->  │  │ BAND ONLY         │  │  >> BUT LOG IT, AND    │
+    │     REMOVE, aggr.  │  │                   │  │  RANDOM-SAMPLE IT FOR  │
+    │   spam -> REMOVE   │  │ Better at CONTEXT │  │  HUMAN REVIEW. YOU     │
+    │   nudity ->        │  │ and you can hand  │  │  CANNOT MEASURE RECALL │
+    │     RESTRICT       │  │ it the POLICY     │  │  ANY OTHER WAY - if    │
+    │   misinfo -> LABEL │  │ TEXT, so a policy │  │  you only store        │
+    │   borderline ->    │  │ change needs no   │  │  removals you have no  │
+    │     DEMOTE  <- THE │  │ retrain.          │  │  idea what you missed. │
+    │     MOST-USED      │  │ Too expensive for │  └────────────────────────┘
+    │     ACTION         │  │ all 10M items.    │
+    └────────────────────┘  └────────┬──────────┘
+                                     │ still uncertain
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  STAGE 5  HUMAN REVIEW QUEUE                          most expensive    │
+    │                                                                          │
+    │   PRIORITISE BY score x REACH x severity, NOT by score. An item with 3   │
+    │   views and one with 3,000,000 are not the same problem. Cheapest large  │
+    │   improvement in the system, and it needs no model change.               │
+    │                                                                          │
+    │   MEASURED STAFFING at 200 items/reviewer-hour, 8h shifts:               │
+    │     2% of traffic to humans  ->   200,000/day  ->  125 reviewers         │
+    │     5% of traffic            ->   500,000/day  ->  312 reviewers         │
+    │    12% of traffic            -> 1,200,000/day  ->  750 reviewers         │
+    │   THE THRESHOLD IS A HEADCOUNT DECISION.                                 │
+    │                                                                          │
+    │   WELLBEING IS A DESIGN CONSTRAINT: blur by default, rotate off the      │
+    │   worst queues, cap exposure. Turnover destroys label quality.           │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  APPEALS - LOAD-BEARING, sized alongside the threshold                   │
+    │   MEASURED: an aggressive threshold produces 112,200 wrongful removals   │
+    │   per day. Appeals is also your best source of LABELLED FALSE POSITIVES. │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+THE ASSUMPTIONS: 10,000,000 items per day, 0.2% prevalence, so 20,000 true violations per day.
+
+THE THRESHOLD TRADE-OFF - each row is one operating point of the same model:
+
+     model recall     model precision     auto-removed/day     WRONGLY removed/day     missed/day
+     50%                          95%               10,526                     526         10,000
+     70%                          90%               15,556                   1,556          6,000
+     85%                          70%               24,286                   7,286          3,000
+     95%                          40%               47,500                  28,500          1,000
+     99%                          15%              132,000                 112,200            200
+
+    HOW THE COLUMNS ARE COMPUTED, so the arithmetic is checkable:
+        true positives  = 20,000 x recall
+        false positives = TP / precision - TP
+        missed          = 20,000 - TP
+        auto-removed    = TP + FP
+
+    THE SHAPE TO NOTICE: going from 95% to 99% recall saves 800 missed violations and costs 83,700
+    ADDITIONAL WRONGFUL REMOVALS. The exchange rate at the top of the curve is roughly a hundred
+    innocent posts per additional violation caught. THAT IS THE NUMBER TO PUT IN FRONT OF WHOEVER IS
+    ASKING FOR "BETTER RECALL".
+
+THE STAFFING CONSEQUENCE - at 200 items per reviewer-hour, 8-hour shifts:
+
+     auto-remove above     auto-allow below     sent to humans/day     reviewers needed
+     0.95                              0.05                200,000                  125
+     0.90                              0.10                500,000                  312
+     0.80                              0.20              1,200,000                  750
+
+     WIDENING THE BAND FROM 2% TO 12% OF TRAFFIC IS 625 ADDITIONAL PEOPLE.
+
+THE LINE-BY-LINE MAPPING - which assumption produced which number:
+
+    THE 0.2% PREVALENCE
+            produced everything. At 2% prevalence the wrongful-removal counts scale by ten and the
+            impossible trade-off gets worse, not better. LOW PREVALENCE IS WHAT MAKES PRECISION
+            COLLAPSE AT HIGH RECALL - it is the same arithmetic as the fraud-detection and
+            rare-disease cases, and it is worth naming as the base-rate problem.
+    THE PRECISION VALUES PAIRED WITH EACH RECALL
+            are the shape of a real precision-recall curve on a hard, subjective task. If your model
+            held 90% precision at 99% recall the trade-off would disappear - and no content classifier
+            does, because humans themselves disagree on borderline cases.
+    THE 200 ITEMS PER REVIEWER-HOUR
+            produced the headcount column. It is the number to ASK FOR in an interview rather than
+            assume, because it varies enormously by content type - a 30-second video is not a tweet.
+    THE 8-HOUR SHIFT
+            is a simplification that ignores the wellbeing constraint. In practice the worst queues
+            cap exposure well below a full shift, so the real headcount is HIGHER than this table.
+            SAYING THAT IS BETTER THAN QUOTING THE TABLE AS IF IT WERE PRECISE.
+    WHAT IS NOT MEASURED HERE
+            is recall itself. Every number in the first table assumes you KNOW the true violation
+            count - and in production you do not. THE ONLY WAY TO ESTIMATE IT IS A HUMAN-REVIEWED
+            RANDOM SAMPLE OF ALLOWED CONTENT, which is a real, ongoing cost that must be budgeted.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask for the volume and prevalence numbers?
+    Did you quantify the error trade-off in ITEMS PER DAY rather than percentages?
+    Did you get to a two-threshold pipeline with a human band rather than a single classifier?
+    Did you connect the threshold to HEADCOUNT?
+    Did you tier by violation severity?
+    Did you name actions beyond remove/allow - especially DEMOTE?
+    Did you raise the adversary, and say what that means for retraining cadence?
+    Did you say how you would measure RECALL at all?
+
+THE #1 MISTAKE: treating this as a pure classification problem and spending the interview on model
+architecture. The pipeline, the thresholds and the queue are the design.
+
+THE #2 MISTAKE: one global threshold. It prices a child-safety miss the same as a spam miss.
+
+THE #3 MISTAKE: only remove-or-allow. DEMOTE is the most-used action in practice: reversible, cheap
+when wrong, and it removes most of the harm when right.
+
+THE #4 MISTAKE: not connecting thresholds to staffing. Measured: 2% of traffic to humans is 125
+reviewers and 12% is 750.
+
+THE #5 MISTAKE: no plan to measure recall. If you log only removals you cannot know what you missed;
+you need a human-reviewed random sample of ALLOWED content, and it costs real money.
+
+THE #6 MISTAKE: appeals as an afterthought. Measured: an aggressive threshold produces 112,200 wrongful
+removals a day, and appeals is also your best source of labelled false positives.
+
+THE #7 MISTAKE: ignoring the adversary. Static models decay fast against deliberate evasion, and
+keyword rules exist precisely because they can ship in minutes when a retrain takes a week.
+
+THE #8 MISTAKE: ignoring per-language performance. The failure is silent and correlates with which
+users get protected.
+
+THE #9 MISTAKE: ignoring reviewer wellbeing. It is a real harm, it drives turnover, and turnover
+destroys label quality - so it is a system constraint, not an HR footnote.
+
+THE #10 MISTAKE: chasing offline metrics past the inter-annotator agreement ceiling. If humans agree
+only 70% of the time on a category, no model exceeds 70% on it and the extra effort is chasing noise.
+
+ONE-SENTENCE TAKEAWAY: at 10 million items a day and 0.2% prevalence there is NO good single threshold
+- 99% recall wrongly removes 112,200 legitimate posts daily and 50% recall leaves 10,000 violations up
+- so the design is a cost-ordered cascade (hash match, rules, classifier, LLM on the uncertain band,
+humans) with TWO thresholds per severity tier, a queue prioritised by score x reach x severity, an
+action space wider than remove/allow with DEMOTE doing most of the work, and the honest recognition
+that the band width is a headcount decision: 2% of traffic to humans is 125 reviewers and 12% is 750.""",
+]
+
+_EX_P1AO["Design a Demand Forecasting system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how much of each thing will we need, and when
+
+DEMAND FORECASTING predicts how much of each product will be needed at each location over each future
+period, so that you can buy, make, staff and ship the right amount.
+
+THE THING THAT MAKES IT DIFFERENT FROM EVERY OTHER PREDICTION PROBLEM IS THAT THE ERRORS ARE
+ASYMMETRIC AND THE ASYMMETRY IS DIFFERENT FOR EVERY PRODUCT.
+
+    UNDER-FORECAST -> stockout. You lose the sale, and sometimes the customer.
+    OVER-FORECAST  -> excess inventory. Holding cost, markdowns, and for perishables, waste.
+
+    FOR FRESH FISH, over-forecasting means it is thrown away tomorrow - so you lean under.
+    FOR A £2,000 MEDICAL DEVICE, a stockout is catastrophic and storage is cheap - so you lean over.
+    A SYMMETRIC LOSS FUNCTION IS WRONG FOR BOTH, and that is the single most important design point in
+    this whole problem.
+
+    THE CONSEQUENCE: you should be forecasting a DISTRIBUTION, not a number. What the business
+    actually needs is "how much do I stock to have a 95% chance of not running out" - and that is a
+    QUANTILE, not a mean. FORECASTING THE MEAN AND THEN ADDING A SAFETY BUFFER IS THE SAME THING DONE
+    BADLY, because the right buffer depends on the demand's variance, which the mean does not tell you.
+
+THE SECOND FRAMING THAT MATTERS: THE FORECAST IS NOT THE PRODUCT. The decision is. A forecast that is
+5% more accurate but arrives after the purchase order deadline is worth nothing. ASK WHAT DECISION
+THIS FEEDS AND WHEN IT IS MADE - that sets the horizon, the granularity and the refresh cadence, and
+everything else follows.
+
+TERMS AS THEY APPEAR:
+- SKU: one distinct product. A large retailer has millions.
+- HORIZON: how far ahead you forecast. Days for staffing, months for procurement.
+- INTERMITTENT DEMAND: a series that is mostly zeros. Most of a long-tail catalogue.
+- WAPE / MAPE: weighted and mean absolute percentage error. Section 2 is about why the difference
+  matters enormously.""",
+
+    """2. THE MEASUREMENT - MAPE is the wrong metric and it fails in a way that flatters you
+
+MAPE - mean absolute percentage error - is the default metric in every forecasting tool and in most
+business conversations. I generated four SKUs with IDENTICAL RELATIVE NOISE (35% standard deviation
+around the mean) and forecast each with its own historical mean:
+
+     SKU                              mean/day     zero-demand days     MAPE      WAPE      RMSE
+     high volume                           500                2/180    33.4%     26.8%    172.79
+     medium                                 50                0/180    42.3%     27.1%     16.87
+     low                                     5                2/180    40.1%     29.3%      1.63
+     intermittent (60% zero days)            2              129/180    67.8%    143.3%      0.79
+
+    THE NOISE IS THE SAME IN EVERY ROW. WAPE reflects that - 27%, 27%, 29% - until the intermittent
+    SKU, where it correctly explodes to 143% because a constant forecast is genuinely terrible for a
+    mostly-zero series.
+
+    MAPE DOES SOMETHING WORSE THAN BEING WRONG. On the intermittent SKU it reports 67.8% - WHICH LOOKS
+    BETTER THAN WAPE'S 143% AND IS COMPLETELY MEANINGLESS, because MAPE is UNDEFINED whenever the
+    actual is zero and simply DROPS those days. It computed its average over 51 of 180 days and
+    silently ignored the other 129.
+
+    A METRIC THAT SILENTLY DISCARDS 72% OF YOUR DATA AND REPORTS A FLATTERING NUMBER IS WORSE THAN NO
+    METRIC.
+
+WHY MAPE MISBEHAVES, precisely:
+    IT DIVIDES BY THE ACTUAL. A day with demand 1 and forecast 3 contributes 200% on its own, and a
+    day with demand 500 and forecast 600 contributes 20%. THE SAME ABSOLUTE ERROR IS PRICED WILDLY
+    DIFFERENTLY depending on how busy the day was.
+    IT IS UNDEFINED AT ZERO, and zero is the most common value in a long-tail catalogue.
+    IT IS ASYMMETRIC: over-forecasting is unbounded (a forecast of 100 against an actual of 1 is
+    9,900%) while under-forecasting caps at 100%. SO MINIMISING MAPE SYSTEMATICALLY BIASES YOUR
+    FORECASTS LOW, which for a retailer means systematic stockouts.
+
+    THAT LAST POINT IS THE ONE TO SAY OUT LOUD. Choosing MAPE does not just measure badly - IT CHANGES
+    WHAT THE MODEL LEARNS, in a direction that costs sales.
+
+USE INSTEAD: WAPE (total absolute error divided by total actual) for a portfolio view; ABSOLUTE UNITS
+or a currency value for anything a human will act on; and PINBALL LOSS if you are forecasting quantiles,
+which you should be.""",
+
+    """3. THE BASELINE NOBODY REPORTS - measured
+
+I generated two years of a series with a linear trend, a weekly cycle and an annual cycle, trained on
+the first year, and evaluated four trivial baselines on the second:
+
+     forecast method                          WAPE       RMSE
+     mean of history                         21.4%      33.56
+     last value (naive)                      19.2%      29.31
+     seasonal naive: last week repeated      20.0%      31.04
+     SEASONAL NAIVE: SAME DAY LAST YEAR      15.9%      23.45
+
+    "WHATEVER HAPPENED ON THIS DAY LAST YEAR" IS THE BEST OF THE FOUR, by a clear margin, and it costs
+    one lookup.
+
+    THE REASON IT WINS IS WORTH UNDERSTANDING: IT CAPTURES BOTH SEASONALITIES AT ONCE. The same day
+    last year is the same day of the week AND the same point in the annual cycle. The weekly-naive
+    baseline gets the day of week right and misses the annual shape; the mean gets neither.
+
+    IT IS THE NUMBER ANY MODEL MUST BEAT, AND MOST FORECASTING PROJECTS NEVER COMPUTE IT. Reporting
+    "our model achieves 18% WAPE" without it beside this is reporting a number with no denominator -
+    and in this simulation an 18% model would be WORSE than a one-line lookup.
+
+    SAYING "MY FIRST DELIVERABLE IS THE SEASONAL NAIVE BASELINE AND ITS ERROR" IS ONE OF THE STRONGEST
+    THINGS YOU CAN SAY IN THIS INTERVIEW. It is what tells the interviewer you have run a forecasting
+    project rather than read about one.
+
+AND THE PRACTICAL CONSEQUENCE FOR THE DESIGN: for a large fraction of a long-tail catalogue, THE
+SEASONAL NAIVE IS WHAT YOU SHOULD ACTUALLY SHIP. Millions of SKUs cannot each justify a tuned model,
+and the ones that can are the small head that carries most of the revenue. THE DESIGN IS A HIERARCHY:
+a simple method everywhere, a good method on the items that matter, and a rule that decides which is
+which.
+
+    THE RULE ITSELF IS USUALLY VOLUME AND VARIABILITY - forecast the high-volume, regular items with a
+    model, and the intermittent tail with Croston's method or a simple average, because a sophisticated
+    model on a series that is 70% zeros is fitting noise.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - FORECASTING A NUMBER INSTEAD OF A DISTRIBUTION. The business needs "how much to stock for
+a 95% service level", which is a QUANTILE. A mean plus a fixed buffer gets the buffer wrong for every
+item whose variance differs from the average - which is all of them.
+
+FAILURE 2 - MAPE. Measured: it silently drops 129 of 180 days on an intermittent SKU and reports a
+flattering number, and minimising it biases forecasts LOW because over-forecasting is unbounded and
+under-forecasting caps at 100%.
+
+FAILURE 3 - NO BASELINE. Measured: "same day last year" achieves 15.9% WAPE with one lookup. Any model
+must beat it, and most projects never compute it.
+
+FAILURE 4 - TRAINING ON HISTORICAL SALES AND CALLING IT DEMAND. THEY ARE NOT THE SAME. If an item was
+out of stock, sales were zero and demand was not. TRAIN ON CENSORED DATA AND YOU LEARN TO FORECAST
+STOCKOUTS - you under-forecast, which causes a stockout, which produces another zero, which reinforces
+the under-forecast. IT IS A FEEDBACK LOOP AND IT IS THE MOST DAMAGING FAILURE IN THIS WHOLE PROBLEM.
+The fix is to flag out-of-stock periods and treat those observations as censored rather than as zero
+demand.
+
+FAILURE 5 - IGNORING PROMOTIONS AND PRICE. A 30% discount can multiply demand several-fold, and it is
+KNOWN IN ADVANCE - it is a feature, not noise. A model without promotion features will look terrible
+in exactly the weeks the business cares most about.
+
+FAILURE 6 - A RANDOM TRAIN/TEST SPLIT. On a time series this lets the model see the future. SPLIT BY
+TIME, always, and evaluate with a rolling origin.
+
+FAILURE 7 - NEW PRODUCTS. A new SKU has no history at all. The answer is the same shape as
+recommendation cold start: forecast from SIMILAR products' launch curves, using attributes - category,
+price band, brand.
+
+FAILURE 8 - HIERARCHY INCOHERENCE. Forecast each store-SKU separately and the numbers will not add up
+to the regional forecast, and the business will notice. RECONCILIATION - forcing the levels to agree -
+is a real step and it is worth naming.
+
+FAILURE 9 - ONE-OFF EVENTS TREATED AS SIGNAL. A pandemic, a competitor closing, a viral moment. A model
+that extrapolates from them confidently will be wrong for a year. FLAG AND EXCLUDE THEM, and keep a
+holiday and event calendar as a first-class input.
+
+FAILURE 10 - THE WRONG HORIZON OR GRANULARITY. A daily forecast when the purchase order is monthly is
+noise; a monthly forecast when staffing is decided daily is useless. ASK WHAT DECISION IT FEEDS.""",
+
+    """5. THE MODELS - and why the simple ones keep winning
+
+THE HIERARCHY OF APPROACHES, in the order to present them:
+
+    SEASONAL NAIVE. Same day last year, or same day last week. MEASURED at 15.9% WAPE on a series with
+    trend plus two seasonalities. IT IS THE BASELINE AND FOR MOST OF A LONG TAIL IT IS ALSO THE ANSWER.
+
+    EXPONENTIAL SMOOTHING / HOLT-WINTERS. Level, trend and seasonality with three parameters. Fast,
+    robust, interpretable, and it handles the majority of well-behaved series. STILL THE WORKHORSE OF
+    a great many real forecasting systems.
+
+    ARIMA / SARIMA. The classical statistical answer. Powerful per series and expensive to fit across
+    millions of SKUs, and it needs stationarity work. WORTH KNOWING; rarely the right production choice
+    at scale.
+
+    CROSTON'S METHOD for INTERMITTENT demand. It forecasts the SIZE of a demand event and the INTERVAL
+    between events separately, rather than averaging over the zeros. NAMING IT IS A STRONG SIGNAL,
+    because it shows you know that a mostly-zero series is a different problem rather than a hard
+    instance of the same one.
+
+    GRADIENT-BOOSTED TREES ON LAG FEATURES. This is what wins most forecasting competitions in
+    practice. Lags, rolling means, day-of-week, holiday flags, price, promotion flags - and one global
+    model across all SKUs, which lets a sparse item borrow strength from similar ones.
+    THE "ONE GLOBAL MODEL" POINT IS THE IMPORTANT ONE: fitting a separate model per SKU is both more
+    expensive and usually worse, because each model sees only its own thin history.
+
+    DEEP LEARNING (DeepAR, Temporal Fusion Transformer, N-BEATS). Genuinely good when you have many
+    related series and rich covariates, and they produce QUANTILES natively, which matters here.
+    COST: infrastructure, tuning, and a much harder failure to debug. NOT A VERSION ONE.
+
+WHAT TO ACTUALLY PROPOSE, and this is the answer that sounds like experience:
+
+    A SEGMENTED PORTFOLIO. Seasonal naive or a simple average for the intermittent tail. Holt-Winters
+    or a global GBDT for the regular items. Special handling and human review for the top few hundred
+    SKUs that carry most of the revenue.
+    AND A RULE THAT ASSIGNS EACH SKU TO A METHOD, based on volume and variability, re-evaluated
+    periodically.
+
+    MILLIONS OF SKUs CANNOT EACH JUSTIFY A TUNED MODEL. Recognising that, and designing the triage
+    instead of the model, is the whole job.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHAT DECISION THIS FEEDS AND WHEN IT IS MADE. Purchase orders, staffing, production
+scheduling? That sets the horizon, granularity and refresh cadence, and a forecast that arrives after
+the decision is worth nothing.
+
+STEP 2 - ASK ABOUT THE ERROR ASYMMETRY, PER PRODUCT TYPE. Perishables lean under; high-value
+low-storage items lean over. A SYMMETRIC LOSS IS WRONG FOR BOTH.
+
+STEP 3 - PROPOSE FORECASTING QUANTILES, NOT MEANS. The business needs a service level, which is a
+quantile. Say that a mean plus a fixed buffer gets the buffer wrong for every item.
+
+STEP 4 - COMPUTE THE SEASONAL NAIVE BASELINE FIRST AND REPORT ITS ERROR. Measured at 15.9% WAPE. IT IS
+YOUR FIRST DELIVERABLE and any model must beat it.
+
+STEP 5 - CHOOSE THE METRIC DELIBERATELY AND SAY WHY NOT MAPE. Measured: MAPE silently dropped 129 of
+180 days on an intermittent SKU, and minimising it biases forecasts low.
+
+STEP 6 - DISTINGUISH SALES FROM DEMAND. Flag out-of-stock periods as CENSORED. Otherwise you learn to
+forecast stockouts, and the loop reinforces itself.
+
+STEP 7 - USE KNOWN-FUTURE COVARIATES: promotions, price changes, holidays, planned events. They are
+known in advance and they dominate the weeks the business cares most about.
+
+STEP 8 - SEGMENT THE CATALOGUE AND ASSIGN METHODS BY VOLUME AND VARIABILITY. Croston's or a simple
+average for the intermittent tail; a global GBDT for the regular items; human review for the top
+revenue SKUs.
+
+STEP 9 - PREFER ONE GLOBAL MODEL ACROSS SKUs to one model per SKU. Sparse items borrow strength from
+similar ones, and it is cheaper.
+
+STEP 10 - EVALUATE WITH A ROLLING-ORIGIN TIME SPLIT, reconcile the hierarchy so levels add up, and
+monitor forecast bias - persistent one-sided error - separately from forecast error, because bias is
+what quietly drains money.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The first question is what DECISION this feeds and when it's made - purchase orders, staffing,
+production. That sets the horizon, the granularity and the refresh cadence, and a forecast that's five
+per cent better but arrives after the PO deadline is worth nothing.
+
+Then the thing that makes this different from other prediction problems: THE ERRORS ARE ASYMMETRIC AND
+THE ASYMMETRY DIFFERS BY PRODUCT. Under-forecast fresh fish and you lose a sale; over-forecast it and
+you throw it away. For a two-thousand-pound medical device a stockout is catastrophic and storage is
+cheap. A symmetric loss function is wrong for both.
+
+Which means you shouldn't be forecasting a NUMBER, you should be forecasting a DISTRIBUTION. What the
+business actually needs is "how much do I stock to have a ninety-five per cent chance of not running
+out" - that's a QUANTILE. Forecasting the mean and adding a safety buffer is the same thing done
+badly, because the right buffer depends on the variance and the mean doesn't tell you the variance.
+
+On metrics: I'd specifically argue AGAINST MAPE, which is the default everywhere. I tested four SKUs
+with IDENTICAL relative noise. WAPE reported about 27 per cent for all the regular ones, correctly. On
+an intermittent SKU - sixty per cent zero-demand days - MAPE reported 67.8 per cent, which looks BETTER
+than WAPE's 143, and it's meaningless: MAPE is undefined when the actual is zero, so it silently
+dropped 129 of the 180 days and averaged over the rest. A metric that discards seventy per cent of your
+data and reports a flattering number is worse than no metric.
+
+And there's a second problem with MAPE that's worse. It's asymmetric - over-forecasting is unbounded,
+a forecast of 100 against an actual of 1 is 9,900 per cent, while under-forecasting caps at 100. So
+minimising MAPE systematically biases your forecasts LOW, which for a retailer means systematic
+stockouts. It doesn't just measure badly, it changes what the model learns.
+
+The other thing I'd insist on is the BASELINE. I generated two years with a trend and weekly and annual
+seasonality and tested the trivial methods. "Same day last year" got 15.9 per cent WAPE, beating the
+mean, the last value, and last-week-repeated - because it captures BOTH seasonalities at once for one
+lookup. That's the number any model has to beat, and most forecasting projects never compute it. My
+first deliverable would be that baseline and its error.
+
+Practically, for most of a long-tail catalogue, the seasonal naive IS what you ship. Millions of SKUs
+can't each justify a tuned model. So the design is a segmented portfolio: Croston's method or a simple
+average for the intermittent tail, because a sophisticated model on a series that's seventy per cent
+zeros is fitting noise; one GLOBAL gradient-boosted model on lag features for the regular items, so
+sparse SKUs borrow strength from similar ones; and human review on the few hundred SKUs carrying most
+of the revenue.
+
+One failure mode I'd raise unprompted: SALES ARE NOT DEMAND. If an item was out of stock, sales were
+zero and demand wasn't. Train on that and you learn to forecast stockouts - you under-forecast, which
+causes a stockout, which produces another zero, which reinforces it. It's a feedback loop, and the fix
+is to flag out-of-stock periods as CENSORED rather than as zero demand.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  START FROM THE DECISION, NOT THE DATA                                   │
+    │   what decision?  purchase order / staffing / production scheduling      │
+    │   when is it made?   -> sets the HORIZON and the refresh cadence         │
+    │   at what granularity?  SKU x store x day, or category x region x week   │
+    │   what is the error asymmetry FOR THIS PRODUCT TYPE?                     │
+    │   >> A FORECAST THAT ARRIVES AFTER THE DECISION IS WORTH NOTHING.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  DATA                                                                    │
+    │   HISTORICAL SALES ... AND SALES ARE NOT DEMAND.                         │
+    │     out-of-stock periods must be flagged as CENSORED, not read as zero   │
+    │     demand. OTHERWISE: under-forecast -> stockout -> another zero ->      │
+    │     reinforced under-forecast. THE MOST DAMAGING LOOP IN THIS PROBLEM.   │
+    │   KNOWN-FUTURE COVARIATES: promotions, price changes, holidays, planned  │
+    │     events. These are known IN ADVANCE - features, not noise - and they  │
+    │     dominate exactly the weeks the business cares most about.            │
+    │   PRODUCT ATTRIBUTES: category, price band, brand -> needed for NEW SKUs │
+    │     with no history, the same shape as recommendation cold start.        │
+    │   EXCLUDE ONE-OFF EVENTS explicitly. A model that extrapolates from a    │
+    │     pandemic confidently is wrong for a year.                            │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SEGMENTATION - assign each SKU a METHOD by volume and variability       │
+    │                                                                          │
+    │   INTERMITTENT (mostly zeros)  -> CROSTON'S METHOD or a simple average.  │
+    │      Croston's forecasts the SIZE of a demand event and the INTERVAL     │
+    │      between events SEPARATELY, instead of averaging over the zeros.     │
+    │      A sophisticated model on a 70%-zero series is fitting noise.        │
+    │   REGULAR, HIGH VOLUME        -> ONE GLOBAL GBDT on lag features.        │
+    │      GLOBAL, not per-SKU: sparse items borrow strength from similar      │
+    │      ones, and it is far cheaper than millions of fitted models.         │
+    │   TOP REVENUE SKUs (a few hundred) -> model PLUS human review.           │
+    │                                                                          │
+    │   >> MILLIONS OF SKUs CANNOT EACH JUSTIFY A TUNED MODEL. Designing the   │
+    │      triage instead of the model is the job.                             │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  OUTPUT: QUANTILES, NOT A POINT FORECAST                                 │
+    │   p50 for planning, p95 for safety stock, p05 for the downside case      │
+    │   >> the business needs a SERVICE LEVEL, which IS a quantile. A mean     │
+    │      plus a fixed buffer gets the buffer wrong for every item whose      │
+    │      variance differs from the average - i.e. all of them.               │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  RECONCILIATION                                                          │
+    │   store-SKU forecasts will NOT sum to the regional forecast, and the     │
+    │   business WILL notice. Forcing the levels to agree is a real step.      │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  EVALUATION AND MONITORING                                               │
+    │   BASELINE FIRST: seasonal naive, same day last year. MEASURED 15.9%     │
+    │     WAPE - the number every model must beat, and the one nobody computes.│
+    │   METRIC: WAPE for the portfolio, absolute units for anything a human    │
+    │     acts on, PINBALL LOSS for quantiles. NOT MAPE - measured, it dropped │
+    │     129 of 180 days on an intermittent SKU and biases forecasts LOW.     │
+    │   SPLIT BY TIME, rolling origin. Never randomly.                         │
+    │   MONITOR BIAS SEPARATELY FROM ERROR. Persistent one-sided error is what │
+    │     quietly drains money, and an error metric alone cannot see it.       │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+MEASUREMENT 1 - THE METRICS, on four SKUs with IDENTICAL relative noise (35% sd around the mean),
+each forecast by its own historical mean, 180 days:
+
+     SKU                              mean/day     zero-demand days     MAPE      WAPE      RMSE
+     high volume                           500                2/180    33.4%     26.8%    172.79
+     medium                                 50                0/180    42.3%     27.1%     16.87
+     low                                     5                2/180    40.1%     29.3%      1.63
+     intermittent (60% zero days)            2              129/180    67.8%    143.3%      0.79
+
+    WAPE IS STABLE ACROSS THE THREE REGULAR SKUs - 26.8%, 27.1%, 29.3% - which is correct, because the
+    relative noise is the same. It then explodes to 143.3% on the intermittent SKU, which is ALSO
+    correct: a constant forecast really is terrible for a series that is zero on 129 of 180 days.
+
+    MAPE IS ERRATIC ON THE REGULAR SKUs (33.4%, 42.3%, 40.1% for identical noise) AND ACTIVELY
+    MISLEADING ON THE INTERMITTENT ONE. Its 67.8% is computed over only 51 days - the ones where the
+    actual was non-zero - and reads as BETTER than the regular SKUs. IT DISCARDED 72% OF THE DATA AND
+    REPORTED A FLATTERING NUMBER.
+
+    RMSE tracks the SCALE of the series rather than the quality of the forecast (172.79 down to 0.79
+    across the four rows), which is why it cannot be compared across SKUs and why a portfolio view
+    needs WAPE.
+
+MEASUREMENT 2 - THE BASELINES, on 2 years of a series with linear trend + weekly cycle + annual cycle,
+trained on year 1 and evaluated on year 2:
+
+     forecast method                          WAPE       RMSE
+     mean of history                         21.4%      33.56
+     last value (naive)                      19.2%      29.31
+     seasonal naive: last week repeated      20.0%      31.04
+     SEASONAL NAIVE: SAME DAY LAST YEAR      15.9%      23.45
+
+    "SAME DAY LAST YEAR" WINS BY 3.3 POINTS OF WAPE OVER THE NEXT BEST, for one lookup.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    USING THE SAME RELATIVE NOISE (35% sd) FOR ALL FOUR SKUs
+            is what makes the metric comparison valid. Any spread in the reported error across rows is
+            the METRIC's behaviour, not the data's - which is exactly what isolates MAPE's flaw.
+    SETTING THE INTERMITTENT SKU TO 60% ZERO DAYS
+            produced the 129/180 undefined-day count and therefore MAPE's silent discard. AT 90% ZEROS
+            - which is entirely normal for a long-tail catalogue - MAPE would be computed on 18 days
+            out of 180 and would be pure noise.
+    FORECASTING WITH THE HISTORICAL MEAN
+            is a deliberately weak forecast, chosen so the metrics are comparing the same errors. A
+            better forecast would shrink every number and would not change the RELATIVE behaviour,
+            which is what the table is about.
+    INCLUDING BOTH A WEEKLY AND AN ANNUAL CYCLE in the baseline series
+            produced the ranking in measurement 2. WITH ONLY A WEEKLY CYCLE, "last week repeated" and
+            "same day last year" would tie - the annual component is exactly what separates them, and
+            it is why the result generalises to retail and not to, say, server load.
+    TRAINING ON YEAR 1 AND TESTING ON YEAR 2
+            is the time-based split. A random split here would let "last value" cheat outrageously and
+            would produce a table that means nothing.
+    WHAT IS NOT MEASURED
+            is quantile quality, censoring, or promotions - the three things sections 4 and 5 argue
+            matter most. THOSE ARGUMENTS ARE REASONED, NOT MEASURED, and it is worth being clear which
+            claims here carry numbers and which do not.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask what decision the forecast feeds and when it is made?
+    Did you raise the asymmetric error cost, and that it differs by product?
+    Did you propose QUANTILES rather than a point forecast?
+    Did you name a baseline and say you would report it?
+    Did you choose the metric deliberately, and can you say what is wrong with MAPE?
+    Did you distinguish SALES from DEMAND?
+    Did you recognise that millions of SKUs need triage rather than a model each?
+
+THE #1 MISTAKE: forecasting a point estimate. The business needs a service level, which is a quantile;
+a mean plus a fixed buffer gets the buffer wrong for every item.
+
+THE #2 MISTAKE: using MAPE. Measured: it silently discarded 129 of 180 days on an intermittent SKU,
+reported a number that LOOKED better than the honest one, and its asymmetry biases forecasts LOW -
+which means systematic stockouts.
+
+THE #3 MISTAKE: no baseline. Measured: seasonal naive on the same day last year achieves 15.9% WAPE
+with one lookup, beating three other trivial methods.
+
+THE #4 MISTAKE: treating sales as demand. Out-of-stock periods are CENSORED, and reading them as zero
+creates a self-reinforcing under-forecast loop.
+
+THE #5 MISTAKE: ignoring promotions and price. They are known in advance and they dominate the weeks
+that matter most.
+
+THE #6 MISTAKE: a random train/test split on a time series. Split by time, with a rolling origin.
+
+THE #7 MISTAKE: one model per SKU. A global model across SKUs is cheaper AND usually better, because
+sparse series borrow strength.
+
+THE #8 MISTAKE: the same method for intermittent and regular demand. Croston's exists because a
+mostly-zero series is a different problem, not a hard instance of the same one.
+
+THE #9 MISTAKE: no hierarchy reconciliation. Store-SKU forecasts will not sum to the regional one and
+the business will notice.
+
+THE #10 MISTAKE: monitoring error without monitoring BIAS. Persistent one-sided error is what quietly
+drains money, and an absolute-error metric cannot see it.
+
+ONE-SENTENCE TAKEAWAY: demand forecasting is decided by the LOSS FUNCTION and the METRIC rather than
+the model - forecast QUANTILES because the business needs a service level and the error cost is
+asymmetric per product; report the seasonal-naive baseline first because "same day last year" scored
+15.9% WAPE with one lookup and beats three other trivial methods; refuse MAPE because it silently
+dropped 129 of 180 days on an intermittent SKU and its asymmetry biases forecasts low into systematic
+stockouts; and treat out-of-stock sales as CENSORED rather than as zero demand, or the under-forecast
+feeds itself.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
