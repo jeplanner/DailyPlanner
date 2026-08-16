@@ -173,7 +173,29 @@
   .tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
   .tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; cursor: pointer; }
   html.dark .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
-  .q-actions { margin-top: 8px; }
+  .q-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+  /* ── Schedule this topic onto a day ──────────────────────────────
+     Hidden until the button is pressed, and it takes a whole row of its
+     own when it opens (flex-basis:100%) so the date and time fields never
+     have to share a line with the PDF and Schedule buttons on a phone. */
+  .sched { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+           margin-top: 6px; padding: 10px; border: 1px dashed var(--color-border);
+           border-radius: 10px; background: var(--color-bg); }
+  .sched[hidden] { display: none; }
+  .sched label { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
+                 color: var(--color-text-secondary); }
+  .sched input { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--color-border);
+                 border-radius: 8px; background: var(--color-surface); color: var(--color-text);
+                 min-width: 0; }
+  .sched .btn.primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .sched-msg { flex-basis: 100%; font-size: 11.5px; color: var(--color-text-secondary); }
+  .sched-msg.ok  { color: #047857; font-weight: 700; }
+  .sched-msg.err { color: #b91c1c; font-weight: 700; }
+  html.dark .sched-msg.ok { color: #6ee7b7; } html.dark .sched-msg.err { color: #fca5a5; }
+  /* Its phone rules live in the single @media block below, not in one of
+     their own — the page has exactly one mobile block by convention. */
+
   .empty { color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; text-align: center; }
   h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); margin: 22px 0 10px; }
 
@@ -207,6 +229,11 @@
     .ex .body { padding: 0 10px 10px 10px; }
     .sec > .secbody { padding: 0 9px 10px; }
     .sec > summary, .ex > summary { min-height: 42px; }   /* thumb-sized targets */
+    /* Each scheduler field on its own line — a date picker squeezed next
+       to a time picker on a 360px screen leaves neither one tappable. */
+    .sched label { flex-basis: 100%; }
+    .sched label input { flex: 1; }
+    .sched .btn { width: 100%; }
   }
   /* Same dark treatment when the OS is set to dark but no explicit
      .dark class is present. Without this, these panels keep their light
@@ -535,7 +562,16 @@
       ${fld("pitfall","Common pitfalls",b.pitfalls)}
       ${fld("follow","Follow-up questions",b.followups)}
       ${b.tags&&b.tags.length ? `<div class="tags">${b.tags.map(t=>`<button class="tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : ""}
-      <div class="q-actions"><a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a></div>
+      <div class="q-actions">
+        <a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a>
+        <button class="btn sm" type="button" data-sched-open>📅 Schedule this</button>
+        <div class="sched" hidden>
+          <label>Day <input type="date" class="sched-date" value="${todayISO()}"></label>
+          <label>Time <input type="time" class="sched-time"></label>
+          <button class="btn sm primary" type="button" data-sched-go>Put it on the calendar</button>
+          <span class="sched-msg">Leave the time blank and it sits at 12:00 AM, the top of that day. It lands in the AISDEPrep project, the calendar, and the Quick Bucket.</span>
+        </div>
+      </div>
       ${quizHTML(e, b.quiz)}`;
   }
 
@@ -683,6 +719,60 @@
         body: JSON.stringify({title: title, studied: !!isStudied}),
       });
     } catch(_) { /* offline — the mirror keeps it until the next load */ }
+  }
+
+  /* ── Schedule a topic onto a day ────────────────────────────────────
+     Reading a topic and *planning* to read it are different acts, and
+     only the second one survives a busy week. This puts the topic where
+     the day is already being run from: the AISDEPrep project, the
+     calendar grid, and the Quick Bucket, in one request.
+
+     A blank time means midnight, and midnight is a position rather than
+     a missing value — the calendar grid starts at hour 0, so 00:00 draws
+     at the very top of the day, the way an all-day row does elsewhere.
+
+     LOCAL date, not toISOString(). toISOString() converts to UTC first,
+     so anywhere west of Greenwich it hands back yesterday for most of
+     the evening — the picker would open on the wrong day. */
+  function todayISO(){
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+  }
+
+  async function scheduleTopic(card, box){
+    const id    = card.dataset.id;
+    const msg   = box.querySelector(".sched-msg");
+    const go    = box.querySelector("[data-sched-go]");
+    const day   = box.querySelector(".sched-date").value;
+    const time  = box.querySelector(".sched-time").value;
+    if (!day) { msg.className = "sched-msg err"; msg.textContent = "Pick a day first."; return; }
+
+    go.disabled = true;
+    msg.className = "sched-msg";
+    msg.textContent = "Adding…";
+    try {
+      const r = await fetch("/api/ai-sde/schedule", {
+        method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json",
+                  "X-CSRFToken": (document.querySelector('meta[name=csrf-token]')||{}).content || ""},
+        // The title rides along with the id: "ai42" is the entry's INDEX
+        // in the bank, so a tab left open across a bank update would
+        // otherwise schedule whatever moved into slot 42. The server
+        // trusts the title and treats the id as a hint.
+        body: JSON.stringify({id: id, title: titleOf(id), plan_date: day, start_time: time}),
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
+      msg.className = "sched-msg ok";
+      msg.textContent = (out.status === "already-scheduled" ? "Already there — " : "Added — ") + (out.message || day);
+      if (window.showToast) showToast(out.message || "Scheduled", "success");
+    } catch (err) {
+      msg.className = "sched-msg err";
+      msg.textContent = "Could not schedule it: " + err.message;
+    } finally {
+      go.disabled = false;
+    }
   }
 
   const saveP = () => { saveLocal(); };
@@ -879,6 +969,22 @@
       expand.textContent = opening ? "Collapse all" : "Expand all";
       return;
     }
+    // ── Schedule this topic onto a day ───────────────────────────────
+    // Both branches return before the fall-through at the bottom, which
+    // would otherwise read a press on the Add button as a card toggle
+    // and fold the card shut mid-edit.
+    const schedOpen = e.target.closest("[data-sched-open]");
+    if (schedOpen) {
+      const box = card.querySelector(".sched");
+      const opening = box.hasAttribute("hidden");
+      if (opening) box.removeAttribute("hidden"); else box.setAttribute("hidden", "");
+      schedOpen.textContent = opening ? "✕ Cancel" : "📅 Schedule this";
+      if (opening) box.querySelector(".sched-date").focus();
+      return;
+    }
+    const schedGo = e.target.closest("[data-sched-go]");
+    if (schedGo) { scheduleTopic(card, schedGo.closest(".sched")); return; }
+    if (e.target.closest(".sched")) return;   // typing in the date/time fields
     const grade = e.target.closest("[data-grade]");
     if (grade) {
       const qi = grade.closest(".qi");

@@ -449,6 +449,334 @@ def ai_sde_entry(entry_id):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# AI SDE → CALENDAR — drop a topic onto a specific day
+#
+# The ask was a study plan you can *see*: pick a topic on /ai-sde, pick a
+# day, and have it show up in the three places that already exist rather
+# than in a fourth one invented for it —
+#
+#   * the AISDEPrep project, so the whole syllabus has one home;
+#   * the calendar grid for that day;
+#   * the Quick Bucket, so it is in front of her without opening the
+#     calendar at all.
+#
+# WHY MIDNIGHT WHEN NO TIME IS GIVEN. planner_v2.js builds the grid with
+# `for (let hour = 0; hour < 24; hour++)`, so hour 0 is the first row on
+# the page. A 00:00 start therefore pins the topic to the very top of the
+# day the way an all-day row does in Google Calendar — visible the moment
+# the day opens, and out of the way of anything actually timed. It is a
+# deliberate position, not a null standing in for one.
+#
+# WHY THIS DOES NOT POST TO /api/v2/events. That endpoint runs
+# get_conflicts() and returns 409 unless the caller forces it. Stacking
+# five topics at 00:00 on the same morning is the *intended* use here, so
+# every one after the first would be rejected for overlapping the last.
+# This writes the daily_events row directly, which is the same table the
+# calendar reads.
+#
+# Three inserts, no transaction. If a later one fails the earlier ones
+# survive, which is the right way round: the project task is the record
+# of what she planned to study, and the other two are views onto it.
+# ══════════════════════════════════════════════════════════════════════
+
+#: The project every scheduled topic lands in. Looked up by name — there
+#: is no id to store anywhere because the name IS the handle.
+AI_SDE_PROJECT_NAME = "AISDEPrep"
+AI_SDE_PROJECT_DESC = (
+    "AI/SDE interview prep. Topics scheduled onto a day from the "
+    "/ai-sde page land here."
+)
+
+AI_SDE_MIDNIGHT = "00:00"
+
+#: Bounds on the calendar block. The floor stops a 5-minute topic from
+#: rendering as an unclickable sliver; the ceiling stops a 6-hour one
+#: from swallowing the whole day in a single bar. Anything longer is a
+#: multi-session topic and wants more than one calendar entry anyway.
+AI_SDE_MIN_BLOCK = 15
+AI_SDE_MAX_BLOCK = 180
+AI_SDE_DEFAULT_BLOCK = 30
+
+_AI_SDE_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+_AI_SDE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _pg_eq(value):
+    """A PostgREST ``eq.`` filter for a free-text value.
+
+    386 of the 1,120 topic titles contain a comma, a parenthesis or a
+    colon — "Precision vs Recall (and the 95%-accuracy trap)" — and
+    PostgREST reads every one of those as filter syntax rather than as
+    part of the value. Quoting turns it back into a value; a double quote
+    inside is backslash-escaped, being the one character the quoting
+    can't cover by itself.
+    """
+    return 'eq."' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _ai_sde_clean_time(raw):
+    """``"9:05"`` → ``"09:05"``; empty or unparseable → midnight.
+
+    An unreadable time is not an error here. The caller asked to schedule
+    a topic; refusing over a malformed time field would throw the whole
+    request away to protect a field that has a documented default.
+    """
+    m = _AI_SDE_TIME_RE.match((raw or "").strip())
+    if not m:
+        return AI_SDE_MIDNIGHT
+    return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+
+def _ai_sde_end_time(start, minutes):
+    """End of the calendar block, clamped inside the same day.
+
+    A block that would spill past midnight is cut to 23:59 rather than
+    wrapping — wrapping would put half the study session on a day the
+    user never picked, and the grid would draw it there.
+    """
+    try:
+        length = int(minutes)
+    except (TypeError, ValueError):
+        length = AI_SDE_DEFAULT_BLOCK
+    length = max(AI_SDE_MIN_BLOCK, min(length or AI_SDE_DEFAULT_BLOCK, AI_SDE_MAX_BLOCK))
+
+    base = datetime.strptime(start, "%H:%M")
+    end = base + timedelta(minutes=length)
+    if end.day != base.day:          # crossed into tomorrow
+        return "23:59"
+    return end.strftime("%H:%M")
+
+
+def _ensure_ai_sde_project(user_id):
+    """Return the AISDEPrep project id, creating it if it isn't there.
+
+    Select-then-insert, and on an insert failure it selects again: the
+    partial unique index from MIGRATION_AISDEPREP.sql turns a double-tap
+    race into a constraint error, and the row the other request just
+    created is exactly what this one wanted. Returns None if the project
+    genuinely cannot be resolved, and the caller reports that rather than
+    scattering tasks into a project that doesn't exist.
+    """
+    def _find():
+        rows = get("projects", params={
+            "user_id": f"eq.{user_id}",
+            "name": f"eq.{AI_SDE_PROJECT_NAME}",
+            "is_archived": "eq.false",
+            "select": "project_id",
+            "limit": "1",
+        }) or []
+        return rows[0]["project_id"] if rows else None
+
+    found = _find()
+    if found:
+        return found
+
+    try:
+        created = post("projects", {
+            "user_id": user_id,
+            "name": AI_SDE_PROJECT_NAME,
+            "description": AI_SDE_PROJECT_DESC,
+            "is_archived": False,
+        }, prefer="return=representation")
+        if created:
+            return created[0]["project_id"]
+    except Exception:
+        logger.warning("AISDEPrep project insert failed; re-selecting", exc_info=True)
+
+    return _find()
+
+
+def _ai_sde_lookup(entry_id, title):
+    """Resolve the topic being scheduled to (title, prep_minutes).
+
+    The id is honoured when it still points at the same topic, but the
+    TITLE is what decides — ``ai{i}`` is the entry's index in the bank and
+    shifts whenever the bank changes, the same reason progress and recall
+    are keyed by title. A stale tab holding ``ai42`` must not schedule
+    whatever moved into slot 42 since it loaded.
+    """
+    title = (title or "").strip()
+    idx = -1
+    if entry_id and entry_id.startswith("ai"):
+        try:
+            idx = int(entry_id[2:])
+        except ValueError:
+            idx = -1
+
+    if 0 <= idx < len(AI_SDE_ENTRIES):
+        e = AI_SDE_ENTRIES[idx]
+        if not title or e["title"] == title:
+            return e["title"], e.get("prep_minutes")
+
+    # Id was missing, out of range, or has drifted — fall back to the title.
+    for e in AI_SDE_ENTRIES:
+        if e["title"] == title:
+            return e["title"], e.get("prep_minutes")
+    return None, None
+
+
+@interview_prep_bp.route("/api/ai-sde/schedule", methods=["POST"])
+@login_required
+def ai_sde_schedule():
+    """Put one topic on one day.
+
+    Body: ``{id?, title?, plan_date, start_time?, duration_min?,
+    quick_bucket?}``. Either ``id`` or ``title`` identifies the topic;
+    ``plan_date`` is required; everything else has a default.
+
+    Idempotent per (topic, day): tapping Schedule twice for the same
+    topic on the same date reports what is already there instead of
+    stacking a second copy of it in all three places.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+
+    plan_date = (data.get("plan_date") or "").strip()
+    if not _AI_SDE_DATE_RE.match(plan_date):
+        return jsonify({"error": "plan_date must be YYYY-MM-DD"}), 400
+    try:
+        date.fromisoformat(plan_date)
+    except ValueError:
+        return jsonify({"error": "plan_date is not a real date"}), 400
+
+    title, prep_minutes = _ai_sde_lookup(data.get("id"), data.get("title"))
+    if not title:
+        return jsonify({"error": "unknown topic"}), 404
+
+    start_time = _ai_sde_clean_time(data.get("start_time"))
+    end_time = _ai_sde_end_time(start_time, data.get("duration_min") or prep_minutes)
+    untimed = start_time == AI_SDE_MIDNIGHT and not (data.get("start_time") or "").strip()
+
+    project_id = _ensure_ai_sde_project(user_id)
+    if not project_id:
+        return jsonify({"error": "could not open the AISDEPrep project"}), 500
+
+    # ── Already on this day? ────────────────────────────────────────
+    existing = get("project_tasks", params={
+        "user_id": f"eq.{user_id}",
+        "project_id": f"eq.{project_id}",
+        "plan_date": f"eq.{plan_date}",
+        "task_text": _pg_eq(title),
+        "is_deleted": "eq.false",
+        "select": "task_id,start_time",
+        "limit": "1",
+    }) or []
+    if existing:
+        return jsonify({
+            "status": "already-scheduled",
+            "project_id": project_id,
+            "task_id": existing[0]["task_id"],
+            "plan_date": plan_date,
+            "start_time": existing[0].get("start_time") or AI_SDE_MIDNIGHT,
+            "message": f"Already on {plan_date}.",
+        })
+
+    # ── 1. The project task — the record of what she planned ────────
+    task_payload = {
+        "user_id": user_id,
+        "project_id": project_id,
+        "task_text": title,
+        "status": "open",
+        "priority": "medium",
+        "plan_date": plan_date,
+        "start_time": start_time,
+        "due_date": plan_date,
+        "notes": "AI/SDE prep topic · scheduled from /ai-sde",
+        "is_deleted": False,
+    }
+    if prep_minutes:
+        task_payload["planned_hours"] = round(prep_minutes / 60.0, 2)
+    # Link it to the project's default epic when the OKR trio resolves, so
+    # the task appears in the project tree rather than only in flat views.
+    try:
+        from routes.projects import _default_epic_id
+        epic_id = _default_epic_id(user_id, project_id)
+        if epic_id:
+            task_payload["epic_id"] = epic_id
+    except Exception:
+        logger.warning("AISDEPrep: default epic unresolved, filing task flat",
+                       exc_info=True)
+
+    task_rows = post("project_tasks", task_payload, prefer="return=representation")
+    task_id = (task_rows or [{}])[0].get("task_id")
+
+    # ── 2. The calendar row ─────────────────────────────────────────
+    # Written straight to daily_events, not through POST /api/v2/events —
+    # see the block comment above for why the conflict check would reject
+    # the second topic stacked at midnight.
+    event_id = None
+    try:
+        ev = post("daily_events", {
+            "user_id": user_id,
+            "plan_date": plan_date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "title": title,
+            "description": "AI/SDE prep — open the topic at /ai-sde",
+            "priority": "medium",
+            "reminder_minutes": 10,
+            "is_deleted": False,
+        }, prefer="return=representation")
+        event_id = (ev or [{}])[0].get("id")
+    except Exception:
+        logger.exception("AISDEPrep: calendar row failed for %r on %s", title, plan_date)
+
+    # ── 3. The Quick Bucket row ─────────────────────────────────────
+    # Prefixed so a line in the bucket says where it came from; the
+    # bucket is a flat list with no project column to say it otherwise.
+    bucket_id = None
+    bucket_text = f"{AI_SDE_PROJECT_NAME} · {title}"[:500]
+    if data.get("quick_bucket", True):
+        try:
+            dupes = get("quick_bucket", params={
+                "user_id": f"eq.{user_id}",
+                "text": _pg_eq(bucket_text),
+                "is_deleted": "eq.false",
+                "is_done": "eq.false",
+                "select": "id",
+                "limit": "1",
+            }) or []
+            if dupes:
+                bucket_id = dupes[0]["id"]
+            else:
+                # A topic with a real time gets a real deadline, which is
+                # what drives the countdown pill. A midnight default does
+                # not — a countdown to 00:00 would read as urgent when the
+                # time only means "top of the day".
+                due_at = None
+                if not untimed:
+                    due_at = f"{plan_date}T{start_time}:00"
+                today = user_today().isoformat()
+                qb = post("quick_bucket", {
+                    "user_id": user_id,
+                    "text": bucket_text,
+                    "time_bucket": "at" if due_at else ("now" if plan_date <= today else "future"),
+                    "due_at": due_at,
+                    "position": 0,
+                    "is_done": False,
+                    "is_deleted": False,
+                }, prefer="return=representation")
+                bucket_id = (qb or [{}])[0].get("id")
+        except Exception:
+            logger.exception("AISDEPrep: quick bucket row failed for %r", title)
+
+    when = "12:00 AM (top of the day)" if untimed else start_time
+    return jsonify({
+        "status": "ok",
+        "project_id": project_id,
+        "task_id": task_id,
+        "event_id": event_id,
+        "quick_bucket_id": bucket_id,
+        "title": title,
+        "plan_date": plan_date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "untimed": untimed,
+        "message": f"On the calendar for {plan_date} at {when}.",
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
 # AI SDE PROGRESS — server-side, so study follows the user between devices
 #
 # Keyed by TITLE, never by the "ai{i}" id the list endpoint hands out: that
