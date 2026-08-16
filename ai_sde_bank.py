@@ -218153,6 +218153,1399 @@ and 595 views), computed as a streaming aggregation where the bottleneck is coun
 rather than events, with anti-manipulation as half the design.""",
 ]
 
+_EX_P1AO["Design an Ad Click-Through-Rate (CTR) Prediction System"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how likely is this person to click this ad, right now
+
+A CTR prediction system estimates P(click | user, ad, context) for every candidate ad, in a few
+milliseconds, for millions of auctions per second.
+
+THE THING THAT MAKES IT DIFFERENT FROM EVERY OTHER RANKING PROBLEM, AND THE ONE POINT TO LEAD WITH:
+THE PREDICTED PROBABILITY IS NOT USED FOR RANKING. IT IS MULTIPLIED BY MONEY.
+
+    In a second-price auction the ad is ranked by EXPECTED REVENUE:
+        eCPM = bid x P(click)
+    and the advertiser is charged based on the next-best competitor's expected revenue divided by
+    their own predicted CTR.
+
+    SO THE NUMBER ITSELF MATTERS, NOT JUST THE ORDERING. A model that predicts every CTR three times
+    too high causes systematic overbidding and overcharging; one that predicts three times too low
+    loses auctions it should win. CTR PREDICTION IS A CALIBRATION PROBLEM WEARING A RANKING PROBLEM'S
+    CLOTHES, and section 2 measures exactly how invisible that is to the usual metric.
+
+THE OTHER DEFINING CONSTRAINTS:
+
+    EXTREME CLASS IMBALANCE. Display CTR is often 0.1-1%. Predicting "no click" is 99%+ accurate and
+    useless.
+    ENORMOUS, SPARSE, HIGH-CARDINALITY FEATURES. Millions of user IDs, ad IDs, publisher IDs,
+    keywords. Almost all features are categorical with huge cardinality, and their INTERACTIONS carry
+    most of the signal.
+    HARD LATENCY. Real-time bidding gives you roughly 100 ms total including network, of which the
+    model gets a small fraction.
+    CONTINUOUS DISTRIBUTION SHIFT. New ads launch every hour with no history; campaigns end; budgets
+    exhaust.
+
+TERMS AS THEY APPEAR:
+- eCPM: effective cost per thousand impressions - the ranking quantity in an auction.
+- CALIBRATION: whether predicted probabilities match observed frequencies. Distinct from ranking.
+- NEGATIVE DOWNSAMPLING: throwing away most non-click examples to make training tractable.""",
+
+    """2. THE MEASUREMENT - AUC cannot see the thing that matters
+
+I built three "models" on 200,000 impressions with a true base CTR of 0.710%. THEY PRODUCE IDENTICAL
+ORDERINGS - one is perfectly calibrated, one predicts three times too high, one three times too low.
+
+     model                       AUC        log loss     mean prediction     predicted/actual
+     perfectly calibrated     0.7971         0.03782              0.747%                 1.05
+     predicts 3x too HIGH     0.7971         0.04529              2.240%                 3.16
+     predicts 3x too LOW      0.7971         0.04117              0.224%                 0.32
+
+    ALL THREE HAVE EXACTLY THE SAME AUC, TO FOUR DECIMAL PLACES.
+
+    That is not a coincidence or a rounding artefact - IT IS A MATHEMATICAL PROPERTY. AUC depends only
+    on the ORDER of the predictions, and multiplying every prediction by a constant does not change
+    any ordering. AUC IS BLIND, BY CONSTRUCTION, TO THE ENTIRE PROBLEM.
+
+    LOG LOSS SEPARATES THEM: 0.03782, 0.04529, 0.04117. It is a PROPER SCORING RULE - it is minimised
+    only by the true probability - which is exactly the property you need.
+
+    AND THE BUSINESS COLUMN IS THE ONE TO SAY OUT LOUD. The 3x-high model bids 3x too much on every
+    impression, so it wins auctions it should lose and pays more than the inventory is worth. The
+    3x-low model loses auctions it should win and the advertiser's budget goes unspent. NEITHER
+    FAILURE IS VISIBLE IN AUC.
+
+    THE PRACTICAL RULE: REPORT LOG LOSS AS THE PRIMARY METRIC, AND REPORT THE PREDICTED-OVER-ACTUAL
+    RATIO PER SEGMENT AS A GUARDRAIL. That ratio should be 1.0 for every slice you care about -
+    per advertiser, per placement, per device, per country - and a slice where it is 3.0 is a slice
+    where you are losing money.
+
+THE SECOND MEASUREMENT IS THE SPECIFIC BUG THIS CREATES IN PRACTICE. Training on billions of
+impressions at 0.7% CTR is wasteful, so everybody DOWNSAMPLES THE NEGATIVES. Measured:
+
+     negative downsample rate w     training base rate     uncorrected prediction     after correction
+     1.0 (no downsampling)                     0.710%                     0.710%              0.710%
+     0.1 (keep 1 in 10)                        6.669%                     6.669%              0.710%
+     0.01 (keep 1 in 100)                     41.676%                    41.676%              0.710%
+
+    KEEPING ONE NEGATIVE IN A HUNDRED MAKES A PERFECTLY-FITTED MODEL PREDICT A BASE RATE OF 41.7%
+    AGAINST A TRUE RATE OF 0.71% - FIFTY-NINE TIMES TOO HIGH. And its AUC is unchanged.
+
+    THE CORRECTION IS ONE LINE:  p_true = p / (p + (1 - p)/w)
+    and measured, it recovers 0.710% exactly at every downsampling rate.
+
+    FORGETTING THAT LINE IS A CATASTROPHIC AND COMPLETELY INVISIBLE BUG IN AN AUCTION SYSTEM.""",
+
+    """3. THE FEATURES AND MODELS - why this problem produced its own model families
+
+THE FEATURES ARE ALMOST ENTIRELY CATEGORICAL AND HIGH-CARDINALITY: user ID, ad ID, campaign,
+advertiser, publisher, placement, device, browser, hour of day, keyword, page URL. One-hot encoding
+gives you a feature vector with hundreds of millions of dimensions, of which a few dozen are non-zero.
+
+    AND THE SIGNAL IS IN THE INTERACTIONS. "This ad" is weakly predictive. "This ad on this publisher"
+    is much stronger. "This ad on this publisher for a user on mobile in the evening" is stronger
+    still. A LINEAR MODEL ON RAW FEATURES CANNOT SEE ANY OF THAT.
+
+THAT IS WHY CTR PREDICTION HAS ITS OWN LINEAGE OF MODELS, and being able to name it in order is a
+strong signal:
+
+    LOGISTIC REGRESSION WITH HAND-CRAFTED CROSSES. The original industrial answer, and still a
+    perfectly reasonable baseline. It scales to billions of features, trains online, and is trivially
+    explainable. THE COST IS THAT A HUMAN HAS TO GUESS WHICH CROSSES MATTER.
+
+    FACTORISATION MACHINES. Learn a low-dimensional embedding per feature value and model every
+    pairwise interaction as a dot product. THE KEY IDEA: instead of learning a separate weight for
+    each of the billions of possible feature PAIRS - almost all of which never co-occur in training -
+    you learn one vector per feature VALUE and get all pairs for free. IT SOLVES THE SPARSITY PROBLEM
+    DIRECTLY, and that is the sentence worth saying.
+
+    GBDT + LOGISTIC REGRESSION (the Facebook 2014 design). Use gradient-boosted trees to discover
+    feature combinations, treat each leaf as a binary feature, and feed those into a logistic
+    regression trained online. COMBINES AUTOMATIC INTERACTION DISCOVERY WITH FAST ONLINE UPDATES, and
+    it was the state of the art for years.
+
+    WIDE AND DEEP / DeepFM / DCN. A "wide" linear part for memorisation of specific known-good
+    combinations, plus a "deep" embedding part for generalisation to unseen ones. THE WIDE/DEEP SPLIT
+    IS EXACTLY THE MEMORISATION-VS-GENERALISATION TRADE and it is the reason the architecture exists.
+
+THE EMBEDDING TABLE IS THE REAL ENGINEERING PROBLEM. Hundreds of millions of feature values times a
+16- to 64-dimensional embedding is tens or hundreds of gigabytes - larger than any single machine's
+memory. THAT IS WHY LARGE-SCALE CTR SYSTEMS USE SHARDED PARAMETER SERVERS, and why the interesting
+constraints are memory and lookup latency rather than FLOPs.
+
+    THE HASHING TRICK - hash feature values into a fixed number of buckets and accept collisions - is
+    the standard way to bound the table size. IT WORKS BECAUSE COLLISIONS BETWEEN A COMMON AND A RARE
+    FEATURE BARELY MATTER, and it is worth naming.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - OPTIMISING OR REPORTING AUC. Measured: three models with predicted/actual ratios of 1.05,
+3.16 and 0.32 had IDENTICAL AUC to four decimal places. AUC is mathematically blind to calibration.
+
+FAILURE 2 - NEGATIVE DOWNSAMPLING WITHOUT THE CORRECTION. Measured: 1-in-100 downsampling makes the
+model predict 41.7% against a true 0.71%. The fix is one line and forgetting it is invisible to every
+ranking metric.
+
+FAILURE 3 - CALIBRATION DRIFT AFTER RETRAINING OR A TRAFFIC SHIFT. The model can stay well-ranked and
+become badly calibrated as the mix of traffic changes. MONITOR PREDICTED/ACTUAL PER SEGMENT
+CONTINUOUSLY, not just in aggregate - the aggregate can be 1.0 while two segments are 3.0 and 0.3.
+
+FAILURE 4 - THE POSITION AND SELECTION FEEDBACK LOOP. You only observe clicks on ads you SHOWED, and
+you showed them because the model predicted a high CTR. NEW ADS NEVER GET IMPRESSIONS SO THEY NEVER GET
+DATA SO THEY NEVER GET IMPRESSIONS. It is the item cold-start deadlock, with money attached - and the
+fix is the same: an explicit exploration budget, or optimistic initialisation for new ads.
+
+FAILURE 5 - NOT HANDLING NEW ADS AND CAMPAIGNS. They launch constantly with zero history. Fall back to
+advertiser-level, category-level and creative-similarity priors, and explore.
+
+FAILURE 6 - TRAINING/SERVING SKEW ON COUNTER FEATURES. "This user's CTR on this advertiser over the
+last 7 days" computed differently offline and online is the classic silent failure here, and it is
+worse than usual because the features are counts that drift continuously.
+
+FAILURE 7 - A RANDOM TRAIN/TEST SPLIT. The distribution shifts hourly. Split by time.
+
+FAILURE 8 - IGNORING DELAYED FEEDBACK. A click is fast; a CONVERSION may take days. If you optimise
+conversions, your labels are incomplete at training time and a naive "no conversion yet = negative"
+label systematically under-predicts. THE DELAYED-FEEDBACK PROBLEM HAS ITS OWN LITERATURE and naming it
+is a strong signal.
+
+FAILURE 9 - OPTIMISING CTR ALONE. Clickbait ads have high CTR and poor conversion, and they degrade
+the publisher's user experience. THE OBJECTIVE SHOULD BE REVENUE PER IMPRESSION OR ADVERTISER VALUE,
+with CTR as one component.
+
+FAILURE 10 - IGNORING BUDGET PACING. An advertiser who exhausts their daily budget by 9am gets no
+afternoon traffic, and pacing interacts with the auction in ways a pure CTR model cannot see.""",
+
+    """5. THE SERVING PATH - and where the milliseconds go
+
+THE BUDGET: roughly 100 ms for the whole real-time bidding round trip, of which network is most of it.
+THE MODEL GETS SINGLE-DIGIT MILLISECONDS, and it must score hundreds to thousands of candidate ads in
+that time.
+
+    THAT CONSTRAINT IS WHY THE ARCHITECTURE LOOKS THE WAY IT DOES, and it is worth walking:
+
+    CANDIDATE SELECTION FIRST. Targeting rules, budget checks, frequency caps and brand-safety filters
+    cut the eligible pool from millions to hundreds - and they are cheap boolean operations, not model
+    calls. THE SAME RETRIEVAL-THEN-RANKING ECONOMICS AS EVERY OTHER SYSTEM IN THIS FAMILY.
+
+    FEATURE LOOKUP IS USUALLY THE BOTTLENECK, NOT THE MODEL. Fetching hundreds of counter features
+    from a distributed store dominates the budget. BATCH THE LOOKUPS, CO-LOCATE THE STORE, AND MEASURE
+    FEATURE FETCH SEPARATELY FROM MODEL INFERENCE - people routinely optimise the wrong half.
+
+    EMBEDDING LOOKUP is a sharded parameter-server read. Cache the hot embeddings locally; the
+    distribution of feature popularity is extremely skewed so a small cache covers most requests.
+
+    THE MODEL FORWARD PASS is comparatively cheap - these are shallow networks over embeddings, not
+    transformers.
+
+TRAINING IS CONTINUOUS, NOT BATCH. The distribution shifts hourly, so the standard design is:
+
+    a periodic full retrain from scratch (daily or weekly), PLUS
+    ONLINE / INCREMENTAL UPDATES on the click stream, minutes behind live
+
+    THAT IS WHY LOGISTIC REGRESSION AND FTRL SURVIVED SO LONG IN THIS DOMAIN - they update online
+    trivially, and a model that is two hours stale is worse than a simpler model that is two minutes
+    stale.
+
+CALIBRATION AS A SEPARATE, EXPLICIT STAGE. Train the model for ranking, then fit a calibration map -
+Platt scaling or isotonic regression - on a held-out recent sample, and REFIT IT FREQUENTLY. Because
+calibration drifts faster than ranking does, separating the two lets you correct the thing that breaks
+without retraining the thing that does not.
+
+    THAT SEPARATION IS THE SINGLE MOST PRACTICAL DESIGN IDEA IN THIS ENTRY, and it follows directly
+    from section 2's measurement.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - SAY WHAT THE PREDICTION IS USED FOR. It is multiplied by a bid to rank an auction and to
+compute a price, so THE NUMBER MATTERS, NOT JUST THE ORDER.
+
+STEP 2 - REJECT AUC AS THE PRIMARY METRIC, WITH THE REASON. Measured: three models with
+predicted/actual ratios of 1.05, 3.16 and 0.32 had identical AUC. Use LOG LOSS, and predicted/actual
+per segment as a guardrail.
+
+STEP 3 - GET THE NUMBERS: auctions per second, latency budget, base CTR, number of candidate ads per
+auction.
+
+STEP 4 - DESCRIBE THE FEATURE SPACE HONESTLY: hundreds of millions of sparse categorical values, with
+the signal in the INTERACTIONS.
+
+STEP 5 - GIVE THE MODEL LINEAGE WITH REASONS. Logistic regression with crosses; factorisation machines
+to solve the pairwise sparsity; GBDT leaves into an online LR; wide-and-deep for
+memorisation-plus-generalisation.
+
+STEP 6 - RAISE THE EMBEDDING TABLE AS THE REAL ENGINEERING PROBLEM - tens to hundreds of gigabytes,
+sharded parameter servers, and the hashing trick to bound it.
+
+STEP 7 - DOWNSAMPLE NEGATIVES AND CORRECT FOR IT EXPLICITLY. p_true = p/(p + (1-p)/w). Measured: 1-in-
+100 downsampling predicts 41.7% against a true 0.71% without it.
+
+STEP 8 - MAKE CALIBRATION A SEPARATE, FREQUENTLY-REFITTED STAGE, because calibration drifts faster
+than ranking.
+
+STEP 9 - DESIGN FOR CONTINUOUS TRAINING: periodic full retrain plus online incremental updates, and
+say why a fresher simple model beats a staler complex one here.
+
+STEP 10 - RAISE NEW-AD COLD START AND THE EXPLORATION BUDGET, delayed conversion feedback, budget
+pacing, and the fact that optimising CTR alone rewards clickbait.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The thing I'd lead with is what the prediction is FOR, because it changes the whole problem. In an ad
+auction the predicted click probability is MULTIPLIED BY THE BID to rank ads by expected revenue, and
+it's used to compute what the advertiser is charged. So THE NUMBER ITSELF MATTERS, not just the
+ordering. This is a CALIBRATION problem wearing a ranking problem's clothes.
+
+I measured how invisible that is to the usual metric. I built three models on two hundred thousand
+impressions at a 0.71 per cent base rate, with IDENTICAL orderings - one calibrated, one predicting
+three times too high, one three times too low. All three had EXACTLY the same AUC, to four decimal
+places. That's not a coincidence, it's a mathematical property: AUC depends only on the ORDER, and
+multiplying every prediction by a constant changes no ordering. AUC IS BLIND BY CONSTRUCTION TO THE
+ENTIRE PROBLEM. Log loss separates them, because it's a proper scoring rule - minimised only by the
+true probability.
+
+And the business consequence is concrete: the three-times-high model overbids on every impression and
+pays more than the inventory is worth; the three-times-low model loses auctions it should win and the
+advertiser's budget goes unspent. Neither is visible in AUC. So I'd report LOG LOSS as primary, and
+PREDICTED-OVER-ACTUAL PER SEGMENT as a guardrail - it should be 1.0 for every advertiser, placement,
+device and country, and a segment where it's 3.0 is a segment where you're losing money.
+
+There's a specific bug that follows. Training on billions of impressions at 0.7 per cent is wasteful,
+so everyone downsamples negatives. I measured it: keeping one negative in a hundred makes a
+perfectly-fitted model predict a base rate of forty-two per cent against a true rate of 0.71 - fifty-
+nine times too high - and its AUC is unchanged. The correction is one line, p over p plus one-minus-p
+over w, and it recovers the true rate exactly. Forgetting it is catastrophic and completely invisible.
+
+On features: they're almost entirely categorical and high-cardinality - user, ad, campaign, publisher,
+placement, keyword - so one-hot gives you hundreds of millions of dimensions with a few dozen non-zero.
+And the signal is in the INTERACTIONS: "this ad" is weak, "this ad on this publisher for a mobile user
+in the evening" is strong. That's why this problem produced its own model lineage. Logistic regression
+with hand-crafted crosses. Then FACTORISATION MACHINES, whose key idea is that instead of learning a
+weight for each of billions of feature PAIRS - almost all of which never co-occur - you learn one
+vector per feature VALUE and get all pairs from dot products. Then GBDT leaves fed into an online
+logistic regression. Then wide-and-deep, where the wide part memorises known-good combinations and the
+deep part generalises to unseen ones.
+
+The real engineering problem is the EMBEDDING TABLE - hundreds of millions of values times 16 to 64
+dimensions is tens to hundreds of gigabytes, bigger than one machine, so you need sharded parameter
+servers and the hashing trick to bound it. And at serving time the FEATURE LOOKUP is usually the
+bottleneck, not the model forward pass, so measure those separately or you'll optimise the wrong half.
+
+Last design point: make CALIBRATION A SEPARATE STAGE - Platt scaling or isotonic on a recent held-out
+sample, refitted frequently - because calibration drifts faster than ranking does, and separating them
+lets you fix the thing that breaks without retraining the thing that doesn't.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  BID REQUEST arrives. Total RTB budget ~100 ms INCLUDING NETWORK.        │
+    │  The model gets single-digit milliseconds for HUNDREDS of candidate ads. │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  CANDIDATE SELECTION  - millions -> hundreds,  ~1 ms                     │
+    │    targeting rules | budget checks | frequency caps | brand safety       │
+    │    >> CHEAP BOOLEAN OPERATIONS, NOT MODEL CALLS. Same retrieval-then-    │
+    │       ranking economics as every other system in this family.            │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  FEATURE ASSEMBLY  - USUALLY THE BOTTLENECK, NOT THE MODEL              │
+    │    sparse categorical: user, ad, campaign, advertiser, publisher,        │
+    │      placement, device, hour, keyword, URL                               │
+    │    COUNTER FEATURES: this user's CTR on this advertiser over 7 days      │
+    │      <- TRAINING/SERVING SKEW LIVES HERE, and it is worse than usual     │
+    │         because these are counts that drift continuously                 │
+    │    >> BATCH THE LOOKUPS, CO-LOCATE THE STORE, AND MEASURE FEATURE FETCH  │
+    │       SEPARATELY FROM INFERENCE - people optimise the wrong half.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  EMBEDDING LOOKUP  - SHARDED PARAMETER SERVER                           │
+    │    hundreds of millions of values x 16-64 dims = TENS TO HUNDREDS OF GB, │
+    │    larger than any single machine. THIS IS THE REAL ENGINEERING PROBLEM: │
+    │    the constraint is MEMORY AND LOOKUP LATENCY, not FLOPs.               │
+    │    HASHING TRICK bounds the table; collisions between a common and a     │
+    │    rare feature barely matter.                                            │
+    │    Cache hot embeddings locally - feature popularity is extremely skewed. │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  MODEL  - comparatively CHEAP: shallow nets over embeddings              │
+    │    LR + crosses -> FACTORISATION MACHINES (one vector per feature VALUE, │
+    │      all pairs from dot products - solves the pairwise sparsity directly)│
+    │      -> GBDT leaves into an ONLINE LR -> WIDE AND DEEP                   │
+    │      (wide = memorise known-good combos; deep = generalise to unseen)    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  CALIBRATION - A SEPARATE, FREQUENTLY-REFITTED STAGE                    │
+    │                                                                          │
+    │    1. UNDO NEGATIVE DOWNSAMPLING:  p_true = p / (p + (1-p)/w)            │
+    │       MEASURED: w=0.01 makes a perfect model predict 41.676% against a   │
+    │       true 0.710%. The formula recovers 0.710% exactly. AND AUC IS       │
+    │       UNCHANGED EITHER WAY - the bug is invisible to ranking metrics.     │
+    │    2. Platt scaling or ISOTONIC REGRESSION on a recent held-out sample   │
+    │                                                                          │
+    │    >> SEPARATE FROM THE MODEL BECAUSE CALIBRATION DRIFTS FASTER THAN     │
+    │       RANKING DOES. You can refit this hourly without retraining.        │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  AUCTION:  eCPM = bid x P(click).  THE NUMBER IS MULTIPLIED BY MONEY.    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  TRAINING AND MONITORING                                                 │
+    │    CONTINUOUS: periodic full retrain PLUS online incremental updates     │
+    │      minutes behind live. A model two hours stale is worse than a        │
+    │      simpler one two minutes stale - which is why LR and FTRL survived   │
+    │      in this domain for so long.                                          │
+    │    SPLIT BY TIME. The distribution shifts hourly.                        │
+    │    PRIMARY METRIC: LOG LOSS.  MEASURED - three models with predicted/    │
+    │      actual of 1.05, 3.16 and 0.32 had IDENTICAL AUC (0.7971).           │
+    │    GUARDRAIL: predicted/actual PER SEGMENT. The aggregate can read 1.0   │
+    │      while two segments read 3.0 and 0.3.                                │
+    │    EXPLORATION BUDGET for new ads - the cold-start deadlock, with money. │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+MEASUREMENT 1 - CALIBRATION VS AUC. 200,000 impressions. Each has a true click probability drawn from
+Beta(0.6, 80), giving a heavily right-skewed CTR distribution and an overall base rate of 0.710%.
+Clicks are simulated from those probabilities. Then three predictors:
+
+     model                       AUC        log loss     mean prediction     predicted/actual
+     perfectly calibrated     0.7971         0.03782              0.747%                 1.05
+     predicts 3x too HIGH     0.7971         0.04529              2.240%                 3.16
+     predicts 3x too LOW      0.7971         0.04117              0.224%                 0.32
+
+    THE AUC COLUMN IS IDENTICAL TO FOUR DECIMAL PLACES BY CONSTRUCTION, because the 3x-high predictor
+    is exactly 3 times the calibrated one (clipped at 1.0, which affects almost nothing at these
+    magnitudes) and the 3x-low is exactly 0.3 times it. MONOTONE TRANSFORMATIONS PRESERVE RANK, AND
+    AUC IS A FUNCTION OF RANK ALONE.
+
+    THE LOG LOSS ORDERING IS INFORMATIVE TOO: the 3x-LOW model (0.04117) is penalised LESS than the
+    3x-HIGH one (0.04529). That is because at a 0.7% base rate almost every example is a negative, and
+    over-predicting hurts far more negatives than under-predicting hurts positives. SO LOG LOSS IS NOT
+    SYMMETRIC IN THE DIRECTION OF MISCALIBRATION EITHER - which is worth knowing, because it means log
+    loss alone will tolerate some under-prediction, and the predicted/actual guardrail is what catches
+    it.
+
+MEASUREMENT 2 - NEGATIVE DOWNSAMPLING. Keeping a fraction w of negatives and all positives:
+
+     w          training base rate     uncorrected prediction     after p/(p+(1-p)/w)
+     1.0                    0.710%                     0.710%                  0.710%
+     0.1                    6.669%                     6.669%                  0.710%
+     0.01                  41.676%                    41.676%                  0.710%
+
+    THE MIDDLE COLUMN IS WHAT A PERFECTLY-FITTED MODEL PREDICTS ON THE DOWNSAMPLED DATA - it learns
+    the training set's base rate, which is exactly right for the data it saw and wildly wrong for
+    reality.
+
+    THE JUMP FROM 6.7% TO 41.7% BETWEEN w=0.1 AND w=0.01 IS WORTH NOTING: the distortion is not linear
+    in w. At w=0.01 the training set is 42% positive - nearly balanced - which is precisely why people
+    downsample that aggressively, and precisely why the correction is not optional.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    MAKING THE THREE MODELS EXACT MULTIPLES OF EACH OTHER
+            is what forces the AUC values to be identical. IT IS THE WHOLE POINT: a real miscalibrated
+            model would not be an exact multiple and its AUC would differ slightly - but only slightly,
+            and by an amount unrelated to the size of the calibration error.
+    THE Beta(0.6, 80) TRUE-CTR PRIOR
+            gives a realistic long right tail with a 0.71% mean. A UNIFORM CTR DISTRIBUTION WOULD MAKE
+            THE PROBLEM ARTIFICIALLY EASY and would compress the log-loss differences.
+    CLIPPING THE 3x-HIGH MODEL AT 1.0
+            affects essentially nothing here because 3 x 0.5 = 1.5 only occurs for the extreme tail. On
+            a high-CTR product (search ads at 5-10%) the clipping would bite and the AUC would move
+            slightly - so this demonstration is cleanest at low CTR, which is the display-ads case.
+    COMPUTING THE DOWNSAMPLED BASE RATE ANALYTICALLY rather than by training a model
+            isolates the arithmetic. A REAL TRAINED MODEL WOULD ALSO CARRY ITS OWN FITTING ERROR, and
+            separating the two makes clear that this distortion is not a modelling failure - it is a
+            property of the sampling.
+    WHAT IS NOT MEASURED
+            is latency, embedding table size, the delayed-feedback problem or the exploration deadlock.
+            THOSE SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you say the prediction is multiplied by money, so calibration matters?
+    Did you reject AUC and choose log loss, with a reason?
+    Did you mention negative downsampling AND its correction?
+    Do you know why this domain has its own model lineage - the sparsity of pairwise interactions?
+    Did you identify the embedding table as the engineering problem?
+    Did you know that feature lookup, not inference, is usually the latency bottleneck?
+    Did you design for continuous training?
+
+    THE CALIBRATION POINT IS THE ONE THAT MARKS OUT SOMEONE WHO HAS WORKED ON ADS. Everybody else
+    treats it as a classification problem and reports AUC.
+
+THE #1 MISTAKE: reporting or optimising AUC. Measured: three models with predicted/actual of 1.05,
+3.16 and 0.32 had identical AUC to four decimal places, because AUC is a function of rank alone.
+
+THE #2 MISTAKE: downsampling negatives without correcting. Measured: 1-in-100 downsampling predicts
+41.676% against a true 0.710%, and the one-line correction recovers it exactly.
+
+THE #3 MISTAKE: monitoring calibration only in aggregate. The overall ratio can read 1.0 while two
+segments read 3.0 and 0.3.
+
+THE #4 MISTAKE: not separating calibration from the model. Calibration drifts faster than ranking, so
+it should be a stage you can refit hourly without retraining.
+
+THE #5 MISTAKE: a random train/test split. The distribution shifts hourly.
+
+THE #6 MISTAKE: ignoring new-ad cold start. No impressions means no data means no impressions, and
+here the deadlock has money attached.
+
+THE #7 MISTAKE: optimising the model when feature lookup is the bottleneck. Measure them separately.
+
+THE #8 MISTAKE: ignoring delayed conversion feedback. Labelling "no conversion yet" as negative
+systematically under-predicts, and this has its own literature.
+
+THE #9 MISTAKE: optimising CTR alone. Clickbait has high CTR, poor conversion, and it degrades the
+publisher's product.
+
+THE #10 MISTAKE: treating training/serving skew on counter features as an ordinary risk. These are
+continuously drifting counts and the skew is both likely and silent.
+
+ONE-SENTENCE TAKEAWAY: CTR prediction is a CALIBRATION problem, not a ranking problem, because the
+predicted probability is multiplied by a bid to price an auction - measured, three models with
+predicted/actual ratios of 1.05, 3.16 and 0.32 had IDENTICAL AUC to four decimal places, and 1-in-100
+negative downsampling makes a perfect model predict 41.7% against a true 0.71% while leaving AUC
+untouched - so report log loss with predicted/actual per segment as a guardrail, apply
+p/(p+(1-p)/w) after downsampling, and keep calibration as a separately refitted stage because it drifts
+faster than ranking does.""",
+]
+
+_EX_P1AO["Design an ETA Prediction system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how long will this journey take, and what number do we show
+
+An ETA system predicts how long a trip will take - a rider to their destination, a courier to a
+doorstep, a package to a warehouse - and it is used for two different things that pull in opposite
+directions:
+
+    INTERNAL: dispatch, routing, driver assignment, capacity planning. These want the BEST ESTIMATE.
+    EXTERNAL: the number shown to the customer. This wants THE NUMBER THAT MINIMISES REGRET.
+
+    THOSE ARE NOT THE SAME NUMBER, AND SECTION 2 MEASURES HOW DIFFERENT THEY ARE.
+
+THE DEFINING PROPERTY OF THIS PROBLEM IS THAT THE ERROR COSTS ARE ASYMMETRIC:
+
+    BEING LATE is much worse than being early. A customer told 20 minutes who waits 35 is angry,
+    contacts support, and may not come back. A customer told 30 who is served in 25 is pleasantly
+    surprised.
+    AND YET YOU CANNOT JUST INFLATE EVERYTHING, because an ETA of 60 minutes loses the order to a
+    competitor showing 25.
+
+    SO THE QUESTION IS NOT "WHAT IS THE EXPECTED TRAVEL TIME" BUT "WHAT PROMISE MINIMISES TOTAL COST",
+    and those have different answers.
+
+THE MODELLING CONSEQUENCE, WHICH IS THE WHOLE ENTRY: A MODEL TRAINED ON MEAN SQUARED ERROR PREDICTS
+THE MEAN. THE MEAN IS THE WRONG ANSWER BY CONSTRUCTION when the costs are asymmetric. You want a
+QUANTILE, and you get one by training on PINBALL LOSS instead.
+
+THE OTHER STRUCTURAL FEATURE: TRAVEL TIME IS RIGHT-SKEWED. Most trips are near the typical time and a
+minority take much longer - an accident, a closed road, a queue. THE TAIL IS WHERE ALL THE PAIN IS, and
+a symmetric loss function treats a 30-minute overrun as merely a large error rather than as a
+qualitatively different event.
+
+TERMS AS THEY APPEAR:
+- PINBALL LOSS: the loss function whose minimiser is a chosen quantile.
+- QUANTILE REGRESSION: predicting the p-th percentile rather than the mean.
+- SEGMENT: a stretch of road between two intersections, the usual atomic unit of a routing graph.""",
+
+    """2. THE MEASUREMENT - the mean is the wrong promise, and by how much
+
+I generated 200,000 trips with a lognormal travel-time distribution - mean 22.2 minutes, median 20.1,
+p80 29.3, p90 35.7 - and applied an ASYMMETRIC COST: every minute the customer waits beyond the
+promise costs 3x what every minute of being early costs.
+
+     promise strategy     value (min)     mean cost     % of trips late     mean lateness when late
+     the MEAN                    22.2         15.84               41.2%                    9.6 min
+     the MEDIAN (p50)            20.1         17.58               50.0%                    9.8 min
+     p70                         25.4         14.50               30.0%                    9.4 min
+     p80                         29.3         14.54               20.0%                    9.3 min
+     p90                         35.7         17.20               10.0%                    9.3 min
+     p95                         42.1         21.78                5.0%                    9.4 min
+
+    THE COST CURVE IS U-SHAPED AND ITS MINIMUM IS AT ROUGHLY THE p75 QUANTILE - NOT THE MEAN AND NOT
+    THE MEDIAN.
+
+    PROMISING THE MEAN MAKES YOU LATE ON 41% OF TRIPS. Promising the median makes you late on exactly
+    half - which is what "median" means, and it is a terrible customer promise.
+
+    AND THE OPTIMUM IS NOT A COINCIDENCE. With a lateness penalty of L times the earliness penalty,
+    THE COST-MINIMISING PROMISE IS THE q-TH QUANTILE WHERE q = L / (1 + L). With L = 3 that is 3/4 =
+    75%, and the measured minimum sits right there.
+
+    THAT FORMULA IS THE SINGLE MOST USEFUL THING IN THIS ENTRY. It converts a product argument -
+    "how much worse is late than early?" - directly into a model training parameter, and it means the
+    answer to "which quantile should we predict" is not a guess.
+
+NOW THE PART THAT MAKES IT A DESIGN DECISION RATHER THAN A FORMULA. LOOK AT THE COSTS AT p70 AND p80:
+14.50 and 14.54 - ESSENTIALLY IDENTICAL. But the "% late" column differs by a third, 30% versus 20%.
+
+    THE COST FUNCTION IS FLAT NEAR ITS OPTIMUM AND THE CUSTOMER-VISIBLE OUTCOME IS NOT. So you can buy
+    a 10-percentage-point reduction in late deliveries for almost no cost in your own loss function -
+    WHICH IS EXACTLY THE KIND OF TRADE A PRODUCT TEAM SHOULD MAKE AND A LOSS FUNCTION CANNOT SEE.
+
+    AND NOTICE THE LAST COLUMN BARELY MOVES - mean lateness when late stays around 9.3-9.8 minutes at
+    every strategy. RAISING THE PROMISE REDUCES HOW OFTEN YOU ARE LATE AND NOT HOW BADLY, because the
+    lateness is driven by the distribution's tail rather than by where you set the threshold. THAT IS
+    AN ARGUMENT FOR PREDICTING THE TAIL BETTER (better features, incident data) RATHER THAN JUST
+    PADDING.""",
+
+    """3. THE ARCHITECTURE - route first, then learn the residual
+
+THE CLASSICAL APPROACH IS SEGMENT-BASED AND IT IS STILL THE BACKBONE:
+
+    1. ROUTE. Find the path through the road graph - Dijkstra or A*, or in practice CONTRACTION
+       HIERARCHIES, which precompute shortcuts so continental-scale routing runs in microseconds.
+    2. PREDICT A SPEED for each segment on that path, given the time of day, day of week, weather and
+       current traffic.
+    3. SUM the segment times, add turn penalties, traffic-light delays and intersection costs.
+
+    STRENGTHS: interpretable, handles novel routes, degrades gracefully, and the same segment speed
+    model serves every route.
+    WEAKNESS: ERRORS COMPOUND ALONG THE PATH, and it systematically misses everything that is not a
+    property of a road segment - the time to find parking, the walk to the door, the wait at the
+    restaurant.
+
+THE MODERN APPROACH IS TO LEARN A CORRECTION ON TOP:
+
+    ETA = segment-based estimate + a learned residual
+
+    THE RESIDUAL MODEL SEES FEATURES THE ROUTING GRAPH CANNOT: the specific restaurant's historical
+    prep time, this courier's historical pace, the building's access difficulty, the weather, whether
+    it is a match day. TRAINING ON THE RESIDUAL RATHER THAN ON THE RAW TIME IS THE KEY MOVE - the
+    physics is handled by the router and the model only has to learn what the router does not know,
+    which is a far easier learning problem with far less data.
+
+    THAT "PREDICT THE RESIDUAL OF A GOOD PHYSICAL MODEL" PATTERN IS TRANSFERABLE and worth naming.
+
+GRAPH NEURAL NETWORKS over the road network are the research frontier here - they propagate congestion
+information along the graph structure, which is what actually happens physically. THEY ARE REAL AND
+DEPLOYED at large mapping companies, and they are not a version one.
+
+THE END-TO-END DECOMPOSITION MATTERS AS MUCH AS THE MODEL. A delivery ETA is not one quantity:
+
+    order placed -> restaurant accepts -> FOOD PREPARATION -> courier assigned -> courier travels to
+    pickup -> WAITING AT PICKUP -> travel to customer -> parking and walking -> handover
+
+    MOST OF THE VARIANCE IS OFTEN NOT IN THE DRIVING. Preparation time and waiting at pickup routinely
+    dominate, and they are predicted from completely different features. MODEL THE PHASES SEPARATELY
+    AND COMBINE THEM - and be aware that summing independent quantile predictions is not the quantile
+    of the sum, which is a real subtlety: p80 of A plus p80 of B is above p80 of A+B.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - TRAINING ON MSE. It gives you the MEAN, which is the wrong answer by construction under
+asymmetric costs. Measured: promising the mean is late on 41.2% of trips at a cost of 15.84, against
+14.50 at the optimum.
+
+FAILURE 2 - PROMISING THE MEDIAN. Late on exactly 50% of trips, by definition.
+
+FAILURE 3 - ONE ETA FOR TWO PURPOSES. Dispatch needs the best estimate; the customer needs the
+regret-minimising promise. USE DIFFERENT QUANTILES FOR DIFFERENT CONSUMERS of the same model.
+
+FAILURE 4 - THE FEEDBACK LOOP, AND IT IS SEVERE HERE. The ETA affects behaviour: a long ETA makes the
+customer cancel, so you never observe that trip's actual duration. A short ETA makes the courier rush.
+AND A DISPATCH SYSTEM THAT USES THE ETA TO CHOOSE THE COURIER CHANGES WHICH TRIPS HAPPEN AT ALL. Your
+training data is generated by your own predictions.
+
+FAILURE 5 - SURVIVORSHIP IN THE TRAINING DATA. Cancelled orders have no actual duration, and they are
+disproportionately the slow ones. TRAINING ONLY ON COMPLETED TRIPS SYSTEMATICALLY UNDER-PREDICTS.
+
+FAILURE 6 - IGNORING THE NON-DRIVING PHASES. Preparation, waiting at pickup, parking and the walk to
+the door often dominate the variance, and none of them are properties of a road segment.
+
+FAILURE 7 - SUMMING QUANTILES. p80 of the driving plus p80 of the prep is NOT p80 of the total; it is
+higher. If you need a quantile of a sum, model the sum or simulate it.
+
+FAILURE 8 - NO REAL-TIME SIGNAL. An ETA that ignores current traffic, an accident or a stadium
+emptying is wrong in exactly the situations that matter most.
+
+FAILURE 9 - STALE ETAs. The prediction must be UPDATED during the trip, and the update policy is a
+product decision: a number that keeps sliding backwards destroys trust faster than a single wrong
+number.
+
+FAILURE 10 - EVALUATING ON MAE OR RMSE ONLY. Report the LATE RATE and the LATENESS DISTRIBUTION,
+because those are what the customer experiences. Measured: p70 and p80 have essentially identical cost
+(14.50 vs 14.54) and late rates of 30% versus 20% - the loss function cannot see a difference the
+customer certainly can.
+
+FAILURE 11 - IGNORING GEOGRAPHY AND SEGMENT PERFORMANCE. A model excellent in the city centre and poor
+in the suburbs looks fine in aggregate and is a persistent, localised failure.""",
+
+    """5. THE FEATURES AND THE REAL-TIME PATH
+
+FEATURES, GROUPED BY WHERE THEY COME FROM:
+
+    ROUTE / PHYSICAL: distance, number of turns, road types, number of traffic lights, elevation,
+    historical speed per segment for this time of day and day of week.
+    TEMPORAL: hour, day of week, holiday, school term, whether a major event is on.
+    REAL-TIME: current observed speeds from other vehicles, incident reports, weather, and - the
+    highest-value one - HOW LONG SIMILAR TRIPS HAVE ACTUALLY TAKEN IN THE LAST 15 MINUTES.
+    ENTITY-SPECIFIC: this courier's historical pace, this restaurant's historical prep time, this
+    building's historical access difficulty. THESE ARE OFTEN THE BIGGEST WIN and they are what the
+    routing graph structurally cannot know.
+    ORDER-SPECIFIC: basket size, number of items, whether it needs assembly.
+
+THE REAL-TIME LAYER IS WHAT SEPARATES A GOOD ETA FROM A MEDIOCRE ONE. A model using only historical
+averages is a timetable; a model using the last 15 minutes of observed traffic is a prediction. THAT
+IS A STREAMING AGGREGATION PROBLEM - windowed speed estimates per segment - and it is the same
+infrastructure the fraud and trending systems need.
+
+SERVING. ETAs are requested constantly and for many candidate assignments at once - a dispatch system
+may evaluate a hundred courier-to-order pairings before choosing. SO THE THROUGHPUT REQUIREMENT IS
+MUCH HIGHER THAN "ONE ETA PER ORDER" SUGGESTS, and it is worth asking about explicitly.
+
+    PRECOMPUTE what you can: segment speed profiles by time bucket, contraction hierarchies for
+    routing, restaurant prep-time distributions.
+    COMPUTE LIVE: the route, the real-time adjustment, the residual model.
+
+UPDATING DURING THE TRIP is a product decision as much as a modelling one. Recompute continuously, and
+then decide what to SHOW. THE STANDARD APPROACH IS HYSTERESIS: only update the displayed number when
+it changes materially, and be far more willing to revise the ETA DOWN than UP - because an ETA that
+keeps sliding backwards is worse for trust than a single number that was always wrong.
+
+MONITORING. Late rate and lateness distribution as primary; pinball loss at the target quantile; and
+PER-SEGMENT breakdowns by city, time of day, distance band and courier type - because an aggregate
+number hides exactly the localised failures that generate support tickets.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHO CONSUMES THE ETA. Dispatch wants the best estimate; the customer wants the
+regret-minimising promise. THEY ARE DIFFERENT NUMBERS FROM THE SAME MODEL.
+
+STEP 2 - ESTABLISH THE COST ASYMMETRY EXPLICITLY. "How much worse is a minute late than a minute
+early?" That ratio is a product answer and it becomes a model parameter.
+
+STEP 3 - CONVERT IT TO A QUANTILE. With a lateness penalty of L, the cost-minimising promise is the
+L/(1+L) quantile. Measured with L = 3: the optimum sits at p75, and promising the mean is late on 41%
+of trips.
+
+STEP 4 - TRAIN ON PINBALL LOSS AT THAT QUANTILE, NOT MSE. MSE gives the mean, which is wrong by
+construction.
+
+STEP 5 - DECOMPOSE THE JOURNEY INTO PHASES: preparation, assignment, travel to pickup, waiting, travel
+to customer, parking and handover. MOST OF THE VARIANCE IS OFTEN NOT IN THE DRIVING.
+
+STEP 6 - ROUTE FIRST, THEN LEARN THE RESIDUAL. Let the routing graph handle the physics and let the
+model learn only what the graph cannot know. It is a much easier learning problem.
+
+STEP 7 - BUILD THE REAL-TIME LAYER. Observed speeds in the last 15 minutes, incidents, weather. Without
+it you have a timetable rather than a prediction.
+
+STEP 8 - RAISE THE FEEDBACK LOOP AND SURVIVORSHIP. Cancelled orders have no duration and are
+disproportionately slow, so training on completed trips only under-predicts.
+
+STEP 9 - DEFINE THE UPDATE POLICY: recompute continuously, display with hysteresis, and revise down
+more readily than up.
+
+STEP 10 - MEASURE THE LATE RATE AND THE LATENESS DISTRIBUTION, per segment, not just MAE. Measured:
+p70 and p80 differ by 0.04 in cost and by ten percentage points in late rate - the loss function cannot
+see what the customer feels.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd ask who consumes the ETA, because there are two consumers and they want different numbers.
+Dispatch and routing want the BEST ESTIMATE. The customer-facing number wants the promise that
+MINIMISES REGRET. Those aren't the same, and conflating them is the first mistake.
+
+The defining property is that the error costs are ASYMMETRIC. Being late is much worse than being
+early - a customer told twenty minutes who waits thirty-five contacts support and may not come back,
+while one told thirty and served in twenty-five is pleasantly surprised. But you can't just inflate
+everything, because a sixty-minute ETA loses the order to a competitor showing twenty-five.
+
+So the question isn't "what's the expected travel time", it's "what promise minimises total cost". And
+that has a specific answer. A model trained on mean squared error predicts the MEAN, and the mean is
+wrong BY CONSTRUCTION under asymmetric costs. You want a QUANTILE, and you get one by training on
+PINBALL LOSS.
+
+I measured this. Two hundred thousand trips, lognormal travel times - mean 22.2 minutes, median 20.1,
+p90 35.7 - with a cost where every minute late is worth three minutes early. Promising the MEAN is
+LATE ON 41 PER CENT OF TRIPS. Promising the MEDIAN is late on exactly half, which is what median
+means. The cost curve is U-shaped and its minimum is at about the p75 quantile.
+
+And that's not a coincidence: with a lateness penalty of L times the earliness penalty, the
+cost-minimising promise is the L over one-plus-L quantile. With L equals three that's three quarters,
+and the measured minimum sits right there. THAT FORMULA IS THE MOST USEFUL THING HERE, because it turns
+a product argument - how much worse is late than early - directly into a training parameter.
+
+There's a second finding I'd raise, because it's the kind of thing a loss function can't see. The costs
+at p70 and p80 were 14.50 and 14.54 - essentially identical. But the LATE RATE differs by a third,
+thirty per cent versus twenty. So you can buy a ten-point reduction in late deliveries for almost
+nothing in your own loss function, and that's exactly the trade a product team should make. And note
+the mean lateness WHEN late barely moved across every strategy - about nine and a half minutes
+throughout. RAISING THE PROMISE REDUCES HOW OFTEN YOU'RE LATE, NOT HOW BADLY, because the lateness is
+driven by the distribution's tail. That's an argument for predicting the tail better with incident and
+traffic data, rather than just padding.
+
+Architecturally: route first with contraction hierarchies, sum segment speeds, and then LEARN A
+RESIDUAL on top. The router handles the physics and the model only learns what the router can't know -
+this restaurant's prep time, this courier's pace, this building's access difficulty. That's a much
+easier learning problem than predicting the raw duration.
+
+And I'd decompose the journey into phases, because MOST OF THE VARIANCE IS OFTEN NOT IN THE DRIVING -
+food preparation and waiting at pickup routinely dominate, and they're predicted from completely
+different features. One subtlety there: p80 of the driving plus p80 of the prep is NOT p80 of the
+total, it's higher, so if you need a quantile of a sum you model or simulate the sum.
+
+Two failure modes I'd raise unprompted. SURVIVORSHIP: cancelled orders have no actual duration and
+they're disproportionately the slow ones, so training on completed trips only under-predicts. And the
+FEEDBACK LOOP: a long ETA makes the customer cancel so you never see that trip, and a dispatch system
+that uses the ETA to choose the courier changes which trips happen at all.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  DECOMPOSE THE JOURNEY - it is NOT one quantity                          │
+    │    order placed -> restaurant accepts -> PREPARATION -> courier assigned  │
+    │    -> travel to pickup -> WAITING AT PICKUP -> travel to customer         │
+    │    -> parking and walking -> handover                                     │
+    │  >> MOST OF THE VARIANCE IS OFTEN NOT IN THE DRIVING. Prep and waiting    │
+    │     routinely dominate and are predicted from different features.         │
+    │  >> CAUTION: p80(A) + p80(B) is NOT p80(A+B) - it is higher. If you need  │
+    │     a quantile of a sum, model or SIMULATE the sum.                       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 1  ROUTING - the physics                                          │
+    │    CONTRACTION HIERARCHIES (precomputed shortcuts) -> continental-scale   │
+    │    routing in microseconds. Sum segment speeds by time-of-day profile,    │
+    │    plus turn penalties and traffic-light delays.                          │
+    │    STRENGTH: interpretable, handles novel routes, degrades gracefully.    │
+    │    WEAKNESS: errors COMPOUND along the path, and it structurally cannot   │
+    │    see parking, the walk to the door, or the queue at the restaurant.     │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 2  REAL-TIME ADJUSTMENT - what makes it a prediction              │
+    │    observed speeds on these segments IN THE LAST 15 MINUTES               │
+    │    incidents, weather, events (a stadium emptying)                        │
+    │  >> WITHOUT THIS YOU HAVE A TIMETABLE, NOT A PREDICTION. It is a          │
+    │     streaming windowed-aggregation problem - the same infrastructure the  │
+    │     fraud and trending systems need.                                       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  LAYER 3  LEARNED RESIDUAL  - predict what the router does not know      │
+    │    ETA = routing estimate + learned correction                            │
+    │    FEATURES the graph cannot have: this restaurant's prep history, this    │
+    │      courier's pace, this building's access difficulty, basket size,       │
+    │      day-of-week and event flags                                           │
+    │  >> TRAINING ON THE RESIDUAL RATHER THAN THE RAW TIME IS THE KEY MOVE.    │
+    │     A far easier learning problem, with far less data required. The        │
+    │     "predict the residual of a good physical model" pattern transfers.     │
+    │  >> TRAIN ON PINBALL LOSS AT THE TARGET QUANTILE, NOT MSE.                │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  QUANTILE SELECTION - THE PRODUCT DECISION, MADE NUMERICALLY             │
+    │                                                                          │
+    │    with lateness penalty L x earliness, the cost-minimising promise is    │
+    │    the  q = L / (1 + L)  quantile.   L = 3  ->  p75.                     │
+    │                                                                          │
+    │    MEASURED, 200k lognormal trips (mean 22.2, median 20.1, p90 35.7):     │
+    │      promise    value   mean cost   % late   mean lateness when late      │
+    │      MEAN        22.2       15.84    41.2%              9.6 min           │
+    │      MEDIAN      20.1       17.58    50.0%              9.8 min           │
+    │      p70         25.4       14.50    30.0%              9.4 min  <- min   │
+    │      p80         29.3       14.54    20.0%              9.3 min           │
+    │      p90         35.7       17.20    10.0%              9.3 min           │
+    │      p95         42.1       21.78     5.0%              9.4 min           │
+    │                                                                          │
+    │    >> p70 AND p80 COST THE SAME (14.50 vs 14.54) AND DIFFER BY TEN        │
+    │       POINTS OF LATE RATE. The loss function is flat where the customer   │
+    │       experience is not - that is a product trade a loss cannot see.      │
+    │    >> MEAN LATENESS WHEN LATE BARELY MOVES (9.3-9.8 everywhere). Raising  │
+    │       the promise changes HOW OFTEN, not HOW BADLY - so improve the TAIL  │
+    │       with incident data rather than padding.                              │
+    │                                                                          │
+    │    DIFFERENT CONSUMERS GET DIFFERENT QUANTILES FROM THE SAME MODEL:       │
+    │      dispatch -> p50 (best estimate) | customer -> p75 | SLA -> p90       │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  DISPLAY AND UPDATE POLICY - a product decision                          │
+    │    recompute continuously; DISPLAY with HYSTERESIS                        │
+    │    revise DOWN readily, UP reluctantly - an ETA that keeps sliding        │
+    │    backwards destroys trust faster than one number that was always wrong. │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  MONITORING                                                              │
+    │    PRIMARY: late rate and the LATENESS DISTRIBUTION - what the customer   │
+    │      actually experiences. Pinball loss at the target quantile.           │
+    │    PER SEGMENT: city, time of day, distance band, courier type. An        │
+    │      aggregate hides the localised failures that generate support tickets.│
+    │    WATCH SURVIVORSHIP: cancelled orders have no duration and are          │
+    │      disproportionately SLOW, so completed-trips-only training UNDER-     │
+    │      predicts.                                                            │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 200,000 trips with durations drawn from a lognormal, exp(Normal(3.0, 0.45)). The resulting
+distribution has mean 22.2 minutes, median 20.1, p80 29.3 and p90 35.7 - RIGHT-SKEWED, with the mean
+above the median, which is the realistic shape.
+
+THE COST FUNCTION: if the promise is at least the actual, cost = (promise - actual) x 1, the mild
+annoyance of waiting for a slot you were told about. If the promise is less than the actual, cost =
+(actual - promise) x 3. A LATENESS PENALTY OF 3x.
+
+     promise strategy     value (min)     mean cost     % of trips late     mean lateness when late
+     the MEAN                    22.2         15.84               41.2%                    9.6 min
+     the MEDIAN (p50)            20.1         17.58               50.0%                    9.8 min
+     p70                         25.4         14.50               30.0%                    9.4 min
+     p80                         29.3         14.54               20.0%                    9.3 min
+     p90                         35.7         17.20               10.0%                    9.3 min
+     p95                         42.1         21.78                5.0%                    9.4 min
+
+    SWEEPING q FROM 0.50 TO 0.98 AND TAKING THE ARGMIN GIVES q = 0.75, WHICH MATCHES THE THEORETICAL
+    L/(1+L) = 3/4 EXACTLY.
+
+    THE "% LATE" COLUMN IS A SANITY CHECK ON THE WHOLE TABLE: promising the p80 makes you late on
+    exactly 20% of trips, promising p90 on exactly 10%. THAT IS THE DEFINITION OF A QUANTILE, and its
+    appearing correctly confirms the simulation is doing what it claims.
+
+    THE MEAN'S ROW IS THE INTERESTING ONE. The mean of 22.2 sits between the p50 (20.1) and the p70
+    (25.4) - it is above the median because the distribution is right-skewed - so promising it is late
+    41.2% of the time. AN MSE-TRAINED MODEL DELIVERS EXACTLY THIS, and it is late on two trips in five.
+
+THE LINE-BY-LINE MAPPING - which construction choice produced which conclusion:
+
+    THE LOGNORMAL WITH sigma = 0.45
+            produces a mean/median ratio of 1.10. A HEAVIER TAIL WOULD PUSH THE MEAN FURTHER ABOVE THE
+            MEDIAN and make the "MSE gives you the mean" failure worse, not better. Real trip-time
+            distributions with incidents in them are heavier-tailed than this, so the measured 41.2%
+            late rate is a LOWER bound on the failure.
+    THE 3x LATENESS MULTIPLIER
+            is what puts the optimum at p75. IT IS AN ASSUMPTION AND IT IS THE ONE TO ARGUE ABOUT WITH
+            THE PRODUCT TEAM. At L = 1 the optimum is the median; at L = 9 it is p90. THE FORMULA IS
+            THE DELIVERABLE, not the specific number.
+    MAKING THE EARLINESS COST LINEAR
+            is a simplification. In reality being 40 minutes early is not four times as bad as being 10
+            minutes early - the customer just does something else - so a realistic earliness cost is
+            SUBLINEAR, which would push the optimal quantile HIGHER than p75.
+    THE "mean lateness when late" COLUMN
+            is the one I did not expect to be flat, and it is the most useful row in the table. It
+            stays at 9.3-9.8 minutes across every strategy because it is a property of the
+            DISTRIBUTION'S TAIL BEYOND THE THRESHOLD, not of the threshold. That is why padding the ETA
+            cannot fix bad tail predictions.
+    WHAT IS NOT MEASURED
+            is the routing decomposition, the residual model, survivorship or the feedback loop. THOSE
+            SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask who consumes the ETA, and note that dispatch and the customer want different numbers?
+    Did you identify the asymmetric cost and convert it to a QUANTILE?
+    Do you know that MSE gives the mean, and that pinball loss gives a quantile?
+    Did you decompose the journey into phases rather than treating it as one travel-time problem?
+    Did you propose routing first and a LEARNED RESIDUAL on top?
+    Did you raise the real-time layer, survivorship, and the feedback loop?
+
+    THE QUANTILE POINT IS THE ONE THAT SEPARATES A SENIOR ANSWER. Almost everyone proposes a
+    regression on travel time.
+
+THE #1 MISTAKE: training on MSE. It predicts the mean, and measured, promising the mean is late on
+41.2% of trips.
+
+THE #2 MISTAKE: promising the median. Late on exactly 50% by definition.
+
+THE #3 MISTAKE: not converting the cost asymmetry into a number. With a lateness penalty of L, the
+optimum is the L/(1+L) quantile - measured at p75 for L = 3.
+
+THE #4 MISTAKE: one ETA for all consumers. Dispatch wants p50, the customer promise wants p75, an SLA
+wants p90 - all from the same model.
+
+THE #5 MISTAKE: treating the trip as only driving. Preparation and waiting at pickup routinely dominate
+the variance and use entirely different features.
+
+THE #6 MISTAKE: summing quantiles across phases. p80 + p80 exceeds p80 of the sum.
+
+THE #7 MISTAKE: ignoring survivorship. Cancelled orders have no duration and are disproportionately
+slow, so completed-trips-only training under-predicts.
+
+THE #8 MISTAKE: no real-time layer. Historical averages are a timetable, not a prediction, and they
+fail precisely when it matters.
+
+THE #9 MISTAKE: no display hysteresis. An ETA that keeps sliding backwards destroys trust faster than
+a single number that was always wrong.
+
+THE #10 MISTAKE: reporting MAE only. Measured, p70 and p80 differ by 0.04 in cost and by TEN
+PERCENTAGE POINTS in late rate - report the late rate and the lateness distribution, per segment.
+
+ONE-SENTENCE TAKEAWAY: ETA is an asymmetric-cost problem, so the right output is a QUANTILE and not a
+mean - with a lateness penalty of L times earliness the cost-minimising promise is the L/(1+L)
+quantile, measured at p75 for L=3, where promising the MEAN is late on 41.2% of trips and the median on
+50% - which means training on pinball loss rather than MSE, decomposing the journey into phases because
+prep and waiting often dominate the driving, and predicting a learned RESIDUAL on top of a router;
+and note that mean lateness WHEN late barely moves across strategies (9.3-9.8 min), so padding the ETA
+changes how OFTEN you are late and not how badly.""",
+]
+
+_EX_P1AO["Design a Search Ranking system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - put the thing they wanted first
+
+A search ranking system takes a query and returns documents ordered by how well they satisfy the
+user's intent. The structure is the familiar cascade - RETRIEVAL, then RANKING, then RE-RANKING - and
+what makes search distinctive is that YOU ARE GIVEN AN EXPLICIT STATEMENT OF INTENT.
+
+    In a recommender you must guess what the user wants. IN SEARCH THEY TOLD YOU. That is enormous
+    information, and it is why lexical methods that would be useless in a recommender are strong
+    baselines here.
+
+    THE CATCH: the query is short, ambiguous, often misspelled, and it states the user's WORDS rather
+    than their INTENT. "apple" is a company, a fruit, or a record label. "jaguar" is a car or an
+    animal. "python" is a language or a snake. DISAMBIGUATION IS MOST OF THE HARD WORK.
+
+THE FIRST QUESTIONS TO ASK, AND THEY CHANGE THE ANSWER COMPLETELY:
+
+    WHAT IS BEING SEARCHED? Web pages, products, code, people, documents inside one company? An
+    e-commerce search has price, stock and margin as ranking signals; a web search does not.
+    HOW MANY DOCUMENTS? Thousands, and you can score them all. Billions, and the index architecture is
+    the whole question.
+    WHAT DOES SUCCESS MEAN? A click, a purchase, a long dwell, or NOT having to search again? Section
+    2 shows that this choice is embedded in the metric before any model exists.
+
+TERMS AS THEY APPEAR:
+- INVERTED INDEX: a map from each term to the list of documents containing it. The core data
+  structure of every search engine.
+- BM25: the standard lexical relevance score. A refinement of TF-IDF.
+- NDCG: normalised discounted cumulative gain - the standard graded ranking metric.
+- MRR: mean reciprocal rank - one over the position of the first relevant result.""",
+
+    """2. THE MEASUREMENT - your metric is a belief about users, not a neutral instrument
+
+I computed three standard ranking metrics on five different result patterns. Relevance is graded: 3 is
+perfect, 1 is acceptable, 0 is irrelevant.
+
+     result pattern                                NDCG@10       MRR      P@5
+     one perfect result at rank 1                   1.0000     1.000     0.20
+     one perfect result at rank 5                   0.3869     0.200     0.20
+     five OK results at ranks 1-5                   1.0000     1.000     1.00
+     one OK at rank 1, perfect at rank 10           0.5142     1.000     0.20
+     graded 3, 2, 1 at the top                      1.0000     1.000     0.60
+
+    LOOK AT ROW 4. MRR SCORES IT 1.000 - A PERFECT SCORE - because the first result is relevant and
+    MRR STOPS LOOKING THERE. It is completely blind to the fact that the genuinely perfect answer is
+    buried at rank 10. NDCG sees it and gives 0.5142.
+
+    LOOK AT ROWS 2 AND 3. "One perfect result at rank 5" and "five OK results at ranks 1-5" have the
+    SAME precision@5 (0.20 vs 1.00 - no, they differ) - but compare rows 2 and 4: identical P@5 of
+    0.20, wildly different NDCG (0.3869 vs 0.5142) and wildly different MRR (0.200 vs 1.000).
+
+    THREE METRICS, AND THEY DISAGREE ABOUT WHICH RESULT SET IS BETTER. That is not a defect in any of
+    them - EACH ONE ENCODES A DIFFERENT BELIEF ABOUT WHAT USERS DO:
+
+    MRR believes the user scans from the top and stops at the first useful result. RIGHT FOR
+    NAVIGATIONAL QUERIES ("facebook login") where there is exactly one correct answer.
+    PRECISION@k believes the user looks at the whole first page and wants as much of it useful as
+    possible. RIGHT FOR EXPLORATORY QUERIES ("running shoes").
+    NDCG believes relevance is GRADED and position matters logarithmically. RIGHT FOR MOST GENERAL
+    SEARCH, and it is the default for good reason.
+
+    SO CHOOSING THE METRIC IS CHOOSING A MODEL OF USER BEHAVIOUR, AND DIFFERENT QUERY CLASSES NEED
+    DIFFERENT ONES. THE CORRECT ANSWER IN AN INTERVIEW IS TO SEGMENT BY QUERY INTENT AND USE MRR ON
+    NAVIGATIONAL QUERIES AND NDCG ON INFORMATIONAL ONES - reporting one aggregate number across both
+    averages away the thing you need to know.
+
+NOTE ALSO THAT "one perfect at rank 1" AND "five OK at ranks 1-5" BOTH SCORE NDCG 1.0000. NDCG IS
+NORMALISED BY THE BEST POSSIBLE ORDERING OF THE RESULTS YOU RETRIEVED - so it measures ranking quality
+and NOT retrieval quality. A ranker that perfectly orders five mediocre documents scores 1.0. YOU NEED
+A SEPARATE RETRIEVAL RECALL METRIC, and that is a distinction candidates miss constantly.""",
+
+    """3. THE MEASUREMENT - why BM25 beats raw TF-IDF, in one column
+
+The other measurement worth carrying is the term-frequency saturation that makes BM25 work.
+
+     term frequency in document     raw TF     BM25 saturated (k1 = 1.2)
+     0                                   0                         0.000
+     1                                   1                         1.000
+     2                                   2                         1.375
+     3                                   3                         1.571
+     5                                   5                         1.774
+     10                                 10                         1.964
+     50                                 50                         2.148
+     500                               500                         2.195
+
+    RAW TERM FREQUENCY SAYS A DOCUMENT MENTIONING "SHOES" FIVE HUNDRED TIMES IS FIVE HUNDRED TIMES AS
+    RELEVANT AS ONE MENTIONING IT ONCE. BM25 SAYS 2.2 TIMES.
+
+    THE SATURATION CURVE IS THE WHOLE IDEA. Going from 0 to 1 occurrence is a huge jump - the term is
+    present at all. Going from 1 to 2 adds 38%. Going from 50 to 500 adds 2%. THAT MATCHES HOW HUMANS
+    JUDGE RELEVANCE, and it is why BM25 has survived fifty years of attempts to replace it.
+
+    IT IS ALSO WHY BM25 IS RESISTANT TO KEYWORD STUFFING. Repeating a term is the oldest search-spam
+    technique there is, and against raw TF it works linearly and against BM25 it stops working almost
+    immediately.
+
+    THE FORMULA:  tf x (k1 + 1) / (tf + k1),  with k1 typically 1.2 to 2.0.
+    k1 CONTROLS HOW FAST IT SATURATES - lower saturates faster. BM25's other parameter, b, controls
+    document-length normalisation, because a long document mentions everything more often and should
+    not get credit for it.
+
+THE PRACTICAL POINT FOR AN INTERVIEW: BM25 IS A VERY STRONG BASELINE AND YOU SHOULD SAY SO. It requires
+no training data, no GPU, no embeddings, and it is competitive with neural methods on many query
+classes - particularly rare and long-tail queries where there is no behavioural data to learn from.
+
+    THE MODERN ANSWER IS HYBRID: BM25 for exact and rare-term matching, dense embeddings for semantic
+    matching, fused together. NEITHER ALONE IS BEST - BM25 fails on "how do I stop my car making a
+    squealing noise" (no term overlap with "brake pad replacement"), and dense retrieval fails on
+    "error code 0x80070005" (an exact string it has never seen).
+
+    SAYING "I'D USE BOTH AND FUSE THEM WITH RECIPROCAL RANK FUSION" IS THE CURRENT CORRECT ANSWER, and
+    saying WHY each fails alone is what makes it credible.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - ONE METRIC ACROSS ALL QUERY TYPES. Measured: MRR gives a perfect 1.000 to a result set
+whose best document is at rank 10. Navigational and informational queries need different metrics, and
+an aggregate averages away the failure.
+
+FAILURE 2 - CONFUSING RANKING QUALITY WITH RETRIEVAL QUALITY. Measured: NDCG is 1.0000 for "five OK
+results" because it normalises by the best ordering OF WHAT YOU RETRIEVED. A perfect ordering of
+mediocre documents scores perfectly. YOU NEED A SEPARATE RECALL METRIC.
+
+FAILURE 3 - RAW TF-IDF WITHOUT SATURATION. Measured: raw TF rates 500 occurrences as 500x, BM25 as
+2.2x. Linear TF is directly exploitable by keyword stuffing.
+
+FAILURE 4 - DENSE RETRIEVAL ALONE. It fails on exact strings, product codes, rare names and error
+messages - things with no semantic neighbourhood.
+
+FAILURE 5 - BM25 ALONE. It fails whenever the user's words differ from the document's words, which is
+most natural-language questions.
+
+FAILURE 6 - TRAINING ON CLICKS WITHOUT DEBIASING. Position bias applies here exactly as in a feed:
+people click the top result partly because it is at the top. WITHOUT IMPRESSION AND POSITION LOGGING
+YOU CANNOT CORRECT IT.
+
+FAILURE 7 - IGNORING QUERY UNDERSTANDING. Spelling correction, query expansion, entity recognition,
+intent classification and segmentation often deliver more than a better ranker. A MISSPELLED QUERY THAT
+RETRIEVES NOTHING CANNOT BE RANKED WELL.
+
+FAILURE 8 - NO HANDLING OF ZERO-RESULT AND LOW-RESULT QUERIES. They are a large fraction of traffic and
+a large fraction of abandonment, and they are fixed by relaxation, spelling correction and synonym
+expansion rather than by ranking.
+
+FAILURE 9 - IGNORING FRESHNESS AND QUERY-DEPENDENT RECENCY. "Election results" needs today's page;
+"pythagoras theorem" does not. THE RECENCY WEIGHT IS ITSELF QUERY-DEPENDENT and a global decay is wrong
+both ways.
+
+FAILURE 10 - IGNORING THE TAIL. Head queries have abundant behavioural data and are easy; the long tail
+is most of the distinct queries, has no click data at all, and is where lexical and semantic methods
+have to carry the whole load.
+
+FAILURE 11 - IGNORING ADVERSARIES. Web search has SEO; marketplace search has sellers gaming titles.
+Any signal you use will be manipulated, which is an argument for signals that are expensive to fake
+(behaviour, links) over ones that are cheap (the document's own text).""",
+
+    """5. THE ARCHITECTURE - and where the cost is
+
+    QUERY UNDERSTANDING - before any retrieval:
+        spelling correction, normalisation, tokenisation
+        query segmentation ("new york times" is one entity, not three words)
+        entity recognition and intent classification (navigational / informational / transactional)
+        query expansion with synonyms and related terms
+    THIS STAGE IS OFTEN WORTH MORE THAN THE RANKER and it is the one candidates skip.
+
+    RETRIEVAL - billions to thousands, and it must not miss:
+        INVERTED INDEX with BM25 for lexical matching. Posting lists, skip pointers, WAND or
+        block-max WAND for early termination so you do not score every candidate.
+        DENSE VECTOR RETRIEVAL with ANN (HNSW or IVF) for semantic matching.
+        FUSE THEM - reciprocal rank fusion is the standard, simple, strong answer.
+        SHARD BY DOCUMENT, scatter-gather across shards, merge.
+    A RETRIEVAL MISS IS UNRECOVERABLE AND A RANKING MISS IS NOT, which is why retrieval is tuned for
+    recall and is deliberately over-generous.
+
+    RANKING - thousands to hundreds:
+        A learning-to-rank model. LambdaMART on features is still extremely competitive and is often
+        the production choice; a neural ranker if you have the data and the latency budget.
+        FEATURES: BM25 score per field (title, body, anchor), semantic similarity, document quality,
+        popularity, freshness, personalisation, and QUERY-DOCUMENT INTERACTION features.
+
+    RE-RANKING - hundreds to the top 10:
+        A CROSS-ENCODER, which reads the query and the document TOGETHER rather than embedding them
+        separately. Far more accurate and far too expensive to run on more than a few dozen documents
+        - WHICH IS EXACTLY WHY THE CASCADE EXISTS.
+        Then diversity (not five results from one site), business rules, and safety filtering.
+
+    THE LEARNING-TO-RANK OBJECTIVES, worth knowing by name:
+        POINTWISE - predict each document's relevance independently. Simple, and it optimises the wrong
+        thing: absolute relevance rather than order.
+        PAIRWISE - predict which of two documents is better. RankNet.
+        LISTWISE - optimise the whole list's metric directly. LambdaRank/LambdaMART, and it is the one
+        that actually targets NDCG.
+    THE PROGRESSION FROM POINTWISE TO LISTWISE IS "GET CLOSER TO OPTIMISING THE ACTUAL METRIC", and
+    saying that is better than naming the algorithms.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHAT IS BEING SEARCHED AND HOW MANY DOCUMENTS. Product search has price, stock and margin
+as signals; web search does not. Thousands versus billions is a different architecture.
+
+STEP 2 - ASK WHAT SUCCESS MEANS. Click, purchase, dwell, or not searching again? Measured, that choice
+is already embedded in whichever metric you pick.
+
+STEP 3 - START WITH QUERY UNDERSTANDING, not ranking. Spelling, segmentation, entities, intent,
+expansion. A misspelled query that retrieves nothing cannot be ranked well.
+
+STEP 4 - PROPOSE HYBRID RETRIEVAL AND SAY WHY EACH HALF FAILS ALONE. BM25 misses paraphrases; dense
+retrieval misses exact strings like error codes. Fuse with reciprocal rank fusion.
+
+STEP 5 - EXPLAIN BM25's SATURATION AS THE REASON IT BEATS TF-IDF. Measured: 500 occurrences score
+2.195 against raw TF's 500, which is both more human and spam-resistant.
+
+STEP 6 - USE A CASCADE AND SAY WHY: a retrieval miss is unrecoverable, so retrieval optimises recall
+and is over-generous, which lets an expensive cross-encoder run on the final few dozen.
+
+STEP 7 - CHOOSE METRICS BY QUERY CLASS. Measured: MRR gives 1.000 to a set whose best document is at
+rank 10. Use MRR for navigational, NDCG for informational, and report them separately.
+
+STEP 8 - ADD A SEPARATE RETRIEVAL RECALL METRIC. Measured: NDCG normalises by the best ordering of what
+you retrieved, so a perfect ordering of mediocre documents scores 1.0.
+
+STEP 9 - DEBIAS THE CLICK DATA. Position bias applies exactly as in a feed, and impression and position
+logging is the prerequisite.
+
+STEP 10 - COVER THE TAIL, ZERO-RESULT QUERIES, QUERY-DEPENDENT FRESHNESS, AND ADVERSARIES. Prefer
+signals that are expensive to fake over ones that are cheap.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd ask what's being searched and how much of it. Product search has price, stock and margin as
+ranking signals and web search doesn't; a thousand documents means you can score them all and a billion
+means the index architecture IS the question.
+
+Then what success means - a click, a purchase, a long dwell, or not having to search again - because
+that's already baked into whichever metric you choose, before any model exists.
+
+I'd actually start with QUERY UNDERSTANDING rather than ranking, because it's usually worth more and
+it's the part people skip. Spelling correction, segmentation - "new york times" is one entity, not
+three words - entity recognition, intent classification, and synonym expansion. A misspelled query that
+retrieves nothing cannot be ranked well no matter how good the ranker is.
+
+For retrieval I'd use a HYBRID, and I'd say why each half fails alone. BM25 over an inverted index
+fails on "how do I stop my car making a squealing noise", because there's no term overlap with "brake
+pad replacement". Dense embedding retrieval fails on "error code 0x80070005", because it's an exact
+string with no semantic neighbourhood. So you run both and fuse them - reciprocal rank fusion is the
+standard, simple, strong answer.
+
+I'd defend BM25 as a serious baseline rather than a legacy one, and the reason is TERM SATURATION. Raw
+TF-IDF says a document mentioning "shoes" five hundred times is five hundred times as relevant as one
+mentioning it once. BM25 says 2.2 times - I checked the curve: one occurrence scores 1.0, two scores
+1.375, ten scores 1.96, five hundred scores 2.195. Going from zero to one is a huge jump because the
+term is PRESENT; going from fifty to five hundred adds two per cent. That matches how humans judge
+relevance, and it's why keyword stuffing works linearly against raw TF and stops working almost
+immediately against BM25.
+
+Then the cascade: retrieval to a few thousand, a learning-to-rank model - LambdaMART on features is
+still very competitive - down to a few hundred, and then a CROSS-ENCODER on the final few dozen, which
+reads the query and document TOGETHER rather than embedding them separately. That's far more accurate
+and far too expensive to run broadly, WHICH IS EXACTLY WHY THE CASCADE EXISTS. And a retrieval miss is
+unrecoverable while a ranking miss isn't, so retrieval is tuned for recall and is deliberately
+over-generous.
+
+On metrics I'd make a specific point. I computed NDCG, MRR and precision-at-five on several result
+patterns. MRR gives a PERFECT 1.000 to a result set whose first item is merely OK and whose genuinely
+perfect answer sits at rank ten - because MRR stops looking at the first relevant hit. NDCG sees it and
+gives 0.51. Neither is wrong: MRR encodes the belief that the user stops at the first useful result,
+which is right for navigational queries like "facebook login", and NDCG encodes graded relevance with
+logarithmic position discounting, which is right for informational ones. SO CHOOSING THE METRIC IS
+CHOOSING A MODEL OF USER BEHAVIOUR, and I'd segment by query intent rather than report one number.
+
+One more from the same table: "five mediocre results in the right order" scores NDCG 1.0000, because
+NDCG normalises by the best possible ordering OF WHAT YOU RETRIEVED. It measures RANKING quality, not
+RETRIEVAL quality. So you need a separate retrieval recall metric or you'll be blind to the case where
+the right document was never in the candidate set at all.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  QUERY UNDERSTANDING  - OFTEN WORTH MORE THAN THE RANKER                 │
+    │    spelling correction | normalisation | tokenisation                    │
+    │    SEGMENTATION: "new york times" is one entity, not three words         │
+    │    entity recognition | intent class (navigational/informational/        │
+    │      transactional) | synonym and query expansion                        │
+    │  >> A MISSPELLED QUERY THAT RETRIEVES NOTHING CANNOT BE RANKED WELL.     │
+    │  >> ZERO-RESULT QUERIES are a large share of abandonment and are fixed   │
+    │     HERE - by relaxation and expansion - not by the ranker.              │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  RETRIEVAL  - billions -> thousands.  OPTIMISED FOR RECALL.             │
+    │                                                                          │
+    │  ┌──────────────────────────────┐   ┌──────────────────────────────────┐ │
+    │  │ LEXICAL: inverted index+BM25 │   │ SEMANTIC: dense vectors + ANN    │ │
+    │  │  posting lists, skip pointers│   │  (HNSW / IVF)                    │ │
+    │  │  WAND / block-max WAND for   │   │                                  │ │
+    │  │  EARLY TERMINATION so you do │   │  FAILS ON: "error code           │ │
+    │  │  not score every candidate   │   │  0x80070005" - an exact string   │ │
+    │  │                              │   │  with no semantic neighbourhood  │ │
+    │  │ FAILS ON: "car making a      │   │                                  │ │
+    │  │ squealing noise" vs "brake   │   │                                  │ │
+    │  │ pad replacement" - no term   │   │                                  │ │
+    │  │ overlap                      │   │                                  │ │
+    │  └──────────────┬───────────────┘   └───────────────┬──────────────────┘ │
+    │                 └──── RECIPROCAL RANK FUSION ───────┘                    │
+    │  SHARD BY DOCUMENT, scatter-gather, merge.                               │
+    │  >> A RETRIEVAL MISS IS UNRECOVERABLE; A RANKING MISS IS NOT. That       │
+    │     asymmetry is why this stage is deliberately over-generous.           │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  RANKING  - thousands -> hundreds.  LEARNING TO RANK.                   │
+    │    LambdaMART on features is STILL VERY COMPETITIVE and often the        │
+    │    production choice. Neural rankers if data and latency allow.          │
+    │    FEATURES: BM25 per FIELD (title/body/anchor), semantic similarity,    │
+    │      document quality, popularity, freshness, personalisation, and       │
+    │      QUERY-DOCUMENT INTERACTION features                                 │
+    │    OBJECTIVES: POINTWISE (predict relevance) -> PAIRWISE (which of two   │
+    │      is better) -> LISTWISE (optimise the list metric directly).         │
+    │      THE PROGRESSION IS "GET CLOSER TO OPTIMISING THE ACTUAL METRIC".    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  RE-RANKING  - hundreds -> top 10                                       │
+    │    CROSS-ENCODER: reads query and document TOGETHER rather than          │
+    │      embedding them separately. Far more accurate, far too expensive for │
+    │      more than a few dozen docs - WHICH IS WHY THE CASCADE EXISTS.       │
+    │    diversity (not five results from one site) | business rules | safety  │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  EVALUATION - AND THE METRIC IS A BELIEF ABOUT USERS                     │
+    │                                                                          │
+    │   MEASURED on five result patterns (relevance graded 3/1/0):             │
+    │     pattern                            NDCG@10    MRR    P@5             │
+    │     one perfect at rank 1                1.0000  1.000   0.20            │
+    │     one perfect at rank 5                0.3869  0.200   0.20            │
+    │     five OK at ranks 1-5                 1.0000  1.000   1.00            │
+    │     one OK at rank 1, perfect at 10      0.5142  1.000   0.20            │
+    │     graded 3,2,1 at the top              1.0000  1.000   0.60            │
+    │                                                                          │
+    │   >> ROW 4: MRR SCORES A PERFECT 1.000 while the genuinely best document │
+    │      sits at rank 10, because MRR STOPS AT THE FIRST RELEVANT HIT.       │
+    │      MRR = "the user stops at the first useful result" -> NAVIGATIONAL   │
+    │      P@k = "the user scans the whole page"           -> EXPLORATORY      │
+    │      NDCG = graded relevance, log position discount  -> GENERAL          │
+    │      SEGMENT BY QUERY INTENT. One aggregate averages the failure away.   │
+    │                                                                          │
+    │   >> ROW 3: NDCG 1.0000 for FIVE MEDIOCRE RESULTS, because NDCG          │
+    │      NORMALISES BY THE BEST ORDERING OF WHAT YOU RETRIEVED. It measures  │
+    │      RANKING quality, not RETRIEVAL quality. YOU NEED A SEPARATE RECALL  │
+    │      METRIC or you are blind to documents never retrieved at all.        │
+    │                                                                          │
+    │   DEBIAS THE CLICKS. Position bias applies exactly as in a feed, and     │
+    │   impression + position logging is the prerequisite.                     │
+    └──────────────────────────────────────────────────────────────────────────┘""",
+
+    """9. THE MEASUREMENTS, TRACED
+
+MEASUREMENT 1 - THE THREE METRICS. Relevance is graded: 3 = perfect, 1 = acceptable, 0 = irrelevant.
+NDCG@10 uses gain = relevance and discount = 1/log2(rank+1), normalised by the ideal ordering of the
+same results. MRR = 1/(rank of the first result with relevance > 0). P@5 = fraction of the top 5 with
+relevance > 0.
+
+     result pattern                                NDCG@10       MRR      P@5
+     [3,0,0,0,0,0,0,0,0,0]  one perfect at 1        1.0000     1.000     0.20
+     [0,0,0,0,3,0,0,0,0,0]  one perfect at 5        0.3869     0.200     0.20
+     [1,1,1,1,1,0,0,0,0,0]  five OK at 1-5          1.0000     1.000     1.00
+     [1,0,0,0,0,0,0,0,0,3]  OK at 1, perfect at 10  0.5142     1.000     0.20
+     [3,2,1,0,0,0,0,0,0,0]  graded at the top       1.0000     1.000     0.60
+
+    ROWS 1 AND 4 SHARE AN MRR OF 1.000. Row 1 is the ideal result set; row 4 buries the perfect answer
+    at position 10. MRR CANNOT DISTINGUISH THEM AT ALL, because its definition stops at the first
+    relevant item.
+
+    ROWS 2 AND 4 SHARE A P@5 OF 0.20. Row 2 has the perfect answer inside the top 5; row 4 has it
+    outside. P@5 CANNOT DISTINGUISH GRADED RELEVANCE - it treats a 1 and a 3 identically.
+
+    ROWS 1, 3 AND 5 ALL SCORE NDCG 1.0000 despite containing completely different material - one
+    perfect document, five mediocre ones, and a graded 3/2/1. THAT IS THE NORMALISATION AT WORK: each
+    is the BEST POSSIBLE ORDERING of its own retrieved set. NDCG SAYS NOTHING ABOUT WHETHER THE RIGHT
+    DOCUMENTS WERE RETRIEVED.
+
+MEASUREMENT 2 - BM25 SATURATION, tf x (k1+1)/(tf+k1) with k1 = 1.2:
+
+     tf         raw TF     BM25       marginal gain from the previous row
+     0               0     0.000                                       -
+     1               1     1.000                                  +1.000
+     2               2     1.375                                  +0.375
+     3               3     1.571                                  +0.196
+     5               5     1.774                                  +0.203 (over 2 steps)
+     10             10     1.964                                  +0.190 (over 5 steps)
+     50             50     2.148                                  +0.184 (over 40 steps)
+     500           500     2.195                                  +0.047 (over 450 steps)
+
+    THE MARGINAL COLUMN IS THE POINT. THE FIRST OCCURRENCE IS WORTH MORE THAN THE NEXT 499 COMBINED.
+    The asymptote is k1 + 1 = 2.2, so no amount of repetition can ever exceed 2.2 - which is a hard
+    ceiling on the value of keyword stuffing.
+
+THE LINE-BY-LINE MAPPING - which definition produced which number:
+
+    NDCG's `1/log2(rank+1)` DISCOUNT
+            produced 0.3869 for a perfect result at rank 5: gain 3 discounted by 1/log2(6) = 0.387,
+            against an ideal of 3/log2(2) = 3. THE LOG DISCOUNT IS GENTLE - rank 5 keeps 39% of the
+            credit, where a linear 1/rank discount would keep 20%. THAT GENTLENESS IS A MODELLING
+            CHOICE about how far users scroll.
+    NDCG's NORMALISATION BY THE IDEAL DCG
+            produced the three 1.0000 rows. Remove the normalisation and use raw DCG and those rows
+            separate immediately - which is exactly why raw DCG is not comparable across queries and
+            NDCG is.
+    MRR's DEFINITION - stop at the first relevant item
+            produced the 1.000 in row 4. It is not a bug; it is what MRR means, and it is correct for
+            a navigational query where the user wants one specific page.
+    P@5's BINARY TREATMENT OF RELEVANCE
+            produced identical 0.20 scores for rows 2 and 4. Graded precision variants exist and are
+            rarely used because the simplicity is the point.
+    THE k1 = 1.2 PARAMETER
+            sets the asymptote at 2.2 and the saturation speed. RAISING k1 MAKES THE CURVE MORE LINEAR
+            (closer to raw TF); lowering it saturates faster. It is the tuning knob for how much
+            repetition should count.
+    WHAT IS NOT MEASURED
+            is retrieval architecture, hybrid fusion, learning-to-rank performance or position-bias
+            correction. THOSE SECTIONS ARE REASONED, NOT MEASURED.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask what is being searched, at what scale, and what success means?
+    Did you start with query understanding rather than jumping to the ranker?
+    Did you propose HYBRID retrieval and say why each half fails alone?
+    Can you explain why BM25 beats raw TF-IDF?
+    Did you justify the cascade with the retrieval-miss-is-unrecoverable asymmetry?
+    Did you choose metrics by query class, and separate ranking quality from retrieval quality?
+
+    THE METRIC POINT IS THE STRONGEST SIGNAL. Naming NDCG is table stakes; knowing that it cannot see
+    retrieval failures, and that MRR is blind past the first hit, is not.
+
+THE #1 MISTAKE: one metric for all query types. Measured: MRR scores 1.000 for a set whose best
+document is at rank 10, which is correct behaviour for a navigational query and disastrous for an
+informational one.
+
+THE #2 MISTAKE: treating NDCG as a measure of search quality. Measured: it scores 1.0000 for five
+mediocre results, because it normalises by the best ordering of what you retrieved. Add a retrieval
+recall metric.
+
+THE #3 MISTAKE: raw TF-IDF. Measured: 500 occurrences score 500 on raw TF and 2.195 on BM25, and the
+first occurrence is worth more than the next 499 combined.
+
+THE #4 MISTAKE: dense retrieval only. It cannot match exact strings, product codes or error messages.
+
+THE #5 MISTAKE: BM25 only. It cannot match a paraphrase.
+
+THE #6 MISTAKE: skipping query understanding. Spelling, segmentation and expansion often beat a better
+ranker, and a query that retrieves nothing cannot be ranked.
+
+THE #7 MISTAKE: training on raw clicks. Position bias applies exactly as in a feed and needs impression
+and position logs.
+
+THE #8 MISTAKE: ignoring the long tail. Head queries have abundant click data; the tail has none, and
+it is most of the distinct queries.
+
+THE #9 MISTAKE: a global freshness decay. Recency importance is query-dependent - "election results"
+versus "pythagoras theorem".
+
+THE #10 MISTAKE: ignoring adversaries. Prefer signals that are expensive to fake - behaviour, links -
+over the document's own text, which is free to manipulate.
+
+ONE-SENTENCE TAKEAWAY: search is a cascade - query understanding, hybrid BM25-plus-dense retrieval
+fused, learning-to-rank, then an expensive cross-encoder on the final few dozen - where BM25 earns its
+place through TERM SATURATION (measured: 500 occurrences score 2.195 against raw TF's 500, and the
+first occurrence is worth more than the next 499 combined), and where the metric you choose IS a belief
+about user behaviour: measured, MRR awards a perfect 1.000 to a result set whose best document sits at
+rank 10, and NDCG awards 1.0000 to five mediocre results because it normalises by the best ordering of
+what you retrieved - so segment metrics by query intent and add a separate retrieval recall metric.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
