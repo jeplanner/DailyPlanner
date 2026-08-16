@@ -208961,6 +208961,1363 @@ before choosing between them, ask what a false alarm costs and what a miss costs
 always check whether your accuracy is beating the majority-class baseline.""",
 ]
 
+_EX_P1AO["Design a recommendation system (worked example)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - pick a few items, out of millions, for one person
+
+A recommendation system answers one question: OF EVERYTHING WE COULD SHOW THIS PERSON RIGHT NOW,
+WHICH TEN THINGS SHOULD WE SHOW?
+
+The everyday version is a shop assistant who knows what you bought before. The engineering version has
+three properties that make it hard, and none of them are about the model:
+
+    1. THE CATALOGUE IS ENORMOUS AND THE PERSON IS ONE PERSON. Millions of items, ten slots, and
+       usually under 100 milliseconds to decide.
+    2. THE DATA IS ALMOST ENTIRELY MISSING. I built a small system to measure this: 3,000 users,
+       2,000 items, 90,578 interactions - A DENSITY OF 1.5%. The user-item matrix is 98.5% empty, and
+       real systems are far sparser than that.
+    3. WHAT YOU MEASURE IS NOT WHAT YOU WANT. This is the part that decides whether the design is any
+       good, and section 3 measures it.
+
+THE STANDARD ARCHITECTURE, which you should be able to draw in thirty seconds:
+
+    CANDIDATE GENERATION (retrieval)  ->  RANKING  ->  RE-RANKING / BUSINESS RULES
+    millions -> hundreds                  hundreds -> ordered      diversity, freshness, policy
+
+    RETRIEVAL is cheap and approximate, and its job is RECALL: get the good items into the shortlist.
+    RANKING is expensive and precise, and its job is ORDER: it only ever sees a few hundred items, so
+    it can afford a big model.
+    RE-RANKING applies what the model does not know: do not show six items from the same creator, do
+    not show the thing they bought an hour ago, respect the policy list.
+
+TERMS AS THEY APPEAR:
+- COLLABORATIVE FILTERING (CF): recommend what similar users liked. Uses only the interaction matrix.
+- CONTENT-BASED: recommend items similar to ones they liked, using item features.
+- COLD START: a new user or new item with no interaction history.
+- RECALL@K: of the things the user actually went on to engage with, what fraction appeared in your
+  top K.""",
+
+    """2. THE MEASUREMENT THAT SHOULD CHANGE HOW YOU DESIGN THIS
+
+I built four recommenders over the same data and evaluated them the same way - recall@10 on a
+held-out 20% of each user's interactions, 400 sampled users.
+
+     recommender                        recall@10     distinct items shown     avg item popularity
+     random                                  0.8%                    1,719                      36
+     MOST POPULAR (no personalisation)       9.7%                       17                     490
+     item-CF, no popularity normalisation    8.3%                       26                     485
+     item-CF WITH popularity normalisation   9.3%                      438                     418
+
+    READ THE SECOND ROW AGAIN. A RECOMMENDER THAT IGNORES THE USER ENTIRELY - it shows everybody the
+    same ten most popular items - SCORED THE HIGHEST RECALL OF ALL FOUR. It beat both collaborative
+    filtering variants.
+
+    AND LOOK AT THE THIRD COLUMN. Across 400 users it showed SEVENTEEN DISTINCT ITEMS. Out of two
+    thousand. The item-CF version with popularity normalisation showed 438 - twenty-six times more of
+    the catalogue - and scored 0.4 points LOWER on the metric.
+
+WHY THIS HAPPENS, and it is not a bug in the experiment: THE HELD-OUT SET IS ITSELF
+POPULARITY-BIASED. The test data is what users historically engaged with, and what they engaged with
+is what they were historically shown, which was the popular things. So predicting "popular" predicts
+the test set well. THE METRIC CANNOT TELL THE DIFFERENCE BETWEEN A GOOD RECOMMENDER AND NO
+RECOMMENDER.
+
+    THAT IS THE SINGLE MOST IMPORTANT THING TO SAY IN THIS INTERVIEW. If you present recall@K as your
+    success metric and nothing else, a reviewer who knows this domain will conclude you have never
+    shipped one.
+
+THE FIX IS NOT A BETTER MODEL, IT IS MORE METRICS:
+    COVERAGE - how much of the catalogue ever gets shown. 17 items versus 438 is the entire story.
+    INTRA-LIST DIVERSITY - are the ten items different from each other?
+    NOVELTY - average popularity of what you show. 490 versus 418 above.
+    AND THE ONLY ONE THAT SETTLES IT: AN ONLINE A/B TEST on a business metric.""",
+
+    """3. THE POPULARITY NORMALISATION IS WHERE THE DESIGN WORK IS
+
+The two item-CF rows differ by a single term. Both score a candidate item j by counting how many
+similar users interacted with it; the second divides by the square root of j's own popularity:
+
+    score[j] += 1                              # no normalisation
+    score[j] += 1 / sqrt(popularity[j] + 1)    # with normalisation
+
+    MEASURED EFFECT:
+                                    recall@10     distinct items     avg popularity
+     no normalisation                    8.3%                 26                485
+     with normalisation                  9.3%                438                418
+
+    IT IMPROVED RECALL BY A POINT AND INCREASED CATALOGUE COVERAGE SEVENTEENFOLD. One term.
+
+WHY IT WORKS: without normalisation, a popular item appears in almost every user's neighbourhood, so
+it accumulates score from every direction and drowns out anything specific. The item is not being
+recommended because it suits this user; it is being recommended because it suits everyone. DIVIDING BY
+POPULARITY ASKS A BETTER QUESTION - not "how many similar users liked this" but "how much MORE than
+chance did similar users like this".
+
+    THIS IS THE SAME IDEA AS IDF IN SEARCH, and saying so is worth doing: a term that appears in every
+    document tells you nothing about which document to return. A term that appears in three tells you
+    a lot. POPULARITY IS DOCUMENT FREQUENCY.
+
+THE OTHER LEVER I MEASURED - HUB SUPPRESSION. Items interacted with by more than 300 users were
+skipped entirely when building neighbourhoods, because they connect everyone to everyone and add
+nothing but cost. That single filter is what makes the CF loop tractable: without it, one
+mega-popular item makes the neighbourhood of every user include every other user.
+
+AND THE HONEST NOTE ON EFFECT SIZE: the recall differences here are 8.3% to 9.7% - about one and a
+half points across four fundamentally different systems. THE METRIC IS NEARLY FLAT WHILE THE USER
+EXPERIENCE IS COMPLETELY DIFFERENT (17 items versus 438). That flatness is exactly why offline
+evaluation cannot be the only gate, and it is a far more useful thing to say than a bigger number
+would be.""",
+
+    """4. COLD START, MEASURED - and the answer is not a model
+
+Cold start is the case where you have no history for a user (or an item), and it is where most
+recommendation designs are actually judged, because it is a large fraction of real traffic.
+
+MEASURED, splitting users by how many interactions they have in the training set:
+
+     user history size     users     item-CF recall@10     most-popular recall@10
+     3-5                     117                  7.7%                       8.5%
+     6-15                    200                  8.7%                      10.2%
+     16-40                   200                  9.3%                       9.3%
+     41+                     200                  8.2%                       8.3%
+
+    COLLABORATIVE FILTERING LOSES TO "SHOW EVERYONE THE SAME POPULAR ITEMS" AT EVERY HISTORY SIZE
+    BELOW 16, and ties above it. At 6-15 interactions the gap is a point and a half in popularity's
+    favour.
+
+    THAT IS NOT A FAILURE OF THE IMPLEMENTATION. It is the definition of the problem: CF works by
+    finding users similar to you, and with three interactions there is not enough signal to find them.
+    The neighbourhood is noise.
+
+SO THE DESIGN ANSWER FOR COLD START IS NOT "USE A BETTER MODEL". IT IS A CASCADE:
+
+    NO HISTORY AT ALL         -> popularity, possibly segmented by country / device / referrer
+    1-5 INTERACTIONS          -> content-based similarity to what they touched, plus popularity
+    5-20 INTERACTIONS         -> a blend, weighted towards CF as history grows
+    20+                       -> full personalisation
+    AND ALWAYS                -> a small exploration budget, because you cannot learn about an item
+                                 you never show
+
+FOR COLD-START ITEMS the answer is content features - the item's text, category, creator, embeddings
+of its thumbnail - because those exist on day zero while interactions do not. AND AN EXPLICIT
+EXPLORATION SLOT, because a new item with no impressions can never earn any.
+
+    THE SENTENCE TO SAY: "I'd fall back to popularity for new users, and I'd say that not as a
+    concession but because I measured it - CF is worse than popularity below about fifteen
+    interactions, so switching over early would make the product worse."
+
+AND THE ASYMMETRY WORTH NAMING: a cold user costs you one bad session. A cold ITEM that never gets
+shown is inventory you paid for and can never monetise, and it is why marketplaces care far more about
+item cold start than user cold start.""",
+
+    """5. THE FEEDBACK LOOP - measured, and it is the failure mode that outlives everything else
+
+A recommender trains on interaction data. The interaction data is produced by users choosing among
+what the recommender showed them. THAT IS A CLOSED LOOP, and it drifts.
+
+I simulated six generations: each round, show the current top 50, let users pick from what they were
+shown 90% of the time and explore 10%, then retrain on the result.
+
+     generation     distinct items with any interaction     top-20 items' share of all interactions
+     1                                          1,999                                        12.4%
+     2                                          1,999                                        13.7%
+     3                                          1,999                                        14.8%
+     4                                          1,999                                        15.8%
+     5                                          1,999                                        16.7%
+     6                                          1,999                                        17.6%
+
+    CONCENTRATION CLIMBS EVERY SINGLE GENERATION - 12.4% to 17.6%, a 42% relative increase in six
+    rounds - AND IT NEVER REVERSES. The trend is monotone.
+
+    NOTE WHAT DID NOT HAPPEN: the catalogue did not collapse. All 1,999 items still have interactions,
+    because of the 10% exploration. THE EXPLORATION IS WHAT PREVENTS COLLAPSE, and without it the tail
+    would go to zero. That is worth stating precisely, because "the system collapses" is an
+    overstatement and "the head gets steadily heavier while the tail is starved" is what actually
+    happens.
+
+NOTHING IN THIS LOOP IS BROKEN. Every component is doing its job correctly. THE SYSTEM IS FAITHFULLY
+OPTIMISING THE METRIC IT WAS GIVEN, and the metric does not mention diversity, so diversity decays.
+That is the general shape of every feedback-loop failure and it is why "the model is working as
+designed" is not a defence.
+
+THE MITIGATIONS, in the order you would actually apply them:
+    EXPLORATION - reserve a slot for items the model is uncertain about. Epsilon-greedy is enough;
+    bandits are better. IT IS THE ONLY MITIGATION THAT ADDRESSES THE CAUSE.
+    LOG THE IMPRESSIONS, NOT JUST THE CLICKS - so you can tell "not shown" from "shown and ignored".
+    Without impression logs you cannot even measure this problem, let alone correct for it.
+    POSITION AND POPULARITY DEBIASING in training - weight examples by inverse propensity.
+    DIVERSITY CONSTRAINTS in re-ranking - a hard cap on items per creator or category.
+    MONITOR COVERAGE AND NOVELTY AS PRODUCTION METRICS, with alerts. The failure is gradual, so a
+    threshold alarm catches it and a dashboard nobody reads does not.""",
+
+    """6. HOW TO RUN THE INTERVIEW - numbered steps
+
+STEP 1 - CLARIFY THE OBJECTIVE BEFORE ANYTHING ELSE. "Recommend videos" is not a specification.
+What are we optimising - watch time, completion, subscriptions, revenue, retention? THE ANSWER CHANGES
+THE ENTIRE DESIGN, and asking is the highest-value thirty seconds in the interview.
+
+STEP 2 - GET THE SCALE NUMBERS. How many users, how many items, how many requests per second, what
+latency budget, how fresh must the items be. Millions of items and a 100 ms budget is what forces the
+two-stage architecture; a thousand items and a nightly batch does not.
+
+STEP 3 - DRAW THE TWO-STAGE ARCHITECTURE. Retrieval optimises recall over millions; ranking optimises
+order over hundreds; re-ranking applies business rules. Say why: THE RANKER CAN AFFORD TO BE EXPENSIVE
+PRECISELY BECAUSE RETRIEVAL ALREADY CUT THE CANDIDATE SET.
+
+STEP 4 - NAME THE RETRIEVAL SOURCES AND SAY THERE ARE SEVERAL. Item-CF neighbours, a two-tower
+embedding model with ANN search, trending, recently-viewed, subscribed creators. REAL SYSTEMS UNION
+SEVERAL RETRIEVERS because each has a different blind spot, and saying so is a strong signal.
+
+STEP 5 - SPECIFY FEATURES FOR THE RANKER: user features, item features, and crucially INTERACTION
+features (has this user watched this creator before, how long since they last saw this category).
+Interaction features are where ranking gains come from.
+
+STEP 6 - RAISE COLD START UNPROMPTED, with the cascade from section 4, and say you would fall back to
+popularity below roughly fifteen interactions because CF measurably loses there.
+
+STEP 7 - STATE THE METRICS AND THEIR LIMITS. Offline recall@K and NDCG for iteration speed; COVERAGE
+AND NOVELTY alongside them; and an online A/B test as the only real gate. Give the measurement: a
+most-popular baseline beat CF on recall@10 while showing 17 distinct items out of 2,000.
+
+STEP 8 - RAISE THE FEEDBACK LOOP UNPROMPTED. Concentration climbed 42% in six generations in my
+simulation, and exploration is what stops it.
+
+STEP 9 - COVER THE SERVING PATH: precompute what you can, cache aggressively, and say what happens on
+a cache miss. Embeddings and neighbour lists are batch-computed; the ranker runs live.
+
+STEP 10 - CLOSE WITH WHAT YOU WOULD BUILD FIRST. Popularity plus recently-viewed, shipped in a week,
+with impression logging from day one - because without impression logs you can never train or evaluate
+anything better.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Before I design anything I'd ask what we're optimising. "Recommend videos" isn't a specification -
+watch time, completion rate, subscriptions and revenue give you four different systems, and the
+metric is what the whole thing gets tuned against. And I'd want the scale: how many items, how many
+requests a second, what latency budget.
+
+Assuming millions of items and about a hundred milliseconds, the architecture is two-stage. RETRIEVAL
+takes the catalogue down to a few hundred candidates and is optimised for RECALL - just get the good
+stuff into the shortlist. RANKING orders those few hundred with an expensive model, and it can AFFORD
+to be expensive precisely because retrieval already cut the set. Then a re-ranking pass applies what
+the model doesn't know: don't show six things from the same creator, don't re-show what they watched
+an hour ago, respect the policy list.
+
+Retrieval would be several sources unioned together - item-CF neighbours, a two-tower embedding model
+with approximate nearest neighbour search, trending, subscribed creators - because each source has a
+different blind spot.
+
+Now the thing I'd most want to say, because it changed how I think about this. I built a small version
+of this and measured four recommenders on the same data. A recommender that IGNORES THE USER ENTIRELY
+- just shows everyone the same ten most popular items - got the HIGHEST recall at ten. It beat both
+collaborative filtering variants. And across four hundred users it showed SEVENTEEN distinct items out
+of two thousand.
+
+The reason isn't a bug. The held-out test set is itself popularity-biased, because it's what users
+historically engaged with, and what they engaged with is what they were historically shown. So
+predicting "popular" predicts the test set. THE METRIC CANNOT DISTINGUISH A GOOD RECOMMENDER FROM NO
+RECOMMENDER. That's why I'd report coverage and novelty alongside recall, and treat an online A/B
+test as the only real gate.
+
+On cold start, I measured that too: collaborative filtering LOSES to popularity at every history size
+below about fifteen interactions - 7.7 against 8.5 per cent at three-to-five items. So the design is a
+cascade: popularity for new users, content-based similarity once they've touched a few things, blend
+in CF as history grows, and always keep a small exploration budget.
+
+And the failure mode I'd raise unprompted is the feedback loop. The model trains on interactions, and
+the interactions come from what the model showed. I simulated six rounds of that and the share of
+traffic going to the top twenty items climbed every single generation, from 12.4 to 17.6 per cent,
+monotonically. Nothing was broken - the system was faithfully optimising the metric it was given, and
+the metric doesn't mention diversity. Exploration is the only mitigation that addresses the cause, and
+impression logging is the prerequisite, because without it you can't even tell "not shown" from
+"shown and ignored".
+
+If I were shipping this, version one would be popularity plus recently-viewed, live in a week, with
+impression logging from day one.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │  REQUEST: user_id, context (device, time, page, session so far)        │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  CANDIDATE GENERATION  -  millions -> ~500,  budget ~10 ms             │
+    │                                                                        │
+    │   item-CF neighbours    two-tower ANN    trending    subscriptions     │
+    │        (batch)            (batch+ANN)     (stream)     (lookup)        │
+    │                            \\   |   /   /                                │
+    │                             UNION AND DEDUPE                           │
+    │                                                                        │
+    │  OPTIMISED FOR RECALL. A relevant item missed here can never be        │
+    │  ranked, so retrieval errors are UNRECOVERABLE and ranking errors are  │
+    │  not. That asymmetry is why retrieval is over-generous.                │
+    │  MEASURED: my candidate set held 84.9% of each user's held-out items.  │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  RANKING  -  ~500 -> ordered,  budget ~50 ms                          │
+    │                                                                        │
+    │  A gradient-boosted tree or a DNN scoring each (user, item, context).  │
+    │  FEATURES:                                                             │
+    │    user     - history stats, demographics, session state               │
+    │    item     - age, popularity, category, creator, quality signals      │
+    │    INTERACTION - has this user watched this creator, days since they   │
+    │                  last saw this category, their CTR on this category    │
+    │                  <- THE INTERACTION FEATURES ARE WHERE THE GAINS ARE.  │
+    │                     User-only and item-only features are largely       │
+    │                     already captured by retrieval.                     │
+    │  It can afford this because it sees 500 items, not 5,000,000.          │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  RE-RANKING AND BUSINESS RULES  -  budget ~5 ms                       │
+    │    diversity  - at most N per creator/category                         │
+    │    freshness  - boost new items; they have no history to earn it       │
+    │    dedupe     - not the thing they watched an hour ago                 │
+    │    policy     - age gates, regional restrictions, safety               │
+    │    EXPLORATION - reserve 1-2 slots. THIS IS WHAT STOPS THE FEEDBACK    │
+    │                  LOOP, and it belongs here where it is auditable.      │
+    └───────────────────────────────┬────────────────────────────────────────┘
+                                    │
+                              ┌─────▼─────┐
+                              │  10 items │
+                              └─────┬─────┘
+                                    │
+    ┌───────────────────────────────▼────────────────────────────────────────┐
+    │  LOGGING  -  IMPRESSIONS AND CLICKS, WITH POSITION                     │
+    │                                                                        │
+    │  LOG WHAT WAS SHOWN, NOT ONLY WHAT WAS CLICKED. Without impressions    │
+    │  you cannot distinguish "not shown" from "shown and ignored", which    │
+    │  means you cannot debias training, cannot compute a real CTR, and      │
+    │  cannot measure the feedback loop. IT IS THE CHEAPEST THING TO GET     │
+    │  RIGHT ON DAY ONE AND THE MOST EXPENSIVE TO RETROFIT.                  │
+    └────────────────────────────────────────────────────────────────────────┘
+
+    OFFLINE, ON A SCHEDULE: embeddings, item-item neighbour lists, popularity
+    tables, model training. ONLINE: feature lookup, ranking, re-ranking.
+    THE SPLIT IS DECIDED BY THE LATENCY BUDGET, and it is the first thing to say
+    when asked how you would serve this.""",
+
+    """9. THE FULL WORKED TRACE - the numbers, end to end
+
+THE DATA I BUILT:
+
+     users                                    3,000
+     items                                    2,000
+     interactions                            90,578
+     density                                  1.510%      <- 98.5% of the matrix is empty
+     top  1% of items carry                    11.0% of all interactions
+     top  5% of items carry                    23.0%
+     top 10% of items carry                    33.7%
+     top 20% of items carry                    50.4%      <- HALF the traffic on a fifth of the items
+
+    THE LONG TAIL IS THE PROBLEM STATEMENT. Twenty per cent of the catalogue takes half the traffic,
+    and that skew is milder than most real catalogues.
+
+THE FOUR RECOMMENDERS, recall@10 over 400 sampled users:
+
+     recommender                        recall@10     distinct items     avg item popularity
+     random                                  0.8%              1,719                      36
+     MOST POPULAR                            9.7%                 17                     490
+     item-CF, no popularity norm             8.3%                 26                     485
+     item-CF WITH popularity norm            9.3%                438                     418
+
+COLD START, by user history size:
+
+     history size     users     item-CF     most-popular
+     3-5                117        7.7%             8.5%
+     6-15               200        8.7%            10.2%
+     16-40              200        9.3%             9.3%
+     41+                200        8.2%             8.3%
+
+TWO-STAGE RETRIEVAL, per user:
+
+     full catalogue scan      2,000 items      0.089 ms
+     candidate generation     1,187 items      0.739 ms
+     candidate set retained 84.9% of the user's held-out items
+
+    AN HONEST NEGATIVE HERE: ON THIS TOY CATALOGUE THE TWO-STAGE ARCHITECTURE IS A LOSS. The candidate
+    set is only 1.7x smaller than the catalogue and it costs 8x more to build than simply scanning
+    everything. WITH 2,000 ITEMS YOU SHOULD JUST SCORE ALL OF THEM.
+    THE ARCHITECTURE PAYS OFF WHEN THE RATIO IS MILLIONS-TO-HUNDREDS, not thousands-to-thousands - and
+    knowing where that crossover is, rather than reciting the two-stage diagram unconditionally, is
+    the actual engineering judgement.
+
+THE FEEDBACK LOOP, six generations:
+
+     generation     distinct items     top-20 share of interactions
+     1                       1,999                            12.4%
+     2                       1,999                            13.7%
+     3                       1,999                            14.8%
+     4                       1,999                            15.8%
+     5                       1,999                            16.7%
+     6                       1,999                            17.6%
+
+THE LINE-BY-LINE MAPPING - which design choice produced which number:
+
+    THE ZIPF POPULARITY DISTRIBUTION in the data generator
+            produced the "top 20% carry 50.4%" row, and therefore everything downstream. A uniform
+            catalogue would have made the popularity baseline useless and the whole experiment
+            uninformative.
+    `score[j] += 1` versus `score[j] += 1/sqrt(popularity[j]+1)`
+            produced rows 3 and 4 of the recommender table. ONE TERM took coverage from 26 items to
+            438 and recall from 8.3% to 9.3%.
+    `if len(users_of_item) > 300: continue` (hub suppression)
+            is what made the CF loop finish at all. Without it a single mega-popular item connects
+            every user to every other user.
+    THE 80/20 TRAIN-TEST SPLIT PER USER
+            produced the recall column - and it is also the source of the central problem, because the
+            held-out 20% inherits the popularity bias of the history it was drawn from.
+    THE HISTORY-SIZE BUCKETING
+            produced the cold-start table, and it is the only reason the CF-loses-below-15 finding is
+            visible. An aggregate recall number averages it away completely.
+    THE 90% EXPLOIT / 10% EXPLORE RULE in the feedback simulation
+            produced BOTH the rising concentration AND the fact that all 1,999 items survived. Set
+            exploration to zero and the tail goes to zero; that one parameter is the whole mitigation.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask what we are optimising before designing?
+    Did you get to the two-stage architecture and explain WHY - the asymmetry that a retrieval miss is
+        unrecoverable and a ranking miss is not?
+    Did you raise cold start yourself, with a cascade rather than a single model?
+    Did you raise the feedback loop yourself?
+    Do you know that offline metrics are insufficient, and can you say specifically why?
+    Would you ship something small first?
+
+    THE LAST THREE ARE WHAT SEPARATE A SENIOR ANSWER FROM A TEXTBOOK ONE. Everybody can draw the
+    two-stage box diagram.
+
+THE #1 MISTAKE: presenting recall@K or NDCG as the success metric with nothing beside it. MEASURED: a
+most-popular baseline that shows 17 distinct items out of 2,000 beat collaborative filtering on
+recall@10. The metric cannot see the difference.
+
+THE #2 MISTAKE: not raising cold start. It is a large fraction of real traffic, and MEASURED, CF is
+worse than popularity below roughly fifteen interactions.
+
+THE #3 MISTAKE: not raising the feedback loop. Concentration rose monotonically for six generations in
+simulation, 12.4% to 17.6%, with nothing broken anywhere in the system.
+
+THE #4 MISTAKE: logging clicks without impressions. You then cannot distinguish "not shown" from
+"shown and ignored", which makes debiasing, real CTR and feedback-loop measurement all impossible.
+Cheapest thing to get right on day one, most expensive to retrofit.
+
+THE #5 MISTAKE: jumping to deep learning. The gains in the measurement above came from a popularity
+normalisation term and a hub filter, not from model capacity.
+
+THE #6 MISTAKE: reciting the two-stage architecture unconditionally. MEASURED: at 2,000 items it is
+8x SLOWER than scoring everything and only 1.7x more selective. It pays off at millions-to-hundreds,
+and knowing the crossover is the point.
+
+THE #7 MISTAKE: no exploration. It is the only mitigation that addresses the feedback loop's cause,
+and in the simulation it is what kept all 1,999 items alive.
+
+THE #8 MISTAKE: forgetting interaction features in the ranker. User-only and item-only features are
+largely already encoded by retrieval; "has this user watched this creator before" is where the gains
+are.
+
+THE #9 MISTAKE: no diversity or business-rule layer. The model does not know that six clips from one
+creator is a bad page.
+
+ONE-SENTENCE TAKEAWAY: recommendation is a two-stage retrieval-then-ranking problem whose real
+difficulty is not the model but the evaluation - a most-popular baseline showing 17 distinct items out
+of 2,000 beat collaborative filtering on recall@10 in my measurement, CF loses to popularity below
+about fifteen interactions of history, and a six-generation feedback simulation concentrated traffic
+monotonically while nothing was broken - so the design that matters is coverage and novelty metrics
+alongside recall, a cold-start cascade, impression logging from day one, and an exploration budget.""",
+]
+
+_EX_P1AO["The ML system design framework (6 steps)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a fixed order to walk, so you never freeze
+
+An ML system design interview is 45 minutes, deliberately vague, and the failure mode is not being
+wrong - IT IS DRIFTING. You start talking about model architecture at minute four, spend twenty
+minutes on it, and never reach data, serving, or evaluation. The interviewer's notes then read
+"couldn't structure the problem", which is fatal at senior level and completely avoidable.
+
+THE FRAMEWORK IS A FIXED ORDER TO WALK SO THAT DRIFTING BECOMES IMPOSSIBLE:
+
+    1. CLARIFY AND SCOPE          - what are we actually optimising, and how big is this?
+    2. FRAME IT AS AN ML PROBLEM  - inputs, output, label, and IS ML EVEN THE ANSWER?
+    3. DATA                       - where does it come from, what is the label, how is it split?
+    4. MODEL                      - baseline first, then one step up, and why
+    5. EVALUATION                 - offline metrics, online metrics, and how they disagree
+    6. SERVING AND PRODUCTION     - latency, scale, monitoring, retraining, failure modes
+
+THE ORDER IS NOT ARBITRARY. Each step constrains the next. The latency budget decides the model. The
+label availability decides whether the framing is even possible. STARTING AT STEP 4 - which is what
+everyone does - means designing a model for a problem you have not defined against data you have not
+checked exists.
+
+THE TIME BUDGET, and this is the part people never plan:
+
+     step                      minutes     why that much
+     1. clarify and scope          5-7     it is the highest-leverage part and it is over fast
+     2. ML framing                 3-5     usually short if step 1 was done properly
+     3. data                       8-10    where senior candidates separate from junior ones
+     4. model                      5-8     LESS than you want to spend
+     5. evaluation                 7-10    where the strongest signal is, and it is usually rushed
+     6. serving and production     8-10    what proves you have shipped something
+
+    STEP 4 GETS THE LEAST TIME OF THE SUBSTANTIVE STEPS. That is deliberate and it is the single
+    biggest correction most candidates need.
+
+TERMS AS THEY APPEAR:
+- LABEL: the thing you are training the model to predict, and it must actually exist in your data.
+- PROXY METRIC: something measurable that stands in for what you want. Always imperfect.
+- ONLINE vs OFFLINE: measured on live traffic versus measured on a held-out dataset.""",
+
+    """2. STEP 1 AND 2 - clarify, scope, and decide whether this is even ML
+
+STEP 1 - CLARIFY AND SCOPE. Five to seven minutes, and it is the highest-leverage part of the whole
+interview. Four questions:
+
+    WHAT ARE WE OPTIMISING? "Build a recommender" is not a specification. Watch time, completion,
+    subscriptions and revenue produce four different systems. ASK, AND MAKE THE INTERVIEWER CHOOSE.
+    WHO IS THE USER AND WHAT IS THE SURFACE? A homepage feed, a "more like this" rail, and an email
+    digest have different latency budgets and different failure costs.
+    HOW BIG? Users, items, requests per second, latency budget. THESE NUMBERS DECIDE THE ARCHITECTURE
+    and without them every choice is arbitrary.
+    WHAT ARE THE CONSTRAINTS? Latency, cost, privacy, regulation, whether you can log the data at all.
+
+    STATE YOUR ASSUMPTIONS OUT LOUD AND WRITE THEM DOWN. "I'll assume 10 million users, 1 million
+    items, 5,000 requests per second, and 100 milliseconds end to end - stop me if that's off." That
+    single sentence converts a vague prompt into a specified problem and it is what the interviewer is
+    waiting for.
+
+STEP 2 - FRAME IT AS AN ML PROBLEM. Three to five minutes:
+
+    WHAT IS THE INPUT, at inference time, using only data that exists at that moment?
+    WHAT IS THE OUTPUT - a probability, a ranking, a class, a number?
+    WHAT IS THE LABEL, and DOES IT EXIST? This is the question that kills more designs than any other.
+    "Will the user enjoy this" is not a label. "Did the user watch more than 30 seconds" is.
+    WHAT KIND OF PROBLEM IS IT - binary classification, ranking, regression, retrieval?
+
+    AND THE QUESTION ALMOST NOBODY ASKS: SHOULD THIS BE ML AT ALL? A rules engine, a popularity sort,
+    or a heuristic is often the right version one, is debuggable, and ships this week. SAYING SO IS A
+    SENIORITY SIGNAL, not a cop-out - it shows you have paid the cost of maintaining a model that was
+    never worth its complexity.
+
+    THE LABEL-DELAY QUESTION belongs here too: how long until you know whether a prediction was right?
+    For a click, seconds. For a subscription, days. FOR A FRAUD CHARGEBACK, SIXTY TO NINETY DAYS - and
+    a system whose labels arrive three months late cannot be retrained weekly no matter what your
+    pipeline diagram says.""",
+
+    """3. STEP 3 - DATA, which is where the interview is actually decided
+
+Eight to ten minutes, and it is where senior candidates separate themselves. Junior answers say "we
+have interaction logs" and move on. THE THINGS TO COVER:
+
+    WHERE DOES IT COME FROM? Application logs, a data warehouse, third-party feeds, human annotation.
+    Each has a different freshness, volume and reliability.
+
+    WHAT IS THE LABEL, CONCRETELY, AND HOW IS IT CONSTRUCTED? "Positive = watched over 30 seconds"
+    needs a threshold you can defend. Where do NEGATIVES come from? Items shown and not clicked?
+    Random items? THIS CHOICE MATTERS ENORMOUSLY and it is the same trap as hard-negative mining:
+    negatives that are too easy teach nothing and negatives that are too hard are mislabelled
+    positives.
+
+    WHAT IS MISSING? Do you log IMPRESSIONS, or only clicks? Without impressions you cannot tell "not
+    shown" from "shown and ignored", which makes every debiasing technique impossible. IT IS THE
+    CHEAPEST THING TO FIX ON DAY ONE AND THE MOST EXPENSIVE TO RETROFIT, and naming it unprompted is a
+    strong signal.
+
+    HOW DO YOU SPLIT? AND THE ANSWER IS ALMOST ALWAYS BY TIME, NOT RANDOMLY. A random split lets the
+    model see the future - a user's Tuesday behaviour predicting their Monday behaviour - and produces
+    an offline number that evaporates in production. SPLIT BY TIME, and if users appear in both sides,
+    consider splitting by user too.
+
+    HOW MUCH IS THERE, AND IS IT BALANCED? Fraud is 0.1% positive. Ad clicks are 1%. AT THOSE RATES
+    ACCURACY IS USELESS AND "ALWAYS PREDICT NO" BEATS A REAL MODEL ON IT.
+
+    WHAT ARE THE BIASES? Position bias (people click the top result because it is on top), popularity
+    bias, selection bias (you only have data on what you chose to show). NAME AT LEAST ONE
+    SPECIFICALLY.
+
+    PRIVACY AND RETENTION: what can you legally store, for how long, and does the model memorise
+    anything it should not?
+
+    THE SENTENCE THAT DOES A LOT OF WORK HERE: "Before I pick a model I'd want to know whether we log
+    impressions, because if we only log clicks then everything downstream - the negatives, the CTR,
+    the debiasing - is built on data we don't have.""",
+
+    """4. STEPS 4 AND 5 - model less than you want to, evaluate more than you want to
+
+STEP 4 - MODEL. Five to eight minutes, and LESS TIME THAN YOU WANT TO SPEND.
+
+    START WITH A BASELINE AND MEAN IT. Popularity, a logistic regression on ten features, a heuristic.
+    STATE WHAT IT WOULD SCORE. It is not humility - it is the thing that tells you whether the complex
+    model is worth its cost, and without it you cannot answer "how much did this help?".
+
+    THEN ONE STEP UP, WITH A REASON. Gradient-boosted trees for tabular features. A two-tower model
+    for retrieval. A transformer for sequences. THE REASON MATTERS MORE THAN THE CHOICE - "GBDT
+    because the features are tabular and heterogeneous and it handles that better than a DNN with less
+    tuning" is a good answer; "I'd use a transformer" alone is not.
+
+    SAY WHAT YOU WOULD NOT DO AND WHY. Not fine-tuning an LLM for a tabular ranking problem. Not
+    training from scratch when a pretrained encoder exists.
+
+    COVER FEATURES BRIEFLY - and remember that in a ranking system the INTERACTION features (this
+    user × this item) are where the gains live, because user-only and item-only signal is largely
+    already captured upstream.
+
+STEP 5 - EVALUATION. Seven to ten minutes, and it is where the strongest signal is and where
+candidates are most often rushed.
+
+    OFFLINE METRICS, AND WHY THIS ONE. Precision/recall/F1 for imbalanced classification, PR-AUC over
+    ROC-AUC when positives are rare, NDCG or recall@K for ranking, MAE or RMSE for regression.
+
+    AND IMMEDIATELY: WHAT THIS METRIC CANNOT SEE. This is the highest-value thing you can say in the
+    whole interview. Concretely: in a recommender I built, a most-popular baseline that showed 17
+    distinct items out of 2,000 BEAT collaborative filtering on recall@10, because the held-out set is
+    itself popularity-biased. RECALL COULD NOT DISTINGUISH A RECOMMENDER FROM NO RECOMMENDER.
+
+    SO NAME THE COMPANION METRICS: coverage, diversity, novelty, calibration, per-segment performance.
+    AGGREGATE METRICS HIDE SEGMENT FAILURES - a model can be 95% accurate overall and 60% accurate on
+    new users, and the aggregate never shows it.
+
+    ONLINE: what A/B test, on what metric, with what guardrails. GUARDRAILS ARE THE PART PEOPLE MISS -
+    the metrics that must NOT get worse even if the primary one improves.
+
+    AND: HOW LONG UNTIL YOU KNOW? If the label takes 60 days, your experiment takes 60 days, and you
+    need a proxy to iterate against in the meantime - along with an honest statement of how the proxy
+    can mislead you.""",
+
+    """5. STEP 6 - SERVING AND PRODUCTION, which is what proves you have shipped something
+
+Eight to ten minutes. This section is where people who have actually operated a model sound different
+from people who have only trained one.
+
+    LATENCY AND THE BATCH/ONLINE SPLIT. What must be computed live and what can be precomputed? In a
+    recommender, embeddings and neighbour lists are batch; the ranker is live. THE LATENCY BUDGET
+    DECIDES THIS, which is why step 1 asked for it.
+
+    THROUGHPUT AND COST. Requests per second, cost per thousand predictions. A model that costs more
+    per prediction than the prediction earns is a real and common failure.
+
+    THE FEATURE STORE AND TRAINING/SERVING SKEW. Are the features at serving time computed by the same
+    code as at training time? IF NOT, YOU HAVE A SILENT BUG THAT NO TEST CATCHES - the model performs
+    worse in production than offline and nobody can say why. Naming training/serving skew unprompted
+    is one of the strongest signals available in this interview.
+
+    MONITORING. Not just uptime. INPUT DISTRIBUTION DRIFT, prediction distribution drift, per-segment
+    metrics, and the business metric. AND ALERT THRESHOLDS - a dashboard nobody reads is not
+    monitoring.
+
+    RETRAINING. How often, triggered by what, and validated how before it goes live? AUTOMATIC
+    RETRAINING WITHOUT AN AUTOMATIC QUALITY GATE IS A LOADED GUN - it will eventually deploy a model
+    trained on a corrupted day of data.
+
+    FAILURE MODES AND FALLBACKS. What happens when the model service is down, when a feature is
+    missing, when the input is out of distribution? THE ANSWER SHOULD BE A DEGRADED-BUT-WORKING PATH -
+    fall back to popularity, fall back to the previous model, fall back to a rule - not an error page.
+
+    THE FEEDBACK LOOP. If the model's outputs influence the data it is next trained on, say so and say
+    what you would do. In simulation, six generations of training on your own recommendations raised
+    the top-20 items' traffic share from 12.4% to 17.6% monotonically, with nothing broken anywhere.
+
+    ROLLOUT. Shadow mode, then 1%, then 10%, then full - with a kill switch. NAME THE KILL SWITCH.""",
+
+    """6. HOW TO RUN THE 45 MINUTES - numbered steps
+
+STEP 1 - SPEND THE FIRST FIVE MINUTES ASKING QUESTIONS AND WRITING ASSUMPTIONS DOWN. What are we
+optimising, who is the user, what scale, what constraints. Do not start designing.
+
+STEP 2 - STATE THE ASSUMPTIONS BACK AS A SPECIFICATION. "So: 10 million users, 1 million items, 5,000
+QPS, 100 ms budget, optimising watch time. Stop me if that's wrong." This is the moment the interview
+becomes tractable.
+
+STEP 3 - SAY THE SIX STEPS OUT LOUD BEFORE WALKING THEM. "I'll go through framing, data, model,
+evaluation and serving - and I'd like to spend most of the time on data and evaluation." THIS BUYS YOU
+PERMISSION TO SPEND LESS TIME ON THE MODEL, which is what you want.
+
+STEP 4 - FRAME IT: input, output, LABEL, problem type. And ask whether it needs ML at all.
+
+STEP 5 - GO DEEP ON DATA. Label construction, negative sampling, what is missing, TIME-BASED SPLIT,
+class balance, biases. Raise impression logging unprompted.
+
+STEP 6 - BASELINE FIRST IN THE MODEL SECTION, with an estimate of what it scores. Then one step up
+with a reason. KEEP IT SHORT.
+
+STEP 7 - IN EVALUATION, NAME THE METRIC AND THEN IMMEDIATELY NAME WHAT IT CANNOT SEE. Use a concrete
+example. Then companion metrics, per-segment breakdowns, and the online test with guardrails.
+
+STEP 8 - IN SERVING, COVER THE BATCH/ONLINE SPLIT, TRAINING/SERVING SKEW, MONITORING WITH ALERTS,
+RETRAINING WITH A QUALITY GATE, AND A FALLBACK PATH. Name the kill switch.
+
+STEP 9 - RAISE ONE FAILURE MODE UNPROMPTED - feedback loop, drift, cold start, or fairness - whichever
+is most relevant. VOLUNTEERING A WEAKNESS IS SCORED HIGHLY; being caught by one is not.
+
+STEP 10 - CLOSE WITH WHAT YOU WOULD SHIP FIRST AND WHAT YOU WOULD MEASURE IN WEEK ONE. Interviewers
+remember the last thirty seconds, and "here is the smallest thing that would prove this works" is the
+best possible ending.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The way I'd approach any ML system design is a fixed order, mostly so I don't drift - because the
+usual failure isn't being wrong, it's spending twenty-five minutes on model architecture and never
+reaching data or evaluation.
+
+Six steps: clarify and scope, frame it as an ML problem, data, model, evaluation, and serving. And I'd
+say up front that I want to spend most of my time on DATA and EVALUATION, and LESS on the model than
+you might expect. The model is usually the least interesting decision.
+
+Step one, I ask what we're optimising. "Build a recommender" isn't a specification - watch time,
+completion, subscriptions and revenue give you four different systems. And I want the scale numbers:
+users, items, requests per second, latency budget. Those decide the architecture, so without them
+every choice downstream is arbitrary. Then I state my assumptions back as a specification and ask to
+be corrected.
+
+Step two is framing: what's the input at inference time, what's the output, and what's the LABEL - and
+does it actually exist? That's the question that kills more designs than any other. "Will the user
+enjoy this" isn't a label; "did they watch more than thirty seconds" is. I'd also ask how long until
+we KNOW the label - for a click it's seconds, for a fraud chargeback it's sixty to ninety days, and a
+system whose labels arrive three months late can't be retrained weekly regardless of the pipeline
+diagram. And I'd ask whether this needs ML at all, because a rules engine that ships this week is
+often the right version one.
+
+Step three, data, is where I'd spend the most time. How the label is constructed, where the negatives
+come from, what's MISSING - specifically whether we log impressions or only clicks, because without
+impressions you can't tell "not shown" from "shown and ignored" and every debiasing technique becomes
+impossible. And the split has to be BY TIME, not random, or the model sees the future and the offline
+number evaporates in production.
+
+Step four, model: baseline first, and I'd say what it would score, because without that I can't tell
+you whether the complex model was worth it. Then one step up with a reason.
+
+Step five, evaluation, is where I'd say the most useful thing. Name the metric, and then immediately
+name what it CANNOT see. Concretely: in a recommender I built, a most-popular baseline that showed
+seventeen distinct items out of two thousand BEAT collaborative filtering on recall at ten - because
+the held-out set is itself popularity-biased. The metric couldn't distinguish a recommender from no
+recommender. So I'd always report coverage and diversity alongside, break results down by segment
+because aggregates hide segment failures, and treat the online A/B test with guardrail metrics as the
+real gate.
+
+Step six, serving: what's batch and what's live, training/serving skew, monitoring with actual alert
+thresholds, retraining with a quality gate, and a degraded-but-working fallback rather than an error
+page. And I'd raise one failure mode unprompted - usually the feedback loop, because the model's
+outputs become its next training data.
+
+Then I'd close with the smallest thing I'd ship first and what I'd measure in week one.'""",
+
+    """8. THE FRAMEWORK, PIECE BY PIECE - the questions to ask at each step
+
+    ┌─ 1. CLARIFY AND SCOPE ──────────────────────────────── 5-7 min ──────────┐
+    │  What are we optimising?          <- MAKE THEM CHOOSE. Four different    │
+    │                                      metrics give four different systems │
+    │  Who is the user, which surface?  <- decides latency and failure cost    │
+    │  How many users / items / QPS?    <- DECIDES THE ARCHITECTURE            │
+    │  Latency budget? Cost? Privacy?                                          │
+    │  >> STATE ASSUMPTIONS BACK AS A SPEC AND ASK TO BE CORRECTED <<          │
+    └──────────────────────────────────┬───────────────────────────────────────┘
+    ┌─ 2. ML FRAMING ─────────────────── ▼ ───────────────── 3-5 min ──────────┐
+    │  Input at inference time (only data that exists then)                    │
+    │  Output: probability / ranking / class / number                          │
+    │  LABEL - and DOES IT EXIST? <- kills more designs than anything else     │
+    │  How long until the label is known? <- 60-day labels break weekly retrain│
+    │  SHOULD THIS BE ML AT ALL? <- asking is a seniority signal               │
+    └──────────────────────────────────┬───────────────────────────────────────┘
+    ┌─ 3. DATA ───────────────────────── ▼ ──────────────── 8-10 min ──────────┐
+    │  Source, volume, freshness                                               │
+    │  Label construction; WHERE DO NEGATIVES COME FROM?                       │
+    │  WHAT IS MISSING? impressions vs clicks <- raise this unprompted         │
+    │  SPLIT BY TIME, NOT RANDOMLY <- random split lets the model see the future│
+    │  Class balance (fraud 0.1%, ads 1%) -> accuracy is useless there         │
+    │  Biases: position, popularity, selection <- name at least one            │
+    │  Privacy, retention, memorisation                                        │
+    └──────────────────────────────────┬───────────────────────────────────────┘
+    ┌─ 4. MODEL ──────────────────────── ▼ ───────────────── 5-8 min ──────────┐
+    │  BASELINE, and what it would score  <- without this you cannot say how   │
+    │                                        much anything helped              │
+    │  One step up, WITH A REASON         <- the reason > the choice           │
+    │  What you would NOT do, and why                                          │
+    │  Features - INTERACTION features are where ranking gains live            │
+    │  >> DELIBERATELY THE SHORTEST SUBSTANTIVE SECTION <<                     │
+    └──────────────────────────────────┬───────────────────────────────────────┘
+    ┌─ 5. EVALUATION ─────────────────── ▼ ──────────────── 7-10 min ──────────┐
+    │  Offline metric AND WHY THAT ONE                                         │
+    │  >> IMMEDIATELY: WHAT IT CANNOT SEE <<  highest-value sentence available │
+    │  Companion metrics: coverage, diversity, calibration                     │
+    │  PER-SEGMENT BREAKDOWN <- aggregates hide segment failures               │
+    │  Online A/B test + GUARDRAIL METRICS (must not get worse)                │
+    │  How long until you know?                                                │
+    └──────────────────────────────────┬───────────────────────────────────────┘
+    ┌─ 6. SERVING AND PRODUCTION ─────── ▼ ──────────────── 8-10 min ──────────┐
+    │  Batch vs online split <- decided by the step-1 latency budget           │
+    │  TRAINING/SERVING SKEW <- silent bug no test catches                     │
+    │  Monitoring: drift, per-segment, business metric, ALERT THRESHOLDS       │
+    │  Retraining cadence + AN AUTOMATIC QUALITY GATE                          │
+    │  Fallback: degraded-but-working, not an error page                       │
+    │  Feedback loop, if outputs become future training data                   │
+    │  Rollout: shadow -> 1% -> 10% -> full, WITH A KILL SWITCH                │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    THE ARROWS ARE THE POINT. Each step constrains the next: the latency budget from step 1 decides
+    the batch/online split in step 6; the label availability in step 2 decides whether step 3 is even
+    possible; the class balance in step 3 decides the metric in step 5. WALKING THEM OUT OF ORDER IS
+    WHY PEOPLE DESIGN MODELS FOR PROBLEMS THEY HAVE NOT DEFINED.""",
+
+    """9. THE FRAMEWORK APPLIED - a full worked trace on one prompt
+
+PROMPT: "Design a system to detect fraudulent transactions."
+
+    STEP 1 - CLARIFY (5 min).
+        What are we optimising? Caught fraud value, or false-positive rate? THEY TRADE OFF DIRECTLY.
+        Assume: minimise fraud losses subject to declining under 0.5% of legitimate transactions.
+        Scale? Assume 10,000 transactions per second, decision in under 100 ms, because the payment
+        is held open while we decide.
+        Constraint: a false decline costs a customer relationship; a missed fraud costs the
+        chargeback amount. THE COSTS ARE ASYMMETRIC AND THAT DECIDES THE THRESHOLD.
+
+    STEP 2 - FRAME (4 min).
+        Input: transaction fields, account history, device, merchant, at request time.
+        Output: P(fraud), a number in [0,1], thresholded into approve / review / decline.
+        Label: chargeback filed, or confirmed by the fraud team.
+        >> LABEL DELAY: 60-90 DAYS FOR A CHARGEBACK. That single fact means today's model is trained
+        on three-month-old fraud patterns and the adversary has moved. IT SHAPES EVERYTHING BELOW.
+        Should it be ML? Partly not - hard rules for known-bad cards and velocity limits, ML for the
+        grey zone. SAY BOTH.
+
+    STEP 3 - DATA (9 min).
+        Positives: confirmed chargebacks. RARE - roughly 0.1%.
+        Negatives: everything else, which INCLUDES undetected fraud. Your negatives are contaminated
+        and you should say so.
+        Missing: declined transactions have no outcome. YOU NEVER LEARN WHETHER A DECLINE WAS RIGHT -
+        this is selection bias in its purest form, and a small random-approval holdout is the only
+        honest fix.
+        Split: BY TIME, always. Fraud is adversarial and non-stationary; a random split trains on next
+        month's pattern and reports a fantasy number.
+        Balance: 0.1% positive. ACCURACY IS USELESS - always-predict-legitimate scores 99.9%.
+
+    STEP 4 - MODEL (6 min).
+        Baseline: rules - velocity, geo-mismatch, amount z-score. Would catch maybe half the fraud at
+        a high false-positive rate, and it is what the business runs today.
+        Step up: gradient-boosted trees. Tabular, heterogeneous features, handles missing values,
+        trains fast, and IS EXPLAINABLE - which matters because declines may need justifying to a
+        regulator.
+        Not: a deep sequence model as v1. The label delay and volume do not support it yet.
+
+    STEP 5 - EVALUATION (8 min).
+        PR-AUC, not ROC-AUC - at 0.1% prevalence ROC-AUC looks excellent while the precision is
+        terrible. Precision at a fixed recall, and FRAUD VALUE CAUGHT rather than fraud COUNT, because
+        the amounts vary by orders of magnitude.
+        What it cannot see: the metric is computed on transactions we APPROVED. Anything we declined
+        has no label at all.
+        Per segment: new accounts, high-value transactions, each geography.
+        Online: a champion/challenger split, guardrailed on false-decline rate and on approval rate by
+        segment.
+
+    STEP 6 - SERVING (9 min).
+        Under 100 ms hard, because the payment is held. Features from a feature store; account
+        aggregates precomputed, transaction features live.
+        TRAINING/SERVING SKEW is the big risk - "transactions in the last hour" computed one way in
+        the warehouse and another way in the service is a classic silent failure.
+        Monitoring: score distribution drift, per-segment approval rates, and the fraud rate itself.
+        Retrain: monthly, gated on PR-AUC not regressing, and remember the labels are 60-90 days old.
+        Fallback: rules engine if the model service is unavailable. NEVER FAIL OPEN ON FRAUD.
+
+THE LINE-BY-LINE MAPPING - which framework step produced which design decision:
+
+    STEP 1's "costs are asymmetric" produced the threshold policy and the guardrail metric in step 5.
+    STEP 2's 60-90 day label delay produced the monthly retrain cadence in step 6 AND the decision not
+            to use a deep sequence model in step 4. ONE FACT, THREE DOWNSTREAM CONSEQUENCES.
+    STEP 3's 0.1% class balance produced PR-AUC over ROC-AUC in step 5.
+    STEP 3's "declines have no outcome" produced the random-approval holdout - a DATA COLLECTION
+            decision that only exists because the data step was walked properly.
+    STEP 4's explainability requirement came from step 1's regulatory constraint, not from a
+            preference about model families.
+    STEP 6's "never fail open" came from step 1's asymmetric costs again.
+
+    NOTHING IN STEP 6 WAS INVENTED AT STEP 6. That is what the framework is for.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you clarify before designing?
+    Did you spend your time proportionally - data and evaluation over model?
+    Did you name a label that actually exists, and know when it arrives?
+    Did you say what your metric CANNOT see?
+    Did you raise a failure mode unprompted?
+    Would you ship something small first?
+    Do you sound like you have operated a model, not only trained one?
+
+THE #1 MISTAKE: starting at the model. It is the most common failure and it is entirely
+self-inflicted. Announce the six steps first and you cannot do it.
+
+THE #2 MISTAKE: not asking what is being optimised. Four different objectives give four different
+systems, and designing against an unstated one means designing against the wrong one.
+
+THE #3 MISTAKE: a label that does not exist, or ignoring label delay. A 60-90 day chargeback label
+makes weekly retraining meaningless no matter what the diagram says.
+
+THE #4 MISTAKE: a random train/test split on time-series or adversarial data. The model sees the
+future and the offline number evaporates in production.
+
+THE #5 MISTAKE: naming a metric without naming its blind spot. Measured, in a recommender: a
+most-popular baseline showing 17 distinct items out of 2,000 beat CF on recall@10, because the
+held-out set carries the same popularity bias.
+
+THE #6 MISTAKE: reporting only aggregate metrics. A model can be 95% accurate overall and 60% on new
+users, and the aggregate never shows it.
+
+THE #7 MISTAKE: no baseline. Without one you cannot say how much anything helped, and "we got 0.82
+AUC" is a number with no denominator.
+
+THE #8 MISTAKE: skipping serving. Training/serving skew, monitoring with real thresholds, a retraining
+quality gate and a fallback path are what distinguish someone who has shipped from someone who has
+not.
+
+THE #9 MISTAKE: never mentioning the feedback loop when outputs become future training data. Measured
+in simulation: six generations raised the top-20 traffic share from 12.4% to 17.6% monotonically with
+nothing broken.
+
+THE #10 MISTAKE: running out of time. Budget it: 5-7 / 3-5 / 8-10 / 5-8 / 7-10 / 8-10, and say the
+budget out loud at the start so the interviewer helps you keep it.
+
+ONE-SENTENCE TAKEAWAY: walk six steps in a fixed order - clarify and scope, ML framing, data, model,
+evaluation, serving - spending the MOST time on data and evaluation and the LEAST on the model,
+because each step constrains the next (the latency budget decides the serving split, the label delay
+decides the retrain cadence, the class balance decides the metric), and the two sentences that carry
+the most weight are "does this label actually exist and when does it arrive" and "here is what my
+metric cannot see".""",
+]
+
+_EX_P1AO["Design for Recommendation Cold-Start"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - recommending when you know nothing
+
+COLD START is the case where you have no interaction history to work from. It comes in three flavours
+and they are NOT the same problem:
+
+    NEW USER  - somebody just signed up. You know nothing about their taste.
+    NEW ITEM  - something was just uploaded. Nobody has interacted with it, so no algorithm that
+                relies on interactions can ever surface it.
+    NEW SYSTEM - you are launching. Nobody has interacted with anything.
+
+THE EVERYDAY VERSION: a shop assistant on a customer's first visit. They cannot say "based on your
+last purchase". They can say what is popular, they can ask a question, and they can watch what you
+pick up.
+
+WHY IT MATTERS MORE THAN IT SOUNDS: cold users are a large and permanent fraction of traffic, because
+new users arrive continuously, and THEY ARE THE ONES DECIDING WHETHER TO COME BACK. A system that is
+excellent for a user with 200 interactions and useless for one with 3 has optimised for the people it
+was already going to keep.
+
+    AND THE ITEM SIDE IS WORSE, BECAUSE IT IS A DEADLOCK. An item with no interactions is never
+    recommended; an item never recommended gets no interactions. NOTHING BREAKS THIS EXCEPT AN
+    EXPLICIT DECISION TO SHOW UNPROVEN ITEMS ANYWAY. That is why exploration is not a nice-to-have in
+    a marketplace - without it your newest inventory is invisible by construction.
+
+THE ASYMMETRY WORTH NAMING: a cold user costs you one bad session. A cold ITEM that never gets shown
+is inventory you paid for and can never monetise. MARKETPLACES CARE FAR MORE ABOUT ITEM COLD START
+THAN USER COLD START, and knowing which side of that you are on decides the design.
+
+TERMS AS THEY APPEAR:
+- COLLABORATIVE FILTERING: recommend what similar users liked. Needs history. Fails cold.
+- CONTENT-BASED: recommend using item FEATURES - text, category, creator. Works on day zero.
+- EXPLORATION: deliberately showing something you are unsure about, to learn.""",
+
+    """2. THE MEASUREMENT - collaborative filtering is worse than popularity when history is short
+
+I built a small recommender - 3,000 users, 2,000 items, 90,578 interactions - and evaluated
+collaborative filtering against a most-popular baseline, BROKEN DOWN BY HOW MUCH HISTORY EACH USER HAD.
+
+     user history size     users     item-CF recall@10     most-popular recall@10     winner
+     3-5                     117                  7.7%                       8.5%     POPULAR
+     6-15                    200                  8.7%                      10.2%     POPULAR
+     16-40                   200                  9.3%                       9.3%     tie
+     41+                     200                  8.2%                       8.3%     tie
+
+    COLLABORATIVE FILTERING LOSES TO "SHOW EVERYBODY THE SAME POPULAR ITEMS" AT EVERY HISTORY SIZE
+    BELOW SIXTEEN. At 6-15 interactions the gap is a point and a half in popularity's favour, and
+    those buckets are a large share of any real user base.
+
+    THIS IS NOT AN IMPLEMENTATION FAILURE. It is the definition of the problem. CF works by finding
+    users similar to you; with three interactions there is not enough signal to find them, so the
+    neighbourhood is noise and the recommendations are noise.
+
+    NOTE THE AGGREGATE WOULD HAVE HIDDEN THIS ENTIRELY. Averaged over all users, item-CF and popularity
+    both score about 9.5%. THE FINDING ONLY EXISTS BECAUSE THE EVALUATION WAS SEGMENTED BY HISTORY
+    SIZE, and that is the transferable lesson: aggregate metrics hide segment failures, and cold start
+    is the segment that gets hidden most often.
+
+WHAT THIS MEANS FOR THE DESIGN, and it is the sentence to say in an interview:
+
+    "I'd fall back to popularity for users below roughly fifteen interactions - and I'd say that not
+    as a concession but because I measured it. Switching to CF early makes the product measurably
+    worse."
+
+    THAT IS A DIFFERENT ANSWER FROM "use a better model for cold start", and it is the correct one.
+    There is no model that extracts personalised signal from three data points; the honest design is to
+    use a different source of information entirely until there is enough history to be worth using.""",
+
+    """3. THE CASCADE - what to serve at each stage of knowing someone
+
+The design answer for cold start is not one model. It is A LADDER OF FALLBACKS, where each rung uses
+the cheapest information that is actually available at that point.
+
+     what you know                     what you serve                              why
+     -------------------------------------------------------------------------------------------
+     NOTHING AT ALL                    popularity, segmented by whatever           the only signal
+     (first request, no account)       context you do have: country, device,       that exists
+                                       referrer, time of day, landing page
+     -------------------------------------------------------------------------------------------
+     1-5 INTERACTIONS                  content-based similarity to what they       item FEATURES
+                                       touched, blended with popularity            exist on day zero;
+                                                                                   interactions do not
+     -------------------------------------------------------------------------------------------
+     5-20 INTERACTIONS                 a blend, weighted towards CF as history     MEASURED: the
+                                       grows                                       crossover is
+                                                                                   around 15
+     -------------------------------------------------------------------------------------------
+     20+ INTERACTIONS                  full personalisation                        enough signal to
+                                                                                   find neighbours
+     -------------------------------------------------------------------------------------------
+     ALWAYS, AT EVERY RUNG             an exploration slot                         you cannot learn
+                                                                                   about an item you
+                                                                                   never show
+
+    THE SEGMENTED POPULARITY IN ROW 1 IS UNDERRATED. "Most popular in this country, on this device,
+    from this referrer" is dramatically better than global popularity and costs nothing but a GROUP BY.
+    A user arriving from a cooking blog and a user arriving from a gaming forum are not the same cold
+    user, and you know that before they click anything.
+
+THE OTHER LEVERS, in rough order of value per unit of effort:
+
+    ONBOARDING QUESTIONS - "pick three topics you like". Cheap, effective, and it costs you friction
+    at exactly the moment the user is least committed. WORTH IT WHEN THE CATALOGUE IS DIVERSE and
+    actively harmful when it is narrow.
+    SESSION-BASED SIGNAL - what they have clicked in THIS session, before you know anything else. It
+    is the fastest-moving information you have and it is free.
+    IMPORTED SIGNAL - social graph, contacts, a linked account. Powerful and privacy-sensitive; ask
+    before assuming it is available.
+    TRANSFER FROM A RELATED SURFACE - if they use another product of yours, that history is not cold.
+
+FOR COLD ITEMS the answer is different, because the problem is a deadlock rather than a shortage:
+    CONTENT FEATURES from day zero - text, category, creator, thumbnail embeddings. An item that
+    resembles known items can be scored without ever having been shown.
+    CREATOR PRIOR - a new video from a creator with a strong track record is not really cold.
+    A GUARANTEED EXPLORATION BUDGET - a reserved slot, or a boosted score for items under N
+    impressions. THIS IS THE ONLY THING THAT BREAKS THE DEADLOCK.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - SWITCHING TO PERSONALISATION TOO EARLY. Measured: below sixteen interactions CF is worse
+than popularity. A system that switches at three interactions is serving noise to exactly the users
+who are deciding whether to stay.
+
+FAILURE 2 - NO ITEM EXPLORATION, so new items are invisible by construction. The deadlock: no
+interactions means never recommended means no interactions. It resolves itself only if you decide it
+should.
+
+FAILURE 3 - EVALUATING ON AGGREGATE METRICS. Item-CF and popularity both score about 9.5% overall in
+my measurement, and the cold-start gap is completely invisible at that level. IF YOU DO NOT SEGMENT BY
+HISTORY SIZE YOU WILL NOT KNOW YOU HAVE THIS PROBLEM.
+
+FAILURE 4 - TREATING ALL COLD USERS AS IDENTICAL. Country, device, referrer and landing page are all
+known before the first click. Global popularity throws that away for free.
+
+FAILURE 5 - ONBOARDING FRICTION AT THE WRONG MOMENT. Five questions before a new user has seen
+anything is a great way to lose them. One question, skippable, after they have seen the product works.
+
+FAILURE 6 - NEVER GRADUATING. A user who has been treated as cold for six months because the threshold
+was set once and never revisited. THE CASCADE NEEDS TO BE MONITORED - what fraction of users sit in
+each rung, and is it moving?
+
+FAILURE 7 - COLD START AT THE SYSTEM LEVEL BEING IGNORED. At launch, everything is cold. The version
+one is popularity plus editorial curation plus content similarity, and it should be built first
+because it is also the permanent fallback.
+
+FAILURE 8 - NO FALLBACK WHEN THE PERSONALISATION SERVICE FAILS. The cold-start path IS the fallback
+path. Building it well means you also have a degraded-but-working mode for every outage, and that is a
+good argument for building it properly rather than as an afterthought.
+
+FAILURE 9 - CONFUSING COLD WITH SPARSE. A user with 200 interactions spread over four years is not
+cold, but their recent signal may be. Recency-weighting is a different fix from a cold-start cascade,
+and applying the wrong one wastes effort.""",
+
+    """5. THE ALTERNATIVES - and what each actually costs
+
+CONTENT-BASED FILTERING. Score items by similarity to what the user touched, using item features
+rather than interactions.
+    COST: you need item features that are actually informative, and building good ones is real work -
+    text embeddings, category taxonomies, image models.
+    WHEN IT WINS: item cold start, always. A new item has features on day zero and interactions never.
+    WHEN IT LOSES: it recommends more of the same. Content similarity has no notion of "people who
+    liked this also unexpectedly liked that", which is the entire value CF adds.
+
+HYBRID / BLENDED SCORING. A weighted sum of a popularity score, a content score and a CF score, with
+the weights depending on how much history the user has.
+    COST: three systems to maintain and a weighting scheme to tune.
+    THE PRACTICAL VERSION: not a learned blend but a simple ramp - CF weight scales from 0 to 1 as
+    history goes from 5 to 20 interactions. Measured, the crossover is around 15, so that ramp is
+    defensible rather than arbitrary.
+
+TWO-TOWER MODELS WITH SIDE FEATURES. A user tower and an item tower, where the item tower takes
+CONTENT features as well as an ID embedding.
+    THIS IS THE MODERN ANSWER TO ITEM COLD START, and it is worth naming: because the item tower can
+    embed a brand-new item from its features alone, the item is retrievable on day zero without ever
+    having been interacted with.
+    COST: real infrastructure - training, embedding refresh, an ANN index.
+
+BANDITS AND EXPLORATION. Treat each item as an arm with an uncertain reward; explore in proportion to
+uncertainty.
+    COST: more machinery than epsilon-greedy, and it needs impression logging to work at all.
+    WHEN IT IS WORTH IT: when item cold start is your dominant problem, i.e. a marketplace with
+    constant new inventory. EPSILON-GREEDY - reserve one slot in ten for something unproven - captures
+    most of the benefit for almost none of the complexity, and it is the right version one.
+
+ASKING THE USER. Onboarding preferences.
+    COST: friction, at the worst possible moment.
+    THE HONEST TRADE: it is the single most information-dense option available and it is also the one
+    most likely to lose the user. One skippable question, placed after the first successful
+    interaction, is usually the right compromise.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+STEP 1 - ASK WHICH COLD START THEY MEAN. New user, new item, or new system. They are different
+problems with different answers, and answering the wrong one wastes the whole discussion.
+
+STEP 2 - ASK WHICH SIDE COSTS MORE. In a marketplace, unshown inventory is the expensive failure. In a
+consumer feed, a bad first session is. THE ANSWER DECIDES WHERE THE EFFORT GOES.
+
+STEP 3 - START FROM SEGMENTED POPULARITY, NOT GLOBAL. Country, device, referrer, landing page, time.
+All known before the first click, and it costs a GROUP BY.
+
+STEP 4 - DEFINE THE CASCADE EXPLICITLY, with thresholds. Nothing -> segmented popularity. 1-5 ->
+content similarity plus popularity. 5-20 -> ramped blend. 20+ -> full personalisation.
+
+STEP 5 - JUSTIFY THE THRESHOLD WITH A MEASUREMENT. "CF is measurably worse than popularity below about
+fifteen interactions" is a far stronger statement than "we switch at ten".
+
+STEP 6 - USE SESSION SIGNAL IMMEDIATELY. What they clicked thirty seconds ago is the fastest-moving
+information you have and it costs nothing.
+
+STEP 7 - GIVE COLD ITEMS A GUARANTEED EXPLORATION BUDGET. A reserved slot or a boost for items under
+N impressions. IT IS THE ONLY THING THAT BREAKS THE DEADLOCK.
+
+STEP 8 - USE CONTENT FEATURES FOR ITEM COLD START, and mention two-tower models with side features as
+the scalable version, because the item tower can embed a brand-new item without any interactions.
+
+STEP 9 - SEGMENT THE EVALUATION BY HISTORY SIZE. Aggregate metrics hid this entirely in my
+measurement - both systems scored about 9.5% overall while CF was losing by 1.5 points in the 6-15
+bucket.
+
+STEP 10 - MONITOR THE CASCADE ITSELF. What fraction of users are in each rung, what fraction of items
+have under N impressions, and are those numbers moving? AND REMEMBER THE COLD-START PATH IS ALSO YOUR
+OUTAGE FALLBACK, which is a good reason to build it properly.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I'd ask which cold start we mean, because new user, new item and new system are three different
+problems. And I'd ask which one costs more here - in a marketplace, inventory that never gets shown is
+the expensive failure; in a consumer feed, a bad first session is.
+
+For NEW USERS, the thing I'd want to say is that the answer isn't a better model. I measured this: I
+built a small recommender and evaluated collaborative filtering against a most-popular baseline, broken
+down by how much history each user had. CF LOST to popularity at every history size below sixteen
+interactions - 7.7 against 8.5 per cent at three-to-five items, and 8.7 against 10.2 at six-to-fifteen.
+
+That's not an implementation failure, it's the definition of the problem. CF works by finding users
+similar to you, and with three interactions there isn't enough signal to find them, so the
+neighbourhood is noise.
+
+And here's the part that generalises: the AGGREGATE would have hidden this completely. Averaged over
+all users both systems scored about 9.5 per cent. The finding only exists because I segmented by
+history size. Aggregate metrics hide segment failures, and cold start is the segment that gets hidden
+most often.
+
+So the design is a cascade rather than a model. Nothing at all: segmented popularity - by country,
+device, referrer, landing page - all of which you know before the first click, and which is much
+better than global popularity for the cost of a GROUP BY. One to five interactions: content-based
+similarity to what they touched, blended with popularity. Five to twenty: ramp the CF weight up as
+history grows, with the crossover around fifteen because that's where I measured it. Twenty plus: full
+personalisation. And at every rung, session signal - what they clicked thirty seconds ago is the
+fastest-moving information you have.
+
+NEW ITEMS are a different shape of problem: it's a DEADLOCK. An item with no interactions is never
+recommended, and an item never recommended gets no interactions. Nothing breaks that except an
+explicit decision to show unproven items anyway. So: content features from day zero, a creator prior,
+and a guaranteed exploration budget - a reserved slot or a boost for items under N impressions.
+Epsilon-greedy captures most of the benefit for almost none of the complexity. The scalable version is
+a two-tower model where the item tower takes content features, so a brand-new item is retrievable on
+day one without ever having been shown.
+
+Two last things. I'd segment the evaluation by history size, for the reason above. And I'd note that
+the cold-start path IS the fallback path when personalisation is down - which is a good argument for
+building it properly rather than as an afterthought.'""",
+
+    """8. THE CASCADE, PIECE BY PIECE
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  REQUEST arrives. How much do we know about this user?                    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+                                     │
+        ┌────────────────────────────┼────────────────────────────┐
+        │                            │                            │
+    ┌───▼──────────────┐   ┌─────────▼──────────┐   ┌────────────▼───────────┐
+    │ 0 INTERACTIONS   │   │ 1-5 INTERACTIONS   │   │ 5-20 INTERACTIONS      │
+    │                  │   │                    │   │                        │
+    │ SEGMENTED        │   │ content similarity │   │ BLEND, ramping the CF  │
+    │ POPULARITY:      │   │ to what they       │   │ weight from 0 to 1 as  │
+    │  country         │   │ touched            │   │ history goes 5 -> 20   │
+    │  device          │   │        +           │   │                        │
+    │  referrer        │   │ segmented          │   │ MEASURED CROSSOVER:    │
+    │  landing page    │   │ popularity         │   │ ~15 interactions       │
+    │  time of day     │   │                    │   │                        │
+    │                  │   │ item FEATURES      │   │ below it CF LOSES to   │
+    │ all known BEFORE │   │ exist on day zero; │   │ popularity: 7.7% vs    │
+    │ the first click, │   │ interactions do    │   │ 8.5% at 3-5 items,     │
+    │ costs a GROUP BY │   │ not                │   │ 8.7% vs 10.2% at 6-15  │
+    └───┬──────────────┘   └─────────┬──────────┘   └────────────┬───────────┘
+        │                            │                            │
+        └────────────────────────────┼────────────────────────────┘
+                                     │        ┌──────────────────────────────┐
+                                     │        │ 20+ INTERACTIONS             │
+                                     │◄───────┤ full personalisation         │
+                                     │        └──────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  SESSION SIGNAL - overlaid at EVERY rung                                 │
+    │  what they clicked 30 seconds ago is the fastest-moving information you   │
+    │  have and it is free. A cold user stops being cold WITHIN one session.    │
+    └────────────────────────────────┬─────────────────────────────────────────┘
+    ┌────────────────────────────────▼─────────────────────────────────────────┐
+    │  EXPLORATION SLOT - reserved at EVERY rung                               │
+    │                                                                          │
+    │  THE ITEM-SIDE DEADLOCK:  no interactions -> never recommended           │
+    │                           never recommended -> no interactions           │
+    │  NOTHING BREAKS THIS except deciding to show unproven items anyway.       │
+    │  Implement as: a reserved slot, or a score boost for items under N        │
+    │  impressions. Epsilon-greedy is enough; bandits are better.               │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    AND FOR COLD ITEMS SPECIFICALLY, the retrieval side:
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  TWO-TOWER MODEL WITH SIDE FEATURES                                      │
+    │    user tower: history, context                                          │
+    │    ITEM TOWER: content features (text, category, creator, thumbnail)      │
+    │                PLUS an ID embedding                                      │
+    │                                                                          │
+    │  BECAUSE THE ITEM TOWER READS FEATURES, a brand-new item can be embedded  │
+    │  and indexed on day zero, with no interactions at all. THAT IS THE        │
+    │  SCALABLE ANSWER TO ITEM COLD START and it is worth naming by name.       │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    MONITOR THE CASCADE ITSELF: what fraction of users sit in each rung, what fraction of items are
+    under N impressions, and are those numbers moving. A cascade nobody watches silently strands users
+    on the wrong rung for months.""",
+
+    """9. THE MEASUREMENT, TRACED
+
+THE SETUP: 3,000 users, 2,000 items, 90,578 interactions, density 1.51%. Users were split 80/20 into
+train and test; recall@10 was computed on the held-out fifth. Users were then BUCKETED BY THE SIZE OF
+THEIR TRAINING HISTORY.
+
+     user history size     users sampled     item-CF recall@10     most-popular recall@10
+     3-5                             117                  7.7%                       8.5%
+     6-15                            200                  8.7%                      10.2%
+     16-40                           200                  9.3%                       9.3%
+     41+                             200                  8.2%                       8.3%
+
+     AGGREGATED OVER ALL USERS:      item-CF 9.3%      most-popular 9.7%
+
+    READ THE LAST LINE AGAINST THE TABLE. The aggregate says the two systems are within half a point of
+    each other and popularity is marginally ahead - a shrug. THE SEGMENTED TABLE SAYS SOMETHING
+    ACTIONABLE: popularity wins decisively in the two low-history buckets and ties everywhere else.
+
+    THAT DIFFERENCE - between a number that suggests nothing and a number that dictates the design -
+    came entirely from adding one GROUP BY to the evaluation.
+
+THE TWO RECOMMENDERS, for reference:
+
+    MOST POPULAR: rank all items by training-set interaction count, remove what the user has already
+    seen, return the top 10. IT DOES NOT READ THE USER AT ALL beyond their exclusion list.
+    ITEM-CF: for each item the user touched, find the users who also touched it, score every item those
+    users touched, weight by 1/sqrt(item popularity), return the top 10.
+
+THE SUPPORTING NUMBERS FROM THE SAME EXPERIMENT:
+
+     catalogue skew:  top 20% of items carry 50.4% of all interactions
+     coverage:        most-popular showed 17 distinct items across 400 users
+                      item-CF with popularity normalisation showed 438
+     feedback loop:   6 generations of training on own output took the top-20 items' traffic share
+                      from 12.4% to 17.6%, monotonically
+
+    THE COVERAGE NUMBER IS THE COUNTERWEIGHT TO THE COLD-START FINDING. Popularity wins on recall for
+    low-history users AND shows seventeen items out of two thousand. SO THE HONEST DESIGN IS NOT
+    "USE POPULARITY" - it is "use popularity as the cold-start rung, and get users off that rung as
+    fast as possible, and keep an exploration slot so the catalogue does not collapse to seventeen
+    items while you do it".
+
+THE LINE-BY-LINE MAPPING - which experimental choice produced which conclusion:
+
+    BUCKETING BY TRAINING-HISTORY SIZE
+            produced the entire finding. Without it there is no cold-start result at all, only a
+            0.4-point aggregate difference that means nothing.
+    THE 80/20 PER-USER SPLIT
+            produced the recall numbers - and note it also means a user with 5 interactions has 1 test
+            item, so the low-history buckets are noisier. THE DIRECTION IS CONSISTENT ACROSS BOTH LOW
+            BUCKETS, which is what makes it trustworthy rather than the size of either gap.
+    THE ZIPF POPULARITY DISTRIBUTION in the synthetic data
+            produced the "top 20% carry 50.4%" skew, which is what makes a popularity baseline strong
+            at all. On a uniform catalogue this entire finding would vanish - and real catalogues are
+            more skewed than this one, not less, so the effect is if anything understated.
+    THE 1/sqrt(popularity) NORMALISATION in item-CF
+            produced the 438-item coverage figure, and is why the recommendation is a cascade rather
+            than "just serve popular things".
+    NOT MODELLING CONTENT FEATURES AT ALL
+            is this experiment's limitation, and it is worth stating: the cascade's 1-5 rung is
+            content-based, and I did not measure it. THE MEASURED CLAIM IS NARROWER THAN THE DESIGN -
+            it says CF loses below 15 interactions, not that content-based beats popularity there.""",
+
+    """10. WHAT IS SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+WHAT AN INTERVIEWER IS ACTUALLY SCORING:
+    Did you ask WHICH cold start - user, item, or system?
+    Did you recognise the item side as a DEADLOCK rather than a data shortage?
+    Did you propose a cascade rather than a single model?
+    Did you justify the switch threshold with something other than instinct?
+    Did you say you would segment the evaluation by history size?
+    Did you mention exploration, and say why it is the only thing that breaks the item deadlock?
+
+    RAISING COLD START UNPROMPTED IN A RECOMMENDATION DESIGN IS ITSELF A SIGNAL. It is where the
+    system is judged and it is the section most candidates skip.
+
+THE #1 MISTAKE: answering "use a better model". Measured: below sixteen interactions CF is worse than
+a baseline that ignores the user entirely. No model extracts personalised signal from three data
+points.
+
+THE #2 MISTAKE: evaluating in aggregate. Item-CF and popularity are within 0.4 points overall while
+popularity wins by 1.5 in the 6-15 bucket. THE PROBLEM IS INVISIBLE WITHOUT SEGMENTATION.
+
+THE #3 MISTAKE: no item exploration. The deadlock is absolute - no interactions means never
+recommended means no interactions - and it resolves only if you decide it should.
+
+THE #4 MISTAKE: global popularity for cold users. Country, device, referrer and landing page are all
+known before the first click, and segmenting on them costs a GROUP BY.
+
+THE #5 MISTAKE: switching to personalisation too early. It serves noise to precisely the users who are
+deciding whether to come back.
+
+THE #6 MISTAKE: heavy onboarding friction. Five questions before the user has seen the product work is
+how you lose them; one skippable question afterwards is the compromise.
+
+THE #7 MISTAKE: not monitoring the cascade. Users get stranded on the wrong rung for months when a
+threshold is set once and never revisited.
+
+THE #8 MISTAKE: forgetting that the cold-start path is also the outage fallback. Building it properly
+gives you a degraded-but-working mode for free.
+
+THE #9 MISTAKE: confusing cold with sparse. A user with 200 interactions over four years needs
+recency-weighting, not a cold-start cascade.
+
+ONE-SENTENCE TAKEAWAY: cold start is three different problems - and for new users the answer is not a
+better model but a CASCADE of fallbacks, because measured, collaborative filtering LOSES to a
+recommender that ignores the user entirely at every history size below about fifteen interactions
+(7.7% vs 8.5% at 3-5 items), a gap the aggregate metric hides completely; while for new items it is a
+DEADLOCK that only a guaranteed exploration budget and content features can break.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
