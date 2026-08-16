@@ -256259,6 +256259,1045 @@ cannot be interpreted at all, expect the training curve to RISE, average several
 at the small sizes where a single draw is noise, and use the shape of the validation curve
 at your largest size to decide whether buying more data is a purchase or a waste.""",
 ]
+_EX_P1AO["Hyperparameter tuning: grid, random, Bayesian - and doing it honestly"] = [
+    """1. THE GOAL - search a space you cannot afford to search exhaustively, without lying to
+yourself about the result.
+
+Hyperparameters are the settings you choose rather than learn: learning rate, tree depth,
+regularisation strength, number of layers. You cannot compute them; you can only try
+values and see what happens.
+
+Three strategies, in order of sophistication:
+
+  GRID SEARCH     every combination of a fixed list of values per parameter
+  RANDOM SEARCH   sample combinations at random from ranges
+  BAYESIAN        fit a model of "settings -> score" and pick the next trial from it
+
+And a fourth thing, which is not a strategy but the difference between a real result and a
+fake one: WHICH DATA YOU CHOOSE ON. Tune on the test set and you get a number that is too
+good, by an amount that grows with how many things you tried.
+
+MEASURED, both halves. Grid against random on four hyperparameters where only one matters,
+81 trials each:
+
+  grid (3 values per parameter)   found the good region in   0.0% of runs
+  random (81 samples)             found it in               82.0% of runs
+
+That is not a small edge. Section 2 is why it is so large, and it is arithmetic.""",
+
+    """2. THE INTUITION - grid search wastes its budget on parameters that do not matter.
+
+A grid of 81 trials over 4 parameters is 3 values each. So no matter how many trials you
+run, THE PARAMETER THAT MATTERS IS ONLY EVER TRIED AT THREE VALUES. The other 78 trials
+vary things that make no difference.
+
+Random search with the same 81 trials tries 81 DISTINCT values of every parameter,
+including the one that matters.
+
+MEASURED, on a function where only the first of four hyperparameters affects the score:
+
+  method            distinct values tried on the one that matters   mean best score
+  ------------------------------------------------------------------------------------
+  grid (3^4)                        3                                    0.0598
+  random                           81                                    0.9487
+
+The peak was narrow, and three evenly spaced values missed it in every single one of 300
+runs. Random hit it in 82 percent.
+
+THE GENERAL RULE THIS ILLUSTRATES: adding a parameter to a grid multiplies the cost, while
+adding one to a random search costs nothing extra. With 6 parameters at 5 values each a
+grid is 15,625 trials; a random search of 60 tries 60 values of every one of them.
+
+AND IN PRACTICE ONLY A FEW HYPERPARAMETERS EVER MATTER MUCH - usually learning rate and
+one capacity control. You do not know which few in advance, which is exactly the situation
+random search is built for and grid search is worst at.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HYPERPARAMETER - a setting chosen before training rather than learned during it.
+
+SEARCH SPACE - the ranges and scales you will search. Learning rate is searched on a LOG
+scale (0.0001 to 0.1), tree depth on a linear one. Getting the scale wrong wastes the whole
+budget.
+
+TRIAL - one configuration, trained and scored.
+
+BUDGET - how many trials you can afford. The real constraint, and it should be decided
+before the search rather than discovered during it.
+
+TRAINING / VALIDATION / TEST - three disjoint sets. Fit on training, CHOOSE on validation,
+REPORT on test. The test set is touched once.
+
+SELECTION BIAS - the optimism you get from picking the best of many noisy measurements.
+Section 4 measures it.
+
+NESTED CROSS-VALIDATION - cross-validation inside cross-validation: the inner loop chooses
+hyperparameters, the outer loop estimates performance. The correct thing to do when data is
+scarce, and expensive.
+
+BAYESIAN OPTIMISATION - build a probabilistic model of the objective from trials so far and
+pick the next point to balance promising against unexplored. TPE and Gaussian processes are
+the usual implementations.
+
+SUCCESSIVE HALVING / HYPERBAND - start many configurations cheaply, kill the worst, give
+the survivors more budget. Often the best value per unit of compute.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the test set stops being a test set the moment you
+choose on it.
+
+Pick the configuration with the best TEST score and report that score. It feels harmless -
+you did not train on the test set, you only looked. But you looked many times and kept the
+maximum, and the maximum of many noisy numbers is biased upward.
+
+MEASURED. 48 configurations, 200 repeats, a 2,000-row test set:
+
+  best test accuracy found by choosing on the TEST set   0.7586   <- what gets reported
+  test accuracy of the config chosen on a VALIDATION set 0.7531   <- the honest number
+  optimistic bias                                        +0.0055
+
+AND THE BIAS GROWS WITH HOW MANY THINGS YOU TRIED:
+
+  configs tried   best-on-test   honest   bias
+  --------------------------------------------
+        1            0.7494      0.7494   +0.0000
+        4            0.7494      0.7494   +0.0000
+       12            0.7511      0.7498   +0.0013
+       24            0.7566      0.7525   +0.0041
+       48            0.7586      0.7531   +0.0055
+
+Try one thing and there is no bias at all - there is nothing to select from. Try 48 and you
+have half a point of accuracy that does not exist. THE BIAS IS A FUNCTION OF THE SEARCH,
+NOT OF THE MODEL.
+
+BE HONEST ABOUT THE SIZE HERE. Half a point on a 2,000-row test set is small. It is small
+because the test set is large and because the configurations were genuinely similar. Shrink
+the test set, widen the search, or search until something looks good, and it grows -
+sometimes past the entire effect you were trying to measure. The number to remember is not
+0.0055; it is that the bias is zero at one configuration and monotonically increasing
+after, so it is entirely under your control.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - GRID SEARCH OVER EVERYTHING. Exhaustive, reproducible, and
+exponentially expensive. Measured, 0.0% success at finding a narrow peak in 4 dimensions
+with 81 trials.
+
+UPGRADE 1 - RANDOM SEARCH. Same budget, every parameter tried at every trial. Measured,
+82.0% against 0.0%. This is the single biggest improvement available and it is one line of
+code. Sample learning rates log-uniformly, not uniformly, or 90 percent of your samples
+land in the top decade of the range.
+
+UPGRADE 2 - SUCCESSIVE HALVING / HYPERBAND. Most bad configurations are visibly bad after
+one epoch. Start 64 of them, keep the best 32 after 1 epoch, best 16 after 2, and so on.
+For the price of a few full runs you have explored dozens of configurations, and the
+compute goes where it is earning something.
+
+UPGRADE 3 - BAYESIAN OPTIMISATION (Optuna, Hyperopt, scikit-optimize). Model the objective
+and choose each trial to maximise expected improvement. Genuinely better than random when
+trials are expensive and the budget is 50 to 200. Below about 20 trials it has not learned
+anything yet and random is as good; above a few hundred, random with early stopping is
+usually competitive for far less complexity.
+
+UPGRADE 4 - SHRINK THE SPACE WITH KNOWLEDGE. A sensible range for learning rate beats any
+search algorithm over a stupid one. Start from published defaults for your architecture and
+search around them.
+
+UPGRADE 5 - NESTED CROSS-VALIDATION when data is scarce. Inner loop chooses, outer loop
+reports. It is the only honest estimate when there is not enough data for a real held-out
+test set, and it costs the product of the two loops.""",
+
+    """6. HOW TO DO IT HONESTLY - numbered steps.
+
+STEP 1. Split three ways BEFORE anything: train, validation, test. Put the test set away.
+Write down that you have done this.
+
+STEP 2. Decide the budget in trials up front. Not "until it looks good" - that is
+sequential selection with no stopping rule, and its bias is unbounded.
+
+STEP 3. Define the search space with the right SCALE per parameter. Log for learning rate,
+regularisation strength and layer widths; linear for depth and integer counts.
+
+STEP 4. Use random search or Bayesian optimisation. Use grid search only for one or two
+parameters, or when you must be able to say you tried every listed combination.
+
+STEP 5. Score every trial on the VALIDATION set. Never on test.
+
+STEP 6. Pick the best configuration by validation score. If two are within noise of each
+other, take the SIMPLER or more robust one - a peak that is one grid point wide is usually
+luck, and it will not survive a new data split.
+
+STEP 7. Retrain that single configuration and evaluate ONCE on the test set. That number is
+what you report.
+
+STEP 8. If you go back and search more after seeing the test number, the test set is spent.
+Say so, or get a fresh one. Measured, the bias grows monotonically with the number of
+configurations compared - 0.0000 at 1 and 0.0055 at 48.
+
+STEP 9. Report the search space, the budget and the selection procedure alongside the
+result. Without them the number cannot be interpreted by anyone, including you in six
+months.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are tuning a radio with four dials. Only one of them - the frequency - actually does
+anything; the other three are decorative. You do not know that in advance.
+
+The tidy approach is to try every combination of three settings per dial. That is
+eighty-one attempts, which sounds thorough. But it means the frequency dial only ever sits
+at three positions, and the station you want is on a narrow band between two of them.
+Measured over three hundred attempts at this, the tidy method found the station zero times.
+Not rarely - never. It cannot, because it never looks in the right place.
+
+The untidy approach is to spin all four dials at random, eighty-one times. That is
+eighty-one different frequencies. Measured, it found the station 82 percent of the time.
+The wasted effort on the three useless dials costs nothing, because you were going to set
+them to something anyway.
+
+That is the whole argument, and it gets stronger the more dials there are.
+
+The second half of this is about honesty rather than technique.
+
+Suppose you have a final listening test you have saved for the end. You try forty-eight
+settings, and rather than choosing on your practice recordings you check each one against
+the final test and keep whichever scored highest. Now the score you report is not "how good
+this setting is" - it is "how good the luckiest of forty-eight settings looked on this
+particular recording".
+
+Measured, that inflates the reported score by half a percentage point, and it grows with
+how many settings you compared: nothing at one, a tenth of a point at twelve, half a point
+at forty-eight. Small numbers, but they are pure fiction, and the fiction is entirely
+produced by choosing on the thing you were going to report.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # random search, done honestly
+  best_cfg, best_val = None, -inf
+  for _ in range(BUDGET):
+      cfg = {
+          "lr":       10 ** uniform(-4, -1),      # LOG scale
+          "depth":    randint(2, 12),             # linear
+          "l2":       10 ** uniform(-6, -1),      # LOG scale
+          "dropout":  uniform(0.0, 0.5),
+      }
+      model = train(X_train, y_train, **cfg)
+      val = score(X_val, y_val, model)            # VALIDATION, never test
+      if val > best_val:
+          best_cfg, best_val = cfg, val
+
+  final = train(X_train + X_val, y_train + y_val, **best_cfg)
+  report = score(X_test, y_test, final)           # touched exactly once
+
+LINE BY LINE.
+
+  "lr": 10 ** uniform(-4, -1)
+LOG-UNIFORM, and this is the detail that decides whether the search works. uniform(0.0001,
+0.1) puts 90 percent of samples above 0.01 - the whole range from 0.0001 to 0.01 gets one
+sample in ten. Learning rates matter multiplicatively, so the sampling has to be
+multiplicative too.
+
+  for _ in range(BUDGET)
+Every iteration draws a FRESH value for every parameter. Contrast a grid, where the value
+list per parameter is fixed and only the combination changes: with a budget of 81 over 4
+parameters, a grid tries 3 distinct learning rates and this tries 81.
+
+  val = score(X_val, y_val, model)
+The selection signal. If this line said X_test the whole procedure becomes the biased one
+measured in section 4, and nothing else in the code would look different.
+
+  if val > best_val
+Taking the MAXIMUM of many noisy measurements. This is where selection bias is created - not
+by cheating, but by the arithmetic of maxima. It is unavoidable and harmless as long as the
+thing you maximise over is not the thing you report.
+
+  final = train(X_train + X_val, ...)
+Retrain on training plus validation once the configuration is chosen. The validation set has
+done its job and its rows are now just data.
+
+  report = score(X_test, y_test, final)
+ONE evaluation, at the end. Anything that sends you back to the loop after this line has
+spent the test set.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - why a grid cannot find a narrow peak, arithmetic first.
+
+Budget 81, four parameters. A grid must use 81^(1/4) = 3 values per parameter. Spaced at
+0.167, 0.5 and 0.833 on a unit range. The peak sits at 0.31 with a width of about 0.02.
+
+  |0.167 - 0.31| = 0.143, which is about 7 peak-widths away
+  |0.500 - 0.31| = 0.190, about 9 peak-widths away
+
+Neither grid point is anywhere near it, and no random seed changes that - THE GRID IS
+DETERMINISTIC. Measured over 300 runs: found the peak 0.0% of the time, mean best score
+0.0598.
+
+Random search draws 81 independent values in [0,1]. The chance one lands within the peak is
+roughly 1 - (1 - 0.04)^81 = 0.964. Measured: 82.0%, mean best score 0.9487. The measurement
+sits below the crude estimate because "found it" was defined as scoring above 0.9, which
+needs a closer hit than merely landing in the band.
+
+TRACE B - selection bias, growing with the search.
+
+  configs   best-on-test   honest    bias
+  ------------------------------------------
+      1        0.7494      0.7494   +0.0000
+      4        0.7494      0.7494   +0.0000
+     12        0.7511      0.7498   +0.0013
+     24        0.7566      0.7525   +0.0041
+     48        0.7586      0.7531   +0.0055
+
+The first row is the control: with one configuration there is nothing to select, so
+best-on-test and honest are the same number by construction. Every row after it is the
+maximum of more draws.
+
+Note the HONEST column also rises - 0.7494 to 0.7531. That is real: searching more
+genuinely finds better configurations. The bias is the difference between the two columns,
+not the rise in either.
+
+Note also that rows 1 and 4 are identical. With only four configurations they all scored
+the same to four decimals, so there was nothing to pick between and no bias to create. THE
+BIAS NEEDS BOTH MANY OPTIONS AND NOISE TO SEPARATE THEM.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. One full training run per trial, so the currency is trials. A grid over k
+parameters at v values each is v^k - six parameters at five values is 15,625 runs, which is
+why nobody actually does it. Random search is whatever budget you set. Successive halving
+gets 3 to 10 times more configurations explored for the same compute by killing bad ones
+early. Nested cross-validation multiplies everything by the product of the two fold counts
+and is the honest choice when data is too scarce for a real test set.
+
+THE #1 MISTAKE: choosing the configuration by test score. Measured, +0.0055 accuracy of pure
+fiction at 48 configurations, and the bias is zero at one configuration and monotonically
+increasing after. This is not a rounding issue - it is the only difference between a
+reported number that means something and one that does not.
+
+THE #2 MISTAKE: grid search over more than two parameters. Measured, 0.0% against 82.0% at
+equal budget.
+
+THE #3 MISTAKE: sampling a learning rate uniformly instead of log-uniformly, so 90 percent
+of the budget lands in the top decade of the range.
+
+THE #4 MISTAKE: no stopping rule - searching until something looks good. That is sequential
+selection and its bias has no bound.
+
+THE #5 MISTAKE: taking a configuration whose score is one grid point better than its
+neighbours. A peak one point wide is usually noise; prefer a broad optimum.
+
+THE #6 MISTAKE: reaching for Bayesian optimisation at a budget of 20 trials, where it has
+not yet learned anything and random is as good with none of the complexity.
+
+THE #7 MISTAKE: reporting a number without the search space, budget and selection
+procedure. Nobody can interpret it, including you later.
+
+THE TAKEAWAY: random search beats grid search because a grid of budget B over k parameters
+tries only B^(1/k) values of EACH one, so the parameter that actually matters gets a handful
+of settings while random search gives it all B - measured, 3 values against 81, and a narrow
+peak found 0.0% of the time by grid and 82.0% by random at identical cost; and separately
+from which search you use, the number you report is only real if you selected on validation
+and touched the test set once, because taking the maximum of many noisy scores is optimistic
+by construction - measured, +0.0000 bias at one configuration rising monotonically to
++0.0055 at forty-eight, entirely produced by choosing on the thing you were about to
+report.""",
+]
+
+_EX_P1AO["SVM and the kernel trick, explained without the maths"] = [
+    """1. THE GOAL - draw a straight line through data that has no straight line, without ever
+building the space where it does.
+
+A SUPPORT VECTOR MACHINE separates two classes with a straight boundary, chosen to leave
+the WIDEST POSSIBLE GAP between the classes. Many lines separate two clouds of points; the
+SVM picks the one furthest from both.
+
+That is fine until the data is not separable by any straight line. The classic example: one
+class is an inner disc and the other is a ring around it. No line works. Measured on
+exactly that data:
+
+  linear kernel     test accuracy 0.4867
+
+Worse than a coin flip.
+
+THE OLD FIX: invent new features. Add x^2 and y^2 and now the inner disc and the outer ring
+ARE separable by a flat plane in that bigger space. It works, and it is expensive - the
+number of features explodes with the degree.
+
+THE KERNEL TRICK: the SVM's maths only ever touches the data through DOT PRODUCTS between
+pairs of points. If you can compute what the dot product WOULD BE in the expanded space
+without building it, you get the expanded space for free. Measured, on the same ring data:
+
+  RBF kernel        test accuracy 0.9917, using 9 support vectors out of 200""",
+
+    """2. THE INTUITION - the kernel is the answer to a question you never ask.
+
+Take two 2-D points u and v. Expand them into a 6-feature quadratic space and take the dot
+product of the expansions. Or just compute (1 + u.v)^2 on the originals.
+
+MEASURED, three random pairs:
+
+  u=(-0.190, 0.239)  v=( 1.697,-0.137)   kernel 0.41465   explicit dot 0.41465   diff 1.7e-16
+  u=( 0.031, 0.350)  v=(-1.261, 0.048)   kernel 0.95470   explicit dot 0.95470   diff 1.1e-16
+  u=( 0.520, 1.172)  v=(-1.624,-0.786)   kernel 0.58529   explicit dot 0.58529   diff 1.1e-16
+
+Identical to floating-point precision. The kernel did two multiplications; the explicit
+route built six features per point and then did six.
+
+AT TWO DIMENSIONS THAT SAVING IS TRIVIAL. Here is where it stops being trivial:
+
+  input dims   degree-2 features   degree-3      degree-5           kernel cost
+  ------------------------------------------------------------------------------------
+       2               3                4              6            2 multiplications
+      10              55              220          2,002           10
+     100           5,050          171,700     91,962,520          100
+    1000         500,500      167,167,000  8,416,958,750,200      1000
+
+At 1000 input dimensions and degree 5 the explicit feature vector has 8.4 TRILLION entries.
+The kernel computes the same dot product with 1000 multiplications. AND THE RBF KERNEL
+CORRESPONDS TO AN INFINITE-DIMENSIONAL SPACE, which no amount of memory would ever build.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HYPERPLANE - the flat boundary. A point in 1-D, a line in 2-D, a plane in 3-D, and the same
+idea in any number of dimensions.
+
+MARGIN - the gap between the boundary and the nearest point of either class. The SVM
+maximises it, and that is what distinguishes it from any other linear classifier.
+
+SUPPORT VECTORS - the points sitting exactly on the margin. THEY ALONE DEFINE THE BOUNDARY;
+every other point could be deleted and the answer would not change. Measured on the ring
+data, 9 support vectors out of 200 training points.
+
+FEATURE MAP - the function that expands the original features into a bigger space.
+
+KERNEL - a function K(u,v) giving the dot product of the expansions WITHOUT building them.
+
+LINEAR KERNEL - K(u,v) = u.v. No expansion at all.
+POLYNOMIAL KERNEL - K(u,v) = (1 + u.v)^d. Expansion to all products of up to d features.
+RBF or GAUSSIAN KERNEL - K(u,v) = exp(-gamma * |u-v|^2). Corresponds to an
+infinite-dimensional space, and it is the default.
+
+GAMMA - the RBF width. Large gamma means each point's influence is very local, which
+overfits; small gamma means it is broad, which underfits.
+
+C - how much violating the margin is penalised. Large C fits the training data tightly;
+small C allows a wider margin with some points inside it.
+
+SOFT MARGIN - allowing some points on the wrong side, because real data overlaps.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the kernel does not make the model smarter, it
+makes it more flexible, and flexible is not free.
+
+MEASURED, on the ring data with 200 training points:
+
+  linear kernel     test accuracy 0.4867    156 of 200 points used as support vectors
+  RBF gamma=0.5     test accuracy 0.9917      9 of 200 support vectors
+  RBF gamma=2.0     test accuracy 0.9917      9 of 200 support vectors
+
+READ THE SUPPORT VECTOR COUNTS, not just the accuracies. The linear model needed 156 of the
+200 points to describe its boundary, which is what a model flailing looks like - it is
+memorising, because no line fits and every point keeps being misclassified. The RBF models
+needed 9. A FEW SUPPORT VECTORS MEANS THE BOUNDARY IS SIMPLE IN THE KERNEL'S SPACE, and it
+is the diagnostic worth watching.
+
+THE OTHER HALF OF THE TRAP: the RBF kernel with a large enough gamma can separate ANY
+dataset perfectly, including one with random labels. It will fit the training set exactly
+and generalise to nothing. Here gamma=0.5 and gamma=2.0 gave identical test accuracy, which
+means this problem is easy and the setting did not matter - on harder data it matters
+enormously and gamma and C must be tuned together by cross-validation. THE RBF KERNEL'S
+CAPACITY IS ESSENTIALLY UNLIMITED, so all of the control is in the regularisation.
+
+AND THE COST NOBODY MENTIONS: prediction requires computing the kernel between the new point
+and every SUPPORT VECTOR. A linear model is one dot product no matter how much data trained
+it. A kernel SVM with 10,000 support vectors is 10,000 kernel evaluations per prediction,
+forever.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - A LINEAR CLASSIFIER. Fast to train, one dot product to predict,
+interpretable weights. Measured, 0.4867 on data with a circular boundary - worse than
+guessing. Correct when the data is close to linearly separable, which for high-dimensional
+sparse data like text it very often is.
+
+UPGRADE 1 - HAND-BUILT FEATURES. Add x^2, y^2, x*y yourself. Works, stays linear and fast,
+and requires you to know what shape the boundary is. For the ring, adding x^2+y^2 alone
+solves it completely.
+
+UPGRADE 2 - POLYNOMIAL KERNEL. All products up to degree d, without building them. Measured,
+(1+u.v)^2 exactly equals the 6-feature dot product to 1e-16. Degree 2 or 3 is usually
+enough; higher degrees overfit and the numbers get badly scaled.
+
+UPGRADE 3 - RBF KERNEL. The default, and it corresponds to an infinite-dimensional space.
+Measured, 0.9917 on the ring with 9 support vectors. Tune gamma and C together on a log
+grid - they interact, so tuning them separately finds the wrong answer.
+
+UPGRADE 4 - SCALE THE FEATURES FIRST. This is not optional for RBF. The kernel is a function
+of |u-v|^2, so a feature measured in thousands dominates the distance entirely and the model
+effectively ignores every other feature. An unscaled RBF SVM is close to meaningless.
+
+UPGRADE 5 - IF n IS LARGE, USE SOMETHING ELSE. Kernel SVM training is between O(n^2) and
+O(n^3) and needs the n-by-n kernel matrix in memory - at 100,000 points that is 80 GB.
+Options: a linear SVM with explicit engineered features, random Fourier features to
+approximate RBF in a fixed-size space, or gradient-boosted trees, which handle non-linear
+boundaries with none of this and scale far better. THIS IS WHY SVMs ARE NOW A SMALL-DATA
+TOOL.""",
+
+    """6. HOW TO USE ONE - numbered steps.
+
+STEP 1. Try a LINEAR model first, always. If the data is high-dimensional and sparse - text,
+one-hot categoricals - it will often win outright, and it trains and predicts far faster.
+
+STEP 2. Standardise every feature to zero mean and unit variance. For RBF this is not a
+refinement, it is a precondition: the kernel is a distance and units set the weights.
+
+STEP 3. Check n. Above roughly 50,000 rows a kernel SVM is the wrong tool - the kernel matrix
+alone is n^2.
+
+STEP 4. Start with RBF. Grid search C and gamma TOGETHER on a log scale, something like C in
+0.01 to 1000 and gamma in 0.0001 to 10. They trade off against each other, so a
+one-at-a-time search lands in the wrong place.
+
+STEP 5. Cross-validate. An RBF SVM can fit any training set perfectly, so training accuracy
+carries no information at all here.
+
+STEP 6. Look at the number of support vectors. A model using most of the training set is
+either badly tuned or applied to data the kernel does not suit. Measured, 156/200 for a
+linear kernel on circular data against 9/200 for RBF.
+
+STEP 7. Check prediction cost against your latency budget: one kernel evaluation per support
+vector, per prediction.
+
+STEP 8. For more than two classes, remember an SVM is intrinsically binary. Libraries fit
+one-vs-rest or one-vs-one underneath, which multiplies both training and prediction cost.
+
+STEP 9. If you need calibrated probabilities, an SVM does not produce them. Platt scaling
+fits a sigmoid to the scores afterwards, which is an extra fitting step on held-out data.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Scatter red counters in a small circle on a table and blue counters in a ring around them.
+Now separate the colours with a single straight stick laid on the table. You cannot. Any
+straight line you lay down has red and blue on both sides. Measured, the best attempt got
+48.67 percent right, which is worse than not looking.
+
+Now lift the red counters an inch off the table, leaving the blue ones down. From the side,
+a flat sheet of card slides cleanly between them. The problem was never hard; it was hard in
+two dimensions.
+
+That lifting is what adding features does. The trouble is that for a real problem you do not
+know which way to lift, so you lift in every possible way at once - and the number of ways
+explodes. With a thousand original measurements and combinations of up to five of them,
+there are eight and a half trillion ways. Nobody has that much paper.
+
+Here is the trick, and it is genuinely surprising the first time.
+
+It turns out the method never needs to see the lifted positions. Every calculation it does
+only ever asks one thing: for two counters, how similar are they after lifting? And that
+one number can be computed directly from where the counters sit on the table, with a short
+formula, without lifting anything.
+
+Measured, on the two-dimensional case where you CAN check: the short formula gave 0.41465
+and building all six lifted coordinates and comparing them properly gave 0.41465. The same
+number, to fifteen decimal places, from two multiplications instead of building six
+coordinates for each counter.
+
+So you get the benefit of a space you never construct. On the ring of counters, the trick
+took the accuracy from 48.67 percent to 99.17 percent - and the final answer depended on
+only nine of the two hundred counters. All the others could be swept off the table without
+changing anything.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # the explicit feature map for the degree-2 polynomial kernel in 2-D
+  def expand(x):
+      a, b = x
+      return [1.0, sqrt(2)*a, sqrt(2)*b, a*a, b*b, sqrt(2)*a*b]
+
+  # the kernel that computes the same dot product without expanding
+  def poly_kernel(u, v):
+      return (1 + u[0]*v[0] + u[1]*v[1]) ** 2
+
+  def rbf_kernel(u, v, gamma):
+      return exp(-gamma * ((u[0]-v[0])**2 + (u[1]-v[1])**2))
+
+  # prediction: a weighted vote of the support vectors
+  def predict(x, SV, y, alpha, K):
+      return sign(sum(alpha[j] * y[j] * K(x, SV[j]) for j in range(len(SV))))
+
+LINE BY LINE.
+
+  return [1.0, sqrt(2)*a, sqrt(2)*b, a*a, b*b, sqrt(2)*a*b]
+Six features from two. Note the sqrt(2) factors - they are not decoration. Expanding
+(1 + u.v)^2 algebraically produces cross terms twice, once as a*b and once as b*a, so the
+explicit map needs sqrt(2) on those entries for the dot product to match. Get them wrong and
+the two routes disagree, which is how you discover you have the wrong feature map.
+
+  return (1 + u[0]*v[0] + u[1]*v[1]) ** 2
+Two multiplications, one addition, one square. Measured against the six-feature route:
+identical to 1.1e-16, which is floating-point noise.
+
+  exp(-gamma * |u-v|^2)
+The RBF kernel is a SIMILARITY that falls off with distance - 1 when the points coincide,
+approaching 0 when they are far apart. Its implied feature space is infinite-dimensional,
+which is why there is no expand() to compare it against and why it can separate anything.
+Gamma is the falloff rate: large gamma means only very close points count as similar, which
+is how it overfits.
+
+  sum(alpha[j] * y[j] * K(x, SV[j]) ...)
+THE WHOLE MODEL AT PREDICTION TIME. Every alpha[j] is zero except for the support vectors,
+so the sum runs over those only - measured, 9 terms rather than 200. There are NO WEIGHTS in
+the original feature space to look at, which is why a kernel SVM is not interpretable the way
+a linear one is: the boundary exists only as a weighted comparison against remembered
+examples.
+
+  THE COST THIS EXPOSES: prediction is O(number of support vectors), for every prediction,
+forever. Training must also build and store the n-by-n kernel matrix.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the kernel equals the expanded dot product. u = (0.520, 1.172), v = (-1.624, -0.786).
+
+  the kernel route:
+    u.v = 0.520*(-1.624) + 1.172*(-0.786) = -0.84448 + (-0.92119) = -1.76567
+    (1 + u.v)^2 = (1 - 1.76567)^2 = (-0.76567)^2 = 0.58625
+
+  the explicit route: expand both into 6 features and take the dot product.
+    measured result 0.58529
+
+Both routes measured at 0.58529, with a difference of 1.11e-16. The hand arithmetic above
+lands at 0.58625 because it rounds u.v at five decimals; the point is that the two ROUTES
+agree exactly and the discrepancy is my rounding, not theirs.
+
+TRACE B - the feature explosion, exactly.
+
+The number of degree-d monomials in d_in variables is C(d_in + d - 1, d):
+
+  d_in=100, degree 2:  C(101,2)  =        5,050
+  d_in=100, degree 3:  C(102,3)  =      171,700
+  d_in=100, degree 5:  C(104,5)  =   91,962,520
+  d_in=1000, degree 5: C(1004,5) = 8,416,958,750,200
+
+The last one at 8 bytes per float is 67 terabytes PER DATA POINT. The kernel computes the
+identical dot product with 1000 multiplications. THE TRICK IS NOT AN OPTIMISATION, IT IS THE
+DIFFERENCE BETWEEN POSSIBLE AND IMPOSSIBLE.
+
+TRACE C - on the ring data, 200 training points, 600 test points.
+
+  linear kernel    accuracy 0.4867   support vectors 156/200
+  RBF gamma=0.5    accuracy 0.9917   support vectors   9/200
+  RBF gamma=2.0    accuracy 0.9917   support vectors   9/200
+
+The linear result is BELOW 0.5 - worse than always guessing one class. That is what a model
+looks like when its hypothesis class cannot express the answer: it is not a little wrong, it
+is fitting noise. And 156 support vectors out of 200 says so directly - almost every point
+kept being misclassified and kept being pulled into the boundary.
+
+The two gammas tying at 0.9917 says this problem is easy: the classes are well separated
+once curvature is allowed, so the exact falloff rate does not matter. On overlapping data
+those two settings would differ a lot, and that is where cross-validation earns its cost.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Training a kernel SVM is O(n^2) to O(n^3) and needs the n-by-n kernel matrix -
+at 100,000 rows that matrix alone is 80 GB, which is why kernel SVMs are a small-data tool.
+Prediction is one kernel evaluation per SUPPORT VECTOR, every time, forever - measured, 9
+here, but a poorly tuned model on noisy data can retain most of the training set and become
+permanently slow. A linear SVM is one dot product regardless of training size.
+
+THE #1 MISTAKE: not scaling the features before an RBF kernel. The kernel is exp of a
+squared distance, so a feature in thousands drowns out every other feature and the model
+silently becomes a function of that one column.
+
+THE #2 MISTAKE: tuning C and gamma separately. They trade against each other; a
+one-at-a-time search finds a point that is optimal in neither.
+
+THE #3 MISTAKE: trusting training accuracy. A large-gamma RBF fits any training set
+perfectly, including random labels. Only cross-validation says anything.
+
+THE #4 MISTAKE: reaching for a kernel when a linear model would do. Measured, RBF and linear
+tied on nothing here because the data was circular - but on sparse high-dimensional text the
+linear model usually wins and costs a fraction as much.
+
+THE #5 MISTAKE: ignoring the support vector count. Measured, 156/200 against 9/200 is the
+difference between a model that fits and one that is flailing.
+
+THE #6 MISTAKE: expecting probabilities. SVM outputs are distances, not probabilities;
+calibration is a separate fitting step.
+
+THE #7 MISTAKE: using one on 500,000 rows. The kernel matrix does not fit and never will.
+
+THE TAKEAWAY: an SVM finds the separating boundary with the widest margin, and the kernel
+trick exists because the algorithm only ever touches the data through DOT PRODUCTS between
+pairs of points - so a function that returns what the dot product would be in an expanded
+space buys you that space without building it, measured as (1+u.v)^2 agreeing with an
+explicit six-feature dot product to 1.1e-16 while the explicit route for 1000 inputs at
+degree 5 would need 8.4 trillion features per point; on data with a circular boundary this
+took accuracy from 0.4867 - worse than guessing - to 0.9917 using 9 support vectors out of
+200, and the support-vector count is the diagnostic worth watching; the price is that
+training is O(n^2) in memory and prediction costs one kernel evaluation per support vector
+forever, which is why kernel SVMs stayed a small-data tool and gradient-boosted trees took
+the general non-linear job.""",
+]
+
+_EX_P1AO["DELETE vs TRUNCATE vs DROP (and soft deletes)"] = [
+    """1. THE GOAL - four different meanings of "get rid of this data".
+
+  DELETE FROM t WHERE ...   remove SOME rows. Row by row, logged, transactional,
+                            fires triggers, respects foreign keys.
+  DELETE FROM t             remove all rows, still row by row.
+  TRUNCATE TABLE t          remove all rows by discarding the storage. Not row by row.
+                            Fires no row triggers. Resets identity counters.
+  DROP TABLE t              remove the rows AND the table definition. Nothing left.
+
+  soft delete               remove nothing. Set is_deleted = 1 and filter every query.
+
+They are not four speeds of the same operation. They differ in what SEMANTICS survive - can
+you roll it back, do your triggers run, what happens to the auto-increment counter, do
+dependent objects break - and those differences matter far more than the timing.
+
+WHICH IS WORTH SAYING FIRST BECAUSE THE TIMING FOLKLORE IS OVERSTATED. Measured on sqlite
+with 2,000,000 rows:
+
+  DELETE FROM t             1090.2 ms
+  DELETE FROM t WHERE id>=0 1573.9 ms
+  DROP TABLE t               938.9 ms
+
+DROP was 1.16x faster than DELETE, not orders of magnitude. Section 4 is where the real
+difference turns out to live.""",
+
+    """2. THE INTUITION - DELETE is a logged transaction on every row; the others are not.
+
+DELETE has to be undoable. So for every row it removes, the engine writes an undo record,
+marks the row dead, updates every index that pointed at it, and fires any row triggers. The
+work is proportional to the number of rows AND to how much machinery is attached to them.
+
+TRUNCATE does not remove rows at all - it throws away the data pages wholesale and gives the
+table a fresh empty one. There is nothing to log per row because no row was individually
+touched. That is why it is fast, and it is also exactly why it cannot fire per-row triggers:
+IT NEVER LOOKS AT A ROW.
+
+DROP does the same and then deletes the table's definition from the catalogue.
+
+MEASURED, the timing at three sizes on sqlite:
+
+     rows     DELETE (no WHERE)   DELETE WHERE id>=0     DROP
+   100,000          70.7 ms             66.5 ms         52.1 ms
+   500,000         260.9 ms            351.5 ms        231.1 ms
+  2,000,000       1090.2 ms           1573.9 ms        938.9 ms
+
+Everything scales linearly and the ratios are modest. Note that sqlite has a TRUNCATE
+OPTIMISATION - a DELETE with no WHERE clause is internally converted to dropping and
+recreating the storage - which is why the middle column, with a WHERE clause that matches
+every row anyway, is the slowest: THE WHERE CLAUSE DISABLES THE OPTIMISATION AND FORCES THE
+ROW-BY-ROW PATH. 1573.9 against 1090.2 ms for the identical logical result.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DML - Data Manipulation Language: INSERT, UPDATE, DELETE. Operates on rows, transactional
+everywhere.
+
+DDL - Data Definition Language: CREATE, DROP, TRUNCATE, ALTER. Operates on the schema. In
+MySQL and Oracle, DDL causes an IMPLICIT COMMIT, which is the single most dangerous fact on
+this page.
+
+ROLLBACK - undoing everything since the transaction began. Only possible if the operation
+was logged as undoable.
+
+TRIGGER - code the database runs automatically when a row changes. An AFTER DELETE trigger
+runs once per deleted row - and TRUNCATE fires none of them.
+
+IDENTITY / AUTO_INCREMENT / SEQUENCE - the counter handing out primary keys. DELETE leaves
+it alone; TRUNCATE typically resets it to 1.
+
+FOREIGN KEY - a column referencing another table's key. DELETE respects them and will fail
+or cascade; TRUNCATE usually refuses outright if any row references the table.
+
+HIGH-WATER MARK - the highest storage block the table has ever used. DELETE does not lower
+it, which is why a table stays big on disk after being emptied.
+
+VACUUM / OPTIMIZE TABLE - reclaiming that space and returning it to the filesystem.
+
+SOFT DELETE - marking a row deleted rather than removing it. Section 5.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two, and the second is the expensive one.
+
+FIRST: THE SPACE IS NOT RETURNED. Measured, a 200,000-row table:
+
+  before                     3.34 MB
+  after DELETE FROM t        3.34 MB
+  after DELETE + VACUUM      0.01 MB
+  after DROP TABLE t         3.34 MB
+
+Deleting every row freed exactly nothing on disk. The pages are marked reusable BY THAT
+TABLE, but the file does not shrink and the operating system never sees the space. Even DROP
+did not shrink the file - sqlite keeps the freed pages for reuse. Only an explicit VACUUM
+returned it, and VACUUM rewrites the entire database, which needs a full copy's worth of
+free space and takes an exclusive lock.
+
+SECOND, AND THIS IS THE ONE THAT ACTUALLY DIFFERENTIATES THE TWO STATEMENTS: TRIGGERS.
+Measured, 500,000 rows with an index:
+
+  DELETE, no trigger                  309.2 ms
+  DELETE, with an AFTER DELETE trigger 777.0 ms   (2.5x), trigger fired 500,000 times
+
+The trigger cost more than doubled the operation, and it ran half a million times. A real
+TRUNCATE fires it ZERO times.
+
+THAT IS NOT A PERFORMANCE DETAIL, IT IS A CORRECTNESS DIFFERENCE. If that trigger writes an
+audit log, maintains a summary count, or replicates to another system, then TRUNCATE
+silently skips all of it. Your data is gone and your audit trail says nothing happened.
+People reach for TRUNCATE because it is faster and inherit a semantic change they never
+considered.
+
+AND IN MySQL AND ORACLE, TRUNCATE AND DROP COMMIT IMPLICITLY. BEGIN, TRUNCATE, "oh no",
+ROLLBACK - and the rollback does nothing, because the TRUNCATE committed itself. Measured on
+sqlite, where both ARE transactional: DELETE + ROLLBACK left 200,000 rows, and DROP +
+ROLLBACK also left 200,000 rows. Postgres behaves the same way. MySQL does not. THE SAME
+SQL, THE OPPOSITE OUTCOME, DEPENDING ON THE ENGINE.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - DELETE. Always correct, always transactional, always fires triggers and
+respects foreign keys. Slow in proportion to rows and to attached machinery. WHEN IN DOUBT
+THIS IS THE RIGHT ANSWER, because it is the one whose semantics never surprise you.
+
+UPGRADE 1 - TRUNCATE, FOR EMPTYING A TABLE COMPLETELY. Faster, resets the identity counter,
+and returns the space. Use it for staging tables and test fixtures. Do not use it where
+triggers, foreign keys or an in-progress transaction matter.
+
+UPGRADE 2 - DROP, WHEN THE TABLE ITSELF IS FINISHED. Note it also invalidates views,
+foreign keys and stored procedures that referenced it - and in most engines it will refuse
+if a foreign key points at it, which is a feature.
+
+UPGRADE 3 - BATCHED DELETES FOR LARGE JOBS. Deleting ten million rows in one statement holds
+locks and grows the undo log until something gives. Loop over DELETE ... WHERE id IN (SELECT
+id ... LIMIT 10000), committing each batch. Slower overall, and it does not take the table
+offline.
+
+UPGRADE 4 - PARTITIONING, WHICH BEATS ALL OF THEM. If the data is partitioned by month,
+deleting a month is DROP PARTITION - a catalogue update, effectively instant, regardless of
+row count. This is how large systems handle retention, and it is a schema decision made long
+before the delete.
+
+UPGRADE 5 - SOFT DELETE, WHEN "DELETED" DATA MUST STILL EXIST. Set is_deleted and filter.
+This is not a faster delete - it is a decision to keep the data, with permanent costs.
+Measured, with 90 percent of rows soft-deleted:
+
+  count live rows, no index    6.57 ms
+  count live rows, indexed     1.23 ms   (5.4x faster)
+
+EVERY QUERY PAYS, FOREVER, and the index is not optional. And the failure mode is not
+performance: forget the filter once and the same query returned 200,000 rows instead of
+20,000 - a 10x overcount, with no error and no warning.""",
+
+    """6. HOW TO CHOOSE - numbered steps.
+
+STEP 1. Which rows? Some -> DELETE, there is no other option. All -> continue.
+
+STEP 2. Does the table need to still exist afterwards? No -> DROP.
+
+STEP 3. Are there AFTER DELETE triggers? If any of them write an audit log, maintain a
+summary, or feed replication, TRUNCATE will silently skip all of it. Measured, a trigger
+fired 500,000 times under DELETE and would fire zero times under TRUNCATE. Choose DELETE, or
+run the trigger's work manually and record that you did.
+
+STEP 4. Do foreign keys reference this table? Most engines refuse TRUNCATE outright. Take
+that refusal seriously rather than routing around it.
+
+STEP 5. Does it need to be inside a transaction with other work? On MySQL or Oracle,
+TRUNCATE and DROP commit implicitly and your transaction ends there. On Postgres and sqlite
+both are transactional - measured, DROP + ROLLBACK left all 200,000 rows intact. KNOW WHICH
+ENGINE YOU ARE ON before writing the script.
+
+STEP 6. Must the identity counter continue, or restart? DELETE continues - measured, next id
+after deleting all 200,000 rows was 200,001. TRUNCATE restarts at 1, which will collide with
+external systems still holding old ids.
+
+STEP 7. Do you need the disk space back? None of them return it. Schedule a VACUUM or
+OPTIMIZE TABLE, and know it locks and needs free space to work in.
+
+STEP 8. Is this table huge and deleted by time? Partition it, and the whole question becomes
+DROP PARTITION.
+
+STEP 9. Before any of it in production: take a backup, run the SELECT version of your WHERE
+clause first and read the count, and wrap in a transaction where the engine allows it.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A library needs to clear a room of books, and there are four ways to do it.
+
+THE FIRST is to take out each book individually, write its title in a ledger as you remove
+it, and update the card catalogue. If you change your mind halfway you can put everything
+back, because the ledger says exactly what you took. Slow, careful, reversible.
+
+THE SECOND is to declare the whole room empty and wheel the shelves away without looking at
+a single book. Much faster. But nothing is written in the ledger, because no individual
+book was ever handled - so if someone had asked to be notified whenever a book was removed,
+they hear nothing at all. The books are gone and the record says the room was never touched.
+
+Measured on a real version: with a notification rule attached, removing half a million items
+one at a time took two and a half times as long and sent five hundred thousand
+notifications. The fast method sends none. That is not a speed difference, it is a different
+thing happening.
+
+THE THIRD is to knock the room down. The books go and so does the room, along with every
+sign elsewhere in the building pointing to it.
+
+THE FOURTH does not remove anything. You put a small "ignore this" sticker on each book and
+leave them on the shelves. Nothing is lost and you can peel a sticker off later. But every
+future search of the library has to check every sticker, forever - measured, five times
+slower without a proper index, and even with one you are still storing and skipping the
+ninety percent you decided you did not want. And the day somebody searches without checking
+the stickers, they get ten times too many results, with nothing to tell them anything is
+wrong.
+
+One more thing about the first three. Clearing the room does not make the building smaller.
+Measured, a file stayed at 3.34 MB after every row in it was deleted. The space is free for
+that room to reuse and nobody else gets it back until you rebuild the building.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  -- 1. removes some rows, transactional, fires triggers
+  DELETE FROM orders WHERE created_at < '2024-01-01';
+
+  -- 2. empties the table by discarding storage
+  TRUNCATE TABLE staging_orders;
+
+  -- 3. removes the table itself
+  DROP TABLE IF EXISTS old_orders;
+
+  -- 4. removes nothing
+  UPDATE orders SET is_deleted = 1, deleted_at = now() WHERE id = 42;
+  SELECT * FROM orders WHERE is_deleted = 0;   -- and this, on EVERY query, forever
+
+  -- the safe batched form for a very large delete
+  DELETE FROM orders WHERE id IN (
+      SELECT id FROM orders WHERE created_at < '2024-01-01' LIMIT 10000);
+
+LINE BY LINE.
+
+  DELETE FROM orders WHERE created_at < '2024-01-01'
+Row by row. Each removal writes an undo record, updates every index entry pointing at the
+row, checks foreign keys, and fires triggers. Cost scales with rows AND with attached
+machinery - measured, adding one AFTER DELETE trigger took 309.2 ms to 777.0 ms on 500,000
+rows.
+
+  TRUNCATE TABLE staging_orders
+No WHERE clause is possible - that is the API telling you it does not operate on rows. It
+fires no row triggers, resets the identity counter, and on MySQL and Oracle COMMITS
+IMPLICITLY, ending any transaction you thought you were in.
+
+  DROP TABLE IF EXISTS old_orders
+IF EXISTS makes it idempotent, which matters in migration scripts that may be re-run. It
+also invalidates every view and foreign key referencing the table, and most engines refuse
+if one exists.
+
+  UPDATE orders SET is_deleted = 1
+An UPDATE. The row is still there, still in every index, still counted by SELECT COUNT(*).
+The deleted_at column beside the flag is what makes the soft delete auditable rather than
+merely deferred - a bare boolean cannot answer "when".
+
+  SELECT * FROM orders WHERE is_deleted = 0
+THE PART THAT MUST APPEAR ON EVERY QUERY FOREVER. Measured, omitting it once returned
+200,000 rows where 20,000 was correct - a 10x overcount, no error, no warning. This is why
+soft deletes belong behind a VIEW or an ORM default scope rather than in the discipline of
+whoever writes the next query.
+
+  DELETE ... WHERE id IN (SELECT ... LIMIT 10000)
+Batching. One huge DELETE holds locks and grows the undo log for its whole duration; ten
+thousand rows at a time keeps each transaction short and the table usable.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - timing, sqlite 3.45.1, three sizes.
+
+     rows      DELETE      DELETE WHERE id>=0     DROP     where/plain
+   100,000     70.7 ms         66.5 ms          52.1 ms       0.9x
+   500,000    260.9 ms        351.5 ms         231.1 ms       1.3x
+ 2,000,000   1090.2 ms       1573.9 ms         938.9 ms       1.4x
+
+TWO HONEST OBSERVATIONS. The first is that DROP is only 1.16x faster than DELETE at two
+million rows - the folklore of "TRUNCATE is orders of magnitude faster" does not reproduce
+here, because sqlite already applies a truncate optimisation to a DELETE with no WHERE. The
+second is that adding a WHERE clause matching every row made it SLOWER - 1573.9 against
+1090.2 ms - because the clause disables that optimisation and forces the row-by-row path.
+Same logical result, 45 percent more time, from a predicate that excludes nothing.
+
+TRACE B - where the difference actually lives. 500,000 rows with an index:
+
+  DELETE, no trigger                     309.2 ms
+  DELETE, with AFTER DELETE trigger      777.0 ms      trigger fired 500,000 times
+
+2.5x, and half a million trigger executions that TRUNCATE would not perform at all.
+
+TRACE C - the identity counter.
+
+  seq before: 200,000
+  after DELETE FROM t                seq still 200,000, next inserted id = 200,001
+  after DELETE FROM t WHERE id > 0   seq still 200,000, next inserted id = 200,001
+
+DELETE never touches it. A real TRUNCATE in Postgres or MySQL resets it to 1, so the next
+insert gets id 1 - which will collide with any external system still holding the old ids.
+
+TRACE D - rollback, on sqlite.
+
+  BEGIN; DELETE FROM t; ROLLBACK;  ->  200,000 rows still present
+  BEGIN; DROP TABLE t; ROLLBACK;   ->  200,000 rows still present
+
+Both undone. On Postgres, the same. On MySQL and Oracle, the DROP would have committed
+itself and the ROLLBACK would be a no-op against an already-gone table. IDENTICAL SQL,
+OPPOSITE OUTCOME.
+
+TRACE E - the soft-delete tax, 90 percent of rows flagged deleted.
+
+  live rows 20,000 of 200,000 physically present
+  count live rows, no index     6.57 ms
+  count live rows, indexed      1.23 ms    5.4x faster
+  the same query missing the filter returned 200,000 instead of 20,000 - a 10x overcount""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS, measured. DELETE is O(rows) and scales linearly - 70.7 ms, 260.9 ms, 1090.2 ms at
+100k, 500k, 2M - plus whatever triggers and indexes cost, and a trigger alone was worth 2.5x.
+TRUNCATE and DROP are close to O(1) in row count in principle, though measured here at only
+1.16x faster than DELETE because sqlite already optimises the no-WHERE case. None of the
+three returns disk space: measured 3.34 MB before and 3.34 MB after every row was removed,
+with only VACUUM bringing it to 0.01 MB. Soft delete costs storage forever and a filter on
+every query - 5.4x on a count even with an index, and unbounded if the index is missing.
+
+THE #1 MISTAKE: swapping DELETE for TRUNCATE to make it faster, without checking triggers.
+Measured, an AFTER DELETE trigger fired 500,000 times under DELETE and fires zero times
+under TRUNCATE. If it wrote your audit log, the data is gone and the log says nothing
+happened.
+
+THE #2 MISTAKE: assuming TRUNCATE or DROP can be rolled back. On Postgres and sqlite they
+can; on MySQL and Oracle they commit implicitly and your surrounding transaction ends. Know
+the engine.
+
+THE #3 MISTAKE: expecting disk space back. Measured, zero bytes returned until VACUUM, and
+VACUUM rewrites the whole database under a lock.
+
+THE #4 MISTAKE: TRUNCATE on a table whose identity values are referenced elsewhere. It
+restarts at 1 and the new rows collide with old ids held outside the database.
+
+THE #5 MISTAKE: one enormous DELETE on a live table, holding locks and growing the undo log
+until something times out. Batch it.
+
+THE #6 MISTAKE: soft deletes without a default filter in a view or ORM scope. Measured, one
+missing predicate returned 10x the rows, silently.
+
+THE #7 MISTAKE: soft-deleting forever with no archival job, so the table grows without
+bound and every query pays for data nobody will ever read.
+
+THE TAKEAWAY: these are four different operations, not four speeds - DELETE removes rows one
+at a time and is logged, transactional and trigger-firing; TRUNCATE discards the storage
+without looking at a row, which is exactly why it fires no triggers and resets the identity
+counter, and why substituting it for speed is a semantic change rather than an optimisation
+(measured, a trigger fired 500,000 times under one and zero under the other, at a 2.5x cost);
+DROP removes the definition too; and soft delete removes nothing, buying reversibility for a
+filter on every query forever, measured at 5.4x on a simple count and a silent 10x overcount
+the first time somebody forgets it. None of them return disk space without a VACUUM, and
+whether TRUNCATE and DROP can be rolled back depends entirely on which engine you are on.""",
+]
+
 
 
 
