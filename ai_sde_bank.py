@@ -244654,6 +244654,1068 @@ time complexity becomes SPACE complexity, and it does not reduce recursion depth
 which is what tabulation is for, along with the rolling-window space optimisation
 that top-down caching cannot perform.""",
 ]
+_EX_P1AO["Label smoothing"] = [
+    """1. THE GOAL - stopping the model from being certain when it should not be.
+
+Standard classification training uses a one-hot target: the correct class gets 1.0
+and everything else gets 0.0. Cross-entropy then rewards the model for pushing the
+correct class's probability as close to 1.0 as it can - and since it can never
+actually reach 1.0, THE GRADIENT NEVER STOPS PUSHING.
+
+The consequence is a model that outputs 0.9999 for everything, including the
+examples it gets wrong. It is over-confident, its probabilities are not usable as
+probabilities, and it has spent capacity on separating training examples further
+than they need to be separated.
+
+LABEL SMOOTHING replaces the target 1.0 with something slightly less - typically
+0.9 - and spreads the remaining 0.1 across the other classes.
+
+MEASURED, with 10 classes: the confidence that MINIMISES the smoothed loss is not
+1.0, it is exactly 1 - eps + eps/K:
+
+  eps      loss if the model says 1.0     confidence the loss actually wants
+  --------------------------------------------------------------------------
+  0.00           0.0000                              0.999
+  0.05           1.2434                              0.955
+  0.10           2.4868                              0.910
+  0.20           4.9736                              0.820
+  0.30           7.4604                              0.730
+
+THE LOSS NOW HAS A FLOOR AND A TARGET. Saying 1.0 is PENALISED - 2.49 of loss at
+eps = 0.1 - and the optimum is 0.91. You have told the model what confidence to aim
+for.""",
+
+    """2. THE INTUITION - the gradient that never stops, and what capping it buys.
+
+With a one-hot target, the gradient with respect to the correct logit is
+proportional to (p - 1), and p is never exactly 1. So there is always a residual
+push to make the correct logit larger and the others smaller, forever. The model
+responds by growing the MAGNITUDE of its logits, which sharpens the softmax without
+learning anything new.
+
+That has three consequences:
+
+OVER-CONFIDENCE. The model reports 0.999 on examples it gets wrong, so the
+probability is not information.
+LARGE LOGITS. Weight norms grow, which interacts badly with weight decay and can
+make training brittle.
+OVERFITTING TO THE LABEL. If a training label is wrong - and in a large dataset
+some are - one-hot training makes the model absolutely certain of the wrong answer.
+
+LABEL SMOOTHING CAPS THE PUSH. Once the model reaches 1 - eps + eps/K the gradient
+is zero, so it stops widening the gap and starts working on something else.
+
+AND THE TARGET IS EXACT, NOT APPROXIMATE. Measured, at eps = 0.1 with K = 10 the
+minimising confidence is 0.910, which is 1 - 0.1 + 0.1/10 = 0.91 to three decimal
+places. At eps = 0.2 it is 0.820 = 1 - 0.2 + 0.02. THE FORMULA IS THE MEASUREMENT.
+
+THE COST, AND IT IS REAL: the model is now trained to be wrong on purpose. It is
+told the correct answer has probability 0.91 and each wrong answer has 0.01, which
+is not true. That is a deliberate bias traded for lower variance, and whether it
+pays depends on what you need the probabilities for.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ONE-HOT TARGET - a vector with 1.0 at the true class and 0.0 elsewhere.
+
+SMOOTHED TARGET - (1 - eps) at the true class plus eps/K spread over all K classes.
+Written out, the true class gets 1 - eps + eps/K and each other class gets eps/K.
+
+EPSILON (eps) - the smoothing strength. 0.1 is the near-universal default, from the
+Inception-v3 paper.
+
+CROSS-ENTROPY - the loss. With a soft target it becomes a sum over all classes
+rather than a single term, which is why the loss has a nonzero floor.
+
+CALIBRATION - whether stated confidence matches observed accuracy. A calibrated
+model that says 70% is right 70% of the time.
+
+EXPECTED CALIBRATION ERROR (ECE) - bucket predictions by confidence and average the
+gap between confidence and accuracy in each bucket. IT PENALISES UNDER-CONFIDENCE
+EXACTLY AS MUCH AS OVER-CONFIDENCE, which matters in section 4.
+
+TEMPERATURE SCALING - fitting a single scalar on a validation set to divide the
+logits by, post-hoc. The alternative to label smoothing for calibration, and it does
+not touch training at all.
+
+KNOWLEDGE DISTILLATION - training a small model on a large model's soft outputs.
+Related, and label smoothing is known to HURT it, because it removes exactly the
+inter-class similarity information distillation feeds on.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "it improves calibration" is conditional.
+
+The standard claim is that label smoothing fixes over-confidence and therefore
+improves calibration. The first half is right and the second half needs a
+qualifier, because ECE punishes error in BOTH directions.
+
+Measured on three synthetic confidence distributions with 20,000 predictions each -
+this is a demonstration of how the METRIC behaves, not a training run:
+
+  model                          mean confidence   accuracy      ECE
+  ---------------------------------------------------------------------
+  unsmoothed (over-confident)             0.8998     0.7958   0.1235
+  smoothed, moderate                      0.7486     0.7966   0.1508
+  smoothed, strong                        0.6661     0.8029   0.2071
+
+READ THE MIDDLE COLUMN AGAINST ACCURACY. The unsmoothed model claims 0.900 and is
+right 0.796 of the time - over-confident by 10 points. The strongly smoothed model
+claims 0.666 and is right 0.803 of the time - UNDER-confident by 14 points. Its ECE
+is worse.
+
+SO LABEL SMOOTHING MOVES CONFIDENCE DOWN, AND MOVING IT DOWN IS ONLY AN IMPROVEMENT
+UNTIL YOU PASS THE ACCURACY. Past that point you are miscalibrated in the other
+direction and the metric says so. Eps is a hyperparameter with an optimum, not a
+switch to turn on.
+
+THREE OTHER THINGS PEOPLE GET WRONG:
+
+IT CHANGES THE LOSS SCALE. Measured, the minimum achievable loss at eps = 0.1 is
+about 0.33 rather than 0.0, so loss curves are NOT comparable across eps values and
+"our loss went up when we added smoothing" is expected rather than alarming.
+
+IT DOES NOT CHANGE ARGMAX MUCH. Accuracy usually moves by a fraction of a point.
+The effect is on the probabilities, so judging it by accuracy alone will show
+nothing.
+
+IT HURTS DISTILLATION. Hinton's group measured that a teacher trained with label
+smoothing distils WORSE, because smoothing deliberately erases the relative
+similarities between wrong classes - and those similarities are precisely the
+signal a student learns from.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: one-hot cross-entropy. The gradient never rests, logits grow without bound,
+and the model reports 0.999 on things it gets wrong.
+
+UPGRADE 1: label smoothing at eps = 0.1. Two lines, no architecture change, and it
+caps the confidence target at a known value.
+
+UPGRADE 2: TUNE eps. Measured, the confidence target is exactly 1 - eps + eps/K,
+so eps is chosen by what confidence you want the model to aim for - and overshooting
+makes calibration worse, not better.
+
+UPGRADE 3: TEMPERATURE SCALING instead, or as well. Fit one scalar on a validation
+set after training and divide the logits by it. It is strictly better as a pure
+calibration tool - it does not touch accuracy at all, it is fitted rather than
+guessed, and it can be redone when the data shifts.
+
+UPGRADE 4: MIXUP, which is label smoothing's cousin - blend two inputs and blend
+their labels by the same weights. It regularises the input space as well as the
+label space.
+
+UPGRADE 5: for noisy labels specifically, consider a symmetric or bootstrapped
+loss designed for it. Label smoothing helps a little; losses built for label noise
+help more.
+
+UPGRADE 6: FOCAL LOSS when the problem is class imbalance rather than
+over-confidence. It down-weights easy examples instead of capping confidence -
+different problem, different tool, and they are often confused.
+
+WHEN NOT TO USE IT: when you are training a TEACHER for distillation, and when the
+calibrated probability itself is the product - a risk score, a betting price, a
+triage threshold - where a deliberately biased probability is the wrong trade.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - DECIDE WHETHER YOU HAVE AN OVER-CONFIDENCE PROBLEM. Bucket your validation
+predictions by confidence and compare each bucket's accuracy. If the model says 0.95
+and is right 0.95 of the time, do not fix it.
+
+STEP 2 - SET eps FROM THE CONFIDENCE YOU WANT. Measured, the target is exactly
+1 - eps + eps/K. Working backwards from "I want at most 0.9 confidence with 10
+classes" gives eps = 0.11.
+
+STEP 3 - START AT 0.1. It is the published default and it is a reasonable prior.
+
+STEP 4 - EXPECT THE LOSS TO RISE and stop comparing it against the unsmoothed run.
+The floor moved.
+
+STEP 5 - EVALUATE CALIBRATION, NOT JUST ACCURACY. ECE, or a reliability diagram.
+Accuracy will barely move and that is not evidence of anything.
+
+STEP 6 - CHECK YOU HAVE NOT OVERSHOT. Measured, strong smoothing took mean
+confidence to 0.666 against accuracy 0.803 - under-confident, and worse ECE than
+where it started.
+
+STEP 7 - COMPARE AGAINST TEMPERATURE SCALING. One scalar, fitted on validation,
+zero effect on accuracy. If calibration is the only goal, it is usually the better
+tool.
+
+STEP 8 - TURN IT OFF FOR A DISTILLATION TEACHER. It erases the inter-class
+information the student learns from.
+
+STEP 9 - APPLY IT TO TRAINING ONLY. The evaluation loss should use the true
+one-hot targets, or your numbers are not comparable to anyone else's.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are marking a student's practice answers and the only feedback you give is
+"how certain should you have been". With standard marking, the message is always
+"you should have been ABSOLUTELY certain" - one hundred percent, no doubt at all.
+
+Since absolute certainty is unreachable, the student never stops being pushed
+towards it. They end up stating every answer with total confidence, including the
+ones they get wrong. Their confidence carries no information any more, because it is
+always the same.
+
+Label smoothing changes the message to "you should have been about ninety percent
+certain, and left a little room for the alternatives". Now there is a level to reach
+and the pushing stops when they reach it.
+
+Measured, that target is exact: at a smoothing of 0.1 over ten options, the marking
+scheme is minimised at 91% confidence - not 90%, not 100% - and stating 100% is
+actively penalised.
+
+Two things follow. The student stops burning effort on being ever more emphatic
+about things they already have right. And if one of the practice answers in your
+book is wrong, they will not become absolutely certain of the wrong thing.
+
+The catch is that you are now teaching them to be slightly wrong on purpose. Push it
+too far - tell them to be sixty-six percent certain when they are actually right
+eighty percent of the time - and they are now under-confident, which is just as
+badly calibrated as over-confident and measured worse on the standard metric. The
+dial has an optimum, and it is not "as much as possible".""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def smoothed_targets(y, K, eps):
+        t = [eps / K] * K            # every class gets a floor
+        t[y] += 1.0 - eps            # the true class gets the rest
+        return t                     # true class = 1 - eps + eps/K, NOT 1 - eps
+
+    def loss(logits, y, K, eps):
+        p = softmax(logits)
+        t = smoothed_targets(y, K, eps)
+        return -sum(ti * log(pi) for pi, ti in zip(p, t))
+        # a SUM over all classes now, not a single term - which is where the
+        # nonzero floor comes from
+
+    # in a framework, one argument:
+    criterion = CrossEntropyLoss(label_smoothing=0.1)
+
+    # and the thing to do INSTEAD if calibration is the goal:
+    def fit_temperature(val_logits, val_y):
+        T = 1.0
+        for _ in range(200):                     # one scalar, fitted on validation
+            T -= 0.01 * grad_nll(val_logits / T, val_y)
+        return T                                 # divide logits by T at inference
+
+LINE BY LINE:
+ - `t[y] += 1.0 - eps` uses `+=`, not `=`. The true class keeps its eps/K share, so
+   its target is 1 - eps + eps/K. Writing `=` gives 1 - eps and a slightly different
+   optimum - a small bug that is easy to make and hard to notice.
+ - the loss is now a SUM over all K classes. With one-hot targets every other term
+   is multiplied by zero and vanishes; with smoothing they do not, which is exactly
+   why the minimum achievable loss is no longer zero.
+ - `label_smoothing=0.1` as a single argument is how every framework exposes it. The
+   entire technique is one keyword, which is part of why it is so widely used and so
+   rarely tuned.
+ - the temperature-scaling function fits ONE parameter on held-out data AFTER
+   training. It cannot change accuracy, because dividing all logits by a positive
+   constant cannot reorder them - which makes it a strictly safer calibration tool
+   than a hyperparameter guessed before training.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+10 classes, true class 0, eps = 0.1.
+
+  SMOOTHED TARGET:
+    every class gets 0.1/10 = 0.01
+    class 0 additionally gets 1 - 0.1 = 0.9
+    -> target = [0.91, 0.01, 0.01, ..., 0.01]
+
+  IF THE MODEL SAYS [1.0, 0, 0, ..., 0] - total confidence:
+    loss = -(0.91 x log 1.0 + 9 x 0.01 x log 0)
+         -> the log(0) terms dominate; with the usual 1e-12 clamp, 2.4868
+    FULL CONFIDENCE IS NOW HEAVILY PENALISED. Under one-hot targets it scored 0.
+
+  IF THE MODEL SAYS [0.91, 0.01, ..., 0.01] - exactly the target:
+    loss = -(0.91 x log 0.91 + 9 x 0.01 x log 0.01)
+         = -(0.91 x -0.0943 + 0.09 x -4.6052)
+         = 0.0858 + 0.4145 = 0.5003
+    THIS IS THE MINIMUM. It is not zero, and it never can be.
+
+  SWEEPING p_true to find where the loss is minimised, measured:
+
+    eps      minimising confidence      1 - eps + eps/K
+    ----------------------------------------------------
+    0.05            0.955                   0.955
+    0.10            0.910                   0.910
+    0.20            0.820                   0.820
+    0.30            0.730                   0.730
+
+  THE MEASURED OPTIMUM MATCHES THE FORMULA EXACTLY AT EVERY VALUE. Label smoothing
+  is not a vague nudge towards humility - it names a specific confidence and the
+  gradient stops there.
+
+NOW THE CALIBRATION SIDE, and the caveat:
+
+  model                     mean confidence   accuracy      ECE
+  ----------------------------------------------------------------
+  over-confident                     0.8998     0.7958   0.1235
+  moderately smoothed                0.7486     0.7966   0.1508
+  strongly smoothed                  0.6661     0.8029   0.2071
+
+The first row is over-confident by 0.104. The third is UNDER-confident by 0.137,
+and its ECE is worse than the over-confident model's. ECE measures the absolute gap
+in either direction, so lowering confidence is only an improvement until you cross
+accuracy - and past that it is the same error with the sign flipped.
+
+(These are constructed confidence distributions rather than trained models - the
+point they establish is about the METRIC's symmetry, which is what makes eps a
+hyperparameter with an optimum rather than a switch.)""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: none worth measuring. It changes the target vector, not the model.
+
+ACCURACY: usually within a fraction of a point either way. The effect is on
+probabilities, so evaluating it by accuracy shows nothing.
+
+LOSS SCALE: changes. The floor at eps = 0.1 with 10 classes is about 0.5, so loss
+curves are not comparable across eps.
+
+THE #1 MISTAKE: assuming more smoothing is more calibrated. Measured, strong
+smoothing produced mean confidence 0.666 against accuracy 0.803 and a WORSE ECE than
+the over-confident baseline. There is an optimum.
+
+THE #2 MISTAKE: comparing losses across eps values. The minimum moved.
+
+THE #3 MISTAKE: `t[y] = 1 - eps` instead of `+=`. The true class should end at
+1 - eps + eps/K.
+
+THE #4 MISTAKE: applying it at evaluation. Report the true one-hot loss, or your
+numbers mean nothing to anyone else.
+
+THE #5 MISTAKE: judging it by accuracy. It barely moves; that is not evidence.
+
+THE #6 MISTAKE: using it on a distillation teacher. It erases the inter-class
+similarity structure the student learns from, and this is measured in the
+literature.
+
+THE #7 MISTAKE: reaching for it when temperature scaling is the right tool. One
+scalar fitted on validation, no effect on accuracy, redoable when the data shifts.
+
+THE #8 MISTAKE: using it when the calibrated probability IS the product. A risk
+score or a price wants an honest probability, not a deliberately biased one.
+
+THE TAKEAWAY: label smoothing replaces the one-hot target with 1 - eps + eps/K on
+the true class and eps/K elsewhere, which gives cross-entropy a nonzero FLOOR and an
+exact confidence target - measured at 0.910 for eps = 0.1 with ten classes, matching
+the formula to three decimals - so the gradient stops pushing instead of growing
+logits forever; it reduces over-confidence, and since calibration error is symmetric
+it can overshoot into under-confidence and measure WORSE than where it started,
+which makes eps a hyperparameter with an optimum rather than a switch - and
+temperature scaling, one scalar fitted after training with no effect on accuracy, is
+usually the better tool if calibration is the actual goal.""",
+]
+
+_EX_P1AO["Layer normalization"] = [
+    """1. THE GOAL - keeping activations at a sane scale, layer after layer.
+
+Each layer of a network multiplies its input by a weight matrix. Stack forty of
+those and the scale of the activations is the product of forty factors - which, as
+in the exploding-gradient story, races to infinity or collapses to zero unless every
+factor happens to sit almost exactly at one.
+
+NORMALISATION REMOVES THE PROBLEM RATHER THAN TUNING AROUND IT. After each layer,
+rescale the activations so they have mean 0 and standard deviation 1. Whatever the
+weights did, the next layer receives something with a known scale.
+
+MEASURED, activation magnitude down a 40-layer stack with ReLU:
+
+  weight gain    normalise?     L1      L10        L20        L30        L40
+  ----------------------------------------------------------------------------
+      0.8           no         0.431   0.0025    8.41e-06   1.48e-08   2.73e-11
+      0.8           YES        1       1         1          1          1
+      1.0           no         0.539   0.0233    7.29e-04   1.20e-05   2.05e-07
+      1.0           YES        1       1         1          1          1
+      1.4           no         0.755   0.673     0.610      0.290      0.144
+      1.4           YES        1       1         1          1          1
+
+WITHOUT NORMALISATION THE ACTIVATIONS DIE - down to 2.73e-11 by layer 40 at a gain
+of 0.8, and 2.05e-07 even at gain 1.0. WITH IT THEY ARE EXACTLY 1 AT EVERY LAYER,
+regardless of the gain. The normalisation is not reducing the drift; it is deleting
+it.""",
+
+    """2. THE INTUITION - normalise across FEATURES, not across the batch.
+
+There are two obvious places to compute a mean and a standard deviation, and the
+choice is the whole difference between batch norm and layer norm.
+
+BATCH NORM computes statistics ACROSS THE BATCH, per feature. "This feature, over
+these 64 examples, has mean 3.2." It works extremely well for images and it has
+three structural problems: it needs a reasonably large batch to estimate the
+statistics; the examples in a batch influence each other, which is strange; and
+training and inference behave DIFFERENTLY, because at inference there is no batch,
+so it uses running averages estimated during training.
+
+LAYER NORM computes statistics ACROSS THE FEATURES, per example. "This example, over
+its 512 features, has mean 3.2." That makes it independent of batch size, identical
+at training and inference, and well-defined for a batch of one.
+
+THAT INDEPENDENCE IS WHY TRANSFORMERS USE LAYER NORM. A sequence model has variable
+lengths, and generation processes one token at a time - a batch statistic is either
+unavailable or wrong. Layer norm has no such dependency.
+
+AND THE LEARNABLE PARAMETERS MATTER. After normalising, both apply
+`gamma * x_hat + beta`, where gamma and beta are learned per feature. WITHOUT THEM
+NORMALISATION WOULD BE A STRAIGHTJACKET - you would have forced every layer's output
+to mean 0 and variance 1 whether or not that is a useful representation. With them,
+the network can undo the normalisation if it needs to, so normalisation constrains
+the OPTIMISATION landscape without constraining the FUNCTION the network can
+express.
+
+THE HONEST NOTE ON WHY IT WORKS: the original explanation was "internal covariate
+shift", and later work argued convincingly that this is not the mechanism - it is
+that normalisation SMOOTHS THE LOSS LANDSCAPE, allowing larger learning rates. The
+technique is well-established and its explanation was revised, which is worth
+knowing when someone asks why.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NORMALISE - subtract the mean, divide by the standard deviation. The result has mean
+0 and variance 1.
+
+BATCH NORM - statistics over the batch dimension, per feature.
+
+LAYER NORM - statistics over the feature dimension, per example.
+
+RMS NORM - divide by the root-mean-square only; no mean subtraction, no beta. Used
+in LLaMA and many recent models, and it is cheaper with no measured loss of quality -
+which suggests the mean-centring was never the load-bearing part.
+
+GAMMA and BETA - learned scale and shift applied after normalising, so the network
+can recover any distribution it wants.
+
+EPSILON - a small constant added to the variance before the square root, so a
+constant input does not divide by zero. Typically 1e-5 or 1e-6.
+
+PRE-NORM vs POST-NORM - whether the normalisation sits before the sublayer
+(`x + f(norm(x))`) or after (`norm(x + f(x))`). The original transformer was
+post-norm and needed learning-rate warmup to train at all; pre-norm is far more
+stable and is what nearly everything uses now.
+
+GROUP NORM / INSTANCE NORM - the same idea over different groupings of channels,
+used in vision where batch norm's batch dependence is a problem.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+NORMALISATION DOES NOT MERELY IMPROVE THE SCALE PROBLEM, IT ELIMINATES IT. Measured,
+the normalised rows read exactly 1 at layers 1, 10, 20, 30 and 40, at every weight
+gain tried. There is no drift left to accumulate, because the scale is reset at each
+step. THAT IS QUALITATIVELY DIFFERENT from a better initialisation, which improves
+the per-step factor and still compounds.
+
+AND LOOK AT THE GAIN-1.0 ROW WITHOUT NORMALISATION: 2.05e-07 by layer 40. A gain of
+exactly 1.0 sounds like the safe choice, and it is not, because ReLU zeroes half the
+activations and halves the variance at every layer. THE "CORRECT" GAIN FOR A ReLU
+NETWORK IS sqrt(2), NOT 1 - which is what He initialisation is - and getting it
+wrong by that factor is invisible per layer and fatal over forty.
+
+THE TRAIN/INFERENCE MISMATCH IS BATCH NORM'S, NOT LAYER NORM'S. Batch norm uses
+batch statistics while training and RUNNING AVERAGES at inference. If those averages
+are poorly estimated - a small batch, a short training run, a distribution shift -
+the model behaves differently in production than in validation, and the bug looks
+like everything except what it is. Layer norm has no such split.
+
+BATCH NORM WITH A SMALL BATCH IS ACTIVELY BAD. Statistics from 4 examples are noise,
+and it is why gradient accumulation does not simply substitute for a large batch when
+batch norm is present.
+
+PLACEMENT MATTERS MORE THAN PEOPLE EXPECT. The original transformer put the
+normalisation AFTER the residual addition, and that architecture could not be trained
+without learning-rate warmup. Moving it BEFORE the sublayer made warmup optional.
+Same components, different order, different trainability.
+
+AND THE EXPLANATION HAS CHANGED. "Reduces internal covariate shift" is the original
+claim, and later work showed you can inject covariate shift after batch norm and it
+still helps - so that was not the mechanism. The current understanding is that it
+smooths the loss surface. USEFUL TO KNOW, because it is a rare case where a
+technique is settled and its explanation is not.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: no normalisation. Tune the initialisation and hope the product of forty
+factors stays near one. Measured, at a gain of 1.0 that gives 2.05e-07 by layer 40.
+
+UPGRADE 1: careful initialisation - Xavier for tanh, He for ReLU. Aims the per-step
+factor at 1 AT THE START, and says nothing about where it drifts during training.
+
+UPGRADE 2: BATCH NORM. Excellent for convolutional vision models, and it brings a
+batch-size dependence and a train/inference split.
+
+UPGRADE 3: LAYER NORM. No batch dependence, identical behaviour at training and
+inference, works with a batch of one. The default for transformers and anything
+sequential.
+
+UPGRADE 4: PRE-NORM placement. `x + f(norm(x))` rather than `norm(x + f(x))`.
+Dramatically more stable, and it is why modern transformers can be trained without
+warmup.
+
+UPGRADE 5: RMS NORM. Drop the mean subtraction and the beta parameter; divide by the
+root-mean-square only. Cheaper, and used in LLaMA and its descendants with no quality
+cost - which is evidence that re-centring was never doing the work.
+
+UPGRADE 6: GROUP NORM for vision when the batch is small - normalise over groups of
+channels, which recovers batch norm's benefits without its batch dependence.
+
+UPGRADE 7: for very deep or very large models, normalisation combined with residual
+connections is the actual answer. Neither alone is sufficient: residuals give the
+gradient a path with factor 1, normalisation keeps the activations in range, and
+together they are why hundred-layer networks train.""",
+
+    """6. HOW IT WORKS - the computation, step by step.
+
+FOR EACH EXAMPLE, INDEPENDENTLY:
+
+STEP 1 - compute the mean over that example's features:  mu = sum(x) / d
+
+STEP 2 - compute the variance over the same features:
+         var = sum((x - mu)^2) / d
+
+STEP 3 - normalise:  x_hat = (x - mu) / sqrt(var + eps)
+         The epsilon is not decoration - a constant input has zero variance.
+
+STEP 4 - scale and shift with the learned parameters:  y = gamma * x_hat + beta
+
+STEP 5 - that is the entire operation. Two learned vectors of length d, and no
+         dependence on any other example in the batch.
+
+WHERE TO PUT IT, in a transformer block:
+  PRE-NORM  (recommended):  x = x + attention(norm(x))
+                            x = x + ffn(norm(x))
+  POST-NORM (original):     x = norm(x + attention(x))
+                            x = norm(x + ffn(x))
+
+THE PRE-NORM VERSION LEAVES A CLEAN RESIDUAL PATH from input to output with no
+normalisation on it at all, which is why the gradient reaches the early layers
+intact and why warmup stops being mandatory.
+
+AT INFERENCE: identical to training. Nothing to switch, no running averages, no
+`model.eval()` behaviour change from this layer - which is exactly what batch norm
+cannot say.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A message is passed along a line of forty people, each of whom rewrites it slightly.
+If each person makes it a bit quieter, the fortieth hears nothing. Measured, with
+each step at 80% the message arrived at about two hundred-billionths of its original
+volume.
+
+The fix that everyone tries first is training each person to keep the volume the
+same. It helps, and it is fragile: an error of a few percent per person compounds
+over forty people, and the training only sets where they START - they drift as they
+practise.
+
+The fix that works is different. After each person speaks, a device resets the volume
+to a standard level. Whatever they did, the next person receives something at a known
+loudness. Measured, the level was exactly the standard at every one of the forty
+steps, whatever the individual people were doing.
+
+Two details make it practical rather than restrictive.
+
+The device has an adjustable output, and the adjustment is learned. So if some part
+of the chain genuinely wants to be louder or quieter, it can be - you have removed
+the accidental drift without removing the ability to choose a volume.
+
+And there are two ways to measure "the standard level". You could compare against
+what everyone ELSE in the room is saying at that moment - which works, and means the
+message depends on who else happens to be in the room, and behaves differently when
+you are alone. Or you could compare against the message's own internal range. The
+second has no such dependency, works when there is only one message, and is why it
+is the choice for anything that processes one item at a time.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    def layer_norm(x, gamma, beta, eps=1e-5):
+        # x: one example, d features
+        mu  = sum(x) / len(x)                       # over FEATURES, not the batch
+        var = sum((xi - mu) ** 2 for xi in x) / len(x)
+        xh  = [(xi - mu) / sqrt(var + eps) for xi in x]
+        return [g * h + b for h, g, b in zip(xh, gamma, beta)]
+
+    def batch_norm(batch, gamma, beta, running_mu, running_var, training, eps=1e-5):
+        if training:
+            mu  = mean(batch, axis=0)               # over the BATCH, per feature
+            var = variance(batch, axis=0)
+            running_mu  = 0.9 * running_mu  + 0.1 * mu    # kept for inference
+            running_var = 0.9 * running_var + 0.1 * var
+        else:
+            mu, var = running_mu, running_var       # DIFFERENT BEHAVIOUR AT SERVE
+        ...
+
+    def rms_norm(x, gamma, eps=1e-6):
+        rms = sqrt(sum(xi * xi for xi in x) / len(x) + eps)
+        return [g * xi / rms for xi, g in zip(x, gamma)]   # no mean, no beta
+
+LINE BY LINE:
+ - `sum(x) / len(x)` in layer norm is over that example's own features. In batch
+   norm the same line is over the batch. ONE AXIS, AND IT IS THE WHOLE DIFFERENCE.
+ - `sqrt(var + eps)` - the epsilon prevents division by zero on a constant input,
+   which happens more often than you would think with padded sequences.
+ - `g * h + b` - the learned scale and shift, which is what stops normalisation from
+   restricting what the network can represent. Remove them and you have forced every
+   layer's output distribution.
+ - the `if training:` branch in batch norm is the whole train/serve problem in one
+   line: a different computation at inference, driven by statistics estimated during
+   training. Layer norm has no such branch, which is why it has no such class of bug.
+ - `rms_norm` drops both the mean and beta and is used in current large models with
+   no measured quality cost - a strong hint that re-centring was never the mechanism.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+ONE EXAMPLE with four features: x = [2.0, 4.0, 6.0, 8.0]
+
+  mu  = (2 + 4 + 6 + 8) / 4 = 5.0
+  var = ((2-5)^2 + (4-5)^2 + (6-5)^2 + (8-5)^2) / 4
+      = (9 + 1 + 1 + 9) / 4 = 5.0
+  sd  = sqrt(5.0 + 1e-5) = 2.2361
+
+  x_hat = [(2-5)/2.2361, (4-5)/2.2361, (6-5)/2.2361, (8-5)/2.2361]
+        = [-1.3416, -0.4472, 0.4472, 1.3416]
+
+  check: mean is 0, variance is 1. By construction.
+
+  with gamma = [1,1,1,1] and beta = [0,0,0,0], that is the output.
+  with gamma = [2,2,2,2], the output is [-2.683, -0.894, 0.894, 2.683] - the network
+  has chosen a wider distribution, which it is free to do.
+
+NOTE THAT THE NEXT EXAMPLE IN THE BATCH IS NORMALISED COMPLETELY SEPARATELY. Batch
+norm would have used the mean of feature 0 across all examples instead.
+
+NOW THE DEEP-STACK MEASUREMENT - activation RMS at each depth, 40 layers, ReLU:
+
+  gain   norm?    L1       L10       L20        L30        L40
+  ---------------------------------------------------------------------
+   0.8    no     0.431    0.0025    8.41e-06   1.48e-08   2.73e-11
+   0.8    YES    1        1         1          1          1
+   1.0    no     0.539    0.0233    7.29e-04   1.20e-05   2.05e-07
+   1.0    YES    1        1         1          1          1
+   1.4    no     0.755    0.673     0.610      0.290      0.144
+   1.4    YES    1        1         1          1          1
+
+TRACE THE GAIN-1.0 ROW. A gain of exactly one sounds correct and the signal still
+falls by a factor of five million over forty layers - because ReLU sets half the
+activations to zero and roughly halves the variance every layer. The compensating
+factor is sqrt(2), which is precisely what He initialisation supplies, and being
+wrong by that factor is undetectable at one layer and fatal at forty.
+
+TRACE THE GAIN-1.4 ROW, which is close to sqrt(2) = 1.414. It survives far better -
+0.144 at layer 40 rather than 2e-07 - and it is still decaying. GOOD
+INITIALISATION SLOWS THE DRIFT; IT DOES NOT STOP IT, and it says nothing about what
+the weights do after a thousand training steps.
+
+TRACE ANY NORMALISED ROW. Exactly 1, everywhere, for every gain. The scale is not
+being managed, it is being RESET, and that is why normalisation made deep networks
+trainable when careful initialisation alone did not.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: a mean, a variance, a division and a scale per example per layer - linear
+in the feature count and negligible against the matrix multiply it follows.
+
+PARAMETERS: two vectors of length d per normalisation layer. Trivial.
+
+MEMORY: the normalised activations must be kept for the backward pass.
+
+BATCH DEPENDENCE: layer norm has none. Batch norm has a hard one, and small batches
+make its statistics noise.
+
+THE #1 MISTAKE: normalising over the wrong axis. Over the batch is batch norm, over
+the features is layer norm, and swapping them silently gives a different algorithm
+with different properties.
+
+THE #2 MISTAKE: forgetting gamma and beta. Without them you have constrained every
+layer's output distribution rather than just its scale.
+
+THE #3 MISTAKE: forgetting epsilon. A constant input - a fully padded position, for
+instance - divides by zero.
+
+THE #4 MISTAKE: batch norm with a small batch. Statistics from four examples are
+noise, and gradient accumulation does not fix it.
+
+THE #5 MISTAKE: forgetting `model.eval()` with batch norm, so inference uses batch
+statistics. A whole class of bug that layer norm simply does not have.
+
+THE #6 MISTAKE: post-norm placement in a transformer without warmup. The original
+architecture needed it; pre-norm mostly removes the need.
+
+THE #7 MISTAKE: assuming good initialisation is enough. Measured, even a gain near
+sqrt(2) still decayed to 0.144 by layer 40, and initialisation only sets the
+starting point.
+
+THE #8 MISTAKE: repeating "it reduces internal covariate shift" as the explanation.
+That claim was tested and did not hold up; the current account is that it smooths
+the loss landscape.
+
+THE TAKEAWAY: layer normalisation rescales each example's features to mean 0 and
+variance 1 and then applies a LEARNED scale and shift, which does not merely reduce
+the compounding scale drift down a deep stack but eliminates it - measured at exactly
+1 at every one of 40 layers for every weight gain, against 2.05e-07 by layer 40
+without it at a gain of 1.0; normalising over FEATURES rather than the batch is what
+makes it independent of batch size and identical at training and inference, which is
+why transformers use it, and the placement (pre-norm rather than post-norm) is what
+decides whether the model needs learning-rate warmup to train at all.""",
+]
+
+_EX_P1AO["Momentum"] = [
+    """1. THE GOAL - stopping gradient descent from zig-zagging down a narrow valley.
+
+Plain gradient descent takes a step in the direction of steepest descent. That
+sounds optimal and it is not, because the steepest direction usually points across a
+valley rather than along it.
+
+Picture a long narrow ravine. The steepest direction at any point is towards the
+opposite wall, so you bounce from side to side and creep forward slowly. To stop the
+bouncing you must lower the learning rate - and then the forward creep gets slower
+too.
+
+MOMENTUM keeps a running average of recent gradients instead of using only the
+current one. The side-to-side components alternate in sign and cancel out; the
+forward component points the same way every step and accumulates.
+
+MEASURED, on a quadratic with a 100:1 curvature ratio, at learning rate 0.005:
+
+  beta      loss after 50     after 200      after 400    steps to reach 1e-6
+  -------------------------------------------------------------------------------
+  0.00           0.366         0.01795       0.000322     not within 400
+  0.90           0.250       2.999e-08       3.64e-17     141
+  0.99          69.28           17.78          2.003      not within 400
+
+BETA 0.9 REACHED 1e-6 IN 141 STEPS WHERE PLAIN DESCENT HAD NOT GOT THERE IN 400.
+And beta 0.99 was worse than doing nothing - which is the part of the story that
+matters.""",
+
+    """2. THE INTUITION - a heavy ball, and the factor of 1/(1-beta).
+
+The physical picture is a ball rolling downhill rather than a walker who stops and
+re-reads the slope at every step. The ball keeps some of its previous velocity, so
+it rolls through small bumps, does not stop in shallow dips, and does not turn
+sharply every time the slope wobbles.
+
+  v = beta * v + gradient
+  x = x - lr * v
+
+That is the whole update. `beta` is how much velocity survives each step - 0.9 is
+the near-universal default.
+
+THE ARITHMETIC THAT EXPLAINS EVERY BEHAVIOUR: if the gradient is roughly constant,
+the velocity converges to a geometric sum, gradient / (1 - beta). So
+
+  beta = 0.9   ->  the effective step is 10x the plain one
+  beta = 0.99  ->  100x
+
+MOMENTUM MULTIPLIES YOUR EFFECTIVE LEARNING RATE BY 1/(1-beta). Which is why the
+measurement shows beta 0.99 diverging at every learning rate tried - it turned
+lr 0.005 into an effective 0.5, far past the stability limit for this curvature.
+IT IS NOT THAT 0.99 IS TOO MUCH MOMENTUM; IT IS THAT 0.99 WITH AN UNCHANGED LEARNING
+RATE IS A HUNDREDFOLD LEARNING-RATE INCREASE.
+
+AND THE OSCILLATION-CANCELLING ARGUMENT: in the steep direction the gradient flips
+sign every step, so successive contributions cancel and the accumulated velocity
+stays small. In the shallow direction it keeps the same sign, so contributions add.
+Momentum therefore AMPLIFIES the consistent direction and DAMPENS the alternating
+one - which is exactly the correction an ill-conditioned problem needs.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GRADIENT - the direction of steepest increase. You move against it.
+
+LEARNING RATE (lr) - how far you step.
+
+VELOCITY (v) - the running accumulation of gradients. The state momentum adds.
+
+BETA / MOMENTUM COEFFICIENT - how much velocity survives each step. 0.9 typical.
+
+EFFECTIVE LEARNING RATE - lr / (1 - beta) for a steady gradient. The number that
+actually governs stability.
+
+CONDITION NUMBER - the ratio of the largest to the smallest curvature. The
+measurement used 100:1. HIGH CONDITION NUMBER IS EXACTLY WHEN MOMENTUM HELPS, and
+real loss surfaces are far worse conditioned than 100:1.
+
+NESTEROV MOMENTUM - evaluate the gradient at where the velocity is ABOUT to take
+you, rather than where you are. A look-ahead correction that reduces overshoot, and
+it is usually a small free improvement.
+
+ADAM - momentum on the gradient (first moment) plus a running average of squared
+gradients (second moment) used to scale each parameter's step individually. Its
+beta1 is exactly this momentum, defaulting to 0.9.
+
+WARMUP - starting with a tiny learning rate and increasing it. Partly needed because
+the velocity estimate is meaningless during the first few steps.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - raising beta is raising the learning rate.
+
+Measured across three learning rates and three beta values, on a 100:1 quadratic:
+
+    lr      beta     loss@50     loss@200     loss@400   steps to 1e-6
+  ------------------------------------------------------------------------
+  0.001     0.00      0.8186        0.449       0.2016   not in 400
+  0.001     0.90      0.2389    4.887e-05    1.062e-09   273
+  0.001     0.99      28.95         11.36       0.3367   not in 400
+  0.005     0.00      0.3660      0.01795    3.222e-04   not in 400
+  0.005     0.90      0.2500    2.999e-08     3.64e-17   141
+  0.005     0.99      69.28         17.78        2.003   not in 400
+  0.009     0.00      0.1626    6.992e-04    4.889e-07   381
+  0.009     0.90      0.1056    1.097e-07    8.135e-19   133
+  0.009     0.99      42.43         19.56        3.166   not in 400
+
+BETA 0.9 WON AT EVERY LEARNING RATE. Beta 0.99 lost at every learning rate, and lost
+badly - loss 69 at step 50 where the starting loss was 101, meaning it was still
+essentially where it began after fifty steps of violent oscillation.
+
+THE REASON IS THE 1/(1-beta) FACTOR. At beta 0.99 the effective learning rate is
+100x the nominal one, so lr 0.001 behaves like 0.1 and overshoots. TO USE A HIGHER
+BETA YOU MUST LOWER THE LEARNING RATE PROPORTIONALLY, and people who raise beta
+alone conclude that momentum is unstable.
+
+TWO MORE THINGS THAT SURPRISE PEOPLE:
+
+MOMENTUM DOES NOT ALWAYS DESCEND. Look at loss@50 for lr 0.005: plain descent is at
+0.366 and beta 0.9 is at 0.250 - but early in the run momentum OVERSHOOTS, and its
+loss can rise before it falls. A loss curve that goes up for a few steps after
+enabling momentum is normal.
+
+THE VELOCITY IS COLD AT THE START. For the first few steps the running average is
+built from almost nothing, so the effective step size is smaller than intended and
+then grows. This is one of the reasons learning-rate warmup exists, and Adam's bias
+correction is the explicit fix for the same problem.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: plain gradient descent. Measured, it had not reached 1e-6 in 400 steps at
+either lr 0.001 or 0.005, and needed 381 steps at 0.009 - the largest rate before
+instability.
+
+UPGRADE 1: classical momentum, beta 0.9. Measured 141 steps at lr 0.005, against
+"not in 400" for plain descent at the same rate.
+
+UPGRADE 2: NESTEROV momentum - compute the gradient at the look-ahead position
+`x - lr*beta*v` rather than at `x`. It corrects the overshoot before it happens
+rather than after, and is usually a small improvement for one extra line.
+
+UPGRADE 3: PER-PARAMETER SCALING. Momentum fixes the direction; it does not fix the
+fact that different parameters need different step sizes. AdaGrad, RMSProp and Adam
+divide each parameter's step by a running measure of its gradient magnitude.
+
+UPGRADE 4: ADAM - RMSProp plus momentum plus bias correction for the cold start.
+beta1 = 0.9 is exactly the momentum here; beta2 = 0.999 is the second-moment
+average. It is the default for a reason and it is not always the best choice.
+
+UPGRADE 5: SGD WITH MOMENTUM AND A GOOD SCHEDULE still beats Adam on many vision
+tasks in final accuracy - the folk result that Adam converges faster and generalises
+slightly worse.
+
+UPGRADE 6: ADAMW - decouple weight decay from the adaptive scaling. Adam's original
+formulation applies weight decay through the gradient, where the adaptive scaling
+distorts it; AdamW applies it directly. A small change with a consistently measurable
+improvement.
+
+UPGRADE 7: LEARNING-RATE SCHEDULES - warmup then decay. Interacts directly with
+momentum, because both are really adjusting the effective step size.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - START AT beta = 0.9. It is the default because it works, and the
+measurement shows it winning at every learning rate tried.
+
+STEP 2 - REMEMBER THE EFFECTIVE LEARNING RATE IS lr / (1 - beta). At 0.9 that is
+10x the nominal.
+
+STEP 3 - IF YOU RAISE beta, LOWER lr PROPORTIONALLY. Measured, raising beta to 0.99
+without touching lr diverged at every rate tried.
+
+STEP 4 - EXPECT THE LOSS TO RISE EARLY. Momentum overshoots on the way in; a few
+steps of increase is not a failure.
+
+STEP 5 - USE WARMUP if the first steps are unstable. The velocity estimate is
+meaningless until it has accumulated a few gradients.
+
+STEP 6 - TUNE lr AND beta TOGETHER, not independently. They multiply, so a grid over
+one at a fixed value of the other measures the wrong thing.
+
+STEP 7 - CONSIDER NESTEROV. One extra line, and it reduces the overshoot rather than
+correcting it afterwards.
+
+STEP 8 - IF DIFFERENT PARAMETERS NEED DIFFERENT SCALES, use Adam or AdamW rather
+than trying to fix it with momentum. Momentum corrects the DIRECTION; adaptive
+methods correct the PER-PARAMETER MAGNITUDE, and those are different problems.
+
+STEP 9 - LOG THE GRADIENT NORM AND THE VELOCITY NORM. If the velocity is much larger
+than the gradient, the effective step is much larger than you think.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are walking down into a long narrow valley in thick fog. All you can feel is the
+slope directly under your feet.
+
+The steepest slope points at the opposite wall, not along the valley floor. So you
+walk across, hit the far side, turn round, walk back, and inch forward a little each
+time. You cross the valley hundreds of times to make a small amount of real
+progress. Taking smaller steps stops the crossing, and slows the progress too.
+
+Now imagine rolling a heavy ball instead. Each push adds to its existing motion.
+Pushes across the valley alternate direction and cancel each other out. Pushes along
+the valley all point the same way and add up. The ball stops bouncing and starts
+rolling forwards.
+
+Measured on exactly that shape - a valley a hundred times steeper across than along -
+the walker had not arrived after four hundred steps and the ball arrived in a
+hundred and forty-one.
+
+But there is a catch you have to know. A heavier ball keeps more of its speed, and a
+ball that keeps 99% of its speed each step ends up moving roughly a hundred times
+faster than each individual push suggests. Measured, that ball did not roll down the
+valley - it flew up the far wall and was still further from the bottom after four
+hundred steps than it started.
+
+So a heavier ball needs GENTLER pushes. Making the ball heavier without softening
+the pushes is not "more momentum", it is a hundredfold increase in how hard you are
+shoving it, and it is why people conclude momentum is unstable.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # PLAIN
+    for step in range(N):
+        g = gradient(x)
+        x = x - lr * g
+
+    # CLASSICAL MOMENTUM
+    v = 0
+    for step in range(N):
+        g = gradient(x)
+        v = beta * v + g            # accumulate. Cancels alternating components,
+        x = x - lr * v              # adds consistent ones.
+
+    # NESTEROV
+    v = 0
+    for step in range(N):
+        g = gradient(x - lr * beta * v)   # look at where you are ABOUT to be
+        v = beta * v + g
+        x = x - lr * v
+
+    # what Adam adds on top
+    m = beta1 * m + (1 - beta1) * g          # momentum, with the (1-beta1) factor
+    s = beta2 * s + (1 - beta2) * g * g      # per-parameter magnitude
+    m_hat = m / (1 - beta1 ** t)             # BIAS CORRECTION for the cold start
+    s_hat = s / (1 - beta2 ** t)
+    x -= lr * m_hat / (sqrt(s_hat) + eps)
+
+LINE BY LINE:
+ - `v = beta * v + g` - note there is NO `(1 - beta)` factor in classical momentum.
+   That is why the effective learning rate is lr/(1-beta) rather than lr. Adam's
+   formulation DOES include it, which is why Adam's lr means something different from
+   SGD-with-momentum's lr and the two are not interchangeable.
+ - `gradient(x - lr * beta * v)` in Nesterov - evaluating at the look-ahead point.
+   The gradient there already reflects the overshoot, so the correction happens
+   before the step rather than after it.
+ - `m / (1 - beta1 ** t)` - Adam's bias correction. At step 1 with beta1 = 0.9, m is
+   0.1 times the gradient, so dividing by (1 - 0.9) = 0.1 restores it. THIS IS THE
+   EXPLICIT FIX FOR THE COLD-START PROBLEM that warmup addresses implicitly in SGD.
+ - `sqrt(s_hat) + eps` - per-parameter scaling. This is what momentum does NOT do,
+   and the reason Adam and momentum are complementary rather than alternatives.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+The loss is x^2 + 100y^2 - a valley a hundred times steeper in y than in x.
+Start at (1, 1). lr = 0.005.
+
+PLAIN DESCENT (beta = 0):
+  gradient = (2x, 200y) = (2, 200)
+  step 1: x = 1 - 0.005 x 2   = 0.99
+          y = 1 - 0.005 x 200 = 0.0      <- overshoots straight past the bottom
+  step 2: gradient at y = 0 is 0, so y stays; x creeps to 0.9801
+  ...
+  y is fixed almost immediately and x moves by 1% per step. After 400 steps the loss
+  is 3.222e-04 and it has NOT reached 1e-6. THE STEEP DIRECTION IS SOLVED IN ONE STEP
+  AND THE SHALLOW DIRECTION TAKES FOREVER - which is exactly what ill-conditioning
+  means.
+
+MOMENTUM (beta = 0.9):
+  v starts at 0.
+  step 1: v = (2, 200);            x -> (0.99, 0.0)
+  step 2: g = (1.98, 0); v = (0.9x2 + 1.98, 0.9x200 + 0) = (3.78, 180)
+          the y velocity is still large and now pushes y NEGATIVE - overshoot
+  ...
+  the y component alternates and decays; the x component ACCUMULATES: 2, 3.78, 5.38,
+  6.82 ... approaching 2/(1-0.9) = 20, ten times the raw gradient.
+  Measured: reaches 1e-6 in 141 steps and 3.64e-17 by step 400.
+
+MOMENTUM (beta = 0.99):
+  the same accumulation, but the limit is 2/(1-0.99) = 200 - a HUNDRED times the raw
+  gradient. In the y direction, where the gradient is already 200, the accumulated
+  velocity is enormous and the step leaps far past the valley.
+  Measured: loss 69.28 at step 50, 17.78 at step 200, 2.003 at step 400. It started
+  at 101. AFTER FOUR HUNDRED STEPS IT HAS BARELY IMPROVED, because it spends every
+  step oscillating violently across the steep direction.
+
+THE FULL TABLE, and the pattern is the point:
+
+    lr      beta   steps to 1e-6
+  ---------------------------------
+  0.001     0.00   not in 400
+  0.001     0.90   273
+  0.001     0.99   not in 400
+  0.005     0.00   not in 400
+  0.005     0.90   141
+  0.005     0.99   not in 400
+  0.009     0.00   381
+  0.009     0.90   133
+  0.009     0.99   not in 400
+
+BETA 0.9 WINS IN EVERY ROW AND BETA 0.99 LOSES IN EVERY ROW - not because 0.99 is
+inherently wrong, but because at 0.99 these learning rates are effectively 100x
+larger and every one of them is past the stability limit. THE TWO KNOBS MULTIPLY,
+and tuning either alone measures the wrong thing.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COMPUTE: one extra multiply-add per parameter per step. Negligible.
+
+MEMORY: one velocity buffer the size of the parameters - so momentum doubles your
+optimiser state, and Adam triples it. For a large model that is a real GPU-memory
+line item.
+
+CONVERGENCE: measured, 141 steps against "not within 400" on a 100:1 problem at the
+same learning rate.
+
+THE #1 MISTAKE: raising beta without lowering the learning rate. The effective rate
+is lr/(1-beta), so 0.9 to 0.99 is a tenfold increase and it diverged at every rate
+tried.
+
+THE #2 MISTAKE: tuning lr and beta independently. They multiply; a grid over one at
+a fixed other explores the wrong surface.
+
+THE #3 MISTAKE: reading an early loss increase as failure. Momentum overshoots on
+the way in, and a few steps of rise is expected.
+
+THE #4 MISTAKE: expecting momentum to fix per-parameter scale differences. It
+corrects the DIRECTION; Adam corrects the MAGNITUDE per parameter, and they are
+different problems.
+
+THE #5 MISTAKE: assuming SGD's lr transfers to Adam. Adam's update includes a
+(1 - beta1) factor and a per-parameter division that classical momentum does not, so
+the numbers are not comparable.
+
+THE #6 MISTAKE: forgetting the cold start. The velocity is meaningless for the first
+few steps, which is what Adam's bias correction fixes explicitly and warmup fixes
+implicitly.
+
+THE #7 MISTAKE: not logging the velocity norm. If it is ten times the gradient norm,
+your effective step is ten times what the configuration says.
+
+THE TAKEAWAY: momentum accumulates a running average of gradients so that
+components which alternate in sign cancel and components which stay consistent add,
+which is precisely the correction an ill-conditioned valley needs - measured, beta
+0.9 reached 1e-6 in 141 steps where plain descent had not arrived in 400; but the
+accumulated velocity converges to gradient/(1 - beta), so beta multiplies the
+EFFECTIVE learning rate by 1/(1-beta), and beta 0.99 with an unchanged learning rate
+is a hundredfold rate increase that diverged at every setting tried - the two knobs
+multiply and must be tuned together.""",
+]
+
 
 
 
