@@ -257297,6 +257297,1044 @@ filter on every query forever, measured at 5.4x on a simple count and a silent 1
 the first time somebody forgets it. None of them return disk space without a VACUUM, and
 whether TRUNCATE and DROP can be rolled back depends entirely on which engine you are on.""",
 ]
+_EX_P1AO["Design a Lead Scoring system"] = [
+    """1. THE GOAL - sales can call 200 people today. Which 200, out of 20,000?
+
+A lead is someone who might buy. You have far more leads than salespeople. The job is not
+to decide who WILL buy - it is to put the list in the right order, and then draw a line
+where the calling capacity runs out.
+
+STATE THE PROBLEM AS RANKING, NOT CLASSIFICATION, AND SAY WHY IN THE FIRST MINUTE OF THE
+INTERVIEW. Measured, on 20,000 simulated leads with a 20.76% base conversion rate:
+
+  score-ranked top 200:  155 conversions
+  random 200:             49 conversions
+
+Same 200 calls, 3.2x the result. Nothing about that required a probability to be correct in
+absolute terms - only the ORDER had to be roughly right.
+
+AND THE REASON CLASSIFICATION IS THE WRONG FRAME: a model that predicts "will not convert"
+for every lead is 79.24% accurate on this data and is worth exactly nothing. Accuracy is
+not the metric, the threshold is not a modelling choice, and the answer to "what threshold
+should we use" is "how many calls can your team make".""",
+
+    """2. THE INTUITION - the value is concentrated at the top, and that concentration IS the
+product.
+
+MEASURED, the same 20,000 leads sorted by score:
+
+  top %    leads    converted   conversion rate   lift vs base   % of all wins captured
+  ---------------------------------------------------------------------------------------
+    1%       200        155         77.50%           3.73x                3.7%
+    5%     1,000        675         67.50%           3.25x               16.3%
+   10%     2,000      1,155         57.75%           2.78x               27.8%
+   20%     4,000      1,878         46.95%           2.26x               45.2%
+   50%    10,000      3,173         31.73%           1.53x               76.4%
+  100%    20,000      4,152         20.76%           1.00x              100.0%
+
+READ THE LAST TWO COLUMNS AGAINST EACH OTHER, because they are the two halves of the
+business conversation.
+
+LIFT falls as you go down the list - 3.73x at the top 1% to 1.53x at the top half. That is
+the model working: the best leads really are at the top.
+
+COVERAGE rises - the top 20% contains 45.2% of all the deals you were ever going to win.
+So calling 20% of the list captures nearly half the revenue.
+
+THE TENSION IS THE WHOLE DESIGN. Call fewer and each call is more valuable but you leave
+deals on the table; call more and you capture more while wasting time. Where you draw the
+line is a capacity and cost question, not a modelling one - and presenting this table is
+how you get the business to choose it instead of you.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LEAD - a person or company that might buy. Comes from form fills, trials, events, purchased
+lists.
+
+CONVERSION - the outcome you are predicting. DEFINE IT PRECISELY AND EARLY: a booked demo,
+a signed contract, or revenue collected are three different labels with three different
+base rates and different lags.
+
+BASE RATE - the overall conversion rate. Measured here at 20.76%; in real B2B it is often
+1-3%, which makes everything below harder.
+
+LIFT - conversion rate in a slice divided by the base rate. The standard way to state a
+ranking model's value.
+
+MQL / SQL - Marketing Qualified Lead, Sales Qualified Lead. The manual thresholds this
+system usually replaces.
+
+FIRMOGRAPHIC features - about the company: size, industry, region.
+BEHAVIOURAL features - about what they did: pages viewed, demo requested, emails opened.
+The behavioural ones are usually far more predictive and far more prone to leakage.
+
+LABEL LAG - the gap between scoring a lead and knowing whether it converted. A 90-day sales
+cycle means today's model was trained on a market three months old.
+
+CALIBRATION - whether a predicted 0.7 really converts 70% of the time. Needed if the score
+feeds a revenue forecast; NOT needed if it only sorts a list.
+
+FEEDBACK LOOP - the model decides who gets called, and only called leads produce labels.
+Section 4.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the model chooses its own training data.
+
+A lead that is never called never converts. So next month's training set contains only
+leads the CURRENT model liked, and the model learns to confirm itself. This is the single
+hardest thing about the system and it does not appear in any offline metric.
+
+MEASURED, six rounds of "score, call the top 400, retrain on called leads only", starting
+from a pool that is 49.0% small-company:
+
+  round 1: 400 called,   49.2% of them small-company
+  round 2: 800 called,   36.0%
+  round 3: 1,200 called, 36.6%
+  round 4: 1,600 called, 37.7%
+  round 5: 2,000 called, 30.1%
+  round 6: 2,400 called, 31.4%
+
+THE TRAINING SET DRIFTED FROM 49% TO 31% SMALL-COMPANY IN SIX ROUNDS. The pool never
+changed. The model decided early that small companies convert less, stopped calling them,
+and therefore stopped collecting evidence that could ever change its mind. If that early
+judgement was wrong, nothing in the pipeline will discover it - offline accuracy on the
+called leads will look fine and improve.
+
+THE FIX IS EXPLORATION, AND IT COSTS MONEY ON PURPOSE. Reserve 5-10% of calling capacity
+for leads chosen randomly or from under-represented segments. Those calls have a lower
+expected value, and they are the only unbiased data you will ever have. Budget them
+explicitly and explain to the business what they buy, or they will be cut in the first
+efficiency review.
+
+A SECOND VERSION OF THE SAME TRAP: features that encode past sales behaviour - "number of
+previous calls from us" - are strong predictors and pure feedback. The model learns that
+leads sales already liked convert, which is true and useless.""",
+
+    """5. THE SYSTEM, BUILT UP IN LAYERS.
+
+LAYER 0 - THE RULE-BASED SCORE. Points for job title, company size, demo requested.
+Sales already has one of these, informally. It is a baseline you must beat and it is often
+better than people expect, because it encodes real domain knowledge.
+
+LAYER 1 - LOGISTIC REGRESSION ON A FEW FEATURES. Interpretable coefficients, calibrated
+probabilities, trains in seconds. START HERE. When sales asks "why is this lead a 90", you
+can answer, and that answer is the difference between a system that gets used and one that
+gets ignored.
+
+LAYER 2 - GRADIENT-BOOSTED TREES. Handles interactions and non-linearities, usually a few
+points better on ranking metrics. Add SHAP values so the "why" survives. Retrain weekly;
+the underlying market moves.
+
+LAYER 3 - THE SERVING PATH. Score on a schedule (nightly batch) unless there is a real-time
+trigger - a demo request should re-score immediately, because the value of a lead decays
+sharply with time-to-contact. Write scores to the CRM where sales already works. A model
+whose output lives in a dashboard nobody opens has no effect.
+
+LAYER 4 - THE FEEDBACK AND EXPLORATION LOOP. Log every score, every call, every outcome,
+and the model version. Reserve exploration capacity. This is what makes the system
+improvable rather than merely deployed.
+
+LAYER 5 - MONITORING. Feature drift, score distribution drift, and above all the REALISED
+conversion rate by score decile. If the top decile stops converting at 3x, you know before
+sales tells you.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. CLARIFY THE OUTCOME. Demo booked, opportunity created, closed-won, or revenue?
+Ask what the sales cycle length is - it sets your label lag and your retraining cadence.
+
+STEP 2. CLARIFY THE CAPACITY. How many leads per day can be worked? This is the threshold,
+and asking for it is what shows you understand the problem is ranking.
+
+STEP 3. STATE THE METRIC. Precision@k and lift at the capacity point, not accuracy, not
+AUC alone. Say explicitly that accuracy is useless here and give the number - a model
+predicting "no" for everyone is 79% accurate on a 21% base rate.
+
+STEP 4. FEATURES, IN THREE GROUPS: firmographic, behavioural, and source. Name the leakage
+risks out loud - anything recorded after a salesperson made contact is not available at
+scoring time.
+
+STEP 5. BASELINE FIRST. The existing rule-based score, then logistic regression. Only then
+trees.
+
+STEP 6. DESIGN THE SERVING PATH into the CRM, with a re-score trigger on high-intent
+events.
+
+STEP 7. RAISE THE FEEDBACK LOOP YOURSELF. Measured, 49% to 31% drift in six rounds. Propose
+the exploration budget and say what it costs.
+
+STEP 8. MONITORING: realised conversion by decile, feature drift, and a holdout of
+uncontacted leads if the business will tolerate one.
+
+STEP 9. THE HUMAN FACTOR. Sales will ignore a score they do not understand. Ship reason
+codes with every score - "requested a demo, enterprise size, corporate email" - and expect
+to spend as much effort on adoption as on the model.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A small sales team gets twenty thousand enquiries and can phone two hundred people a day.
+Everything else is a detail.
+
+Someone notices that the enquiries are not all alike. People from big companies who asked
+for a demonstration buy far more often than people using a free email address who read one
+page and left. So you build a score from the things you know at the moment the enquiry
+arrives, and you sort the list.
+
+Measured, the top two hundred by that score produced 155 sales. Two hundred picked at
+random produced 49. Same phone calls, same working day, three times the result. That is
+the entire value of the system and it did not require the score to be accurate in any
+absolute sense - only for the good enquiries to float upward.
+
+Now the two things that decide whether it survives contact with reality.
+
+The first is where to draw the line, and that is not a technical question. Call only the top
+one percent and three quarters of your calls turn into sales - but you only reach 3.7% of
+the business you could have won. Call the top half and you reach 76% of it while wasting
+most of your time. The right answer depends on how many people you employ and what a call
+costs, and the honest thing to do is show the table and let the business choose.
+
+The second is subtler and it is what quietly ruins these systems. Once you stop phoning a
+kind of enquiry, you never find out whether they would have bought. Measured over six
+rounds, the enquiries the team actually spoke to went from matching the incoming mix to
+badly under-representing small companies - not because small companies stopped enquiring,
+but because an early judgement stopped them being called, and nothing could ever contradict
+it. The cure is to keep phoning a small random sample regardless of score. Those calls make
+less money and they are the only honest information you have.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # scoring
+  score = model.predict_proba(features(lead))[1]
+
+  # the decision, which is NOT a threshold on the score
+  todays_list = sorted(open_leads, key=lambda l: -l.score)[:CALLING_CAPACITY]
+
+  # exploration: pay for unbiased data on purpose
+  n_explore = int(CALLING_CAPACITY * EXPLORE_FRACTION)
+  todays_list = todays_list[:-n_explore] + random.sample(open_leads, n_explore)
+
+  # what must be logged for any of this to be improvable
+  log(lead_id, score, model_version, features, chosen_by="score"|"explore",
+      called_at, outcome, outcome_at)
+
+LINE BY LINE.
+
+  score = model.predict_proba(...)[1]
+A probability, but only its ORDER is load-bearing unless someone forecasts revenue from it.
+Say that out loud in the interview: calibration is required for forecasting and not for
+ranking, and knowing which you need decides whether you must calibrate.
+
+  sorted(open_leads, ...)[:CALLING_CAPACITY]
+NO THRESHOLD ANYWHERE. The cut is capacity, so it moves when the team grows or when a
+holiday halves it. A hard-coded 0.5 would either flood the team or starve it, and it would
+do so silently.
+
+  n_explore = int(CALLING_CAPACITY * EXPLORE_FRACTION)
+The exploration budget, made explicit as a line of code rather than a good intention. This
+line is what stops the drift measured in section 4, and it is the first line someone will
+try to delete.
+
+  random.sample(open_leads, n_explore)
+Uniform over ALL open leads, including ones the model scored badly. Sampling from the top
+1,000 instead would explore nothing - it has to reach where the model is confident and
+wrong.
+
+  chosen_by="score"|"explore"
+THE MOST IMPORTANT FIELD IN THE LOG. Without it you cannot separate "this segment converts
+badly" from "we only called this segment when the model was already sure", and every
+subsequent analysis is contaminated.
+
+  model_version, features
+Log the features AS SCORED, not as they look today. A feature store that recomputes
+"pages viewed" at analysis time gives a value that includes activity after the call, and
+your offline evaluation becomes fiction.
+
+  outcome_at
+Needed to handle the label lag: a lead scored today may not be labelled for 90 days, so
+training must filter by outcome_at, and anything still open is CENSORED - not a negative.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the decile table and what to say about each column. 20,000 leads, 4,152
+conversions, base rate 20.76%.
+
+  top 1%   200 leads, 155 conversions.  155/200 = 77.50% conversion.
+                                        77.50/20.76 = 3.73x lift.
+                                        155/4152 = 3.7% of all wins.
+  top 20%  4,000 leads, 1,878 conversions.  46.95% conversion, 2.26x lift,
+                                            1878/4152 = 45.2% of all wins.
+
+The top fifth of the list holds nearly half the winnable business. THAT SENTENCE IS THE
+BUSINESS CASE, and it is one division away from the raw counts.
+
+TRACE B - the capacity decision, done properly.
+Capacity 200 calls/day. Score-ranked: 155 conversions. Random: 49. Ratio 3.2x.
+
+Now suppose the team doubles to 400 calls. From the table, the top 5% (1,000 leads) converts
+at 67.50%, so calls 201-400 convert at roughly the top-2% rate - still far above base, so
+the second 200 calls are worth making. Extend to 10,000 calls and the marginal calls are
+converting near 20%, at which point whether they are worth making is a cost question. THE
+TABLE ANSWERS "SHOULD WE HIRE" AS WELL AS "WHO DO WE CALL".
+
+TRACE C - the feedback loop, round by round.
+
+  pool composition: 49.0% small-company, unchanged throughout
+  round 1: 49.2% of called leads are small-company   (matches the pool)
+  round 2: 36.0%
+  round 3: 36.6%
+  round 5: 30.1%
+  round 6: 31.4%
+
+Round 1 matches the pool because the model was untrained and picked essentially arbitrarily.
+By round 2 it has learned from 400 labels and already excludes small companies at nearly the
+final rate. THE DAMAGE IS DONE IN THE FIRST RETRAIN, on 400 noisy observations - which is
+why the exploration budget has to exist from day one rather than being added when someone
+notices the drift.
+
+TRACE D - the accuracy trap, one line of arithmetic. Base rate 20.76%, so predicting "no
+conversion" for every lead is right 79.24% of the time. Any model reported at 79% accuracy
+on this data has demonstrated nothing.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. This is a small system by ML standards: tens of thousands of leads, tens of
+features, a nightly batch score that runs in seconds. Nothing here is a scaling problem.
+The expensive parts are organisational - the label lag (a 90-day sales cycle means your
+training data is 90 days stale and your first honest evaluation is 90 days after launch),
+and the exploration budget, which is a permanent, visible, deliberate reduction in
+short-term conversion.
+
+THE #1 MISTAKE: reporting accuracy. Measured, always-say-no scores 79.24% on a 20.76% base
+rate. Report precision@k at the actual calling capacity, and lift.
+
+THE #2 MISTAKE: choosing a score threshold instead of a capacity cut. The threshold is not
+yours to choose; the sales roster sets it, and it changes weekly.
+
+THE #3 MISTAKE: no exploration. Measured, the called population drifted from 49% to 31%
+small-company in six rounds while the pool did not move at all, and no offline metric shows
+it.
+
+THE #4 MISTAKE: leakage from post-contact features. "Number of calls made" predicts
+conversion beautifully and is not available when you need to score.
+
+THE #5 MISTAKE: treating still-open leads as negatives. They are censored, not lost - and
+including them teaches the model that recent leads never convert.
+
+THE #6 MISTAKE: an uninterpretable score. Sales will not work a list they do not trust.
+Ship reason codes.
+
+THE #7 MISTAKE: scoring nightly when the trigger is real-time. A demo request scored 20
+hours later has already gone cold.
+
+THE TAKEAWAY: lead scoring is a RANKING problem with a capacity cut, not a classification
+problem with a threshold - which is why accuracy is meaningless here (always-say-no scores
+79.24% against a 20.76% base rate) and why the deliverable is a lift table: measured, the
+top 1% converts at 3.73x base and holds 3.7% of all wins while the top 20% converts at
+2.26x and holds 45.2%, so the business chooses the line and you supply the curve; the
+model's real value is that the same 200 calls produced 155 conversions ranked against 49
+random; and the failure that no offline metric will show you is the feedback loop, measured
+drifting the called population from 49% to 31% small-company within six retraining rounds
+because uncalled leads never generate labels - which is why a permanent, explicitly
+budgeted exploration slice is part of the design and not a refinement.""",
+]
+
+_EX_P1AO["LLD: Design Splitwise (shared expense settlement)"] = [
+    """1. THE GOAL - four people share a flat, pay for things at random, and eventually somebody
+has to work out who owes whom.
+
+The naive record is a list of IOUs: Ana owes Bo 12.50 for the taxi, Bo owes Cy 30 for
+dinner, Cy owes Ana 8 for milk. After a few months that list is enormous and useless -
+nobody wants to make forty separate bank transfers.
+
+THE INSIGHT THAT MAKES THIS A DESIGN QUESTION RATHER THAN A CRUD APP: you do not need to
+settle the individual debts. You only need everyone's NET BALANCE, and then the smallest
+set of transfers that zeroes them all.
+
+MEASURED, on simulated groups:
+
+  people   expenses   pairwise IOUs   greedy transfers   reduction
+  --------------------------------------------------------------------
+      5        20            20              4              80%
+     10        60            81              9              89%
+     20       200           315             19              94%
+     50       800         1,635             49              97%
+
+1,635 IOUs become 49 bank transfers. AND NOTICE THE PATTERN IN THE LAST COLUMN: the transfer
+count is always people-1 or fewer, no matter how many expenses there were. The number of
+expenses does not appear in the answer at all.""",
+
+    """2. THE INTUITION - netting does almost all the work; the clever algorithm does the rest.
+
+There are two separate reductions and people conflate them.
+
+STEP ONE, NETTING. Reduce every pairwise history to one number per person: total paid minus
+total owed. Measured on 10 people and 60 expenses:
+
+  80 distinct debtor -> creditor pairs before netting
+  10 people with a non-zero balance after netting
+
+That collapse is pure bookkeeping - no algorithm, just addition - and it is where most of
+the reduction comes from.
+
+STEP TWO, SETTLEMENT. Given balances like {+120, +40, -60, -100}, find transfers that zero
+them. Greedy: repeatedly match the largest creditor with the largest debtor and transfer
+the smaller of the two amounts.
+
+  greedy transfers: 9   (upper bound, people - 1 = 9)
+
+THE UPPER BOUND IS EASY TO SEE AND WORTH SAYING IN AN INTERVIEW. Each transfer fully settles
+at least one person - the one whose balance hit zero. With n people, after n-1 transfers
+only one person can be left, and their balance must be zero because ALL BALANCES SUM TO
+ZERO. Measured: 0.0000000000, exactly, and that identity is the invariant to assert in
+code.
+
+BE HONEST ABOUT WHAT GREEDY DOES NOT GIVE YOU: it is not guaranteed minimal. Finding the
+true minimum is NP-hard, because subsets that cancel exactly (+50 and -50) should be paired
+and finding all such subsets is subset-sum.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EXPENSE - one payment: who paid, how much, and who it was on behalf of.
+
+SPLIT - how an expense is divided. EQUAL (four ways), EXACT (named amounts), PERCENTAGE,
+or SHARES (Ana counts double because she took the big room). The split strategy is the part
+of this design that most wants to be polymorphic.
+
+BALANCE - one number per person per group: total they paid, minus total that was on their
+behalf. Positive means owed money.
+
+NETTING - collapsing all pairwise debts into per-person balances.
+
+SETTLEMENT - the set of transfers that returns every balance to zero.
+
+SIMPLIFY DEBTS - the product feature name for settlement. Note it is optional in the real
+product, because some people prefer to see who they personally owe.
+
+GROUP - a named set of people expenses belong to. Balances are per group; a person can be
+in many.
+
+IDEMPOTENCY KEY - a client-supplied id on an expense so a retried request does not create
+a duplicate. In a money system this is not optional.
+
+AUDIT LOG - append-only record of every expense and edit. Also not optional - "why do I owe
+this" must be answerable.
+
+MINOR UNITS - store money as integer cents, never as a float. Section 4.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - splitting 10.00 three ways.
+
+10.00 / 3 = 3.333... Round each to 3.33 and the shares total 9.99. One cent has vanished,
+and it vanishes on a large fraction of every expense you will ever process. Over a year of
+a real group the balances stop summing to zero, the settlement algorithm's invariant breaks,
+and someone's account will never close.
+
+THE FIX IS TO ALLOCATE THE REMAINDER EXPLICITLY, not to round better. Work in integer cents:
+1000 cents / 3 = 333 each, remainder 1. Give the extra cent to one specific person by a
+deterministic rule - the payer, or the first alphabetically, or rotate it across expenses so
+it evens out. THE RULE MUST BE DETERMINISTIC AND WRITTEN DOWN, because two different
+services computing the same split must agree.
+
+AND THE RELATED, LARGER ONE: NEVER USE FLOATING POINT FOR MONEY. 0.1 + 0.2 is not 0.3 in
+binary floating point, and errors accumulate across thousands of expenses. Store integer
+minor units - cents, paise - and format for display only. The measured invariant that
+balances sum to exactly 0.0000000000 holds only because it can be made exact; with floats it
+becomes "sums to about zero", and an algorithm that loops while a balance is non-zero will
+either loop forever or leave a stray fraction.
+
+THE THIRD TRAP, WHICH IS A PRODUCT DECISION DISGUISED AS A TECHNICAL ONE: what happens when
+an expense is EDITED or DELETED after a settlement has been recorded? Balances are derived
+from history, so changing history changes balances that people have already acted on. The
+usual answer is that settlements are themselves recorded as transactions, so an edit creates
+a new imbalance rather than rewriting the past - which is the same reason accountants post
+reversing entries instead of erasing.""",
+
+    """5. THE OBJECT MODEL, BUILT UP IN LAYERS.
+
+LAYER 0 - THE ENTITIES. User, Group, Expense, Split, Settlement. Expense holds the payer,
+the amount in minor units, the group, and a list of Splits; each Split is a user and an
+amount. NOTE THAT THE SPLIT STORES THE RESOLVED AMOUNT, not the percentage - the division
+happens once, at creation, so the remainder is allocated once and never recomputed
+differently.
+
+LAYER 1 - THE SPLIT STRATEGY, which is where the polymorphism belongs.
+
+  interface SplitStrategy:
+      List<Split> split(amountMinor, participants, params)
+
+with EqualSplit, ExactSplit, PercentSplit, ShareSplit implementing it. Each returns splits
+that MUST sum exactly to the amount - a validation the base class enforces, so a new
+strategy cannot break the invariant. This is the strategy pattern, and it is the answer the
+interviewer is listening for.
+
+LAYER 2 - THE BALANCE SHEET. A service that folds expenses into per-user balances. Two
+options and you should name both: recompute from the expense log on demand (simple,
+correct, O(expenses)), or maintain a running balance updated on each write (fast reads,
+and now you have a cache to invalidate). Start with recompute plus a cache keyed on the
+group's last-modified timestamp.
+
+LAYER 3 - SETTLEMENT. Given balances, produce transfers. Greedy largest-creditor to
+largest-debtor. Measured, always at most people-1.
+
+LAYER 4 - CONCURRENCY AND MONEY DISCIPLINE. Idempotency keys on expense creation, an
+append-only audit log, and optimistic locking on the group so two simultaneous expense
+additions cannot interleave a balance recomputation.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. CLARIFY SCOPE FIRST. One currency or many? Do settlements move real money or just
+get recorded? Can expenses be edited? Each answer changes the design substantially and
+asking shows you know that.
+
+STEP 2. NAME THE ENTITIES: User, Group, Expense, Split, Settlement. Draw the relationships.
+
+STEP 3. SAY "INTEGER MINOR UNITS" OUT LOUD, unprompted. It is the single clearest signal
+that you have built something with money in it.
+
+STEP 4. INTRODUCE THE SPLIT STRATEGY INTERFACE. Equal, exact, percentage, shares. State the
+invariant that splits must sum to the total, and that the base class enforces it.
+
+STEP 5. HANDLE THE REMAINDER EXPLICITLY. 1000 cents three ways is 333/333/334, and say who
+gets the extra cent and why the rule must be deterministic.
+
+STEP 6. EXPLAIN NETTING BEFORE SETTLEMENT. They are different reductions; measured, 80
+pairwise debts become 10 balances become 9 transfers.
+
+STEP 7. GIVE THE GREEDY SETTLEMENT AND ITS BOUND: at most n-1 transfers, because each
+transfer zeroes at least one person and the balances sum to zero. THEN SAY IT IS NOT
+PROVABLY MINIMAL and why - exact-cancelling subsets make the true minimum NP-hard. Admitting
+this is worth more than claiming optimality.
+
+STEP 8. RAISE CONCURRENCY AND IDEMPOTENCY without being asked.
+
+STEP 9. IF TIME REMAINS: multi-currency (store the rate AT THE TIME of the expense, not
+today's), notifications, and the settlement-versus-edit ordering problem.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Five friends share a house. Over a month they buy things for each other constantly - one
+pays for the internet, another for a takeaway, a third for cleaning supplies. By the end
+there are dozens of small debts running in every direction.
+
+The obvious way to sort it out is to pay each debt separately, and it is exhausting. Measured
+on a realistic month for ten people, that is eighty-one separate payments.
+
+The first realisation is that most of those cancel. If Ana owes Bo twelve pounds and Bo owes
+Ana ten, only two pounds needs to move. Extend that to the whole house and you stop asking
+"who owes whom" and ask instead "how much is each person up or down overall". Ten people,
+ten numbers - and that step alone removed most of the work, with no cleverness at all, just
+addition.
+
+The second realisation is that those ten numbers can be cleared in at most nine payments.
+Take whoever is owed the most and whoever owes the most and have one pay the other. Whatever
+the smaller of the two amounts is, that person is now settled and leaves. Repeat. Each
+payment retires at least one person, so with ten people you cannot need more than nine - and
+the last person is automatically square, because the whole house's balances have to add up to
+zero.
+
+Measured: eighty-one payments became nine.
+
+Two warnings.
+
+This is not always the theoretical minimum. If two people happen to owe exactly what two
+others are owed, a smarter pairing might do better, and finding all such coincidences is a
+famously hard problem. Nine is good and provably close enough; do not claim it is optimal.
+
+And the boring one that causes real bugs: split ten pounds three ways and each share is
+3.333... Round them all down and you have accounted for 9.99. One penny disappears every
+time, and after a few hundred expenses the books no longer balance - at which point the
+"pay until everyone is square" method never finishes, because somebody is a few pence short
+forever.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # money is integer minor units, everywhere
+  def equal_split(total_cents: int, people: list) -> dict:
+      n = len(people)
+      base, rem = divmod(total_cents, n)
+      shares = {p: base for p in people}
+      for i in range(rem):                       # deterministic remainder rule
+          shares[people[i]] += 1
+      assert sum(shares.values()) == total_cents
+      return shares
+
+  def settle(balances: dict) -> list:
+      assert sum(balances.values()) == 0, "balances must net to zero"
+      creditors = sorted(((v, p) for p, v in balances.items() if v > 0), reverse=True)
+      debtors   = sorted(((-v, p) for p, v in balances.items() if v < 0), reverse=True)
+      transfers, i, j = [], 0, 0
+      while i < len(creditors) and j < len(debtors):
+          amt = min(creditors[i][0], debtors[j][0])
+          transfers.append((debtors[j][1], creditors[i][1], amt))
+          creditors[i] = (creditors[i][0] - amt, creditors[i][1])
+          debtors[j]   = (debtors[j][0]   - amt, debtors[j][1])
+          if creditors[i][0] == 0: i += 1
+          if debtors[j][0]   == 0: j += 1
+      return transfers
+
+LINE BY LINE.
+
+  base, rem = divmod(total_cents, n)
+divmod gives the share and the leftover in one operation, and because these are INTEGERS
+there is no rounding to argue about. 1000 cents three ways is base=333, rem=1.
+
+  for i in range(rem): shares[people[i]] += 1
+The remainder allocation, made explicit. Note it depends on the ORDER of `people`, so that
+list must be canonically sorted or two servers will disagree about who owes the extra cent.
+That is the kind of detail that only shows up in production, as a one-cent discrepancy that
+nobody can reproduce.
+
+  assert sum(shares.values()) == total_cents
+The invariant, checked at the only place it can be violated. With floats this assertion
+could not be written at all.
+
+  assert sum(balances.values()) == 0
+THE SETTLEMENT'S PRECONDITION. Measured on real data: 0.0000000000. If this ever fails, the
+bug is upstream in the splitting - and the loop below would either run forever or leave a
+residue, so failing loudly here is worth the line.
+
+  amt = min(creditors[i][0], debtors[j][0])
+The greedy step. Taking the MINIMUM guarantees at least one of the two hits exactly zero,
+which is what bounds the whole thing at n-1 transfers.
+
+  if creditors[i][0] == 0: i += 1
+Both checks are separate ifs, not elif - when the two amounts are equal BOTH parties settle
+in one transfer, and an elif would leave a zero-balance entry in the list to be processed
+again.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the remainder, exactly. Dinner costs 10.00, split three ways between Ana, Bo, Cy.
+
+  1000 cents, divmod(1000, 3) -> base 333, remainder 1
+  shares: Ana 334, Bo 333, Cy 333
+  sum = 1000. Exact.
+
+Compare the naive float version: 10.00/3 = 3.3333..., rounded to 3.33 each, total 9.99. One
+cent lost on this single expense. Over a group's 800 expenses that is up to 8.00 unaccounted
+for, and the settlement's zero-sum precondition fails.
+
+TRACE B - settlement, step by step. Balances after netting:
+  Ana +120, Bo +40, Cy -60, Di -100.  Sum = 120 + 40 - 60 - 100 = 0.
+
+  creditors sorted: [(120, Ana), (40, Bo)]
+  debtors sorted:   [(100, Di), (60, Cy)]
+
+  transfer 1: min(120, 100) = 100.  Di pays Ana 100.
+              Ana now +20, Di now 0 -> Di is finished, j advances.
+  transfer 2: min(20, 60) = 20.     Cy pays Ana 20.
+              Ana now 0 -> finished, i advances. Cy still owes 40.
+  transfer 3: min(40, 40) = 40.     Cy pays Bo 40.
+              BOTH hit zero. This is the case that needs two separate ifs.
+
+  3 transfers for 4 people. Upper bound is n-1 = 3.
+
+TRACE C - the scaling, and what the numbers actually say.
+
+  people   expenses   pairwise IOUs   greedy transfers
+      5        20            20              4
+     10        60            81              9
+     20       200           315             19
+     50       800         1,635             49
+
+THE TRANSFER COUNT IS EXACTLY people-1 IN EVERY ROW. The expense count grew forty-fold from
+the first row to the last and had no effect whatsoever on the answer, because netting
+discards it entirely. That is the design's whole claim, and the table is the proof.
+
+TRACE D - where netting alone gets you. 10 people, 60 expenses:
+  80 distinct debtor->creditor pairs
+  10 non-zero balances after netting
+  9 transfers after settlement
+80 -> 10 is addition. 10 -> 9 is the algorithm. MOST OF THE WIN IS THE BORING STEP.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Netting is O(expenses) - one pass, adding to a per-person total. Settlement is
+O(n log n) for the two sorts plus O(n) for the merge, where n is PEOPLE, not expenses.
+Memory is O(people). Measured, 800 expenses among 50 people settle in 49 transfers, and the
+algorithm never looks at the 800 again after netting. Nothing here scales badly; the
+expensive parts of a real Splitwise are the notification fan-out and the multi-currency
+bookkeeping, not this.
+
+THE #1 MISTAKE: floating-point money. 10.00 split three ways loses a cent every time,
+balances stop summing to zero, and the settlement loop's precondition - measured at exactly
+0.0000000000 - becomes unassertable. Integer minor units, always.
+
+THE #2 MISTAKE: rounding the remainder away instead of allocating it. 333/333/334, by a
+deterministic rule, on a canonically ordered participant list so two servers agree.
+
+THE #3 MISTAKE: claiming the greedy settlement is minimal. It is bounded by n-1 and it is
+not optimal - exact-cancelling subsets make the true minimum NP-hard. Say so.
+
+THE #4 MISTAKE: settling pairwise debts instead of net balances. Measured, 1,635 IOUs
+against 49 transfers for the same group.
+
+THE #5 MISTAKE: no idempotency key on expense creation, so a retried mobile request charges
+the group twice.
+
+THE #6 MISTAKE: mutating expense history after a settlement. Post a compensating entry
+instead; balances derived from a rewritten past betray people who already paid.
+
+THE #7 MISTAKE: storing a percentage rather than the resolved split amount, so the remainder
+gets re-derived - possibly differently - every time the balance is recomputed.
+
+THE TAKEAWAY: the design turns on realising you never settle individual debts - you net each
+person to a single balance and then clear the balances, which is why 1,635 pairwise IOUs
+among 50 people became 49 transfers and why the expense count vanishes from the answer
+entirely; greedy largest-creditor-to-largest-debtor is bounded at people-1 because every
+transfer zeroes at least one person and all balances sum to zero (measured exactly
+0.0000000000, which is the precondition to assert), while being honestly NOT minimal since
+exact-cancelling subsets make that NP-hard; and the detail that separates a design from a
+working system is money discipline - integer minor units, and a deterministic rule that
+gives 1000 cents split three ways as 334/333/333 rather than losing a cent per expense until
+the books no longer balance.""",
+]
+
+_EX_P1AO["Design a document classification system"] = [
+    """1. THE GOAL - route incoming text into categories, at volume, without a human reading it.
+
+Support tickets into billing / bug / feature / account. Emails into spam or not. Contracts
+into clause types. The shape is always the same: text arrives, a label is needed, and there
+are too many to read.
+
+THE DESIGN QUESTION IS NOT "WHICH MODEL". It is: where do the labels come from, what happens
+when the model is unsure, and what does the system do six months from now when the
+categories have changed. The model is the easy part and it is rarely where these systems
+fail.
+
+MEASURED, on 1,600 simulated support tickets across four classes that SHARE most of their
+vocabulary - which is what real tickets look like:
+
+  always predict the biggest class    accuracy 0.2500
+  three hand-picked keywords per class accuracy 0.7531
+  naive Bayes over all words          accuracy 0.9850
+
+THREE HAND-WRITTEN KEYWORDS PER CLASS GOT 75%. That is the baseline any model has to beat,
+it took ten minutes to write, and it is the thing to build first - because it also tells you
+whether the problem is separable at all before you invest in anything.""",
+
+    """2. THE INTUITION - the classifier's job is easy; the system's job is the uncertain cases.
+
+MEASURED, the same naive Bayes model against document LENGTH:
+
+  words in ticket    n     accuracy
+  ------------------------------------
+       3-6         2,000    0.7980
+       7-12        2,000    0.9355
+      13-25        2,000    0.9940
+      26-60        2,000    1.0000
+
+A LONG TICKET IS ESSENTIALLY FREE AND A SHORT ONE IS A COIN FLIP BY COMPARISON. Every word
+is a piece of evidence, so six words is six pieces and forty words is forty. The overall
+0.9850 headline is an average over a population where most documents are easy.
+
+THAT IS THE FACT THE WHOLE SYSTEM DESIGN SHOULD BE BUILT AROUND. The errors are not spread
+evenly - they concentrate in the short, terse, ambiguous documents, and those are
+IDENTIFIABLE BEFORE YOU CLASSIFY THEM. So the system does not need to be right about
+everything; it needs to know which cases it is likely to be wrong about and send those to a
+person.
+
+A system reporting a single accuracy number has thrown that away. A system that reports
+accuracy by document length, by class, and by confidence bucket can be given a routing rule:
+auto-apply above a confidence threshold, queue for review below it, and the threshold is
+chosen from how much human review capacity exists - the same capacity argument as any
+ranking system.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DOCUMENT - one unit of text to be labelled: a ticket, an email, a contract clause.
+
+LABEL / CLASS - the category. SINGLE-LABEL means exactly one applies; MULTI-LABEL means
+several can. Decide which before anything else - they need different models, different
+losses and different metrics.
+
+BAG OF WORDS - representing a document as word counts, ignoring order. Crude and often
+sufficient.
+
+TF-IDF - term frequency times inverse document frequency. Weights a word by how often it
+appears here and how RARE it is overall, so "the" is discounted to nothing automatically.
+
+NAIVE BAYES - multiply the per-class probability of each word, times the class prior. Naive
+because it assumes words are independent, which is false and works anyway.
+
+LAPLACE / ADD-ONE SMOOTHING - adding 1 to every word count so an unseen word does not make
+the whole product zero. Without it a single new word vetoes a class entirely.
+
+PRIOR - the model's belief about class frequencies before seeing any words. Comes from the
+training mix, which may not match production. Section 4.
+
+CONFIDENCE / MARGIN - how much the top class beat the second. The routing signal.
+
+CONCEPT DRIFT - the meaning or mix of categories changing over time. The reason this system
+needs a retraining plan, not just a training run.
+
+HUMAN-IN-THE-LOOP - low-confidence documents going to a person, whose decision becomes new
+training data.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - and an honest correction to the folklore.
+
+THE FOLKLORE SAYS: with an imbalanced training set the rare class stops being predicted and
+accuracy hides it. MEASURED, shrinking a rare class in TRAINING only, evaluating on a
+balanced test set:
+
+  rare % of training   overall accuracy   recall on rare   precision on rare
+  ------------------------------------------------------------------------------
+        50.0%              0.9990             0.9980            1.0000
+        16.7%              0.9930             0.9900            0.9960
+         9.1%              0.9960             0.9920            1.0000
+         2.0%              0.9880             0.9760            1.0000
+
+RECALL ON THE RARE CLASS FELL FROM 0.9980 TO 0.9760 - two percentage points, not a collapse.
+The prediction that imbalance would destroy the rare class DID NOT HOLD HERE, and the reason
+is worth more than the folklore: naive Bayes multiplies a class PRIOR by a likelihood over
+every word, and when the words are genuinely distinctive the likelihood term is enormous and
+easily overwhelms a 50:1 prior. IMBALANCE HURTS IN PROPORTION TO HOW WEAK YOUR SIGNAL IS. On
+a well-separated problem it barely matters; on a marginal one it is fatal.
+
+THE FIX IS STILL WORTH KNOWING, and it is cheaper than resampling. The prior is a single
+additive term at prediction time, so you can simply replace it:
+
+  training prior (1200:24)   accuracy 0.9900   recall(bug) 0.9800   precision(bug) 1.0000
+  balanced prior (50:50)     accuracy 0.9980   recall(bug) 0.9960   precision(bug) 1.0000
+
+NO RETRAINING, NO RESAMPLING, NO SYNTHETIC DATA. One number changed at inference, and recall
+went from 0.9800 to 0.9960 with precision unchanged at 1.0000. Reach for this before
+reaching for SMOTE.""",
+
+    """5. THE SYSTEM, BUILT UP IN LAYERS.
+
+LAYER 0 - THE KEYWORD RULE. Three words per class, written by whoever currently does this
+manually. Measured, 0.7531 on four classes. Ship it, measure it, and now you have a baseline
+and a labelled backlog from its corrections.
+
+LAYER 1 - TF-IDF PLUS LINEAR MODEL (naive Bayes or logistic regression). Measured, 0.9850.
+Trains in seconds, runs in microseconds, needs no GPU, and the coefficients are readable -
+you can show a reviewer which words drove a decision. FOR MOST TICKET-ROUTING PROBLEMS THIS
+IS THE FINAL ANSWER, and saying so in an interview is a strength rather than a lack of
+ambition.
+
+LAYER 2 - A FINE-TUNED TRANSFORMER. Worth it when word order and negation matter ("this is
+NOT a billing question"), when documents are long and subtle, or when the linear model has
+plateaued below requirement. Costs a GPU, a serving stack, and a latency budget. Measure the
+gain against layer 1 before committing to it.
+
+LAYER 3 - THE CONFIDENCE ROUTER. Auto-apply above a threshold, human review below.
+Threshold chosen from review capacity. Measured, short documents are where the errors live -
+0.7980 at 3-6 words against 1.0000 at 26-60 - so document length is a useful second routing
+signal alongside confidence.
+
+LAYER 4 - THE LABEL LOOP. Every human correction is training data. Log the document, the
+prediction, the confidence, the human's answer and the model version. This is what makes the
+system improve rather than decay.
+
+LAYER 5 - DRIFT MONITORING. Track the predicted class distribution and the review queue
+rate. A sudden shift in either usually means the world changed - a new product launched, a
+new spam campaign - before any accuracy metric can tell you, because accuracy needs labels
+and labels lag.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. CLARIFY SINGLE-LABEL VS MULTI-LABEL, and how many classes. Four is a different
+problem from four hundred; at four hundred, hierarchy and retrieval-based approaches enter.
+
+STEP 2. ASK WHERE LABELS COME FROM. Existing manual routing? An annotation budget? This is
+usually the binding constraint and interviewers are waiting to see whether you ask.
+
+STEP 3. ASK WHAT HAPPENS ON A WRONG ANSWER. A misrouted support ticket costs a day; a
+misclassified legal document costs a lawsuit. This sets the confidence threshold and whether
+a human is in the loop at all.
+
+STEP 4. BASELINE FIRST: keyword rules, measured. 0.7531 here. It also proves the classes are
+separable before you spend anything.
+
+STEP 5. TF-IDF plus a linear model. Report macro-F1 and the per-class confusion matrix, NOT
+accuracy - with four balanced classes accuracy is fine, but with a 2% class it is not.
+
+STEP 6. PROPOSE THE CONFIDENCE ROUTER and size it against human capacity.
+
+STEP 7. RAISE IMBALANCE YOURSELF, and be precise: adjust the prior at inference first
+(measured, recall 0.9800 to 0.9960 with no retraining), then class weights, and only then
+resampling.
+
+STEP 8. DESIGN THE LABEL FEEDBACK LOOP and the retraining cadence.
+
+STEP 9. MONITORING: predicted class distribution, review-queue rate, and per-class recall on
+a small continuously-labelled sample. If asked about scale: this model is microseconds per
+document and embarrassingly parallel - throughput is never the problem, labels are.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A company gets thousands of messages a day and someone has to decide, for each one, whether
+it is about a bill, a broken feature, a suggestion, or a login problem. It is dull, and it is
+too much work.
+
+The first thing to try is the obvious thing: pick three telltale words for each category and
+count them. Measured, that alone got three quarters of the messages into the right pile.
+Three quarters, from a rule anyone could write in ten minutes - and it is worth doing even if
+you intend to replace it, because it proves the piles are distinguishable at all.
+
+Doing better means using every word rather than three. Not because any single word is
+decisive - most of these messages share almost all of their vocabulary - but because a slight
+lean in one direction from each of twenty words adds up to near-certainty. Measured, 98.5%.
+
+Now the fact that should shape everything else. That 98.5% is an average, and the mistakes
+are not scattered evenly. Long messages were classified perfectly. Very short ones - three
+to six words - were right only 80% of the time. Which stands to reason: with six words there
+is barely any evidence to weigh.
+
+That is useful because you know the length BEFORE you classify. So the system does not have
+to be right about everything. It has to notice which messages it is likely to fumble - the
+short ones, and the ones where two categories scored almost the same - and put those in
+front of a person. Everything else goes through untouched, and the person's answer becomes
+training data for next time.
+
+One last thing, and it contradicts something often said. People warn that if one category is
+rare in your training data the system will stop predicting it. Measured here, cutting a
+category to 2% of the training data cost only two percentage points of recall - because the
+words really were distinctive enough to overcome the imbalance. And the cheap fix was not
+collecting more data or inventing fake examples: it was telling the system to stop assuming
+the category is rare. That one change took recall from 98.0% back to 99.6%.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def train(documents):
+      prior = Counter(label for _, label in documents)
+      counts = {c: Counter() for c in classes}
+      total  = Counter()
+      for words, label in documents:
+          for w in words:
+              counts[label][w] += 1
+              total[label]     += 1
+      return prior, counts, total
+
+  def classify(words, prior, counts, total, V, class_log_prior=None):
+      best, best_score = None, -inf
+      for c in classes:
+          s = class_log_prior[c] if class_log_prior else log(prior[c] / n_docs)
+          for w in words:
+              s += log((counts[c][w] + 1) / (total[c] + V))     # add-one smoothing
+          if s > best_score:
+              best, best_score = c, s
+      return best, best_score
+
+LINE BY LINE.
+
+  s = log(prior[c] / n_docs)
+THE PRIOR, as a single additive term. Because it is one number added once - not multiplied
+through every word - it can be REPLACED at inference without retraining. That is the entire
+mechanism behind the imbalance fix: measured, swapping a 1200:24 prior for a 50:50 one took
+recall from 0.9800 to 0.9960.
+
+  s += log(...)
+LOGS, NOT PRODUCTS. Multiplying twenty probabilities of around 0.01 gives 1e-40, which
+underflows to zero in floating point and makes every class equally impossible. Adding logs
+is numerically stable and turns the product into a sum. This is not an optimisation; the
+naive version silently returns garbage.
+
+  (counts[c][w] + 1) / (total[c] + V)
+ADD-ONE (LAPLACE) SMOOTHING. Without the +1, a word never seen in class c gives probability
+zero, and one zero in a product vetoes that class entirely no matter how well every other
+word fits. V, the vocabulary size, is added to the denominator so the probabilities still
+sum to one.
+
+  for w in words
+Note this loops over words WITH REPETITION, so a word appearing three times contributes its
+log-probability three times. That is multinomial naive Bayes. The Bernoulli variant would use
+presence/absence instead, and on short documents the choice measurably matters.
+
+  return best, best_score
+RETURNING THE SCORE, not just the label, is what makes the confidence router possible. The
+margin between the top two scores is the routing signal, and a classifier that only returns
+argmax has thrown away the one number the system most needs.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the three baselines on 1,600 tickets, four classes with shared vocabulary.
+
+  always the biggest class    0.2500     the floor: four balanced classes
+  three keywords per class    0.7531     ten minutes of work
+  naive Bayes over all words  0.9850
+
+The gap from 0.2500 to 0.7531 is the domain knowledge. The gap from 0.7531 to 0.9850 is
+using twenty pieces of weak evidence instead of three strong ones. NEITHER GAP REQUIRED A
+NEURAL NETWORK.
+
+TRACE B - where the errors actually are.
+
+  3-6 words     0.7980
+  7-12 words    0.9355
+  13-25 words   0.9940
+  26-60 words   1.0000
+
+The 26-60 bucket is perfect and the 3-6 bucket is at 0.7980. Averaged, that is the headline
+0.9850, and the average is describing two completely different populations. A system that
+routes the short ones to a human and auto-applies the rest gets near-perfect automation on
+most of the volume and spends its review budget exactly where it is needed.
+
+TRACE C - imbalance, and the honest result.
+
+  rare % of training   overall acc   recall(rare)
+       50.0%              0.9990        0.9980
+       16.7%              0.9930        0.9900
+        9.1%              0.9960        0.9920
+        2.0%              0.9880        0.9760
+
+Twenty-five-fold imbalance cost 2.2 points of recall. THE PREDICTION THAT THE RARE CLASS
+WOULD COLLAPSE WAS WRONG, and the reason is visible in the code: the prior is one additive
+term while the likelihood is a sum over every word, so with distinctive vocabulary the
+likelihood dominates. Note also that the 9.1% row scored HIGHER than the 16.7% row - the
+differences at that end are inside the noise of a 1,000-document test set.
+
+TRACE D - the cheap fix, at the worst imbalance (1200:24).
+
+  training prior   accuracy 0.9900   recall 0.9800   precision 1.0000
+  balanced prior   accuracy 0.9980   recall 0.9960   precision 1.0000
+
+Recall up 1.6 points, precision unchanged, zero retraining. The prior was log(24/1224) =
+-3.93 and became log(0.5) = -0.69, a shift of 3.24 in the score - which is worth about three
+or four moderately informative words.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Training naive Bayes is one pass over the corpus: O(total words), seconds for
+millions of documents. Prediction is O(words in the document times classes) - microseconds,
+CPU only, trivially parallel. Memory is the vocabulary times the class count. A fine-tuned
+transformer is milliseconds per document on a GPU and three orders of magnitude more
+expensive to serve, which is why layer 1 deserves a real attempt first. THE EXPENSIVE
+RESOURCE IN THIS SYSTEM IS NEVER COMPUTE - IT IS LABELS AND HUMAN REVIEW TIME.
+
+THE #1 MISTAKE: reporting a single accuracy number. Measured, 0.9850 overall conceals 0.7980
+on short documents and 1.0000 on long ones. Report by class, by confidence bucket, and by
+length; the breakdown is what turns a model into a system.
+
+THE #2 MISTAKE: skipping the keyword baseline. Measured, 0.7531 for ten minutes of work,
+and it tells you whether the classes are separable before you spend a quarter.
+
+THE #3 MISTAKE: multiplying probabilities instead of adding logs. Twenty terms around 0.01
+underflow to exactly zero and every class ties.
+
+THE #4 MISTAKE: no smoothing, so one unseen word vetoes an entire class.
+
+THE #5 MISTAKE: reaching for resampling or SMOTE on an imbalanced set before trying the
+prior. Measured, changing one number at inference took recall from 0.9800 to 0.9960.
+
+THE #6 MISTAKE: returning only the argmax, discarding the margin - and with it any
+possibility of a confidence router.
+
+THE #7 MISTAKE: no plan for new or changed categories. Categories always change, and a model
+trained on last year's taxonomy will confidently assign the closest wrong label.
+
+THE TAKEAWAY: document classification is a solved modelling problem and an unsolved systems
+problem - measured, three hand-written keywords per class got 0.7531 and TF-IDF-style naive
+Bayes got 0.9850 with no neural network anywhere, so the design effort belongs in where
+labels come from, what happens to uncertain cases, and how the taxonomy changes; the errors
+concentrate predictably (0.7980 on 3-6 word documents against 1.0000 on 26-60 word ones), and
+because length and margin are known BEFORE you commit to a label, the right architecture is a
+confidence router sized against human review capacity rather than a better classifier; and
+on imbalance, be precise rather than superstitious - a 25x imbalance cost only 2.2 points of
+recall here because the prior is a single additive term against a likelihood summed over
+every word, and replacing that one term at inference recovered it entirely without
+retraining.""",
+]
+
 
 
 
