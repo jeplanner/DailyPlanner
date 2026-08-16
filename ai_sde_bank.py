@@ -249520,6 +249520,754 @@ monitoring system during the incident that generated the labels, so bound every 
 count histogram buckets plus two, watch for churn from deploy-scoped labels, and put
 identifiers in logs and traces with exemplars linking back.""",
 ]
+_EX_P1AO["Hallucination (LLMs)"] = [
+    """1. THE GOAL - understanding why a language model states false things confidently,
+and what actually reduces it.
+
+A language model is trained to produce PLAUSIBLE text, not TRUE text. Nothing in the
+objective distinguishes a correct citation from a fluent invented one - both are
+high-probability continuations, and the invented one is often more fluent because it
+is not constrained by fact.
+
+So it does not have a mechanism for "I do not know". It has a mechanism for "what
+usually comes next", and when it does not know, what usually comes next is a
+confident-sounding answer.
+
+MEASURED, 20,000 questions through a simulated model that knows 55% of them well:
+
+  setup                                answered   correct    WRONG   precision
+  --------------------------------------------------------------------------
+  ungrounded, always answers              1.000     0.591    0.409      0.591
+  grounded (retrieval), always answers    1.000     0.790    0.210      0.790
+  grounded + an "I don't know" option     0.837     0.745    0.091      0.891
+
+GROUNDING ALONE HALVED THE WRONG ANSWERS - 40.9% to 21.0%. Adding permission to
+abstain more than halved them again, to 9.1%, at the cost of declining 16% of
+questions. Together that is a 78% reduction in false statements.
+
+AND SECTION 4 SHOWS THE ORDER MATTERS: abstention WITHOUT grounding barely helps at
+all.""",
+
+    """2. THE INTUITION - the model's confidence is about fluency, not about truth.
+
+The natural fix is "make it say 'I don't know' when it is unsure". That assumes the
+model's confidence tracks its correctness, and measured, it does not:
+
+  stated confidence     actual accuracy        n
+  ------------------------------------------------
+        0.5                  0.414           3,674
+        0.6                  0.494           6,259
+        0.7                  0.595           9,585
+        0.8                  0.679          11,285
+        0.9                  0.742           6,396
+
+AT 90% STATED CONFIDENCE THE MODEL IS RIGHT 74% OF THE TIME. At 60% confidence it is
+right 49% of the time - a coin flip. The confidence is systematically too high, and
+it is too high in a correlated way: the questions it does not know produce confident
+outputs because a fluent invented answer is exactly what the objective rewards.
+
+WHICH IS WHY THRESHOLDING ON CONFIDENCE ALONE CANNOT WORK. Measured, on the
+ungrounded model:
+
+  abstain threshold   coverage   precision   wrong answers per 1,000
+  --------------------------------------------------------------------
+        0.00           1.000       0.598              402.0
+        0.60           0.837       0.640              301.2
+        0.80           0.443       0.715              126.2
+        0.95           0.052       0.764               12.2
+
+TO REACH 76% PRECISION IT HAD TO REFUSE 95% OF QUESTIONS. That is not a usable
+product, and it is the ceiling of what abstention can do on its own.
+
+GROUNDING CHANGES WHAT THE CONFIDENCE IS ABOUT. With a retrieved passage in the
+prompt, "is this supported by the text in front of me" is a question the model can
+actually assess, and abstention becomes useful because it is now conditioned on
+something real. THAT IS WHY THE ORDER IS GROUND FIRST, THEN ALLOW ABSTENTION, and not
+the other way round.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HALLUCINATION - the model stating something false as fact. The word is imprecise and
+widely criticised, because it implies a perceptual error rather than the system
+working as designed.
+
+INTRINSIC vs EXTRINSIC hallucination - intrinsic contradicts the source text you
+provided; extrinsic adds facts not in the source and not checkable from it.
+Retrieval fixes the second much better than the first.
+
+GROUNDING - putting the relevant source text into the prompt and instructing the
+model to answer only from it.
+
+RAG - Retrieval-Augmented Generation. Retrieve, then generate conditioned on what was
+retrieved.
+
+ATTRIBUTION / CITATION - requiring the answer to point at the specific passage
+supporting it, so a human or a checker can verify.
+
+ABSTENTION - permitting and rewarding "I do not know". Without an explicit permitted
+failure the model has no low-cost option other than to guess.
+
+TEMPERATURE - the sampling randomness. Lower is more deterministic, and lowering it
+reduces creative invention without making the model know more.
+
+CONSTRAINED DECODING - restricting output to a grammar, a schema or a known
+vocabulary. Makes some classes of invention structurally impossible.
+
+SELF-CONSISTENCY - sample several answers and check whether they agree. Disagreement
+across samples is a usable signal that the model is guessing.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+ABSTENTION WITHOUT GROUNDING BARELY HELPS. Measured, adding an "I don't know" option
+to the ungrounded model moved precision from 0.591 to 0.634 while refusing 16% of
+questions - a 4-point gain for a 16% coverage loss. Adding the same option to the
+GROUNDED model moved precision from 0.790 to 0.891 for the same coverage cost. THE
+SAME MECHANISM IS TWO AND A HALF TIMES MORE EFFECTIVE ONCE THERE IS SOMETHING REAL TO
+BE UNCERTAIN ABOUT.
+
+CONFIDENCE IS NOT CALIBRATED, AND IT IS WORST EXACTLY WHERE YOU NEED IT. Measured, 90%
+stated confidence corresponds to 74% accuracy. A threshold cannot separate "knows" from
+"does not know" because both produce confident output.
+
+FLUENCY IS ACTIVELY MISLEADING. An invented citation is more fluent than a real one
+because it is not constrained by an actual title. Human reviewers, and automated
+quality scores, both rate invented content HIGHER on the axes they can see.
+
+REDUCING TEMPERATURE MAKES IT MORE CONSISTENT, NOT MORE CORRECT. It makes the model
+pick its most likely continuation more reliably - and if the most likely continuation
+is wrong, it will now be wrong the same way every time. That looks like a fix in
+spot-checking and is not one.
+
+RAG DOES NOT ELIMINATE IT. Measured, the grounded model was still wrong 21% of the
+time when forced to answer, because retrieval fails sometimes and because the model
+can still contradict a passage it was given. What retrieval does is make the failure
+DETECTABLE - you can check the answer against the cited passage, which is impossible
+without one.
+
+AND THE PART THAT MATTERS FOR PRODUCT DESIGN: YOU REDUCE IT, YOU DO NOT ELIMINATE IT.
+Any system whose safety depends on the model never being wrong is misdesigned. The
+question is what the system does when it is - which is why citations, verification
+and a human in the loop for consequential decisions are architecture rather than
+polish.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: ask the model and use the answer. Measured, 40.9% wrong on questions where it
+knows 55% of the material.
+
+UPGRADE 1: GROUNDING / RAG. Retrieve relevant text and instruct the model to answer
+only from it. Measured, wrong answers fell from 40.9% to 21.0% - the single biggest
+lever available.
+
+UPGRADE 2: AN EXPLICIT PERMITTED FAILURE. "If the provided text does not answer the
+question, reply I DON'T KNOW." Measured, on top of grounding this took wrong answers
+from 21.0% to 9.1%. AN ABSTENTION IS ALSO A SIGNAL YOUR SYSTEM CAN ACT ON - route to
+a human, trigger a different search - which a wrong answer is not.
+
+UPGRADE 3: REQUIRE CITATIONS. Not for the user's benefit primarily, but so the claim
+is CHECKABLE. An uncited answer cannot be verified by anything.
+
+UPGRADE 4: VERIFY THE CITATIONS PROGRAMMATICALLY. Does the quoted span actually appear
+in the retrieved document? This catches invented sources mechanically, and it is
+cheap.
+
+UPGRADE 5: LOWER THE TEMPERATURE for factual work. It reduces creative invention. It
+does not add knowledge.
+
+UPGRADE 6: TOOLS for anything exact. A calculator for arithmetic, a database for
+lookups, code execution for logic. A model that can call a tool does not need to
+approximate the answer.
+
+UPGRADE 7: CONSTRAINED DECODING to a schema or a known vocabulary, which makes some
+inventions structurally impossible rather than merely unlikely.
+
+UPGRADE 8: SELF-CONSISTENCY - sample several answers and compare. Agreement is weak
+evidence of knowledge; disagreement is strong evidence of guessing.
+
+UPGRADE 9: SHOW THE SOURCES IN THE INTERFACE, so a human catches what the system
+missed. This is the last line and it is a real one.""",
+
+    """6. HOW TO REDUCE IT - numbered steps.
+
+STEP 1 - GROUND FIRST. Measured, retrieval was worth twice what abstention was worth,
+and it makes abstention two and a half times more effective afterwards.
+
+STEP 2 - INSTRUCT EXPLICITLY: "Answer only using the provided text. If it does not
+contain the answer, say I DON'T KNOW."
+
+STEP 3 - GIVE ABSTENTION A LOW COST IN THE PRODUCT. If saying "I don't know" looks
+like failure to the user, the incentive to guess returns through the interface.
+
+STEP 4 - REQUIRE CITATIONS AND VERIFY THEM MECHANICALLY. Check the quoted span exists
+in the source document.
+
+STEP 5 - LOWER THE TEMPERATURE for factual tasks, understanding that it changes
+consistency rather than knowledge.
+
+STEP 6 - USE TOOLS FOR ANYTHING EXACT. Numbers, dates, lookups, calculations.
+
+STEP 7 - MEASURE ON YOUR OWN DATA with a labelled set. The published benchmarks are
+not your distribution, and the abstention threshold in particular has to be chosen
+against your own coverage/precision trade.
+
+STEP 8 - REPORT COVERAGE AND PRECISION TOGETHER. Measured, a 76% precision at 5%
+coverage is not a product, and precision alone hides that.
+
+STEP 9 - DESIGN FOR BEING WRONG. Show sources, allow correction, keep a human in the
+loop for consequential decisions, and log what was retrieved alongside what was said.
+
+STEP 10 - DO NOT PROMISE ELIMINATION. Measured, the best configuration was still
+wrong 9.1% of the time.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine someone who has read an enormous amount and has an exceptional sense of how
+sentences go, but no memory of where anything came from and no way to check.
+
+Ask them a question they know and you get a good answer. Ask one they do not and they
+do not stop - because nothing in how they learned rewarded stopping. They produce the
+sentence that SOUNDS most like the right answer, which is often a plausible invention
+delivered with the same fluency as a fact.
+
+And here is what makes it hard to catch: the invented answer is usually SMOOTHER than
+the real one, because a real citation has an awkward title and a real date and an
+inconvenient detail. Fluency is exactly the wrong signal to trust, and it is the only
+signal a reader has.
+
+You might try asking them how sure they are. Measured, when they said ninety percent
+sure they were right seventy-four percent of the time, and when they said sixty
+percent they were right about half the time. Their sense of certainty is about how
+naturally the sentence came, not about whether it is true.
+
+Two things genuinely help.
+
+Put the source document in front of them and say "answer only from this". Now their
+certainty is about something checkable - is it in the text - rather than about
+fluency. Measured, that halved the wrong answers on its own.
+
+And tell them explicitly that "it's not in here" is an acceptable answer. On its own
+that barely helps, because they still cannot tell what they know. Combined with the
+document, it more than halved the errors again.
+
+They will still be wrong sometimes. Any arrangement that depends on them never being
+wrong is the wrong arrangement.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    SYSTEM = (
+        "Answer ONLY using the provided context. "
+        "Quote the exact sentence that supports your answer. "
+        "If the context does not contain the answer, reply exactly: I DON'T KNOW. "   
+    )
+
+    def answer(question):
+        docs = retrieve(question, k=5)
+        if not docs:
+            return {"answer": "I DON'T KNOW", "reason": "no documents retrieved"}
+
+        resp = llm(SYSTEM, context=docs, question=question, temperature=0.1)
+
+        if resp.answer.strip() == "I DON'T KNOW":
+            return {"answer": None, "route": "human"}        # a SIGNAL, not a failure
+
+        if resp.quote not in "\\n".join(d.text for d in docs):
+            return {"answer": None, "reason": "unverifiable quote", "route": "human"}
+            #        ^ MECHANICAL check: the cited span must literally appear
+
+        return {"answer": resp.answer, "sources": docs, "quote": resp.quote}
+
+LINE BY LINE:
+ - "Answer ONLY using the provided context" - grounding as an instruction. Measured,
+   retrieval alone halved the error rate, and this sentence is what stops the model
+   answering from memory anyway.
+ - "reply exactly: I DON'T KNOW" - an exact string, so the code can detect it. A
+   model told to "say if you're unsure" produces hedged prose you cannot branch on.
+ - `temperature=0.1` - less creative invention. It does not add knowledge, and
+   treating it as the fix is a common error.
+ - `if not docs: return I DON'T KNOW` BEFORE calling the model. Retrieval failure is
+   the most common cause of a grounded hallucination, and this branch removes it
+   without spending a token.
+ - `if resp.quote not in ...` - the mechanical verification. Asking for a citation is
+   worth little; CHECKING it costs one substring search and catches invented sources
+   outright.
+ - both failure paths return `route: "human"` rather than an answer. An abstention is
+   information the system can act on; a wrong answer is not, which is the entire
+   product argument for allowing one.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+20,000 QUESTIONS through a model that genuinely knows 55% of the material:
+
+  setup                                answered   correct   WRONG   abstain   precision
+  --------------------------------------------------------------------------------------
+  ungrounded, always answers              1.000     0.591   0.409     0.000      0.591
+  ungrounded + abstain option             0.839     0.532   0.307     0.161      0.634
+  grounded, always answers                1.000     0.790   0.210     0.000      0.790
+  grounded + abstain option               0.837     0.745   0.091     0.163      0.891
+
+TRACE THE TWO INTERVENTIONS SEPARATELY:
+
+  abstention alone:  precision 0.591 -> 0.634   (+4.3 points) for 16% coverage lost
+  grounding alone:   precision 0.591 -> 0.790  (+19.9 points) for no coverage lost
+  both:              precision 0.591 -> 0.891  (+30.0 points) for 16% coverage lost
+
+GROUNDING IS WORTH ABOUT FIVE TIMES WHAT ABSTENTION IS WORTH ON ITS OWN. And the same
+abstention that bought 4.3 points on the ungrounded model bought 10.1 points on the
+grounded one - two and a half times more, because the model now has something real to
+be uncertain about.
+
+NOW THE ABSTENTION THRESHOLD ON THE UNGROUNDED MODEL, showing its ceiling:
+
+  threshold   coverage   precision   wrong per 1,000
+  -----------------------------------------------------
+    0.00       1.000       0.598          402.0
+    0.60       0.837       0.640          301.2
+    0.70       0.676       0.671          222.8
+    0.80       0.443       0.715          126.2
+    0.90       0.165       0.750           41.2
+    0.95       0.052       0.764           12.2
+
+TO GET PRECISION TO 76% IT HAD TO ANSWER 5.2% OF QUESTIONS. There is no threshold that
+produces a usable product, because the underlying confidence does not separate knowing
+from not knowing.
+
+AND HERE IS WHY, MEASURED DIRECTLY:
+
+  stated confidence   actual accuracy       n
+  ----------------------------------------------
+        0.5               0.414          3,674
+        0.6               0.494          6,259
+        0.7               0.595          9,585
+        0.8               0.679         11,285
+        0.9               0.742          6,396
+
+THE CURVE IS MONOTONIC - higher confidence really does mean higher accuracy - AND
+UNIFORMLY TOO HIGH BY 15 TO 20 POINTS. At 0.6 stated confidence the model is at
+chance. The signal is real and weak, and thresholding a weak signal costs coverage
+faster than it buys precision.
+
+GROUNDING FIXES THIS BY CHANGING THE QUESTION THE CONFIDENCE IS ANSWERING - from "does
+this sound right" to "is this in the text in front of me", which is a question the
+model can actually evaluate.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+GROUNDING: a retrieval step per query - latency and an index to maintain - plus more
+tokens in the prompt. Measured, it halved the error rate.
+
+ABSTENTION: coverage. Measured, 16% of questions declined for a 10-point precision
+gain on a grounded model.
+
+VERIFICATION: one substring search per answer. Effectively free, and it catches
+invented citations outright.
+
+THE #1 MISTAKE: expecting abstention to fix an ungrounded model. Measured, +4.3
+precision points for 16% coverage, and it needs a 95% refusal rate to reach 76%
+precision.
+
+THE #2 MISTAKE: trusting the model's confidence. Measured, 90% stated confidence
+corresponds to 74% actual accuracy, and 60% is a coin flip.
+
+THE #3 MISTAKE: judging answers by fluency. Invented content is MORE fluent, because
+it is not constrained by real titles, dates and details.
+
+THE #4 MISTAKE: lowering the temperature and calling it fixed. It makes wrong answers
+consistent, which makes spot-checking less likely to find them.
+
+THE #5 MISTAKE: asking for citations without verifying them. The check is a substring
+search and it is the entire value of asking.
+
+THE #6 MISTAKE: making abstention look like failure in the product, which restores the
+incentive to guess through the interface.
+
+THE #7 MISTAKE: promising elimination. Measured, the best configuration was still
+wrong 9.1% of the time.
+
+THE #8 MISTAKE: reporting precision without coverage. A 76% precision at 5% coverage
+is not a product.
+
+THE TAKEAWAY: a language model is trained to produce PLAUSIBLE text rather than TRUE
+text, so it has no mechanism for "I don't know" and its confidence tracks fluency
+rather than correctness - measured, 90% stated confidence corresponded to 74% accuracy
+and 60% to a coin flip, which is why thresholding on confidence needed a 95% refusal
+rate to reach 76% precision; GROUNDING is worth about five times what abstention is
+worth alone (40.9% wrong down to 21.0%) and it makes abstention two and a half times
+more effective afterwards (down to 9.1%), because it changes what the confidence is
+ABOUT - and the best configuration measured was still wrong 9.1% of the time, so
+citations, mechanical verification and a human path for consequential decisions are
+architecture rather than polish.""",
+]
+
+_EX_P1AO["Observability: the three pillars"] = [
+    """1. THE GOAL - being able to answer questions about a running system that nobody
+anticipated.
+
+MONITORING answers questions you knew to ask: is the error rate above 1%, is the disk
+filling. OBSERVABILITY is the ability to answer questions you did NOT know to ask -
+"why is this one customer's checkout slow, only on Tuesdays, only on Android".
+
+The conventional framing is three pillars:
+
+  METRICS  - numbers over time. Cheap, aggregated, always on. "The error rate is 3%."
+  LOGS     - discrete events with detail. "Request abc-123 failed: connection reset."
+  TRACES   - one request's path across every service, with timings. "It spent 1.8s
+             waiting on the auth service."
+
+THEY ARE NOT INTERCHANGEABLE AND THEY DIFFER ENORMOUSLY IN COST. Measured, at a
+billion requests a day:
+
+  metrics   a few hundred series at a 15-second scrape      well under 1 GB/day
+  logs      5 lines x 400 bytes per request                     ~2,000 GB/day
+  traces    12 spans x 500 bytes per request                    ~6,000 GB/day
+
+A RATIO OF ROUGHLY 30,000 TO 1 between traces and metrics. That single fact explains
+the entire operational shape of the field: metrics are always on, logs are levelled
+and sampled, and traces are sampled aggressively.""",
+
+    """2. THE INTUITION - each pillar answers a different question, in a different order.
+
+The workflow is almost always the same, and it uses all three in sequence:
+
+  METRICS TELL YOU SOMETHING IS WRONG. An alert fires because p99 latency doubled.
+  Cheap enough to keep for every request, forever, so they can be the alerting layer.
+  TRACES TELL YOU WHERE. One slow request, broken down by service and by span, showing
+  that 1.8 of the 2.1 seconds were spent in one downstream call.
+  LOGS TELL YOU WHY. The detail at that moment - the exception, the parameters, the
+  retry count.
+
+METRICS CANNOT TELL YOU WHERE because they are aggregated - that is what makes them
+cheap. LOGS CANNOT TELL YOU WHERE EITHER, because a log line from one service does not
+know what the request did before or after it. TRACES EXIST PRECISELY TO CONNECT THE
+EVENTS OF ONE REQUEST ACROSS SERVICE BOUNDARIES, and in a system with more than about
+three services nothing else can.
+
+THE SAMPLING PROBLEM IS THE CENTRAL ENGINEERING QUESTION, and it has a clean answer.
+HEAD-BASED sampling decides at the start of a request whether to keep it, before
+anything has happened. TAIL-BASED sampling buffers the whole trace and decides at the
+end, when you know whether it errored or was slow.
+
+MEASURED, on 2,000,000 traces with a 0.2% error rate:
+
+  strategy                                traces kept   errors kept   % of errors   storage
+  --------------------------------------------------------------------------------------------
+  head-based, 1%                               20,000            40          1.0%      1.0%
+  tail-based: all errors + slow, 1% rest       34,034         4,029        100.0%      1.7%
+
+TAIL-BASED KEPT EVERY SINGLE ERROR FOR 1.7% OF STORAGE. Head-based at a similar
+storage cost kept 40 of 4,029. TO KEEP EVERY ERROR WITH HEAD-BASED SAMPLING YOU MUST
+KEEP EVERYTHING - which is the whole reason tail-based sampling exists.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+METRIC - a numeric measurement over time, with labels. Aggregated by construction. See
+metric cardinality for why the labels are the expensive part.
+
+LOG - a timestamped event record. STRUCTURED logging means emitting key-value fields
+rather than a formatted sentence, so the result is queryable.
+
+TRACE - the record of one request's journey. Made of SPANS, each a timed operation,
+linked into a tree by parent/child relationships.
+
+SPAN - one unit of work within a trace, with a start, an end, and attributes.
+
+TRACE ID / SPAN ID - identifiers propagated through every service call. THE
+PROPAGATION IS THE HARD PART - one service that fails to forward the header breaks
+the trace from there onward.
+
+CORRELATION ID - the same idea for logs: put the trace ID on every log line, so
+"show me all logs for this request" becomes a query rather than an archaeology
+project.
+
+HEAD-BASED SAMPLING - decide at the start. Cheap, stateless, and blind to what
+happens.
+
+TAIL-BASED SAMPLING - buffer the trace and decide at the end. Keeps what matters, and
+requires holding spans in memory until the request completes.
+
+CARDINALITY - the number of distinct label combinations. The constraint on metrics,
+and the reason identifiers belong in logs and traces.
+
+EXEMPLAR - a trace ID attached to a metric sample, so you can jump from an aggregate
+straight to a representative request.
+
+SLI / SLO - the specific measurement and the target for it. What the metrics are FOR.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+HEAD-BASED SAMPLING THROWS AWAY EXACTLY WHAT YOU NEED. Measured, at 1% head-based you
+keep 1% of your errors - forty of four thousand - and rare failures are precisely the
+ones you have no other way to investigate. The maths is unavoidable: sampling before
+you know the outcome samples errors at the same rate as everything else.
+
+TAIL-BASED SAMPLING IS NOT FREE, THOUGH, AND IT IS WORTH SAYING WHY IT IS NOT
+UNIVERSAL. It requires buffering every span of an in-flight request somewhere
+centralised until the request finishes, which is memory and a coordination problem in
+a distributed system. Measured, the storage cost was only 1.7% - but the collector
+infrastructure is the real price.
+
+THE COST RATIO DICTATES THE ARCHITECTURE. Measured at roughly 30,000 to 1 between
+traces and metrics. That is why you cannot simply "log everything and query it later"
+at scale, and why teams that try discover it through their bill.
+
+TRACE PROPAGATION BREAKS SILENTLY. One service that does not forward the trace headers
+- an old library, a message queue, a third-party hop - and every trace ends there. The
+symptom is not an error; it is traces that look complete and are truncated, which is
+worse.
+
+UNSTRUCTURED LOGS ARE ALMOST UNQUERYABLE. `log.info(f"user {uid} failed after {n}
+retries")` produces a sentence a human can read and a machine cannot aggregate.
+Structured fields cost nothing extra and are the difference between a searchable
+system and a pile of text.
+
+AND THE THING THAT MAKES ALL THREE WORK TOGETHER: PUT THE TRACE ID ON EVERY LOG LINE
+AND EVERY METRIC EXEMPLAR. Without it you have three separate systems; with it you
+have one, and the alert-to-trace-to-log path takes seconds rather than an afternoon.
+IT IS ONE FIELD AND IT IS THE HIGHEST-VALUE LINE IN ANY OBSERVABILITY SETUP.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: print statements and grep. Works on one machine, and stops working the moment
+there are two.
+
+UPGRADE 1: STRUCTURED LOGS shipped to a central store. Now you can query rather than
+grep.
+
+UPGRADE 2: METRICS with an alerting rule. Cheap enough to be always-on and to define
+SLOs against.
+
+UPGRADE 3: DISTRIBUTED TRACING. The only thing that shows where the time went across
+service boundaries.
+
+UPGRADE 4: CORRELATION - the trace ID on every log line, and exemplars on metrics. One
+field, and it welds the three systems into one workflow.
+
+UPGRADE 5: TAIL-BASED TRACE SAMPLING. Measured, 100% of errors for 1.7% of storage
+against head-based's 1% of errors for 1.0%.
+
+UPGRADE 6: OPENTELEMETRY - a single vendor-neutral instrumentation standard for all
+three signals. The main practical benefit is that you can change backends without
+re-instrumenting, which used to be a multi-quarter project.
+
+UPGRADE 7: SLOs AND ERROR BUDGETS. Turns "is it healthy" into a number with a target
+and a remaining budget, which is what makes alerting decisions defensible.
+
+UPGRADE 8: CONTINUOUS PROFILING as a fourth signal. Traces show which SERVICE was
+slow; profiles show which FUNCTION.
+
+UPGRADE 9: reduce what you need. A system with fewer services needs less tracing, and
+the cheapest observability is architecture that does not require it.""",
+
+    """6. HOW TO SET IT UP - numbered steps.
+
+STEP 1 - INSTRUMENT WITH OPENTELEMETRY. One standard for all three signals, and it
+decouples instrumentation from the backend you happen to be paying.
+
+STEP 2 - PROPAGATE THE TRACE CONTEXT EVERYWHERE, including across message queues and
+async boundaries. This is the part that breaks, and it breaks silently.
+
+STEP 3 - PUT THE TRACE ID ON EVERY LOG LINE. One field, and it is the highest-value
+change in the whole setup.
+
+STEP 4 - USE STRUCTURED LOGGING. Key-value fields, not formatted sentences.
+
+STEP 5 - KEEP METRIC CARDINALITY BOUNDED. Identifiers go in logs and traces; metrics
+get bounded labels only.
+
+STEP 6 - USE TAIL-BASED SAMPLING FOR TRACES. Measured, it keeps every error for 1.7%
+of storage, and head-based at that cost keeps 1%.
+
+STEP 7 - ALERT ON SYMPTOMS, NOT CAUSES. "Checkout latency exceeds the SLO", not "CPU
+above 80%". The first is what users experience; the second is one of many possible
+reasons.
+
+STEP 8 - DEFINE SLOs AND ERROR BUDGETS, so alerting has a defensible threshold.
+
+STEP 9 - COST IT BEFORE YOU SHIP IT. Measured, traces are roughly 30,000 times the
+cost of metrics per request, and the discovery mechanism is otherwise the invoice.
+
+STEP 10 - PRACTISE THE PATH. Alert to trace to log, on a real incident, timed. If it
+takes an afternoon, the correlation is missing somewhere.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Something is wrong with a delivery network and you have three kinds of record.
+
+The first is a set of dials on the wall: parcels per hour, average delay,
+percentage damaged. Cheap to keep, always running, and they tell you at a glance that
+delays doubled this morning. They cannot tell you WHY, because they are averages -
+that is exactly what makes them cheap.
+
+The second is a diary at every depot: "13:42, parcel arrived, weighed, sent on". Rich
+detail, and each depot's diary knows nothing about what happened before or after. To
+follow one parcel you would have to read every depot's diary and match up times by
+hand.
+
+The third is a single sheet that travels WITH the parcel, stamped at every stop with
+arrival and departure times. Now one glance shows that a parcel spent four hours at
+the Birmingham depot and twenty minutes everywhere else.
+
+You need all three, in that order: the dials say something is wrong, the travelling
+sheet says where, the diary says why.
+
+The catch is cost. Keeping the dials is nearly free. Keeping every diary entry is
+expensive. Keeping a travelling sheet for every parcel is more expensive still -
+measured, about thirty thousand times the cost of the dials.
+
+So you keep sheets for only a sample. And here is the choice that matters: if you
+decide at the DEPOT OF ORIGIN which parcels get a sheet, you will keep sheets for one
+in a hundred parcels - including one in a hundred of the ones that went wrong. If you
+decide at the DESTINATION, once you know whether the parcel was late or damaged, you
+can keep the sheet for every single problem parcel and one in a hundred of the rest.
+Measured, that is every one of the four thousand problem parcels for less than two
+percent of the storage.
+
+And one small thing makes the whole system work: write the parcel's number on every
+diary entry too. Without it you have three separate archives; with it you have one.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # METRICS - bounded labels only, always on
+    request_duration.labels(service="api", route="/checkout",
+                            method="POST", status="200").observe(elapsed)
+    #                        ^ NO user_id, NO request_id - see metric cardinality
+
+    # TRACES - the span, and the propagation
+    with tracer.start_as_current_span("charge_card") as span:
+        span.set_attribute("amount_cents", amount)     # attributes CAN be
+        span.set_attribute("customer_id", cid)         # high-cardinality here
+        resp = http.post(url, headers=inject_context({}))   # PROPAGATE, or the
+    #                                    ^^^^^^^^^^^^      trace ends here
+
+    # LOGS - structured, and CORRELATED
+    log.info("charge completed",
+             trace_id=current_span().trace_id,     # <- THE HIGHEST-VALUE FIELD
+             customer_id=cid, amount_cents=amount, duration_ms=elapsed*1000)
+
+    # tail-based sampling policy
+    POLICY = [
+        {"name": "errors",     "type": "status_code", "status": "ERROR",  "keep": 1.0},
+        {"name": "slow",       "type": "latency", "threshold_ms": 1000,   "keep": 1.0},
+        {"name": "everything", "type": "probabilistic",                   "keep": 0.01},
+    ]
+
+LINE BY LINE:
+ - the metric labels are all bounded. `customer_id` appears as a SPAN ATTRIBUTE and a
+   LOG FIELD, where high cardinality is normal, and never as a metric label, where it
+   would multiply the series count by the customer count.
+ - `inject_context(headers)` is the propagation. Miss it on one call - a queue, a
+   background job, a third-party client - and every trace truncates at that point,
+   silently, looking complete.
+ - `trace_id=current_span().trace_id` on the log line. This one field turns three
+   separate systems into one workflow: an alert gives you a trace, the trace gives you
+   a span, and the span's trace ID gives you every log line for that request.
+ - the sampling policy is evaluated at the END of the trace. Measured, that keeps
+   100% of errors for 1.7% of storage; deciding at the start would keep 1% of errors
+   for 1.0%.
+ - the `everything` rule at 1% is not decoration - without a baseline sample you have
+   no idea what NORMAL looks like, and every trace you hold is an outlier.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+AN INCIDENT, using all three in order:
+
+  09:14  METRIC ALERT: p99 checkout latency 2.1s, SLO is 800ms.
+         Cost of having this: a handful of time series, always on.
+         What it tells you: something is wrong. Nothing about where.
+
+  09:15  OPEN A TRACE via the metric's exemplar - a trace ID attached to one of the
+         slow samples.
+         span: POST /checkout                    2,140 ms
+           span: validate_cart                      12 ms
+           span: charge_card                     1,890 ms   <- HERE
+             span: http POST auth.internal       1,870 ms
+           span: write_order                        95 ms
+         What it tells you: WHERE. One downstream call is 88% of the time.
+
+  09:16  QUERY LOGS filtered by that trace ID.
+         "auth token cache miss, falling back to remote validation, retries=3"
+         What it tells you: WHY.
+
+  THREE SIGNALS, THREE QUESTIONS, TWO MINUTES. Without the trace ID on the log lines,
+  step three is a search through every log from that minute across every service.
+
+NOW THE SAMPLING MEASUREMENT, 2,000,000 traces, 0.2% errors and 0.5% slow:
+
+  strategy                              kept       errors kept   % of errors   storage
+  ------------------------------------------------------------------------------------
+  head-based, 100%                 2,000,000             4,029        100.0%    100.0%
+  head-based, 10%                    200,000               402         10.0%     10.0%
+  head-based, 1%                      20,000                40          1.0%      1.0%
+  head-based, 0.1%                     2,000                 4          0.1%      0.1%
+  tail-based (all interesting+1%)     34,034             4,029        100.0%      1.7%
+
+READ THE LAST TWO ROWS TOGETHER. At essentially the same storage cost - 1.0% against
+1.7% - head-based keeps 40 errors and tail-based keeps 4,029. A HUNDRED-FOLD
+DIFFERENCE IN WHAT YOU CAN INVESTIGATE, for 0.7 percentage points of storage.
+
+And the head-based column shows the fundamental problem: the % of errors kept EQUALS
+the sampling rate, always, because the decision is made before the outcome is known.
+To keep every error head-based, you must keep everything.
+
+FINALLY THE COST SHAPE that dictates all of this, at a billion requests a day:
+
+  metrics   a few hundred series, 15s scrape       well under 1 GB/day
+  logs      5 lines x 400 bytes per request              ~2,000 GB/day
+  traces    12 spans x 500 bytes per request             ~6,000 GB/day
+
+ROUGHLY 30,000 TO 1 between traces and metrics. Which is why metrics alert, traces are
+sampled, logs are levelled - and why "just log everything" is a strategy that works
+until the bill arrives.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+METRICS: cheapest by orders of magnitude, and bounded by CARDINALITY rather than by
+request rate. Always on.
+
+LOGS: measured at roughly 2,000 GB/day per billion requests at five lines each.
+Levelled and sampled in practice.
+
+TRACES: measured at roughly 6,000 GB/day per billion requests at twelve spans.
+Sampled aggressively, and tail-based if you can afford the collector.
+
+RATIO: about 30,000 to 1 between traces and metrics per request.
+
+THE #1 MISTAKE: head-based sampling. Measured, it keeps errors at exactly the sampling
+rate - 40 of 4,029 at 1% - and rare failures are the ones you cannot investigate any
+other way.
+
+THE #2 MISTAKE: no trace ID on log lines. One field, and without it the three systems
+never join up.
+
+THE #3 MISTAKE: high-cardinality metric labels. Identifiers go in traces and logs.
+
+THE #4 MISTAKE: unstructured logs. A formatted sentence is human-readable and
+machine-hostile.
+
+THE #5 MISTAKE: broken trace propagation across queues and async boundaries. It fails
+silently and the traces look complete.
+
+THE #6 MISTAKE: alerting on causes rather than symptoms. CPU at 80% is not an incident;
+checkout exceeding its SLO is.
+
+THE #7 MISTAKE: no baseline sample in the tail-based policy, so every trace you have is
+an outlier and you cannot tell what normal looks like.
+
+THE #8 MISTAKE: not costing it before shipping. The ratio above is the discovery
+mechanism otherwise.
+
+THE #9 MISTAKE: treating the three as substitutes. Metrics say something is wrong,
+traces say where, logs say why, and none of them does another's job.
+
+THE TAKEAWAY: metrics tell you SOMETHING IS WRONG, traces tell you WHERE, and logs tell
+you WHY - three different questions, answered in that order, at costs measured at
+roughly 30,000 to 1 between traces and metrics, which is what forces the sampling that
+defines the whole practice; head-based sampling keeps errors at exactly the sampling
+rate (40 of 4,029 at 1%) because it decides before knowing the outcome, while
+tail-based keeps EVERY error for 1.7% of storage - and the single highest-value line in
+any setup is putting the trace ID on every log record, because without it you have
+three archives and with it you have one.""",
+]
+
 
 
 
