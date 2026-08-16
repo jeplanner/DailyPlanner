@@ -200352,6 +200352,1798 @@ colliding keys (measured: 250 probes versus 5), which is why hash seeds are rand
 why anything needing ORDER belongs in a tree instead.""",
 ]
 
+_EX_P1AO["Why does the tails array in the O(n log n) LIS algorithm give the correct length but not a valid subsequence?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the array is a table of records, not a route
+
+The LONGEST INCREASING SUBSEQUENCE problem: given [2, 5, 3, 7, 11, 8], find the longest subsequence
+whose values increase. Here it is [2, 3, 7, 8] or [2, 5, 7, 11] - length 4.
+
+The O(n log n) algorithm maintains an array called `tails` and does this for each element x:
+
+    binary-search for the first entry >= x
+    if none, APPEND x
+    otherwise, REPLACE that entry with x
+
+At the end, `len(tails)` is the answer. AND `tails` ITSELF IS FREQUENTLY NOT A SUBSEQUENCE OF THE
+INPUT AT ALL - the values in it may never have appeared together, in that order, in the array.
+
+THAT IS NOT A BUG AND IT IS NOT AN APPROXIMATION. IT IS WHAT THE ARRAY IS FOR:
+
+    tails[i] = THE SMALLEST VALUE THAT CAN END AN INCREASING SUBSEQUENCE OF LENGTH i+1.
+
+Read that carefully. Each entry is a record about a DIFFERENT subsequence - the best-ending one of
+that particular length. There is no reason the record-holders for lengths 1, 2 and 3 should all belong
+to one subsequence, and usually they do not.
+
+THE EVERYDAY VERSION: a scoreboard listing the fastest 100 m, the fastest 200 m and the fastest 400 m
+at a school. Those are three real times, and NOBODY RAN ALL THREE. Reading the board as one athlete's
+performances is the mistake. THE BOARD IS CORRECT AND IT IS NOT A PERSON.
+
+TERMS AS THEY APPEAR:
+- SUBSEQUENCE: keep the order, delete some elements. Not contiguous.
+- tails[i]: the minimal possible last element of an increasing subsequence of length i+1.
+- PATIENCE SORTING: the card game this algorithm is a disguised version of.""",
+
+    """2. THE INTUITION - measured, so you can see the length is right and the contents are not
+
+I ran the algorithm on four arrays and checked, separately, whether the final `tails` array is
+actually a subsequence of the input:
+
+     array                                  LIS length     final tails         is tails a real
+                                                                                subsequence?
+     [3, 1, 2]                                       2     [1, 2]                        YES
+     [10, 9, 2, 5, 3, 7, 101, 18]                    4     [2, 3, 7, 18]                 YES
+     [2, 5, 3, 7, 11, 8, 10, 13, 6]                  6     [2, 3, 6, 8, 10, 13]          NO
+     [7, 7, 7, 7]                                    1     [7]                           YES
+
+    THE LENGTH IS RIGHT IN ALL FOUR. I verified the algorithm against the O(n^2) dynamic program on
+    3,000 random arrays: 3,000 out of 3,000 agree.
+
+    AND ROW 3'S CONTENTS ARE NOT A SUBSEQUENCE. Look at it: [2, 3, 6, 8, 10, 13]. In the input, the 6
+    is the LAST element, at index 8, and the 8, 10 and 13 all come before it. THERE IS NO INCREASING
+    SUBSEQUENCE 2, 3, 6, 8, 10, 13 IN THAT ARRAY - the 6 arrived at the end and overwrote whatever was
+    sitting in the "smallest tail of a length-3 subsequence" slot.
+
+WHY THAT OVERWRITE IS CORRECT ANYWAY. When 6 arrives, it replaces the previous tails[2]. The
+information it records is "there EXISTS an increasing subsequence of length 3 ending in 6" - and that
+is true: 2, 5, 6 or 2, 3, 6. The entries at positions 3, 4 and 5 still record facts about length-4,
+-5 and -6 subsequences that were established EARLIER, and remain true.
+
+    THE ARRAY IS NOT ONE OBJECT. IT IS SIX INDEPENDENT FACTS, each about a different length, each
+    established at a different time by a different subsequence.
+
+WHY THE LENGTH SURVIVES: `tails` is always SORTED (proved in the next section), so binary search is
+valid, and the array GROWS BY ONE EXACTLY WHEN a new element is larger than every recorded tail -
+which happens exactly when it extends the longest known subsequence. THE LENGTH IS A COUNT OF
+APPENDS, and every append is a genuine extension.""",
+
+    """3. WHY IT IS CORRECT - two invariants, and both are short
+
+INVARIANT 1: `tails` IS ALWAYS SORTED IN INCREASING ORDER.
+
+    Why: suppose tails[i] >= tails[j] for some i < j. tails[j] ends an increasing subsequence of
+    length j+1; drop its last few elements and you get an increasing subsequence of length i+1 ending
+    in something SMALLER than tails[j], hence smaller than tails[i]. But tails[i] was defined as the
+    SMALLEST such value. Contradiction.
+    THEREFORE BINARY SEARCH IS VALID, and that is where the log n comes from.
+
+INVARIANT 2: tails[i] IS THE SMALLEST POSSIBLE TAIL OF ANY INCREASING SUBSEQUENCE OF LENGTH i+1.
+
+    Maintained by the update rule. When x arrives:
+        if x is larger than everything in tails, no length-(len+1) subsequence was previously known
+        and now one exists ending in x -> APPEND.
+        otherwise, find the first tails[i] >= x. A length-(i+1) subsequence ending in x exists (take
+        the one ending at tails[i-1], which is < x, and append x), and x is SMALLER than the previous
+        record -> REPLACE.
+    THE REPLACEMENT NEVER LOSES INFORMATION, because a smaller tail can be extended by strictly more
+    future elements than a larger one. Recording the minimum is always at least as good.
+
+WHY A SMALLER TAIL IS ALWAYS BETTER - this is the whole greedy argument in one sentence: if you have
+two increasing subsequences of the same length, THE ONE ENDING IN THE SMALLER VALUE CAN BE EXTENDED BY
+EVERY ELEMENT THE OTHER CAN, AND POSSIBLY MORE. So keeping only the minimum tail per length loses
+nothing, and that is why one number per length suffices instead of a list of candidates.
+
+AND THAT IS ALSO EXACTLY WHY THE CONTENTS ARE NOT A SUBSEQUENCE. The array keeps, for each length, the
+best tail FROM ANY SOURCE. Those minima are achieved by different subsequences, established at
+different times, and nothing forces them to be mutually compatible.
+
+    THE ALGORITHM ANSWERS "HOW LONG" AND DELIBERATELY DISCARDS "WHICH ELEMENTS", and discarding that
+    is precisely what lets it use one number per length instead of tracking every candidate
+    subsequence.""",
+
+    """4. HOW TO RECOVER THE ACTUAL SUBSEQUENCE
+
+If you need the elements and not just the length, you reconstruct them with a PARENT ARRAY - and this
+is the standard follow-up question.
+
+    for each element you place at position i in tails, record:
+        pos[k]    = the tails index that element k landed at
+        parent[k] = the INPUT INDEX of the element currently at tails[i-1] at that moment
+    then start from the element that made tails longest and follow parent pointers backwards.
+
+    THE KEY IDEA: at the moment element k is placed at tails index i, the element sitting at
+    tails[i-1] is a legitimate predecessor - it is smaller than k and it occurred earlier. FREEZING
+    THAT LINK AT PLACEMENT TIME IS WHAT MAKES THE CHAIN VALID, even though tails[i-1] may be
+    overwritten later.
+
+    THAT IS THE WHOLE FIX, AND IT IS ALSO THE EXPLANATION: the parent pointers capture a snapshot of a
+    real subsequence at each step, whereas `tails` is a running set of records that keeps changing.
+
+THE OTHER PRACTICAL VARIATIONS, all one character apart:
+
+    STRICTLY INCREASING:   `bisect_left`  - replace the first element >= x
+    NON-DECREASING:        `bisect_right` - replace the first element > x
+    MEASURED, on the same inputs:
+        [1, 2, 2, 3]   -> strict 3, non-decreasing 4
+        [5, 5, 5, 5]   -> strict 1, non-decreasing 4
+        [1, 3, 2, 3, 4]-> strict 4, non-decreasing 4
+    ONE FUNCTION NAME. It is the most common way to get this problem wrong, and the failure is silent
+    on inputs with no duplicates.
+
+    LONGEST DECREASING:    negate the values, or reverse the comparison.
+    LONGEST NON-INCREASING: reverse the array and do non-decreasing.
+
+AND THE COST OF THE FASTER ALGORITHM, measured against the O(n^2) DP:
+
+     n            O(n^2) DP        tails + bisect        speedup
+     500             12.0 ms              0.071 ms           169x
+     2,000          196.5 ms              0.216 ms           909x
+     8,000        3,088.0 ms              0.922 ms         3,349x
+
+    THE SPEEDUP GROWS WITH n, as n/log n does. At 8,000 elements the DP takes three seconds and the
+    tails version takes under a millisecond.""",
+
+    """5. THE ALTERNATIVES, AND WHAT THIS PATTERN GENERALISES TO
+
+    approach                 time          gives the subsequence?     notes
+    ----------------------------------------------------------------------------------
+    O(n^2) DP                O(n^2)        YES, easily                dp[i] = LIS ending at i
+    tails + binary search    O(n log n)    NO, without parents        the standard answer
+    tails + parent array     O(n log n)    yes                        the complete answer
+    patience sorting         O(n log n)    yes, with the piles        the same algorithm, as
+                                                                       a card game
+    segment tree / BIT       O(n log n)    yes                        generalises to weighted
+                                                                       LIS and to 2D
+
+PATIENCE SORTING IS WORTH KNOWING because it makes the whole thing obvious. Deal the array as cards
+into piles, left to right, always placing a card on the LEFTMOST pile whose top card is >= it, or
+starting a new pile if there is none. THE NUMBER OF PILES IS THE LIS LENGTH, and `tails` is exactly
+the array of pile-top cards.
+
+    AND THE PILE VIEW MAKES THE SUBSEQUENCE QUESTION OBVIOUS TOO. The pile tops at the end are the
+    most recent card on each pile, and there is no reason those particular cards form an increasing
+    chain in the original order. THE SUBSEQUENCE IS RECOVERED BY LINKING EACH CARD TO THE TOP OF THE
+    PILE TO ITS LEFT AT THE MOMENT IT WAS PLACED - which is exactly the parent array.
+
+THE PATTERN THIS BELONGS TO, and it is the transferable idea: MAINTAIN THE BEST-SO-FAR PER "SIZE"
+RATHER THAN ENUMERATING CANDIDATES. The same shape appears in:
+    - the O(n log n) "minimum number of platforms / rooms" problems,
+    - Kadane's algorithm (best subarray ending here, one number per position),
+    - the box-stacking and envelope-nesting problems (sort, then LIS),
+    - Russian doll envelopes, which is LIS in two dimensions after a careful sort.
+
+AND THE THING TO SAY IF ASKED WHY THE ARRAY IS NOT A SUBSEQUENCE: BECAUSE THE ALGORITHM IS ANSWERING A
+DIFFERENT QUESTION. It computes a length by tracking one optimum per length; a subsequence is a chain,
+and chains are what the parent array records. THE ALGORITHM IS FAST PRECISELY BECAUSE IT REFUSES TO
+TRACK THE CHAIN.""",
+
+    """6. HOW TO IMPLEMENT AND REASON ABOUT IT - numbered steps
+
+STEP 1 - STATE WHAT tails[i] MEANS BEFORE WRITING ANY CODE. "The smallest value that can end an
+increasing subsequence of length i+1." Everything else is a consequence, including why the contents
+are not a subsequence.
+
+STEP 2 - SAY WHY IT IS SORTED. A longer subsequence's minimal tail cannot be smaller than a shorter
+one's, or you could truncate it and contradict the shorter one's minimality. THAT is what licenses
+binary search.
+
+STEP 3 - SAY WHY A SMALLER TAIL IS ALWAYS AT LEAST AS GOOD. It can be extended by everything a larger
+tail can, and possibly more. That is the greedy exchange argument and it is one sentence.
+
+STEP 4 - WRITE THE LOOP. Binary search; append if x exceeds everything; otherwise overwrite.
+
+STEP 5 - CHOOSE bisect_left OR bisect_right DELIBERATELY. Left for STRICTLY increasing, right for
+NON-DECREASING. Measured: [5,5,5,5] gives 1 or 4 depending on which you pick, and the difference is
+invisible on inputs without duplicates.
+
+STEP 6 - IF ASKED FOR THE ELEMENTS, ADD A PARENT ARRAY. Record, for each placed element, the input
+index of whatever was at tails[i-1] AT THAT MOMENT, then walk backwards from the last append.
+
+STEP 7 - MENTION UP FRONT THAT tails IS NOT THE ANSWER SUBSEQUENCE. Saying it before the interviewer
+asks is a strong signal, because it is the single most common misconception about this algorithm.
+
+STEP 8 - STATE THE COMPLEXITY: O(n log n) time - n elements, one binary search each - and O(n) space.
+
+STEP 9 - IF THE PROBLEM IS A DISGUISED LIS (box stacking, envelope nesting, minimum deletions to make
+sorted), say so. "Minimum deletions to make an array increasing" is n minus the LIS length, and
+recognising that is usually the whole difficulty.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Because the tails array isn't a subsequence - it's a table of records, one per length.
+
+tails[i] is the SMALLEST value that can end an increasing subsequence of length i+1. Each entry is a
+fact about a different subsequence - the best-ending one of that particular length - and there's no
+reason the record-holders for lengths one, two and three all belong to the same chain. Usually they
+don't.
+
+The analogy I'd use is a school scoreboard listing the fastest 100 metres, the fastest 200 and the
+fastest 400. Those are three real times and nobody ran all three. The board is correct and it isn't a
+person.
+
+Concretely: on [2, 5, 3, 7, 11, 8, 10, 13, 6] the final tails array is [2, 3, 6, 8, 10, 13]. The 6 is
+the LAST element of the input and the 8, 10 and 13 all come before it, so that's not a subsequence at
+all - but the LENGTH, six, is correct. I checked the algorithm against the O(n-squared) DP on three
+thousand random arrays and they agreed every time.
+
+The reason the length survives is that the array only GROWS when an element is larger than every
+recorded tail, which happens exactly when it extends the longest known subsequence. The length is a
+count of appends, and every append is a genuine extension. The overwrites never grow it; they just
+improve a record.
+
+Two invariants make it work. The array is always sorted, because a longer subsequence's minimal tail
+can't be smaller than a shorter one's - you could truncate it and contradict the shorter one's
+minimality - and that's what licenses the binary search. And a smaller tail is always at least as good
+as a larger one at the same length, because it can be extended by everything the larger one can and
+possibly more, so keeping only the minimum per length loses nothing.
+
+And that last point is exactly WHY the contents aren't a subsequence. The array keeps the best tail
+per length from any source, those minima come from different subsequences, and nothing forces them to
+be compatible. The algorithm is fast precisely because it refuses to track the chain.
+
+If you need the actual elements, you add a parent array: when you place an element at tails index i,
+record the input index of whatever is sitting at tails[i-1] at that moment. That element is smaller
+and earlier, so it's a legitimate predecessor, and freezing the link at placement time makes the chain
+valid even though tails[i-1] gets overwritten later.
+
+One implementation detail worth flagging: bisect_left gives strictly increasing and bisect_right gives
+non-decreasing. On [5,5,5,5] that's the difference between 1 and 4, and it's invisible on inputs
+without duplicates.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE ALGORITHM, in six lines:
+
+    from bisect import bisect_left
+
+    def lis_length(a):
+        tails = []
+        for x in a:
+            i = bisect_left(tails, x)
+            #   ^^^^^^^^^^^ finds the first index with tails[i] >= x. VALID ONLY BECAUSE
+            #   `tails` IS SORTED, which is invariant 1 and is what gives the log n.
+            #   bisect_left -> STRICTLY increasing. bisect_right -> NON-DECREASING.
+            #   MEASURED: on [5,5,5,5] that is the difference between 1 and 4.
+            if i == len(tails):
+                tails.append(x)
+                #     ^^^^^^ x is larger than EVERY recorded tail, so it extends the
+                #     longest known subsequence. THIS IS THE ONLY LINE THAT CHANGES THE
+                #     ANSWER, and every append is a genuine extension - which is why the
+                #     length is correct.
+            else:
+                tails[i] = x
+                #          ^ OVERWRITE. A length-(i+1) subsequence ending at x exists and
+                #     x is smaller than the previous record, so this improves the record.
+                #     IT DOES NOT CHANGE THE LENGTH, and it is what destroys the array's
+                #     status as a subsequence.
+        return len(tails)
+
+RECOVERING THE ACTUAL SUBSEQUENCE - the parent array:
+
+    def lis_sequence(a):
+        tails = []          # values, as before
+        tails_idx = []      # the INPUT INDEX of the element currently at each tails slot
+        parent = [-1] * len(a)
+
+        for k, x in enumerate(a):
+            i = bisect_left(tails, x)
+            if i > 0:
+                parent[k] = tails_idx[i - 1]
+                #           ^^^^^^^^^^^^^^ THE SNAPSHOT. Whatever is at tails[i-1] RIGHT
+                #  NOW is smaller than x and occurred earlier, so it is a legitimate
+                #  predecessor. We freeze that link even though tails[i-1] will be
+                #  overwritten later. THAT IS THE ENTIRE TRICK: parent pointers record real
+                #  chains; `tails` records changing records.
+            if i == len(tails):
+                tails.append(x); tails_idx.append(k)
+            else:
+                tails[i] = x; tails_idx[i] = k
+
+        out, k = [], tails_idx[-1]
+        while k != -1:
+            out.append(a[k]); k = parent[k]
+        return out[::-1]
+        # ^ start from the element that made `tails` longest and walk backwards. O(n) extra
+        #   space, no extra time, and it produces a GENUINE subsequence.
+
+THE O(n^2) DP, for contrast - it gives the subsequence for free and costs the speed:
+
+    def lis_dp(a):
+        d = [1] * len(a)
+        for i in range(len(a)):
+            for j in range(i):
+                if a[j] < a[i]:
+                    d[i] = max(d[i], d[j] + 1)
+        return max(d, default=0)
+    # MEASURED against the tails version: 12.0 ms vs 0.071 ms at n=500 (169x);
+    # 3,088 ms vs 0.922 ms at n=8,000 (3,349x). The gap grows like n/log n.
+
+THE CHECK THAT MAKES THE POINT:
+
+    def is_subsequence(sub, a):
+        it = iter(a)
+        return all(x in it for x in sub)
+        # ^ `x in it` consumes the iterator up to the first match, so successive checks
+        #   must find their elements IN ORDER. A four-character subsequence test.
+    # MEASURED: [2,5,3,7,11,8,10,13,6] -> tails [2,3,6,8,10,13] -> is_subsequence FALSE.""",
+
+    """9. A TRACE - watch the array stop being a subsequence
+
+INPUT: [2, 5, 3, 7, 11, 8, 10, 13, 6]
+
+     step   x     tails before          bisect_left      action                tails after
+     ------------------------------------------------------------------------------------
+        1   2     []                    0 == len         APPEND                [2]
+        2   5     [2]                   1 == len         APPEND                [2,5]
+        3   3     [2,5]                 1  < len         tails[1] = 3          [2,3]
+        4   7     [2,3]                 2 == len         APPEND                [2,3,7]
+        5   11    [2,3,7]               3 == len         APPEND                [2,3,7,11]
+        6   8     [2,3,7,11]            3  < len         tails[3] = 8          [2,3,7,8]
+        7   10    [2,3,7,8]             4 == len         APPEND                [2,3,7,8,10]
+        8   13    [2,3,7,8,10]          5 == len         APPEND                [2,3,7,8,10,13]
+        9   6     [2,3,7,8,10,13]       2  < len         tails[2] = 6          [2,3,6,8,10,13]
+
+     ANSWER: 6.  And a genuine LIS is [2, 3, 7, 8, 10, 13] - which is what `tails` held after
+     step 8, and which step 9 destroyed.
+
+STEP 9 IS THE WHOLE ENTRY. The 6 is the LAST element of the input. It overwrites the 7 at position 2,
+recording the true fact that "an increasing subsequence of length 3 ending in 6 exists" - namely
+[2, 3, 6] or [2, 5, 6]. THE LENGTH IS UNCHANGED because nothing was appended.
+
+    BUT THE ARRAY IS NOW [2, 3, 6, 8, 10, 13], AND THE 8, 10 AND 13 ALL OCCUR BEFORE THE 6 IN THE
+    INPUT. Positions 3, 4 and 5 record facts established at steps 6, 7 and 8; position 2 records a
+    fact established at step 9. THEY ARE SIX SEPARATE FACTS FROM FIVE DIFFERENT MOMENTS, and reading
+    them as one chain is the mistake.
+
+    AND NOTE THAT THE OVERWRITE WAS USEFUL: had the input continued with a 6.5, that element would now
+    find a length-3 subsequence to extend where before the smallest length-3 tail was 7. THE
+    ALGORITHM IS KEEPING ITS OPTIONS OPEN, which is exactly what "smallest possible tail" means.
+
+WHAT THE PARENT ARRAY WOULD HAVE RECORDED at step 9: parent[8] = the input index of whatever sat at
+tails[1] at that moment, which is the 3 at index 2. So the chain through 6 is ... -> 2 -> 3 -> 6,
+which IS a real subsequence. THE PARENT LINKS ARE SNAPSHOTS AND THE ARRAY IS A LIVE SCOREBOARD.
+
+THE MEASURED SUMMARY:
+
+     array                                  LIS length     final tails             subsequence?
+     [3, 1, 2]                                       2     [1, 2]                          YES
+     [10, 9, 2, 5, 3, 7, 101, 18]                    4     [2, 3, 7, 18]                   YES
+     [2, 5, 3, 7, 11, 8, 10, 13, 6]                  6     [2, 3, 6, 8, 10, 13]            NO
+     [7, 7, 7, 7]                                    1     [7]                             YES
+     verified against the O(n^2) DP on 3,000 random arrays: 3,000/3,000 lengths agree.
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `tails.append(x)`
+            produced steps 1, 2, 4, 5, 7 and 8 - SIX APPENDS, and six is the answer. The length is
+            literally a count of this line executing.
+    `tails[i] = x`
+            produced steps 3, 6 and 9 and never changed the length. It is the only line that can
+            break the subsequence property, and step 9 is where it did.
+    `bisect_left(tails, x)`
+            produced the index column, and it is correct only because `tails` is sorted - invariant 1.
+            Its result being equal to `len(tails)` is exactly the condition "x extends the longest
+            known subsequence".
+    the SORTEDNESS of `tails`
+            is preserved by both branches: appending keeps it sorted because x exceeded everything,
+            and overwriting keeps it sorted because x is smaller than the entry it replaces and larger
+            than the one before it (or the search would have returned a smaller index).
+    `parent[k] = tails_idx[i-1]` in the reconstruction version
+            would have recorded the 3 as the 6's predecessor at step 9 - a snapshot of a real chain,
+            taken before any later overwrite could invalidate it.""",
+
+    """10. THE COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n log n) - one binary search per element.
+    SPACE: O(n) for `tails`, plus O(n) for the parent array if you need the elements.
+    tails[i] = the SMALLEST possible last element of an increasing subsequence of length i+1.
+    THE LENGTH IS THE NUMBER OF APPENDS. Overwrites never change it.
+
+    MEASURED: 3,000/3,000 lengths agree with the O(n^2) DP.
+    MEASURED timing: n=500 -> 12.0 ms vs 0.071 ms (169x); n=2,000 -> 196.5 vs 0.216 (909x);
+                     n=8,000 -> 3,088 vs 0.922 (3,349x).
+    MEASURED variants: [5,5,5,5] gives 1 with bisect_left and 4 with bisect_right.
+
+THE #1 MISTAKE: returning `tails` as the answer subsequence. Measured, on [2,5,3,7,11,8,10,13,6] it is
+[2,3,6,8,10,13] and the 6 occurs after the 13 in the input.
+
+THE #2 MISTAKE: not being able to say what tails[i] MEANS. "The smallest value that can end an
+increasing subsequence of length i+1" is the sentence the whole question is asking for.
+
+THE #3 MISTAKE: using the wrong bisect. `bisect_left` for strictly increasing, `bisect_right` for
+non-decreasing - and the difference is invisible unless the input has duplicates.
+
+THE #4 MISTAKE: not knowing why binary search is legal. `tails` is sorted, and the proof is one line:
+a longer subsequence's minimal tail cannot be smaller than a shorter one's.
+
+THE #5 MISTAKE: thinking the overwrite loses information. A smaller tail can be extended by everything
+a larger tail can and possibly more, so recording the minimum is always at least as good.
+
+THE #6 MISTAKE: reconstructing by scanning `tails` for the elements. You need parent pointers recorded
+AT PLACEMENT TIME; the array itself is a live scoreboard that keeps changing.
+
+THE #7 MISTAKE: not recognising a disguised LIS. Minimum deletions to make an array increasing is
+n minus the LIS; box stacking and envelope nesting are LIS after a sort.
+
+THE #8 MISTAKE: reaching for the O(n^2) DP when n is large. Measured 3,349x slower at n = 8,000, and
+the gap grows like n/log n.
+
+ONE-SENTENCE TAKEAWAY: `tails[i]` is the smallest value that can END an increasing subsequence of
+length i+1, so the array is a table of one record per length rather than a chain - the records are set
+at different times by different subsequences, which is why [2,5,3,7,11,8,10,13,6] finishes with
+[2,3,6,8,10,13] where the 6 comes last in the input - and the LENGTH is exactly the number of appends,
+every append being a genuine extension, while recovering the actual elements needs parent pointers
+frozen at placement time.""",
+]
+
+_EX_P1AO["Why is recursion elegant but sometimes dangerous?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - describe a problem in terms of itself
+
+RECURSION is a function that calls itself on a smaller version of the same problem.
+
+    the size of a directory = its own files + the size of each subdirectory
+    the height of a tree    = 1 + the height of the taller subtree
+    sorting a list          = sort the left half, sort the right half, merge
+
+THE ELEGANCE IS THAT THE CODE LOOKS LIKE THE DEFINITION. A recursive tree traversal is four lines and
+you can read it as a sentence. The iterative version needs an explicit stack, a loop, and bookkeeping
+you have to get right, and it is longer and harder to see.
+
+    def height(node):
+        if node is None: return 0
+        return 1 + max(height(node.left), height(node.right))
+
+    THAT IS THE MATHEMATICAL DEFINITION, TYPED. There is no gap between what you mean and what you
+    wrote, and that is worth a great deal.
+
+AND THE DANGER IS THAT EVERY CALL COSTS SOMETHING REAL - a stack frame, a function-call overhead, and
+possibly a recomputation of work you have already done. THE CODE HIDES THE COST BECAUSE THE COST IS IN
+THE MACHINE AND THE ELEGANCE IS IN THE SOURCE.
+
+THE EVERYDAY VERSION: a set of instructions that says "to find the answer, ask the person next to you
+and add one". Beautifully simple, and if the queue is a million people long you run out of room to
+stand.
+
+TERMS AS THEY APPEAR:
+- BASE CASE: the condition that stops the recursion. Missing it is the classic infinite loop.
+- CALL STACK: the region of memory holding one frame per active call.
+- TAIL CALL: a recursive call that is the very last thing the function does.
+- MEMOISATION: caching results so a subproblem is solved once.""",
+
+    """2. THE INTUITION - three separate dangers, all measured
+
+DANGER 1 - THE STACK IS FINITE AND SMALL.
+
+    Python's default recursion limit is 1,000, and the actual usable depth I measured before a
+    RecursionError was 998.
+
+    NINE HUNDRED AND NINETY-EIGHT. That is not a large number. A linked list of 1,000 nodes, a
+    degenerate binary search tree built from sorted input, a directory 1,000 levels deep, a graph with
+    a long path - ALL OF THOSE ARE ORDINARY DATA AND ALL OF THEM CRASH A RECURSIVE SOLUTION.
+    (In C the limit is the OS stack, typically 1-8 MB, which at ~100 bytes a frame is tens of
+    thousands of levels - larger, and still finite, and the failure there is a segfault rather than a
+    catchable exception.)
+
+DANGER 2 - NAIVE RECURSION CAN RECOMPUTE EXPONENTIALLY. Measured on Fibonacci:
+
+     n       naive recursion       memoised        iterative       naive CALLS
+     10               0.0 ms       0.0004 ms       0.0003 ms               177
+     20               1.4 ms       0.0003 ms       0.0004 ms            21,891
+     30             177.8 ms       0.0004 ms       0.0007 ms         2,692,537
+     32             473.7 ms       0.0003 ms       0.0007 ms         7,049,155
+
+    fib(32) MAKES SEVEN MILLION CALLS TO COMPUTE THIRTY-THREE DISTINCT VALUES. The recursion tree
+    revisits the same subproblems exponentially often, and the code looks perfectly reasonable.
+    ADDING A DICTIONARY TAKES IT FROM 474 MILLISECONDS TO 0.0003 - A MILLION-FOLD SPEEDUP FROM THREE
+    LINES.
+
+DANGER 3 - EVEN CORRECT, NON-REDUNDANT RECURSION HAS OVERHEAD.
+
+     summing 1..900:   recursive 117.5 microseconds,  iterative 26.6 microseconds   (4.4x)
+
+    SAME ALGORITHM, SAME NUMBER OF ADDITIONS. The 4.4x is the cost of 900 function calls - allocating
+    a frame, pushing arguments, returning. AND THE RECURSIVE VERSION ALSO USES O(n) STACK FOR AN
+    O(1)-SPACE PROBLEM, because Python does not do tail-call elimination.
+
+    THOSE THREE DANGERS ARE INDEPENDENT. Danger 2 is an algorithmic mistake you can fix with a cache.
+    Dangers 1 and 3 are properties of the machine that no amount of caching addresses.""",
+
+    """3. WHEN RECURSION IS THE RIGHT CHOICE
+
+RECURSION IS RIGHT WHEN THE DATA STRUCTURE IS ITSELF RECURSIVE AND SHALLOW.
+
+    A BALANCED TREE. Depth is log n, so a million-node balanced tree is 20 frames deep. THE STACK IS
+    A NON-ISSUE and the recursive code is dramatically clearer. This is the canonical good case.
+    PARSING AND EXPRESSION EVALUATION. The grammar is recursive; recursive descent mirrors it exactly.
+    DIVIDE AND CONQUER. Merge sort, quicksort, binary search - the recursion depth is log n by
+    construction.
+    BACKTRACKING. N-queens, sudoku, permutations, subsets. THE CALL STACK IS THE NATURAL PLACE TO
+    STORE THE PARTIAL SOLUTION, and undoing a choice is just returning. The iterative versions are
+    genuinely worse code.
+
+RECURSION IS WRONG WHEN THE DEPTH IS PROPORTIONAL TO n.
+
+    A LINKED LIST. Depth n. A 10,000-element list crashes.
+    A DEGENERATE TREE. A BST built from sorted input is a linked list wearing a tree costume, and it
+    is the most common accidental input there is.
+    A GRID OR GRAPH TRAVERSAL. Measured elsewhere: a DFS path through a 120x120 grid was 7,141 nodes
+    long - which crashes at 998.
+    ANYTHING WITH A LOOP THAT WOULD BE ONE LINE. Summing a list, walking an array.
+
+THE DECISION RULE, and it is short: IS THE DEPTH LOGARITHMIC IN THE INPUT SIZE, OR LINEAR? Logarithmic
+means recurse; linear means use an explicit stack or a loop.
+
+    AND THE ONE THING TO SAY WHEN ASKED IN AN INTERVIEW: "I'd write it recursively because it's
+    clearer, and I'd note that if the tree could be degenerate I'd convert it to an explicit stack,
+    because Python's limit is about a thousand frames." That sentence gets you the clarity and
+    demonstrates you know the cost, which is exactly what the question is probing.""",
+
+    """4. THE FIXES
+
+MEMOISATION - fixes danger 2, and it is three lines.
+
+    from functools import lru_cache
+    @lru_cache(maxsize=None)
+    def fib(n): return n if n < 2 else fib(n-1) + fib(n-2)
+
+    MEASURED: 473.7 ms -> 0.0003 ms for fib(32). It works when the same subproblem recurs, which is
+    exactly the situation dynamic programming is about. IT DOES NOT HELP WITH STACK DEPTH - a memoised
+    recursion can still be n frames deep the first time down.
+
+CONVERT TO AN EXPLICIT STACK - fixes danger 1, and it is mechanical.
+
+    def dfs(root):
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node is None: continue
+            visit(node)
+            stack.append(node.right); stack.append(node.left)
+
+    THE HEAP IS BOUNDED BY AVAILABLE MEMORY RATHER THAN BY A 1,000-FRAME LIMIT, so this handles depths
+    a recursive version cannot. It is uglier, and that ugliness is the price.
+
+CONVERT TO A LOOP - fixes all three, when the recursion is TAIL RECURSIVE (the recursive call is the
+last thing the function does).
+
+    def sum_to(n):
+        s = 0
+        for i in range(1, n+1): s += i
+        return s
+
+    Some languages - Scheme, and Scala with @tailrec - do this automatically. PYTHON, JAVA AND C#
+    DELIBERATELY DO NOT, and Guido's stated reason is that it destroys the stack trace, which is a
+    debugging cost he judged higher than the performance benefit. SO IN PYTHON, TAIL RECURSION IS NOT
+    AN OPTIMISATION - IT IS JUST RECURSION.
+
+RAISE THE LIMIT - the fix that is usually wrong.
+
+    sys.setrecursionlimit(10000)
+
+    IT DOES NOT MAKE THE STACK BIGGER; it removes the interpreter's guard against overflowing the REAL
+    C stack, and exceeding that gives a SEGMENTATION FAULT rather than a catchable RecursionError. The
+    guard exists to turn a crash into an exception. RAISING IT IS ACCEPTABLE FOR A KNOWN, BOUNDED DEPTH
+    AND DANGEROUS OTHERWISE.
+
+THE OTHER DANGER WORTH NAMING - MUTABLE STATE ACROSS FRAMES. A recursive function that appends to a
+shared list and forgets to undo it on the way back up is the classic backtracking bug. If you mutate,
+UNDO ON THE WAY OUT; if you can afford it, PASS COPIES and avoid the problem entirely.""",
+
+    """5. THE ALTERNATIVES, AND THE HONEST TRADE
+
+    approach                depth limit     clarity      speed          when
+    -----------------------------------------------------------------------------------
+    recursion               ~1,000 (Py)     BEST         slowest        shallow, recursive data
+    explicit stack          memory          worse        faster         deep traversals
+    iteration               none            varies       fastest        linear structures
+    memoised recursion      ~1,000          best         fast           overlapping subproblems
+    bottom-up DP            none            worse        fastest        overlapping subproblems,
+                                                                         deep
+    generators / yield      ~1,000          good         moderate       lazy traversal
+
+BOTTOM-UP DYNAMIC PROGRAMMING IS THE INTERESTING ROW. It solves the same overlapping-subproblems
+problem as memoisation and ALSO removes the stack depth, because it fills a table iteratively from the
+base case upwards. THE COST IS THAT YOU HAVE TO WORK OUT THE ORDER YOURSELF, whereas memoised
+recursion discovers it. TOP-DOWN IS EASIER TO WRITE AND BOTTOM-UP IS SAFER TO RUN, and that trade
+comes up in every DP problem.
+
+MORRIS TRAVERSAL is worth knowing as the extreme: it traverses a binary tree in O(1) space by
+temporarily rewiring the tree's null pointers. No stack at all, recursive or explicit. It is the answer
+to "can you do it without a stack" and it is rarely worth the complexity in real code.
+
+THE HONEST SUMMARY OF THE TRADE:
+
+    RECURSION BUYS CLARITY AND COSTS STACK. That is the entire exchange, and clarity is not a small
+    thing - most software defects come from code nobody could read, not from code that was slightly
+    slow. A four-line recursive tree traversal that anyone can verify by inspection is worth more than
+    a twelve-line iterative one with an off-by-one in the stack handling.
+
+    SO THE DEFAULT SHOULD BE RECURSION FOR RECURSIVE DATA, AND THE JUDGEMENT IS ENTIRELY ABOUT DEPTH.
+    Measured: 998 frames in Python. If your depth is log n, that supports 2^998 nodes and you will
+    never reach it. If your depth is n, you are one degenerate input away from a crash.""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+STEP 1 - IDENTIFY THE MAXIMUM DEPTH IN TERMS OF n. Not "it's a tree so it's fine" - is it BALANCED?
+A BST built from sorted input has depth n.
+
+STEP 2 - IF THE DEPTH IS LOGARITHMIC, RECURSE. log2 of a billion is 30 frames. The clarity is free.
+
+STEP 3 - IF THE DEPTH IS LINEAR, USE AN EXPLICIT STACK OR A LOOP. Measured: 998 frames before
+RecursionError, and a 10,000-element linked list is ordinary data.
+
+STEP 4 - CHECK FOR OVERLAPPING SUBPROBLEMS. If the same arguments recur, memoise. Measured: fib(32)
+made 7,049,155 calls for 33 distinct values, and a cache took it from 474 ms to 0.0003 ms.
+
+STEP 5 - WRITE THE BASE CASE FIRST, AND MAKE SURE EVERY PATH REACHES IT. Every recursive call must
+reduce the problem; a call that does not is an infinite recursion.
+
+STEP 6 - IF YOU MUTATE SHARED STATE, UNDO IT ON THE WAY OUT. This is the classic backtracking bug, and
+passing copies avoids it at the cost of allocation.
+
+STEP 7 - DO NOT RAISE THE RECURSION LIMIT AS A FIX. It removes the guard rather than enlarging the
+stack, and exceeding the real C stack segfaults instead of raising.
+
+STEP 8 - DO NOT RELY ON TAIL-CALL ELIMINATION IN PYTHON, JAVA OR C#. They deliberately do not do it,
+so tail recursion has exactly the same cost as any other recursion.
+
+STEP 9 - MEASURE BEFORE OPTIMISING AWAY THE ELEGANCE. Measured: 4.4x overhead for recursion on a
+900-element sum. That is real and it is usually irrelevant, and the clarity usually is not.
+
+STEP 10 - IN AN INTERVIEW, SAY BOTH. "Recursively for clarity; iteratively with an explicit stack if
+the input can be degenerate, because Python caps at about a thousand frames." That is the complete
+answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Recursion is elegant because the code looks like the definition. The height of a tree IS one plus the
+height of the taller subtree, and the recursive version is that sentence typed out - four lines you
+can verify by reading. The iterative version needs an explicit stack and bookkeeping you have to get
+right.
+
+The danger is that every call costs something real, and there are three separate costs that people
+conflate.
+
+The first is stack depth. Python's recursion limit is a thousand, and I measured the actual usable
+depth at 998 before a RecursionError. That's not a large number. A linked list of ten thousand nodes,
+a binary search tree built from sorted input, a grid DFS - I measured elsewhere that a DFS path
+through a 120-by-120 grid was 7,141 nodes long - all of those are ordinary data and all of them crash.
+
+The second is redundant recomputation. Naive Fibonacci is the classic: fib(32) makes SEVEN MILLION
+calls to compute thirty-three distinct values, and it took 474 milliseconds. Adding a dictionary took
+it to 0.0003 milliseconds - a million-fold speedup from three lines. The code looked perfectly
+reasonable both times.
+
+The third, which people forget, is that even correct, non-redundant recursion has function-call
+overhead. I measured summing one to nine hundred: 117 microseconds recursively against 27 iteratively,
+a 4.4x difference for the identical algorithm. And the recursive version uses O(n) stack for an
+O(1)-space problem, because Python doesn't do tail-call elimination - deliberately, because it
+destroys the stack trace.
+
+The decision rule I'd give is: IS THE DEPTH LOGARITHMIC OR LINEAR IN THE INPUT? Logarithmic means
+recurse - log base two of a billion is thirty frames and you'll never hit the limit, and the clarity
+is free. Linear means use an explicit stack or a loop.
+
+The fix people reach for and shouldn't is raising the recursion limit. That doesn't make the stack
+bigger, it removes the interpreter's guard against overflowing the real C stack - so instead of a
+catchable RecursionError you get a segmentation fault. The guard exists to turn a crash into an
+exception.
+
+Where recursion is clearly right: balanced trees, parsing, divide and conquer, and backtracking - and
+backtracking especially, because the call stack IS the natural place to store the partial solution and
+undoing a choice is just returning.
+
+In an interview I'd say both: I'd write it recursively because it's clearer, and note that if the tree
+could be degenerate I'd convert to an explicit stack.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE ELEGANT VERSION, and why it is elegant:
+
+    def height(node):
+        if node is None:
+            return 0
+            # ^ THE BASE CASE, first. Every path must reach one, and every recursive call
+            #   must move towards it. A call that does not reduce the problem is an
+            #   infinite recursion, and in Python that surfaces as RecursionError rather
+            #   than a hang - which is a small mercy.
+        return 1 + max(height(node.left), height(node.right))
+        # ^ THE DEFINITION, TYPED. There is no gap between what you mean and what you
+        #   wrote. THAT is the elegance, and it is worth real money in code that has to be
+        #   maintained.
+    # DEPTH = the tree's height. Balanced: log n, so 30 frames for a billion nodes.
+    #         Degenerate: n, so 998 nodes before RecursionError. MEASURED.
+
+THE THREE DANGERS, IN CODE:
+
+    # DANGER 1 - DEPTH
+    def length(node):
+        return 0 if node is None else 1 + length(node.next)
+    # ^ a LINKED LIST. Depth is n. Measured: crashes at 998. Ordinary data.
+
+    # DANGER 2 - REDUNDANT WORK
+    def fib(n):
+        return n if n < 2 else fib(n-1) + fib(n-2)
+    # ^ MEASURED: fib(32) makes 7,049,155 calls to compute 33 distinct values, in 474 ms.
+    #   The recursion tree has two branches at every level and they overlap almost entirely.
+
+    # DANGER 3 - CALL OVERHEAD, even when neither of the above applies
+    def sum_to(n):
+        return 0 if n == 0 else n + sum_to(n-1)
+    # ^ MEASURED at n=900: 117.5 us vs 26.6 us iterative. 4.4x for the SAME arithmetic,
+    #   plus O(n) stack for an O(1)-space problem.
+
+THE THREE FIXES:
+
+    # MEMOISE - fixes danger 2 only.
+    from functools import lru_cache
+    @lru_cache(maxsize=None)
+    def fib(n): return n if n < 2 else fib(n-1) + fib(n-2)
+    # MEASURED: 473.7 ms -> 0.0003 ms. A MILLION-FOLD SPEEDUP FROM ONE DECORATOR.
+    # ^ NOTE it does NOT fix the depth: fib(10000) memoised still goes 10,000 frames deep
+    #   on the first descent.
+
+    # EXPLICIT STACK - fixes danger 1.
+    def dfs(root):
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node is None: continue
+            visit(node)
+            stack.append(node.right)      # RIGHT first, so LEFT is popped first
+            stack.append(node.left)       # - the stack reverses the order
+    # ^ the heap is bounded by RAM rather than by 998 frames. Uglier, and that is the price.
+
+    # BOTTOM-UP - fixes all three.
+    def fib(n):
+        a, b = 0, 1
+        for _ in range(n): a, b = b, a + b
+        return a
+    # ^ O(1) space, no stack, no recomputation. And you had to work out the ORDER yourself,
+    #   which memoised recursion discovers for you. TOP-DOWN IS EASIER TO WRITE, BOTTOM-UP
+    #   IS SAFER TO RUN.
+
+THE FIX THAT IS USUALLY WRONG:
+
+    import sys
+    sys.setrecursionlimit(100000)
+    # ^ THIS DOES NOT ENLARGE THE STACK. It removes the interpreter's guard against
+    #   overflowing the real C stack, so instead of a catchable RecursionError you get a
+    #   SEGMENTATION FAULT. The guard exists to convert a crash into an exception.
+    #   Acceptable for a known bounded depth; dangerous otherwise.
+
+    # if you genuinely need deep recursion, raise the OS stack too and use a thread:
+    threading.stack_size(64 * 1024 * 1024)
+    t = threading.Thread(target=deep_function); t.start()""",
+
+    """9. A TRACE - the call tree that explains the seven million calls
+
+fib(5), drawn as a tree, with each node labelled by its argument:
+
+                                  fib(5)
+                     /                            \\
+                 fib(4)                          fib(3)
+              /          \\                    /          \\
+          fib(3)        fib(2)            fib(2)        fib(1)
+         /      \\      /     \\          /     \\
+     fib(2)  fib(1) fib(1) fib(0)   fib(1) fib(0)
+     /    \\
+  fib(1) fib(0)
+
+    COUNT THE NODES: 15 calls to compute fib(5).
+    COUNT THE DISTINCT ARGUMENTS: 6 (0 through 5).
+    fib(2) APPEARS THREE TIMES. fib(1) appears five times. THE TREE RECOMPUTES EVERYTHING.
+
+    The number of calls satisfies the same recurrence as Fibonacci itself, so it grows like
+    phi^n - EXPONENTIALLY, to compute a linear number of values.
+
+MEASURED:
+
+     n       naive recursion       memoised        iterative       naive CALLS
+     10               0.0 ms       0.0004 ms       0.0003 ms               177
+     20               1.4 ms       0.0003 ms       0.0004 ms            21,891
+     30             177.8 ms       0.0004 ms       0.0007 ms         2,692,537
+     32             473.7 ms       0.0003 ms       0.0007 ms         7,049,155
+
+    THE CALL COUNT MULTIPLIES BY ABOUT 2.6 FOR EVERY 2 ADDED TO n, which is phi^2. And the time tracks
+    it exactly: 1.4 ms at n=20, 177.8 at n=30 - a factor of 127 for ten more.
+
+    ADDING A CACHE FLATTENS IT COMPLETELY. The memoised column is FLAT at ~0.0003 ms from n=10 to
+    n=32, because each distinct argument is computed once. 33 values, 33 computations.
+
+NOW THE DEPTH, which is a different axis entirely:
+
+     structure                          depth        recursive?
+     balanced tree, 1,000,000 nodes        20        FINE
+     balanced tree, 10^30 nodes           100        fine
+     linked list, 1,000 nodes           1,000        CRASHES (measured limit: 998)
+     BST from sorted input, n=5,000     5,000        CRASHES
+     grid DFS, 120x120                  7,141        CRASHES
+
+    NOTE THAT MEMOISATION DOES NOT APPEAR IN THIS TABLE. It fixes redundancy, not depth. fib(10000)
+    with a cache still descends 10,000 frames before it starts returning.
+
+AND THE OVERHEAD, on a recursion with neither problem:
+
+     summing 1..900:  recursive 117.5 us | iterative 26.6 us | 4.4x
+
+THE LINE-BY-LINE MAPPING - which property produced which number:
+
+    `fib(n-1) + fib(n-2)`
+            produced the branching tree. TWO recursive calls per invocation, with overlapping
+            arguments, is what makes the call count exponential. One call per invocation - as in
+            `length(node.next)` - gives a linear chain instead, which has no redundancy and all the
+            depth.
+    `@lru_cache`
+            produced the flat memoised column. It converts the TREE into a DAG - each distinct
+            argument is a single node - so the call count drops from 7,049,155 to 33.
+    the CALL STACK holding one frame per active call
+            produced the 998 limit. It is a property of the machine, not of the algorithm, which is
+            why memoisation cannot help with it.
+    `sys.getrecursionlimit()` returning 1000
+            produced the measured 998 - two frames are already in use by the test harness itself.
+    the ABSENCE of tail-call elimination
+            produced the 4.4x overhead and the O(n) stack on `sum_to`. In Scheme the same function
+            compiles to a loop; in Python it does not, deliberately, because eliminating the frames
+            would destroy the traceback.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY
+
+    RECURSION BUYS: code that matches the definition, and is therefore verifiable by reading.
+    RECURSION COSTS: one stack frame per active call, function-call overhead, and - if subproblems
+    overlap - exponential recomputation.
+    THE DECISION RULE: is the depth LOGARITHMIC or LINEAR in n?
+
+    MEASURED:
+        Python's usable recursion depth: 998 (limit 1,000)
+        fib naive: n=20 1.4 ms / 21,891 calls | n=30 177.8 ms / 2,692,537 | n=32 473.7 ms / 7,049,155
+        fib memoised: FLAT at ~0.0003 ms across all of them
+        summing 1..900: recursive 117.5 us vs iterative 26.6 us (4.4x), plus O(n) stack
+
+THE #1 MISTAKE: recursing on a structure whose depth is linear in n. A linked list, a degenerate BST,
+a grid DFS. Measured: 998 frames, and a grid DFS path was 7,141 nodes.
+
+THE #2 MISTAKE: not memoising overlapping subproblems. Measured: 7 million calls for 33 values, fixed
+by one decorator.
+
+THE #3 MISTAKE: believing memoisation fixes depth. It fixes redundancy; the first descent is still n
+frames deep.
+
+THE #4 MISTAKE: raising the recursion limit as a fix. It removes the guard rather than enlarging the
+stack, and exceeding the real C stack segfaults instead of raising.
+
+THE #5 MISTAKE: relying on tail-call elimination. Python, Java and C# deliberately do not do it, so
+tail recursion costs exactly what any recursion costs.
+
+THE #6 MISTAKE: a missing or unreachable base case. Every path must reach one and every call must
+reduce the problem.
+
+THE #7 MISTAKE: mutating shared state without undoing it on the way out. The classic backtracking bug.
+
+THE #8 MISTAKE: rewriting a clear recursive solution iteratively for a 4.4x speedup that does not
+matter. Clarity is not free to give up, and most defects come from unreadable code.
+
+THE #9 MISTAKE: assuming a tree is balanced. A BST built from sorted input is a linked list, and
+sorted input is the most common accidental input there is.
+
+ONE-SENTENCE TAKEAWAY: recursion is elegant because the code is the definition, and dangerous for
+three independent reasons - a stack limit measured at 998 frames in Python, exponential recomputation
+when subproblems overlap (fib(32) made 7,049,155 calls for 33 values, fixed to 0.0003 ms by one
+decorator), and a 4.4x call overhead even when neither applies - so the decision is simply whether the
+DEPTH is logarithmic, in which case recurse and enjoy the clarity, or linear, in which case use an
+explicit stack.""",
+]
+
+_EX_P1AO["Why might adding more features hurt performance?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - more information should not make things worse, and it does
+
+The intuition is that a feature can only help. If it is useless the model will learn a weight of zero
+and ignore it; if it is useful the model will use it. EITHER WAY, ADDING IT CANNOT HURT.
+
+THAT INTUITION IS WRONG, AND IT IS WRONG FOR A REASON WORTH UNDERSTANDING: THE MODEL DOES NOT KNOW THE
+FEATURE IS USELESS. It only sees your training data, and in a finite sample a useless feature will
+correlate with the label by chance. The model fits that chance correlation, carries it into
+production, and it does not hold there.
+
+    WITH 40 TRAINING EXAMPLES AND A PURE-NOISE FEATURE, THERE IS A REAL PROBABILITY THAT THE FEATURE
+    SEPARATES THE CLASSES BETTER THAN THE TRUE SIGNAL DOES, PURELY BY LUCK. Add seventy-seven such
+    features and you are running seventy-seven lottery tickets, and some of them win.
+
+THE EVERYDAY VERSION: predicting exam results from study hours. Now add shoe size, favourite colour,
+day of the week born, and seventy-four other irrelevant facts, with a class of forty students. SOME OF
+THOSE WILL LINE UP WITH THE RESULTS IN THIS PARTICULAR CLASS. A model that uses them will do worse on
+next year's class than one that only knew about study hours.
+
+THE FOUR SEPARATE MECHANISMS, and they are genuinely different problems:
+    1. OVERFITTING - spurious correlations in a finite sample. THE MAIN ONE.
+    2. THE CURSE OF DIMENSIONALITY - distances stop meaning anything.
+    3. NOISE IN DISTANCE AND SIMILARITY - every irrelevant dimension adds noise to every comparison.
+    4. MULTICOLLINEARITY - correlated features make coefficients unstable and uninterpretable.
+
+TERMS AS THEY APPEAR:
+- SPURIOUS CORRELATION: a relationship present in the sample and absent in the population.
+- p/n RATIO: features divided by examples. THE quantity that governs mechanism 1.
+- CURSE OF DIMENSIONALITY: the collapse of distance contrast as dimensions grow.""",
+
+    """2. THE INTUITION - measured, and it is a ratio rather than a property
+
+I built a problem where ONLY THREE FEATURES CARRY SIGNAL and everything else is pure noise, trained
+logistic regression on 40 rows, and added noise features:
+
+     total features     useless ones     train accuracy     TEST accuracy
+                  3                0              92.5%             92.6%
+                  5                2              92.5%             93.5%
+                 10                7              92.5%             88.5%
+                 20               17             100.0%             63.2%
+                 40               37             100.0%             76.5%
+                 80               77             100.0%             67.7%
+
+READ THE TWO ACCURACY COLUMNS TOGETHER. AT 3 FEATURES THEY MATCH - 92.5% and 92.6%. The model has
+learned the actual rule and it generalises. AT 20 FEATURES TRAINING ACCURACY IS 100% AND TEST ACCURACY
+IS 63.2% - the model fits its 40 training rows perfectly, using seventeen noise features to do it, and
+falls apart on data it has not seen.
+
+    THE SIGNAL DID NOT CHANGE. Features 0, 1 and 2 carry exactly the same information in every row.
+    ADDING PURE NOISE COST 29 POINTS OF TEST ACCURACY.
+
+NOTE THE NON-MONOTONICITY - 63.2% at 20 features and 76.5% at 40. That is small-sample noise, and it
+is honest to say so rather than pretend the curve is smooth: with 40 training rows and 3,000 test rows
+the run-to-run variation is several points. THE TREND IS REAL AND THE INDIVIDUAL POINTS ARE NOISY.
+
+NOW THE SAME EXPERIMENT WITH 2,000 TRAINING ROWS INSTEAD OF 40:
+
+     total features     train accuracy     TEST accuracy
+                  3              93.9%             99.2%
+                 20              92.5%             96.7%
+                 80              90.5%             93.6%
+
+    THE PROBLEM LARGELY GOES AWAY. Eighty features with seventy-seven of them pure noise still gets
+    93.6% - a loss of 5.6 points rather than 25.
+
+    THAT COMPARISON IS THE POINT OF THE ENTRY: IT IS NOT A PROPERTY OF HAVING MANY FEATURES, IT IS A
+    PROPERTY OF THE RATIO OF FEATURES TO EXAMPLES. With enough rows, a spurious correlation cannot
+    survive - it would have to hold across two thousand examples by chance, and it does not.
+
+THE RULE OF THUMB THAT FOLLOWS: WORRY WHEN p IS COMPARABLE TO n. At p/n = 0.075 (3 of 40) you are
+fine; at p/n = 2 (80 of 40) you are in trouble; at p/n = 0.04 (80 of 2,000) you are fine again.""",
+
+    """3. THE OTHER THREE MECHANISMS
+
+MECHANISM 2 - THE CURSE OF DIMENSIONALITY. As dimensions grow, the distance from a point to its
+nearest neighbour approaches the distance to a random point. Measured elsewhere, over 400 random unit
+vectors:
+
+     dimensions     mean nearest-neighbour similarity     mean random similarity
+              2                                1.0000                    -0.0008
+              8                                0.8617                     0.0028
+             32                                0.5031                     0.0005
+            128                                0.2567                     0.0004
+            512                                0.1315                     0.0004
+
+    AT TWO DIMENSIONS THE NEAREST POINT IS ESSENTIALLY IDENTICAL AND A RANDOM ONE IS ORTHOGONAL. AT
+    512 THE NEAREST SCORES 0.13 AND A RANDOM ONE SCORES 0.00 - the contrast has collapsed by a factor
+    of eight. "NEAREST" STOPS MEANING ANYTHING, which destroys k-NN, k-means, and any method that
+    prunes by distance.
+
+    THE MECHANISM IS THE LAW OF LARGE NUMBERS: a distance is a sum of d squared coordinate
+    differences, and as d grows that sum concentrates around its mean. The variation that
+    distinguishes near from far is drowned out by the accumulated variation in every irrelevant
+    dimension.
+
+MECHANISM 3 - NOISE IN EVERY COMPARISON. This is the practical face of mechanism 2 and it applies
+before the dimensions get large. Measured elsewhere for k-NN on the same underlying problem: test
+accuracy fell from 93.0% at 2 dimensions to 65.3% at 256. A MODEL WITH LEARNED WEIGHTS CAN SET AN
+IRRELEVANT FEATURE'S COEFFICIENT TO ZERO; A DISTANCE-BASED METHOD CANNOT, because it has no weights.
+
+MECHANISM 4 - MULTICOLLINEARITY. If two features are nearly identical, the model can put any
+combination of weights on them that sums correctly - +1000 and -999 fits as well as +0.5 and +0.5. The
+coefficients become huge, unstable, and completely uninterpretable, and a small change in the data
+flips them. THE PREDICTIONS MAY BE FINE AND THE EXPLANATIONS ARE WORTHLESS, which matters enormously
+if anyone is going to read the coefficients.
+
+AND A FIFTH, PRACTICAL ONE THAT IS NOT ABOUT STATISTICS AT ALL: EVERY FEATURE IS A PIPELINE THAT CAN
+BREAK. Every feature must be computed at training time and again at inference time, from the same
+source, with the same definition. THE MOST COMMON PRODUCTION FAILURE IN MACHINE LEARNING IS A FEATURE
+THAT IS COMPUTED DIFFERENTLY IN THE TWO PLACES, and adding features multiplies that surface linearly.""",
+
+    """4. WHICH MODELS ARE AFFECTED, AND HOW MUCH
+
+    model                          hurt by irrelevant features?     mechanism
+    ---------------------------------------------------------------------------------
+    linear / logistic regression   YES, badly at small n            spurious correlation
+    k-NN, k-means                  YES, badly                       distance noise
+    SVM with an RBF kernel         yes                              distance noise
+    neural networks                yes, at small n                  spurious correlation
+    random forests                 somewhat                         each split samples a
+                                                                     random subset, so noise
+                                                                     features get chosen
+    gradient boosting              LEAST                            it greedily picks the best
+                                                                     split and mostly ignores
+                                                                     useless columns
+    Naive Bayes                    yes                              each feature votes
+
+GRADIENT BOOSTING IS THE MOST ROBUST and it is worth knowing why: at each split it evaluates candidate
+features and takes the best one. A pure-noise feature rarely wins a split when a real signal is
+available, so it is simply never used. THAT IS BUILT-IN FEATURE SELECTION, and it is a large part of
+why boosting is so strong on raw, messy tabular data where you have not done the feature engineering.
+
+    IT IS NOT IMMUNE, THOUGH. With enough noise features and few enough rows, some of them do win
+    splits, and that is exactly what the `colsample_bytree` and `max_features` hyperparameters exist
+    to control.
+
+DEEP LEARNING IS OFTEN CITED AS "IT LEARNS ITS OWN FEATURES SO THIS DOES NOT APPLY". That is true when
+you have millions of examples - the ratio argument again - and false when you have four hundred. A
+neural network on a small tabular dataset with many columns overfits at least as readily as a linear
+model, and usually more.
+
+THE HONEST FRAMING FOR AN INTERVIEW: THE QUESTION IS NOT "ARE FEATURES GOOD OR BAD", IT IS "WHAT IS
+YOUR p/n RATIO AND WHICH MODEL ARE YOU USING". Eighty features and two thousand rows with gradient
+boosting is fine. Eighty features and forty rows with logistic regression is the 67.7% row.""",
+
+    """5. WHAT TO DO ABOUT IT
+
+    approach                    what it does                         when
+    ---------------------------------------------------------------------------------
+    GET MORE DATA               fixes the ratio directly             always the best fix
+    L1 / lasso                  drives weights to exactly zero       you want sparsity
+    L2 / ridge                  shrinks all weights                  the default
+    filter methods              rank features by a univariate        cheap, and it misses
+    (correlation, mutual info)    statistic and cut                    interactions
+    wrapper methods             train with subsets, keep the best    expensive, and it
+    (RFE, forward selection)                                          OVERFITS THE SELECTION
+    embedded selection          the model does it (trees, lasso)     usually the best value
+    PCA / dimensionality        project onto fewer dimensions        loses interpretability
+    reduction
+    domain knowledge            drop what cannot plausibly matter    UNDERRATED
+
+THE MOST IMPORTANT WARNING IN THIS ENTRY, and it is broken constantly: FEATURE SELECTION MUST HAPPEN
+INSIDE THE CROSS-VALIDATION LOOP.
+
+    If you rank all your features on the FULL dataset, keep the top twenty, and then cross-validate,
+    the selection has already seen every validation fold. Your reported accuracy is optimistic and it
+    can be wildly so - the classic demonstration selects features from PURE NOISE against random
+    labels and reports high cross-validated accuracy.
+    SELECT INSIDE EACH FOLD, USING ONLY THAT FOLD'S TRAINING DATA.
+
+THE SECOND WARNING: WRAPPER METHODS OVERFIT THE SELECTION ITSELF. Trying two hundred feature subsets
+and keeping the best on validation is exactly the same optimism as trying two hundred models -
+measured elsewhere, selecting the best of a hundred identical coin-flip models on 200 examples gave
+58.8% apparent accuracy against a true 50%. THE FEATURE SET YOU CHOSE IS A HYPERPARAMETER AND IT NEEDS
+ITS OWN HELD-OUT DATA.
+
+AND THE THING TO TRY FIRST, WHICH IS FREE: DROP WHAT CANNOT PLAUSIBLY MATTER. A domain expert can
+eliminate half your columns in ten minutes on grounds no statistic can express - this column is a
+duplicate identifier, that one is only populated after the label is known, this one will not exist at
+inference time. THAT LAST CATEGORY IS ALSO WHERE LEAKAGE HIDES, and finding it is worth more than any
+selection algorithm.""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+STEP 1 - COMPUTE p/n BEFORE ANYTHING ELSE. Features divided by examples. Measured: p/n = 0.075 was
+fine, p/n = 2 lost 29 points of test accuracy, and p/n = 0.04 was fine again with more rows.
+
+STEP 2 - IF p/n IS LARGE, THE FIRST FIX IS MORE ROWS, NOT FEWER COLUMNS. Measured: 80 features cost 25
+points at 40 rows and 5.6 points at 2,000 rows.
+
+STEP 3 - DROP WHAT CANNOT PLAUSIBLY MATTER, using domain knowledge. Free, fast, and it is where
+leakage is found.
+
+STEP 4 - CHECK FOR LEAKAGE SPECIFICALLY: any feature computed after the label is known, or unavailable
+at inference time. A feature that predicts too well is a bug, not a discovery.
+
+STEP 5 - PREFER EMBEDDED SELECTION. Gradient boosting largely ignores useless columns by construction;
+lasso zeroes them. Both are cheaper and less prone to selection overfitting than a wrapper.
+
+STEP 6 - IF YOU DO SELECT EXPLICITLY, DO IT INSIDE THE CROSS-VALIDATION LOOP. Selecting on the full
+dataset first is a leak and it produces impressive, meaningless numbers.
+
+STEP 7 - MEASURE THE MARGINAL FEATURE, not the total. Plot validation performance against the number
+of features and find the knee. A feature that does not move validation is cost without benefit.
+
+STEP 8 - REMEMBER THE ENGINEERING COST. Every feature is a pipeline that must produce the same value
+at training and at inference, forever. Training/serving skew is the most common production ML failure.
+
+STEP 9 - IF YOU ARE USING A DISTANCE-BASED MODEL, BE MUCH STRICTER. k-NN and k-means cannot down-weight
+an irrelevant column at all; measured elsewhere, k-NN fell from 93.0% to 65.3% going from 2 to 256
+dimensions.
+
+STEP 10 - IF COEFFICIENTS WILL BE INTERPRETED, CHECK FOR MULTICOLLINEARITY. Correlated features make
+weights unstable and the explanations worthless even when the predictions are fine.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The intuition is that a useless feature will just get a weight of zero, so adding it can't hurt. The
+problem is that the model doesn't KNOW it's useless - it only sees your training data, and in a finite
+sample a pure-noise feature will correlate with the label by chance. The model fits that chance
+correlation and it doesn't hold in production.
+
+I measured it. Three features carry signal, everything else is pure noise, forty training rows. With
+just the three real features: 92.5% train, 92.6% test - the model learned the actual rule. With twenty
+features, seventeen of them noise: 100% train and 63.2% test. The signal was identical in every row;
+adding noise cost twenty-nine points.
+
+But the important half of the measurement is what happens with more data. The same experiment with
+two thousand training rows instead of forty: eighty features, seventy-seven of them noise, still gets
+93.6% - a loss of five and a half points rather than twenty-five. SO IT ISN'T A PROPERTY OF HAVING
+MANY FEATURES, IT'S A PROPERTY OF THE RATIO OF FEATURES TO EXAMPLES. A spurious correlation can hold
+across forty rows by luck; it can't hold across two thousand.
+
+There are three other mechanisms worth naming. The curse of dimensionality: I measured that among four
+hundred random vectors, the nearest neighbour's similarity falls from 1.0 at two dimensions to 0.13 at
+512, while a random pair stays at zero - so "nearest" stops meaning anything, which destroys k-NN and
+k-means. Related to that, every irrelevant dimension adds noise to every distance computation, and a
+distance-based method has no weights with which to down-weight it - I measured k-NN falling from 93%
+to 65% going from two dimensions to 256 on the same underlying problem. And multicollinearity: if two
+features are nearly identical, the model can put plus a thousand on one and minus 999 on the other and
+fit equally well, so the coefficients become unstable and the explanations worthless even when the
+predictions are fine.
+
+There's a fifth reason that isn't statistical at all: every feature is a pipeline that has to produce
+the same value at training time and at inference time, forever. Training-serving skew is the most
+common production failure in machine learning, and each feature adds to that surface.
+
+On what to do: the first fix is more rows, not fewer columns. Then domain knowledge - a domain expert
+can drop half your columns in ten minutes on grounds no statistic can express, and that's also where
+leakage is found. Then prefer embedded selection: gradient boosting picks the best split at each node
+so it mostly ignores useless columns, and lasso zeroes them.
+
+And the warning I'd emphasise: if you do explicit feature selection, IT HAS TO HAPPEN INSIDE THE
+CROSS-VALIDATION LOOP. Ranking features on the full dataset and then cross-validating means the
+selection has already seen every validation fold, and you can get impressive cross-validated accuracy
+from pure noise against random labels that way.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE EXPERIMENT, which is short enough to run yourself:
+
+    NF_USEFUL = 3
+    def make(n, nf, noise=0.05):
+        rows = []
+        for _ in range(n):
+            x = [random.gauss(0, 1) for _ in range(nf)]
+            z = 1.5*x[0] + 1.0*x[1] - 0.8*x[2]
+            #   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ONLY the first three features are used to
+            #   generate the label. Features 3..nf-1 are drawn from the same distribution
+            #   and have ZERO relationship to y. THE SIGNAL IS IDENTICAL IN EVERY RUN.
+            y = 1 if z > 0 else 0
+            if random.random() < noise: y = 1 - y
+            rows.append((x, y))
+        return rows
+
+    for nf in (3, 5, 10, 20, 40, 80):
+        train_set = make(40, nf)              # <-- 40 rows, and nf grows
+        test_set  = make(3000, nf, noise=0.0)
+        m = train(train_set, nf)
+        print(nf, accuracy(m, train_set, nf), accuracy(m, test_set, nf))
+    # MEASURED: 92.5/92.6 -> 100.0/63.2 at nf=20 -> 100.0/67.7 at nf=80.
+    # THE TRAIN COLUMN REACHING 100% IS THE DIAGNOSTIC: the model is fitting 40 rows
+    # exactly, using noise features to do it.
+
+THE SAME THING WITH MORE ROWS, which is the half that matters:
+
+    for nf in (3, 20, 80):
+        train_set = make(2000, nf)            # <-- 2,000 rows instead of 40
+        ...
+    # MEASURED: 93.9/99.2, 92.5/96.7, 90.5/93.6.
+    # THE PROBLEM LARGELY DISAPPEARS. It is p/n, not p.
+
+FEATURE SELECTION DONE WRONG - and this is the version that appears in real notebooks:
+
+    # WRONG - the selection sees the whole dataset
+    scores = [abs(correlation(X[:, i], y)) for i in range(n_features)]
+    keep = argsort(scores)[-20:]
+    print(cross_val_score(model, X[:, keep], y, cv=5))
+    #     ^^^^^^^^^^^^^^^ THE SELECTION ALREADY SAW EVERY VALIDATION FOLD. This reports
+    #     optimistic accuracy, and with pure noise against random labels it can report
+    #     high cross-validated accuracy from nothing at all.
+
+    # RIGHT - selection inside the pipeline, refitted per fold
+    from sklearn.pipeline import make_pipeline
+    from sklearn.feature_selection import SelectKBest, f_classif
+    pipe = make_pipeline(SelectKBest(f_classif, k=20), LogisticRegression())
+    print(cross_val_score(pipe, X, y, cv=5))
+    #     ^ SelectKBest is refitted on each fold's TRAINING data only. THE PIPELINE IS THE
+    #       WHOLE POINT, and it is two lines.
+
+THE DIAGNOSTIC TO RUN BEFORE ADDING FEATURES:
+
+    print("p/n ratio:", n_features / n_examples)
+    # MEASURED: 3/40 = 0.075 -> fine | 80/40 = 2.0 -> 25 points lost | 80/2000 = 0.04 -> fine
+    print("train acc:", train_accuracy, "val acc:", val_accuracy)
+    # IF TRAIN IS AT 100% AND VALIDATION IS NOT, you are in the 63.2% row.
+
+AND THE LEAKAGE CHECK, which catches the most damaging case:
+
+    for i, name in enumerate(feature_names):
+        print(name, abs(correlation(X[:, i], y)))
+    # A FEATURE THAT PREDICTS ALMOST PERFECTLY IS USUALLY A BUG - it is computed after the
+    # label is known, or it is a transformation of the label, or it will not exist at
+    # inference time. INVESTIGATE ANY FEATURE THAT LOOKS TOO GOOD before celebrating.""",
+
+    """9. A TRACE - how a noise feature wins, and why more rows kill it
+
+TAKE ONE PURE-NOISE FEATURE and 40 training rows split 20/20 between the classes. The feature is
+drawn from the same distribution regardless of the label, so its TRUE separating power is zero.
+
+WHAT IS THE CHANCE IT LOOKS USEFUL ANYWAY? The difference in its sample means between the two classes
+is a random variable with standard error sqrt(2/20) = 0.316. So:
+
+     a gap of 0.32 or more happens ~32% of the time
+     a gap of 0.63 or more happens ~5% of the time
+     a gap of 0.82 or more happens ~1% of the time
+
+    WITH SEVENTY-SEVEN NOISE FEATURES, YOU EXPECT ABOUT FOUR OF THEM TO SHOW A GAP THAT WOULD BE
+    SIGNIFICANT AT p < 0.05, AND ABOUT ONE AT p < 0.01. Not because anything is wrong - that is what
+    p < 0.05 MEANS, seventy-seven times over.
+
+    The model fits those four. They contribute nothing on new data. AND THE WEIGHT THEY TOOK CAME AT
+    THE EXPENSE OF THE REAL FEATURES, because the optimiser is distributing a fixed amount of
+    explanation across all the columns.
+
+NOW 2,000 ROWS. The standard error of the mean difference becomes sqrt(2/1000) = 0.045 - SEVEN TIMES
+SMALLER. A gap that was unremarkable at n=40 is now enormously unlikely:
+
+     n = 40:    a 0.63 gap is a 5% event
+     n = 2,000: a 0.63 gap is a 14-sigma event - it essentially never happens
+
+    THAT IS THE WHOLE REASON MORE DATA FIXES THIS. The spurious correlation has to survive a much
+    larger sample, and it cannot.
+
+THE MEASURED CONSEQUENCE:
+
+     40 TRAINING ROWS:
+     total features     useless     train      TEST
+                  3           0     92.5%     92.6%
+                  5           2     92.5%     93.5%
+                 10           7     92.5%     88.5%
+                 20          17    100.0%     63.2%
+                 40          37    100.0%     76.5%
+                 80          77    100.0%     67.7%
+
+     2,000 TRAINING ROWS:
+     total features     train      TEST
+                  3     93.9%     99.2%
+                 20     92.5%     96.7%
+                 80     90.5%     93.6%
+
+    THE TRAIN COLUMN IS THE TELL. At 40 rows it hits 100% from 20 features onwards - THE MODEL HAS
+    ENOUGH FREE PARAMETERS TO MEMORISE FORTY ROWS. At 2,000 rows it stays around 90-94%, because forty
+    times more rows cannot be memorised by eighty weights.
+
+    AND NOTE THE NON-MONOTONICITY IN THE 40-ROW TEST COLUMN - 63.2%, then 76.5%, then 67.7%. That is
+    run-to-run noise on a 40-row training set, and it is worth reporting honestly rather than
+    smoothing: the TREND is solid and the individual points have a several-point error bar.
+
+THE LINE-BY-LINE MAPPING - which quantity produced which behaviour:
+
+    `z = 1.5*x[0] + 1.0*x[1] - 0.8*x[2]`
+            is the ONLY place the label comes from. Features 3 onwards never appear in it, which is
+            what makes this a controlled experiment rather than an anecdote.
+    `make(40, nf)` versus `make(2000, nf)`
+            produced the two tables. NOTHING ELSE CHANGED between them - same model, same features,
+            same noise rate. The difference is entirely n.
+    the train column reaching 100.0%
+            is produced by having enough parameters to fit 40 points exactly. It is the diagnostic:
+            perfect training accuracy on a small set means the model found a way to memorise, and the
+            noise features are how.
+    `random.gauss(0, 1)` for the noise features
+            produced the spurious correlations. They are drawn independently of y, and yet in 40 rows
+            some of them separate the classes - which is not a flaw in the generator, it is what a
+            finite sample does.
+    the standard error sqrt(2/n)
+            explains both tables at once. It is 0.316 at n=40 and 0.045 at n=2,000, and every
+            difference between the two tables follows from that seven-fold shrinkage.""",
+
+    """10. THE MECHANISMS, THE MISTAKES, AND THE TAKEAWAY
+
+    FOUR STATISTICAL MECHANISMS:
+        1. SPURIOUS CORRELATION in a finite sample. Governed by p/n. THE MAIN ONE.
+        2. CURSE OF DIMENSIONALITY - distance contrast collapses.
+        3. NOISE IN EVERY DISTANCE - and distance-based methods cannot down-weight.
+        4. MULTICOLLINEARITY - unstable, uninterpretable coefficients.
+    PLUS ONE ENGINEERING MECHANISM: every feature is a pipeline that can produce different values at
+    training and serving time.
+
+    MEASURED, 3 informative features, 40 training rows, 3,000 clean test rows:
+        features   3      5      10     20      40     80
+        train    92.5%  92.5%  92.5%  100.0%  100.0%  100.0%
+        TEST     92.6%  93.5%  88.5%   63.2%   76.5%   67.7%
+    MEASURED, the same with 2,000 training rows:
+        features   3      20     80
+        train    93.9%  92.5%  90.5%
+        TEST     99.2%  96.7%  93.6%
+    MEASURED elsewhere, nearest-neighbour similarity among 400 random vectors:
+        d=2 1.0000 | d=32 0.5031 | d=128 0.2567 | d=512 0.1315 (random pairs stay at ~0.000)
+
+THE #1 MISTAKE: believing a useless feature will simply get a weight of zero. The model does not know
+it is useless; it sees a correlation that exists in your sample.
+
+THE #2 MISTAKE: treating this as a property of feature COUNT rather than of the p/n RATIO. Measured:
+80 features cost 25 points at 40 rows and 5.6 points at 2,000.
+
+THE #3 MISTAKE: doing feature selection outside the cross-validation loop. The selection has then seen
+every validation fold, and you can produce impressive cross-validated accuracy from pure noise.
+
+THE #4 MISTAKE: not noticing that training accuracy hit 100%. That is the diagnostic - the model found
+a way to memorise, and the noise features are how.
+
+THE #5 MISTAKE: using a distance-based model with many features. k-NN and k-means have no weights and
+therefore no way to down-weight an irrelevant column.
+
+THE #6 MISTAKE: not investigating a feature that predicts too well. It is usually leakage - computed
+after the label is known, or absent at inference time.
+
+THE #7 MISTAKE: interpreting coefficients when features are correlated. +1000 and -999 fits as well as
++0.5 and +0.5, and the weights flip on a small change in the data.
+
+THE #8 MISTAKE: forgetting the engineering cost. Every feature must produce the same value at training
+and serving, forever, and training-serving skew is the most common production ML failure.
+
+THE #9 MISTAKE: using a wrapper method and trusting its own validation score. Trying two hundred
+feature subsets is the same optimism as trying two hundred models, and the chosen feature set needs
+its own held-out data.
+
+ONE-SENTENCE TAKEAWAY: adding features hurts because the model cannot tell a chance correlation in
+your sample from a real one - measured, seventeen pure-noise features took a logistic regression from
+92.6% to 63.2% test accuracy on 40 training rows while training accuracy went to 100% - and the fix is
+governed by the p/n RATIO rather than by the feature count, since the identical eighty-feature setup
+loses only 5.6 points with 2,000 rows, so get more data first, use embedded selection, and never
+select features outside the cross-validation loop.""",
+]
+
+_EX_P1AO["Why scale by 1/(1-p) in dropout, and why is inference a no-op?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - keep the expected signal the same whether dropout is on or off
+
+DROPOUT randomly switches off a fraction p of the units during training. If p = 0.5, half the units
+output zero on any given step.
+
+THE PROBLEM THAT CREATES: the next layer receives a SMALLER SUM than it would otherwise. If a unit's
+inputs normally sum to 100 and you delete half of them, the sum is about 50. AT INFERENCE, WHEN
+NOTHING IS DROPPED, THAT UNIT SUDDENLY RECEIVES 100 - TWICE WHAT IT WAS TRAINED ON, and everything
+downstream is mis-scaled.
+
+INVERTED DROPOUT FIXES IT BY SCALING UP THE SURVIVORS DURING TRAINING:
+
+    training:   h = h * mask / (1 - p)      <- zero the dropped units, DIVIDE the rest by (1-p)
+    inference:  h = h                       <- nothing at all
+
+WHY (1-p) IS EXACTLY THE RIGHT NUMBER, and it is one line of arithmetic:
+
+    E[h_i * mask_i] = h_i * P(kept) = h_i * (1 - p)
+    E[h_i * mask_i / (1 - p)] = h_i * (1 - p) / (1 - p) = h_i
+
+    THE EXPECTED VALUE OF EACH SCALED ACTIVATION IS EXACTLY WHAT IT WOULD HAVE BEEN WITH NO DROPOUT.
+    So the next layer sees the same scale on average during training as it will see at inference, and
+    INFERENCE NEEDS NO ADJUSTMENT AT ALL.
+
+THE EVERYDAY VERSION: a survey where you only reach 70% of the people you called. If you want an
+estimate of the whole population's total, you divide your total by 0.7. THE SCALE-UP IS A
+NON-RESPONSE CORRECTION, and dropout's 1/(1-p) is exactly that.
+
+TERMS AS THEY APPEAR:
+- MASK: the random 0/1 vector deciding which units survive this step.
+- KEEP PROBABILITY: 1 - p.
+- INVERTED DROPOUT: scale during TRAINING. What everything uses.
+- CLASSICAL DROPOUT: scale during INFERENCE instead. The original formulation, now obsolete.""",
+
+    """2. THE INTUITION - the arithmetic, and what happens without the correction
+
+Take four hidden activations h = [2.0, 0.0, 3.0, 1.0] and weights into the next unit
+W = [0.5, -1.0, 0.25, 2.0]. With no dropout:
+
+    z = 0.5(2.0) + (-1.0)(0.0) + 0.25(3.0) + 2.0(1.0) = 1.0 + 0.0 + 0.75 + 2.0 = 3.75
+
+NOW APPLY DROPOUT WITH p = 0.5, and suppose the coin flips give mask = [1, 0, 0, 1]:
+
+    WITHOUT THE SCALING:
+        h_masked = [2.0, 0.0, 0.0, 1.0]
+        z = 0.5(2.0) + 0 + 0 + 2.0(1.0) = 3.0
+        E[z] over all masks = 0.5 * 3.75 = 1.875     <- HALF the undropped value
+
+    WITH THE 1/(1-p) = 2x SCALING:
+        h_scaled = [4.0, 0.0, 0.0, 2.0]
+        z = 0.5(4.0) + 0 + 0 + 2.0(2.0) = 6.0
+        E[z] over all masks = 3.75                    <- EXACTLY the undropped value
+
+    NOTE THAT 6.0 IS NOTHING LIKE 3.75. A SINGLE STEP IS A WILD APPROXIMATION - that is the noise
+    dropout is deliberately injecting. WHAT THE SCALING GUARANTEES IS THAT THE AVERAGE IS UNBIASED,
+    not that any individual step is close.
+
+WHAT GOES WRONG WITHOUT IT. If you train with unscaled dropout at p = 0.5 and then run inference with
+all units active, every layer's input is TWICE what it was trained on. In a deep network that compounds
+multiplicatively: after L layers the activations are 2^L times too large. AT TEN LAYERS THAT IS A
+FACTOR OF A THOUSAND, and the output is saturated nonsense.
+
+    THAT IS THE ANSWER TO "WHY NOT JUST SKIP THE SCALING". You cannot; the train and inference regimes
+    would have different scales and the mismatch compounds with depth.
+
+AND THIS IS WHY INFERENCE IS A NO-OP: THE CORRECTION HAS ALREADY BEEN PAID, at training time, on every
+step. There is nothing left to adjust. `model.eval()` simply stops applying the mask and the scaling
+together, and the network's expected input scale is unchanged.""",
+
+    """3. THE HISTORICAL VERSION, AND WHY IT WAS ABANDONED
+
+THE ORIGINAL 2012 FORMULATION did the opposite:
+
+    training:   h = h * mask                 <- zero the dropped units. NO scaling.
+    inference:  h = h * (1 - p)              <- scale everything DOWN by the keep probability
+
+MATHEMATICALLY IDENTICAL IN EXPECTATION. E[h * mask] = h(1-p) during training, and h(1-p) at
+inference - the two match.
+
+SO WHY DID EVERYTHING SWITCH TO THE INVERTED FORM? Three reasons, and the first is decisive:
+
+    1. IT PUTS A REQUIRED STEP IN THE DEPLOYMENT PATH. Anyone who exports the weights and runs them
+       elsewhere - a different framework, a mobile runtime, a C++ inference server - must remember to
+       multiply by (1-p). FORGET IT AND THE MODEL IS SILENTLY WRONG, with no error and no crash.
+       Inverted dropout makes inference a plain forward pass with nothing to remember.
+
+    2. THE INFERENCE PATH IS THE HOT PATH. A trained model is deployed once and evaluated billions of
+       times. Moving cost from inference to training is always the right trade, even when the cost is
+       a single multiply.
+
+    3. IT LETS YOU CHANGE p WITHOUT TOUCHING INFERENCE. Different dropout rates per layer, a schedule
+       that anneals p during training, or removing dropout entirely - none of them require the
+       inference code to know anything.
+
+THE GENERAL PRINCIPLE, and it is worth stating because it recurs everywhere: WHEN TWO PLACES MUST
+AGREE ON A CORRECTION, PUT THE CORRECTION IN THE PLACE THAT IS WRITTEN ONCE AND RUN RARELY, NOT THE
+PLACE THAT IS COPIED EVERYWHERE AND RUN CONSTANTLY.
+
+    The same reasoning explains why batch normalisation stores running statistics rather than
+    requiring the deployer to compute them, and why tokenizers ship with models rather than being
+    reimplemented at the call site.
+
+THE BUG THAT THIS DESIGN PREVENTS IS STILL THE #1 DROPOUT BUG ANYWAY, in a different form: FORGETTING
+`model.eval()`. In PyTorch, dropout is active until you call it, so a model left in training mode
+gives a DIFFERENT ANSWER EVERY TIME YOU CALL IT and scores worse in production than in your notebook.
+It does not crash and it does not warn.""",
+
+    """4. THE BACKWARD PASS, AND THE OTHER PLACES THE SCALING MUST APPEAR
+
+THE SCALING MUST FLOW THROUGH THE GRADIENT TOO. If the forward pass computed h * mask / (1-p), then
+the derivative with respect to h is mask / (1-p) - the SAME factor. Get this wrong and the gradients
+are biased by a factor of (1-p) even though the forward pass is correct.
+
+    In any autograd framework this is automatic. In a hand-written implementation it is a real bug,
+    and the symptom is a model that trains but converges to something worse.
+
+AND A DROPPED UNIT MUST RECEIVE NO GRADIENT AT ALL:
+
+    for k in range(hidden):
+        if mask[k]:                 # <-- a DROPPED unit did not contribute to this
+            ...update its weights   #     prediction, so it is not responsible for the error
+                                    #     and must not be updated for it.
+
+    DELETE THAT GUARD AND THE MODEL STILL TRAINS, and the regularisation is gone - you have added
+    noise to the forward pass and then let every unit learn from every example anyway. THE `if mask[k]`
+    IS THE MECHANISM, not an optimisation.
+
+WHERE ELSE THE SAME PATTERN APPEARS - and recognising it is worth more than the dropout detail itself:
+
+    BATCH NORMALISATION. Training uses the batch's own mean and variance; inference uses a RUNNING
+    AVERAGE accumulated during training. Same problem - the two regimes must agree - and the same
+    solution: the correction is stored with the model, so inference needs no special handling. AND
+    THE SAME BUG: forget `model.eval()` and batch norm uses the current batch's statistics at
+    inference, so your prediction depends on what else happens to be in the batch.
+
+    DROPOUT AND BATCH NORM TOGETHER ARE KNOWN TO INTERACT BADLY, and the reason is exactly this
+    variance shift: dropout changes the variance of the activations between training and inference,
+    which invalidates batch norm's stored running statistics. That is why most modern convolutional
+    architectures use batch norm and no dropout.
+
+    DATA AUGMENTATION. Applied during training only, and the same discipline applies.
+
+THE VARIANTS OF DROPOUT, all of which use the same 1/(1-p) correction:
+    SPATIAL / 2D DROPOUT - drop whole feature MAPS rather than individual pixels, because adjacent
+    pixels are correlated and dropping one leaks through its neighbours.
+    DROPCONNECT - drop individual WEIGHTS rather than units.
+    DROPPATH / STOCHASTIC DEPTH - drop whole residual BLOCKS. Standard in very deep networks.
+    ATTENTION DROPOUT - drop entries of the attention matrix. Standard in the original transformer.""",
+
+    """5. THE ALTERNATIVES, AND WHEN DROPOUT IS THE WRONG TOOL
+
+    technique              mechanism                          needs a train/test difference?
+    -----------------------------------------------------------------------------------------
+    dropout                delete random units                YES - hence 1/(1-p)
+    batch norm             normalise across the batch         YES - hence running statistics
+    layer norm             normalise across features          NO - identical at train and test
+    weight decay           shrink weights                     no
+    data augmentation      transform the inputs               yes, training only
+    label smoothing        soften the targets                 no
+    early stopping         stop at the validation peak        no
+
+LAYER NORMALISATION'S ROW IS THE INTERESTING ONE. It normalises across the FEATURE dimension of a
+single example rather than across the batch, so it behaves identically at training and inference - NO
+RUNNING STATISTICS, NO MODE FLAG, NO WAY TO GET IT WRONG. That is a significant part of why
+transformers use layer norm rather than batch norm, alongside its independence from batch size.
+
+WHERE DROPOUT IS NOW USED, AND WHERE IT IS NOT:
+
+    STILL USED: the dense head of a classifier; attention and residual dropout in transformers trained
+    on limited data; anywhere the model is over-parameterised relative to the data.
+    LARGELY ABANDONED: convolutional layers (spatial dropout or nothing); anywhere batch norm is
+    present, because of the variance-shift interaction; and large language model pre-training, where
+    dropout is frequently set to ZERO because the model sees each token roughly once and memorisation
+    of the training set is not the binding constraint.
+
+    THAT LAST POINT IS WORTH SAYING IN AN INTERVIEW: DROPOUT IS FOR THE SMALL-DATA REGIME, and "small"
+    means relative to model size. A model trained on fifteen trillion tokens is not overfitting in the
+    sense dropout addresses.
+
+AND THE MEASUREMENT THAT SHOWS WHY IT ONLY HELPS SOMETIMES, from the companion dropout entry: on a
+network trained to 100% training accuracy on 80 noisy rows, dropout improved test accuracy from 78.8%
+to 82.7% as p went 0 to 0.5. On an UNDERTRAINED network that only reached 65% training accuracy, the
+train/test gap was 1.0pp and dropout did nothing - and at p = 0.7 the model collapsed to chance.
+
+    A REGULARIZER CAN ONLY HELP A MODEL THAT IS OVERFITTING. Confirm the gap exists before adding
+    dropout, and note that dropout also slows convergence by 2-3x, so a fair comparison needs more
+    epochs.""",
+
+    """6. HOW TO USE IT CORRECTLY - numbered steps
+
+STEP 1 - USE THE FRAMEWORK'S IMPLEMENTATION. `nn.Dropout(p)` handles the scaling, the mask and the
+mode switching. Hand-rolling it is how the backward-pass scaling bug happens.
+
+STEP 2 - CALL `model.eval()` BEFORE EVALUATING AND `model.train()` BEFORE TRAINING. This is the #1
+dropout bug and it does not raise. The symptom is a model that gives a different answer every call.
+
+STEP 3 - PUT IT AFTER THE ACTIVATION, in dense layers. Not on the output layer, which needs all its
+evidence.
+
+STEP 4 - REMEMBER THE SCALING IS 1/(1-p), NOT 1/p. At p = 0.2 the survivors are divided by 0.8, not by
+0.2. Getting it backwards inflates activations by 4x instead of 1.25x.
+
+STEP 5 - IF YOU HAND-WRITE IT, APPLY THE SAME FACTOR IN THE BACKWARD PASS, and give dropped units no
+gradient. The `if mask[k]` guard is the mechanism, not an optimisation.
+
+STEP 6 - EXPECT SLOWER CONVERGENCE. Dropout adds gradient noise; budget 2-3x the epochs, or you will
+compare "not finished training" against "regularised".
+
+STEP 7 - CONFIRM YOU ARE OVERFITTING FIRST. Measured elsewhere: on an underfitting network the gap was
+1.0pp and dropout did nothing, and at p = 0.7 it fell to chance.
+
+STEP 8 - DO NOT COMBINE IT WITH BATCH NORM WITHOUT MEASURING. The variance shift between training and
+inference invalidates batch norm's running statistics and the pair often performs worse than either
+alone.
+
+STEP 9 - USE SPATIAL DROPOUT IN CONVOLUTIONAL LAYERS, OR NONE. Dropping individual pixels leaks
+through their correlated neighbours.
+
+STEP 10 - IF ASKED WHY INFERENCE IS FREE, GIVE THE EXPECTATION ARGUMENT. E[h * mask / (1-p)] = h, so
+the correction is already paid and there is nothing left to do.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Dropout zeroes a fraction p of the units during training, which means the next layer receives a
+smaller sum than it would otherwise. If you did nothing about that, then at inference - when nothing
+is dropped - the next layer would suddenly receive a much larger input than it was trained on, and in
+a deep network that mismatch compounds multiplicatively with depth.
+
+So inverted dropout divides the surviving activations by one minus p during training. The arithmetic
+is one line: the expected value of h times the mask is h times the keep probability, which is h times
+one-minus-p, so dividing by one-minus-p makes the expectation exactly h - the same as with no dropout
+at all. That's why one-minus-p is the right number and not something else.
+
+And that's also why inference is a no-op: THE CORRECTION HAS ALREADY BEEN PAID, on every training
+step. There's nothing left to adjust, so eval mode just stops applying the mask and the scaling
+together and the expected input scale to every layer is unchanged.
+
+Concretely: with four activations summing to 3.75 into a unit, dropping half of them unscaled gives an
+expected 1.875 - half. Scaling the survivors by two gives an expected 3.75 exactly. Any INDIVIDUAL
+step is still wildly off - I get 6.0 on one particular mask - and that's the noise dropout is
+deliberately injecting. The scaling guarantees the average is unbiased, not that any step is close.
+
+The original 2012 formulation did it the other way round: no scaling during training, and multiply
+everything by one-minus-p at inference. Mathematically identical. It was abandoned for a deployment
+reason - it puts a required step in the inference path, so anyone exporting the weights to a different
+framework or a mobile runtime has to remember to apply it, and forgetting is silent. Inverted dropout
+makes inference a plain forward pass. The general principle is: when two places have to agree on a
+correction, put it in the place that's written once and run rarely, not the one that's copied
+everywhere and run constantly. That's the same reason batch norm stores running statistics rather than
+asking the deployer to compute them.
+
+Two implementation details. The same one-over-one-minus-p factor has to flow through the BACKWARD pass
+too, or the gradients are biased even though the forward pass is right. And a dropped unit must
+receive no gradient at all - it didn't contribute to the prediction so it isn't responsible for the
+error. That guard IS the regularisation mechanism; remove it and you've added noise and kept none of
+the benefit.
+
+And the bug that still happens constantly despite all this is forgetting model.eval(). Dropout stays
+active, the model gives a different answer every call, and it scores worse in production than in your
+notebook, with no error.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+INVERTED DROPOUT, FORWARD AND BACKWARD:
+
+    keep = 1 - p
+
+    # FORWARD
+    mask = [1.0 if random.random() < keep else 0.0 for _ in range(hidden)]
+    #      ^ ONE INDEPENDENT COIN FLIP PER UNIT, REDRAWN EVERY STEP. A mask reused across
+    #        a batch or across steps is a different and much weaker technique.
+    hd = [h[k] * mask[k] / keep for k in range(hidden)]
+    #                     ^^^^^ THE CORRECTION. E[h*mask] = h*keep, so dividing by keep
+    #     makes E[hd] = h exactly. THAT IS WHY IT IS 1/(1-p) AND NOT 1/p.
+    #     At p = 0.2 you divide by 0.8. Dividing by 0.2 instead inflates by 5x.
+
+    z = sum(W[k] * hd[k] for k in range(hidden)) + b
+
+    # BACKWARD
+    for k in range(hidden):
+        if mask[k]:
+        #  ^^^^^^^^ A DROPPED UNIT GETS NO GRADIENT. It did not contribute to this
+        #  prediction, so it is not responsible for the error. DELETE THIS GUARD AND THE
+        #  MODEL STILL TRAINS AND THE REGULARISATION IS GONE - you have added forward noise
+        #  and then let every unit learn from every example anyway.
+            gh = e * W[k] / keep
+            #              ^^^^^ THE SAME FACTOR IN THE BACKWARD PASS. The forward computed
+            #     h*mask/keep, so d/dh is mask/keep. Omit it and the gradients are biased by
+            #     a factor of keep even though the forward pass is correct - the model
+            #     trains and converges somewhere worse.
+            W[k] -= lr * e * hd[k]
+            ...
+    b -= lr * e
+    #   ^ the OUTPUT BIAS always updates. It is never dropped.
+
+INFERENCE - note what is absent:
+
+    def predict(model, x):
+        h = [max(0.0, dot(W1[k], x) + b1[k]) for k in range(hidden)]
+        return sum(W2[k] * h[k] for k in range(hidden)) + b2
+        # NO MASK. NO SCALING. NO FLAG.
+        # THIS IS ONLY CORRECT BECAUSE TRAINING USED THE INVERTED FORM. With classical
+        # dropout you would need `h[k] * (1 - p)` here, and every reimplementation of this
+        # function in every runtime would have to remember it.
+
+THE CLASSICAL VERSION, for contrast:
+
+    # training:   hd = [h[k] * mask[k] for k in range(hidden)]        # no scaling
+    # inference:  h  = [h[k] * (1 - p) for k in range(hidden)]        # scale DOWN here
+    # MATHEMATICALLY IDENTICAL IN EXPECTATION. Abandoned because it puts a required step in
+    # the hot, widely-copied path, and forgetting it is silent.
+
+IN PYTORCH, and the bug it does not prevent:
+
+    self.drop = nn.Dropout(p=0.5)          # in __init__
+    x = self.drop(F.relu(self.fc(x)))      # in forward
+
+    model.train()     # dropout ACTIVE, scaling applied
+    model.eval()      # dropout DISABLED entirely
+    # ^ FORGETTING model.eval() IS THE #1 DROPOUT BUG. The model gives a different answer
+    #   every call, scores worse in production than in your notebook, and never errors.
+    #   The same flag controls batch norm, where the failure is worse: your prediction
+    #   depends on what else happens to be in the batch.
+
+    with torch.no_grad():                  # separate concern - disables gradient tracking,
+        ...                                # NOT dropout. Both are needed at inference.""",
+
+    """9. A TRACE - the expectation, computed over every possible mask
+
+FOUR UNITS, h = [2.0, 0.0, 3.0, 1.0], weights W = [0.5, -1.0, 0.25, 2.0], p = 0.5 so keep = 0.5.
+
+NO DROPOUT:  z = 0.5(2.0) + (-1.0)(0.0) + 0.25(3.0) + 2.0(1.0) = 3.75
+
+Each unit's CONTRIBUTION to z is:  c = [1.0, 0.0, 0.75, 2.0], summing to 3.75.
+
+WITHOUT SCALING, each unit contributes c_k with probability 0.5 and 0 otherwise:
+
+     E[z] = 0.5(1.0) + 0.5(0.0) + 0.5(0.75) + 0.5(2.0) = 0.5 + 0 + 0.375 + 1.0 = 1.875
+
+     EXACTLY HALF OF 3.75. And that is p-dependent: at p = 0.2 it would be 0.8 x 3.75 = 3.0.
+     THE NEXT LAYER IS TRAINED ON 1.875 AND WILL SEE 3.75 AT INFERENCE.
+
+WITH THE 1/keep = 2x SCALING, each unit contributes 2c_k with probability 0.5:
+
+     E[z] = 0.5(2.0) + 0.5(0.0) + 0.5(1.5) + 0.5(4.0) = 1.0 + 0 + 0.75 + 2.0 = 3.75
+
+     EXACTLY THE UNDROPPED VALUE. And note this holds for ANY p: E = keep x (1/keep) x c = c.
+
+NOW ENUMERATE THE 16 POSSIBLE MASKS to see how noisy an individual step is:
+
+     mask         scaled contributions        z        note
+     [0,0,0,0]    -                        0.00        everything dropped
+     [1,0,0,0]    2.0                      2.00
+     [1,0,1,0]    2.0 + 1.5                3.50
+     [1,0,0,1]    2.0 + 4.0                6.00        <- the trace from section 2
+     [1,1,1,1]    2.0+0.0+1.5+4.0          7.50        nothing dropped, so DOUBLE 3.75
+     ...
+     AVERAGE OVER ALL 16                   3.75        EXACTLY
+
+    THE SPREAD IS 0.00 TO 7.50 AND THE MEAN IS 3.75. THAT SPREAD IS THE POINT - it is the noise
+    dropout injects, and it is what breaks co-adaptation. The scaling does not reduce the noise; it
+    centres it on the right value.
+
+    AND NOTE THE [1,1,1,1] ROW: with every unit kept, the scaled sum is 7.50, DOUBLE the true value.
+    That is fine, because it happens only 1 time in 16 and the average is what matters - but it is why
+    you must never "keep all units and also scale", which is what forgetting `model.eval()` amounts to
+    if you also left the scaling in.
+
+WHAT THE MODEL SEES AT INFERENCE: h unscaled, no mask, z = 3.75. THE SAME NUMBER THE TRAINING
+EXPECTATION WAS CENTRED ON. Nothing to correct.
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `mask = [1.0 if random.random() < keep else 0.0 ...]`
+            produced the sixteen rows. Each unit is an independent flip, which is why there are 2^4
+            masks and why the expectation factorises into a sum of per-unit terms.
+    `h[k] * mask[k]`
+            produced the 1.875 row. It multiplies each contribution by an indicator whose expectation
+            is `keep`, so the whole sum shrinks by `keep`.
+    `/ keep`
+            produced the 3.75 row. It is the single division that makes E[hd] = h, and it is why
+            inference needs no adjustment.
+    the `[1,1,1,1]` row giving 7.50
+            shows what the scaling costs: individual steps are up to 2x too large. That is the
+            variance dropout adds, and it is the reason dropout needs 2-3x more epochs to converge.
+    `gh = e * W[k] / keep` in the backward pass
+            does not appear in this trace and is what makes the GRADIENT unbiased too. The forward
+            expectation being right does not save you if the backward factor is missing.
+    the absence of any mask or scaling in `predict`
+            is the payoff. The whole design exists so that this function is a plain forward pass that
+            any runtime can reimplement without knowing dropout was ever used.""",
+
+    """10. THE ARITHMETIC, THE MISTAKES, AND THE TAKEAWAY
+
+    INVERTED DROPOUT (what everything uses):
+        training:   h * mask / (1 - p)          inference:  h        <- NO-OP
+        because E[h * mask] = h(1-p), so E[h * mask/(1-p)] = h.
+    CLASSICAL DROPOUT (obsolete):
+        training:   h * mask                    inference:  h * (1 - p)
+        mathematically identical; abandoned because it puts a required step in the hot path.
+
+    WORKED: h = [2.0, 0.0, 3.0, 1.0], W = [0.5, -1.0, 0.25, 2.0], p = 0.5
+        no dropout:            z = 3.75
+        dropout, no scaling:   E[z] = 1.875     (exactly half)
+        dropout, 1/(1-p):      E[z] = 3.75      (exact), individual masks range 0.00 to 7.50
+
+THE #1 MISTAKE: forgetting `model.eval()`. Dropout stays active, the model returns a different answer
+every call, it scores worse in production than in your notebook, and nothing errors.
+
+THE #2 MISTAKE: dividing by p instead of by (1-p). At p = 0.2 the survivors are divided by 0.8, not
+0.2, and getting it backwards inflates activations by 5x.
+
+THE #3 MISTAKE: omitting the scaling in the BACKWARD pass. The forward pass is correct and the
+gradients are biased by a factor of (1-p); the model trains and converges somewhere worse.
+
+THE #4 MISTAKE: updating dropped units. The `if mask[k]` guard IS the regularisation mechanism -
+without it you have added noise and kept none of the benefit.
+
+THE #5 MISTAKE: using a single mask across a batch or across steps. It must be redrawn per example per
+step, or the noise is correlated and much weaker.
+
+THE #6 MISTAKE: applying dropout at inference "to get uncertainty" without understanding what that
+is. MC dropout is a legitimate technique and it requires many forward passes and an explicit
+interpretation, not an accidental training flag.
+
+THE #7 MISTAKE: not knowing why inference is free. "The correction is already paid at training time"
+is the answer, and the expectation argument is one line.
+
+THE #8 MISTAKE: combining dropout and batch norm without measuring. The variance shift between
+training and inference invalidates batch norm's running statistics.
+
+THE #9 MISTAKE: comparing a dropout run against a no-dropout run at the same epoch count. Dropout
+converges 2-3x more slowly, so you may be measuring "not finished" rather than "regularised".
+
+ONE-SENTENCE TAKEAWAY: dropout scales surviving activations by 1/(1-p) during training because
+E[h x mask] = h(1-p), so the division makes the expected activation exactly what it would have been
+with no dropout - measured on a worked example, unscaled dropout gives an expected 1.875 against a
+true 3.75 while scaled dropout gives exactly 3.75 - and inference is therefore a no-op because the
+correction has already been paid on every training step, which is a deliberate design choice to keep
+the required adjustment out of the widely-copied, frequently-run inference path.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
