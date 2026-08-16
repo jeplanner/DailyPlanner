@@ -3591,3 +3591,934 @@ collapses to the carrier count with no error at all, and above all replace the r
 thread pool was silently enforcing on every downstream resource, because that limit is the reason the
 database survived.""",
 ]
+
+
+DEEP["ArrayList vs LinkedList — and why the textbook answer is usually wrong"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — the answer everyone gives, and why it is wrong
+
+THE TEXTBOOK ANSWER: an ArrayList is an array, so reading by index is instant but inserting in the
+middle means shifting everything after it. A LinkedList is a chain of nodes each pointing at the next,
+so inserting is just rewiring two pointers, but reading the thousandth element means walking a
+thousand links. Therefore: ArrayList for reading, LinkedList for inserting.
+
+    THAT ANSWER IS ALGORITHMICALLY CORRECT AND PRACTICALLY WRONG. On real hardware, for essentially
+    every workload you will meet, ArrayList wins — INCLUDING at inserting and removing in the middle,
+    which is precisely the case LinkedList is supposed to own.
+
+    THE REASON IS NOT IN THE BIG-O. Big-O counts OPERATIONS and assumes every memory access costs the
+    same. On a modern CPU that assumption is false by a factor of about a hundred: a value already in
+    cache arrives in roughly a nanosecond, and one that must come from main memory takes closer to a
+    hundred. An algorithm that touches memory PREDICTABLY beats one that touches less memory
+    UNPREDICTABLY, and it beats it by more than the operation count suggests.
+
+THE EVERYDAY VERSION: two ways to store a hundred documents. One is a single stack on your desk — to
+insert in the middle you lift half the stack, which is real work, but it is one smooth motion. The
+other scatters the hundred documents across a hundred rooms in a building, each with a note saying
+which room the next one is in. Inserting is trivial: change two notes. Getting to document fifty means
+walking to fifty rooms. AND THE WALKING IS THE ENTIRE COST — the fact that you did less "work" at the
+insertion point is irrelevant next to it.
+
+TERMS AS THEY APPEAR:
+- CACHE LINE: memory is fetched in blocks, typically 64 bytes. Reading one byte fetches all 64.
+- LOCALITY: whether the things you access next are near the things you accessed last.
+- PREFETCHER: hardware that notices sequential access and fetches ahead of you, for free.
+- POINTER CHASING: following a reference to find the address of the next reference. Unpredictable
+  by construction, so the prefetcher cannot help.""",
+
+"""2. THE INTUITION — why contiguity beats operation count
+
+AN ARRAYLIST IS ONE CONTIGUOUS ARRAY OF REFERENCES. Walking it, the CPU reads 64 bytes at a time and
+gets sixteen references per fetch (with compressed pointers). The prefetcher sees the pattern
+immediately and loads the NEXT block while you are still using this one. In steady state you wait for
+memory almost never.
+
+A LINKEDLIST IS N SEPARATE NODE OBJECTS, each holding a previous pointer, a next pointer, and the item.
+They are allocated at different times and land at different addresses.
+
+    TO REACH THE NEXT ELEMENT YOU MUST FIRST READ THE CURRENT NODE — because the address of the next
+    one IS THE DATA IN THIS ONE. The CPU cannot fetch ahead, because it does not know where ahead is
+    until the current fetch returns. THAT IS A SERIALISED DEPENDENCY CHAIN OF MEMORY LOADS, and it is
+    the worst pattern modern hardware has.
+
+NOW COUNT THE MEMORY, which is the second half of the story:
+
+    ARRAYLIST, per element: one 4-byte reference, plus up to 50% slack capacity. Call it 4–6 bytes.
+    LINKEDLIST, per element: a Node object — 12-byte header, prev, next, item = 24 bytes, plus the
+    element itself. Call it 24 bytes.
+
+    THAT IS ROUGHLY FIVE TIMES THE MEMORY, and memory bandwidth is the scarce resource. A list that
+    fits in L2 cache as an ArrayList may not fit as a LinkedList, and the difference between "in cache"
+    and "not in cache" is the hundred-fold one.
+
+AND THE INSERT CASE — the one LinkedList is supposed to win — has a hidden step:
+
+    `list.add(5000, x)` ON A LINKEDLIST IS NOT O(1). The rewiring is O(1); FINDING position 5000 is
+    O(n), and it is O(n) of the worst possible kind — five thousand dependent cache misses. The O(1)
+    only exists if you ALREADY HOLD the node, and Java's `List` interface never gives you one.
+
+    `list.add(5000, x)` ON AN ARRAYLIST IS O(n) SHIFTING — via `System.arraycopy`, which is a JVM
+    INTRINSIC compiled to a vectorised block move. It moves many bytes per instruction, sequentially,
+    at memory bandwidth. Moving ten thousand references costs a few microseconds.
+
+    SO THE COMPARISON IS: a vectorised sequential block move, versus five thousand serialised pointer
+    dereferences. The one with the better Big-O loses, and it loses badly.
+
+THE HONEST SUMMARY, which is what makes this a good interview answer: LINKEDLIST'S ADVANTAGE IS REAL
+ONLY WHEN YOU ALREADY HAVE A REFERENCE TO THE POSITION — which in Java means you are iterating and
+using `Iterator.remove()`. Every other case, ArrayList.""",
+
+"""3. THE MECHANISM — growth, arraycopy, and what each class actually is
+
+ARRAYLIST INTERNALS:
+
+    Object[] elementData;   // the backing array. Note: Object[], because of erasure.
+    int size;               // how many are USED. capacity is elementData.length.
+
+    GROWTH. When full, a new array of `oldCapacity + (oldCapacity >> 1)` — 1.5x — is allocated and the
+    contents copied. The default starting capacity is 10, and it is allocated LAZILY on first add.
+    Growth is O(n) but AMORTISED O(1): doubling-ish growth means the total copying across n additions
+    is O(n), so each addition averages constant.
+    `ensureCapacity(n)` up front skips all of it, and matters when n is large and known.
+
+    add(i, x)        System.arraycopy shifts [i, size) right by one, then writes. O(n) but VECTORISED.
+    remove(i)        System.arraycopy shifts left, then nulls the last slot (so it can be collected).
+    get(i)           one bounds check, one array read. Genuinely O(1).
+
+    THE SLACK IS A REAL COST. After growth an ArrayList can be up to 50% empty, and `trimToSize()`
+    exists for the case where that matters. `remove` never shrinks the array.
+
+LINKEDLIST INTERNALS: a doubly-linked list with head and tail pointers.
+
+    private static class Node<E> { E item; Node<E> next; Node<E> prev; }
+
+    get(i)           walks from the NEARER END — so index 0 and index size-1 are fast, and the middle
+                     is the worst case at n/2 dependent loads. Still O(n).
+    add(i, x)        walks to i, then rewires. O(n) walk + O(1) rewire.
+    addFirst/addLast O(1) genuinely, and this is the only operation where it is competitive.
+    Iterator.remove  O(1) genuinely, because the iterator holds the node.
+
+    IT ALSO IMPLEMENTS Deque. Which is the source of most remaining uses — and `ArrayDeque` does the
+    same job on a circular array, with better locality and less memory, so it wins there too.
+
+THE OPERATION THAT DECIDES MOST REAL CODE — removing while iterating:
+
+    ARRAYLIST + Iterator.remove()   O(n) per removal, because it still arraycopies the tail.
+                                    Removing k elements one at a time is O(nk).
+    ARRAYLIST + removeIf(pred)      ONE PASS. It marks survivors in a bitset and compacts once. O(n)
+                                    TOTAL regardless of how many are removed. This is the fastest
+                                    option available and most people do not know it exists.
+    LINKEDLIST + Iterator.remove()  O(1) per removal, O(n) total — algorithmically the best, and
+                                    still typically slower in wall clock because the WALK is the
+                                    dominant cost, not the removals.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `list.remove(0)` IN A LOOP TO DRAIN AN ARRAYLIST. Each removal shifts everything left, so
+draining n elements is O(n²). Iterate forwards and clear, iterate BACKWARDS removing from the end, or
+use `ArrayDeque` if it is really a queue.
+
+CASE 2 — `list.remove(1)` MEANING TWO DIFFERENT THINGS. On a `List<Integer>`, `remove(int)` removes by
+INDEX and `remove(Object)` removes by VALUE. `remove(1)` picks the index overload. `remove(Integer.valueOf(1))`
+removes the value. The compiler chooses silently and both compile.
+
+CASE 3 — USING LINKEDLIST AS A QUEUE. `ArrayDeque` does it with better locality, less memory, and no
+per-element node allocation. LinkedList's Deque implementation is essentially legacy.
+
+CASE 4 — GROWTH THRASH ON A KNOWN SIZE. Building a 100,000-element ArrayList from the default capacity
+performs about 25 reallocations and copies. `new ArrayList<>(100_000)` performs none.
+
+CASE 5 — MEMORY AFTER A LARGE LIST SHRINKS. `remove` never shrinks the backing array, so a list that
+held a million elements still holds a million-slot array. `trimToSize()`.
+
+CASE 6 — `Arrays.asList(...)` IS FIXED-SIZE. It is a VIEW over the array: `set` works and writes
+through to the array, `add` and `remove` throw UnsupportedOperationException.
+
+CASE 7 — `List.of(...)` IS FULLY IMMUTABLE AND REJECTS NULLS. Different failure from `Arrays.asList`,
+which permits nulls.
+
+CASE 8 — `subList` IS A VIEW, NOT A COPY. Structurally modifying the backing list invalidates it —
+ConcurrentModificationException on next use — and modifying the sublist writes through to the parent.
+
+CASE 9 — MEASURING WITH A LIST THAT FITS IN CACHE. A thousand-element benchmark shows LinkedList
+looking respectable, because everything is in L1 and locality is free. At a million the gap becomes
+enormous. THE SIZE AT WHICH YOU BENCHMARK DETERMINES THE ANSWER YOU GET.
+
+CASE 10 — ASSUMING `contains` IS CHEAP. O(n) on both, with an `equals` call per element. If you are
+calling it in a loop you wanted a `HashSet` and the whole comparison is beside the point.
+
+CASE 11 — THREAD SAFETY ON NEITHER. `Collections.synchronizedList` locks every method but not
+iteration; `CopyOnWriteArrayList` is right for read-mostly with rare writes.
+
+CASE 12 — NULLS. Both permit them, so `list.get(i) == null` is ambiguous between "absent" and "stored
+null" in exactly the way `Map.get` is.""",
+
+"""5. THE ALTERNATIVES — what to reach for instead of either
+
+ARRAYLIST is the default, and should be. Contiguous, cache-friendly, minimal per-element overhead,
+`System.arraycopy` for the shifting. Reach for it unless you can name why not.
+
+ARRAYDEQUE for anything queue- or stack-shaped. A circular array: O(1) at both ends with no node
+allocation and good locality. IT BEATS BOTH `LinkedList` AND `Stack` AT THEIR OWN JOBS, and the
+Javadoc says so explicitly.
+
+HASHSET / LINKEDHASHSET the moment membership is the question. If you are calling `list.contains` in a
+loop, this is the real fix and the ArrayList-versus-LinkedList question was never the bottleneck.
+
+TREEMAP / PRIORITYQUEUE when you need ordering or a repeatedly-extracted minimum. A sorted ArrayList
+that you re-sort is usually the wrong shape.
+
+PRIMITIVE COLLECTIONS — Eclipse Collections, fastutil, HPPC — when the elements are primitives.
+`ArrayList<Integer>` stores a reference to a boxed object per element: roughly 20 bytes and a pointer
+dereference each, against 4 bytes contiguous for an `int[]`. FOR LARGE NUMERIC DATA THIS IS A BIGGER
+WIN THAN ANY LIST CHOICE.
+
+`int[]` OR `long[]` DIRECTLY when the size is fixed. No abstraction, no boxing, perfect locality.
+
+COPYONWRITEARRAYLIST for read-mostly concurrent access — listener registries, configuration snapshots.
+Every write copies the whole array, so it is wrong for anything write-heavy and perfect for the case
+where writes are rare and iteration must never block.
+
+`removeIf` INSTEAD OF AN ITERATOR LOOP. One compacting pass on an ArrayList, regardless of how many
+elements match.
+
+WHEN IS LINKEDLIST ACTUALLY RIGHT? Honestly: almost never in Java. The case it wins — O(1) insertion at
+a position you already hold — requires node access the `List` interface does not expose, so the only
+realisation is `Iterator.remove()` during a walk, and even there `removeIf` on an ArrayList usually
+wins in wall-clock time. Java's own collections author has said publicly that he wrote it and does not
+use it.
+
+WHAT TO SAY: "ArrayList by default; ArrayDeque for queues and stacks; a Set if the question is
+membership; primitive arrays or a primitive collection library if the elements are numbers. I would
+want a measured reason to choose LinkedList, and I have not had one."
+
+""",
+
+"""6. HOW TO CHOOSE — numbered steps
+
+STEP 1 — ASK WHAT THE ACCESS PATTERN ACTUALLY IS, not what the operation is called. "Insert in the
+middle" via an index is a WALK plus an insert, and the walk dominates.
+
+STEP 2 — DEFAULT TO ARRAYLIST. It is right often enough that the burden of proof is on the alternative.
+
+STEP 3 — IF IT IS A QUEUE OR A STACK, USE ARRAYDEQUE. Not LinkedList, not `Stack`.
+
+STEP 4 — IF THE QUESTION IS MEMBERSHIP, USE A SET. `list.contains` in a loop is O(n²) and no list
+choice fixes it.
+
+STEP 5 — IF THE ELEMENTS ARE PRIMITIVES AND THERE ARE MANY, USE AN ARRAY OR A PRIMITIVE COLLECTION.
+Boxing costs more than the list structure ever will.
+
+STEP 6 — PRE-SIZE WHEN YOU KNOW THE SIZE. `new ArrayList<>(n)` removes every reallocation and copy.
+
+STEP 7 — USE `removeIf` FOR BULK REMOVAL. One compacting pass; an iterator loop is O(nk).
+
+STEP 8 — NEVER `remove(0)` IN A LOOP. That is an accidental O(n²), and it is a common one.
+
+STEP 9 — BE CAREFUL WITH `remove` ON A `List<Integer>`. Index or value, chosen silently by overload
+resolution.
+
+STEP 10 — IF YOU BENCHMARK, USE A REALISTIC SIZE. A thousand elements fit in cache and hide the entire
+effect you are trying to measure.
+
+STEP 11 — TREAT `subList` AND `Arrays.asList` AS VIEWS. They alias, and they throw on operations that
+look ordinary.
+
+STEP 12 — FOR CONCURRENT READ-MOSTLY, USE `CopyOnWriteArrayList`; otherwise a proper concurrent
+structure. `Collections.synchronizedList` does not make ITERATION safe.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'The textbook answer is ArrayList for reading, LinkedList for inserting — O(1) index access versus O(1)
+insertion. That's algorithmically correct and practically wrong. On real hardware ArrayList wins
+essentially everywhere, including at the middle-insertion case LinkedList is supposed to own.
+
+The reason isn't in the Big-O. Big-O counts operations and assumes every memory access costs the same.
+That assumption is off by about a hundred: something in cache arrives in a nanosecond, something from
+main memory takes closer to a hundred. So an algorithm that touches memory PREDICTABLY beats one that
+touches less memory unpredictably.
+
+An ArrayList is one contiguous array of references. Walking it, the CPU fetches 64 bytes at a time and
+gets sixteen references, and the prefetcher sees the pattern and loads the next block while you're
+still using this one. You almost never wait.
+
+A LinkedList is n separate node objects at scattered addresses, and to reach the next element you have
+to read the current node FIRST — because the address of the next one is the data in this one. The CPU
+can't fetch ahead because it doesn't know where ahead is until the current load returns. That's a
+serialised chain of dependent cache misses, which is the worst pattern this hardware has.
+
+Then count the memory. ArrayList: about 4 bytes per element plus some slack. LinkedList: a node object
+per element — 12-byte header plus prev, next and item — call it 24 bytes. Five times the memory, and
+memory bandwidth is the scarce thing.
+
+And the insert case has a hidden step people skip. `list.add(5000, x)` on a LinkedList is NOT O(1). The
+rewiring is O(1); FINDING position 5000 is O(n), and it's the worst kind of O(n) — five thousand
+dependent cache misses. The O(1) only exists if you already hold the node, and Java's List interface
+never gives you one. Meanwhile the ArrayList version is System.arraycopy, which is a JVM intrinsic
+compiled to a vectorised block move — many bytes per instruction, sequential, at memory bandwidth.
+Shifting ten thousand references takes microseconds.
+
+So the real comparison is a vectorised block move versus five thousand serialised pointer
+dereferences. The one with the better Big-O loses, badly.
+
+Where LinkedList's advantage is genuinely real is when you ALREADY have a reference to the position —
+which in Java means Iterator.remove during a walk. And even there, removeIf on an ArrayList usually
+wins in wall clock, because it does one compacting pass regardless of how many you remove.
+
+Practically: ArrayList by default, ArrayDeque for anything queue- or stack-shaped, a Set the moment the
+question is membership, and a primitive array if the elements are numbers — because boxing costs more
+than the list structure ever will. I'd want a measured reason to pick LinkedList, and I've never had
+one.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHAT AN ARRAYLIST IS ────────────────────────────────────────────
+    transient Object[] elementData;   // ONE contiguous array. 16 references per
+    //                                   64-byte cache line with compressed oops.
+    private int size;                 // used slots; capacity is elementData.length
+
+    public void add(int index, E element) {
+        System.arraycopy(elementData, index, elementData, index + 1, size - index);
+    //  ^^^^^^^^^^^^^^^^ A JVM INTRINSIC. Not a loop — a vectorised block move, at
+    //  memory bandwidth. Shifting 10,000 references is a few MICROSECONDS.
+        elementData[index] = element;
+        size++;
+    }
+
+    private Object[] grow(int minCapacity) {
+        int newCapacity = oldCapacity + (oldCapacity >> 1);   // ← 1.5x
+    //                                   ^^^^^^^^^^^^^^^^^ geometric growth is what
+    //  makes add() AMORTISED O(1): total copying across n adds is O(n).
+        return elementData = Arrays.copyOf(elementData, newCapacity);
+    }
+
+    // ── WHAT A LINKEDLIST IS ────────────────────────────────────────────
+    private static class Node<E> { E item; Node<E> next; Node<E> prev; }
+    //                             ^ 12-byte header + 3 refs = 24 bytes PER ELEMENT,
+    //   allocated separately, at whatever address was free at the time.
+
+    Node<E> node(int index) {
+        if (index < (size >> 1)) {              // ← walks from the NEARER end
+            Node<E> x = first;
+            for (int i = 0; i < index; i++) x = x.next;
+    //                                       ^^^^^^^^^^ EACH ITERATION MUST WAIT for
+    //      the previous load: the address of x.next IS the data in x. The prefetcher
+    //      cannot help. This is a serialised chain of cache misses.
+            return x;
+        } ...
+    }
+
+    // ── THE "O(1) INSERT" THAT ISN'T ────────────────────────────────────
+    linked.add(5000, x);
+    //         ^^^^ node(5000) walks 5,000 links FIRST. O(n) of the worst kind.
+    //   Then the rewiring is genuinely O(1) — and irrelevant.
+    array.add(5000, x);
+    //         ^^^^ one arraycopy of the tail. O(n) that runs at memory bandwidth.
+
+    // ── THE ACCIDENTAL O(n²) ────────────────────────────────────────────
+    while (!list.isEmpty()) list.remove(0);
+    //                           ^^^^^^^^^ shifts EVERYTHING left, every time.
+    //   Draining 100,000 elements does ~5 billion element moves. Use clear(),
+    //   iterate backwards, or use an ArrayDeque if it is really a queue.
+
+    // ── THE BULK REMOVAL NOBODY USES ────────────────────────────────────
+    list.removeIf(x -> x.isExpired());
+    //   ^^^^^^^^ ONE compacting pass — it marks survivors and moves them once,
+    //   O(n) TOTAL no matter how many match. An iterator loop calling remove() is
+    //   O(n) PER REMOVAL, so O(nk). This is the fastest option available.
+
+    // ── THE OVERLOAD THAT PICKS SILENTLY ────────────────────────────────
+    List<Integer> l = new ArrayList<>(List.of(10, 20, 30));
+    l.remove(1);                      // remove(int INDEX)  → removes 20
+    l.remove(Integer.valueOf(10));    // remove(Object)     → removes the VALUE 10
+    // ^ Both compile. The compiler prefers the primitive overload without warning.""",
+
+"""9. THE TRACE — the same operation, two data structures, one cache
+
+WALKING 1,000,000 ELEMENTS. Counting cache behaviour rather than operations:
+
+    ARRAYLIST
+    step  what the CPU does                                    memory stalls
+    ---------------------------------------------------------------------------------
+    1     fetch cache line at elementData[0]                    ONE miss
+    2     elements 0..15 are already in that line               ZERO
+    3     the prefetcher, having seen the pattern, has          ZERO — the line was
+          ALREADY loaded the next line                          fetched during step 2
+    ...   repeat
+    ---------------------------------------------------------------------------------
+    TOTAL ≈ 1,000,000 / 16 = 62,500 line fetches, nearly all PREFETCHED, so nearly
+    all free. The loop runs at the speed of the ALU, not of memory.
+
+    LINKEDLIST
+    step  what the CPU does                                    memory stalls
+    ---------------------------------------------------------------------------------
+    1     fetch node[0]                                         ONE miss
+    2     read node[0].next → now we know where node[1] is      —
+    3     fetch node[1] — AND WE COULD NOT HAVE STARTED THIS     ONE miss, SERIALISED
+          UNTIL STEP 2 RETURNED                                 behind step 1
+    ...   repeat
+    ---------------------------------------------------------------------------------
+    TOTAL ≈ 1,000,000 dependent misses. Not "more work" — the SAME number of
+    logical steps, each one waiting on the last, at ~100x the latency.
+
+    SAME O(n). ONE RUNS AT MEMORY BANDWIDTH, THE OTHER AT MEMORY LATENCY. That distinction is invisible
+    in Big-O and is the entire answer.
+
+NOW THE INSERT AT THE MIDDLE — the case the textbook says LinkedList wins:
+
+    operation                        LinkedList                   ArrayList
+    ---------------------------------------------------------------------------------
+    find position 500,000            500,000 DEPENDENT misses     0 — it is an index
+    perform the insertion            rewire 2 pointers: O(1)      arraycopy 500,000
+                                                                  refs: vectorised,
+                                                                  sequential
+    dominant cost                    THE WALK                     the copy
+    which is faster in practice      —                            ARRAYLIST, by a lot
+    ---------------------------------------------------------------------------------
+    The O(1) that LinkedList is famous for is real. It is just attached to the half of the operation
+    that costs nothing, while the half that costs everything is O(n) in the worst possible currency.
+
+AND THE ONE CASE WHERE IT GOES THE OTHER WAY:
+
+    removing 500,000 elements while iterating
+    LinkedList + Iterator.remove()   O(1) each, O(n) total     ← algorithmically best
+    ArrayList  + Iterator.remove()   O(n) each, O(nk) total    ← genuinely bad, avoid
+    ArrayList  + removeIf(pred)      ONE compacting pass       ← usually fastest of all
+
+    THE MIDDLE ROW IS THE REAL TRAP. It is the one people write, it is quadratic, and it is why
+    "ArrayList is always faster" is not quite the right lesson. The right lesson is: match the API to
+    the access pattern, and on an ArrayList that means `removeIf`.
+
+WHAT PRODUCED WHAT:
+    CONTIGUITY          produced the prefetching in trace 1 and the vectorised copy in trace 2.
+    POINTER CHASING     produced the serialised miss chain — the single fact behind every row.
+    THE List INTERFACE  produced "the O(1) you cannot reach", because it exposes indices, not nodes.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+                          ArrayList              LinkedList
+    get(i)                O(1)                   O(n), from the nearer end
+    add(x) at the end     amortised O(1)         O(1)
+    add(i, x)             O(n) VECTORISED copy   O(n) WALK + O(1) rewire
+    remove(i)             O(n) vectorised copy   O(n) walk + O(1) rewire
+    Iterator.remove()     O(n) each              O(1) each
+    removeIf(pred)        O(n) TOTAL, one pass   O(n)
+    contains(x)           O(n)                   O(n)
+    memory per element    ~4 bytes + ≤50% slack  ~24 bytes (a Node object)
+    locality              contiguous, prefetched pointer chasing, unpredictable
+
+THE #1 MISTAKE: choosing from the Big-O alone. It counts operations and assumes uniform memory cost;
+the real spread between cache and main memory is about a hundred to one.
+
+THE #2 MISTAKE: believing LinkedList's middle insert is O(1). Only the rewiring is; finding the
+position is O(n) of dependent cache misses, and the List interface gives you no way to skip it.
+
+THE #3 MISTAKE: `remove(0)` in a loop. Accidental O(n²) and very common.
+
+THE #4 MISTAKE: an iterator-remove loop on an ArrayList. O(n) per removal. Use `removeIf`.
+
+THE #5 MISTAKE: LinkedList as a queue. `ArrayDeque` is better on every axis.
+
+THE #6 MISTAKE: not pre-sizing a list whose size you know. About 25 reallocations to reach 100,000.
+
+THE #7 MISTAKE: `ArrayList<Integer>` for large numeric data. A boxed object and a pointer dereference
+per element — a bigger cost than the list choice.
+
+THE #8 MISTAKE: `list.contains` in a loop. You wanted a `HashSet`, and no list choice will save it.
+
+THE #9 MISTAKE: benchmarking at a thousand elements. Everything fits in cache and the effect you are
+measuring does not exist yet.
+
+THE #10 MISTAKE: treating `Arrays.asList` and `subList` as copies. They are VIEWS that alias the
+original and throw on structural modification.
+
+THE #11 MISTAKE: assuming a large list frees memory when emptied. `remove` never shrinks the array;
+`trimToSize()` does.
+
+ONE-SENTENCE TAKEAWAY: the textbook comparison is algorithmically correct and practically wrong,
+because an ArrayList is ONE CONTIGUOUS BLOCK that the prefetcher can run ahead of and that
+`System.arraycopy` shifts as a vectorised block move, while a LinkedList is a chain of 24-byte nodes
+whose next address IS the data in the current one — a serialised chain of dependent cache misses at
+roughly a hundred times the latency — so even the middle-insertion case LinkedList supposedly owns is
+an O(n) walk in the worst currency attached to an O(1) rewire that costs nothing; default to
+ArrayList, use ArrayDeque for queues, `removeIf` for bulk removal, a Set for membership and a primitive
+array for numbers, and require a measured reason before choosing LinkedList.""",
+]
+
+
+DEEP["0.1 + 0.2 != 0.3 — floating point, and when to use BigDecimal"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — why the computer gets simple arithmetic wrong
+
+    System.out.println(0.1 + 0.2);   →   0.30000000000000004
+
+This is not a bug in Java. Every language using standard hardware floating point prints the same thing:
+Python, JavaScript, C, Go, Rust. It is not imprecision in the addition either. THE ADDITION IS EXACTLY
+CORRECT — it is the two inputs that are not the numbers you wrote.
+
+    A `double` STORES A NUMBER IN BINARY, as a sum of halves, quarters, eighths, sixteenths. Some
+    decimal fractions simply do not fit that form, no matter how many bits you allow.
+
+    0.1 IS ONE TENTH. Ten is 2 × 5. The 5 is the problem: binary can only build fractions out of powers
+    of two, so one fifth — and therefore one tenth — is a REPEATING binary fraction, exactly as one
+    third is a repeating decimal fraction.
+
+    SO WHEN YOU WRITE `0.1`, JAVA STORES THE NEAREST DOUBLE, which is
+    0.1000000000000000055511151231257827021181583404541015625 — close, and not equal. Same for 0.2.
+    Add those two exact values and you get something that is not the nearest double to 0.3. The result
+    prints its true value, and it looks absurd.
+
+    AND HERE IS WHY IT AMBUSHES PEOPLE RATHER THAN BEING OBVIOUS: `System.out.println(0.1)` prints
+    "0.1". Java prints the SHORTEST decimal that would round-trip back to the same double. So the error
+    is invisible in every single value, and becomes visible only when two of them are combined. The
+    representation was wrong from the moment you typed the literal; the arithmetic just revealed it.
+
+THE EVERYDAY VERSION: you write one third as 0.333. Correct to three places. Add three of them and you
+get 0.999, not 1. Nothing went wrong in the addition — the *writing down* was lossy, and adding made
+the loss visible. Binary has the same problem, just with a different set of unlucky fractions, and one
+tenth happens to be one of them.
+
+TERMS AS THEY APPEAR:
+- IEEE 754: the standard every CPU implements for floating point.
+- MANTISSA (significand): the digits. EXPONENT: where the point goes.
+- PRECISION: how many significant digits survive. For a double, about 15–17 decimal digits.
+- ULP: "unit in the last place" — the gap between one representable double and the next.""",
+
+"""2. THE INTUITION — a sliding window of significant digits
+
+A `double` IS 64 BITS: 1 sign, 11 exponent, 52 mantissa. Read it as scientific notation in base two —
+a fixed number of significant BINARY digits, times two to some power.
+
+    THE CONSEQUENCE THAT EXPLAINS EVERYTHING ELSE: YOU ALWAYS HAVE ABOUT 15–17 SIGNIFICANT DECIMAL
+    DIGITS, AND THEY SLIDE. Near 1.0 the gap between representable values is about 2.2e-16. Near
+    1,000,000 it is about 1.2e-10. Near 1e17 the gap is larger than 1, so CONSECUTIVE INTEGERS STOP
+    BEING REPRESENTABLE.
+
+    THAT LAST POINT IS A REAL PRODUCTION BUG AND NOT A CURIOSITY. Above 2^53 (about 9.007e15) a double
+    cannot represent every integer. Put a 19-digit database ID or a nanosecond timestamp through a
+    double — which happens the moment JSON is parsed by JavaScript, where every number IS a double —
+    and it comes back changed. Two distinct IDs can become equal.
+
+WHICH FRACTIONS ARE EXACT? Exactly those whose denominator is a power of two. 0.5, 0.25, 0.75, 0.125.
+Everything else — 0.1, 0.2, 0.3, 1/3 — is stored as the nearest representable neighbour.
+
+    SO SOME "IMPOSSIBLE" RESULTS ARE ACTUALLY CORRECT: `0.5 + 0.25 == 0.75` is true, exactly, always.
+    The rule is not "floating point is random". It is "the inputs were rounded on the way in".
+
+THE THREE WAYS ERROR ACTUALLY HURTS, in increasing order of nastiness:
+
+    ROUNDING, once. Half an ulp per operation. Almost always harmless.
+
+    ACCUMULATION. Add 0.1 to a running total ten million times and the errors compound. The result
+    drifts visibly — this is the one that turns up in financial batch jobs and in physics simulations.
+
+    CATASTROPHIC CANCELLATION, the dangerous one. Subtract two nearly-equal numbers and the leading
+    digits — the ones that were CORRECT — cancel out, promoting the trailing error digits to the front.
+    1.0000000001 minus 1.0 keeps almost no significant digits at all. A calculation that was accurate
+    to fifteen digits can become accurate to two in a single subtraction, and NOTHING SIGNALS IT.
+
+AND THE PROPERTY YOU LOSE THAT MATTERS MOST TO PROGRAMMERS: FLOATING-POINT ADDITION IS NOT ASSOCIATIVE.
+`(a + b) + c` and `a + (b + c)` can differ. Which is why summing an array in parallel gives a different
+answer from summing it sequentially, and why a "flaky" test comparing sums may be reporting something
+real.""",
+
+"""3. THE MECHANISM — the bits, the special values, and BigDecimal
+
+THE LAYOUT of a double:
+
+    ┌─┬───────────┬────────────────────────────────────────────────────┐
+    │S│  exponent │                  mantissa (52 bits)                │
+    └─┴───────────┴────────────────────────────────────────────────────┘
+     1     11                            52
+
+    value = (-1)^S × 1.mantissa × 2^(exponent - 1023)
+
+    THE LEADING 1 IS IMPLIED and not stored, which buys one free bit of precision — and it is why
+    zero, which has no leading 1, needs a special encoding, and why there are TWO of them.
+
+THE SPECIAL VALUES, all of which are representable and none of which behave normally:
+
+    +0.0 and -0.0   Equal by `==`, and DISTINGUISHABLE: 1/0.0 is +Infinity, 1/-0.0 is -Infinity.
+                    `Double.compare(-0.0, 0.0)` is -1 while `-0.0 == 0.0` is true. This split is
+                    why a TreeMap and a HashMap can disagree about a key.
+    Infinity        Overflow does not throw; it saturates. `1.0/0.0` is Infinity, not an exception.
+                    Integer division by zero throws; floating point does not.
+    NaN             `0.0/0.0`. NOT EQUAL TO ITSELF: `Double.NaN == Double.NaN` is FALSE. But
+                    `Double.valueOf(NaN).equals(Double.valueOf(NaN))` is TRUE, and
+                    `Double.compare(NaN, NaN)` is 0 — because collections need a total order.
+                    THREE DIFFERENT ANSWERS TO "ARE THESE EQUAL", all deliberate.
+    SUBNORMALS      Very small values near zero, with reduced precision, and on some hardware
+                    dramatically slower to compute with.
+
+`float` IS 32 BITS — 24 bits of significand, about 7 decimal digits. It is almost never the right
+choice on a modern CPU: doubles are the same speed, and float's precision runs out fast. Use it for
+memory-bound bulk data (graphics, ML tensors), not for scalar arithmetic.
+
+BIGDECIMAL is a completely different machine: an arbitrary-precision INTEGER (`unscaledValue`) plus an
+`int scale`, where the value is unscaledValue × 10^-scale.
+
+    IT IS BASE TEN, so 0.1 is exact. It has no fixed precision, so it grows as needed. And it is
+    roughly a hundred times slower than a double, with an object allocation per operation.
+
+    THREE THINGS ABOUT IT THAT CATCH EVERYONE:
+
+    `new BigDecimal(0.1)` IS WRONG. It faithfully converts the ALREADY-WRONG double, giving
+    0.1000000000000000055511151231257827021181583404541015625. Use `new BigDecimal("0.1")` or
+    `BigDecimal.valueOf(0.1)` (which routes through `Double.toString`).
+
+    `equals` COMPARES SCALE. `new BigDecimal("2.0").equals(new BigDecimal("2.00"))` is FALSE. Use
+    `compareTo(...) == 0`. This breaks HashSet and HashMap membership in a way that looks insane.
+
+    DIVISION CAN THROW. `ONE.divide(new BigDecimal("3"))` throws ArithmeticException, because the exact
+    result is non-terminating. You MUST supply a scale and a RoundingMode.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `if (a == b)` ON DOUBLES. Almost always wrong. Two paths to the same mathematical value can
+produce different doubles.
+
+CASE 2 — A FIXED EPSILON. `Math.abs(a - b) < 0.0001` is fine near 1.0 and meaningless near 1e12, where
+the gap between ADJACENT doubles already exceeds it. Comparison must be RELATIVE to magnitude, or in
+ulps.
+
+CASE 3 — MONEY IN A DOUBLE. The single most expensive instance of this whole topic. 0.1 is not
+representable, so cents drift, and a reconciliation report is off by a few pennies across a million
+rows with no single wrong transaction to point at.
+
+CASE 4 — ACCUMULATING IN A LOOP. Summing 0.1 ten million times drifts measurably. Kahan (compensated)
+summation recovers most of it by tracking the lost low-order part explicitly.
+
+CASE 5 — CATASTROPHIC CANCELLATION. Subtracting nearly-equal values destroys significant digits
+silently. The classic instance is the naive variance formula `E[x²] - E[x]²`, which can even return a
+NEGATIVE variance; use Welford's algorithm.
+
+CASE 6 — INTEGERS ABOVE 2^53. Not all representable. IDs, nanosecond timestamps, and anything that
+passed through JSON parsed by JavaScript. Two distinct IDs can compare equal.
+
+CASE 7 — `NaN` IN A SORT. `NaN == NaN` is false, so a comparator written with `<` and `>` violates
+its own contract and `Arrays.sort` can throw "Comparison method violates its general contract" — or
+silently produce garbage. `Double.compare` handles it.
+
+CASE 8 — `NaN` IN A COLLECTION. `list.contains(Double.NaN)` is TRUE, because `contains` uses `equals`,
+not `==`. The opposite of the `==` result, and both are correct.
+
+CASE 9 — `-0.0` AS A KEY. `HashMap` distinguishes it from `0.0` (different bits, different hash);
+`==` does not. Two structures, two answers.
+
+CASE 10 — OVERFLOW TO INFINITY, SILENTLY. No exception, and `Infinity - Infinity` is NaN, which then
+propagates through every subsequent operation and poisons the whole result.
+
+CASE 11 — `new BigDecimal(double)`. Preserves the error you switched to BigDecimal to escape.
+
+CASE 12 — `BigDecimal.equals` VS `compareTo`. 2.0 and 2.00 are not `equals`. Sets and map keys behave
+bizarrely as a result.
+
+CASE 13 — `float` FOR ACCUMULATION. About 7 digits. A float running total is visibly wrong after a few
+million additions.
+
+CASE 14 — ASSUMING ASSOCIATIVITY. `(a+b)+c != a+(b+c)`, so a parallel sum and a sequential sum legally
+differ. Reordering an expression can change the result.""",
+
+"""5. THE ALTERNATIVES — pick by domain, not by taste
+
+FOR MONEY, TWO CORRECT ANSWERS AND ONE WRONG ONE:
+
+    `long` OF MINOR UNITS — cents, or hundredths of a cent. Exact, fast, and it is what most payment
+    systems actually do. The costs are that you must track the currency's scale yourself and watch for
+    overflow, and that division still needs an explicit rounding decision.
+    `BigDecimal` with an EXPLICIT scale and RoundingMode. Exact in base ten, handles arbitrary
+    precision, self-documenting. About 100x slower, which is irrelevant for transactions and relevant
+    for a billion-row aggregation.
+    `double` — WRONG. Not "risky": wrong. The values you need are not representable.
+
+FOR SCIENTIFIC AND STATISTICAL WORK, `double` is right, and the discipline is in the algorithms:
+    KAHAN / NEUMAIER SUMMATION for long sums.
+    WELFORD'S ALGORITHM for variance, instead of `E[x²] - E[x]²`.
+    `Math.fma(a, b, c)` — a fused multiply-add, computed with a single rounding instead of two.
+    `Math.hypot(x, y)` instead of `sqrt(x*x + y*y)`, which overflows for large inputs.
+    `Math.log1p(x)` and `Math.expm1(x)` near zero, where `log(1+x)` loses everything to cancellation.
+    REORDER SUMS SMALLEST-FIRST when you can; it materially reduces accumulated error.
+
+FOR COMPARISON:
+    `Double.compare(a, b)` for a total order that handles NaN and -0.0 correctly. Use it in every
+    comparator, always.
+    RELATIVE tolerance: `Math.abs(a-b) <= eps * Math.max(Math.abs(a), Math.abs(b))`.
+    ULP-based: `Math.ulp(x)` for a tolerance expressed in representable steps.
+
+FOR EXACT RATIONALS — `BigInteger` numerator and denominator, or `BigFraction` from Apache Commons
+Numbers. Exact for everything expressible as a ratio, and the denominators grow without bound.
+
+FOR REPRODUCIBILITY ACROSS PLATFORMS — `strictfp`, which forced strict IEEE semantics. As of Java 17 it
+is the DEFAULT and the keyword is a no-op, because the x87 hardware quirk it existed for is gone.
+
+WHAT TO SAY: "Doubles for measurement, `long` of minor units or BigDecimal for money, and `Double.compare`
+in every comparator. And I would ask what the number MEANS before choosing — 'money' and 'a sensor
+reading' want opposite answers, and the mistake is treating them the same."
+
+""",
+
+"""6. HOW TO WORK WITH FLOATING POINT — numbered steps
+
+STEP 1 — ASK WHAT THE NUMBER IS. A measurement, or a COUNT of exact units? Money, invoice quantities
+and share counts are counts and belong in `long` or BigDecimal. Temperatures, weights and durations are
+measurements and belong in `double`.
+
+STEP 2 — NEVER USE `==` ON DOUBLES. Compare with a tolerance, and make the tolerance RELATIVE to
+magnitude.
+
+STEP 3 — USE `Double.compare` IN EVERY COMPARATOR. It gives a total order over NaN and -0.0; hand-rolled
+`<`/`>` comparators violate their contract and `Arrays.sort` will eventually tell you so.
+
+STEP 4 — FOR MONEY, DECIDE THE UNIT ONCE AND WRITE IT DOWN. Minor units in a `long`, or BigDecimal with
+a fixed scale. Never mix representations across a boundary.
+
+STEP 5 — CONSTRUCT BIGDECIMAL FROM A STRING. `new BigDecimal("0.1")`, or `BigDecimal.valueOf(x)`. Never
+`new BigDecimal(0.1)`.
+
+STEP 6 — ALWAYS GIVE `divide` A SCALE AND A RoundingMode. Otherwise it throws on any non-terminating
+result, usually in production, usually on a divide by three.
+
+STEP 7 — COMPARE BIGDECIMALS WITH `compareTo(...) == 0`. `equals` includes the scale, so 2.0 and 2.00
+are not equal and set membership behaves absurdly.
+
+STEP 8 — FOR LONG SUMS, USE COMPENSATED SUMMATION or sum smallest-first. Naive accumulation drifts.
+
+STEP 9 — WATCH FOR SUBTRACTION OF NEARLY-EQUAL VALUES. That is where accuracy dies, and nothing warns.
+Look for a mathematically equivalent formula that avoids it.
+
+STEP 10 — CHECK FOR OVERFLOW AND NaN AT BOUNDARIES. They propagate silently through everything
+downstream. `Double.isFinite` at the edges of a computation.
+
+STEP 11 — KEEP LARGE IDS OUT OF DOUBLES. Above 2^53 not every integer exists. Serialise them as
+strings, especially across JSON.
+
+STEP 12 — WHEN A TEST IS FLAKY ON A SUM, SUSPECT ORDERING BEFORE SUSPECTING THE TEST. Addition is not
+associative; a parallel sum legitimately differs from a sequential one.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'0.1 + 0.2 gives 0.30000000000000004, and it's not a Java bug — every language on standard hardware
+prints that. And the addition isn't imprecise either. The addition is exactly correct. It's the two
+INPUTS that aren't the numbers I wrote.
+
+A double stores a number in binary — as a sum of halves, quarters, eighths. One tenth is 1/10, and 10
+is 2 times 5. The 5 is the problem: binary can only build fractions from powers of two, so one tenth is
+a repeating binary fraction, exactly the way one third is a repeating decimal. So when I write 0.1,
+what gets stored is the nearest double, which is 0.1000000000000000055 and change.
+
+The reason it ambushes people rather than being obvious is that println(0.1) prints "0.1". Java prints
+the shortest decimal that round-trips back to the same double, so the error is invisible in every
+individual value and only shows up when you combine two. The representation was already wrong when I
+typed the literal — the arithmetic just revealed it.
+
+The way I'd frame the whole topic: a double gives you about 15 to 17 significant decimal digits, and
+they SLIDE with magnitude. Near 1.0 the gap between representable values is about 2e-16. Near 1e17 the
+gap is bigger than 1 — so consecutive integers stop existing. That's a real production bug, not a
+curiosity: above 2^53 you can't represent every integer, so a 19-digit database ID or a nanosecond
+timestamp through a double comes back changed. Two distinct IDs can become equal. It happens every time
+JSON gets parsed by JavaScript, where every number IS a double.
+
+Error hurts in three escalating ways. Rounding once, half an ulp, harmless. Accumulation — add 0.1 ten
+million times and it visibly drifts. And the dangerous one, catastrophic cancellation: subtract two
+nearly-equal numbers and the leading digits, the CORRECT ones, cancel, which promotes the trailing
+error digits to the front. A calculation accurate to fifteen digits can drop to two in one subtraction,
+and nothing signals it. The classic case is the naive variance formula, E[x²] minus E[x]², which can
+return a negative variance.
+
+Also worth knowing: floating-point addition is not ASSOCIATIVE. (a+b)+c can differ from a+(b+c). Which
+is why a parallel sum and a sequential sum legitimately disagree, and why a flaky test on a sum might
+be telling you something real.
+
+Practically, I'd decide by asking what the number IS. A measurement, or a count of exact units? Money
+is a count — it belongs in a long of minor units, or BigDecimal with an explicit scale and RoundingMode.
+Not a double; that's not risky, it's wrong, because the values aren't representable. Measurements
+belong in doubles, and then the discipline is in the algorithms — Kahan summation, Welford for
+variance, hypot instead of sqrt of squares.
+
+And two BigDecimal traps: `new BigDecimal(0.1)` faithfully preserves the wrong double, so always
+construct from a string. And `equals` compares SCALE, so 2.0 and 2.00 aren't equal and set membership
+goes strange — use compareTo == 0.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHAT IS ACTUALLY STORED ─────────────────────────────────────────
+    System.out.println(0.1);
+    // prints: 0.1
+    // ^ A LIE OF OMISSION. Java prints the SHORTEST decimal that round-trips
+    //   back to this double, which is why the error is invisible per-value.
+    System.out.println(new BigDecimal(0.1));
+    // prints: 0.1000000000000000055511151231257827021181583404541015625
+    // ^ THE TRUTH. new BigDecimal(double) converts the double faithfully, so it
+    //   is the wrong constructor for input AND the perfect one for inspection.
+
+    System.out.println(0.1 + 0.2);        // 0.30000000000000004
+    System.out.println(0.1 + 0.2 == 0.3); // false
+    System.out.println(0.5 + 0.25 == 0.75); // TRUE — denominators are powers of 2
+
+    // ── THE COMPARISON THAT IS ALSO WRONG ───────────────────────────────
+    if (Math.abs(a - b) < 0.0001) { ... }
+    //                     ^^^^^^ fine near 1.0. MEANINGLESS near 1e12, where the
+    //   gap between ADJACENT doubles already exceeds it — so this is always true.
+    if (Math.abs(a - b) <= 1e-9 * Math.max(Math.abs(a), Math.abs(b))) { ... }
+    //                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ RELATIVE to
+    //   magnitude. Scales correctly across the whole range.
+
+    // ── ABOVE 2^53, INTEGERS STOP EXISTING ──────────────────────────────
+    long id = 9007199254740993L;          // 2^53 + 1
+    System.out.println((long)(double) id);// 9007199254740992  ← CHANGED
+    // ^ The double simply has no bit pattern for that integer. This is why IDs
+    //   must be serialised as STRINGS in JSON: JavaScript numbers ARE doubles.
+
+    // ── CATASTROPHIC CANCELLATION: 15 digits down to 2 ──────────────────
+    double a = 1.0000000001, b = 1.0;
+    System.out.println(a - b);            // 1.000000082740371E-10
+    // ^ The correct answer is 1e-10. We kept about TWO significant digits, because
+    //   the leading digits — the accurate ones — cancelled, promoting the error.
+    //   Nothing warned. This is how a good calculation quietly becomes a bad one.
+
+    // ── ACCUMULATION, AND THE FIX ───────────────────────────────────────
+    double sum = 0;
+    for (int i = 0; i < 10_000_000; i++) sum += 0.1;
+    // sum ≈ 999999.9998389754, not 1000000.0
+    double s = 0, c = 0;                  // Kahan: track the lost low-order part
+    for (int i = 0; i < 10_000_000; i++) {
+        double y = 0.1 - c, t = s + y;
+        c = (t - s) - y;                  // ← what the addition DROPPED
+        s = t;
+    }                                     // s is correct to the last digit
+
+    // ── NaN: THREE ANSWERS TO ONE QUESTION, ALL CORRECT ─────────────────
+    double n = 0.0 / 0.0;
+    System.out.println(n == n);                       // false — IEEE 754 says so
+    System.out.println(Double.valueOf(n).equals(n));  // true  — collections need
+    System.out.println(Double.compare(n, n));         // 0     — a total order
+    System.out.println(List.of(n).contains(n));       // TRUE — contains uses equals
+
+    // ── MONEY ───────────────────────────────────────────────────────────
+    // double  total = 0.1 + 0.2;                     ← WRONG. Not risky. Wrong.
+    long cents = 10 + 20;                             // exact, fast, what payment
+    //                                                   systems actually do
+    var big = new BigDecimal("0.1").add(new BigDecimal("0.2"));  // exactly 0.3
+    // new BigDecimal(0.1)  ← keeps the error you switched to BigDecimal to escape
+    new BigDecimal("2.0").equals(new BigDecimal("2.00"));   // FALSE — scale differs
+    new BigDecimal("2.0").compareTo(new BigDecimal("2.00")); // 0 — use THIS
+    BigDecimal.ONE.divide(new BigDecimal("3"));       // THROWS ArithmeticException
+    BigDecimal.ONE.divide(new BigDecimal("3"), 10, RoundingMode.HALF_UP);  // fine""",
+
+"""9. THE TRACE — following 0.1 + 0.2 through the hardware
+
+STEP 1 — THE LITERAL `0.1` IS PARSED. The compiler finds the nearest double to one tenth:
+
+    exact value wanted:  0.1
+    nearest double:      0.1000000000000000055511151231257827021181583404541015625
+    error introduced:    +5.55e-18            ← ALREADY WRONG, BEFORE ANY ARITHMETIC
+
+STEP 2 — THE LITERAL `0.2` IS PARSED:
+
+    nearest double:      0.200000000000000011102230246251565404236316680908203125
+    error introduced:    +1.11e-17
+
+STEP 3 — THE ADDITION. The CPU adds the two stored values EXACTLY, then rounds the exact sum to the
+nearest double:
+
+    exact sum of the two stored values:  0.3000000000000000166533453693773481063544750213623046875
+    nearest double to that:              0.3000000000000000444089209850062616169452667236328125
+    the double nearest to 0.3:           0.299999999999999988897769753748434595763683319091796875
+
+    THE TWO ARE DIFFERENT DOUBLES. So `==` is false, correctly.
+
+STEP 4 — PRINTING. `Double.toString` emits the shortest decimal that round-trips:
+
+    for 0.1 alone       → "0.1"                    ← the error is HIDDEN
+    for the sum         → "0.30000000000000004"    ← the error is now large enough
+                                                      that "0.3" would round-trip to
+                                                      a DIFFERENT double, so it must
+                                                      be shown
+
+    THAT IS THE WHOLE MYSTERY. Nothing changed about how wrong the values were. The printer simply
+    stopped being able to hide it. Every double you have ever printed had this error; you only see it
+    when it crosses the round-trip threshold.
+
+NOW ACCUMULATION — adding 0.1 ten million times:
+
+    additions        running sum                     absolute error
+    ---------------------------------------------------------------------------------
+    10               0.9999999999999999              1.1e-16
+    1,000            99.9999999999986                1.4e-12
+    1,000,000        100000.00000133288              1.3e-6
+    10,000,000       999999.9998389754               1.6e-4      ← visible in a report
+
+    THE ERROR GROWS FASTER THAN THE NUMBER OF ADDITIONS, because each partial sum is larger, so each
+    rounding is coarser — an ulp near 100,000 is much bigger than an ulp near 1. Kahan summation
+    tracks the dropped low-order part explicitly and recovers essentially all of it.
+
+AND CANCELLATION — the failure that produces no symptom at all:
+
+    operation                        significant digits remaining
+    ---------------------------------------------------------------------------------
+    a = 1.0000000001                 ~16, correct
+    b = 1.0                          exact
+    a - b                            ~2 correct digits out of 16
+    (a - b) * 1e10                   still ~2 — the loss is PERMANENT
+
+    NOTHING THREW. NOTHING WARNED. The subtraction was performed exactly as specified; it is the
+    INFORMATION that was lost, and no runtime check can detect that. This is the reason numerical code
+    is rewritten around cancellation — `log1p`, `expm1`, `hypot`, Welford — rather than checked for it.
+
+WHAT PRODUCED WHAT:
+    BINARY FRACTIONS         produced steps 1 and 2 — the error exists before any arithmetic runs.
+    ROUND-TO-NEAREST         produced step 3, which is the only step that is genuinely "the hardware".
+    SHORTEST ROUND-TRIP      produced step 4, and therefore produced the surprise.
+    SLIDING PRECISION        produced the accumulation table: the same operation costs more as the
+                             magnitude grows.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    double: 64 bits, 52-bit mantissa, ~15–17 significant decimal digits, range ~±1.8e308.
+    float:  32 bits, 23-bit mantissa, ~7 digits. Rarely the right scalar choice.
+    Exactly representable: fractions whose denominator is a power of two. 0.5, 0.25, 0.125.
+    Every integer up to 2^53 (~9.007e15) is exact; above that, they are not.
+    ULP near 1.0: ~2.2e-16. Near 1e6: ~1.2e-10. Near 1e17: greater than 1.
+    BigDecimal: exact in base ten, arbitrary precision, roughly 100x slower with an allocation per
+    operation.
+    Arithmetic is COMMUTATIVE but NOT ASSOCIATIVE and NOT DISTRIBUTIVE.
+
+THE #1 MISTAKE: `==` on doubles. Use a RELATIVE tolerance, or `Double.compare` for ordering.
+
+THE #2 MISTAKE: money in a double. Not risky — wrong. `long` of minor units, or BigDecimal.
+
+THE #3 MISTAKE: a FIXED epsilon. Meaningless once the magnitude exceeds it; comparison must scale.
+
+THE #4 MISTAKE: `new BigDecimal(0.1)`. Faithfully preserves the error you were escaping. Use the String
+constructor or `BigDecimal.valueOf`.
+
+THE #5 MISTAKE: `BigDecimal.equals` for value comparison. It includes SCALE, so 2.0 and 2.00 differ and
+set membership behaves absurdly. `compareTo(...) == 0`.
+
+THE #6 MISTAKE: `divide` with no scale and RoundingMode. Throws on any non-terminating result.
+
+THE #7 MISTAKE: hand-rolled `<`/`>` comparators on doubles. They violate the comparator contract on
+NaN, and `Arrays.sort` will eventually say so out loud.
+
+THE #8 MISTAKE: large IDs through a double. Above 2^53 not every integer exists; two distinct IDs can
+become equal. Serialise as strings.
+
+THE #9 MISTAKE: naive accumulation over millions of values. Use compensated summation, or sum
+smallest-first.
+
+THE #10 MISTAKE: subtracting nearly-equal values without noticing. Catastrophic cancellation destroys
+significant digits with no signal whatsoever.
+
+THE #11 MISTAKE: assuming overflow throws. It saturates to Infinity, `Infinity - Infinity` is NaN, and
+the NaN then poisons everything downstream in silence.
+
+THE #12 MISTAKE: assuming associativity. A parallel sum and a sequential sum legally differ, so this
+can present as a flaky test that is actually reporting something true.
+
+ONE-SENTENCE TAKEAWAY: a double stores binary fractions, so any decimal whose denominator is not a
+power of two — 0.1 included — is rounded THE MOMENT YOU TYPE THE LITERAL, and `Double.toString` hides
+that by printing the shortest round-tripping decimal until an addition makes it too large to hide;
+the practical consequences are that `==` is unusable, that a fixed epsilon is wrong at scale, that
+integers above 2^53 do not all exist, that long accumulations drift and near-equal subtractions destroy
+accuracy with no signal at all, and that money — being a COUNT of exact units rather than a measurement
+— belongs in a `long` of minor units or a BigDecimal built from a String and compared with `compareTo`,
+never in a double.""",
+]
