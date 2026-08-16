@@ -9365,3 +9365,1045 @@ on Java 21 sequential I/O belongs in a virtual thread with plain blocking calls,
 increasingly belongs in `StructuredTaskScope`, which gives the bounded lifetimes and real cancellation
 this API never had.""",
 ]
+
+
+DEEP["Comparable vs Comparator — and the contract that silently breaks TreeMap"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — one built-in order, or as many as you like
+
+`Comparable` is a class saying "here is my NATURAL order". `String` sorts alphabetically, `Integer`
+numerically, `LocalDate` chronologically. You implement `compareTo(T other)` inside the class, and you
+get exactly ONE, because a type has at most one obvious order.
+
+`Comparator` is a SEPARATE OBJECT that knows how to order two things. You can write as many as you like,
+for types you do not own, for orders that are not natural, and choose one per call.
+
+    THE RULE OF THUMB: IF THERE IS AN OBVIOUS DEFAULT, MAKE THE CLASS `Comparable`. FOR EVERYTHING ELSE,
+    PASS A `Comparator`.
+
+    An `Employee` has no natural order — by name? salary? hire date? — so it should almost certainly
+    NOT be `Comparable`, and the callers should say what they want. A `Money` or a `Version` does have
+    one.
+
+BOTH RETURN AN INT, AND THE CONVENTION IS THE SAME:
+
+    NEGATIVE   this comes BEFORE the other
+    ZERO       they tie
+    POSITIVE   this comes AFTER
+
+    The magnitude means nothing. Only the sign is read. WHICH IS WHY THE MOST COMMON BUG IN THIS TOPIC
+    IS WRITING `return a.value - b.value`: it gives the right sign almost always, and overflows into
+    the WRONG SIGN when the values are far apart. See section 4.
+
+AND THE REASON THIS ENTRY EXISTS AT ALL: getting the ORDER slightly wrong is a cosmetic bug, but
+violating the CONTRACT is not. `TreeMap`, `TreeSet` and `PriorityQueue` use `compareTo` INSTEAD OF
+`equals` to decide whether two things are the same. So a comparator that disagrees with `equals`
+silently changes what "contains" means, and `Arrays.sort` can throw an error most people have never
+seen: "Comparison method violates its general contract!"
+
+THE EVERYDAY VERSION: a natural order is the alphabetical filing you already use. A comparator is a
+one-off instruction — "today, sort these by date received". You can have many instructions and only one
+filing system.
+
+TERMS AS THEY APPEAR:
+- NATURAL ORDERING: the order given by `compareTo`. Used whenever no comparator is supplied.
+- TOTAL ORDER: every pair is comparable, consistently, with no cycles.
+- STABLE SORT: equal elements keep their original relative order.""",
+
+"""2. THE INTUITION — the contract, and the clause that is "only recommended"
+
+THE CONTRACT HAS THREE HARD RULES AND ONE STRONG SUGGESTION, and the suggestion is where all the damage
+happens.
+
+    1. ANTISYMMETRY.  `sgn(x.compareTo(y)) == -sgn(y.compareTo(x))` for all x, y. If x comes before y,
+       y must come after x. And if one throws, the other must throw.
+    2. TRANSITIVITY.  If x > y and y > z then x > z.
+    3. CONSISTENCY OF TIES. If `x.compareTo(y) == 0`, then x and y must compare the same way against
+       every other z.
+
+    4. STRONGLY RECOMMENDED, NOT REQUIRED: `(x.compareTo(y) == 0)` should equal `x.equals(y)`.
+
+    THE JAVADOC EVEN SPELLS OUT THE CONSEQUENCE OF IGNORING RULE 4: "a class whose natural ordering is
+    inconsistent with equals... will behave STRANGELY when used with sorted sets and sorted maps",
+    because those "use the natural ordering INSTEAD OF the equals method".
+
+WHY THAT MATTERS SO MUCH — THE CANONICAL EXAMPLE IS `BigDecimal`:
+
+    new BigDecimal("1.0").equals(new BigDecimal("1.00"))       → FALSE  (scale differs)
+    new BigDecimal("1.0").compareTo(new BigDecimal("1.00"))    → 0      (same value)
+
+    So put both into a `HashSet` and you have TWO elements — `HashSet` uses `equals`.
+    Put both into a `TreeSet` and you have ONE — `TreeSet` uses `compareTo`.
+
+    SAME TWO OBJECTS. SAME `Set` INTERFACE. DIFFERENT SIZE. That is not a bug in either class; it is
+    what "inconsistent with equals" means, and `BigDecimal` documents it. It is also why the answer to
+    "how do I compare BigDecimals" is always `compareTo(...) == 0`, never `equals`.
+
+THE SECOND CONSEQUENCE, AND IT IS THE ONE THAT PRODUCES AN ERROR NOBODY RECOGNISES:
+
+    `Arrays.sort` and `Collections.sort` on objects use TIMSORT, which finds already-ordered RUNS in
+    the data and merges them, relying on invariants about their lengths. If your comparator is
+    inconsistent — antisymmetry or transitivity violated — those invariants break, and rather than
+    silently corrupting the array TimSort throws:
+
+        java.lang.IllegalArgumentException: Comparison method violates its general contract!
+
+    IT IS NOT ALWAYS THROWN. TimSort only notices when the merge pattern happens to expose the
+    inconsistency, which depends on the data. SO THE SAME BROKEN COMPARATOR WORKS FOR MONTHS ON SMALL
+    INPUTS AND THROWS ON THE DAY THE LIST GETS LONG — and the message points at the sort, not at the
+    comparator you wrote three years ago.
+
+THE THIRD, quieter consequence: a `TreeMap` built with an inconsistent comparator can LOSE ENTRIES —
+`put` finds an existing "equal" key and replaces it — and `get` can fail to find a key that is
+demonstrably in the map. No exception. Just missing data.""",
+
+"""3. THE MECHANISM — where each is used, and the combinators that replaced hand-written comparators
+
+WHO USES WHICH:
+
+    Collections.sort(list) / list.sort(null)   NATURAL ordering — requires `Comparable`.
+    list.sort(cmp) / Arrays.sort(a, cmp)       the comparator.
+    new TreeMap<>() / new TreeSet<>()          natural ordering.
+    new TreeMap<>(cmp)                         the comparator — AND IT DEFINES EQUALITY FOR THAT MAP.
+    new PriorityQueue<>(cmp)                   the comparator, for the heap order.
+    stream.sorted() / sorted(cmp)              either.
+    stream.max(cmp) / min(cmp)                 comparator required.
+    Collections.binarySearch                   MUST use the same ordering the list is sorted by, or the
+                                               result is undefined — and it will not tell you.
+
+THE COMBINATORS (Java 8) — these replaced essentially all hand-written comparators:
+
+    Comparator.comparing(Person::lastName)
+              .thenComparing(Person::firstName)
+              .thenComparingInt(Person::age)
+              .reversed();
+
+    `comparing(keyExtractor)`          order by an extracted `Comparable` key
+    `comparingInt/Long/Double`         the same WITHOUT BOXING — use these for primitives
+    `thenComparing(...)`               tie-breaker, chainable
+    `reversed()`                       reverse — SEE THE TRAP BELOW
+    `nullsFirst(cmp)` / `nullsLast`    wrap a comparator to tolerate nulls
+    `naturalOrder()` / `reverseOrder()`
+
+    THE `reversed()` TRAP: it reverses the ENTIRE COMPARATOR BUILT SO FAR, not the last clause.
+    `comparing(A).thenComparing(B).reversed()` reverses BOTH A and B. To reverse only B, write
+    `comparing(A).thenComparing(B, reverseOrder())`. This produces subtly wrong orderings that pass
+    review because the code reads like English and does not mean what the English says.
+
+SORTING ALGORITHMS, since the choice depends on the type:
+
+    OBJECTS: TimSort — a stable, adaptive merge sort. O(n log n) worst case, O(n) on already-sorted
+    input, and it needs O(n) auxiliary space. STABILITY IS GUARANTEED, which is what makes multi-pass
+    sorting work: sort by name, then sort by department, and within each department the names are still
+    in order.
+    PRIMITIVES: dual-pivot quicksort. Faster and in-place, NOT stable — which does not matter, because
+    two equal `int`s are indistinguishable.
+
+    THAT ASYMMETRY IS DELIBERATE AND IS WORTH KNOWING: `Arrays.sort(int[])` and `Arrays.sort(Object[])`
+    are different algorithms with different guarantees, chosen for exactly this reason.
+
+TIES AND STABILITY: `compareTo` returning 0 means "these tie", and a stable sort leaves tied elements
+in their input order. If your sort output is non-deterministic between runs, you almost certainly have
+ties plus an unstable source order, and the fix is a tie-breaking `thenComparing` on something unique.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `return a.value - b.value`. It OVERFLOWS. With `a.value = Integer.MIN_VALUE` and
+`b.value = 1`, the subtraction wraps to a positive number and says MIN_VALUE is GREATER than 1. The
+comparator is now non-antisymmetric, and everything downstream is undefined. USE `Integer.compare(a, b)`.
+
+CASE 2 — "Comparison method violates its general contract!" from `Arrays.sort`. TimSort detected an
+inconsistent comparator during a merge. It is data-dependent, so it appears when the list grows, long
+after the comparator was written.
+
+CASE 3 — A COMPARATOR INCONSISTENT WITH `equals` IN A `TreeSet`. Elements silently vanish, because
+`add` finds an "equal" one already present. `HashSet` on the same data has a different size.
+
+CASE 4 — `BigDecimal` IN A `TreeSet` OR AS A `TreeMap` KEY. "1.0" and "1.00" collapse into one entry.
+Documented, deliberate, and surprising every time.
+
+CASE 5 — `compareTo` THAT RETURNS 0 FOR DIFFERENT OBJECTS in a `TreeMap`. `put` REPLACES rather than
+adds. Data loss with no error.
+
+CASE 6 — MUTATING AN OBJECT WHILE IT IS IN A `TreeSet` OR `PriorityQueue`. Its position is now wrong; it
+becomes unfindable and unremovable. Same failure mode as mutating a `HashMap` key.
+
+CASE 7 — `reversed()` REVERSING THE WHOLE CHAIN. `comparing(A).thenComparing(B).reversed()` reverses A
+too. Use `thenComparing(B, reverseOrder())` to reverse one clause.
+
+CASE 8 — NULLS. `compareTo` should throw `NullPointerException` on a null argument, per the contract.
+For fields that may be null, wrap with `Comparator.nullsFirst(...)` — a naive `a.getName().compareTo(...)`
+throws on the first null row.
+
+CASE 9 — `Comparator.comparing` WITH A BOXING KEY EXTRACTOR. `comparing(Person::getAge)` boxes every
+age. `comparingInt` does not, and on a large sort the difference is real.
+
+CASE 10 — `binarySearch` WITH A DIFFERENT ORDERING THAN THE SORT USED. Undefined result, no error, and
+it usually returns a plausible-looking wrong index.
+
+CASE 11 — A `PriorityQueue`'s ITERATOR IS NOT SORTED. Only `peek`/`poll` respect the order; iteration
+walks the heap array. `toString` on a `PriorityQueue` looks wrong and is not.
+
+CASE 12 — INHERITANCE AND `compareTo`. Extending a `Comparable` class and adding a field breaks
+antisymmetry between the subclass and superclass instances, for exactly the same reason it breaks
+`equals`. Composition instead.
+
+CASE 13 — RELYING ON SORT STABILITY FOR PRIMITIVES. `Arrays.sort(int[])` is dual-pivot quicksort and
+unstable — harmless for primitives, but the same expectation applied to a parallel array is not.""",
+
+"""5. THE ALTERNATIVES — how to express an ordering well
+
+USE THE COMBINATORS, NOT A HAND-WRITTEN `compare`. `Comparator.comparing(...).thenComparing(...)` is
+shorter, correct by construction on the overflow issue, and reads as the specification. A hand-written
+multi-field `compare` with nested if-blocks is where sign errors and missing tie-breaks live.
+
+USE `comparingInt` / `comparingLong` / `comparingDouble` for primitive keys — same clarity, no boxing.
+
+`Integer.compare` / `Long.compare` / `Double.compare` inside any hand-written comparator. Never
+subtraction. `Double.compare` additionally handles `NaN` and `-0.0` correctly, which `<` and `>` do
+not — a comparator built from `<` on doubles violates its contract whenever a NaN appears.
+
+MAKE THE ORDERING CONSISTENT WITH `equals` UNLESS YOU HAVE A REASON, and DOCUMENT it when it is not.
+`BigDecimal` documents it; most classes that break it did so by accident.
+
+FOR A CLASS WITH NO OBVIOUS ORDER, DO NOT IMPLEMENT `Comparable`. Provide named comparators as static
+fields instead — `Employee.BY_SALARY`, `Employee.BY_HIRE_DATE` — so the call site states which order it
+wants and nobody depends on an arbitrary default.
+
+`record` + `Comparator.comparing` covers most value types: the record gives you `equals` and
+`hashCode`, and a static comparator gives you the order, keeping the two definitions visible next to
+each other.
+
+FOR SORTED COLLECTIONS:
+    `TreeMap` / `TreeSet` — O(log n), sorted, and EQUALITY IS DEFINED BY THE COMPARATOR.
+    `PriorityQueue` — O(log n) insert and extract-min, and NOT sorted when iterated.
+    `ConcurrentSkipListMap` — the concurrent sorted map.
+    A SORTED `ArrayList` + `binarySearch` — often faster than a `TreeMap` for read-mostly data, because
+    of locality.
+
+`Collator` FOR HUMAN-FACING TEXT. `String.compareTo` orders by UTF-16 code unit, so "Z" sorts before
+"a", and accented characters land in positions no user expects. Anything shown to a person in a
+specific locale wants a `Collator`.
+
+FOR SORTING BY A COMPUTED KEY THAT IS EXPENSIVE, precompute it. A comparator is called O(n log n) times,
+so an expensive key extractor is evaluated far more often than there are elements — decorate, sort,
+undecorate.
+
+WHAT TO SAY: "`Comparable` only when there is a genuinely obvious natural order; otherwise named
+static comparators so the call site states the intent. Always the `comparing`/`thenComparing`
+combinators with the primitive variants, never subtraction — and I would keep the ordering consistent
+with `equals`, because `TreeSet` and `TreeMap` use `compareTo` instead of `equals` to decide what is a
+duplicate."
+
+""",
+
+"""6. HOW TO GET ORDERING RIGHT — numbered steps
+
+STEP 1 — ASK WHETHER THERE IS A GENUINELY NATURAL ORDER. If reasonable people would disagree, do not
+implement `Comparable`.
+
+STEP 2 — USE THE COMBINATORS. `Comparator.comparing(...).thenComparing(...)`, not a hand-written
+`compare`.
+
+STEP 3 — NEVER SUBTRACT. `Integer.compare`, `Long.compare`, `Double.compare`. Subtraction overflows and
+breaks antisymmetry at the extremes.
+
+STEP 4 — USE `comparingInt`/`comparingLong`/`comparingDouble` FOR PRIMITIVE KEYS. Same code, no boxing.
+
+STEP 5 — MAKE IT CONSISTENT WITH `equals`, OR DOCUMENT LOUDLY THAT IT IS NOT. Sorted collections use
+`compareTo` to decide duplicates.
+
+STEP 6 — ALWAYS ADD A TIE-BREAKER ON SOMETHING UNIQUE if you need deterministic output. Ties plus an
+unstable input order produce results that differ between runs.
+
+STEP 7 — WATCH `reversed()`. It reverses the whole chain; `thenComparing(key, reverseOrder())` reverses
+one clause.
+
+STEP 8 — HANDLE NULLS EXPLICITLY with `nullsFirst`/`nullsLast` rather than discovering them in
+production.
+
+STEP 9 — NEVER MUTATE AN OBJECT THAT IS INSIDE A `TreeSet`, `TreeMap` KEY SET, OR `PriorityQueue`.
+Remove, mutate, re-add.
+
+STEP 10 — USE THE SAME ORDERING FOR `sort` AND `binarySearch`. Different orderings give an undefined
+result with no error.
+
+STEP 11 — IF THE KEY IS EXPENSIVE TO COMPUTE, PRECOMPUTE IT. The comparator runs O(n log n) times.
+
+STEP 12 — WHEN YOU SEE "Comparison method violates its general contract!", DO NOT SUPPRESS IT WITH
+`-Djava.util.Arrays.useLegacyMergeSort=true`. That flag hides a genuinely broken comparator; find the
+inconsistency instead.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Comparable is a class saying "here is my natural order" — you implement compareTo inside the class and
+you get exactly one, because a type has at most one obvious order. Comparator is a separate object, so
+you can write as many as you like, for types you don't own and for orders that aren't natural.
+
+My rule of thumb: if reasonable people would disagree about the default, don't implement Comparable. An
+Employee has no natural order — name? salary? hire date? — so I'd provide named static comparators and
+let the call site say what it wants. Money or a Version does have one.
+
+Both return an int, and only the SIGN is read; the magnitude means nothing. Which is why the most
+common bug here is writing `return a.value - b.value`. That gives the right sign almost always and
+OVERFLOWS into the wrong sign when the values are far apart — MIN_VALUE minus 1 wraps positive, so your
+comparator claims MIN_VALUE is the larger. Use Integer.compare.
+
+But the reason this topic actually matters isn't ordering, it's the CONTRACT. Three hard rules —
+antisymmetry, transitivity, consistent ties — and then a fourth that's only "strongly recommended":
+compareTo returning zero should agree with equals. That fourth one is where all the damage is, because
+TreeMap, TreeSet and PriorityQueue use compareTo INSTEAD of equals to decide whether two things are the
+same.
+
+The canonical example is BigDecimal. "1.0".equals("1.00") is false because the scale differs, but
+compareTo returns zero because the value is the same. So put both in a HashSet and you have two
+elements; put both in a TreeSet and you have one. Same two objects, same Set interface, different size.
+That's not a bug in either class — it's what "inconsistent with equals" means, and it's why the answer
+to "how do I compare BigDecimals" is always compareTo == 0.
+
+The second consequence is an error most people have never seen: "Comparison method violates its general
+contract!" from Arrays.sort. Sorting objects uses TimSort, which finds already-ordered runs and merges
+them relying on invariants about their lengths. An inconsistent comparator breaks those invariants, and
+rather than silently corrupting the array, TimSort throws. And it's DATA-DEPENDENT — it only notices
+when the merge pattern happens to expose the inconsistency. So the same broken comparator works for
+months on small inputs and throws the day the list gets long, with a message pointing at the sort rather
+than at the comparator someone wrote three years ago.
+
+There's a quieter version too: a TreeMap with an inconsistent comparator loses entries, because put
+finds an "equal" key and replaces it. No exception. Just missing data.
+
+Practically I'd use the Java 8 combinators for everything — comparing, thenComparing, with the
+comparingInt variants so primitive keys don't box. One trap there: reversed() reverses the ENTIRE chain
+built so far, not the last clause, so comparing(A).thenComparing(B).reversed() reverses A too. To
+reverse one clause it's thenComparing(B, reverseOrder()).'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE OVERFLOW BUG ────────────────────────────────────────────────
+    Comparator<Item> byValue = (a, b) -> a.value() - b.value();
+    //                                   ^^^^^^^^^^^^^^^^^^^^^ right sign ALMOST
+    //   always. With a.value = Integer.MIN_VALUE and b.value = 1, the subtraction
+    //   OVERFLOWS to a positive number → "MIN_VALUE is greater than 1". Antisymmetry
+    //   is now violated and everything downstream is undefined.
+    Comparator<Item> byValue = Comparator.comparingInt(Item::value);
+    //                                    ^^^^^^^^^^^^ correct, and no boxing
+
+    // ── THE CONTRACT, AND THE CLAUSE THAT IS ONLY "RECOMMENDED" ─────────
+    // 1. sgn(x.compareTo(y)) == -sgn(y.compareTo(x))          REQUIRED
+    // 2. x>y && y>z  ⟹  x>z                                   REQUIRED
+    // 3. x.compareTo(y)==0 ⟹ x and y compare alike vs any z   REQUIRED
+    // 4. (x.compareTo(y)==0) == x.equals(y)          STRONGLY RECOMMENDED ← the one
+    //                                                that breaks TreeMap when ignored
+
+    // ── THE CANONICAL EXAMPLE ───────────────────────────────────────────
+    var a = new BigDecimal("1.0");
+    var b = new BigDecimal("1.00");
+    a.equals(b);        // FALSE — the SCALE differs
+    a.compareTo(b);     // 0     — the VALUE is the same
+    new HashSet<>(List.of(a, b)).size();   // 2  ← HashSet uses equals
+    new TreeSet<>(List.of(a, b)).size();   // 1  ← TreeSet uses COMPARETO
+    // SAME OBJECTS. SAME Set INTERFACE. DIFFERENT SIZE. Documented, and deliberate.
+
+    // ── THE ERROR NOBODY RECOGNISES ─────────────────────────────────────
+    Comparator<Task> broken = (x, y) -> x.priority() > y.priority() ? 1 : -1;
+    //                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ NEVER
+    //   returns 0, so equal priorities report BOTH "x before y" AND "y before x".
+    //   Antisymmetry violated.
+    Collections.sort(bigList, broken);
+    // → java.lang.IllegalArgumentException: Comparison method violates its
+    //   general contract!
+    //   TimSort found the inconsistency while merging runs and refused to continue.
+    //   IT IS DATA-DEPENDENT: works on 20 elements for years, throws on 2,000.
+
+    // ── THE COMBINATORS, AND THE reversed() TRAP ────────────────────────
+    Comparator.comparing(Person::lastName)
+              .thenComparing(Person::firstName)
+              .thenComparingInt(Person::age)      // ← Int variant: no boxing
+              .reversed();
+    //         ^^^^^^^^^^ REVERSES THE WHOLE CHAIN — lastName AND firstName AND age.
+    //         Not just the last clause. The code reads like English and does not
+    //         mean what the English says.
+    Comparator.comparing(Person::lastName)
+              .thenComparing(Person::age, Comparator.reverseOrder());
+    //                                    ^^^^^^^^^^^^^^^^^^^^^^^^ reverses ONE clause
+
+    // ── NULLS AND NaN ───────────────────────────────────────────────────
+    comparing(Person::nickname)                        // NPE on the first null
+    comparing(Person::nickname, nullsFirst(naturalOrder()))   // tolerant
+    (a, b) -> a.score() < b.score() ? -1 : 1           // ✗ NaN breaks the contract
+    comparingDouble(Item::score)                       // ✓ Double.compare handles
+    //                                                    NaN and -0.0 correctly
+
+    // ── TWO SORTS, TWO ALGORITHMS, TWO GUARANTEES ───────────────────────
+    Arrays.sort(objectArray, cmp);   // TIMSORT: stable, O(n log n), O(n) space,
+    //                                  O(n) on already-sorted input
+    Arrays.sort(intArray);           // DUAL-PIVOT QUICKSORT: in place, NOT stable —
+    //                                  which is fine, two equal ints are the same int
+    // Stability is what makes multi-pass sorting work: sort by name, then by
+    // department, and within each department the names are STILL in order.
+
+    // ── AND ONE THAT LOOKS BROKEN AND IS NOT ────────────────────────────
+    var pq = new PriorityQueue<>(List.of(5, 1, 3));
+    System.out.println(pq);          // [1, 5, 3] — NOT sorted
+    // Only peek() and poll() respect the order. Iteration walks the heap ARRAY.""",
+
+"""9. THE TRACE — one inconsistent comparator, three victims
+
+THE COMPARATOR: `(x, y) -> x.priority() > y.priority() ? 1 : -1`. It never returns 0.
+
+    THE VIOLATION, made explicit:
+    ---------------------------------------------------------------------------------
+    two tasks A and B, both priority 5
+    A.compareTo(B) → not greater → returns -1   ("A before B")
+    B.compareTo(A) → not greater → returns -1   ("B before A")
+    sgn(-1) == -sgn(-1)?   -1 == +1?   NO.      ← ANTISYMMETRY VIOLATED
+    ---------------------------------------------------------------------------------
+    It says each comes before the other. Everything built on that is now undefined.
+
+    VICTIM 1 — `Collections.sort` ON A SHORT LIST
+    input size   what happens
+    ---------------------------------------------------------------------------------
+    5 elements   sorted "successfully". TimSort used one run; no merge exposed the
+                 inconsistency. The output order among ties is arbitrary but nothing
+                 complains.
+    2,000        multiple runs, merged. The merge invariant about run lengths fails.
+                 → IllegalArgumentException: Comparison method violates its general
+                   contract!
+    ---------------------------------------------------------------------------------
+    THE SAME COMPARATOR, THE SAME CODE. It passed every test and every small dataset for as long as the
+    inputs stayed short. The exception's message names the sort; the defect is in a lambda somewhere
+    else entirely.
+
+    VICTIM 2 — `TreeSet`
+    operation                                     result
+    ---------------------------------------------------------------------------------
+    add(A) — priority 5                            size 1
+    add(B) — priority 5, a DIFFERENT task          the tree navigates by the
+                                                   comparator, which never says 0, so
+                                                   B is placed somewhere — but a
+                                                   later contains(B) may walk a
+                                                   different path and MISS IT
+    contains(B)                                    false, unpredictably
+    ---------------------------------------------------------------------------------
+    NO EXCEPTION. The set contains an element it cannot find. A search tree is only correct if the
+    comparator defines a consistent order; break that and the invariant that makes the search work is
+    gone.
+
+    VICTIM 3 — `PriorityQueue`
+    ---------------------------------------------------------------------------------
+    The heap property — "every parent orders before its children" — is maintained by sift-up and
+    sift-down, both of which trust the comparator. With an inconsistent one, poll() can return elements
+    OUT OF ORDER, quietly, forever. No error is possible, because the queue has no way to detect that
+    the ordering it was given is not an ordering.
+
+NOW THE OVERFLOW VERSION, traced with real values:
+
+    a.value = Integer.MIN_VALUE (-2,147,483,648),  b.value = 1
+    ---------------------------------------------------------------------------------
+    mathematically      -2147483648 - 1 = -2147483649       → negative, "a first"
+    in 32-bit int       wraps to        = +2147483647       → POSITIVE, "b first"
+    ---------------------------------------------------------------------------------
+    Integer.compare(a, b) → -1, correctly.
+    THE SUBTRACTION IS RIGHT FOR EVERY VALUE YOU WILL EVER TEST WITH and wrong at the extremes — so it
+    is a latent contract violation that arrives with the first sentinel value, the first negative id, or
+    the first timestamp difference that exceeds two billion.
+
+AND THE `reversed()` TRACE:
+
+    comparator                                          Smith,Ann  Smith,Bob  Adams,Zoe
+    ---------------------------------------------------------------------------------
+    comparing(last).thenComparing(first)                 2          3          1
+    comparing(last).thenComparing(first).reversed()      2          1          3
+                                                         ^ Bob before Ann — BOTH clauses
+                                                           reversed
+    comparing(last).thenComparing(first, reverseOrder()) 3          2          1
+                                                         ^ Adams still first, Bob before
+                                                           Ann within Smith
+    ---------------------------------------------------------------------------------
+    ROWS 2 AND 3 ARE DIFFERENT ORDERINGS, and row 2 is what almost everyone writes when they mean row 3.
+
+WHAT PRODUCED WHAT:
+    NEVER RETURNING 0        produced the antisymmetry violation, and therefore all three victims.
+    TIMSORT'S MERGE INVARIANT produced the only LOUD failure — and only on large enough input.
+    A TREE'S SEARCH INVARIANT produced the silent one.
+    32-BIT WRAPAROUND        produced a comparator that is correct on every value you would think to
+                             test.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    A comparator is invoked O(n log n) times per sort — so an expensive key extractor runs far more
+    often than there are elements. Decorate–sort–undecorate when the key is costly.
+    `Arrays.sort(Object[])`: TimSort. Stable, O(n log n) worst case, O(n) on sorted input, O(n) space.
+    `Arrays.sort(int[])`: dual-pivot quicksort. In place, NOT stable.
+    `TreeMap` / `TreeSet`: O(log n), and EQUALITY IS THE COMPARATOR'S ZERO, not `equals`.
+    `PriorityQueue`: O(log n) offer/poll, O(1) peek, and iteration is NOT ordered.
+    `comparing` boxes; `comparingInt`/`Long`/`Double` do not.
+
+THE #1 MISTAKE: `a - b` as a comparator. Overflows at the extremes and breaks antisymmetry.
+
+THE #2 MISTAKE: an ordering inconsistent with `equals`, undocumented. `TreeSet` and `TreeMap` use
+`compareTo` to decide duplicates, so elements silently vanish.
+
+THE #3 MISTAKE: a comparator that never returns 0. Antisymmetry violated; TimSort throws, but only once
+the input is large enough to merge.
+
+THE #4 MISTAKE: suppressing "Comparison method violates its general contract!" with the legacy-merge-sort
+flag. That hides a genuinely broken comparator.
+
+THE #5 MISTAKE: `reversed()` believing it reverses only the last clause. It reverses the whole chain.
+
+THE #6 MISTAKE: `comparing` with a primitive getter. Boxes every element; `comparingInt` does not.
+
+THE #7 MISTAKE: `<` and `>` on doubles inside a comparator. `NaN` makes all comparisons false, so the
+contract breaks. `Double.compare`.
+
+THE #8 MISTAKE: mutating an object inside a `TreeSet` or `PriorityQueue`. Its position is stale and it
+becomes unfindable.
+
+THE #9 MISTAKE: `binarySearch` with an ordering different from the sort's. Undefined, silent, plausible.
+
+THE #10 MISTAKE: implementing `Comparable` for a class with no natural order, forcing an arbitrary
+default on every caller.
+
+THE #11 MISTAKE: expecting a `PriorityQueue` to iterate in order. Only `peek` and `poll` do.
+
+THE #12 MISTAKE: `String.compareTo` for human-facing sorting. It orders by UTF-16 code unit, so "Z"
+precedes "a". Use a `Collator`.
+
+ONE-SENTENCE TAKEAWAY: `Comparable` gives a class its single natural order and `Comparator` gives
+callers as many alternative orders as they need, both returning only a SIGN — which is why `a - b`
+is a latent bug that overflows into the wrong sign at the extremes — and the part that actually causes
+outages is the contract's "strongly recommended" clause that a zero result should agree with `equals`,
+because `TreeSet`, `TreeMap` and `PriorityQueue` use `compareTo` INSTEAD OF `equals` to decide what is a
+duplicate (which is why `BigDecimal("1.0")` and `("1.00")` are two elements in a `HashSet` and one in a
+`TreeSet`), and because an inconsistent comparator makes TimSort throw "Comparison method violates its
+general contract!" only once the input is large enough to expose it — so build orderings from
+`comparing`/`thenComparing` with the primitive variants, never subtraction, and remember `reversed()`
+reverses the entire chain.""",
+]
+
+
+DEEP["Primitives vs objects — the split that explains half of Java"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two kinds of thing that look the same in source code
+
+Java has EIGHT types that are not objects: `boolean`, `byte`, `short`, `char`, `int`, `long`, `float`,
+`double`. Everything else — every String, every List, every class you write — is an object.
+
+    A PRIMITIVE IS JUST A VALUE. `int x = 5` puts the number 5 somewhere. Four bytes. It has no
+    methods, no identity, and it CANNOT BE null, because there is no "no number" bit pattern reserved
+    for that.
+
+    AN OBJECT IS A VALUE PLUS AN IDENTITY. `Integer x = 5` allocates a small object on the heap holding
+    the number 5, plus a header, and `x` holds a REFERENCE to it. Two objects can contain the same
+    number and still be different objects. And a reference CAN be null, because null is a valid
+    reference.
+
+    THAT ONE DIFFERENCE — IDENTITY — IS WHY `==` MEANS SOMETHING DIFFERENT FOR EACH. On primitives it
+    compares values, and always does what you want. On objects it compares identities, and almost never
+    does.
+
+WHY THE SPLIT EXISTS AT ALL: in 1995, making every integer a heap object would have been catastrophically
+slow. Primitives map directly onto what the CPU and the bytecode set already do. The cost of that
+decision is that primitives cannot participate in the object world — they cannot go into collections,
+cannot be generic type arguments, cannot be null — and Java has been patching around that ever since:
+wrapper classes in 1.0, AUTOBOXING in Java 5, primitive streams in Java 8, and Project Valhalla still
+working on it thirty years later.
+
+    SO THIS IS NOT TRIVIA. THE PRIMITIVE/OBJECT SPLIT IS THE ROOT CAUSE OF: `Integer` caching and the
+    `128 != 128` trap, `List<Integer>` instead of `List<int>`, NullPointerExceptions on arithmetic,
+    `IntStream` existing separately from `Stream`, and a five-fold memory difference on numeric data.
+
+THE EVERYDAY VERSION: a number written on a page versus a number written on a numbered card in a filing
+cabinet. Two pages can both say "42" and the statement "these are the same 42" is meaningless — there
+is only the value. Two cards can both say 42 and be genuinely different cards, and a card slot can be
+empty, which a written number cannot be.
+
+TERMS AS THEY APPEAR:
+- WRAPPER: the object version of a primitive. `Integer`, `Long`, `Double`, `Boolean`, `Character`.
+- BOXING: converting a primitive to its wrapper. UNBOXING: the reverse.
+- AUTOBOXING: the compiler inserting those conversions for you. Java 5 onwards.""",
+
+"""2. THE INTUITION — autoboxing made them look interchangeable, and they are not
+
+BEFORE JAVA 5 YOU WROTE THE CONVERSIONS BY HAND: `list.add(new Integer(x))` and `int y =
+i.intValue()`. Autoboxing removed that noise by having the compiler insert `Integer.valueOf(x)` and
+`.intValue()` automatically.
+
+    IT MADE THE CODE READ AS IF PRIMITIVES AND OBJECTS WERE THE SAME THING. THEY ARE NOT, AND THREE
+    CONSEQUENCES LEAK THROUGH:
+
+    CONSEQUENCE 1 — `==` SILENTLY CHANGES MEANING. `Integer a = 127, b = 127; a == b` is TRUE.
+    `Integer a = 128, b = 128; a == b` is FALSE. Because `Integer.valueOf` returns a CACHED object for
+    −128..127 and a new one outside that range. The comparison went from value equality to reference
+    equality without a single character changing.
+
+    CONSEQUENCE 2 — UNBOXING CAN THROW `NullPointerException` ON A LINE WITH NO METHOD CALL.
+    `int count = map.get("missing");` — `get` returns null, the compiler inserted `.intValue()`, and
+    you get an NPE pointing at an assignment. The same happens with `if (booleanWrapper)`, with
+    arithmetic on a nullable `Integer`, and — most subtly — inside a ternary whose OTHER branch is a
+    primitive, where the unboxing happens even though you are assigning the result to a wrapper.
+
+    CONSEQUENCE 3 — THE COST IS INVISIBLE. `Long sum = 0L; for (...) sum += x;` allocates a NEW Long
+    OBJECT ON EVERY ITERATION, because `sum` is a wrapper and wrappers are immutable. One character
+    (`Long` versus `long`) changes an allocation-free loop into millions of allocations, and the code
+    looks identical.
+
+THE MEMORY PICTURE, which is the argument that persuades people:
+
+    int[] OF ONE MILLION            4 MB. One contiguous block. 16 values per cache line.
+    List<Integer> OF ONE MILLION    a 4 MB array of REFERENCES, plus one million Integer objects at
+                                    16 bytes each (12-byte header + 4-byte value, 8-byte aligned)
+                                    = ~20 MB, scattered across the heap.
+
+    ROUGHLY FIVE TIMES THE MEMORY — and worse, five times the memory in the wrong SHAPE. Walking the
+    `int[]` is a sequential scan the prefetcher runs ahead of. Walking the `List<Integer>` reads a
+    reference, then follows it to wherever that object happens to live: A DEPENDENT CACHE MISS PER
+    ELEMENT. The Integer cache helps only for small values that happen to repeat.
+
+WHY GENERICS CANNOT HOLD PRIMITIVES: type erasure replaces `T` with `Object`, and `Object` is a
+reference. A primitive is not a reference, so it cannot be a type argument. `List<int>` does not
+compile, and that single limitation is why `IntStream` exists alongside `Stream<Integer>`, why
+`OptionalInt` exists alongside `Optional<Integer>`, and why libraries like fastutil and Eclipse
+Collections exist at all.""",
+
+"""3. THE MECHANISM — the eight types, the caches, and what the compiler inserts
+
+THE EIGHT PRIMITIVES:
+
+    type      bits   range / notes                                    wrapper
+    ---------------------------------------------------------------------------------
+    boolean   —      true/false. Size is unspecified; typically a      Boolean
+                     byte in an array, an int on the stack.
+    byte      8      −128 to 127. SIGNED — which surprises people      Byte
+                     doing binary I/O, where 0xFF reads as −1.
+    short     16     −32,768 to 32,767                                 Short
+    char      16     0 to 65,535. UNSIGNED. A UTF-16 code unit, NOT    Character
+                     a character — emoji need two.
+    int       32     ±2.1 billion. The default for integer literals.   Integer
+    long      64     ±9.2 quintillion. Needs the `L` suffix.           Long
+    float     32     ~7 significant decimal digits                     Float
+    double    64     ~15–17 digits. The default for decimal literals.  Double
+
+THE WRAPPER CACHES, and exactly which ones exist:
+
+    Integer, Short, Byte, Long    cached −128 to 127
+    Character                     cached 0 to 127
+    Boolean                       both values, always cached
+    Float, Double                 NEVER CACHED. There is no sensible finite set to cache.
+
+    `Integer.valueOf(x)` returns the cached instance in range and `new Integer(x)` outside it —
+    and the upper bound is tunable with `-XX:AutoBoxCacheMax`. THE CACHE EXISTS BECAUSE SMALL INTEGERS
+    ARE OVERWHELMINGLY THE COMMON CASE (loop counters, sizes, small ids), and it is required by the
+    language specification for −128..127, which is why the `127 == 127` / `128 != 128` behaviour is
+    portable rather than a JVM quirk.
+
+WHAT THE COMPILER ACTUALLY INSERTS:
+
+    list.add(5)          →  list.add(Integer.valueOf(5))
+    int x = integer      →  int x = integer.intValue()          ← THE NPE LIVES HERE
+    Integer a = b + c    →  Integer.valueOf(b.intValue() + c.intValue())
+    if (booleanWrapper)  →  if (booleanWrapper.booleanValue())  ← and here
+
+    `new Integer(5)` has been DEPRECATED FOR REMOVAL since Java 9, precisely because it defeats the
+    cache and creates identity where none was wanted.
+
+THE TERNARY RULE, WHICH IS THE NASTIEST CORNER OF THE WHOLE TOPIC: if BOTH branches of `?:` are
+convertible to numeric types and at least one is a PRIMITIVE, the whole expression undergoes BINARY
+NUMERIC PROMOTION — so the selected branch is UNBOXED, whatever you are assigning the result to. So:
+
+    Boolean enabled = flags.containsKey(k) ? flags.get(k) : false;
+
+    throws `NullPointerException` when the stored value is null. The `false` is a primitive `boolean`,
+    which forces the expression's type to `boolean`, so `flags.get(k)` must be unboxed to satisfy it —
+    EVEN THOUGH THE TARGET VARIABLE IS A `Boolean` AND WOULD HAPPILY HAVE ACCEPTED null. Write
+    `Boolean.FALSE` instead of `false` and the same line is fine.
+
+    THE TYPE OF A CONDITIONAL EXPRESSION IS DECIDED BEFORE ANY BRANCH IS CHOSEN, from both operands
+    together. That is why reading the taken branch tells you nothing, and it is specified behaviour
+    rather than a compiler quirk.
+
+MEMORY LAYOUT OF AN `Integer` on a 64-bit JVM with compressed pointers: 12 bytes of header (mark word +
+class pointer) + 4 bytes of `int` value = 16 bytes, and you also pay 4 bytes for the reference pointing
+at it. Twenty bytes to store four bytes of information.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `Integer a = 128, b = 128; a == b` IS FALSE, while 127 is TRUE. The cache boundary. Always
+`.equals` or `.intValue()` on wrappers.
+
+CASE 2 — NPE FROM UNBOXING, ON A LINE WITH NO METHOD CALL. `int c = map.get(k)` where the key is
+absent. The `.intValue()` was inserted by the compiler and does not appear in the source.
+
+CASE 3 — A TERNARY WITH ONE PRIMITIVE BRANCH UNBOXES THE OTHER.
+`Boolean b = map.containsKey(k) ? map.get(k) : false;` throws when the stored value is null, even
+though `b` is a `Boolean` that would accept it. The primitive `false` forces numeric promotion on the
+whole expression. Using `Boolean.FALSE` fixes it.
+
+CASE 4 — `if (nullableBoolean)` THROWS. The compiler inserted `.booleanValue()`.
+
+CASE 5 — BOXING IN A HOT LOOP. `Long sum = 0L; sum += x;` allocates a new `Long` every iteration. One
+capital letter separates it from an allocation-free loop.
+
+CASE 6 — `list.remove(1)` ON A `List<Integer>`. `remove(int)` removes by INDEX, `remove(Object)` by
+VALUE, and overload resolution silently prefers the primitive. Both compile.
+
+CASE 7 — `byte` IS SIGNED. Reading binary data, `0xFF` becomes `−1`. Mask with `& 0xFF` to get the
+unsigned value, and note the result must be held in an `int`.
+
+CASE 8 — `char` IS A UTF-16 CODE UNIT, NOT A CHARACTER. Anything outside the Basic Multilingual Plane —
+emoji, many CJK extensions — takes TWO chars, so `s.length()` is not the number of characters and
+`charAt` can return half of one. Use `codePoints()`.
+
+CASE 9 — INTEGER OVERFLOW IS SILENT. `Integer.MAX_VALUE + 1` is `Integer.MIN_VALUE`, no exception.
+`Math.addExact` throws instead.
+
+CASE 10 — INTEGER DIVISION TRUNCATES. `5 / 2` is 2, and `1 / 2 * 100` is 0, not 50.
+
+CASE 11 — MIXED-TYPE ARITHMETIC PROMOTES SILENTLY. `int * int` stays `int` and can overflow BEFORE the
+result is assigned to a `long`. `long total = bigInt * 1000` overflows unless one operand is a `long`.
+
+CASE 12 — `Float`/`Double` ARE NEVER CACHED, so `==` on them is always reference comparison — and
+`Double.NaN != Double.NaN` besides.
+
+CASE 13 — A `Map<Integer, ...>` WITH LARGE KEYS. Every key is a heap object with a header; a
+`HashMap<Integer, Integer>` of a million entries is tens of megabytes for eight megabytes of data.
+
+CASE 14 — `Integer` AS A LOCK. `synchronized (Integer.valueOf(1))` locks a CACHED, GLOBALLY SHARED
+object. Unrelated code can hold it.""",
+
+"""5. THE ALTERNATIVES — how to keep primitives primitive
+
+PRIMITIVE STREAMS — `IntStream`, `LongStream`, `DoubleStream`. `mapToInt`, `sum`, `average`,
+`summaryStatistics`, `boxed()` to convert back. USE THESE WHENEVER THE VALUES ARE PRIMITIVES; the
+difference against `Stream<Integer>` is not marginal on a large dataset.
+
+`OptionalInt` / `OptionalLong` / `OptionalDouble` — the same idea for optionals.
+
+ARRAYS — `int[]`, `long[]`, `double[]` — whenever the size is known or bounded. Perfect locality, no
+headers, no boxing, and `Arrays.sort` on them uses dual-pivot quicksort in place. FOR LARGE NUMERIC
+DATA THIS IS THE BIGGEST SINGLE WIN AVAILABLE.
+
+PRIMITIVE COLLECTION LIBRARIES — Eclipse Collections, fastutil, HPPC, Trove. `IntArrayList`,
+`Int2ObjectOpenHashMap`. They exist ENTIRELY because generics cannot hold primitives, and on
+million-element numeric data they are routinely 3–5× smaller and faster than the JDK equivalents.
+
+`LongAdder` INSTEAD OF `AtomicLong` for contended counters — it stripes across cells rather than
+CAS-ing one hot cache line.
+
+`Math.addExact` / `multiplyExact` / `toIntExact` when overflow must be detected rather than wrapped.
+`Math.floorDiv` and `floorMod` when you want the mathematical behaviour on negatives rather than
+truncation toward zero.
+
+`Objects.requireNonNullElse(x, 0)` or `Optional.ofNullable(x).orElse(0)` at the boundary where a
+nullable wrapper becomes a primitive, so the NPE becomes an explicit decision.
+
+`record` FOR SMALL VALUE AGGREGATES — it does not remove the object header, but it makes the value
+semantics explicit and gives you `equals`/`hashCode` that compare by content.
+
+PROJECT VALHALLA, which is the real fix and worth mentioning: VALUE CLASSES that have no identity, so
+the JVM can FLATTEN them into an array or an object with no header and no indirection — "codes like a
+class, works like an int". It would let a `List<Point>` store the points inline rather than as a million
+references, and it is the reason the whole primitive/object split may eventually stop mattering. It has
+been in development for a decade, which is itself a comment on how deeply the split is embedded.
+
+WHAT TO SAY: "Primitives wherever the value is a number, primitive streams and arrays for bulk numeric
+data — the memory difference is about five times and the cache behaviour is worse than the size
+suggests — wrappers only when I need null, a collection element, or a generic type argument. And I
+never use `==` on wrappers, because the Integer cache makes it work for small values and fail for large
+ones."
+
+""",
+
+"""6. HOW TO WORK WITH THE SPLIT — numbered steps
+
+STEP 1 — DEFAULT TO PRIMITIVES. Use a wrapper only when you need null, a collection element, or a
+generic type argument.
+
+STEP 2 — NEVER USE `==` ON WRAPPERS. Use `.equals`, or unbox one side explicitly. The cache makes it
+work for small values and fail for large ones, which is the worst possible failure pattern.
+
+STEP 3 — CHECK FOR NULL BEFORE UNBOXING. `int c = map.getOrDefault(k, 0)` rather than `map.get(k)`.
+
+STEP 4 — WATCH THE TERNARY. If one branch is a primitive and the other can be null, the null is unboxed
+and throws. Make both branches the same reference type, or check first.
+
+STEP 5 — DECLARE ACCUMULATORS AS PRIMITIVES. `long sum`, not `Long sum`. One capital letter separates
+zero allocations from millions.
+
+STEP 6 — USE `IntStream`/`LongStream`/`DoubleStream` FOR NUMERIC PIPELINES. `mapToInt(...).sum()`, not
+`map(...).reduce(0, Integer::sum)`.
+
+STEP 7 — USE PRIMITIVE ARRAYS FOR LARGE NUMERIC DATA. About five times less memory and a sequential
+access pattern instead of pointer chasing.
+
+STEP 8 — MASK `byte` VALUES WITH `& 0xFF` WHEN READING BINARY DATA. It is signed, and the result needs
+an `int` to hold it.
+
+STEP 9 — USE `codePoints()` RATHER THAN `charAt` FOR TEXT THAT MAY CONTAIN EMOJI OR CJK EXTENSIONS. A
+`char` is a UTF-16 code unit, not a character.
+
+STEP 10 — USE `Math.addExact`/`multiplyExact` WHERE OVERFLOW WOULD BE A CORRECTNESS BUG. Silent
+wraparound is the default.
+
+STEP 11 — CAST BEFORE MULTIPLYING WHEN THE RESULT IS A `long`. `(long) a * b`, because `int * int`
+overflows before the assignment happens.
+
+STEP 12 — NEVER SYNCHRONIZE ON A WRAPPER. Cached instances are globally shared.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Java has eight types that aren't objects — boolean, byte, short, char, int, long, float, double — and
+everything else is. A primitive is just a VALUE: four bytes for an int, no methods, no identity, and it
+can't be null because there's no bit pattern reserved for that. An object is a value plus an IDENTITY:
+Integer x = 5 allocates a small heap object holding 5 plus a header, and x holds a reference to it.
+
+That one difference — identity — is why == means something different for each. On primitives it
+compares values and always does what you want. On objects it compares identities and almost never does.
+
+The split exists because in 1995, making every integer a heap object would have been catastrophically
+slow — primitives map directly onto what the CPU already does. The COST is that primitives can't
+participate in the object world: no collections, no generic type arguments, no null. And Java's been
+patching around that ever since — wrappers in 1.0, autoboxing in Java 5, primitive streams in Java 8,
+and Valhalla still working on it thirty years later.
+
+Autoboxing is what makes this dangerous, because it made the two look interchangeable. The compiler
+inserts Integer.valueOf and .intValue for you, and three things leak through.
+
+First, == silently changes meaning. Integer a = 127, b = 127 — a == b is TRUE. Change both to 128 and
+it's FALSE. Because valueOf returns a CACHED object for minus 128 to 127 and a new one outside that.
+The comparison went from value equality to reference equality without a character changing, and it's
+required by the spec, so it's portable behaviour rather than a JVM quirk.
+
+Second, unboxing throws NullPointerException on a line with no method call. `int count =
+map.get("missing")` — get returns null, the compiler inserted .intValue(), and you get an NPE pointing
+at an assignment. The worst version is the ternary: `Boolean b = map.containsKey(k) ? map.get(k) :
+false` throws when the stored value is null — even though b is a Boolean that would happily hold null.
+The primitive `false` forces the whole expression to type boolean, so the other branch gets unboxed.
+Write Boolean.FALSE instead and the identical-looking line is fine. The type of a conditional
+expression is decided from BOTH operands before either branch is chosen, which is why reading the
+taken branch tells you nothing.
+
+Third, the cost is invisible. `Long sum = 0L; sum += x` in a loop allocates a new Long every iteration,
+because wrappers are immutable. One capital letter separates an allocation-free loop from millions of
+allocations, and the code looks identical.
+
+The number that persuades people is the memory. A million ints in an int[] is 4 MB, one contiguous
+block, sixteen values per cache line. A million in a List<Integer> is a 4 MB array of REFERENCES plus a
+million 16-byte objects — about 20 MB, scattered. Five times the memory, and in the wrong SHAPE:
+walking the array is a sequential scan the prefetcher runs ahead of, while walking the list is a
+dependent cache miss per element.
+
+And the reason generics can't hold primitives is erasure: T becomes Object, Object is a reference, a
+primitive isn't. That single limitation is why IntStream exists alongside Stream<Integer>, why
+OptionalInt exists, and why fastutil and Eclipse Collections exist at all. Valhalla's value classes are
+the real fix — no identity, so the JVM can flatten them inline — but it's been a decade, which tells you
+how deep the split goes.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHAT THE COMPILER ACTUALLY INSERTS ──────────────────────────────
+    list.add(5);              // → list.add(Integer.valueOf(5))
+    int x = someInteger;      // → int x = someInteger.intValue()   ← THE NPE IS HERE
+    Integer a = b + c;        // → Integer.valueOf(b.intValue() + c.intValue())
+    if (nullableBoolean)      // → if (nullableBoolean.booleanValue())  ← and here
+    // NONE of this appears in your source. That is what makes it dangerous.
+
+    // ── THE CACHE BOUNDARY ──────────────────────────────────────────────
+    Integer a = 127, b = 127;  System.out.println(a == b);   // true
+    Integer c = 128, d = 128;  System.out.println(c == d);   // FALSE
+    //                                            ^^^^^^ valueOf returns a CACHED
+    //   instance for −128..127 and a NEW object outside it. The comparison silently
+    //   changed from value equality to reference equality. REQUIRED BY THE SPEC for
+    //   that range, so it is portable behaviour, not a JVM quirk.
+    System.out.println(c.equals(d));       // true — always use this
+    System.out.println(c.intValue() == d); // true — or unbox one side
+
+    // ── THE NPE WITH NO METHOD CALL ON THE LINE ─────────────────────────
+    Map<String,Integer> m = new HashMap<>();
+    int count = m.get("missing");
+    //          ^^^^^^^^^^^^^^^^ returns null → .intValue() → NullPointerException,
+    //   reported at an ASSIGNMENT. Nothing in the source says "call a method".
+    int count = m.getOrDefault("missing", 0);      // ← the fix
+
+    // ── THE TERNARY, WHICH IS THE NASTIEST CORNER ───────────────────────
+    Boolean enabled = flags.containsKey(k) ? flags.get(k) : false;
+    //                                                      ^^^^^ a primitive boolean,
+    //   which forces the WHOLE expression to type `boolean` — so flags.get(k) is
+    //   UNBOXED, and throws NullPointerException when the stored value is null.
+    //   EVEN THOUGH `enabled` IS A Boolean THAT WOULD HAVE ACCEPTED null.
+    Boolean enabled = flags.containsKey(k) ? flags.get(k) : Boolean.FALSE;
+    //                                                      ^^^^^^^^^^^^^ both branches
+    //   are references now, so no promotion and no unboxing. Identical-looking line.
+    Integer x = flag ? 1 : nullableInteger;   // NPE when flag is FALSE, same rule
+
+    // ── ONE CAPITAL LETTER, MILLIONS OF ALLOCATIONS ─────────────────────
+    Long sum = 0L;
+    for (long i = 0; i < 10_000_000; i++) sum += i;
+    //                                    ^^^^^^ unbox, add, BOX AGAIN. Ten million
+    //   Long objects allocated, because wrappers are immutable.
+    long sum = 0L;                     // ← the fix. Zero allocations.
+
+    // ── THE MEMORY DIFFERENCE, CONCRETELY ───────────────────────────────
+    int[] a = new int[1_000_000];
+    //  4 MB. ONE contiguous block. 16 values per 64-byte cache line. The prefetcher
+    //  runs ahead of you.
+    List<Integer> b = ...;   // 1,000,000 entries
+    //  a 4 MB array of REFERENCES + 1,000,000 Integer objects at 16 bytes each
+    //  (12-byte header + 4-byte value, 8-byte aligned) ≈ 20 MB, SCATTERED.
+    //  Reading element i: load the reference, THEN follow it. A dependent cache miss
+    //  per element. FIVE TIMES THE MEMORY IN THE WRONG SHAPE.
+
+    // ── WHY List<int> DOES NOT EXIST ────────────────────────────────────
+    // Erasure replaces T with Object. Object is a REFERENCE. A primitive is not.
+    // That single fact is why IntStream exists alongside Stream<Integer>, why
+    // OptionalInt exists alongside Optional<Integer>, and why fastutil exists.
+    items.stream().map(Item::count).reduce(0, Integer::sum);   // boxes EVERY value
+    items.stream().mapToInt(Item::count).sum();                // no boxing at all
+
+    // ── THREE SILENT ARITHMETIC TRAPS ───────────────────────────────────
+    Integer.MAX_VALUE + 1;             // Integer.MIN_VALUE. No exception.
+    Math.addExact(Integer.MAX_VALUE, 1);   // throws ArithmeticException
+    long total = bigInt * 1000;        // int * int OVERFLOWS BEFORE the assignment
+    long total = (long) bigInt * 1000; // ← cast one operand first
+    byte b = (byte) 0xFF;              // −1, because byte is SIGNED
+    int unsigned = b & 0xFF;           // 255. And the result needs an int.""",
+
+"""9. THE TRACE — the same loop, two declarations
+
+TEN MILLION ADDITIONS, differing by one capital letter:
+
+    long sum = 0L;                          Long sum = 0L;
+    for (...) sum += i;                     for (...) sum += i;
+    ---------------------------------------------------------------------------------
+    bytecode per iteration:                 bytecode per iteration:
+      lload / ladd / lstore                   sum.longValue()      ← unbox
+      (three instructions, registers only)    ladd
+                                              Long.valueOf(result) ← BOX: allocate
+                                              astore
+    ---------------------------------------------------------------------------------
+    allocations: ZERO                       allocations: 10,000,000 Long objects
+    heap churn:  none                       ~160 MB pushed through the young generation
+    ---------------------------------------------------------------------------------
+    THE CODE IS VISUALLY IDENTICAL. The right column allocates because wrappers are IMMUTABLE — `sum +=
+    i` cannot modify the existing Long, so it must produce a new one. This is the same reason string
+    concatenation in a loop is quadratic: immutability plus reassignment in a loop.
+
+    (The garbage is short-lived so the GC handles it cheaply — see the generational hypothesis — but
+    the boxing, unboxing and allocation instructions are pure overhead in the loop body itself.)
+
+THE CACHE BOUNDARY, traced through `valueOf`:
+
+    expression        what valueOf does                          `==` result
+    ---------------------------------------------------------------------------------
+    Integer a = 127   in −128..127 → returns cache[255]           a == b is TRUE
+    Integer b = 127   in range → returns THE SAME cache[255]      (same object)
+    Integer c = 128   OUT of range → `new Integer(128)`           c == d is FALSE
+    Integer d = 128   out of range → ANOTHER new Integer(128)     (different objects)
+    ---------------------------------------------------------------------------------
+    THE WORST POSSIBLE FAILURE PATTERN: it works for exactly the values a developer tests with — loop
+    counters, small ids, sizes — and fails for the values production uses. And it is SPECIFIED, so no
+    JVM will save you.
+
+THE TERNARY, traced through the type rules:
+
+    Boolean enabled = flags.containsKey(k) ? flags.get(k) : false;
+    step  what the compiler does
+    ---------------------------------------------------------------------------------
+    1     look at BOTH branch types: `Boolean` and `boolean`
+    2     both are convertible to a numeric/boolean type and one is a PRIMITIVE, so the
+          conditional is promoted → the expression's type is `boolean`
+    3     therefore the selected branch must yield a `boolean`
+    4     so `flags.get(k)` gets an inserted `.booleanValue()` call
+    5     the resulting `boolean` is then RE-BOXED to assign to `Boolean enabled`
+    ---------------------------------------------------------------------------------
+    AT RUNTIME, when the key is present with a null value: step 4 runs `.booleanValue()` on null → NPE.
+    The target variable is a `Boolean` and would have accepted null perfectly well — the unboxing came
+    entirely from the OTHER branch being a primitive.
+
+    now change ONE token:
+    Boolean enabled = flags.containsKey(k) ? flags.get(k) : Boolean.FALSE;
+    ---------------------------------------------------------------------------------
+    1     both branch types are now `Boolean` — no primitive operand
+    2     no promotion. The expression's type is `Boolean`.
+    3     no unboxing is inserted anywhere. null flows through unharmed.
+    ---------------------------------------------------------------------------------
+    THE TYPE OF A CONDITIONAL EXPRESSION IS DECIDED FROM BOTH OPERANDS, BEFORE EITHER BRANCH IS
+    CHOSEN. Which is why reading the branch that runs tells you nothing about whether it will throw, and
+    why `false` versus `Boolean.FALSE` — five characters — is the entire difference.
+
+AND THE ACCESS-PATTERN TRACE, one million elements:
+
+    structure         what reading element i costs
+    ---------------------------------------------------------------------------------
+    int[]             one array index into a contiguous block. The line holding
+                      element i also holds i+1..i+15, and the prefetcher already
+                      fetched the next line. ~62,500 line fetches, nearly all free.
+    List<Integer>     read the reference from the contiguous array (cheap, prefetched)
+                      THEN dereference it to an object that may be anywhere on the
+                      heap. A DEPENDENT LOAD — the CPU cannot fetch ahead because it
+                      does not know the address until the first load returns.
+    ---------------------------------------------------------------------------------
+    SAME O(1) PER ELEMENT. One runs at memory BANDWIDTH, the other at memory LATENCY. That distinction
+    is invisible in Big-O and is most of the real difference — the 5× memory figure understates it.
+
+WHAT PRODUCED WHAT:
+    IMMUTABILITY OF WRAPPERS   produced the ten million allocations.
+    THE −128..127 CACHE        produced `==` working for test values and failing for production ones.
+    NUMERIC PROMOTION          produced the ternary NPE, and it is a TYPE rule, so no runtime check
+                               could have avoided it.
+    IDENTITY ITSELF            produced the indirection, and therefore the dependent cache miss.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    `int`: 4 bytes, no header, no indirection. `Integer`: 16 bytes (12-byte header + 4-byte value,
+    8-byte aligned) plus a 4-byte reference to reach it.
+    A million: `int[]` ≈ 4 MB contiguous; `List<Integer>` ≈ 20 MB scattered. About 5×, and the access
+    pattern is worse than the ratio suggests — bandwidth versus latency.
+    Wrapper caches: Integer/Short/Byte/Long −128..127, Character 0..127, Boolean always. Float and
+    Double NEVER.
+    Boxing allocates; unboxing can throw. Both are inserted invisibly by the compiler.
+    Generics cannot take primitives, because erasure turns `T` into `Object`.
+
+THE #1 MISTAKE: `==` on wrappers. Works below 128, fails above it. The worst possible failure pattern,
+and it is specified behaviour rather than a bug.
+
+THE #2 MISTAKE: unboxing a possibly-null wrapper. An NPE on a line with no visible method call. Use
+`getOrDefault` or check first.
+
+THE #3 MISTAKE: a ternary with one primitive branch and one nullable wrapper branch. Promotion unboxes
+the selected branch even when the target variable is a wrapper that would have accepted null — a TYPE
+rule decided from both operands before either is chosen.
+
+THE #4 MISTAKE: a wrapper accumulator in a loop. One capital letter, millions of allocations.
+
+THE #5 MISTAKE: `Stream<Integer>` where `IntStream` belongs. Every element boxed.
+
+THE #6 MISTAKE: `List<Integer>` for large numeric data. Five times the memory and a dependent cache
+miss per element. Use `int[]` or a primitive collection library.
+
+THE #7 MISTAKE: `list.remove(1)` on a `List<Integer>`. Index or value, chosen silently by overload
+resolution.
+
+THE #8 MISTAKE: forgetting `byte` is signed. `0xFF` reads as `−1` in binary I/O.
+
+THE #9 MISTAKE: treating `char` as a character. It is a UTF-16 code unit; emoji take two.
+
+THE #10 MISTAKE: assuming overflow throws. It wraps silently. `Math.addExact` if it matters.
+
+THE #11 MISTAKE: `int * int` assigned to a `long`. The multiplication overflows before the assignment.
+Cast one operand first.
+
+THE #12 MISTAKE: `synchronized` on an `Integer` or `Boolean`. Cached instances are globally shared
+locks.
+
+ONE-SENTENCE TAKEAWAY: a primitive is a bare VALUE with no identity and no null, while a wrapper is a
+heap object with a 12-byte header and a reference to reach it — and autoboxing hid that distinction so
+thoroughly that `==` silently switches from value to reference comparison at the −128..127 cache
+boundary, unboxing throws NullPointerException on lines containing no method call (worst of all inside a
+ternary, where one primitive branch forces the other to be unboxed even when you are assigning the
+result to a wrapper that would have accepted null), and a single capital letter
+turns an allocation-free loop into ten million allocations; because erasure turns `T` into `Object`,
+generics cannot hold primitives at all, which is why `IntStream` and `OptionalInt` and fastutil exist,
+and why a million numbers cost 4 MB contiguous as an `int[]` and about 20 MB scattered as a
+`List<Integer>` — five times the memory in a shape that turns a prefetched sequential scan into a
+dependent cache miss per element.""",
+]
