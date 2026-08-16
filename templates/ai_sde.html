@@ -196,6 +196,37 @@
   html.dark .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
   .q-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
+  /* ── Must read / Optional ─────────────────────────────────────────
+     1,120 topics is more than anyone can read, and a list of 1,120 titles
+     gives no way to decide what to skip. This defaults to the 278 that are
+     always asked; the other 842 are one press away with a summary each, so
+     skipping one is a decision rather than an oversight. */
+  .reading { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+  .rbtn { font: inherit; font-size: 13px; font-weight: 800; padding: 8px 13px;
+          border: 1px solid var(--color-border); background: var(--color-surface);
+          color: var(--color-text-secondary); border-radius: 999px; cursor: pointer; }
+  .rbtn .n { font-weight: 700; opacity: .75; }
+  .rbtn.on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .rbtn.on .n { opacity: .85; }
+  .rnote { font-size: 12px; line-height: 1.5; color: var(--color-text-secondary); margin: 0 0 10px; }
+
+  /* The group heading in "Everything", so the split stays visible even
+     when nothing is filtered out. */
+  .rung { margin: 20px 0 8px; font-size: 12px; font-weight: 800; letter-spacing: .08em;
+          text-transform: uppercase; color: var(--color-text-secondary); }
+  .rung:first-child { margin-top: 4px; }
+  .rung .n { color: var(--color-text); }
+
+  /* The one-line summary under a title. This is what makes the optional
+     section skimmable — a title says a topic exists, not whether you
+     already know it. Clamped to two lines so forty cards still scan as a
+     list rather than as a page of prose. */
+  .q-sum { flex: 1 0 100%; font-size: 12.5px; line-height: 1.45; margin: -2px 0 0;
+           color: var(--color-text-secondary); overflow-wrap: anywhere;
+           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+           overflow: hidden; }
+  .q-card.open .q-sum { display: none; }   /* the answer is right there now */
+
   .empty { color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; text-align: center; }
   h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); margin: 22px 0 10px; }
 
@@ -334,6 +365,13 @@
   <div id="gamebar"></div>
   <div class="effort" id="effort"></div>
 
+  <div class="reading" id="reading" role="group" aria-label="Reading section">
+    <button type="button" class="rbtn on" data-reading="must">📕 Must read <span class="n"></span></button>
+    <button type="button" class="rbtn" data-reading="opt">📗 Optional <span class="n"></span></button>
+    <button type="button" class="rbtn" data-reading="">Everything <span class="n"></span></button>
+  </div>
+  <p class="rnote" id="rnote"></p>
+
   <div class="card" style="margin-bottom:10px;">
     <div class="controls">
       <select id="cat"><option value="">All topics</option></select>
@@ -384,6 +422,25 @@
   const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const api = async (p) => { const r = await fetch(p,{credentials:"same-origin"}); if(!r.ok) throw new Error("load failed"); return r.json(); };
   let BANK = null, shown = []; const catLabel = {};
+
+  /* ── Must read / Optional ──────────────────────────────────────────
+     The default is "must", not "everything". 1,120 topics on first paint
+     is the thing that made this page overwhelming, and a default nobody
+     chose is the one that decides what it feels like to open.
+
+     The RULE comes from the server (BANK.reading.mandatory_tag) rather
+     than being written here, so the page and ai_sde_summary.py cannot
+     disagree about what "must read" means. */
+  let reading = "must";
+  let MANDATORY_TAG = "Must-Know";      // replaced by the server's value on load
+  const readingOf = (e) => (e.tag_priority === MANDATORY_TAG ? "must" : "opt");
+
+  /* Summaries arrive on their OWN request, after the list has rendered.
+     Folded into /api/ai-sde they take it from 57 KB gzipped to 135 KB —
+     more than doubling what page load waits on, for a line she may not
+     read on most rows. Empty until they land, and a page that never gets
+     them is a page without summaries rather than a page that failed. */
+  let SUMS = {};
 
   // [select id, entry field, PDF query param] for the six filterable tags.
   const TAG_FILTERS = [
@@ -834,6 +891,7 @@
     // The six interview-tag filters, applied on top of everything above.
     const tv = {}; TAG_FILTERS.forEach(([id, field]) => { tv[field] = $(id) ? $(id).value : ""; });
     const list = BANK.entries.filter(e =>
+      (!reading || readingOf(e) === reading) &&
       (!cat || e.cat===cat) && (!onlyUn || !studied.has(e.id)) && (!diff || e.difficulty===diff) &&
       (!onlyDue || isDue(e.title)) &&
       (!pri || e.priority===pri) &&
@@ -847,12 +905,28 @@
     prog(); shown = list; effort(list);
     // HEADERS ONLY. The body is filled by loadBody() when the card is opened,
     // which is what keeps this loop cheap enough to run on every filter change.
-    $("list").innerHTML = list.map(e => `
+    // With a section selected the list is already one section, so a heading
+    // over it would say what the pressed button says. Showing EVERYTHING is
+    // the case that needs them, or the split stops being visible at all.
+    $("list").innerHTML = (reading
+        ? cardsHTML(list)
+        : ["must", "opt"].map(k => {
+            const g = list.filter(e => readingOf(e) === k);
+            if (!g.length) return "";
+            return `<div class="rung">${k === "must" ? "Must read" : "Optional reading"}`
+                 + ` <span class="n">${g.length}</span></div>` + cardsHTML(g);
+          }).join("")
+      ) || '<div class="card"><div class="empty">No topics match.</div></div>';
+  }
+
+  function cardsHTML(list){
+    return list.map(e => `
       <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
           ${PrepScheduler.button("ai_sde", e.title, e.id)}
+          <p class="q-sum">${esc(SUMS[e.id] || "")}</p>
           <span class="q-chips">
             ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
             ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
@@ -863,7 +937,7 @@
           </span>
         </div>
         <div class="q-body"></div>
-      </div>`).join("") || '<div class="card"><div class="empty">No topics match.</div></div>';
+      </div>`).join("");
   }
 
   // The Plan button and its panel are owned by prep-scheduler.js, shared
@@ -942,15 +1016,64 @@
     window.open("/ai-sde/pdf" + (p.toString()?"?"+p.toString():""), "_blank", "noopener");
   });
 
+  function paintReadingCounts(counts){
+    const n = {must: counts.must, opt: counts.opt, "": counts.total};
+    document.querySelectorAll("#reading .rbtn").forEach(b => {
+      const v = n[b.dataset.reading];
+      b.querySelector(".n").textContent = v == null ? "" : `(${v})`;
+    });
+    paintReadingNote();
+  }
+
+  function paintReadingNote(){
+    const el = $("rnote"); if (!el) return;
+    el.textContent = reading === "must"
+      ? "The topics that are always asked. Finish these before anything else."
+      : reading === "opt"
+        ? "Skim the one-line summary. Open it only if it is new to you — nothing here is hidden, it is just second."
+        : "Everything, grouped. Must read first, optional underneath.";
+  }
+
+  /* Fill the summary lines in place rather than re-rendering. render()
+     rebuilds every card, which would throw away any card already open and
+     the Pomodoro bars inside them. */
+  function paintSummaries(){
+    document.querySelectorAll("#list .q-card").forEach(card => {
+      const el = card.querySelector(".q-sum");
+      if (el && !el.textContent) el.textContent = SUMS[card.dataset.id] || "";
+    });
+  }
+
+  $("reading").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-reading]"); if (!b) return;
+    reading = b.dataset.reading;
+    document.querySelectorAll("#reading .rbtn").forEach(x => x.classList.toggle("on", x === b));
+    paintReadingNote();
+    render();
+    window.scrollTo({top: 0, behavior: "smooth"});
+  });
+
   (async () => {
     try {
       BANK = await api("/api/ai-sde");
       loadStudied();
+      if (BANK.reading) {
+        MANDATORY_TAG = BANK.reading.mandatory_tag || MANDATORY_TAG;
+        paintReadingCounts(BANK.reading.counts || {});
+      }
       (BANK.categories||[]).forEach(c => catLabel[c.key]=c.label);
       $("cat").innerHTML = '<option value="">All topics</option>' + (BANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       fillTagFilters();
       refreshDue();
       render();
+      // The summaries come AFTER the first render, deliberately — see SUMS.
+      // Not awaited: the list is already usable, and the only thing this
+      // changes is that each row gains a line saying what it is about.
+      api("/api/ai-sde/summaries").then(d => {
+        SUMS = d.summaries || {};
+        paintSummaries();
+      }).catch(() => { /* no summaries this load; titles still work */ });
+
       // Per-question Pomodoro timers + actual-effort log.
       if (window.Pomodoro) {
         Pomodoro.init({ ns: "ai_sde", container: $("list") });

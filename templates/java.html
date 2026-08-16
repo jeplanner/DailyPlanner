@@ -50,8 +50,18 @@
   .q-head{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:11px 13px;cursor:pointer}
   .q-head input{width:18px;height:18px;flex:none;cursor:pointer}
   .q-head .t{flex:1;font-size:14.5px;font-weight:700;min-width:0;overflow-wrap:anywhere}
+  /* Plan, difficulty, trap and deep dive on their own row, in FIXED
+     tracks. They used to trail a flex:1 title as plain flex children, so
+     where each one landed depended on how long that card's title happened
+     to be — titles here run to 83 characters — and reading down the list
+     meant re-finding every chip on every row. Tracks are sized from the
+     longest real value at the chip font-size, so nothing truncates. */
+  .q-head .q-chips{display:grid;align-items:center;gap:6px;flex:1 0 100%;
+        grid-template-columns:86px 64px 52px 78px;min-width:0;margin-top:1px}
+  .q-head .q-chips .slot{display:flex;align-items:center;min-width:0}
   .chip{flex:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;
-        border:1px solid var(--color-border);color:var(--color-text-secondary)}
+        border:1px solid var(--color-border);color:var(--color-text-secondary);
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .chip.easy{border-color:#34d399;color:#059669}
   .chip.medium{border-color:#fbbf24;color:#b45309}
   .chip.hard{border-color:#f87171;color:#dc2626}
@@ -90,6 +100,11 @@
   .why{display:none;font-size:13px;line-height:1.55;margin-top:8px;
        color:var(--color-text-secondary)}
   .why.show{display:block}
+  @media (max-width:640px){
+    /* Four fixed tracks do not fit at 360px; wrap them instead. */
+    .q-head .q-chips{display:flex;flex-wrap:wrap}
+    .q-head .q-chips .slot:empty{display:none}
+  }
   .empty{padding:26px 12px;text-align:center;color:var(--color-text-secondary);font-size:14px}
 </style>
 </head>
@@ -183,21 +198,31 @@
   }
 
   function card(e) {
-    var chips = "";
-    if (e.difficulty) chips += chip(e.difficulty, e.difficulty.toLowerCase());
-    if (e.has_trap)   chips += chip("trap", "trap");
-    if (e.has_deep)   chips += chip("deep dive", "deep");
+    // Every slot is emitted even when it is empty. The chips sit in a
+    // fixed-column grid so that difficulty is under difficulty and trap is
+    // under trap all the way down the list; a chip omitted rather than left
+    // blank would slide the next one into its column, which is the whole
+    // thing this is avoiding. 44 of the 45 entries have a trap — the one
+    // that does not was enough to knock the column out of line.
+    var chips =
+      PrepScheduler.button("java", e.title, e.id) +
+      slot(e.difficulty ? chip(e.difficulty, e.difficulty.toLowerCase()) : "") +
+      slot(e.has_trap ? chip("trap", "trap") : "") +
+      slot(e.has_deep ? chip("deep dive", "deep") : "");
     return '' +
       '<div class="q-card' + (done[e.title] ? " done" : "") + '" data-id="' + e.id + '">' +
         '<div class="q-head">' +
           '<input type="checkbox" ' + (done[e.title] ? "checked" : "") +
                  ' data-title="' + esc(e.title) + '" title="Mark studied">' +
           '<span class="t">' + esc(e.title) + '</span>' +
-          PrepScheduler.button("java", e.title, e.id) + chips +
+          '<span class="q-chips">' + chips + '</span>' +
         '</div>' +
         '<div class="q-body"><div class="empty">Loading…</div></div>' +
       '</div>';
   }
+
+  // An empty slot still occupies its grid cell — that is the point of it.
+  function slot(inner) { return '<span class="slot">' + inner + '</span>'; }
 
   function chip(text, cls) {
     return '<span class="chip ' + cls + '">' + esc(text) + '</span>';

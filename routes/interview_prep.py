@@ -33,6 +33,7 @@ from ai_sde_bank import (CATEGORIES as AI_SDE_CATEGORIES,
 # data module — it imports no routes, so this cannot cycle.
 import java_bank
 import ai_sde_recall
+import ai_sde_summary
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -339,6 +340,11 @@ _AI_SDE_SEARCH = _build_ai_sde_search_index()
 #: doing it per entry would be quadratic over 1,120 entries.
 _AI_SDE_SIBLINGS = ai_sde_recall.build_sibling_index(AI_SDE_ENTRIES)
 
+#: Built once at import, same reason as the list: the bank is a static
+#: Python literal and cannot change between requests.
+_AI_SDE_SUMMARIES = ai_sde_summary.build(AI_SDE_ENTRIES)
+_AI_SDE_READING_COUNTS = ai_sde_summary.counts(AI_SDE_ENTRIES)
+
 
 @interview_prep_bp.route("/api/ai-sde", methods=["GET"])
 @login_required
@@ -357,7 +363,31 @@ def ai_sde_bank():
         # the single source of truth in ai_sde_tags.py rather than a hardcoded
         # copy in the template that would drift the moment a value is added.
         "tag_vocab": _ai_sde_tag_vocab(),
+        # The must-read / optional split. The RULE travels rather than the
+        # answer, so the page filters on tag_priority — which it already
+        # has for every row — instead of the list carrying a second field
+        # per entry that says the same thing.
+        "reading": {
+            "mandatory_tag": ai_sde_summary.MANDATORY_TAG,
+            "counts": _AI_SDE_READING_COUNTS,
+        },
     })
+
+
+@interview_prep_bp.route("/api/ai-sde/summaries", methods=["GET"])
+@login_required
+def ai_sde_summaries():
+    """One line per topic, for skimming without opening anything.
+
+    A SEPARATE request on purpose. Folded into /api/ai-sde these take the
+    list from 57 KB gzipped to 135 KB — more than doubling the payload
+    that page load actually waits on, to add a line she may not read on
+    most rows. Fetched after the list has rendered, they cost nothing
+    anyone is waiting for, and a page that never gets them is a page
+    without summaries rather than a page that failed.
+    """
+    return jsonify({"summaries": _AI_SDE_SUMMARIES,
+                    "total": len(_AI_SDE_SUMMARIES)})
 
 
 @interview_prep_bp.route("/api/ai-sde/search", methods=["GET"])
