@@ -877,3 +877,912 @@ def apply(entries):
                              f"got {len(sections)}")
         by_title[title]["examples"] = list(sections)
     return entries
+
+
+DEEP["synchronized, volatile, and atomic — three different problems"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two problems that look like one
+
+When two threads touch the same data, two completely different things can go wrong, and almost every
+concurrency bug comes from fixing one of them and assuming you fixed both.
+
+    PROBLEM ONE — TAKING TURNS. Two threads run the same few lines at the same time and interleave.
+    `count++` is really three steps: read the value, add one, write it back. Two threads can both read
+    5, both compute 6, and both write 6. One increment simply vanishes. Nothing is corrupted, nothing
+    throws — the number is just quietly wrong.
+
+    PROBLEM TWO — SEEING. A thread writes a value and another thread never notices. Not "notices
+    late" — never. The writing thread may keep the value in a CPU register, or the compiler may have
+    decided the reading thread's loop can never change and hoisted the read out of it. Both are legal.
+
+    THESE ARE INDEPENDENT. You can fix taking turns and still have an invisible write. You can fix
+    seeing and still lose increments.
+
+THE THREE TOOLS MAP ONTO THEM UNEVENLY, which is the source of the confusion:
+
+    volatile     fixes SEEING only.               One variable.
+    synchronized fixes BOTH.                      A block, at the cost of blocking.
+    Atomic*      fixes BOTH.                      One variable, without blocking.
+
+    SO `volatile int count; count++;` IS BROKEN, and it is broken in the exact way that survives every
+    test you will write on your laptop and fails under load in production.
+
+THE EVERYDAY VERSION: two people editing a shared shopping list. Taking turns is making sure you are
+not both writing on the same line at once. Seeing is making sure the list you are looking at is the
+current one, and not a photocopy you took ten minutes ago.
+
+TERMS AS THEY APPEAR:
+- VISIBILITY: whether one thread's write becomes observable to another.
+- ATOMICITY: whether an operation happens all at once, with no other thread able to interleave.
+- HAPPENS-BEFORE: the ordering guarantee the memory model actually gives you.""",
+
+"""2. THE INTUITION — why "seeing" is even a problem
+
+The natural assumption is that when a thread writes to a field, the value goes into memory and any
+other thread reading that field gets it. That assumption is wrong on every modern machine, and it is
+wrong for THREE separate reasons stacked on top of each other.
+
+    1. THE COMPILER REORDERS. javac and, far more aggressively, the JIT may reorder any two operations
+       whose order is not observable WITHIN A SINGLE THREAD. `a = 1; b = 2;` may become `b = 2; a = 1;`
+       because no single-threaded program can tell. Another thread absolutely can.
+
+    2. THE CPU REORDERS. Store buffers, out-of-order execution, speculative loads. A write may sit in
+       a core's store buffer for a while before any other core can see it.
+
+    3. THE CACHES ARE PER-CORE. A value read into a register or an L1 cache line may be re-read from
+       there indefinitely. The classic symptom is a `while (!stopFlag)` loop that never exits, because
+       the JIT hoisted the read out of the loop entirely — which it is entitled to do, since within
+       that one thread nothing writes to stopFlag.
+
+    NONE OF THIS IS A BUG. Every one of those transformations makes single-threaded code faster and is
+    permitted by the specification. THE JAVA MEMORY MODEL EXISTS TO SAY EXACTLY WHEN YOU ARE ALLOWED
+    TO ASSUME OTHERWISE.
+
+AND THE MODEL'S ANSWER IS A SINGLE RELATION: HAPPENS-BEFORE.
+
+    If action A happens-before action B, then everything A did is visible to B. If there is NO
+    happens-before edge between two actions in different threads, YOU ARE GUARANTEED NOTHING — not
+    "probably fine", not "eventually consistent", nothing.
+
+THE EDGES YOU GET FOR FREE — and this list is short enough to memorise, which is the point:
+
+    PROGRAM ORDER      within one thread, earlier statements happen-before later ones.
+    MONITOR            unlocking a monitor happens-before any later lock of that same monitor.
+    VOLATILE           a write to a volatile happens-before any later read of it.
+    THREAD START       Thread.start() happens-before anything the new thread does.
+    THREAD JOIN        everything a thread does happens-before join() returns.
+    FINAL FIELDS       a correctly-constructed object's final fields are visible without any
+                       synchronisation at all.
+
+    EVERY CORRECT CONCURRENT PROGRAM IS BUILT OUT OF THOSE EDGES. If you cannot point at one, you do
+    not have a guarantee.""",
+
+"""3. THE MECHANISM — what each tool actually does
+
+VOLATILE. A read of a volatile is guaranteed to see the most recent write, and reads and writes cannot
+be reordered across it. Concretely the JIT emits memory barriers: a write is followed by a store
+barrier, a read preceded by a load barrier.
+
+    THE PART PEOPLE MISS: a volatile write also publishes EVERYTHING THE THREAD WROTE BEFORE IT. That
+    is why volatile is useful for more than the one variable — writing a volatile flag after filling a
+    data structure makes the whole structure visible to any thread that reads the flag.
+
+    WHAT IT DOES NOT DO: make a read-modify-write atomic. `count++` on a volatile is still three
+    operations with a gap in the middle.
+
+SYNCHRONIZED. Acquiring a monitor blocks until it is free; releasing it flushes everything the thread
+wrote. So it gives mutual exclusion AND the same visibility guarantee as volatile, over a whole block
+rather than one variable.
+
+    THE COST is blocking: a thread that cannot acquire the lock parks, and parking and unparking is a
+    trip through the OS scheduler. Modern JVMs mitigate with BIASED and THIN locks so an uncontended
+    lock is nearly free — the expense is contention, not the keyword.
+
+ATOMIC CLASSES. AtomicInteger and friends are built on COMPARE-AND-SWAP, a single CPU instruction that
+says "if this memory location still holds X, replace it with Y, and tell me whether you did".
+
+    incrementAndGet is a LOOP:
+        read the current value v
+        compute v + 1
+        compareAndSet(v, v + 1)
+        if it failed, somebody else got there first — go round again
+
+    NO THREAD EVER BLOCKS. A thread that loses the race retries immediately. That is LOCK-FREE: the
+    system as a whole always makes progress, even though an individual thread might retry several
+    times. Under moderate contention it beats a lock comfortably; under EXTREME contention the retries
+    themselves become the bottleneck, which is why LongAdder exists — it spreads the count across
+    several cells and sums them only when you ask.
+
+    THE LIMIT: CAS works on ONE variable. An invariant spanning two fields — "a + b must stay
+    constant" — cannot be maintained by two atomics, no matter how atomic each one is. That needs a
+    lock, or a single immutable object holding both swapped atomically.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `volatile` ON A COUNTER. The canonical mistake. Visibility without atomicity: ten threads
+incrementing a volatile int a thousand times each reliably total LESS than 10,000.
+
+CASE 2 — DOUBLE-CHECKED LOCKING WITHOUT `volatile`. The famous one:
+
+        if (instance == null) { synchronized (lock) { if (instance == null) instance = new Thing(); } }
+
+    Without a volatile field this is BROKEN, and subtly. `instance = new Thing()` is really: allocate,
+    run the constructor, assign the reference. The JIT may reorder the last two, so another thread can
+    see a NON-NULL reference to a HALF-CONSTRUCTED object, skip the synchronized block entirely, and
+    use it. Making the field volatile forbids that reordering and fixes it. USE A STATIC HOLDER CLASS
+    INSTEAD and the problem does not arise — class initialisation is already thread-safe.
+
+CASE 3 — `synchronized` ON A METHOD locks `this`. Any unrelated caller who synchronizes on your object
+now blocks you, and they may not know they are doing it. USE A PRIVATE FINAL LOCK OBJECT.
+
+CASE 4 — SYNCHRONIZING ON SOMETHING MUTABLE OR SHARED. Locking on a String literal or a boxed Integer
+means locking on an interned, JVM-wide object — anyone else with the same literal shares your lock.
+Locking on a field you then reassign means two threads lock different objects and neither excludes the
+other.
+
+CASE 5 — NON-ATOMIC `long` AND `double`. The spec permits a 64-bit non-volatile write to be split into
+two 32-bit halves, so another thread can observe a value that was never written. Rare on 64-bit JVMs
+and permitted, so declare shared longs volatile.
+
+CASE 6 — TWO ATOMICS, ONE INVARIANT. Each operation is atomic and the PAIR is not. If a + b must stay
+constant, atomics cannot do it.
+
+CASE 7 — CHECK-THEN-ACT ON A CONCURRENT COLLECTION. `if (!map.containsKey(k)) map.put(k, v)` races
+even on a ConcurrentHashMap. Each call is atomic; a sequence of calls is not. Use putIfAbsent.
+
+CASE 8 — THE ABA PROBLEM. CAS checks the VALUE, not the history. A value that changed from A to B and
+back to A passes compareAndSet as though nothing happened. Usually harmless for counters, fatal for
+lock-free stacks — AtomicStampedReference adds a version counter for exactly this.
+
+CASE 9 — SWALLOWING InterruptedException. Catching it CLEARS the interrupt flag, so every caller above
+you loses the cancellation signal. Restore it: `Thread.currentThread().interrupt()`.
+
+CASE 10 — TESTING FOR CORRECTNESS. You cannot. A race that never appears in a million runs on your
+laptop appears in the first hour on a machine with a different core count. REASON ABOUT THE
+HAPPENS-BEFORE EDGES; the test can only ever find a bug, never establish its absence.""",
+
+"""5. THE ALTERNATIVES — and what each costs
+
+DON'T SHARE STATE AT ALL. Immutable objects, thread confinement, message passing, a copy per thread.
+NO SYNCHRONISATION IS NEEDED FOR DATA NOBODY ELSE CAN SEE OR CHANGE, and this remains the best answer
+by a wide margin. Most concurrency bugs are the punishment for sharing something that did not need to
+be shared.
+
+IMMUTABLE OBJECTS. All fields final, no setters, defensive copies of mutable components. The memory
+model's FINAL FIELD guarantee means a correctly-constructed immutable object is safe to publish
+anywhere with no synchronisation at all. Update by replacing the whole object, via an
+AtomicReference if it must be shared.
+
+volatile. One variable, visibility only, and free on reads. RIGHT FOR: a flag written by one thread and
+polled by others; a reference published after being fully built. WRONG FOR: anything read-modify-write.
+
+Atomic*. One variable, lock-free, and it scales better than a lock under moderate contention. Under
+severe contention use LongAdder for counters — it spreads writes across cells and only sums on read.
+
+synchronized. Both problems, any number of variables, arbitrary blocks. THE DEFAULT WHEN AN INVARIANT
+SPANS MORE THAN ONE FIELD. Uncontended it is nearly free; the cost is contention.
+
+ReentrantLock. Everything synchronized does, plus tryLock with a timeout, interruptible acquisition,
+fairness, and multiple Conditions. THE COST is that you must unlock in a finally block — the language
+does it for you with synchronized and will not here. ALSO: it does NOT pin a virtual thread where
+synchronized does, which makes it the preferred choice on Java 21.
+
+CONCURRENT COLLECTIONS. ConcurrentHashMap, BlockingQueue, CopyOnWriteArrayList. Almost always better
+than a lock you wrote around a plain collection, because the locking is finer-grained than you would
+bother to make it.
+
+HIGHER-LEVEL COORDINATION. CountDownLatch (wait for N events, once), CyclicBarrier (N threads meet
+repeatedly), Semaphore (N permits), Phaser. PREFER THESE TO wait/notify, which is error-prone —
+notify() wakes an arbitrary waiter and a wait() must always sit in a loop because of spurious wakeups.""",
+
+"""6. HOW TO GET IT RIGHT — numbered steps
+
+STEP 1 — TRY NOT TO SHARE. Confine the data to one thread, or make it immutable. Everything below is
+the price of failing this step.
+
+STEP 2 — IF IT IS SHARED AND NEVER CHANGES, MAKE IT `final`. The final-field guarantee means it needs
+no synchronisation at all.
+
+STEP 3 — IDENTIFY WHICH PROBLEM YOU HAVE. Only visibility, with a single writer? volatile. A
+read-modify-write on one variable? Atomic. An invariant across several fields? A lock.
+
+STEP 4 — NEVER USE `volatile` FOR A COUNTER. `++` is three operations regardless of the modifier.
+
+STEP 5 — LOCK ON A PRIVATE FINAL OBJECT, not on `this` and not on a class you do not own. `private
+final Object lock = new Object();`
+
+STEP 6 — HOLD THE LOCK FOR THE WHOLE INVARIANT AND NOT ONE INSTRUCTION LONGER. Never call unknown code
+— a listener, a callback, an overridable method — while holding a lock; that is how deadlocks form
+between your code and code you have never read.
+
+STEP 7 — IF YOU NEED TWO LOCKS, ORDER THEM GLOBALLY. Same locks, same order, no cycle, no deadlock.
+
+STEP 8 — PREFER THE CONCURRENT COLLECTION TO A LOCK YOU WROTE. It is finer-grained than yours.
+
+STEP 9 — DOCUMENT THE POLICY. "All access to `balance` is guarded by `lock`" as a comment or a
+@GuardedBy annotation. A concurrency policy that lives only in one person's head is not a policy.
+
+STEP 10 — REASON, DO NOT TEST. Point at the happens-before edge. A passing test proves nothing about a
+race, and the absence of a failure on your machine is not evidence.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'There are two problems here, not one, and most concurrency bugs come from fixing one and assuming you
+fixed both.
+
+The first is TAKING TURNS. `count++` is really read, add, write — three steps — so two threads can
+both read 5, both compute 6, and both write 6. One increment vanishes silently.
+
+The second is SEEING. A thread writes a value and another thread never observes it. Not late — never.
+And there are three independent reasons: the compiler can reorder anything whose order isn't
+observable within a single thread; the CPU reorders too, with store buffers and out-of-order
+execution; and caches are per-core, so a value read into a register can be re-read from there forever.
+The classic symptom is a `while (!stopFlag)` loop that never exits because the JIT hoisted the read
+out — which it's entitled to do, since nothing in THAT thread writes to the flag.
+
+None of that is a bug. Every one of those transformations makes single-threaded code faster and is
+permitted. The Java Memory Model exists to say exactly when you're allowed to assume otherwise, and
+its answer is one relation: HAPPENS-BEFORE. If A happens-before B, everything A did is visible to B.
+If there's no edge between two actions in different threads, you're guaranteed NOTHING — not
+"probably fine", nothing.
+
+The edges you get for free are a short list worth memorising: program order within a thread; unlocking
+a monitor before any later lock of it; a volatile write before any later read of it; Thread.start
+before anything the thread does; everything a thread does before join returns; and final fields of a
+correctly-constructed object, which are visible with no synchronisation at all.
+
+So the three tools map onto the two problems unevenly. VOLATILE fixes seeing only — one variable, and
+a volatile write also publishes everything the thread wrote BEFORE it, which is why it's useful for
+more than the one field. SYNCHRONIZED fixes both, over a whole block, at the cost of blocking. And the
+ATOMIC classes fix both for a single variable without blocking, using compare-and-swap in a retry
+loop — no thread ever parks, so under moderate contention they beat a lock.
+
+The headline mistake is `volatile int count; count++;`. Visibility without atomicity, and it's broken
+in exactly the way that survives every test on your laptop and fails under load.
+
+The second one I'd raise is DOUBLE-CHECKED LOCKING without a volatile field. `instance = new Thing()`
+is allocate, construct, assign — and the JIT may reorder the last two, so another thread sees a
+non-null reference to a HALF-CONSTRUCTED object, skips the synchronized block, and uses it. volatile
+forbids the reordering. Though I'd use a static holder class instead, because class initialisation is
+already thread-safe and the problem never arises.
+
+And the thing I'd want to land: YOU CANNOT TEST FOR THIS. A race that never appears in a million runs
+on your machine appears in the first hour on one with a different core count. You have to point at the
+happens-before edge; a test can find a bug but never establish its absence.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WRONG. The single most common concurrency mistake in Java. ──────
+    static volatile int broken = 0;
+    static void incBroken() { broken++; }
+    //                        ^^^^^^^^ THREE operations: read broken, add 1,
+    //   write broken. `volatile` guarantees each of those three SEES the
+    //   latest value and does nothing whatever about the GAPS between them.
+    //   Two threads read 5, both write 6, one increment is gone.
+    //   VOLATILE IS ABOUT SEEING, NOT ABOUT WINNING.
+
+    // ── RIGHT for a single counter: one indivisible operation. ──────────
+    static final AtomicInteger counter = new AtomicInteger();
+    static void incAtomic() { counter.incrementAndGet(); }
+    //                                ^^^^^^^^^^^^^^^^ internally a CAS LOOP:
+    //   read v; compute v+1; compareAndSet(v, v+1); if it failed, retry.
+    //   NO THREAD EVER BLOCKS — a loser retries immediately. Lock-free.
+    //   Under EXTREME contention the retries themselves cost; that is what
+    //   LongAdder is for.
+
+    // ── RIGHT for an invariant spanning several fields. ─────────────────
+    private static final Object lock = new Object();
+    //      ^^^^^^^ PRIVATE and FINAL. Synchronizing on `this` lets any
+    //      unrelated caller who locks your object block you, possibly without
+    //      knowing they are doing it. Private means only your code can lock it.
+    static int a = 0, b = 0;
+    static void moveOne() {
+        synchronized (lock) { a--; b++; }
+        //                    ^^^^^^^^^ a + b stays constant. TWO ATOMICS
+        //   COULD NOT DO THIS — each operation would be atomic and the PAIR
+        //   would not, so another thread could observe the moment between them.
+    }
+
+    // ── THE CLASSIC volatile: a flag, one writer, many readers. ─────────
+    static volatile boolean running = true;
+    static void worker() {
+        while (running) { /* ... */ }
+        //     ^^^^^^^ WITHOUT volatile the JIT may hoist this read out of the
+        //     loop entirely — nothing in THIS thread writes to it — and the
+        //     loop never terminates. With it, the read is guaranteed fresh.
+    }
+
+    // ── DOUBLE-CHECKED LOCKING. The volatile is not optional. ───────────
+    private static volatile Thing instance;
+    //             ^^^^^^^^ REMOVE THIS AND THE CODE IS BROKEN. `new Thing()`
+    //   is allocate, construct, assign — and the last two may be REORDERED, so
+    //   another thread can see a non-null reference to a half-built object,
+    //   skip the synchronized block, and use it.
+    static Thing get() {
+        if (instance == null) {                    // cheap, unsynchronised
+            synchronized (lock) {
+                if (instance == null)              // re-check under the lock
+                    instance = new Thing();
+            }
+        }
+        return instance;
+    }
+
+    // ── BETTER: the holder idiom. No locks, no volatile, no reasoning. ──
+    private static class Holder { static final Thing INSTANCE = new Thing(); }
+    static Thing getBetter() { return Holder.INSTANCE; }
+    //  ^ Class initialisation is ALREADY thread-safe and lazy — the JVM
+    //    guarantees it runs exactly once, on first use. The whole problem
+    //    above simply does not arise.""",
+
+"""9. THE TRACE — the increment that vanishes, and the edge that saves it
+
+TWO THREADS, ONE `volatile int count = 0`, one increment each.
+
+    time   thread A                     thread B                     count in memory
+    ---------------------------------------------------------------------------------
+    t1     read count → 0                                                   0
+    t2                                  read count → 0                      0
+    t3     compute 0 + 1 = 1                                                0
+    t4                                  compute 0 + 1 = 1                   0
+    t5     write 1                                                          1
+    t6                                  write 1                             1
+
+    TWO INCREMENTS, FINAL VALUE 1. And `volatile` did its job perfectly at every step — both reads saw
+    the true current value of 0, and both writes were immediately visible. THE PROBLEM IS THE GAP
+    BETWEEN t1 AND t5, which no amount of visibility can close.
+
+THE SAME SEQUENCE WITH AtomicInteger:
+
+    time   thread A                              thread B                       count
+    ---------------------------------------------------------------------------------
+    t1     read 0, compute 1                                                       0
+    t2                                           read 0, compute 1                 0
+    t3     compareAndSet(0, 1) → SUCCESS                                           1
+    t4                                           compareAndSet(0, 1) → FAILS       1
+    t5                                           (it saw 0, memory holds 1)
+    t6                                           RETRY: read 1, compute 2          1
+    t7                                           compareAndSet(1, 2) → SUCCESS     2
+
+    THE FAILED CAS AT t4 IS THE WHOLE MECHANISM. Thread B's assumption ("count is still 0") was
+    checked at the instant of the write and found to be stale, so the write did not happen and B went
+    round again. Nobody blocked; B simply did the work twice.
+
+THE VISIBILITY FAILURE, which is a different shape entirely:
+
+    boolean running = true;      // NOT volatile
+
+    thread A                                thread B
+    -----------------------------------------------------------------------
+    while (running) { ... }                 running = false;
+      ^ the JIT observes that nothing in
+        THIS thread writes to `running`,
+        hoists the read out of the loop,
+        and compiles it to `while (true)`
+                                            ^ the write happens, and lands in
+                                              B's store buffer or B's cache
+
+    THREAD A NEVER STOPS. Not "stops late" — never. And the program is correct on every JVM that
+    happens not to make that optimisation, which is why this reliably works in development and hangs
+    in production.
+
+    THE FIX IS ONE KEYWORD, and what it buys is precisely a happens-before edge: B's volatile WRITE
+    happens-before A's subsequent volatile READ, so the read cannot be hoisted and cannot be stale.
+
+WHICH LINE PRODUCED WHICH ROW:
+
+    `volatile` ON THE COUNTER      produced correct reads at t1 and t2 and did nothing about the gap.
+                                   Visibility was never the problem in that table.
+    THE THREE-STEP `++`            produced the lost update. Any read-modify-write has this shape,
+                                   including `x = x + 1`, `list.size()` then `list.add()`, and
+                                   check-then-act on a map.
+    `compareAndSet`                produced the FAILURE at t4, which is the only reason the final
+                                   value is 2. A CAS that could not fail would be a plain write.
+    THE ABSENCE OF `volatile` on the flag
+                                   produced the infinite loop — and note the loop is not "slow to
+                                   notice", it is compiled to never check again.""",
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    volatile      read is free (a plain load plus a barrier); write costs a store barrier. VISIBILITY
+                  AND ORDERING ONLY — no atomicity, ever.
+    synchronized  uncontended is nearly free on a modern JVM (thin locks); CONTENDED costs a park and
+                  unpark through the OS scheduler, which is microseconds. Both problems solved.
+    Atomic*       lock-free CAS retry loop. Beats a lock under moderate contention, degrades under
+                  extreme contention as retries pile up — use LongAdder for hot counters.
+    final fields  free. A correctly-constructed object's final fields are visible with NO
+                  synchronisation at all, which is why immutability is the cheapest concurrency
+                  strategy there is.
+
+    THE MODEL IN ONE SENTENCE: without a happens-before edge between two actions in different threads,
+    you are guaranteed nothing.
+
+THE #1 MISTAKE: `volatile` on a counter. Visibility without atomicity — `++` is three operations, and
+ten threads incrementing a thousand times each reliably total less than 10,000.
+
+THE #2 MISTAKE: double-checked locking without a volatile field. The construction can be reordered
+past the assignment, publishing a half-built object. Use a static holder class instead.
+
+THE #3 MISTAKE: `synchronized` on a method, which locks `this`. Any unrelated caller locking your
+object blocks you. Use a private final lock.
+
+THE #4 MISTAKE: locking on a String literal, a boxed Integer, or a field you reassign. The first two
+are JVM-wide interned objects; the third means two threads lock different objects and neither excludes
+the other.
+
+THE #5 MISTAKE: two atomics guarding one invariant. Each operation is atomic and the PAIR is not.
+
+THE #6 MISTAKE: check-then-act on a concurrent collection. Every individual call is atomic; a sequence
+of them is not. That is what putIfAbsent, merge and compute exist for.
+
+THE #7 MISTAKE: assuming a 64-bit `long` write is atomic. The spec permits it to be split in two, so a
+shared long should be volatile.
+
+THE #8 MISTAKE: swallowing InterruptedException. Catching it CLEARS the flag, destroying the
+cancellation signal for every caller above you. Restore it.
+
+THE #9 MISTAKE: calling unknown code — a listener, a callback, an overridable method — while holding a
+lock. That is how a deadlock forms with code you have never read.
+
+THE #10 MISTAKE: believing a passing test. A race that never appears in a million runs on your laptop
+appears in the first hour on a machine with a different core count.
+
+ONE-SENTENCE TAKEAWAY: there are TWO problems and three tools that cover them unevenly — `volatile`
+fixes SEEING only, `synchronized` fixes seeing and TAKING TURNS at the cost of blocking, and the atomic
+classes fix both for a single variable with a lock-free CAS retry loop — so `volatile int count;
+count++;` is broken in exactly the way that passes every test on your laptop; and the only real tool
+for reasoning about any of it is HAPPENS-BEFORE, because without an edge between two actions in
+different threads the specification guarantees you nothing at all.""",
+]
+
+
+DEEP["Generics and type erasure — what actually survives to runtime"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — a promise the compiler keeps and then forgets
+
+`List<String>` tells the compiler "this list holds Strings". The compiler checks every add and every
+get against that promise, and then — this is the part that surprises people — IT THROWS THE PROMISE
+AWAY. The class file contains a plain `List`. At runtime there is no such thing as a List of Strings;
+there is a List, and a set of casts the compiler quietly inserted wherever you read from it.
+
+    List<String> names = new ArrayList<>();
+    names.add("hi");
+    String s = names.get(0);
+
+    ...compiles to roughly:
+
+    List names = new ArrayList();
+    names.add("hi");
+    String s = (String) names.get(0);
+                ^^^^^^^^ YOU DID NOT WRITE THIS CAST. The compiler did, because it knows the promise
+                and the runtime does not.
+
+THAT IS ERASURE, and almost every strange rule about Java generics is a direct consequence of it. You
+cannot make an array of a type parameter. You cannot ask an object what its generic type is. Two
+methods differing only in their generic parameter will not compile. None of those are arbitrary —
+they all reduce to "there is nothing there at runtime to check".
+
+THE EVERYDAY VERSION: a customs form declaring the contents of a box. The inspector checks the form
+against the contents at the border, stamps it, and then removes the form. Downstream, the box is just
+a box — and anyone who tears the form off before the border can put anything they like inside.
+
+TERMS AS THEY APPEAR:
+- ERASURE: replacing a type parameter with its bound and inserting casts.
+- RAW TYPE: `List` with no parameter — the pre-generics form, still legal for compatibility.
+- HEAP POLLUTION: a variable of a parameterised type referring to an object that is not of that type.""",
+
+"""2. THE INTUITION — why Java chose erasure, when C# chose otherwise
+
+Generics arrived in Java 5, nine years after the language. By then there were millions of lines of
+`List` and `Map` in production and, more importantly, millions of COMPILED CLASS FILES in jars nobody
+was going to rebuild.
+
+    THE CONSTRAINT WAS MIGRATION COMPATIBILITY, and it was absolute:
+    * new code using `List<String>` had to work with old libraries expecting `List`;
+    * old compiled code had to keep running on the new JVM unchanged;
+    * a library could add generics to its signatures WITHOUT breaking its existing callers.
+
+    ERASURE SATISFIES ALL THREE FOR FREE, because after erasure the new code IS the old code. A
+    `List<String>` and a raw `List` are byte-for-byte the same type to the JVM, so they interoperate
+    perfectly and no bytecode had to change.
+
+    C# MADE THE OPPOSITE CHOICE two years later and REIFIED its generics — the runtime genuinely knows
+    a `List<string>` from a `List<int>`. It could, because .NET was young enough that breaking the
+    ecosystem was affordable, and because they changed the runtime itself. Java could not change the
+    JVM without invalidating every class file in existence.
+
+    SO THE TRADE IS EXPLICIT: C# gets `new T[]`, `typeof(T)`, `List<int>` without boxing, and paid for
+    it with a runtime change. Java got a smooth migration and pays for it in every restriction below.
+
+    THAT IS THE ANSWER TO "WHY IS JAVA'S GENERICS SYSTEM LIKE THIS" — not an oversight, a deliberate
+    purchase. And Project Valhalla is the long-running attempt to buy back the specialisation without
+    breaking anything, which is why it has been in progress for over a decade.
+
+WHAT ERASURE ACTUALLY DOES, precisely:
+
+    <T>                    becomes Object
+    <T extends Number>     becomes Number          ← the LEFTMOST BOUND, not Object
+    <T extends A & B>      becomes A
+    List<String>           becomes List
+    T[]                    becomes Object[]
+
+    ...and the compiler inserts a checked cast at every point where a value of type T is read out.""",
+
+"""3. THE MECHANISM — casts, bridge methods, and where the exception lands
+
+THE CASTS ARE THE VISIBLE HALF. Every read of a generic value gets a compiler-inserted cast, which is
+why a mistake surfaces AT THE READ rather than at the write:
+
+    List<String> a = new ArrayList<>();
+    List raw = a;                 // legal, with an unchecked warning
+    raw.add(42);                  // NO CHECK HAPPENS HERE. The list has no idea.
+    String s = a.get(0);          // ClassCastException HERE — at a line that looks correct
+
+    THE EXCEPTION LANDS AT A CAST YOU DID NOT WRITE, IN A LINE THAT HAS NOTHING WRONG WITH IT. That
+    displacement is the practical cost of erasure and it is why unchecked warnings are worth taking
+    seriously — they mark the place where the compiler stopped being able to help.
+
+BRIDGE METHODS ARE THE INVISIBLE HALF, and they are the part that most people have never heard of.
+
+    Consider `class StringBox implements Comparable<StringBox>` with
+    `public int compareTo(StringBox other)`.
+
+    After erasure, `Comparable`'s method is `compareTo(Object)`. But StringBox declares
+    `compareTo(StringBox)` — a DIFFERENT SIGNATURE, so by the JVM's rules it does not override
+    anything, and polymorphism would break: `Comparable c = new StringBox(); c.compareTo(x)` would
+    find no implementation.
+
+    SO javac GENERATES A THIRD METHOD you never wrote:
+
+        public int compareTo(Object o) { return compareTo((StringBox) o); }   // synthetic, bridge
+
+    That bridge restores the override relationship and inserts the cast. It is why passing the wrong
+    type through a raw reference throws ClassCastException inside a method whose source contains no
+    cast at all — the cast is in the bridge.
+
+WHAT SURVIVES ERASURE, which is the detail that makes reflection possible at all:
+
+    The class file keeps a SIGNATURE ATTRIBUTE recording the generic type of FIELDS, of METHOD
+    PARAMETERS AND RETURN TYPES, and of CLASS AND INTERFACE DECLARATIONS.
+
+    So reflection CAN tell you that a field is declared `List<String>`, or that a method returns
+    `Map<String, List<Integer>>`. What it CANNOT tell you is the type argument of an OBJECT — because
+    the object genuinely does not carry one.
+
+    THAT GAP IS EXACTLY WHAT THE SUPER TYPE TOKEN TRICK EXPLOITS. `new TypeReference<List<String>>(){}`
+    creates an anonymous SUBCLASS, and a subclass's generic superclass IS recorded in the Signature
+    attribute — so the type argument can be recovered by reflection. It is how Jackson and Gson accept
+    a generic target type, and it works only because of what the class file kept.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `new T[10]` IS ILLEGAL. There is no T at runtime, so the array has no element type to check
+stores against. The workaround is `(T[]) new Object[10]` plus an unchecked warning — and it can throw
+ClassCastException later at a compiler-inserted cast somewhere else entirely. ArrayList does exactly
+this internally, and keeps the array `Object[]` privately to contain the damage.
+
+CASE 2 — `instanceof List<String>` IS ILLEGAL. Nothing to test. Only `instanceof List<?>` compiles.
+
+CASE 3 — TWO METHODS WITH THE SAME ERASURE CLASH. `f(List<String>)` and `f(List<Integer>)` both erase
+to `f(List)` and the error says so literally: "have the same erasure". Note `f(List<String>)` and
+`f(Set<String>)` are fine — their erasures differ.
+
+CASE 4 — A STATIC MEMBER CANNOT USE THE CLASS'S TYPE PARAMETER. There is ONE static field for all
+parameterisations, so `static T instance;` has no coherent meaning.
+
+CASE 5 — YOU CANNOT CATCH A GENERIC EXCEPTION. `catch (T e)` is illegal, because catch matching is a
+runtime type test.
+
+CASE 6 — HEAP POLLUTION VIA VARARGS. `static <T> void f(T... args)` creates a `T[]`, which erases to
+`Object[]`, which can be assigned anything. That is why javac warns and why @SafeVarargs exists — the
+annotation is YOU ASSERTING the method never stores into the array.
+
+CASE 7 — OVERLOADING ON A BOUND. `<T extends Number>` erases to Number, so a method taking it clashes
+with one taking Number.
+
+CASE 8 — A GENERIC ARRAY CREATION EXPRESSION. `new List<String>[10]` is illegal for the same reason as
+case 1, and the workaround has the same caveat.
+
+CASE 9 — RAW TYPES DISABLE GENERICS ENTIRELY, not just for the raw variable. Using a raw `List`
+suppresses type checking on OTHER generic methods of the same class, which is a deliberately blunt
+rule from the migration era and a good reason never to use raw types in new code.
+
+CASE 10 — `List<Object>` IS NOT A SUPERTYPE OF `List<String>`. Generics are INVARIANT, and this is the
+restriction people resent most — it exists because arrays made the other choice and pay for it with a
+runtime check on every store.""",
+
+"""5. THE ALTERNATIVES — living with erasure
+
+WILDCARDS, which recover most of the flexibility invariance takes away.
+
+    `List<? extends Number>` — a PRODUCER. You may READ Numbers from it; you may not add, because the
+    actual list might be a List<Double>.
+    `List<? super Integer>` — a CONSUMER. You may ADD Integers; you may only read Objects, because the
+    actual list might be a List<Object>.
+    PECS: Producer Extends, Consumer Super. It is the single most useful mnemonic in Java generics and
+    Collections.copy(dest, src) is the canonical signature carrying both.
+
+CLASS TOKENS, when you genuinely need the type at runtime.
+
+    `<T> T read(Class<T> type, String json)` — pass the Class object explicitly, and use
+    `type.cast(x)` for a checked cast. It is what erasure forces and it is honest about it.
+
+SUPER TYPE TOKENS, for generic targets a Class cannot express.
+
+    `new TypeReference<List<String>>(){}` — an anonymous subclass, whose generic superclass IS in the
+    Signature attribute and IS readable by reflection. Jackson's TypeReference and Guava's TypeToken.
+
+MAKE THE ARRAY AN ArrayList. Most `new T[]` problems evaporate: an ArrayList has none of the
+restrictions and is what you wanted anyway.
+
+REIFIED GENERICS, for comparison and not as an option. C#, and Kotlin's `inline fun <reified T>` which
+achieves it by INLINING the function at each call site so the compiler can substitute the concrete
+type. Java's Project Valhalla is the long-running effort to get specialisation without breaking the
+existing model.
+
+WHAT TO SAY IN AN INTERVIEW: "Generics are compile-time only — erased to their bound with casts
+inserted. If I need the type at runtime I pass a Class token, or a TypeReference for a parameterised
+target. And I'd never use a raw type in new code, because it disables type checking more broadly than
+people expect."
+
+""",
+
+"""6. HOW TO WORK WITH IT — numbered steps
+
+STEP 1 — TREAT UNCHECKED WARNINGS AS ERRORS. Each one marks a place the compiler stopped being able to
+help, and where a ClassCastException may later surface somewhere unrelated.
+
+STEP 2 — NEVER USE A RAW TYPE IN NEW CODE. It disables generic checking beyond the one variable, and
+it is only legal at all for the sake of 2004.
+
+STEP 3 — PREFER A List TO AN ARRAY when a type parameter is involved. It sidesteps the array
+restrictions entirely.
+
+STEP 4 — USE WILDCARDS ON PARAMETERS, PECS. A method that only reads takes `? extends T`; one that only
+writes takes `? super T`. It widens what callers can pass at no cost to you.
+
+STEP 5 — PASS A `Class<T>` TOKEN when you genuinely need the runtime type — for a cast, a reflective
+instantiation or a deserialisation target.
+
+STEP 6 — USE A SUPER TYPE TOKEN for a parameterised target, and know WHY it works: a subclass's generic
+superclass survives in the Signature attribute where an object's own type argument does not.
+
+STEP 7 — CONFINE ANY UNCHECKED CAST TO ONE PRIVATE PLACE, annotate it @SuppressWarnings("unchecked")
+narrowly, and comment why it is safe. A suppression on a whole class hides the next one.
+
+STEP 8 — USE @SafeVarargs ONLY WHEN IT IS TRUE — the method must never store into the varargs array nor
+let it escape.
+
+STEP 9 — REMEMBER STATIC MEMBERS CANNOT USE THE CLASS'S PARAMETER. Make the METHOD generic instead:
+`static <T> Box<T> empty()`.
+
+STEP 10 — WHEN AN OVERLOAD WILL NOT COMPILE, CHECK THE ERASURES. "Have the same erasure" means the two
+signatures are identical after type parameters are stripped, and the fix is different names.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Generics in Java are a COMPILE-TIME feature. The compiler checks every use against the declared type
+and then erases it — the class file just contains `List`, and the compiler has inserted casts wherever
+you read from it. So at runtime there's no such thing as a List of Strings; a List<String> and a
+List<Integer> are the same class, and `getClass()` on both returns ArrayList.
+
+The reason is MIGRATION COMPATIBILITY, and it was an absolute constraint rather than an oversight.
+Generics arrived nine years into Java's life, when there were millions of compiled class files nobody
+was going to rebuild. Erasure means new generic code IS old raw code after compilation, so they
+interoperate perfectly and no bytecode had to change. C# made the opposite call two years later and
+reified its generics — it could, because .NET was young enough to break its ecosystem and because they
+changed the runtime. Java couldn't change the JVM without invalidating every jar in existence.
+
+So the trade was bought deliberately: C# gets `new T[]`, `typeof(T)` and `List<int>` without boxing;
+Java got a smooth migration and pays for it in every restriction. That's the honest answer to "why is
+Java's generics system like this".
+
+What erasure does precisely: an unbounded T becomes Object, a bounded `T extends Number` becomes
+NUMBER — the leftmost bound, not Object — and casts go in at every read.
+
+The consequence people hit first is that the exception lands in the wrong place. If you smuggle a
+wrong value in through a raw reference, the add succeeds silently — the list has no idea what it's
+supposed to hold — and the ClassCastException fires later at `String s = list.get(0)`, a line that
+looks completely correct. The cast that fails is one you never wrote.
+
+The half most people haven't heard of is BRIDGE METHODS. If you implement `Comparable<StringBox>`, you
+write `compareTo(StringBox)` — but after erasure the interface's method is `compareTo(Object)`, a
+different signature, so by the JVM's rules yours doesn't override anything and polymorphism would
+break. So javac generates a synthetic bridge, `compareTo(Object)`, that casts and delegates. That's
+why the ClassCastException can appear inside a method whose source contains no cast — it's in the
+bridge.
+
+And the thing worth knowing about what SURVIVES: the class file keeps a Signature attribute recording
+the generic types of fields, method signatures and class declarations. So reflection CAN tell you a
+field is declared List<String>. What it can't tell you is an OBJECT's type argument, because the
+object genuinely doesn't carry one. That gap is exactly what the super-type-token trick exploits —
+`new TypeReference<List<String>>(){}` creates an anonymous SUBCLASS, and a subclass's generic
+superclass IS in the Signature attribute. It's how Jackson accepts a generic target type.
+
+Practically: never use raw types in new code, treat unchecked warnings as errors, use wildcards on
+parameters — PECS, producer extends, consumer super — and pass a Class token when you genuinely need
+the type at runtime.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    List<String> a = new ArrayList<>();
+    List<Integer> b = new ArrayList<>();
+    System.out.println(a.getClass() == b.getClass());     // true
+    //                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^ THE SAME CLASS OBJECT. There is
+    //   one ArrayList class and it has no idea what it was declared to hold.
+    //   This single line is erasure in its entirety.
+
+    // ── SMUGGLING A WRONG VALUE IN, AND WHERE IT SURFACES ───────────────
+    List raw = a;
+    //   ^^^ A RAW TYPE. Legal, with an unchecked warning — and legal only because
+    //   pre-2004 code had to keep compiling. Never write this deliberately.
+    raw.add(42);
+    //  ^^^^^^^ NO CHECK OCCURS. The ArrayList has no element type at runtime, so
+    //  there is nothing to check against. The list now genuinely holds an Integer
+    //  in a variable the compiler believes holds Strings — HEAP POLLUTION.
+    // String s = a.get(0);
+    //            ^^^^^^^^^ ClassCastException HERE, at a compiler-inserted
+    //  (String) cast, on a line containing no visible cast and no visible fault.
+    //  THE DISPLACEMENT BETWEEN THE BUG AND THE CRASH IS THE COST OF ERASURE.
+
+    // ── A BOUNDED PARAMETER ERASES TO THE BOUND, NOT TO OBJECT ──────────
+    static <T extends Number> double sum(List<T> xs) {
+        //   ^^^^^^^^^^^^^^^ erases to Number. Which is exactly why the next line
+        //   compiles — the erased parameter type has doubleValue(). An unbounded
+        //   <T> would erase to Object and this would not compile.
+        double t = 0;
+        for (T x : xs) t += x.doubleValue();
+        return t;
+    }
+
+    // ── THE BRIDGE METHOD YOU NEVER WROTE ───────────────────────────────
+    class StringBox implements Comparable<StringBox> {
+        public int compareTo(StringBox other) { return 0; }
+        //         ^^^^^^^^^^^^^^^^^^^^^^^^^ after erasure the INTERFACE declares
+        //   compareTo(Object), so this signature overrides NOTHING and
+        //   polymorphism through a Comparable reference would break.
+        //
+        //   So javac synthesises this, which is in the class file and not in
+        //   your source:
+        //
+        //       public int compareTo(Object o) {
+        //           return compareTo((StringBox) o);      // <- THE CAST LIVES HERE
+        //       }
+        //
+        //   Pass the wrong type through a raw Comparable and the
+        //   ClassCastException is thrown inside a method you did not write.
+    }
+
+    // ── WHAT SURVIVES, AND THE TRICK THAT EXPLOITS IT ───────────────────
+    class Holder { List<String> names; }
+    // reflection CAN read this:
+    //   Holder.class.getDeclaredField("names").getGenericType()
+    //     -> java.util.List<java.lang.String>
+    // ...because the class file's SIGNATURE ATTRIBUTE records a FIELD's generic
+    // type. It cannot do the same for an OBJECT, which carries nothing.
+    //
+    // Hence the super type token — an anonymous SUBCLASS, whose generic
+    // superclass IS recorded:
+    //   new TypeReference<List<String>>() {}
+    //   ((ParameterizedType) getClass().getGenericSuperclass())
+    //       .getActualTypeArguments()[0]     -> List<String>""",
+
+"""9. THE TRACE — the same program, before and after the compiler
+
+SOURCE:
+
+    class Box<T extends Number> {
+        private T value;
+        void set(T v)      { this.value = v; }
+        T get()            { return value; }
+        double doubled()   { return value.doubleValue() * 2; }
+    }
+
+    Box<Integer> b = new Box<>();
+    b.set(21);
+    int x = b.get();
+
+AFTER ERASURE — what the class file effectively contains:
+
+    class Box {
+        private Number value;              // T ERASED TO ITS BOUND, not to Object
+        void set(Number v)   { this.value = v; }
+        Number get()         { return value; }
+        double doubled()     { return value.doubleValue() * 2; }
+        //                            ^^^^^^^^^^^^^^^ compiles because the erased
+        //   field type is Number. With an UNBOUNDED <T> the field would be Object
+        //   and this line would not compile — which is what a bound is FOR.
+    }
+
+    Box b = new Box();
+    b.set(Integer.valueOf(21));            // autoboxing, then a widening reference
+    int x = ((Integer) b.get()).intValue();
+    //       ^^^^^^^^^ THE COMPILER PUT THIS HERE. Every read of a generic value
+    //       carries one, and it is where a violated promise turns into an exception.
+
+THE FAILURE, step by step:
+
+    step                                    what the compiler knows   what the JVM knows
+    -------------------------------------------------------------------------------------
+    List<String> a = new ArrayList<>();     a holds Strings           a holds Objects
+    List raw = a;                           unchecked — warning       identical reference
+    raw.add(42);                            nothing (raw type)        add an Object. FINE.
+    ...
+    String s = a.get(0);                    inserts (String)          CAST FAILS → CCE
+
+    THE TWO COLUMNS DIVERGE AT ROW 2 AND THE PROGRAM CRASHES AT ROW 4. Everything between is correct
+    by both sets of rules, which is precisely why the stack trace points somewhere useless.
+
+WHAT ERASURE DOES TO EACH FORM:
+
+    declared                    erased to        why it matters
+    ---------------------------------------------------------------------------------
+    <T>                         Object           you lose every method but Object's
+    <T extends Number>          Number           you keep Number's methods — USE BOUNDS
+    <T extends A & B>           A                the LEFTMOST bound wins
+    List<String>                List             same class as List<Integer>
+    T[]                         Object[]         which is why new T[] is illegal
+    void f(List<String>)        void f(List)     which is why the overload clashes
+
+WHICH RULE PRODUCED WHICH ROW:
+
+    "REPLACE T WITH ITS BOUND"        produced `private Number value`, and therefore produced the fact
+                                      that `doubled()` compiles at all. An unbounded T would erase to
+                                      Object and the method would be rejected.
+    "INSERT A CAST AT EVERY READ"     produced `((Integer) b.get())`, and produced the crash site in
+                                      the failure table — at a line the programmer did not write.
+    "ERASE THE PARAMETER FROM THE
+     SIGNATURE"                       produced `void f(List)`, and therefore the "have the same
+                                      erasure" compile error for two overloads that look distinct.
+    "KEEP THE SIGNATURE ATTRIBUTE"    is why the FIELD's declared type is still recoverable by
+                                      reflection even though the OBJECT's is not — the one thing
+                                      erasure did not take.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    ERASURE COSTS NOTHING AT RUNTIME — generics are entirely a compile-time construct, so a generic
+    method is exactly as fast as the raw equivalent. The costs are all in EXPRESSIVENESS.
+    THE ONE PERFORMANCE COST IS INDIRECT: no reified primitives, so a List<Integer> boxes every value.
+    An int[] of a million entries is 4MB; a List<Integer> of distinct values is roughly 20MB. That
+    ratio is why IntStream and int[] exist alongside Stream<Integer>.
+
+    WHAT ERASURE REMOVES: `new T[]`, `instanceof List<String>`, `catch (T e)`, `static T field`,
+    overloads differing only by type argument, and an object's knowledge of its own type argument.
+    WHAT IT KEEPS: the Signature attribute — the generic types of FIELDS, METHOD SIGNATURES and CLASS
+    DECLARATIONS — which is what makes reflection and super type tokens possible at all.
+
+THE #1 MISTAKE: ignoring an unchecked warning. Each one marks the point where the compiler stopped
+being able to help, and where a ClassCastException may later appear somewhere unrelated.
+
+THE #2 MISTAKE: using a raw type in new code. It disables generic checking more broadly than the one
+variable, and it exists only for 2004's sake.
+
+THE #3 MISTAKE: expecting the exception where the bug is. A wrong value goes in silently and the crash
+happens at a compiler-inserted cast on a later, innocent-looking line.
+
+THE #4 MISTAKE: `new T[10]`. Use a List, or `(T[]) new Object[10]` confined to one private field.
+
+THE #5 MISTAKE: overloading on the type argument. Both erase to the same signature and the compiler
+says so literally.
+
+THE #6 MISTAKE: an unbounded `<T>` where a bound was wanted. `<T extends Number>` erases to Number and
+keeps its methods; `<T>` erases to Object and keeps nothing.
+
+THE #7 MISTAKE: a static field of type T. There is one static field across all parameterisations, so
+it has no coherent meaning. Make the method generic instead.
+
+THE #8 MISTAKE: @SafeVarargs on a method that stores into the array or lets it escape. The annotation
+is an assertion, and an untrue one is worse than the warning.
+
+THE #9 MISTAKE: a blanket @SuppressWarnings("unchecked") on a class or method. It hides the NEXT
+unchecked operation, which nobody reviewed. Put it on the narrowest declaration possible.
+
+THE #10 MISTAKE: believing invariance is arbitrary. Arrays made the other choice and pay for it with a
+type check on every single store, plus a runtime ArrayStoreException. The restriction IS the fix.
+
+ONE-SENTENCE TAKEAWAY: generics are checked at compile time and then ERASED — a type parameter becomes
+its leftmost bound and casts are inserted at every read — so List<String> and List<Integer> are the
+same class at runtime, which is why you cannot write `new T[]` or `instanceof List<String>` or two
+overloads differing only by type argument; the choice was bought deliberately for MIGRATION
+COMPATIBILITY when generics arrived nine years late and millions of class files could not be rebuilt;
+and the practical consequences are that a violated promise surfaces as a ClassCastException at a cast
+you never wrote, sometimes inside a synthetic BRIDGE METHOD, while the Signature attribute keeps just
+enough for reflection to read a FIELD's generic type even though an OBJECT can never report its own.""",
+]
