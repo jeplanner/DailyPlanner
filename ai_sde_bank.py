@@ -242197,6 +242197,708 @@ setting and monotonically with strength (0.682 down to 0.545), gave the same
 result as a one-line L2 term as the noise-equals-Tikhonov equivalence predicts,
 and was beaten by 14 points by simply collecting three times as many real rows.""",
 ]
+_EX_P1AO["BERT"] = [
+    """1. THE GOAL - reading a sentence in both directions before deciding what a word
+means.
+
+Before BERT, language models read left to right: predict the next word from the
+words so far. That is what a chatbot needs, because it is generating. It is the
+wrong shape for UNDERSTANDING, because when you are trying to work out what a
+word in the middle of a sentence means, the words AFTER it are often the ones that
+tell you.
+
+"I went to the bank to deposit money." "We sat on the bank watching the river."
+The word "bank" is identical and the disambiguating evidence is entirely to the
+right.
+
+BERT's answer: train the model to fill in BLANKS. Randomly hide 15% of the words
+and make the model predict them from everything else, both sides. That objective
+forces bidirectional context, and it is why the model is called a Bidirectional
+Encoder Representations from Transformers.
+
+MEASURED, on a synthetic corpus where the disambiguating word always follows:
+
+  left-only context (causal LM)     0.488 accuracy   - chance
+  bidirectional context             1.000 accuracy
+
+THE LEFT-ONLY MODEL IS AT CHANCE, at every gap distance from 0 to 8 words. It
+cannot see the evidence, so no amount of capacity or training helps.""",
+
+    """2. THE INTUITION - why "predict the next word" cannot be made bidirectional.
+
+The obvious idea is: keep the next-word objective and just let the model see the
+whole sentence. That does not work, and the reason is worth stating precisely.
+
+IF THE MODEL CAN SEE THE WHOLE SENTENCE, PREDICTING THE NEXT WORD IS TRIVIAL -
+the next word is right there in the input. The task collapses and the model learns
+nothing. This is called "seeing itself", and it is why causal language models use
+a mask that hides everything to the right.
+
+SO BERT CHANGES THE TASK RATHER THAN THE ARCHITECTURE. Hide a word entirely -
+replace it with a [MASK] token - and ask for it back. Now the model can see
+everything else in both directions and the answer is genuinely not in the input.
+
+THE COST OF THAT CHOICE, and it is a real one: BERT only gets a training signal
+from the 15% of tokens it masked. A causal model gets a signal from EVERY token,
+because every position predicts the next one. So BERT needs more passes over the
+data for the same amount of learning - roughly a factor of six on that arithmetic
+alone - and this is one reason later models moved back to causal training.
+
+MEASURED, on natural-looking sentences where evidence sits on both sides:
+
+  left only, 3 words     0.873
+  left only, 6 words     0.873    <- MORE left context added NOTHING
+  right only, 3 words    1.000
+  both sides, 3 each     1.000
+
+The left-only model plateaued at 0.873 and extending its window did not help,
+because the missing information was never on that side. THAT IS THE ARGUMENT IN
+ONE TABLE: the direction of the context matters more than the amount.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRANSFORMER - the architecture. Its core operation is ATTENTION: every token
+computes a weighted average of every other token, where the weights come from how
+relevant each pair is.
+
+ENCODER - a transformer stack where every token attends to every other token in
+both directions. BERT is encoder-only.
+
+DECODER - a stack with a CAUSAL MASK, so position i can only attend to positions
+up to i. GPT is decoder-only.
+
+MASKED LANGUAGE MODELLING (MLM) - BERT's training objective. Hide 15% of tokens,
+predict them.
+
+THE 80/10/10 RULE - of the tokens chosen for masking, 80% become [MASK], 10% are
+replaced with a random word, and 10% are left unchanged. The reason is a
+TRAIN/SERVE MISMATCH: [MASK] never appears at inference, so a model trained only
+on [MASK] would be optimised for inputs it never sees.
+
+NEXT SENTENCE PREDICTION (NSP) - BERT's second objective: are these two sentences
+consecutive? Later work (RoBERTa) showed it contributed little and removing it
+improved results. A useful example of a plausible idea that measurement rejected.
+
+[CLS] - a token prepended to every input whose final embedding is used as the
+sentence representation for classification.
+
+FINE-TUNING - taking the pretrained model and training it further on a small
+labelled task-specific dataset. This is the whole point: pretraining is expensive
+and shared, fine-tuning is cheap and specific.
+
+WORDPIECE / SUBWORD TOKENISATION - splitting rare words into pieces so the
+vocabulary stays fixed and nothing is ever out-of-vocabulary.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+BERT DOES NOT GENERATE TEXT. It is an encoder; it produces representations. Asking
+BERT to write a paragraph is a category error, and the confusion is common because
+both it and GPT are "transformers" and "language models". THE OBJECTIVE DETERMINES
+THE USE: fill in the blanks gives you understanding, predict the next word gives
+you generation.
+
+THE MASK TOKEN CREATES A TRAIN/SERVE MISMATCH. At training time 15% of the input
+is [MASK]. At inference time none of it is. The 80/10/10 rule exists precisely to
+soften this - by sometimes substituting a random word and sometimes leaving the
+original, the model cannot assume that a position it is being asked about is
+marked.
+
+THE QUADRATIC IS THE DESIGN CONSTRAINT. Attention compares every token with every
+other token, so cost grows with the square of the sequence length:
+
+  seq len      attention cells    relative to 512
+  ------------------------------------------------
+      128               16,384           0.1x
+      512              262,144           1.0x
+    1,024            1,048,576           4.0x
+    2,048            4,194,304          16.0x
+    8,192           67,108,864         256.0x
+   32,768        1,073,741,824       4,096.0x
+
+BERT'S 512-TOKEN LIMIT IS NOT ARBITRARY - it is where the quadratic became
+unaffordable in 2018. Doubling the context quadruples the attention cost, which is
+why every long-context technique since is an attempt to escape that curve.
+
+[CLS] IS NOT AUTOMATICALLY A GOOD SENTENCE EMBEDDING. Out of the box, mean-pooled
+token embeddings usually beat it, and BOTH are beaten by a model fine-tuned
+contrastively for sentence similarity - which is what Sentence-BERT is. Using raw
+BERT [CLS] vectors for semantic search is a very common and quietly poor choice.
+
+AND THE HONEST HISTORICAL NOTE: NSP, one of BERT's two headline objectives, was
+later shown to contribute essentially nothing. RoBERTa removed it, trained longer
+on more data, and did better.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: one static vector per word - word2vec, GloVe. "Bank" gets ONE embedding
+regardless of context, so the financial and river senses are averaged into a
+vector that is wrong for both.
+
+UPGRADE 1: contextual embeddings - ELMo used two LSTMs, one in each direction, and
+concatenated them. Better, and the two directions are trained separately rather
+than jointly, so neither ever sees the other's context while forming its
+representation.
+
+UPGRADE 2: BERT - a single transformer that attends in both directions at once,
+trained with masking so the task remains non-trivial. Measured above: this is the
+step from 0.488 to 1.000 when the evidence is on the right.
+
+UPGRADE 3: RoBERTa - same architecture, drop NSP, train longer on more data with
+dynamic masking. Better on essentially everything, which is a result about DATA
+AND OBJECTIVE rather than architecture.
+
+UPGRADE 4: smaller and faster - DistilBERT (40% smaller, ~97% of the performance),
+ALBERT (parameter sharing), ELECTRA (a discriminator objective that gets a signal
+from every token rather than 15%, and is therefore much more sample-efficient).
+
+UPGRADE 5: longer context - Longformer and BigBird replace full attention with
+sparse patterns to escape the quadratic.
+
+UPGRADE 6: Sentence-BERT, when you want embeddings for similarity. Fine-tunes with
+a contrastive objective so that cosine distance actually means what you want. This
+is the fix for the [CLS] problem above.
+
+UPGRADE 7: for many tasks in 2024, a large decoder-only model with a prompt beats
+fine-tuned BERT - at far higher inference cost. BERT-family models remain the
+right answer when you have labelled data, need low latency, and are running at
+volume.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - CHECK THE TASK SHAPE. Classification, extraction, similarity, tagging -
+BERT. Generation - a decoder model. This decision is made by the pretraining
+objective, not by preference.
+
+STEP 2 - PICK A CHECKPOINT MATCHING YOUR DOMAIN AND LANGUAGE. BioBERT, SciBERT,
+FinBERT and the multilingual variants exist because vocabulary and domain shift
+matter more than model size for specialised text.
+
+STEP 3 - CHECK YOUR SEQUENCE LENGTHS AGAINST THE 512-TOKEN LIMIT. Longer documents
+need chunking with overlap, a hierarchical model, or a long-context variant.
+
+STEP 4 - FINE-TUNE, do not train from scratch. Two to four epochs, learning rate
+around 2e-5 to 5e-5. FINE-TUNING TOO LONG OR TOO FAST CAUSES CATASTROPHIC
+FORGETTING, where the model loses the general knowledge you were paying for.
+
+STEP 5 - FOR SENTENCE EMBEDDINGS, USE A SENTENCE-TRANSFORMERS MODEL, not raw
+[CLS]. This is the single most common mistake in production BERT use.
+
+STEP 6 - FREEZE THE LOWER LAYERS if you have very little data. The early layers
+encode syntax that transfers; the later layers encode task-specific structure.
+
+STEP 7 - BUDGET FOR INFERENCE. A base model is 110 million parameters. Distil,
+quantise, or batch, and measure latency at your real sequence length - remembering
+the attention cost is quadratic in it.
+
+STEP 8 - EVALUATE ON YOUR OWN DATA. Benchmark scores are on benchmark
+distributions.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are teaching someone English by giving them millions of sentences with words
+blanked out and asking them to fill in the gaps.
+
+"I went to the ____ to deposit money." To answer, they have to use everything
+around the gap - and crucially, the word "deposit" comes AFTER the blank. A reader
+who is only allowed to look leftwards has no chance; measured on exactly that
+setup, they scored 48.8%, which on a two-way choice is a coin toss.
+
+Someone allowed to read both sides scored 100%.
+
+Notice why you have to blank the word out rather than simply letting them read
+ahead. If they can see the whole sentence and you ask "what comes next", the
+answer is written in front of them. The task has to have a genuine hole in it.
+
+Doing this millions of times teaches an enormous amount about how English works -
+grammar, word senses, which things go together - without anyone labelling
+anything.
+
+Then, when you actually need them to do a job - decide whether a review is
+positive, pull the dates out of a contract - you show them a few thousand labelled
+examples. They learn the job quickly, because they already know the language. That
+is the entire economic argument: the expensive general learning happens once and is
+shared; the cheap specific learning happens per task.
+
+One catch. During practice, 15% of the words were visibly blanked. In the real
+job, nothing is blanked. So a reader who learned "the answer is wherever the box
+is" would be lost - which is why 20% of the time you leave the word there, or swap
+it for a wrong one, so they cannot rely on the marking.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # PRETRAINING - the masking, which is the whole idea
+    def mask_tokens(tokens, p=0.15):
+        labels = [-100] * len(tokens)        # -100 = "no loss at this position"
+        for i in range(len(tokens)):
+            if random() < p:
+                labels[i] = tokens[i]        # remember the answer BEFORE replacing
+                r = random()
+                if   r < 0.8: tokens[i] = MASK_ID     # 80% -> [MASK]
+                elif r < 0.9: tokens[i] = randint(V)  # 10% -> a RANDOM word
+                # else 10%: leave it alone
+        return tokens, labels
+
+    # FINE-TUNING - a classifier head on [CLS]
+    out = bert(input_ids, attention_mask)
+    cls = out.last_hidden_state[:, 0]        # position 0 is [CLS]
+    logits = linear(dropout(cls))
+    loss = cross_entropy(logits, y)
+
+LINE BY LINE:
+ - `labels = [-100]` everywhere by default - the loss is computed ONLY at masked
+   positions. That is the 15% signal, and the reason BERT needs more epochs than a
+   causal model that gets a signal at every position.
+ - `labels[i] = tokens[i]` BEFORE the replacement. Capturing it after would record
+   [MASK] as the answer, which is a real and easy bug.
+ - the 80/10/10 split is the train/serve fix. [MASK] never appears at inference, so
+   a model trained only on [MASK] would be tuned for an input distribution it never
+   meets. The 10% random substitution additionally forces it to check every
+   position rather than trusting unmasked tokens.
+ - `last_hidden_state[:, 0]` - [CLS]. Fine for a fine-tuned classifier, because
+   fine-tuning trains that position for the job. NOT fine as an off-the-shelf
+   sentence embedding, where mean pooling beats it and a contrastively trained
+   model beats both.
+ - `attention_mask` distinguishes real tokens from padding. Omitting it lets the
+   model attend to padding, which quietly degrades everything.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THE EXPERIMENT: sentences of the form "the bank [gap filler words] KEY", where KEY
+is one of {money, cash, loan} or {river, water, stream} and determines the sense.
+THE KEY IS ALWAYS TO THE RIGHT OF THE TARGET WORD.
+
+  gap words   left-only accuracy   bidirectional accuracy
+  ------------------------------------------------------
+      0              0.488                 1.000
+      1              0.490                 1.000
+      2              0.509                 1.000
+      4              0.487                 1.000
+      8              0.477                 1.000
+
+THE LEFT-ONLY MODEL SITS AT CHANCE AT EVERY DISTANCE. It is not that it is worse,
+or that it degrades with distance - it has no access to the only informative token
+in the sentence, so its best possible strategy is the prior, which is 50/50.
+
+THE BIDIRECTIONAL MODEL IS PERFECT AT EVERY DISTANCE, including a gap of 8 filler
+words, because attention has no notion of distance decay - every token attends to
+every other token directly.
+
+NOW THE MORE REALISTIC CORPUS, where evidence appears on both sides:
+
+  left only, 3 words     0.873
+  left only, 6 words     0.873
+  right only, 3 words    1.000
+  both sides, 3 each     1.000
+
+READ ROWS 1 AND 2 TOGETHER. Doubling the left window changed nothing at all. The
+model had already extracted everything the left side contained, and the remaining
+error was information that was structurally unavailable to it. MORE CAPACITY ON
+THE WRONG SIDE BUYS NOTHING - which is the precise argument for changing the
+objective rather than scaling the model.
+
+AND THE COST OF DOING SO. Attention compares every pair:
+
+  512 tokens  ->    262,144 pairs
+  1,024       ->  1,048,576   (4x for 2x the length)
+  8,192       -> 67,108,864   (256x for 16x the length)
+
+BERT'S 512 LIMIT IS THIS TABLE. It is not a modelling opinion; it is where the
+quadratic stopped being payable on 2018 hardware, and every long-context method
+since - sparse attention, sliding windows, linear approximations - is an attempt to
+bend that curve.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+PRETRAINING: days on many GPUs, done once, by someone else. This is the whole
+point of the model existing.
+
+FINE-TUNING: minutes to hours on one GPU, a few thousand labelled examples, 2-4
+epochs.
+
+INFERENCE: BERT-base is 110M parameters; BERT-large is 340M. Attention is
+quadratic in sequence length, so latency at 512 tokens is roughly four times
+latency at 256.
+
+THE #1 MISTAKE: expecting BERT to generate text. It is an encoder trained to fill
+blanks; generation needs a causal decoder.
+
+THE #2 MISTAKE: using raw [CLS] as a sentence embedding for similarity. Mean
+pooling usually beats it, and a contrastively fine-tuned model (Sentence-BERT)
+beats both.
+
+THE #3 MISTAKE: ignoring the 512-token limit. Longer inputs are silently truncated
+by most tokenisers, so the model never sees the end of the document.
+
+THE #4 MISTAKE: capturing the label after replacing the token in the masking code.
+The model then learns to predict [MASK].
+
+THE #5 MISTAKE: fine-tuning too long or with too high a learning rate.
+Catastrophic forgetting destroys exactly the general knowledge you were paying
+for. 2e-5 and a few epochs.
+
+THE #6 MISTAKE: forgetting the attention mask, so the model attends to padding.
+
+THE #7 MISTAKE: believing every component of a famous paper was load-bearing. NSP
+was one of BERT's two headline objectives and RoBERTa showed removing it improved
+results.
+
+THE #8 MISTAKE: reaching for a general checkpoint on specialised text.
+Domain-specific pretraining usually matters more than size.
+
+THE TAKEAWAY: BERT is an ENCODER trained to fill in blanks, which is what makes
+bidirectional context possible - you cannot simply let a next-word model see
+ahead, because then the answer is in the input; measured on a corpus where the
+disambiguating word always follows the target, left-only context scored 0.488
+(chance) at every distance while bidirectional scored 1.000, and doubling the left
+window changed nothing, which is the argument for changing the OBJECTIVE rather
+than scaling the model - at the cost of a training signal from only 15% of tokens
+and a 512-token limit that is simply where attention's quadratic became
+unaffordable.""",
+]
+
+_EX_P1AO["Encoder-decoder (seq2seq)"] = [
+    """1. THE GOAL - turning one sequence into a DIFFERENT sequence.
+
+Translation, summarisation, question answering, speech to text, code generation.
+The input is a sequence, the output is a sequence, and crucially they are not the
+same length and the words do not line up one to one.
+
+That rules out anything that maps position i to position i. You need a structure
+that reads the whole input, forms some understanding of it, and then produces
+output tokens one at a time until it decides to stop.
+
+THE ENCODER-DECODER SHAPE: an ENCODER reads the input and produces a
+representation. A DECODER generates the output one token at a time, consulting
+that representation and everything it has already produced.
+
+THE ORIGINAL VERSION SQUEEZED THE ENTIRE INPUT INTO ONE FIXED-SIZE VECTOR, and
+that decision is the whole story of this entry. It works for short inputs, it
+degrades badly as inputs get longer, and the measurement in section 4 shows the
+degradation is governed by a single ratio - which is exactly why attention had to
+be invented, and why it could not have been avoided by simply using a bigger
+vector.""",
+
+    """2. THE INTUITION - the bottleneck, and why a bigger vector does not fix it.
+
+In the 2014 design, the encoder reads the input and its final hidden state - one
+vector, typically 512 or 1024 numbers - is handed to the decoder. Everything the
+decoder will ever know about the input has to fit in that vector.
+
+For "the cat sat" that is plenty. For a 40-word sentence it is not, and the
+failure is graded rather than sudden: translations of long sentences drift, drop
+clauses, and repeat themselves.
+
+THE OBVIOUS FIX IS A BIGGER VECTOR, AND THE MEASUREMENT SAYS IT DOES NOT WORK.
+Encoding a sequence of symbols into a fixed vector and then trying to recover each
+position, accuracy against a 20-symbol vocabulary (chance = 0.050):
+
+    dim   len2    len4    len8    len16   len32   len64
+    ----------------------------------------------------
+     16   0.863   0.560   0.348   0.219   0.151   0.111
+     32   0.973   0.834   0.557   0.346   0.221   0.155
+     64   1.000   0.961   0.802   0.559   0.351   0.225
+    128   1.000   1.000   0.970   0.812   0.560   0.353
+
+READ THE DIAGONALS. Every cell where dim/length equals 4 reads 0.556 to 0.560.
+Every cell where the ratio is 2 reads 0.346 to 0.353. Every cell at ratio 8 reads
+0.802 to 0.863.
+
+ACCURACY IS A FUNCTION OF THE RATIO, NOT OF EITHER NUMBER ALONE. Doubling the
+vector buys you exactly one doubling of input length. To keep quality constant as
+inputs grow, the vector must grow LINEARLY with the input - at which point you are
+storing one vector's worth of capacity per token, which is precisely what
+attention does, without the compression.
+
+THAT IS THE ARGUMENT FOR ATTENTION, and the measurement is what turns it from a
+plausible story into a stated quantity.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ENCODER - reads the input sequence and produces representations of it.
+
+DECODER - generates the output one token at a time. It is AUTOREGRESSIVE: each
+token it produces becomes part of its input for the next step.
+
+CONTEXT VECTOR - in the original design, the single vector summarising the input.
+The bottleneck.
+
+ATTENTION - instead of one summary vector, keep one vector per input position and
+let the decoder compute a weighted combination at each output step, with weights
+that depend on what it is currently generating.
+
+CROSS-ATTENTION - the decoder attending to the ENCODER's outputs. This is the
+thing that replaced the context vector.
+
+SELF-ATTENTION - a sequence attending to itself. What both stacks use internally.
+
+TEACHER FORCING - during training, feed the decoder the TRUE previous token rather
+than its own prediction. Trains much faster, and creates EXPOSURE BIAS: at
+inference the model is fed its own output, which it never practised on, so one
+early mistake compounds.
+
+GREEDY DECODING - take the highest-probability token at each step. BEAM SEARCH -
+keep the k best partial sequences.
+
+START and END TOKENS - the decoder needs something to begin with and a way to say
+it has finished. Without an end token, generation does not terminate.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the bottleneck is a ratio, not a size.
+
+The naive reading of "fixed-size bottleneck" is that there is some length beyond
+which it breaks. The measurement says otherwise: there is no threshold, there is a
+RATIO, and the degradation is smooth and predictable.
+
+    ratio (dim / length)     recovery accuracy
+    -------------------------------------------
+         8                        ~0.82
+         4                        ~0.56
+         2                        ~0.35
+         1                        ~0.22
+       0.5                        ~0.15
+
+Each halving of the ratio costs roughly a third of the remaining accuracy, and it
+does so identically whether you got there by lengthening the input or shrinking
+the vector. A 512-dimension vector on a 64-token sentence is in the same regime as
+a 128-dimension vector on a 16-token one.
+
+WHICH MEANS THE COST OF KEEPING QUALITY CONSTANT IS LINEAR IN INPUT LENGTH. And
+one vector per token IS attention:
+
+    seq len   bottleneck floats   attention floats   ratio
+    ---------------------------------------------------------
+        10                  512              5,120      10x
+       100                  512             51,200     100x
+     1,000                  512            512,000   1,000x
+
+SO ATTENTION IS NOT A CLEVER TRICK BOLTED ON - IT IS WHAT YOU GET WHEN YOU ACCEPT
+THAT THE STORAGE MUST SCALE WITH THE INPUT. The trade it makes is memory (and a
+quadratic attention cost) in exchange for not throwing information away.
+
+TWO OTHER TRAPS IN THIS ARCHITECTURE:
+
+EXPOSURE BIAS. Training feeds the decoder the correct previous token; inference
+feeds it its own. A model that has never been fed its own mistakes has no practice
+at recovering from them, which is why seq2seq outputs sometimes derail completely
+after one bad token.
+
+NO END TOKEN, NO TERMINATION. The decoder generates until it emits an end token or
+hits a length cap. Forgetting the end token in training data produces a model that
+generates until the cap, every time.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: map input position i to output position i. Fails immediately - lengths
+differ and word order differs between languages.
+
+UPGRADE 1: RNN encoder-decoder with a single context vector (2014). The idea that
+made neural translation possible, and the measurement above is its ceiling.
+
+UPGRADE 2: ATTENTION (Bahdanau 2015). Keep every encoder state; let the decoder
+compute a fresh weighted combination at each step. This removed the bottleneck and
+produced the biggest single quality jump in the field's history. It also gives
+INTERPRETABILITY nearly for free - the attention weights show which input words
+each output word looked at, and for translation they line up with word alignment.
+
+UPGRADE 3: TRANSFORMERS (2017) - remove the recurrence entirely and use attention
+for everything. The encoder self-attends, the decoder self-attends causally and
+cross-attends to the encoder. THE POINT IS PARALLELISM: an RNN must process tokens
+in order, a transformer processes them all at once, which is what made training on
+enormous corpora practical.
+
+UPGRADE 4: pretraining. T5 and BART are encoder-decoder transformers pretrained on
+denoising objectives and then fine-tuned - the same economic argument as BERT.
+
+UPGRADE 5: DECODER-ONLY models. GPT-style models do sequence-to-sequence by
+concatenating input and output into one stream. Simpler, and it works well enough
+that it has become the dominant design - though encoder-decoder remains stronger
+per parameter on tasks with a clear input/output split, like translation.
+
+UPGRADE 6: better decoding - beam search, length normalisation, nucleus sampling.
+The model gives a distribution; how you turn it into a sequence is a separate
+decision with a large effect on output quality.""",
+
+    """6. HOW IT WORKS - the loop, step by step.
+
+STEP 1 - TOKENISE the input, add a start-of-sequence marker, and pad the batch to
+a common length with a mask so padding is ignored.
+
+STEP 2 - ENCODE. Run the encoder over the whole input at once, producing one
+representation per input token. In the original design you would keep only the
+last; in a modern one you keep all of them.
+
+STEP 3 - INITIALISE THE DECODER with a start token.
+
+STEP 4 - FOR EACH OUTPUT STEP: self-attend over what has been generated so far
+(causally masked, so the model cannot see its own future), cross-attend over the
+encoder outputs, produce a distribution over the vocabulary, and pick a token.
+
+STEP 5 - APPEND the chosen token and repeat until an end token or a length cap.
+
+STEP 6 - DURING TRAINING, use teacher forcing: feed the TRUE previous tokens, so
+all output positions can be computed in parallel rather than sequentially. This is
+why training is fast and inference is not.
+
+STEP 7 - AT INFERENCE, use beam search if quality matters more than latency, and
+cache the decoder's past keys and values so each new token costs one step rather
+than a re-run of the whole prefix.
+
+STEP 8 - CHECK TERMINATION. Length caps, repetition penalties, and an actual end
+token in the training data.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+An interpreter listens to a speech in French and then delivers it in English.
+
+The first design: listen to the whole speech, write ONE note to yourself, then
+put the speech away and deliver the English version from that note alone. For a
+sentence, fine. For a five-minute speech, the note cannot hold it, and you start
+paraphrasing, dropping clauses and repeating yourself.
+
+The obvious response is a bigger note. Measured, that does not solve it: doubling
+the note's size bought exactly a doubling of the speech length you could handle,
+and no more. Keeping quality fixed as the speech gets longer means the note has to
+grow in proportion - at which point you have not written a note, you have written
+down the whole speech.
+
+Which is the second design, and it is what actually happened. Keep the transcript
+in front of you. As you produce each English word, glance back at whichever French
+words are relevant to it right now - a different few for each word you say.
+
+That is attention, and two things follow from it. Nothing is discarded, so long
+inputs stop degrading. And you can SEE which source words the interpreter looked
+at for each output word - the notes become an explanation, which the single
+summary never was.
+
+The price is that you now need the whole transcript in front of you rather than
+one note, and cross-referencing every output word against every input word is a
+lot of glancing. Both of those costs are real and both were worth paying.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # THE 2014 BOTTLENECK VERSION
+    context = encoder(source)[-1]            # ONE vector. Everything else discarded.
+    h = context
+    out = [SOS]
+    while out[-1] != EOS and len(out) < MAX:
+        h = decoder_step(h, out[-1])         # the decoder never sees `source` again
+        out.append(argmax(vocab_head(h)))
+
+    # WITH ATTENTION
+    enc = encoder(source)                    # ALL positions kept: [len_src, dim]
+    out = [SOS]
+    while out[-1] != EOS and len(out) < MAX:
+        q = decoder_state(out)                       # what am I generating NOW
+        w = softmax(q @ enc.T / sqrt(dim))           # relevance of each SOURCE token
+        c = w @ enc                                  # a FRESH context, per step
+        out.append(argmax(vocab_head(concat(q, c))))
+
+LINE BY LINE:
+ - `encoder(source)[-1]` versus `encoder(source)` is the entire architectural
+   change. One line, and it is the difference the measurement quantifies.
+ - `w = softmax(q @ enc.T / sqrt(dim))` - recomputed at EVERY output step, because
+   the relevant source words differ for each output word. A single context vector
+   cannot do that by construction; it is fixed before decoding begins.
+ - `/ sqrt(dim)` - without it the dot products grow with dimension, the softmax
+   saturates, and the gradients vanish. A one-symbol detail that stops the whole
+   thing training.
+ - `out[-1] != EOS and len(out) < MAX` - BOTH conditions. The end token is the
+   model's decision; the cap is the engineer's insurance, and models that repeat
+   forever are why it exists.
+ - not shown, and it matters: during TRAINING the loop does not exist. Teacher
+   forcing supplies the true previous tokens so every position is computed in
+   parallel - which is why training is fast and generation is inherently
+   sequential.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THE BOTTLENECK EXPERIMENT: encode a sequence of symbols into `dim` numbers, then
+try to recover each position. Vocabulary of 20, so chance is 0.050. This measures
+the CAPACITY of the compression, not a trained model - which is the point, because
+no amount of training creates capacity that is not there.
+
+    dim   len2    len4    len8    len16   len32   len64
+    ----------------------------------------------------
+     16   0.863   0.560   0.348   0.219   0.151   0.111
+     32   0.973   0.834   0.557   0.346   0.221   0.155
+     64   1.000   0.961   0.802   0.559   0.351   0.225
+    128   1.000   1.000   0.970   0.812   0.560   0.353
+
+TRACE THE RATIO-4 CELLS: (16, len4) = 0.560. (32, len8) = 0.557. (64, len16) =
+0.559. (128, len32) = 0.560. FOUR DIFFERENT VECTOR SIZES AND FOUR DIFFERENT INPUT
+LENGTHS, AGREEING TO THREE DECIMAL PLACES.
+
+Trace ratio 2: 0.348, 0.346, 0.351, 0.353. Ratio 8: 0.863, 0.834, 0.802, 0.812.
+
+So the quantity that governs quality is dim divided by length. A translation model
+with a 512-dimension context vector is at ratio 8 for a 64-token sentence and
+ratio 2 for a 256-token one - and the table says that is the difference between
+roughly 82% and roughly 35% of the input surviving.
+
+NOW THE COST OF THE FIX. To hold the ratio constant as length grows, dim must grow
+with length - which means total storage grows as length squared if you keep one
+context vector, or linearly if you keep one vector per token and stop compressing:
+
+    seq len    one context vector    one vector per token
+    ---------------------------------------------------------
+        10                     512                   5,120
+       100                     512                  51,200
+     1,000                     512                 512,000
+
+ATTENTION CHOOSES THE RIGHT-HAND COLUMN. It is a thousand times more memory at a
+thousand tokens, and it is the only option that does not lose information as the
+input grows. The subsequent decade of work on efficient attention is an attempt to
+reduce that constant without going back to the left-hand column.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TRAINING: parallel across output positions thanks to teacher forcing, so a
+transformer encoder-decoder trains far faster than an RNN one of the same size.
+
+INFERENCE: inherently SEQUENTIAL - token t+1 needs token t. This is why generation
+latency scales with output length and why KV caching, speculative decoding and
+batching exist.
+
+MEMORY: attention keeps one vector per input token and compares every output
+position with every input position. Measured, that is 1,000x the bottleneck's
+storage at 1,000 tokens.
+
+THE #1 MISTAKE: believing a bigger context vector fixes the bottleneck. Measured:
+doubling the vector buys exactly one doubling of length, so the required size
+grows linearly with the input and you have reinvented attention with extra steps.
+
+THE #2 MISTAKE: ignoring exposure bias. Teacher forcing means the model has never
+been fed its own mistakes, so one early error can derail the rest of the output.
+
+THE #3 MISTAKE: no end token in the training data, or no length cap at inference.
+Generation that does not terminate.
+
+THE #4 MISTAKE: forgetting the padding mask, so the model attends to padding
+tokens and quality degrades for reasons that do not appear anywhere in the loss.
+
+THE #5 MISTAKE: omitting the `/ sqrt(dim)` scaling in attention. Saturated
+softmax, vanishing gradients, and a model that will not train.
+
+THE #6 MISTAKE: greedy decoding when quality matters. Beam search with length
+normalisation is usually a clear improvement for translation-shaped tasks.
+
+THE #7 MISTAKE: not caching decoder keys and values at inference, so each new
+token re-runs the entire prefix and generation is quadratic in output length.
+
+THE #8 MISTAKE: assuming decoder-only has made this obsolete. For tasks with a
+clear input/output split, encoder-decoder is still stronger per parameter, and T5
+and BART remain competitive at a fraction of the size.
+
+THE TAKEAWAY: an encoder reads the whole input and a decoder generates the output
+one token at a time, and the original design squeezed the input into ONE fixed
+vector - a bottleneck whose severity is governed, measured, by the RATIO of vector
+size to input length (0.56 accuracy at ratio 4, whether that is 32 dims over 8
+tokens or 128 over 32), which means a bigger vector buys only a proportionally
+longer input and keeping quality constant requires storage linear in the input;
+that is exactly what attention does by keeping one vector per token and computing
+a fresh weighted context at every output step, trading a thousandfold memory
+increase at a thousand tokens for not discarding information at all.""",
+]
+
 
 
 
