@@ -21116,3 +21116,529 @@ someone changes the size — so use `Math.floorMod` for anything that will be an
 and `floorMod` together as a pair, test oddness with `!= 0`, and compute midpoints as
 `low + (high - low) / 2`.""",
 ]
+
+
+DEEP["Calling a static method through a null reference works"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — a null that is never dereferenced
+
+    Thread t = null;
+    t.sleep(1000);        // ← no NullPointerException. It sleeps for a second.
+
+    `sleep` IS A STATIC METHOD ON `Thread`. Calling a static method never touches the object, so the
+    reference is never dereferenced, so `null` does not matter. The compiler resolved which method to
+    call from the DECLARED TYPE of the expression — `Thread` — before the program ran, and emitted an
+    instruction that carries no receiver at all.
+
+    THE SAME IS TRUE OF STATIC FIELDS: `t.MAX_PRIORITY` reads `Thread.MAX_PRIORITY` with `t` null.
+
+WHY JAVA ALLOWS THE SYNTAX AT ALL: it was permitted in Java 1.0 for uniformity — `obj.member` for every
+kind of member — and it has been regarded as a mistake ever since. EVERY MAJOR IDE AND LINTER WARNS ON
+IT, under names like "static member accessed via instance reference", and it is one of very few
+language features whose entire modern usage is "turn on the warning that forbids it".
+
+    IT IS ALSO GENUINELY DANGEROUS, AND `Thread.sleep` IS THE PROOF. `someOtherThread.sleep(1000)` reads
+    as "make that thread sleep". IT DOES NOT. It sleeps the CURRENT thread, because `sleep` is static and
+    always acts on whoever is executing it. The syntax says one thing and the semantics say another, and
+    the compiler is silent.
+
+AND THE REFERENCE IS STILL EVALUATED, WHICH IS THE DETAIL PEOPLE MISS:
+
+    getThread().sleep(1000);
+
+    `getThread()` IS CALLED. Its side effects happen, it can throw, and then its result is DISCARDED. The
+    expression is evaluated for its effects and never used — so an expensive lookup, a database call, or
+    an exception all still occur.
+
+THE EVERYDAY VERSION: asking "what is the head office's opening time?" while pointing at an empty desk.
+The desk being empty is irrelevant — the question was always about head office, and pointing was only
+ever a bad habit. But if you had to walk across the building to point at that desk, you still made the
+walk.
+
+TERMS AS THEY APPEAR:
+- STATIC MEMBER: belongs to the CLASS, not to an instance.
+- `invokestatic`: the bytecode for a static call. It takes no receiver.
+- HIDING: what a subclass does to a static method with the same signature. NOT overriding.""",
+
+"""2. THE INTUITION — the compiler picks the target, the runtime never looks at the object
+
+EVERY METHOD CALL IS TWO DECISIONS: THE COMPILER PICKS THE SIGNATURE, AND THE JVM PICKS THE BODY. For a
+static call, THE SECOND DECISION DOES NOT EXIST.
+
+    An INSTANCE call compiles to `invokevirtual`, which needs a receiver on the stack, loads the object's
+    class pointer, and dispatches. A null receiver fails at that load — that is where the
+    `NullPointerException` comes from.
+    A STATIC call compiles to `invokestatic`, which names the class and method DIRECTLY. There is no
+    receiver operand. NOTHING IS EVER LOADED FROM THE OBJECT, so there is nothing to be null.
+
+    SO THE ABSENCE OF AN EXCEPTION IS NOT A SPECIAL CASE OR A LENIENCY. IT IS THE ONLY POSSIBLE
+    BEHAVIOUR, given that the instruction has no receiver.
+
+WHICH CLASS IS CHOSEN? THE DECLARED TYPE OF THE EXPRESSION, NOT THE RUNTIME OBJECT. That is the same rule
+that makes static methods HIDDEN rather than OVERRIDDEN:
+
+    Animal a = new Dog();
+    a.describe();          // calls Animal.describe(), even though the object is a Dog
+
+    A subclass declaring the same static signature does not override anything — it HIDES the
+    superclass's version, and which one runs is fixed at compile time from the declared type. THE SAME
+    MECHANISM PRODUCES BOTH SURPRISES: no dispatch means the declared type decides, and no dispatch means
+    null is harmless.
+
+AND THE THIRD CONSEQUENCE OF "NO DISPATCH": FIELDS BEHAVE THE SAME WAY. Fields are never polymorphic
+either, so `a.name` reads the declared type's field, and `t.MAX_PRIORITY` on a null `Thread` reads the
+class's static field. THE UNIFYING STATEMENT IS THAT DYNAMIC DISPATCH APPLIES TO INSTANCE METHODS AND
+NOTHING ELSE.
+
+NOW THE PART THAT MAKES THIS MORE THAN TRIVIA — `Thread.sleep`:
+
+    Thread worker = startWorker();
+    worker.sleep(5000);         // reads as "pause the worker for 5 seconds"
+                                // ACTUALLY sleeps the CALLING thread
+
+    THE READER'S INTERPRETATION AND THE ACTUAL BEHAVIOUR ARE COMPLETELY DIFFERENT, and both compile. This
+    is why the warning exists and why it is worth treating as an error rather than a hint: the syntax
+    invites a false reading of what the code does, in a domain — concurrency — where false readings are
+    expensive.
+
+    `Thread` IS FULL OF THIS TRAP: `sleep`, `currentThread`, `yield`, `onSpinWait` and `holdsLock` are all
+    static and all sound like they act on an instance.
+
+THE EXPRESSION IS STILL EVALUATED, which is specified explicitly: for a call of the form
+`Primary.Identifier`, the `Primary` expression is evaluated, and IF THE METHOD IS STATIC THE RESULT IS
+DISCARDED. So side effects, exceptions and cost all still happen — which occasionally makes removing the
+bad syntax a behaviour change, if the expression was doing something.""",
+
+"""3. THE MECHANISM — the four invoke instructions, and what a static access compiles to
+
+    Foo f = null;
+    f.staticMethod();
+
+    COMPILES TO:
+        aconst_null      push null
+        astore_1         store into f
+        pop  (or nothing — the reference is simply not loaded)
+        invokestatic  Foo.staticMethod()V
+        ^^^^^^^^^^^^ NAMES THE CLASS DIRECTLY. No receiver operand exists in the instruction.
+
+    Compare `f.instanceMethod()`:
+        aload_1          push f      ← null
+        invokevirtual Foo.instanceMethod()V
+        ^^^^^^^^^^^^^ needs the receiver, loads its class pointer → NullPointerException
+
+    THE ENTIRE DIFFERENCE IS ONE INSTRUCTION, and one of them has a receiver operand.
+
+THE FOUR RELEVANT INVOKE INSTRUCTIONS, since knowing which one a call becomes tells you exactly what can
+happen:
+
+    invokestatic      static methods. NO receiver, NO dispatch, resolved at compile time.
+    invokespecial     constructors, `private` methods, `super.x()`. A receiver, but NO dispatch — the
+                      named method runs, which is why `super.toString()` cannot be intercepted.
+    invokevirtual     ordinary instance methods on a class. Receiver + dispatch through the method table.
+    invokeinterface   instance methods through an interface reference. Receiver + dispatch.
+
+    ONLY THE LAST TWO CAN THROW A NULLPOINTEREXCEPTION FROM THE RECEIVER, and only they are polymorphic.
+    Those two facts are the same fact.
+
+STATIC FIELD ACCESS THROUGH AN INSTANCE compiles to `getstatic`, which likewise names the class and has
+no receiver. So `f.STATIC_FIELD` with `f` null reads the class's field without complaint.
+
+    AND A `static final` PRIMITIVE OR STRING CONSTANT does not even trigger class initialisation, because
+    its value was inlined into the caller's class file at compile time. `f.MAX_VALUE` on a null `Integer`
+    reads a literal that is already in your own class.
+
+WHAT TRIGGERS CLASS INITIALISATION, since the question naturally follows: calling a static METHOD does
+(the class must be initialised before its code runs), and reading a NON-CONSTANT static field does.
+Reading a compile-time constant does not. So `f.staticMethod()` on a null reference will run `Foo`'s
+`<clinit>` if it has not run — the null is irrelevant to that too.
+
+THE EVALUATION RULE, spelled out because it is the part that is easy to get wrong: for a method
+invocation of the form `Primary.Identifier(args)`, the specification says the `Primary` expression IS
+EVALUATED, and if the resolved method is static, THE RESULT IS DISCARDED. Consequences:
+
+    `getFoo().staticMethod()` calls `getFoo()`.
+    If `getFoo()` throws, the exception propagates — the static call never happens.
+    If `getFoo()` is expensive, you pay for it.
+    SO "IT IS EQUIVALENT TO `Foo.staticMethod()`" IS ALMOST TRUE AND NOT QUITE, and a mechanical
+    refactoring that deletes the expression can change behaviour.
+
+`null` CAST TO A TYPE is a related and legitimate use of a typed null: `f((String) null)` disambiguates
+an overload by giving the argument a static type. THAT IS THE SAME PRINCIPLE USED DELIBERATELY — the
+compiler reads declared types, and a cast is how you tell it which one you mean.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `nullRef.staticMethod()` WORKS. `invokestatic` has no receiver, so there is nothing to
+dereference.
+
+CASE 2 — `nullRef.STATIC_FIELD` WORKS. `getstatic` likewise names the class.
+
+CASE 3 — `someThread.sleep(1000)` SLEEPS THE CALLING THREAD. The single most dangerous instance: the
+syntax reads as "pause that thread" and the semantics are the opposite.
+
+CASE 4 — `Thread` IS FULL OF THEM. `sleep`, `currentThread`, `yield`, `onSpinWait`, `holdsLock` are all
+static and all sound instance-shaped.
+
+CASE 5 — THE PRIMARY EXPRESSION IS STILL EVALUATED. `getFoo().staticMethod()` calls `getFoo()`, which can
+throw, cost, or have side effects — and its result is then discarded.
+
+CASE 6 — REFACTORING `expr.staticMethod()` TO `Foo.staticMethod()` CAN CHANGE BEHAVIOUR, if `expr` was
+doing something. Rare, and worth a glance before a mechanical sweep.
+
+CASE 7 — STATIC METHODS ARE HIDDEN, NOT OVERRIDDEN. `Animal a = new Dog(); a.describe();` runs
+`Animal.describe()`. Same root cause: no dispatch, so the declared type decides.
+
+CASE 8 — `@Override` ON A STATIC METHOD IS A COMPILE ERROR, correctly — there is nothing to override.
+
+CASE 9 — MOCKING FRAMEWORKS STRUGGLE WITH STATICS. `invokestatic` names the class directly, so there is
+no instance to substitute. Mockito needed `mockStatic` and a bytecode agent; the older answer was "wrap
+it in an instance method".
+
+CASE 10 — A STATIC CALL STILL TRIGGERS CLASS INITIALISATION. If `Foo`'s `<clinit>` throws, you get
+`ExceptionInInitializerError` from a line whose receiver was null — which reads as impossible until you
+know it never used the receiver.
+
+CASE 11 — A COMPILE-TIME CONSTANT DOES NOT TRIGGER INITIALISATION. `f.MAX_VALUE` reads a literal already
+inlined into your own class file.
+
+CASE 12 — AN INSTANCE METHOD THROUGH NULL THROWS, and on Java 14+ the HELPFUL NullPointerException names
+the variable and the method, which makes the contrast between the two cases obvious in the message
+itself.
+
+CASE 13 — `((Foo) null).staticMethod()` ALSO WORKS, and is occasionally seen in generated code. The cast
+supplies the static type; nothing is dereferenced.
+
+CASE 14 — A STATIC METHOD CALLED ON A GENERIC TYPE VARIABLE — `T.staticMethod()` — DOES NOT COMPILE, and
+cannot, because erasure leaves no `T` at runtime and the compiler has no single class to name.""",
+
+"""5. THE ALTERNATIVES — call statics on the class, and design so it does not arise
+
+CALL STATIC MEMBERS ON THE CLASS. `Thread.sleep(1000)`, `Integer.parseInt(s)`, `Math.max(a, b)`. It is
+one word longer and it says what happens.
+
+TURN ON THE INSPECTION AND MAKE IT AN ERROR:
+    IntelliJ — "Static member accessed via instance reference"
+    Eclipse — "Non-static access to static member"
+    Checkstyle — the equivalent rule; ErrorProne — `StaticQualifiedUsingExpression`
+    THIS IS A BUG CLASS A TOOL REMOVES COMPLETELY, and there is no legitimate use to preserve. Set it to
+    error rather than warning.
+
+STATIC IMPORTS when the class name is noise and the method name is unambiguous: `import static
+java.lang.Math.max;` then `max(a, b)`. USE SPARINGLY — a bare `max` or, worse, a bare `of` or `assertThat`
+is only readable when the reader knows the import list. Effective Java's advice is to use them only when
+the resulting code is clearly clearer.
+
+DESIGN AWAY FROM STATICS WHERE THEY HURT:
+    STATIC METHODS ARE NOT POLYMORPHIC AND NOT EASILY MOCKABLE, so a static dependency is a hard-coded
+    one. `System.currentTimeMillis()` sprinkled through business logic makes time untestable; injecting a
+    `Clock` makes it a parameter.
+    A `Clock`, a `Random` with an injected seed, and an interface for anything that talks to the outside
+    world all convert "unmockable static" into "ordinary dependency".
+    STATIC UTILITY CLASSES ARE FINE for pure functions — `Math`, `Objects`, `Collections`. The problem is
+    statics with STATE or with I/O, not statics as such.
+
+FOR THREADING SPECIFICALLY:
+    `Thread.sleep(...)` on the class, always, so nobody reads it as acting on another thread.
+    To pause ANOTHER thread you cannot simply sleep it — `Thread.suspend` is deprecated and unsafe. You
+    signal it: a `volatile` flag it checks, a `CountDownLatch`, a `Semaphore`, or interruption plus a
+    cooperative check. THE FACT THAT `worker.sleep(...)` LOOKS LIKE IT SOLVES THIS IS EXACTLY WHY THE
+    SYNTAX IS DANGEROUS.
+    `TimeUnit.SECONDS.sleep(5)` reads better than `Thread.sleep(5000)` and is an INSTANCE method on an
+    enum constant — so it is not an example of this trap at all, and it makes the unit explicit.
+
+WHAT TO SAY: "It works because a static call compiles to `invokestatic`, which names the class directly
+and has no receiver operand — the reference is never dereferenced, so null is irrelevant. The target is
+chosen from the DECLARED type at compile time, which is the same reason static methods are hidden rather
+than overridden. And it matters because `someThread.sleep(1000)` reads as 'pause that thread' and
+actually sleeps the CALLING one — so I would turn the IDE inspection into an error and always qualify
+statics with the class."
+
+""",
+
+"""6. HOW TO HANDLE IT — numbered steps
+
+STEP 1 — ALWAYS CALL STATIC MEMBERS ON THE CLASS. `Thread.sleep`, not `t.sleep`. One extra word, and the
+code says what it does.
+
+STEP 2 — TURN THE IDE INSPECTION INTO AN ERROR. There is no legitimate use of the instance form to
+preserve.
+
+STEP 3 — ADD THE BUILD-LEVEL RULE TOO — Checkstyle or ErrorProne's `StaticQualifiedUsingExpression` — so
+it cannot reach main.
+
+STEP 4 — BE ESPECIALLY CAREFUL WITH `Thread`. `sleep`, `yield`, `currentThread`, `onSpinWait` and
+`holdsLock` are all static and all sound instance-shaped.
+
+STEP 5 — REMEMBER THE PRIMARY EXPRESSION IS STILL EVALUATED. Before mechanically rewriting
+`expr.staticMethod()`, check whether `expr` does anything.
+
+STEP 6 — REMEMBER STATIC METHODS ARE HIDDEN, NOT OVERRIDDEN. The declared type decides, so a subclass
+"override" is not one.
+
+STEP 7 — DO NOT TRY TO PAUSE ANOTHER THREAD BY SLEEPING IT. Signal it: a volatile flag, a latch, a
+semaphore, or interruption with a cooperative check.
+
+STEP 8 — USE `TimeUnit.SECONDS.sleep(5)` FOR READABILITY. It is an instance method on an enum constant,
+so it is not this trap, and the unit is explicit.
+
+STEP 9 — USE STATIC IMPORTS SPARINGLY. A bare `max` is fine; a bare `of` or `assertThat` is only readable
+if you know the imports.
+
+STEP 10 — INJECT A `Clock` RATHER THAN CALLING `System.currentTimeMillis()` IN BUSINESS LOGIC. Static
+dependencies are hard-coded ones.
+
+STEP 11 — RESERVE STATICS FOR PURE FUNCTIONS. `Math`, `Objects`, `Collections` are fine; statics with
+state or I/O are the problem.
+
+STEP 12 — IF A STATIC CALL PRODUCES `ExceptionInInitializerError`, LOOK AT THE CLASS'S STATIC
+INITIALISER. The null receiver is a red herring; the call still initialises the class.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'`Thread t = null; t.sleep(1000);` doesn't throw. It sleeps for a second.
+
+The reason is that `sleep` is STATIC, and a static call compiles to `invokestatic`, which names the class
+and the method directly and has NO receiver operand. Nothing is ever loaded from the object, so there's
+nothing to be null. It's not a special case or a leniency — it's the only possible behaviour given the
+instruction.
+
+The contrast makes it clear: an instance call compiles to `invokevirtual`, which needs a receiver on the
+stack, loads the object's class pointer, and dispatches. That load is where the NullPointerException
+comes from. The entire difference is one instruction, and one of them has a receiver.
+
+Which class gets called is decided from the DECLARED TYPE of the expression, at compile time. And that's
+the same rule that makes static methods HIDDEN rather than OVERRIDDEN — `Animal a = new Dog();
+a.describe();` runs Animal.describe. No dispatch means the declared type decides, and no dispatch means
+null is harmless. Same mechanism, two surprises.
+
+Java allowed the syntax in 1.0 for uniformity — `obj.member` for every kind of member — and it's been
+regarded as a mistake ever since. Every IDE and linter warns on it, and it's one of very few language
+features whose entire modern usage is "turn on the rule that forbids it".
+
+And it's genuinely dangerous, with `Thread.sleep` as the proof. `worker.sleep(5000)` reads as "pause the
+worker for five seconds". It does NOT. It sleeps the CALLING thread, because sleep is static and always
+acts on whoever executes it. The syntax invites a false reading, in a domain where false readings are
+expensive — and Thread is full of these: sleep, currentThread, yield, onSpinWait, holdsLock, all static
+and all sounding instance-shaped.
+
+One detail people miss: the reference IS still evaluated. For a call of the form Primary.Identifier, the
+spec says the Primary expression is evaluated and, if the method is static, the RESULT IS DISCARDED. So
+`getThread().sleep(1000)` calls getThread() — its side effects happen, it can throw, you pay for it — and
+then the result is thrown away. Which means "it's equivalent to Thread.sleep" is almost true and not
+quite, and a mechanical refactoring that deletes the expression can change behaviour.
+
+Two related consequences. Static FIELDS work the same way — `t.MAX_PRIORITY` on a null reference compiles
+to getstatic and reads the class's field. And a static call still triggers CLASS INITIALISATION, so if
+the class's static initialiser throws you get an ExceptionInInitializerError from a line whose receiver
+was null, which reads as impossible until you know the receiver was never used.
+
+Practically: always qualify statics with the class, and set the IDE inspection to error rather than
+warning, because there's no legitimate use to preserve.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── THE HEADLINE ────────────────────────────────────────────────────
+    Thread t = null;
+    t.sleep(1000);          // ← no NullPointerException. It sleeps for a second.
+    t.MAX_PRIORITY;         // ← also fine. Reads Thread.MAX_PRIORITY.
+
+    // ── WHY: ONE INSTRUCTION, AND IT HAS NO RECEIVER ────────────────────
+    // f.staticMethod():
+    //   invokestatic  Foo.staticMethod()V
+    //   ^^^^^^^^^^^^ NAMES THE CLASS DIRECTLY. There is no receiver operand in the
+    //                instruction, so there is nothing to dereference.
+    //
+    // f.instanceMethod():
+    //   aload_1                     ← push f (null)
+    //   invokevirtual Foo.instanceMethod()V
+    //   ^^^^^^^^^^^^^ needs the receiver, loads its class pointer → NPE
+    //
+    // THE ENTIRE DIFFERENCE IS ONE INSTRUCTION.
+
+    // ── THE FOUR INVOKE INSTRUCTIONS ────────────────────────────────────
+    // invokestatic     no receiver, no dispatch, resolved at compile time
+    // invokespecial    receiver, NO dispatch (constructors, private, super.x())
+    // invokevirtual    receiver + dispatch
+    // invokeinterface  receiver + dispatch, through an interface
+    // ONLY THE LAST TWO CAN NPE ON THE RECEIVER, and only they are polymorphic.
+    // Those are the same fact.
+
+    // ── THE DANGEROUS ONE ───────────────────────────────────────────────
+    Thread worker = startWorker();
+    worker.sleep(5000);
+    // ^ READS AS "pause the worker for five seconds".
+    //   ACTUALLY sleeps the CALLING thread. `sleep` is static and always acts on
+    //   whoever executes it. Both compile. The compiler is silent.
+    Thread.sleep(5000);                 // ← say what happens
+    TimeUnit.SECONDS.sleep(5);          // ← better still: an INSTANCE method on an
+    //                                     enum constant, so not this trap at all,
+    //                                     and the unit is explicit
+    // Thread is full of them: sleep, currentThread, yield, onSpinWait, holdsLock.
+
+    // ── THE SAME RULE, THE OTHER SURPRISE ───────────────────────────────
+    class Animal { static String describe() { return "an animal"; } }
+    class Dog extends Animal { static String describe() { return "a dog"; } }
+    Animal a = new Dog();
+    a.describe();           // "an animal" — the DECLARED type decides
+    // Static methods are HIDDEN, not overridden. No dispatch means the declared type
+    // decides, AND no dispatch means null is harmless. One mechanism, two surprises.
+    // @Override on a static method is a compile error, correctly.
+
+    // ── THE REFERENCE IS STILL EVALUATED ────────────────────────────────
+    getThread().sleep(1000);
+    // ^ getThread() IS CALLED. Its side effects happen. It can throw. You pay for it.
+    //   THEN ITS RESULT IS DISCARDED.
+    // JLS: for Primary.Identifier(args), the Primary is evaluated, and if the method
+    // is static the result is discarded.
+    // → "it is equivalent to Thread.sleep(1000)" is ALMOST true. A mechanical
+    //   refactoring that deletes the expression can change behaviour.
+
+    // ── AND IT STILL INITIALISES THE CLASS ──────────────────────────────
+    Registry r = null;
+    r.lookup("x");          // runs Registry's <clinit> if it has not run yet
+    // → if that static initialiser throws, you get ExceptionInInitializerError from a
+    //   line whose receiver was NULL, which reads as impossible until you know the
+    //   receiver was never used.
+    Integer i = null;
+    int max = i.MAX_VALUE;  // does NOT initialise Integer — MAX_VALUE is a
+    //                         COMPILE-TIME CONSTANT, already inlined into YOUR class
+
+    // ── AND WHAT DOES NOT WORK ──────────────────────────────────────────
+    ((Foo) null).staticMethod();   // ✓ works. The cast supplies the static type.
+    // <T> void f() { T.staticMethod(); }
+    //                ^ DOES NOT COMPILE, and cannot: erasure leaves no T at runtime,
+    //                  so the compiler has no single class to name in invokestatic.
+
+    // ── THE FIX IS A SETTING ────────────────────────────────────────────
+    // IntelliJ:   "Static member accessed via instance reference"      → ERROR
+    // Eclipse:    "Non-static access to static member"                 → ERROR
+    // ErrorProne: StaticQualifiedUsingExpression
+    // There is no legitimate use of the instance form to preserve.""",
+
+"""9. THE TRACE — the same syntax, four different outcomes
+
+TRACE 1 — WHAT EACH CALL COMPILES TO, with `Foo f = null`:
+
+    source                  bytecode              receiver used?   result
+    ---------------------------------------------------------------------------------
+    f.staticMethod()         invokestatic          NO               runs fine
+    f.STATIC_FIELD           getstatic             NO               reads fine
+    f.CONSTANT               (inlined literal)     NO               no class init even
+    f.instanceMethod()       aload + invokevirtual YES              NullPointerException
+    f.instanceField          aload + getfield      YES              NullPointerException
+    ---------------------------------------------------------------------------------
+    THE FIRST THREE ROWS AND THE LAST TWO ARE THE SAME SYNTAX. What decides is whether the compiled
+    instruction has a receiver operand — which is decided by whether the member is static, which is
+    decided at compile time from the DECLARED type.
+
+TRACE 2 — `worker.sleep(5000)`, step by step:
+
+    step  what happens
+    ---------------------------------------------------------------------------------
+    1     the compiler resolves `sleep` against the DECLARED type `Thread`
+    2     `Thread.sleep(long)` is STATIC → emit invokestatic
+    3     `worker` is evaluated... and DISCARDED. It is never pushed as a receiver.
+    4     at runtime, `Thread.sleep` pauses THE THREAD THAT CALLED IT
+    5     `worker` continues running, entirely unaffected
+    ---------------------------------------------------------------------------------
+    THE VARIABLE NAMED IN THE SOURCE HAS NO EFFECT ON WHAT HAPPENS. A reader sees "worker.sleep" and
+    concludes the worker was paused; the calling thread paused instead, and the worker never noticed.
+    In a concurrency bug hunt, that is an expensive false lead — and nothing in the compiler, the
+    runtime, or the stack trace contradicts the misreading.
+
+TRACE 3 — THE EXPRESSION THAT STILL RUNS:
+
+    code                                     what actually happens
+    ---------------------------------------------------------------------------------
+    expensiveLookup().staticMethod()          expensiveLookup() RUNS, costs what it
+                                              costs, and its result is DISCARDED
+    throwingCall().staticMethod()             throwingCall() throws → the exception
+                                              propagates → the static method NEVER RUNS
+    list.get(0).staticMethod()                get(0) runs and can throw
+                                              IndexOutOfBoundsException on an empty
+                                              list — from a line calling a static
+                                              method
+    ---------------------------------------------------------------------------------
+    ROW 3 IS THE ONE THAT LOOKS IMPOSSIBLE IN A STACK TRACE: an `IndexOutOfBoundsException` originating
+    at a static method call. The static call is irrelevant; the INDEX was the problem, and the receiver
+    expression was evaluated before anything static happened.
+
+    IT ALSO MEANS A MECHANICAL SWEEP THAT REWRITES `expr.staticMethod()` TO `Foo.staticMethod()` IS NOT
+    ALWAYS BEHAVIOUR-PRESERVING. Almost always, and not always.
+
+TRACE 4 — CLASS INITIALISATION THROUGH A NULL RECEIVER:
+
+    Registry r = null;   r.lookup("x");      where Registry's <clinit> reads a config
+                                             file that is missing
+    step  what happens                            what the operator sees
+    ---------------------------------------------------------------------------------
+    1     invokestatic Registry.lookup             —
+    2     Registry has not been initialised →
+          run <clinit>
+    3     <clinit> throws FileNotFoundException     ExceptionInInitializerError
+                                                    Caused by: FileNotFoundException
+    4     every LATER use of Registry               NoClassDefFoundError: Could not
+                                                    initialize class Registry
+    ---------------------------------------------------------------------------------
+    A NULL RECEIVER, AND THE EXCEPTION HAS NOTHING TO DO WITH NULL. The static call still initialises the
+    class, exactly as `Registry.lookup("x")` would have. Anyone reading step 3 and seeing a null variable
+    on that line will spend time on the wrong hypothesis.
+
+WHAT PRODUCED WHAT:
+    invokestatic HAVING NO RECEIVER   produced trace 1's split, and therefore the whole phenomenon.
+    COMPILE-TIME RESOLUTION FROM THE  produced trace 2's false reading, and also produced static-method
+    DECLARED TYPE                     HIDING.
+    THE PRIMARY BEING EVALUATED       produced trace 3 — the part that makes "it is equivalent" not
+    AND DISCARDED                     quite true.
+    STATIC CALLS TRIGGERING <clinit>  produced trace 4's misleading stack trace.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    A static call compiles to `invokestatic`, which names the class and has NO receiver operand.
+    A static field access through an instance compiles to `getstatic`. Same reasoning.
+    A compile-time constant is inlined and does not even trigger class initialisation.
+    The target is resolved from the DECLARED type at compile time — which is also why static methods
+    are HIDDEN rather than overridden.
+    The `Primary` expression IS evaluated and its result discarded, so side effects and exceptions still
+    occur.
+    A static call DOES trigger `<clinit>` if the class is not yet initialised.
+
+THE #1 MISTAKE: `someThread.sleep(n)`. It sleeps the CALLING thread, and the syntax says otherwise.
+
+THE #2 MISTAKE: reading the absence of a NullPointerException as leniency. It is the only possible
+behaviour for an instruction with no receiver.
+
+THE #3 MISTAKE: expecting a subclass to "override" a static method. It HIDES it, and the declared type
+decides.
+
+THE #4 MISTAKE: assuming `expr.staticMethod()` never evaluates `expr`. It does, and discards the result.
+
+THE #5 MISTAKE: a mechanical refactor that deletes the receiver expression. Almost always safe, and not
+always.
+
+THE #6 MISTAKE: being confused by `ExceptionInInitializerError` from a line with a null receiver. The
+static call still initialises the class.
+
+THE #7 MISTAKE: leaving the IDE inspection as a warning. There is no legitimate use of the instance
+form.
+
+THE #8 MISTAKE: trying to pause another thread. Signal it — a flag, a latch, a semaphore, or
+interruption. `Thread.suspend` is deprecated and unsafe.
+
+THE #9 MISTAKE: heavy static dependencies in business logic. Statics are not mockable and not
+polymorphic; inject a `Clock` instead of calling `System.currentTimeMillis()`.
+
+THE #10 MISTAKE: over-using static imports. A bare `max` is fine; a bare `of` is not.
+
+THE #11 MISTAKE: expecting `T.staticMethod()` on a type variable to compile. Erasure leaves no `T` to
+name.
+
+ONE-SENTENCE TAKEAWAY: calling a static member through a null reference works because the call compiles
+to `invokestatic` (or `getstatic`), which names the CLASS directly and has no receiver operand — so
+nothing is ever dereferenced, and the target was chosen at compile time from the DECLARED type, which is
+the very same reason static methods are HIDDEN rather than overridden; the receiver expression is still
+EVALUATED and then discarded, so its side effects and exceptions still happen and a static call still
+runs the class's `<clinit>`; and the reason this matters rather than being trivia is
+`someThread.sleep(1000)`, which reads as "pause that thread" and actually sleeps the CALLING one — so
+qualify every static with its class and set the IDE inspection to error, because there is no legitimate
+use of the instance form to preserve.""",
+]
