@@ -251311,6 +251311,937 @@ is applied FIRST and reshapes the distribution the nucleus then reads, the same 
 kept 1 token at T = 0.2 and 21 at T = 2.0, which is why the two parameters multiply and
 must not be tuned separately.""",
 ]
+_EX_P1AO["R-squared (coefficient of determination)"] = [
+    """1. THE GOAL - how much better is this model than just guessing the average?
+
+Suppose you are predicting house prices. The laziest possible model ignores every
+feature and always answers with the AVERAGE price of the houses you have seen. That
+model is not useless - it is right on average - and it is the bar any real model has
+to clear.
+
+R-SQUARED measures exactly that: how much of the variation your model removed,
+compared with the lazy average-guesser.
+
+  R^2 = 1 - (how wrong your model is) / (how wrong the average-guesser is)
+
+Read the two extremes:
+
+  R^2 = 1.0   your model is exactly right on every point
+  R^2 = 0.0   your model is no better than always answering the average
+  R^2 < 0     YOUR MODEL IS WORSE THAN ANSWERING THE AVERAGE
+
+That last line is the one people do not expect, and it is not a rounding artefact.
+Measured, on five true values 10, 12, 11, 13, 9:
+
+  always answer 11.0 (the mean)     R^2 =   0.0000
+  always answer 20.0                R^2 = -40.5000
+  a decent model                    R^2 =   0.9810
+
+There is no floor. R^2 is not a percentage and it is not bounded below by zero.""",
+
+    """2. THE INTUITION - it is a RATIO OF TWO ERRORS, and the denominator is fixed.
+
+Write the two quantities out.
+
+  SS_res  = sum over points of (actual - predicted)^2      <- your model's error
+  SS_tot  = sum over points of (actual - mean)^2           <- the average-guesser's error
+
+  R^2 = 1 - SS_res / SS_tot
+
+SS_tot does not depend on your model at all. It is a property of the DATA - how spread
+out the true answers are. So R^2 is your error measured in units of "how hard this
+dataset was in the first place".
+
+Two consequences follow immediately, and both surprise people.
+
+FIRST: the same absolute error gives a different R^2 on different datasets. Predicting
+house prices to within 20,000 dollars is superb in a neighbourhood where prices range
+over 2 million and worthless in one where they range over 30,000. Same model, same
+error, opposite verdicts. R^2 IS NOT COMPARABLE ACROSS DATASETS.
+
+SECOND: if every true value is identical, SS_tot is zero and R^2 is undefined - a
+division by zero, not a score of 1.0. A constant target has no variance to explain.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+VARIANCE - how spread out a set of numbers is. Take each number, subtract the average,
+square it, add them all up. Big number means the values are scattered; small means they
+cluster near the average. The squaring is what makes it care about big misses far more
+than small ones.
+
+RESIDUAL - one prediction's error: actual minus predicted. If the true price was 300k
+and you said 280k, the residual is +20k. The residual is what is LEFT OVER after the
+model has said its piece, which is where the name comes from.
+
+SS_res, THE RESIDUAL SUM OF SQUARES - add up every residual squared. This is your
+model's total error.
+
+SS_tot, THE TOTAL SUM OF SQUARES - the same sum, but for the average-guesser: add up
+(actual - mean) squared for every point. This is the total variation in the data.
+
+EXPLAINED VARIANCE - SS_tot minus SS_res. The part of the spread your model accounted
+for. R^2 is this divided by SS_tot, which is the same thing as 1 - SS_res/SS_tot.
+
+COEFFICIENT OF DETERMINATION - the formal name for R^2. Nobody says it out loud.
+
+ADJUSTED R^2 - R^2 with a penalty for the number of features, defined in section 5.
+
+OVERFITTING - a model that has learned the noise in the training data rather than the
+pattern, so it looks excellent on data it has seen and poor on data it has not.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+R^2 NEVER GOES DOWN WHEN YOU ADD A FEATURE. Not "rarely". Never - not even when the
+feature is pure random noise with no relationship to anything.
+
+MEASURED. 40 data points, y genuinely driven by one feature x. Then columns of pure
+Gaussian noise were added one at a time, and the model refitted:
+
+  features in the model     R^2       adjusted R^2
+  --------------------------------------------------
+        1                 0.7948         0.7894
+        4                 0.8013         0.7786
+        7                 0.8057         0.7632
+       10                 0.8205         0.7585
+       13                 0.8211         0.7316
+       16                 0.8413         0.7309
+
+FIFTEEN COLUMNS OF NOISE RAISED R^2 FROM 0.79 TO 0.84. Every one of those columns was
+random. None of them could possibly help predict anything.
+
+WHY IT HAPPENS: least squares picks whatever weights minimise the error. Setting a
+useless feature's weight to exactly zero is always available, so the error can never
+get worse - and with finite data there is always some accidental correlation the fit
+can exploit, so it almost always gets very slightly better.
+
+WHICH MEANS R^2 CANNOT BE USED TO CHOOSE BETWEEN MODELS WITH DIFFERENT NUMBERS OF
+FEATURES. Adjusted R^2, in the right-hand column, goes the other way - 0.7894 down to
+0.7309 - because it charges you for each feature. It is the column that told the truth.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION: report R^2 on the data you trained on. This is the version that
+gives you 0.84 from fifteen noise columns. It answers "how well did I fit what I have
+already seen", which is not the question anyone cares about.
+
+UPGRADE 1 - ADJUSTED R^2. Charge for each feature:
+
+  adjusted R^2 = 1 - (1 - R^2) * (n - 1) / (n - p - 1)
+
+where n is the number of data points and p the number of features. As p rises the
+correction gets harsher. Adjusted R^2 CAN fall, and in the measurement above it fell
+steadily, which is exactly the behaviour you want. Use it whenever you are comparing
+models of different sizes on the same dataset.
+
+UPGRADE 2 - R^2 ON HELD-OUT DATA. Fit on one part, score on a part the model has never
+seen. This is the honest number, and it is where negative R^2 shows up in practice: an
+overfitted model really can do worse than the mean on new data.
+
+UPGRADE 3 - LOOK AT THE RESIDUALS. Plot actual minus predicted against the prediction.
+A good fit gives a shapeless cloud. Any pattern - a curve, a fan, a cluster - means
+there is structure the model missed, and no single number will tell you that.
+
+UPGRADE 4 - REPORT AN ERROR IN THE UNITS OF THE PROBLEM ALONGSIDE. RMSE in dollars or
+minutes is what a stakeholder can act on. R^2 is unitless and cannot be compared across
+datasets; RMSE cannot be compared either but at least it MEANS something on its own.""",
+
+    """6. HOW TO USE IT PROPERLY - numbered steps.
+
+STEP 1. Split the data before you look at anything. Fit on the training part only.
+
+STEP 2. Compute R^2 on the HELD-OUT part. This is the number you report. Training R^2
+is a diagnostic, not a result.
+
+STEP 3. Compare it against the right baseline. R^2 already compares against the mean.
+If a trivial rule beats the mean on your problem - last week's value, the group average,
+the previous reading - compute R^2 against THAT baseline instead by substituting it for
+the mean in SS_tot. Beating the mean is a very low bar in time series.
+
+STEP 4. If you are choosing between models with different feature counts, use adjusted
+R^2, or compare held-out R^2, or both. Never training R^2.
+
+STEP 5. Plot the residuals. Confirm there is no pattern left.
+
+STEP 6. Check for a single influential point. Anscombe set IV below is one point doing
+all the work; deleting it changes everything and R^2 says nothing about that.
+
+STEP 7. Report R^2 WITH an error in real units, and with n. R^2 = 0.9 on twelve points
+is noise; on twelve thousand it is a result.
+
+STEP 8. Never state it as "the model explains 84 percent of the outcome" to a
+non-technical audience. It explains 84 percent of the VARIANCE, in this sample, under
+this model, and the word "explains" carries a causal implication that is not there.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A school wants to know how good a new test is at predicting final exam scores.
+
+Before doing anything clever, they ask the laziest question available: if we just
+guessed that everyone will score the class average, how wrong would we be? They add up
+how far each student actually landed from that average. Call it the size of the problem.
+
+Then they use the new test to make a real prediction for each student, and add up how
+far each of THOSE predictions landed from the truth. Call it the size of what is left.
+
+R-squared is one minus the second divided by the first. If the leftovers are tiny
+compared with the original problem, the test explained most of it, and R-squared is
+close to one. If the leftovers are just as big as the original problem, the test told
+them nothing they did not already know from the average, and R-squared is zero.
+
+And if their prediction is somehow WORSE than just saying the average - say the test is
+scored backwards - the leftovers are bigger than the original problem, and the number
+goes negative. There is no rule stopping it. Measured, a prediction of 20 against true
+values averaging 11 scored minus 40.5.
+
+The trap is the next step. Somebody suggests also feeding in shoe size, birth month and
+the number of letters in the student's name. R-squared goes UP. It always does. Not
+because those things predict anything, but because with a limited number of students
+there is always some coincidence to lean on. Anyone judging the model by that rising
+number is watching it get worse and calling it progress.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def r2(y, pred):
+      m = sum(y) / len(y)
+      ss_res = sum((a - b) ** 2 for a, b in zip(y, pred))
+      ss_tot = sum((a - m) ** 2 for a in y)
+      return 1 - ss_res / ss_tot
+
+LINE BY LINE.
+
+  def r2(y, pred):
+Two lists, the same length: the true values and the model's predictions, in the same
+order. Nothing about the model itself is needed - R^2 is computed from the outputs, so
+it works for any model at all.
+
+  m = sum(y) / len(y)
+The mean of the TRUE values. Note carefully: the mean of y, not of pred. This is the
+lazy baseline the whole score is measured against, and it comes from the data.
+
+  ss_res = sum((a - b) ** 2 for a, b in zip(y, pred))
+zip pairs each true value with its prediction. a - b is the residual. Squaring makes
+every term positive, so errors cannot cancel out, and makes big misses count far more
+than small ones - a residual of 10 contributes a hundred times what a residual of 1
+does. Summed, this is the model's total error.
+
+  ss_tot = sum((a - m) ** 2 for a in y)
+The identical calculation for the baseline: how wrong the mean would have been. This
+depends only on y, which is why it is the fixed denominator.
+
+  return 1 - ss_res / ss_tot
+The ratio is "what fraction of the original problem is left". One minus it is "what
+fraction was removed". If ss_res exceeds ss_tot the ratio is above 1 and the result is
+negative, which is the whole mechanism behind a negative R^2 - no special case needed.
+
+THE MISSING GUARD. If every value in y is identical, ss_tot is 0 and this raises
+ZeroDivisionError. That is arguably correct behaviour - R^2 is genuinely undefined
+there - but production code should catch it and say so rather than crash.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the negative case, computed fully.
+
+  y     = [10, 12, 11, 13, 9]      mean = 55/5 = 11.0
+  pred  = [20, 20, 20, 20, 20]
+
+  ss_tot: (10-11)^2 + (12-11)^2 + (11-11)^2 + (13-11)^2 + (9-11)^2
+        =    1      +    1      +    0      +    4      +    4      = 10
+
+  ss_res: (10-20)^2 + (12-20)^2 + (11-20)^2 + (13-20)^2 + (9-20)^2
+        =   100     +    64     +    81     +    49     +   121     = 415
+
+  R^2 = 1 - 415/10 = 1 - 41.5 = -40.5
+
+Confirmed by the measurement: -40.5000. The ratio is 41.5, so the model's error is
+41.5 TIMES the baseline's. Nothing bounds that ratio, so nothing bounds R^2 below.
+
+TRACE B - a perfect relationship scoring zero.
+
+y = x^2 exactly, no noise at all, for x from -4 to 4. Fit a straight line.
+
+  Measured: R^2 = 0.0000
+
+The relationship is deterministic and exact - given x you know y with certainty - and
+R^2 says the model is worth precisely nothing. It is right. The best straight line
+through a symmetric parabola is a horizontal one at the mean, so the linear model IS
+the average-guesser. R^2 SCORES THE MODEL, NOT THE RELATIONSHIP.
+
+TRACE C - four datasets, one R^2 (Anscombe's quartet).
+
+  set      slope   intercept    R^2
+  ------------------------------------
+  I        0.500     3.000     0.6665
+  II       0.500     3.001     0.6662
+  III      0.500     3.002     0.6663
+  IV       0.500     3.002     0.6667
+
+Same slope to three decimals, same R^2 to three decimals. Set I is an ordinary noisy
+line. Set II is a clean parabola - a linear model is simply the wrong shape. Set III is
+a perfect line plus one outlier. Set IV is eleven points at x = 8 and one at x = 19,
+so a SINGLE POINT determines the entire slope.
+
+Four completely different situations, three of which mean "do not ship this", and the
+summary statistic is identical in all four. This is the argument for plotting the
+residuals rather than reading a number.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Computing R^2 is one pass over the predictions: O(n) time, O(1) memory. It is
+free. The cost is never computational - it is that a single number invites a decision it
+cannot support.
+
+THE #1 MISTAKE: comparing R^2 across different datasets. R^2 is your error divided by
+the spread of THAT dataset. A model with R^2 = 0.95 on easy data can be predicting worse
+in real units than one with R^2 = 0.60 on hard data. The denominators are different, so
+the ratios are not comparable. Compare errors in real units, or compare models on the
+same data.
+
+THE #2 MISTAKE: using training R^2 to choose a model. Measured, fifteen columns of pure
+noise took it from 0.7948 to 0.8413. It cannot go down, so it cannot select.
+
+THE #3 MISTAKE: reading "R^2 = 0.84" as "84 percent of the outcome is caused by these
+features". It is 84 percent of the VARIANCE, in this sample, under this model, and it
+is a statement about correlation.
+
+THE #4 MISTAKE: assuming R^2 is between 0 and 1 and treating a negative value as a bug.
+It is a real result and it means the model is worse than the mean - almost always
+overfitting revealed on held-out data.
+
+THE #5 MISTAKE: reporting R^2 with no n. On few points a high R^2 is expected by chance.
+
+THE #6 MISTAKE: trusting a high R^2 without looking at the residuals. Anscombe: four
+datasets, one R^2 of 0.666, one of them driven entirely by a single point.
+
+THE #7 MISTAKE: computing R^2 for a classifier. It is a regression score; for
+classification you want accuracy, AUC, precision and recall.
+
+THE TAKEAWAY: R^2 is your model's squared error divided by the squared error of always
+guessing the mean, subtracted from one - so it says how much better than the laziest
+possible model you are, in units of how hard the dataset was, which means it does not
+compare across datasets, is undefined when the target is constant, and goes negative
+without limit when the model is worse than the mean (measured, -40.5); and because
+least squares can always zero out a useless feature's weight, it never falls when a
+feature is added - fifteen columns of pure noise raised it from 0.7948 to 0.8413 while
+adjusted R^2 correctly fell from 0.7894 to 0.7309, which is why model selection needs
+the adjusted form or a held-out split, and why Anscombe's four wildly different
+datasets all scoring 0.666 is the reason to plot the residuals rather than read the
+number.""",
+]
+
+_EX_P1AO["Recall@k"] = [
+    """1. THE GOAL - of everything I should have found, how much made the shortlist?
+
+A search box returns ten results. A recommender shows six rows. A retrieval step feeds
+twenty documents to a language model. In every case something produces a RANKED list
+and something downstream only ever looks at the top few.
+
+RECALL@K asks the one question that matters for that top few:
+
+  recall@k = (how many of the relevant items appear in the top k) / (how many relevant
+             items exist in total)
+
+If a user's query has 8 genuinely relevant documents and 6 of them are in your top 20,
+recall@20 = 6/8 = 0.75.
+
+WHY THIS AND NOT ACCURACY. On a search corpus of a million documents, a query has maybe
+ten relevant ones. A system that returns NOTHING is 99.999 percent accurate. Accuracy is
+meaningless when the thing you are looking for is rare, and in retrieval it always is.
+
+WHY RECALL AND NOT PRECISION, AT THE RETRIEVAL STAGE. If a relevant document is not in
+the top k, nothing downstream can recover it - not a reranker, not the language model,
+not the user. Recall@k is the CEILING on everything that happens next. Precision can be
+repaired later; missing recall cannot.""",
+
+    """2. THE INTUITION - it only ever goes up with k, and it stops at 1.0.
+
+Extend the shortlist and you can only find more relevant items, never fewer. So
+recall@k is monotonically non-decreasing in k, and at k = the size of the corpus it is
+exactly 1.0 for EVERY system, including a random one.
+
+MEASURED. 1000 items, 20 of them relevant, a decent but imperfect ranker:
+
+    k     hits   recall@k   precision@k
+  ---------------------------------------
+      1      1     0.050      1.0000
+      5      2     0.100      0.4000
+     10      2     0.100      0.2000
+     20      4     0.200      0.2000
+     50      6     0.300      0.1200
+    100     13     0.650      0.1300
+    200     16     0.800      0.0800
+    500     19     0.950      0.0380
+   1000     20     1.000      0.0200
+
+READ THE TWO COLUMNS AGAINST EACH OTHER. Recall climbs 0.05 to 1.00. Precision collapses
+1.00 to 0.02 - which is 20/1000, the base rate, exactly what a random ranker would give.
+
+THAT IS THE WHOLE TRADE-OFF. A bigger shortlist finds more and dilutes more. The value
+of k is a decision about what the next stage can afford to read, not a property of the
+model, and "recall" quoted without a k is not a number at all.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RELEVANT ITEM - an item that genuinely should be returned for this query. Somebody has
+to decide this: a human judgement, a click log, or a known answer key. The whole metric
+rests on that ground truth being right.
+
+k - how many items you look at, counting from the top of the ranking. A choice you make,
+usually set by what the next stage can handle: how many results fit on a screen, how many
+documents fit in a language model's context.
+
+RECALL@K - relevant items found in the top k, divided by the TOTAL number of relevant
+items. Denominator is the ground truth, not k.
+
+PRECISION@K - relevant items found in the top k, divided by k. Denominator is what you
+showed. Different question: of what I displayed, how much was any good?
+
+RANKING - the ordered list your system produces. Recall@k depends only on the SET of the
+top k, not the order within it. Two systems that return the same twenty documents in
+different orders have identical recall@20.
+
+CANDIDATE GENERATION or RETRIEVAL - the first stage, which narrows a million items to a
+few hundred. Judged on recall@k.
+
+RERANKING - the second stage, which orders those few hundred carefully. Judged on
+precision and on order-sensitive metrics.
+
+MRR and NDCG - metrics that DO care about order within the top k. Section 5.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+RECALL@K HAS A HARD CEILING OF k/R WHEN THERE ARE MORE RELEVANT ITEMS THAN SLOTS. If 100
+items are relevant and you only show 10, the best conceivable system scores 0.10. Not
+"about 0.1" - exactly 0.10, and no model, no budget and no amount of tuning can raise it.
+
+MEASURED, with a PERFECT ranker that puts every relevant item first:
+
+  R = 5   relevant items,  k = 10   ->  recall@k = 1.000
+  R = 5   relevant items,  k = 20   ->  recall@k = 1.000
+  R = 20  relevant items,  k = 10   ->  recall@k = 0.500
+  R = 20  relevant items,  k = 20   ->  recall@k = 1.000
+  R = 100 relevant items,  k = 10   ->  recall@k = 0.100
+  R = 100 relevant items,  k = 20   ->  recall@k = 0.200
+
+WHY THIS MATTERS IN PRACTICE. Average recall@10 across a query set mixes queries with
+two relevant documents and queries with two hundred. The first kind can score 1.0; the
+second kind is capped at 0.05. A model that gets better at the broad queries cannot
+show it in the average, and a shift in the MIX of query types moves the metric with no
+model change at all.
+
+THE OTHER HALF OF THE TRAP: recall@k with k at or near the corpus size is 1.0 for
+everything. A team quoting "recall of 0.98" without naming k may be quoting a number
+that a random shuffle also achieves.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION: one k, averaged over all queries, reported as "recall". This hides
+the ceiling above, hides the variation between queries, and is unreadable without k.
+
+UPGRADE 1 - REPORT SEVERAL k. Recall@1, @10, @100 tells you a different story from any
+one of them. In the measurement, recall went 0.10 at k=10 and 0.65 at k=100: most of the
+relevant items were ranked between 20 and 100, which says the ranker is roughly right
+but not sharp - a very different diagnosis from a flat curve.
+
+UPGRADE 2 - REPORT THE CEILING ALONGSIDE. For each query, k/R when R > k. Then a recall
+of 0.4 against a ceiling of 0.5 reads as excellent instead of poor.
+
+UPGRADE 3 - USE A METRIC THAT SEES ORDER, FOR THE STAGE WHERE ORDER MATTERS.
+  MRR - 1 divided by the rank of the FIRST relevant item, averaged. For "one right
+  answer" tasks.
+  NDCG@k - a graded score that discounts by position, so an item at rank 1 is worth more
+  than the same item at rank 9, and relevance can be a scale rather than yes or no.
+Recall@k treats rank 1 and rank k identically, which is right for retrieval and wrong
+for the final display.
+
+UPGRADE 4 - PICK k FROM THE SYSTEM, NOT FROM HABIT. If the reranker reads 50 candidates,
+recall@50 is your metric; recall@10 measures something nobody uses.
+
+UPGRADE 5 - REPORT THE DISTRIBUTION, NOT ONLY THE MEAN. The fraction of queries with
+recall@k = 0 is the number that predicts complaints. A mean of 0.8 with a tenth of
+queries at zero is a worse product than a uniform 0.7.""",
+
+    """6. HOW TO MEASURE IT PROPERLY - numbered steps.
+
+STEP 1. Fix the ground truth. For each query, the set of relevant item ids. Write down
+where it came from - human labels, clicks, an answer key - because every conclusion
+inherits its biases. Click logs in particular only mark things that were ALREADY shown,
+which systematically hides items your current system misses.
+
+STEP 2. Choose k from the downstream budget: results per page, candidates the reranker
+scores, documents that fit the context window.
+
+STEP 3. For each query, take the top k ids, intersect with the relevant set, divide by
+the SIZE OF THE RELEVANT SET.
+
+STEP 4. Record the per-query ceiling min(1, k/R) so a capped query is visible.
+
+STEP 5. Average across queries - and also report the median, and the share scoring 0.
+
+STEP 6. Report as recall@k with k written down. Never as bare "recall".
+
+STEP 7. Sanity-check against a random baseline: expected recall@k for a random ranker is
+about k/N. If k=100 of N=1000, random scores about 0.10. A system at 0.12 is not working.
+
+STEP 8. If you tune k, tune it on a validation split. Raising k always raises recall,
+so "improving recall" by raising k is not an improvement - it is a change of question.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A library has a million books. A reader asks for everything about Roman bridges. Eight
+books in the building are genuinely about Roman bridges.
+
+The librarian cannot hand over a million books, so she brings a trolley with twenty.
+Recall-at-twenty asks: of the eight books that were actually relevant, how many are on
+the trolley? If six are, that is six out of eight - a score of 0.75.
+
+Notice what the question is NOT. It is not "how many books on the trolley were any
+good" - that is a different question, precision, and it has a different denominator.
+And it is not about the order the books are stacked in; recall-at-twenty is the same
+whether the best book is on top or at the bottom, because the reader will look at all
+twenty.
+
+Now the two traps, both from the same measurement.
+
+Push the trolley size up and the score rises, always. Bring five hundred books and you
+will have caught nearly all eight - measured, 0.95. Bring the whole library and you
+score a perfect 1.0, and so does a librarian who chose at random. A score with no
+trolley size attached means nothing.
+
+And if the reader had asked about Rome in general, with two hundred relevant books,
+then a twenty-book trolley can hold at most twenty of them - one tenth - however
+brilliant the librarian is. Measured: with a hundred relevant items and ten slots, a
+PERFECT selection scores 0.10. Judging her by that number is judging the trolley.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def recall_at_k(ranked_ids, relevant_ids, k):
+      if not relevant_ids:
+          return None
+      top = ranked_ids[:k]
+      hits = sum(1 for i in top if i in relevant_ids)
+      return hits / len(relevant_ids)
+
+LINE BY LINE.
+
+  def recall_at_k(ranked_ids, relevant_ids, k):
+Three inputs. ranked_ids is the system's output, BEST FIRST - the order matters only in
+that it decides which ids land in the first k. relevant_ids should be a SET, not a list;
+the membership test below runs k times and set lookup is O(1) against O(R) for a list.
+
+  if not relevant_ids:
+      return None
+A query with no relevant items has a zero denominator. Returning None rather than 0.0
+matters: averaging a 0.0 in would drag the mean down and make the system look worse for
+a query it could not possibly have got right. Such queries must be excluded, not scored.
+
+  top = ranked_ids[:k]
+Python slicing does not error when the list is shorter than k, it just returns what is
+there. Correct behaviour - if the system returned 8 candidates and k is 10, you scored
+8 - but it also silently hides a broken retriever returning too few. Worth an assertion
+in production.
+
+  hits = sum(1 for i in top if i in relevant_ids)
+The intersection size. Note it counts DISTINCT positions, not distinct ids - if the
+ranked list contains a duplicate, this counts it twice and recall can exceed 1.0.
+Deduplicate the ranking upstream.
+
+  return hits / len(relevant_ids)
+The denominator is the size of the ground truth, NOT k. Divide by k and you have written
+precision@k instead, which is the single most common way this function is got wrong.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the same ranking read at nine values of k. 1000 items, 20 relevant.
+
+  k=1     top 1 contains 1 relevant     recall = 1/20  = 0.050   precision = 1/1  = 1.00
+  k=5     top 5 contains 2              recall = 2/20  = 0.100   precision = 2/5  = 0.40
+  k=10    top 10 contains 2             recall = 2/20  = 0.100   precision = 2/10 = 0.20
+  k=20    top 20 contains 4             recall = 4/20  = 0.200   precision = 4/20 = 0.20
+  k=50    top 50 contains 6             recall = 6/20  = 0.300   precision = 6/50 = 0.12
+  k=100   top 100 contains 13           recall = 13/20 = 0.650   precision = 0.13
+  k=200   top 200 contains 16           recall = 16/20 = 0.800   precision = 0.08
+  k=500   top 500 contains 19           recall = 19/20 = 0.950   precision = 0.038
+  k=1000  top 1000 contains 20          recall = 20/20 = 1.000   precision = 0.020
+
+READ THE JUMP FROM k=50 TO k=100: recall goes 0.30 to 0.65. Seven of the twenty relevant
+items sit between rank 50 and rank 100. If the reranker downstream reads 50 candidates,
+those seven are lost forever, and no amount of reranker quality recovers them. That one
+line is the argument for measuring the retrieval stage on recall and sizing k to it.
+
+READ k=5 AGAINST k=10: recall is 0.100 at both. Doubling the shortlist found nothing
+new - ranks 6 through 10 held no relevant items at all. Recall@k is flat wherever the
+ranking is wrong in a stretch, and the flat sections are where the ranker is failing.
+
+TRACE B - the ceiling, with a PERFECT ranker.
+
+  R=20,  k=10  ->  the top 10 hold 10 of the 20   recall = 10/20 = 0.500
+  R=100, k=10  ->  the top 10 hold 10 of the 100  recall = 10/100 = 0.100
+  R=100, k=20  ->  the top 20 hold 20 of the 100  recall = 20/100 = 0.200
+
+Nothing was ranked wrongly in any of these. Every relevant item that could fit, did.
+The score is min(1, k/R) and it is a property of the QUERY, not the model.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. With relevant_ids as a set, one pass over k items: O(k) time and O(R) memory
+for the set. Across Q queries, O(Q*k). The expense is never here - it is in producing the
+ranking, and in obtaining the ground truth, which is usually human time.
+
+THE #1 MISTAKE: quoting recall without k. Recall@N over the whole corpus is 1.0 for every
+system including a random one, so a large unstated k can make anything look perfect. The
+metric IS the pair.
+
+THE #2 MISTAKE: dividing by k. That is precision@k. Recall divides by the number of
+relevant items that exist.
+
+THE #3 MISTAKE: averaging over queries whose ceilings differ. A query with 200 relevant
+items cannot score above 0.05 at k=10, and mixing it with a two-relevant-item query
+produces a mean that moves when the query MIX changes and the model does not.
+
+THE #4 MISTAKE: scoring queries with no relevant items as 0. They have no denominator.
+Exclude them or the mean measures your test set, not your system.
+
+THE #5 MISTAKE: raising k and reporting the rise as an improvement. Recall@k cannot fall
+when k rises - measured, 0.05 to 1.00 on a fixed ranking - so that is a change of
+question, not a gain.
+
+THE #6 MISTAKE: using recall@k to judge the final displayed ranking. It cannot see order:
+the same twenty documents shuffled score identically. Use MRR or NDCG where order counts.
+
+THE #7 MISTAKE: building ground truth from clicks on the current system. It can only mark
+items that were already shown, so exactly the items your retriever misses are invisible,
+and recall is measured against a set your system chose.
+
+THE TAKEAWAY: recall@k is the fraction of ALL relevant items that made the top k, so its
+denominator is the ground truth and never k, and it is the ceiling on every downstream
+stage because an item outside the top k cannot be recovered by any reranker - which is
+why retrieval is tuned on recall@k and display on order-aware metrics; it rises
+monotonically with k to a guaranteed 1.0 at the corpus size (measured, 0.050 at k=1 to
+1.000 at k=1000 on one fixed ranking, while precision fell to the 0.02 base rate), so a
+recall quoted without its k is not a measurement, and when relevant items outnumber the
+slots it is hard-capped at k/R - measured, a PERFECT ranker scoring 0.100 with 100
+relevant items and 10 slots, which is a fact about the query and not about the model.""",
+]
+
+_EX_P1AO["Silhouette score"] = [
+    """1. THE GOAL - clustering gave me groups, but are they real groups?
+
+k-means always returns clusters. Ask it for four and it gives four, whether the data
+has four groups, one group, or no structure at all. It cannot tell you it found nothing,
+because it has no way to say that.
+
+THE SILHOUETTE SCORE is the usual attempt at an answer. For each point it asks a
+question with an obvious right answer:
+
+  Is this point closer to its OWN cluster-mates than to the nearest OTHER cluster?
+
+  a = the average distance from this point to the other points in its own cluster
+  b = the average distance from this point to the points of the nearest other cluster
+
+  s = (b - a) / max(a, b)
+
+  s near  +1   comfortably inside its own cluster
+  s near   0   sitting on the border between two
+  s near  -1   closer to another cluster than its own - probably mislabelled
+
+The silhouette SCORE for a clustering is the mean of s over every point. It runs from -1
+to +1, and because it needs no ground-truth labels it can be used on data nobody has
+labelled - which is the entire situation clustering is used in.""",
+
+    """2. THE INTUITION - it measures SEPARATION over SPREAD, and that is a specific taste.
+
+Read the formula again as a shape: (nearest other cluster - own cluster) over the larger
+of the two. It rewards clusters that are TIGHT (small a) and FAR APART (large b).
+
+MEASURED, on three well-separated round blobs of 40 points each:
+
+    k     silhouette
+   ------------------
+    2       0.5492
+    3       0.8133      <- the truth
+    4       0.6509
+    5       0.6424
+    6       0.4765
+    7       0.4748
+
+The peak is at k = 3, sharply, and that is the right answer. When the data really is a
+set of round separated blobs, the silhouette finds them.
+
+THAT LAST SENTENCE IS THE WHOLE CAVEAT. "Tight and far apart" is not a definition of a
+cluster, it is one FAMILY of clusters - roughly spherical, roughly equal in size. The
+score is not neutral about what a cluster looks like, and section 4 is what happens when
+your data disagrees with its taste.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CLUSTER - a group the algorithm assigned points to. Nothing more; it carries no promise
+that the group means anything.
+
+COHESION, the a value - for one point, the average distance to the OTHER points in its
+own cluster. Small means it sits among its own kind. A cluster of one point has no other
+points, so a is undefined and s is conventionally set to 0.
+
+SEPARATION, the b value - for one point, the average distance to every point of some
+other cluster, taking the SMALLEST such average over all other clusters. That is the
+nearest rival cluster, and the comparison is against the nearest rival specifically,
+because that is the one that would claim the point.
+
+SILHOUETTE OF A POINT, s - (b - a) / max(a, b). Dividing by the larger of the two forces
+the result into the range -1 to +1 regardless of the units of the data.
+
+SILHOUETTE SCORE - the mean of s over all points. One number for a whole clustering.
+
+k - the number of clusters. Usually the thing you are trying to choose.
+
+CONVEX or SPHERICAL cluster - one shaped roughly like a ball. Its opposite here is an
+elongated, curved or ring-shaped group, which is where the metric fails.
+
+ELBOW METHOD - the older alternative: plot within-cluster error against k and look for a
+bend. Subjective, and it never says "no clusters" either.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two of them, both measured.
+
+FIRST: THE SILHOUETTE ALWAYS NAMES A BEST k, INCLUDING ON DATA WITH NO CLUSTERS.
+
+120 points drawn UNIFORMLY AT RANDOM from a square. No structure whatsoever:
+
+    k     silhouette
+   ------------------
+    2       0.3471
+    3       0.4251      <- the "winner"
+    4       0.4135
+    5       0.3489
+    6       0.3534
+    7       0.3627
+
+It reports k = 3 at 0.4251. There are no clusters. There is no k. The procedure of
+"sweep k, take the argmax" produces an answer on data where every answer is wrong, and
+0.42 is not obviously low enough to raise an alarm. A SILHOUETTE PEAK IS NOT EVIDENCE
+THAT CLUSTERS EXIST.
+
+SECOND: THE TRUE GROUPING CAN SCORE WORSE THAN A WRONG ONE.
+
+Two long parallel bands, 60 points each - clearly two groups to any human eye, but
+elongated rather than round:
+
+  the TRUE two-band labelling      silhouette = 0.1170
+  k-means with k = 2               silhouette = 0.5752
+  k-means with k = 3               silhouette = 0.5051
+  k-means with k = 4               silhouette = 0.4491
+
+THE CORRECT ANSWER SCORED 0.117 AND A WRONG ONE SCORED 0.575 - roughly five times
+better. k-means cut the bands crosswise into compact blobs, and the silhouette preferred
+that, because compact-and-separated is what it rewards. Anyone selecting a clustering by
+maximising the silhouette here would confidently discard the truth.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION: sweep k from 2 to 10, compute the silhouette for each, take the
+argmax, ship it. This is the version that answers k = 3 on uniform noise.
+
+UPGRADE 1 - COMPARE AGAINST A NULL. Generate data with the SAME range and density but no
+structure - uniform, or a shuffle of each column independently - and run the identical
+sweep. If your real data's peak is not clearly above the null's peak, you have not found
+clusters. Measured, the null peaked at 0.4251; a real result needs to beat that, and the
+three-blob data did, at 0.8133. This single step is what separates the two measurements
+in section 4, and it is almost always skipped.
+
+UPGRADE 2 - PLOT THE PER-POINT SILHOUETTES, NOT THE MEAN. Sorted within each cluster,
+this is the classic silhouette PLOT. A mean of 0.5 can be every point at 0.5, or half at
+0.9 and half at 0.1 - the second is one good cluster and one that is not a cluster. The
+mean cannot show that and the plot shows it instantly.
+
+UPGRADE 3 - COUNT THE NEGATIVES. The fraction of points with s < 0 is the fraction the
+clustering itself says are on the wrong side. It is a more honest headline than the mean.
+
+UPGRADE 4 - USE A METRIC THAT MATCHES YOUR SHAPES. If clusters may be elongated or
+curved, use DBSCAN with density-based validation, or Davies-Bouldin, or judge the
+clustering by a downstream task instead. The silhouette encodes an assumption; do not
+use it where the assumption is false.
+
+UPGRADE 5 - IF YOU HAVE ANY LABELS, USE THEM. Adjusted Rand Index or mutual information
+against even a small labelled sample beats any internal metric, because it measures the
+thing you actually care about rather than a proxy for it.""",
+
+    """6. HOW TO USE IT PROPERLY - numbered steps.
+
+STEP 1. Decide the distance first. The silhouette is entirely a function of the distance
+metric, so Euclidean on unscaled features means the feature with the biggest units
+defines every cluster. Scale or standardise before you begin.
+
+STEP 2. Run the clustering for each k in your range, with several random restarts, and
+keep the best by the algorithm's own objective - not by silhouette, which comes later.
+
+STEP 3. Compute the silhouette for each k.
+
+STEP 4. Run the identical sweep on a structure-free null of the same shape and density.
+
+STEP 5. Compare the two curves. Accept a k only where the real curve is clearly above the
+null. If it is not, the honest report is "no cluster structure found", and that IS a
+result.
+
+STEP 6. For the chosen k, plot the per-point silhouettes by cluster. Look for clusters
+that are uniformly thin, and for points below zero.
+
+STEP 7. Sanity-check the shape assumption by eye - two dimensions of PCA is enough to see
+whether the groups are blobs or bands. If they are bands, the metric is the wrong tool
+and step 5 will have been misleading rather than merely weak.
+
+STEP 8. Report the mean, the fraction below zero, the null's peak, and k. The mean alone
+is the number that produced both failures in section 4.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine everyone at a large party has been sorted into groups, and you want to know
+whether the grouping makes sense.
+
+Take one person. Measure the average distance from them to everyone else in their own
+group - how far they have to walk to reach their own people. Then find the nearest OTHER
+group and measure the average distance to the people in it. If their own group is much
+closer than the nearest other group, they are comfortably where they belong. If the
+other group is closer, they have been put with the wrong people. Score everyone that way
+and average it, and you have a number for the whole seating plan.
+
+It works well when the party really does consist of separate huddles standing apart.
+Measured on exactly that, the correct number of huddles scored 0.81 and every other
+guess scored lower.
+
+Now the two ways it lies.
+
+Scatter people at random across the floor with no huddles at all, and run the same
+procedure. It still produces a best answer - three groups, scoring 0.43. There were
+never any groups. The method has no way to say "there is nothing here", so it does not.
+
+And suppose the party is two long queues running side by side. Any human would say two
+groups. But people at opposite ends of the same queue are far apart, so by this scoring
+the queues look terrible - measured 0.12 - while chopping both queues in half crosswise
+and calling each chunk a group scores 0.58. The score prefers a tidy round huddle to a
+true long queue, and it will tell you so with confidence.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def silhouette(points, labels):
+      total = 0.0
+      for i, p in enumerate(points):
+          same = [q for j, q in enumerate(points) if labels[j] == labels[i] and j != i]
+          if not same:
+              continue
+          a = sum(dist(p, q) for q in same) / len(same)
+          b = min(mean_dist_to_cluster(p, c) for c in set(labels) if c != labels[i])
+          total += (b - a) / max(a, b)
+      return total / len(points)
+
+LINE BY LINE.
+
+  for i, p in enumerate(points):
+Every point gets its own score. The index i is needed as well as the point itself,
+because a point must be excluded from its own cohesion calculation by POSITION - two
+identical points at the same coordinates are still two different points.
+
+  same = [q for j, q in enumerate(points) if labels[j] == labels[i] and j != i]
+Cluster-mates, excluding the point itself. That j != i is not cosmetic: including the
+point would add a distance of 0 to the average and shrink a, inflating every score.
+
+  if not same:
+      continue
+A singleton cluster. There is no own-group distance to compute, so a is undefined. The
+convention is s = 0 - neither good nor bad. Note the consequence: k-means with k equal
+to the number of points puts everyone in a singleton and scores 0, not 1.
+
+  a = sum(dist(p, q) for q in same) / len(same)
+Cohesion: mean distance to my own group.
+
+  b = min(mean_dist_to_cluster(p, c) for c in set(labels) if c != labels[i])
+Separation. Note the min: it is the NEAREST other cluster, the one that would claim this
+point. Averaging over all other clusters instead would flatter every clustering, because
+distant irrelevant clusters would pull b up.
+
+  total += (b - a) / max(a, b)
+Dividing by the larger of the two bounds the result in [-1, +1] whatever the units.
+
+  return total / len(points)
+The mean over all points - including the singletons scored 0, which is what makes many
+tiny clusters look mediocre rather than perfect.
+
+THE COST IS IN THAT INNER LOOP: every point measured against every other. O(n^2)
+distances per k, and the sweep multiplies that by the number of k values.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - four points, two obvious pairs, computed fully.
+Points on a line at x = 0, 1, 10, 11. Labels: A A B B.
+
+  point x=0:  own group is {1}, so a = |0-1| = 1
+              other group is {10, 11}, b = (10 + 11)/2 = 10.5
+              s = (10.5 - 1) / 10.5 = 0.9048
+  point x=1:  a = 1,  b = (9 + 10)/2 = 9.5,   s = (9.5-1)/9.5  = 0.8947
+  point x=10: a = 1,  b = (10 + 9)/2 = 9.5,   s = 0.8947
+  point x=11: a = 1,  b = (11 + 10)/2 = 10.5, s = 0.9048
+
+  score = (0.9048 + 0.8947 + 0.8947 + 0.9048)/4 = 0.8997
+
+Now relabel them WRONGLY as A B A B - each point paired with a far one:
+
+  point x=0:  own group is {10}, a = 10;  nearest other is {1, 11}, b = (1+11)/2 = 6
+              s = (6 - 10)/10 = -0.4
+
+Negative, and it should be. The point is closer to the other cluster than its own.
+
+TRACE B - the sweep on three real blobs.
+
+  k=2: 0.5492   two blobs got merged; a is inflated for the merged one
+  k=3: 0.8133   each blob its own cluster
+  k=4: 0.6509   one blob split; the two halves are near each other, so b collapses
+
+The shape of that curve - rise to a peak, then fall - is what "the silhouette found k"
+looks like, and the fall after the peak is caused by b, not a: splitting a real cluster
+creates a very near neighbour.
+
+TRACE C - the same sweep on uniform noise: 0.3471, 0.4251, 0.4135, 0.3489, 0.3534,
+0.3627 for k = 2 to 7. Same rise-and-fall SHAPE, peak at k=3, on data with no clusters.
+The shape of the curve is not evidence either. Only the comparison against this null is.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST. Every point against every other: O(n^2) distance computations for one
+clustering, O(n^2 * d) with d features, and the k-sweep multiplies it again. At 100,000
+points that is 10^10 distances per k - not feasible. Sample a few thousand points and
+compute the silhouette on the sample; the estimate is fine and the cost is not.
+
+THE #1 MISTAKE: treating the best k in a sweep as proof that clusters exist. Measured, a
+uniform random square peaked at k=3 with 0.4251. The procedure ALWAYS returns a winner.
+Without a structure-free null to compare against, the winner means nothing.
+
+THE #2 MISTAKE: using it on elongated, curved or ring-shaped clusters. Measured, the true
+two-band labelling scored 0.1170 while a wrong k-means cut scored 0.5752. The metric
+encodes "compact and round", so where that is false it is not weak, it is inverted.
+
+THE #3 MISTAKE: not scaling the features first. The score is a pure function of distance;
+one feature in dollars and another in years means the dollars decide every cluster.
+
+THE #4 MISTAKE: reading the mean alone. Half the points at 0.9 and half at 0.1 averages
+to the same 0.5 as every point at 0.5, and those are completely different results. Plot
+the per-point values and count the negatives.
+
+THE #5 MISTAKE: comparing silhouettes across different datasets or different distance
+metrics. It is a relative score within one setup.
+
+THE #6 MISTAKE: running it on 100,000 points and waiting. Sample.
+
+THE #7 MISTAKE: forgetting that singleton clusters score 0 by convention, so a clustering
+of many tiny clusters is scored mediocre rather than perfect - useful, but surprising if
+you have not seen it.
+
+THE TAKEAWAY: the silhouette scores each point by how much nearer its own cluster is than
+the nearest rival, (b-a)/max(a,b), so it rewards clusters that are tight and far apart -
+which is a specific taste, not a definition, and where the data shares that taste it is
+excellent, measured 0.8133 at the true k=3 on three round blobs; but it always names a
+best k even on data with no clusters at all - measured 0.4251 at k=3 on a uniform random
+square - so a peak is only evidence when it beats the same sweep run on a structure-free
+null, and where clusters are elongated it does not merely weaken but inverts, measured
+0.1170 for the TRUE two-band labelling against 0.5752 for a wrong crosswise cut.""",
+]
+
 
 
 
