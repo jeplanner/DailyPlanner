@@ -248797,6 +248797,730 @@ method rests on an empirical bet that fine-tuning updates are intrinsically low-
 measured, rank 4 captures 98.2% of a structured matrix and 21.5% of a random one -
 which is also why it adapts style and task shape well and teaches new facts badly.""",
 ]
+_EX_P1AO["Guardrail metric"] = [
+    """1. THE GOAL - noticing when a win on the headline number is a loss for the business.
+
+Every experiment has a PRIMARY metric - the thing you are trying to move.
+Click-through rate, conversion, engagement, revenue per session. A GUARDRAIL METRIC
+is something you are NOT trying to move and would be alarmed to see move: latency,
+error rate, unsubscribe rate, complaint volume, refund rate, session length.
+
+You do not ship on a guardrail. You BLOCK on one.
+
+MEASURED, on a simulated notification change that makes messages more aggressive:
+
+  metric                     control     treatment      change
+  ------------------------------------------------------------
+  click-through rate          0.0321       0.0414       +27.5%
+  unsubscribe rate            0.0022       0.0092      +339.2%
+
+A 27.5% LIFT ON THE PRIMARY METRIC IS AN OVERWHELMING RESULT. Most teams would ship
+it without hesitation, and every dashboard would agree it was the right call.
+
+The unsubscribe rate more than quadrupled, and section 4 follows what that does over
+the following year. The short version: the change stays a win for about six months
+and then becomes an 18.7% loss.""",
+
+    """2. THE INTUITION - the primary metric is a proxy, and proxies can be gamed from
+inside.
+
+Nobody's actual goal is click-through rate. The goal is a business outcome - revenue,
+retention, users who find the product useful - and CTR is a cheap, fast, sensitive
+proxy for it that you can measure in two weeks.
+
+THE PROBLEM WITH ANY PROXY IS THAT IT CAN BE MOVED IN WAYS THAT DO NOT MOVE THE
+THING IT PROXIES FOR, and the easiest such ways are usually the ones an optimisation
+process finds first. Send more notifications, use a more urgent subject line, make
+the button bigger and the dismiss link smaller. All of these raise CTR. Some of them
+raise it by borrowing from the future.
+
+GUARDRAILS ARE THE THINGS THAT WOULD MOVE IF YOU WERE BORROWING. They are chosen by
+asking "if this change were secretly harmful, what would show it?" - and answering
+that question honestly before you see the results.
+
+THE ASYMMETRY IS DELIBERATE AND IS THE WHOLE DESIGN:
+
+  THE PRIMARY METRIC needs to move significantly to justify shipping. You want
+  evidence of a gain.
+  A GUARDRAIL needs only to move ENOUGH TO WORRY YOU to block shipping. You do NOT
+  need statistical significance to be concerned about a 339% increase in
+  unsubscribes; you need it to be confident there is NO harm, which is a much harder
+  claim and one most experiments are not powered for.
+
+THAT IS WHY GUARDRAILS ARE USUALLY EVALUATED WITH A NON-INFERIORITY TEST rather than
+a superiority test - "is it worse by more than X" rather than "is it different" - and
+why the threshold is set in advance.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PRIMARY / NORTH-STAR METRIC - the one the experiment is designed to move. There
+should be exactly one.
+
+GUARDRAIL METRIC - a metric you monitor to catch harm. You do not ship on it; you
+block on it.
+
+COUNTER METRIC - a near-synonym, usually meaning something that moves in the OPPOSITE
+direction when the primary is gamed. Unsubscribes against clicks; complaints against
+engagement.
+
+PROXY METRIC - any short-horizon measurable standing in for a long-horizon outcome.
+CTR for revenue, session length for satisfaction. All primary metrics in a two-week
+experiment are proxies.
+
+NON-INFERIORITY TEST - testing that a metric is not WORSE by more than a chosen
+margin, rather than testing that it is different. The right shape for a guardrail.
+
+NOVELTY EFFECT - a temporary lift because the change is new. Wears off, and it is why
+short experiments overstate.
+
+PRIMACY EFFECT - the opposite: a temporary DROP because users have to relearn
+something. Wears off too, and it is why short experiments can also understate.
+
+DEGRADATION EXPERIMENT - deliberately making the product slightly worse (adding
+latency, for instance) to measure the metric's sensitivity to it. This is how you
+calibrate a guardrail's threshold rather than guessing it.
+
+OVERALL EVALUATION CRITERION (OEC) - a single composite number combining the primary
+and the guardrails with explicit weights. The formal alternative to the
+ship/block split.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the horizon, measured.
+
+The same simulated change, followed forward. Assume three sends a week and that the
+measured per-send unsubscribe rates hold:
+
+  after      subscribers remaining          cumulative clicks per original subscriber
+             control    treatment           control    treatment      difference
+  ---------------------------------------------------------------------------------
+  4 weeks     0.977      0.901                0.38       0.46          +22.9%
+  13 weeks    0.926      0.712                1.19       1.34          +12.7%
+  26 weeks    0.857      0.507                2.30       2.30           +0.1%
+  52 weeks    0.735      0.257                4.26       3.47          -18.7%
+
+READ THE LAST COLUMN DOWNWARDS. The change is a 22.9% win after a month, a 12.7% win
+after a quarter, EXACTLY BREAK-EVEN AT SIX MONTHS, and an 18.7% LOSS after a year.
+
+READ THE SUBSCRIBER COLUMN. The treatment ends the year with 25.7% of its audience
+against the control's 73.5%. It did not merely stop winning - it destroyed the asset
+that generates the clicks.
+
+AND NOW THE POINT ABOUT EXPERIMENT DESIGN: A TWO-WEEK EXPERIMENT MEASURES THE TOP
+ROW. It reports +22.9% with a tight confidence interval, and it is not wrong - that
+is genuinely what happened in two weeks. The crossover is at week 26, which is
+thirteen times longer than the experiment.
+
+SO THE GUARDRAIL IS NOT A SAFETY NET BOLTED ON TO A GOOD MEASUREMENT. IT IS THE ONLY
+PART OF THE MEASUREMENT THAT CAN SEE PAST THE EXPERIMENT'S HORIZON. The unsubscribe
+rate is observable in two weeks and the revenue consequence is not, which is exactly
+why you monitor the leading indicator rather than waiting for the lagging one.
+
+THREE MORE THINGS PEOPLE GET WRONG:
+
+REQUIRING SIGNIFICANCE ON GUARDRAILS. Experiments are powered for the primary metric.
+A guardrail regression that is "not significant" in a two-week test may be very real,
+and the correct response to an alarming point estimate is to investigate rather than
+to ship.
+
+TOO MANY GUARDRAILS. Twenty of them at 95% confidence means roughly one false alarm
+per experiment by chance alone. Choose few, set thresholds in advance, and correct for
+multiplicity if you must have many.
+
+NO THRESHOLD SET IN ADVANCE. Deciding after seeing the numbers what counts as
+"acceptable" is how every regression becomes acceptable.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: one primary metric, ship if it goes up. Measured, that ships a change that
+loses 18.7% within a year.
+
+UPGRADE 1: add guardrails. Latency, error rate, and whatever the primary metric could
+be gamed by borrowing from.
+
+UPGRADE 2: SET THE THRESHOLDS BEFORE THE EXPERIMENT RUNS. "We block if unsubscribes
+rise more than 10% relative" is a decision; "that looks acceptable" after the fact is
+not.
+
+UPGRADE 3: use NON-INFERIORITY tests on guardrails. The question is "is it worse by
+more than the margin", not "is it different".
+
+UPGRADE 4: add LONG-HORIZON metrics where you can - 28-day retention, repeat purchase
+- accepting that they are slow and noisy. They are the closest thing to measuring the
+actual goal.
+
+UPGRADE 5: run a HOLDBACK. Keep a small permanent control that never receives any
+change, so you can measure the cumulative effect of a year of individually-positive
+experiments. THIS IS THE ONLY WAY TO CATCH DEATH BY A THOUSAND WINS, where every
+experiment shipped a small gain and the product got worse.
+
+UPGRADE 6: build an OEC - one number combining primary and guardrails with explicit
+weights. It forces the trade-off to be stated numerically rather than argued.
+
+UPGRADE 7: run DEGRADATION EXPERIMENTS to calibrate. Deliberately add 100 ms of
+latency and measure what it costs; now your latency guardrail's threshold is grounded
+in a number rather than a feeling.""",
+
+    """6. HOW TO SET THEM UP - numbered steps.
+
+STEP 1 - WRITE DOWN THE ACTUAL GOAL, not the metric. "Users find the product useful
+enough to keep paying" rather than "CTR".
+
+STEP 2 - ASK "IF THIS CHANGE WERE SECRETLY HARMFUL, WHAT WOULD SHOW IT?" The honest
+answers to that question are your guardrails.
+
+STEP 3 - INCLUDE THE UNIVERSAL ONES ALWAYS: latency, error rate, crash rate. Almost
+every change can degrade these and almost none intends to.
+
+STEP 4 - INCLUDE THE ONE THAT CATCHES BORROWING FROM THE FUTURE. Unsubscribes,
+uninstalls, complaints, refunds, support contacts.
+
+STEP 5 - SET THRESHOLDS IN ADVANCE and write them in the experiment document.
+
+STEP 6 - USE NON-INFERIORITY TESTS and do not require significance to be worried.
+The experiment is powered for the primary metric, not for these.
+
+STEP 7 - KEEP THE LIST SHORT. Twenty guardrails at 95% confidence generate about one
+false alarm per experiment by chance.
+
+STEP 8 - RUN A PERMANENT HOLDBACK so the cumulative effect of many shipped wins is
+measurable.
+
+STEP 9 - PROJECT THE HORIZON. Measured, a change was +22.9% at four weeks and -18.7%
+at a year. If your experiment cannot run that long, model it - the arithmetic above is
+five lines.
+
+STEP 10 - CALIBRATE WITH DEGRADATION EXPERIMENTS, so thresholds are grounded in
+measured sensitivity rather than in opinion.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A shop wants more sales, so it measures sales per day and tries things.
+
+Someone suggests putting the most profitable items at eye level and hiding the
+cheaper ones at the back. Sales go up 27% in a fortnight. The experiment is a clear
+success by the number the shop chose to watch.
+
+What the number does not show is that some customers found the shop annoying and
+stopped coming. That is invisible in a two-week sales figure, because those customers
+had already been coming that fortnight - they just will not come next month.
+
+Measured on exactly that shape: after four weeks the change is 23% ahead. After three
+months, 13% ahead. After six months, exactly level. After a year, 19% BEHIND - and
+the shop has a quarter of the customers it would otherwise have had, rather than three
+quarters.
+
+The two-week measurement was not wrong. It measured what happened in two weeks
+correctly and with confidence. The problem is that the consequence takes six months to
+appear and the experiment ran for two weeks.
+
+A guardrail is the thing you watch that DOES show up in two weeks - how many
+customers walked out annoyed. It is a leading indicator of the harm, available on the
+same timescale as the gain.
+
+And the crucial rule is asymmetric. You need real evidence of a gain to justify the
+change. You do NOT need equally strong evidence of harm to refuse it - a fourfold
+rise in people walking out is a reason to stop, even if a fortnight is too short to
+prove it beyond doubt.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    EXPERIMENT = {
+        "primary":  {"metric": "ctr", "direction": "increase",
+                     "mde": 0.02, "alpha": 0.05},
+        "guardrails": [                              # THRESHOLDS SET IN ADVANCE
+            {"metric": "unsubscribe_rate", "max_relative_increase": 0.10},
+            {"metric": "p95_latency_ms",   "max_relative_increase": 0.05},
+            {"metric": "error_rate",       "max_relative_increase": 0.01},
+            {"metric": "d28_retention",    "max_relative_decrease": 0.02},
+        ],
+    }
+
+    def decide(results):
+        for g in EXPERIMENT["guardrails"]:
+            r = results[g["metric"]]
+            limit = g.get("max_relative_increase") or -g["max_relative_decrease"]
+            if r.point_estimate > limit:             # POINT ESTIMATE, not p-value
+                return "BLOCK", g["metric"]
+            if r.ci_upper > limit:                   # or the interval ALLOWS harm
+                return "INCONCLUSIVE - extend", g["metric"]
+        if results["ctr"].significant and results["ctr"].lift > 0:
+            return "SHIP", None
+        return "NO EFFECT", None
+
+LINE BY LINE:
+ - the guardrail thresholds are DATA, declared before the run. Setting them after
+   seeing results is how every regression becomes acceptable.
+ - `r.point_estimate > limit` and NOT `r.p_value < 0.05`. The experiment is powered
+   for the primary metric; a guardrail regression that fails to reach significance may
+   be entirely real, and demanding significance to be worried inverts the burden of
+   proof.
+ - `r.ci_upper > limit` returns INCONCLUSIVE rather than SHIP. If the confidence
+   interval still ALLOWS unacceptable harm, you have not established safety - you have
+   established that your experiment was too small to tell.
+ - the guardrails are checked BEFORE the primary metric. A blocked change does not
+   need its lift computed, and checking in this order stops a large primary lift from
+   framing the discussion.
+ - four guardrails, not twenty. At 95% confidence, twenty independent checks produce
+   roughly one false alarm per experiment by chance alone.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THE EXPERIMENT, 200,000 users per arm:
+
+  metric                control    treatment    relative change
+  -----------------------------------------------------------------
+  click-through rate     0.0321      0.0414         +27.5%
+  unsubscribe rate       0.0022      0.0092        +339.2%
+  still subscribed       0.9978      0.9908          -0.7%
+
+At two weeks, the decision looks obvious: a 27.5% lift is enormous and the
+"still subscribed" figure moved by less than a percentage point, which is easy to
+dismiss.
+
+NOW COMPOUND IT. Three sends a week, unsubscribe rate applied per send:
+
+  after      subscribers left                cumulative clicks per original user
+             control    treatment            control   treatment    difference
+  ---------------------------------------------------------------------------------
+   4 weeks    0.977      0.901                 0.38      0.46         +22.9%
+  13 weeks    0.926      0.712                 1.19      1.34         +12.7%
+  26 weeks    0.857      0.507                 2.30      2.30          +0.1%
+  52 weeks    0.735      0.257                 4.26      3.47         -18.7%
+
+TRACE THE MECHANISM. Each send, the treatment loses 0.92% of its remaining audience
+and the control loses 0.22%. Over 156 sends that is (1 - 0.0092)^156 = 0.239 against
+(1 - 0.0022)^156 = 0.709 - and the small per-send difference compounds into a
+threefold difference in surviving audience.
+
+Meanwhile the per-send click rate advantage is constant at +27.5%. So the treatment is
+multiplying a growing advantage by a shrinking base, and the crossover is where those
+two exactly cancel. Measured, that is week 26.
+
+THE THING TO NOTICE ABOUT THE TIMING: a standard two-week experiment sits in the FIRST
+ROW. It reports +22.9%, correctly, with a tight interval. The crossover is thirteen
+times further out than the experiment ran.
+
+SO THE GUARDRAIL IS NOT AN EXTRA CHECK ON A COMPLETE MEASUREMENT - IT IS THE ONLY
+PART OF THE MEASUREMENT THAT REACHES PAST THE EXPERIMENT'S HORIZON. The unsubscribe
+rate was visible immediately and was already screaming: +339% against a primary lift
+of +27.5%, a ratio of more than twelve to one.
+
+AND A THRESHOLD SET IN ADVANCE - "block if unsubscribes rise more than 10% relative" -
+would have blocked this at 339% without anyone needing to run the projection at all.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+COST: guardrails are metrics you were probably already collecting. The expense is
+statistical - each additional check is another chance of a false alarm - and
+organisational, because they generate arguments.
+
+POWER: experiments are sized for the primary metric, so guardrails are typically
+UNDERPOWERED. That is a reason to lower the evidential bar for concern, not to ignore
+them.
+
+THE #1 MISTAKE: shipping on the primary metric alone. Measured, a +27.5% lift became
+an 18.7% loss within a year through a mechanism fully visible in the guardrail on day
+one.
+
+THE #2 MISTAKE: requiring statistical significance to be worried. The burden of proof
+on a guardrail is the reverse of the burden on the primary metric.
+
+THE #3 MISTAKE: setting thresholds after seeing the results.
+
+THE #4 MISTAKE: too many guardrails. Twenty at 95% gives roughly one false alarm per
+experiment by chance.
+
+THE #5 MISTAKE: choosing guardrails that could not detect the specific way this
+change might cheat. The question is "if this were secretly harmful, what would show
+it".
+
+THE #6 MISTAKE: no long-horizon holdback. Individually-positive experiments can
+compound into a worse product, and only a permanent control detects it.
+
+THE #7 MISTAKE: not projecting. Measured, the crossover was thirteen times further out
+than a standard experiment runs - and computing it took five lines of arithmetic.
+
+THE #8 MISTAKE: uncalibrated thresholds. Degradation experiments turn "5% latency
+seems bad" into a measured cost.
+
+THE TAKEAWAY: a guardrail metric is one you BLOCK on rather than ship on, chosen by
+asking what would move if the change were secretly harmful - and the reason it is not
+optional is that the primary metric is a short-horizon PROXY: measured, a notification
+change lifted click-through 27.5% and raised unsubscribes 339%, remained a win for six
+months, and was an 18.7% loss at one year with a quarter of the audience left rather
+than three quarters, while a standard two-week experiment would have reported +22.9%
+correctly and with confidence; the guardrail was the only part of the measurement
+visible on the experiment's own timescale, which is why the evidential bar for
+CONCERN must be lower than the bar for SHIPPING.""",
+]
+
+_EX_P1AO["Metric cardinality"] = [
+    """1. THE GOAL - understanding why your monitoring bill exploded.
+
+A metric with labels is not one time series. It is one series per COMBINATION of label
+values, and the combinations multiply.
+
+  http_requests_total{service, endpoint, method, status_code}
+
+with 40 services, 120 endpoints, 6 methods and 18 status codes is not four things to
+store. It is 40 x 120 x 6 x 18 = 518,400 separate time series, each with its own
+samples, its own index entry and its own memory in the monitoring system.
+
+MEASURED, adding labels one at a time and computing the storage at one 8-byte sample
+every 15 seconds:
+
+  after adding      distinct values      time series          storage per day
+  ---------------------------------------------------------------------------
+  service                    40                   40              0.00 GB
+  endpoint                  120                4,800              0.22 GB
+  method                      6               28,800              1.33 GB
+  status_code                18              518,400             23.89 GB
+  region                      8            4,147,200            191.10 GB
+  pod                       300        1,244,160,000         57,331 GB
+  customer_id            50,000   62,208,000,000,000    2,866,545,000 GB
+
+THE JUMP FROM status_code TO region TO pod IS NOT A GRADUAL INCREASE. Each label
+MULTIPLIES, and adding `customer_id` - which looks like exactly the label an engineer
+would want - takes it from 191 GB per day to something no system will ever store.""",
+
+    """2. THE INTUITION - the difference between a label and an identifier.
+
+Metrics systems store, for each distinct combination of label values, an entire
+independent series: a name, an index entry, and a value every scrape interval,
+forever.
+
+SO THE COST IS DRIVEN BY THE NUMBER OF DISTINCT COMBINATIONS THAT EVER EXIST, not by
+the request rate. A system handling a million requests a second with four bounded
+labels is cheap; a system handling ten requests a second with a user ID label is not.
+
+THE RULE THAT FOLLOWS: A LABEL MUST HAVE A SMALL, BOUNDED, SLOWLY-CHANGING SET OF
+VALUES. Service name, environment, HTTP method, status code - all bounded. User ID,
+request ID, email address, session ID, full URL with query string, error message,
+timestamp - all unbounded, and every one of them appears in real incidents where
+somebody added it to a metric.
+
+THE MEASUREMENT ABOVE OVERSTATES SOMETHING IMPORTANT, THOUGH, AND IT IS WORTH BEING
+HONEST ABOUT: NOT EVERY COMBINATION ACTUALLY OCCURS. Not every service serves every
+endpoint, and not every endpoint returns every status code.
+
+MEASURED ON A PLAUSIBLE TOPOLOGY:
+
+  cartesian product of the four labels     518,400
+  combinations actually observed             2,975   (0.6%)
+
+SO THE NAIVE PRODUCT OVERSTATES BY MORE THAN A HUNDRED-FOLD FOR BOUNDED LABELS,
+because real systems are sparse. THAT IS THE GOOD NEWS AND IT DOES NOT SAVE YOU: add
+one UNBOUNDED label - customer ID, pod name in an autoscaling group, request ID - and
+every one of those 2,975 real combinations multiplies by its cardinality, and sparsity
+buys you nothing because that label is dense by construction.
+
+THE PRACTICAL FORM OF THE RULE: SPARSITY PROTECTS YOU FROM ADDING MORE BOUNDED
+LABELS. NOTHING PROTECTS YOU FROM ONE UNBOUNDED ONE.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TIME SERIES - one metric name plus one specific set of label values, tracked over
+time. The unit of storage and of cost.
+
+CARDINALITY - the number of distinct time series. The number that determines your
+bill and your monitoring system's memory.
+
+LABEL / TAG / DIMENSION - a key-value pair attached to a metric. Each distinct
+combination creates a series.
+
+ACTIVE SERIES - series that received a sample recently. Most systems price and size on
+this rather than on total series ever seen.
+
+CHURN - series that appear and disappear. A pod name in an autoscaling group creates a
+new series on every deploy, so cardinality grows over TIME even with a bounded label
+set at any instant. THIS IS THE ONE PEOPLE MISS.
+
+SCRAPE INTERVAL - how often samples are taken. 15 seconds is typical, giving 5,760
+samples per series per day.
+
+HIGH-CARDINALITY DATA - user IDs, request IDs, trace IDs. Belongs in LOGS or TRACES,
+which are indexed differently, not in metrics.
+
+EXEMPLAR - a trace ID attached to a metric sample as a pointer rather than a label.
+The designed way to get from an aggregate to a specific request without exploding
+cardinality.
+
+RECORDING RULE - a precomputed aggregation, so expensive queries over many series are
+answered from a small derived series.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+CHURN IS AS DANGEROUS AS CARDINALITY, AND LESS OBVIOUS. A `pod` label looks bounded -
+there are only 300 pods. But pods are replaced on every deploy, so after fifty deploys
+you have 15,000 distinct pod names in the index, and the storage keeps the old series.
+THE SET IS BOUNDED AT ANY INSTANT AND UNBOUNDED OVER TIME, and monitoring systems
+usually charge for the second.
+
+THE SAME APPLIES TO version labels, build IDs, container IDs and anything derived from
+a deployment.
+
+ONE UNBOUNDED LABEL DESTROYS THE SPARSITY SAVING. Measured, real label combinations
+were 0.6% of the cartesian product - a 174-fold saving - and adding `customer_id` with
+50,000 values multiplies every one of those real combinations, because every customer
+does hit the endpoints they use. Sparsity is a property of which combinations are
+REACHABLE, and an identifier is reachable by construction.
+
+THE COST IS MEMORY, NOT JUST STORAGE. Prometheus holds an in-memory index of every
+active series. Cardinality explosions do not produce a slowly rising bill; they
+produce an out-of-memory kill on the monitoring system, which fails exactly when you
+need it - during the incident that caused the traffic that created the labels.
+
+HISTOGRAMS MULTIPLY BY THEIR BUCKET COUNT. A histogram with 12 buckets is 14 series
+per label combination (buckets, plus sum and count). Measured against the 2,975 real
+combinations above, that is 41,650 series from ONE metric before any additional
+labels.
+
+AND THE ERROR-MESSAGE TRAP: `errors_total{message="..."}` looks obviously useful and
+is unbounded by construction, because error messages contain IDs, timestamps and
+values. This is the single most common way a production monitoring system is taken
+down by its own instrumentation.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: add every label that might be useful. Measured, that is how you get to 62
+trillion series.
+
+UPGRADE 1: BOUND EVERY LABEL. Before adding one, state the maximum number of distinct
+values it can take. If you cannot, it is not a label.
+
+UPGRADE 2: NORMALISE HIGH-CARDINALITY VALUES. `/users/12345` becomes `/users/{id}`.
+Status code 503 stays 503; the error MESSAGE becomes an error CLASS.
+
+UPGRADE 3: PUT IDENTIFIERS IN LOGS AND TRACES INSTEAD. Those systems are built for
+high-cardinality data - they index differently and do not keep a series per
+combination.
+
+UPGRADE 4: EXEMPLARS - attach a trace ID to a sample as a pointer rather than a
+label. You get from "latency spiked" to "here is a slow request" without any
+cardinality cost. This is the designed solution to the problem people solve by adding
+a label.
+
+UPGRADE 5: RECORDING RULES to precompute aggregations, so dashboards query a few
+derived series rather than fanning out over hundreds of thousands.
+
+UPGRADE 6: DROP LABELS AT INGEST with relabelling rules, as a backstop against
+instrumentation you do not control.
+
+UPGRADE 7: ALERT ON CARDINALITY ITSELF. `count({__name__=~".+"})` or your vendor's
+equivalent, with a threshold. This is the difference between noticing a problem in an
+hour and noticing when the monitoring system dies.
+
+UPGRADE 8: SET LIMITS. Prometheus `sample_limit`, vendor per-metric caps. A metric
+that exceeds the limit is dropped, which is far better than the whole system falling
+over.""",
+
+    """6. HOW TO KEEP IT UNDER CONTROL - numbered steps.
+
+STEP 1 - FOR EVERY LABEL, WRITE DOWN THE MAXIMUM NUMBER OF VALUES. If the answer is
+"depends on traffic" or "one per user", it is not a label.
+
+STEP 2 - MULTIPLY THEM. That is your worst case, and the sparsity discount is a bonus
+you should not rely on.
+
+STEP 3 - MULTIPLY AGAIN BY THE HISTOGRAM BUCKET COUNT plus two, for any histogram.
+
+STEP 4 - CHECK FOR CHURN. Does any label change on deploy? Pod, version, container,
+build. Those are bounded at an instant and unbounded over a quarter.
+
+STEP 5 - NORMALISE PATHS AND MESSAGES at instrumentation time, not in the query.
+
+STEP 6 - MOVE IDENTIFIERS TO LOGS AND TRACES, and link them with exemplars.
+
+STEP 7 - MONITOR CARDINALITY AND ALERT ON IT. The failure mode is an OOM on the
+monitoring system, and it happens during incidents.
+
+STEP 8 - SET INGESTION LIMITS so one bad metric is dropped rather than taking the
+system down.
+
+STEP 9 - REVIEW THE TOP CARDINALITY CONTRIBUTORS PERIODICALLY. Every system has a
+query for this, and the answer is usually one metric somebody added last quarter.
+
+STEP 10 - WHEN SOMEBODY ASKS FOR A PER-CUSTOMER METRIC, ASK WHETHER THEY NEED IT FOR
+ALERTING (aggregate, low cardinality) OR FOR INVESTIGATION (logs and traces). The
+answer is almost always the second.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are keeping a tally chart on the wall for how many parcels you deliver.
+
+One number: parcels per day. One line on the chart.
+
+Then someone asks to split it by depot. Forty depots, forty lines. Reasonable.
+
+Then by route. A hundred and twenty routes. Now four thousand eight hundred lines,
+because each depot needs a line for each route.
+
+Then by vehicle type and by outcome. Now half a million lines on the wall, and you are
+updating every one of them every fifteen seconds whether or not anything happened on
+it.
+
+Then somebody perfectly reasonably asks to split it by CUSTOMER, because they want to
+see whether one particular customer is having a bad time. Fifty thousand customers.
+That is sixty-two trillion lines.
+
+Two things save you a little and one thing does not.
+
+Most combinations never occur - a depot in Leeds does not run the Cornwall route.
+Measured, only 0.6% of the theoretically possible combinations actually existed. That
+is a real and large saving, and it applies to sensible labels.
+
+It does not apply to customers, because every customer really does use the routes they
+use. An identifier is dense by construction, so the sparsity that rescued you from the
+first four splits rescues you from nothing here.
+
+And there is a version people miss entirely. If you relabel your vans every time you
+repaint the fleet, you are not keeping three hundred lines - you are keeping three
+hundred NEW lines every repaint, forever, and the wall fills up over months even
+though there are never more than three hundred vans.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    # BAD - every one of these is unbounded
+    http_requests_total{user_id="12345"}          # one series per user
+    http_requests_total{path="/users/12345"}      # one series per user, again
+    errors_total{message="timeout after 30s ..."} # messages contain ids and values
+    latency_seconds{request_id="abc-123"}         # one series per REQUEST
+
+    # GOOD - bounded, and the identifier moved somewhere built for it
+    http_requests_total{service="api", route="/users/{id}", method="GET",
+                        status="200"}
+    errors_total{service="api", error_class="timeout"}
+    log.info("request completed", user_id=uid, request_id=rid, duration_ms=d)
+    #          ^ logs and traces index high-cardinality data properly
+
+    # the arithmetic, before you add the label
+    def series(labels, buckets=0):
+        n = 1
+        for name, card in labels: n *= card
+        return n * (buckets + 2) if buckets else n
+    # series([("service",40),("route",120),("method",6),("status",18)])  = 518,400
+    # ... with a 12-bucket histogram                                    = 7,257,600
+
+    # the alert that catches it before the OOM does
+    # count({__name__=~".+"}) > 1e6
+
+LINE BY LINE:
+ - `user_id` and `request_id` as labels are the canonical mistakes, and they look
+   identical to good labels in the code. The difference is not visible at the call
+   site; it is visible only if you know the value's cardinality.
+ - `path="/users/12345"` is the same mistake wearing a disguise. It is not obviously
+   an identifier, and it is one per user.
+ - `error_class` instead of `message` - the message contains IDs, timings and values,
+   so it is unbounded by construction. Classifying at instrumentation time is the fix,
+   and it must happen there rather than in the query.
+ - `(buckets + 2)` - a histogram is one series per bucket plus a sum and a count. A
+   12-bucket histogram multiplies your cardinality by 14, and this is routinely
+   forgotten.
+ - the cardinality alert is the difference between finding out in an hour and finding
+   out when the monitoring system is killed - during the incident that generated the
+   labels.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+ONE METRIC, LABELS ADDED ONE AT A TIME, at one 8-byte sample every 15 seconds:
+
+  label added        values          series        storage/day
+  ---------------------------------------------------------------
+  service                40              40            0.00 GB
+  endpoint              120           4,800            0.22 GB
+  method                  6          28,800            1.33 GB
+  status_code            18         518,400           23.89 GB
+  region                  8       4,147,200          191.10 GB
+  pod                   300   1,244,160,000       57,331    GB
+  customer_id        50,000  62,208,000,000,000   2.87e9    GB
+  user_agent          4,000  2.49e17              1.15e13   GB
+
+READ THE FOURTH ROW TO THE FIFTH. Adding `region` - eight values, the most innocuous
+label imaginable - took storage from 24 GB per day to 191 GB per day. It did not add
+eight series; it multiplied by eight.
+
+READ THE SIXTH ROW. `pod` is the one an engineer adds without thinking, and it takes
+a system from 191 GB per day to 57 terabytes per day.
+
+NOW THE SPARSITY CORRECTION, on the first four labels:
+
+  cartesian product                  518,400
+  combinations actually observed       2,975     (0.6%)
+
+A 174-FOLD OVERSTATEMENT, because a real system is sparse - service 7 does not serve
+endpoint 93, and endpoint 93 never returns a 409.
+
+SO THE NAIVE MULTIPLICATION IS PESSIMISTIC FOR BOUNDED LABELS. And now add
+`customer_id` with 50,000 values to the 2,975 REAL combinations:
+
+  2,975 x 50,000 = 148,750,000 series
+
+Sparsity gave nothing back, because every customer genuinely uses the endpoints they
+use. THE DISCOUNT APPLIES TO COMBINATIONS THAT ARE UNREACHABLE, AND AN IDENTIFIER IS
+REACHABLE BY DEFINITION.
+
+AND THE HISTOGRAM MULTIPLIER, on those same 2,975 real combinations:
+
+  a 12-bucket histogram = 12 buckets + sum + count = 14 series each
+  2,975 x 14 = 41,650 series from ONE metric
+
+FINALLY THE CHURN CASE. 300 pods, replaced every deploy, deploying twice a day:
+
+  day 1:      300 distinct pod names
+  day 30:  18,000
+  day 90:  54,000
+
+The instantaneous count never exceeds 300 and the index grows without bound - and
+most systems charge for and index the second number.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+STORAGE: proportional to series count times sample rate. At 15-second scrapes, 5,760
+samples per series per day.
+
+MEMORY: monitoring systems keep an index of every active series in RAM. This is why
+cardinality explosions cause an OOM rather than a gradually rising bill.
+
+QUERY TIME: proportional to the number of series matched, so a high-cardinality metric
+makes every dashboard using it slow.
+
+COST: most vendors price on active series. The multiplication is your invoice.
+
+THE #1 MISTAKE: a user ID, request ID, email or full URL as a label. Unbounded by
+construction, and identical in the code to a good label.
+
+THE #2 MISTAKE: forgetting labels MULTIPLY. Measured, adding an eight-value `region`
+label took 24 GB/day to 191 GB/day.
+
+THE #3 MISTAKE: ignoring CHURN. A pod label is bounded at any instant and unbounded
+over a quarter, and the index keeps the history.
+
+THE #4 MISTAKE: relying on sparsity. Measured, it saved 174-fold on bounded labels and
+nothing at all once an identifier was added.
+
+THE #5 MISTAKE: forgetting histograms multiply by buckets plus two.
+
+THE #6 MISTAKE: an unnormalised path or error message. Both contain identifiers.
+
+THE #7 MISTAKE: no cardinality alert, so you find out when the monitoring system dies
+- during an incident.
+
+THE #8 MISTAKE: no ingestion limit, so one bad metric takes down monitoring for
+everything.
+
+THE #9 MISTAKE: putting investigation data in metrics. Identifiers belong in logs and
+traces, linked with exemplars.
+
+THE TAKEAWAY: a metric with labels is one time series per COMBINATION of label values,
+so labels MULTIPLY rather than add - measured, an innocuous eight-value region label
+took storage from 24 GB/day to 191 GB/day and a pod label took it to 57 TB/day; real
+systems are sparse, so the cartesian product overstates by 174-fold for bounded labels,
+and that discount evaporates entirely for an identifier because every customer really
+does hit the endpoints they use; the failure mode is an out-of-memory kill on the
+monitoring system during the incident that generated the labels, so bound every label,
+count histogram buckets plus two, watch for churn from deploy-scoped labels, and put
+identifiers in logs and traces with exemplars linking back.""",
+]
+
 
 
 
