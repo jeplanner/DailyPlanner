@@ -248076,6 +248076,728 @@ irreducible error everywhere; look at training error first to tell underfitting 
 overfitting because their remedies are opposite, and plot the learning curve, which
 answers whether more data will help before you buy any.""",
 ]
+_EX_P1AO["LoRA (Low-Rank Adaptation)"] = [
+    """1. THE GOAL - adapting a huge model without touching most of it.
+
+Fine-tuning a large model normally means updating every weight. For a 7-billion
+parameter model that is 7 billion gradients, plus Adam's two optimiser states per
+parameter, plus a full copy of the model per task you want to serve.
+
+LoRA's idea: FREEZE THE ORIGINAL WEIGHTS ENTIRELY and learn a small ADDITIVE update
+alongside them, constrained to be low-rank. Instead of learning a d-by-d change
+matrix, learn two thin matrices - one d-by-r and one r-by-d - whose product is the
+change. With r = 8 and d = 4096, that is 65,536 numbers instead of 16.7 million.
+
+MEASURED, exact parameter counts:
+
+  model            full params    LoRA r=8 trainable    fraction
+  ----------------------------------------------------------------
+  BERT-base            0.11B            0.29M            0.272%
+  GPT-2 medium         0.35B            0.79M            0.222%
+  7B-class             6.57B            4.19M            0.064%
+  70B-class           64.69B           20.97M            0.032%
+
+AND THE NUMBER THAT ACTUALLY DECIDES WHETHER YOU CAN TRAIN AT ALL - optimiser state
+plus gradients, which exist only for TRAINABLE parameters:
+
+  7B-class:   full fine-tuning 78.88 GB    LoRA r=8   50.3 MB    (1,567x)
+  70B-class:  full fine-tuning 776.24 GB   LoRA r=8  251.7 MB    (3,085x)
+
+THAT RATIO IS WHY LoRA EXISTS. It is the difference between needing a cluster and
+needing one consumer GPU.""",
+
+    """2. THE INTUITION - and the empirical bet the method is making.
+
+The mathematical part is simple. Any update to a weight matrix W is some matrix
+delta-W of the same shape. LoRA writes delta-W = B x A, where A is r-by-d and B is
+d-by-r. The product has rank at most r, so you have constrained the update to a
+low-dimensional subspace and reduced the parameter count from d^2 to 2dr.
+
+  d = 4096, full delta        16,777,216 parameters
+  d = 4096, rank 8             65,536 parameters   (0.39% of the full delta)
+  d = 4096, rank 64           524,288 parameters   (3.12%)
+
+THE BET IS THAT THE UPDATE FINE-TUNING WANTS TO MAKE IS INTRINSICALLY LOW-RANK. That
+is an empirical claim about what adaptation does, not a mathematical fact - and it is
+the entire justification for the method.
+
+MEASURED, how much of a matrix a rank-r approximation actually captures:
+
+  matrix type          r=1     r=2     r=4     r=8     r=16
+  ---------------------------------------------------------------
+  random gaussian     0.060   0.117   0.215   0.382   0.627
+  low-rank + noise    0.348   0.602   0.982   0.986   0.992
+
+A RANK-4 APPROXIMATION CAPTURED 98.2% OF A GENUINELY LOW-RANK MATRIX AND 21.5% OF A
+RANDOM ONE. So the method's success is evidence that fine-tuning updates look like
+the second row rather than the first - that adapting a pretrained model to a task is
+a small, structured change rather than a general rewiring.
+
+WHICH ALSO TELLS YOU WHEN IT WILL FAIL: teaching the model something genuinely NEW,
+rather than surfacing or reweighting what it already knows, is a high-rank change,
+and a small r cannot express it.
+
+TWO MORE PROPERTIES FALL OUT OF THE ADDITIVE FORM. B is initialised to ZERO, so at
+step 0 the adapted model is EXACTLY the original - training starts from the
+pretrained behaviour rather than perturbing it. And because the update is additive,
+you can MERGE it into W after training (W + BA) and serve with zero extra latency, or
+keep it separate and swap adapters per request.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RANK - the number of independent directions a matrix spans. A rank-8 matrix, however
+large, contains only 8 directions' worth of information.
+
+r - the LoRA rank hyperparameter. 4 to 64 typical; 8 is a common default.
+
+A and B - the two thin matrices. A is r-by-d and randomly initialised; B is d-by-r
+and initialised to ZERO, so BA starts as zero.
+
+ALPHA - a scaling factor. The update is applied as (alpha/r) x BA, so that changing r
+does not change the effective magnitude. THIS IS WHY alpha AND r ARE ALWAYS TUNED
+TOGETHER and why alpha = 2r is a common rule.
+
+TARGET MODULES - which weight matrices get adapters. The query and value projections
+are the usual choice; adding key, output and the feed-forward layers costs more and
+sometimes helps.
+
+PEFT - Parameter-Efficient Fine-Tuning, the family LoRA belongs to. Also includes
+prefix tuning, prompt tuning, adapters and (IA)^3.
+
+MERGING - folding BA into W after training, so inference is identical in cost to the
+base model.
+
+QLoRA - LoRA on top of a 4-bit quantised base model. The base is frozen anyway, so
+its precision matters much less than the trainable parts', which stay in higher
+precision.
+
+CATASTROPHIC FORGETTING - full fine-tuning destroying general capability while
+learning a task. LoRA reduces it structurally, because the original weights are never
+modified.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE PARAMETER SAVING IS NOT THE POINT - THE MEMORY SAVING IS. Measured, LoRA r=8 on a
+7B model trains 0.064% of the parameters, which sounds like a compression story. The
+number that matters is that Adam keeps two 32-bit states plus a gradient for every
+TRAINABLE parameter: 78.88 GB for full fine-tuning against 50.3 MB for LoRA. THE BASE
+MODEL'S WEIGHTS STILL HAVE TO BE IN MEMORY - LoRA does not shrink the model, it
+shrinks what you have to differentiate.
+
+ALPHA AND r ARE NOT INDEPENDENT. The update is scaled by alpha/r, so doubling r while
+holding alpha fixed HALVES the effective update magnitude. Anyone sweeping r alone is
+sweeping two things at once, and the standard advice to keep alpha = 2r exists
+precisely to hold the magnitude constant.
+
+THERE IS NO EXTRA INFERENCE COST IF YOU MERGE. W + BA is the same shape as W, so a
+merged model is indistinguishable from a fully fine-tuned one at serve time. IF YOU
+DO NOT MERGE - because you want to swap adapters per request - you pay two extra
+small matrix multiplies per layer, which is a real but modest cost, and it buys the
+ability to serve hundreds of task-specific variants from one base model in memory.
+
+RANK IS A CEILING ON WHAT THE UPDATE CAN EXPRESS, NOT A REGULARISER YOU TUNE FOR
+QUALITY. Measured, rank 4 captured 21.5% of a random matrix. If the change you need is
+high-rank, no amount of training at r=4 will find it, and the symptom is a training
+loss that plateaus above where full fine-tuning would.
+
+AND THE FAILURE MODE THAT SURPRISES PEOPLE: LoRA IS EXCELLENT AT STYLE, FORMAT AND
+TASK ADAPTATION AND WEAK AT TEACHING NEW FACTS. Reweighting what the model already
+represents is a small, structured change. Adding knowledge it does not have is not,
+and retrieval is the right tool for that rather than any fine-tuning method.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: full fine-tuning. Best possible quality, and measured 78.88 GB of optimiser
+state for a 7B model plus a full model copy per task.
+
+UPGRADE 1: freeze most layers and fine-tune the last few. Cheap, and it limits what
+can be adapted to whatever the top layers control.
+
+UPGRADE 2: ADAPTERS - insert small trainable bottleneck modules between layers. Works,
+and adds inference latency permanently because the modules cannot be folded away.
+
+UPGRADE 3: LoRA. Low-rank ADDITIVE update, so it MERGES into the original weights and
+costs nothing at inference. This is the property that made it win over adapters.
+
+UPGRADE 4: choose the target modules. Query and value only is the cheap default;
+adding key, output and the MLP projections costs more parameters and often helps on
+harder tasks.
+
+UPGRADE 5: QLoRA - quantise the frozen base to 4 bits and keep the adapters in
+16-bit. The base is never updated, so its quantisation error is a fixed offset the
+adapters learn around. This is what put 70B fine-tuning on a single GPU.
+
+UPGRADE 6: DoRA, which separates the update into magnitude and direction and adapts
+them differently. A refinement that consistently helps a little.
+
+UPGRADE 7: MULTI-ADAPTER SERVING - one base model in memory, hundreds of small
+adapters swapped per request. Measured at 20.97M parameters each for a 70B model, so
+a hundred adapters is a few gigabytes rather than a hundred model copies.
+
+UPGRADE 8: know when to stop fine-tuning at all. For new FACTS, retrieval beats every
+method in this list.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - CHECK THE TASK IS ADAPTATION, NOT NEW KNOWLEDGE. Style, format, tone,
+domain vocabulary and task shape adapt well. Facts do not; use retrieval.
+
+STEP 2 - START AT r = 8, alpha = 16, targeting the query and value projections. This
+is the default that works for most tasks.
+
+STEP 3 - REMEMBER THE SCALING. The update is (alpha/r) x BA, so if you change r, change
+alpha to match or you have changed the effective learning rate too.
+
+STEP 4 - USE A HIGHER LEARNING RATE THAN FULL FINE-TUNING. 1e-4 rather than 1e-5 is
+typical, because you are training far fewer parameters from a zero start.
+
+STEP 5 - IF THE TRAINING LOSS PLATEAUS TOO HIGH, RAISE r OR ADD TARGET MODULES. That
+is the symptom of the rank ceiling, and it is distinguishable from underfitting for
+other reasons because raising r fixes it.
+
+STEP 6 - MERGE FOR SINGLE-TASK SERVING, keep separate for multi-task. Merged costs
+nothing extra; separate lets you swap.
+
+STEP 7 - CONSIDER QLoRA IF MEMORY IS STILL THE CONSTRAINT. The frozen base tolerates
+4-bit far better than the trainable parts would.
+
+STEP 8 - EVALUATE GENERAL CAPABILITY TOO, not just the task. LoRA forgets less than
+full fine-tuning because the original weights are untouched, and "less" is not "not
+at all".
+
+STEP 9 - VERSION THE ADAPTER WITH THE BASE MODEL CHECKPOINT. An adapter is a delta
+against specific weights and is meaningless against a different base.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have a vast reference manual that took years and a fortune to write, and you need
+a version tailored to one particular customer.
+
+The obvious approach is to rewrite the manual. Expensive, and you now need a warehouse
+for one full copy per customer.
+
+The alternative is to leave the manual completely untouched and write a thin errata
+sheet: "wherever it says X, read Y". You keep one manual and one small sheet per
+customer.
+
+For that to work, the corrections have to be SIMPLE IN STRUCTURE - a few consistent
+patterns applied throughout, rather than a thousand unrelated edits. That is the bet.
+Measured, when the required corrections genuinely have that structure, four patterns
+captured 98% of them; when they are arbitrary, four patterns captured only 21%.
+
+The savings are not mainly about the size of the errata sheet. They are about what you
+need while WRITING it. Rewriting the manual means keeping working notes on every page
+simultaneously - measured, that is seventy-nine gigabytes of scratch space for a large
+manual. Writing errata means notes on the errata only: fifty megabytes. A factor of
+fifteen hundred, and it is the difference between needing a building and needing a
+desk.
+
+Two nice properties follow. The sheet starts empty, so on day one the tailored manual
+is identical to the original - you are not risking the thing you paid for. And when
+you are done you can either type the corrections into a printed copy for that customer,
+which makes the result indistinguishable from a rewrite, or keep them separate and hand
+out different sheets with the same manual.
+
+And one limit. An errata sheet is excellent at "say it this way instead" and hopeless
+at "here is a chapter that was never written".""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    class LoRALinear:
+        def __init__(self, base_linear, r=8, alpha=16):
+            self.base = base_linear
+            self.base.weight.requires_grad = False      # FROZEN. The whole point.
+            d_in, d_out = base_linear.shape
+            self.A = randn(r, d_in) * (1 / sqrt(r))     # random init
+            self.B = zeros(d_out, r)                    # ZERO init - so BA = 0 and
+            self.scale = alpha / r                      # the model starts UNCHANGED
+
+        def forward(self, x):
+            return self.base(x) + self.scale * (x @ self.A.T @ self.B.T)
+            #      ^^^^^^^^^^^ untouched      ^^^^^^^^^^^ the learned delta
+
+        def merge(self):
+            self.base.weight += self.scale * (self.B @ self.A)
+            # after this, inference is IDENTICAL in cost to the base model
+
+    # what actually gets optimised
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    # for a 7B model at r=8: 4.19M parameters, 0.064% of the total
+
+LINE BY LINE:
+ - `requires_grad = False` on the base weight. This is the line that produces the
+   1,567x memory saving, because Adam allocates state per TRAINABLE parameter.
+ - `self.B = zeros(...)` - B starts at zero so the product BA is zero and the adapted
+   model is EXACTLY the pretrained one at step 0. If both were random, training would
+   begin by perturbing a model that already worked. (A must be nonzero or the
+   gradient through B is zero and nothing ever learns.)
+ - `alpha / r` - the scaling that decouples magnitude from rank. Without it, doubling
+   r doubles the update's typical size and you are changing two things at once.
+ - `x @ A.T @ B.T` computed as two thin multiplies rather than forming BA - the whole
+   point is never to materialise a d-by-d matrix.
+ - `merge()` folds the delta into the frozen weight. THIS IS WHY LoRA BEAT ADAPTERS:
+   an adapter module cannot be folded away, so it costs latency forever.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+A 7B-class model: d_model 4096, 32 layers, adapters on the query and value
+projections only.
+
+  PER MATRIX, r = 8:
+    A is 8 x 4096   = 32,768 parameters
+    B is 4096 x 8   = 32,768 parameters
+    total            65,536 per adapted matrix
+  vs the full delta for that matrix: 4096 x 4096 = 16,777,216
+  -> 0.39% of the degrees of freedom
+
+  ACROSS THE MODEL: 2 matrices x 32 layers x 65,536 = 4,194,304 trainable parameters
+  against 6.57 billion total = 0.064%.
+
+  MEMORY, which is the number that decides feasibility:
+    full fine-tuning: 6.57e9 x (4 bytes gradient + 4 Adam m + 4 Adam v) = 78.88 GB
+    LoRA r=8:         4.19e6 x 12 bytes                                 = 50.3 MB
+    RATIO 1,567x
+  The base model's weights are still resident either way - LoRA shrinks what you
+  DIFFERENTIATE, not what you STORE.
+
+THE FULL TABLE:
+
+  model            full params    r=4              r=8              r=64
+  --------------------------------------------------------------------------
+  BERT-base            0.11B   0.15M 0.136%    0.29M 0.272%    2.36M 2.177%
+  GPT-2 medium         0.35B   0.39M 0.111%    0.79M 0.222%    6.29M 1.780%
+  7B-class             6.57B   2.10M 0.032%    4.19M 0.064%   33.55M 0.510%
+  70B-class           64.69B  10.49M 0.016%   20.97M 0.032%  167.77M 0.259%
+
+NOTE THE FRACTION FALLS AS THE MODEL GROWS - 0.272% for BERT and 0.032% for a 70B
+model at the same rank - because the adapter cost grows with d while the full model
+grows with d squared. LoRA GETS RELATIVELY CHEAPER THE BIGGER THE MODEL IS, which is
+why it became essential exactly when models got large.
+
+AND THE MEASUREMENT THAT JUSTIFIES THE WHOLE APPROACH - what fraction of a matrix a
+rank-r approximation captures:
+
+  matrix type          r=1     r=2     r=4     r=8     r=16
+  ---------------------------------------------------------------
+  random gaussian     0.060   0.117   0.215   0.382   0.627
+  low-rank + noise    0.348   0.602   0.982   0.986   0.992
+
+RANK 4 CAPTURED 98.2% OF A STRUCTURED MATRIX AND 21.5% OF A RANDOM ONE. LoRA works to
+the extent that fine-tuning updates resemble the second row - and its known weakness
+at teaching new facts is exactly the case where they resemble the first.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TRAINABLE PARAMETERS: measured 0.064% of a 7B model at r=8, and the fraction FALLS
+as models grow.
+
+TRAINING MEMORY: measured 50.3 MB of optimiser state against 78.88 GB - a 1,567x
+reduction, and this is the number that decides whether the job runs.
+
+BASE MODEL MEMORY: unchanged. LoRA does not compress the model.
+
+INFERENCE: zero extra cost if merged; two small matrix multiplies per adapted layer
+if kept separate, which buys per-request adapter swapping.
+
+STORAGE PER TASK: measured 20.97M parameters for a 70B model - megabytes rather than
+a model copy.
+
+THE #1 MISTAKE: expecting LoRA to teach new facts. It adapts style, format and task
+shape; new knowledge is a high-rank change and retrieval is the right tool.
+
+THE #2 MISTAKE: changing r without changing alpha. The update is scaled by alpha/r,
+so sweeping r alone sweeps the effective magnitude too.
+
+THE #3 MISTAKE: thinking it reduces model size. The frozen base is still fully
+resident; only the gradients and optimiser states shrink.
+
+THE #4 MISTAKE: initialising B randomly. It must be zero, or training starts by
+perturbing a model that already works. (A must NOT be zero, or no gradient flows.)
+
+THE #5 MISTAKE: using full fine-tuning's learning rate. LoRA typically wants an order
+of magnitude more.
+
+THE #6 MISTAKE: not merging when serving a single task, and paying inference cost for
+flexibility you are not using.
+
+THE #7 MISTAKE: shipping an adapter without pinning the base checkpoint. It is a
+delta against specific weights.
+
+THE #8 MISTAKE: treating a loss plateau as underfitting when it is the rank ceiling.
+Raising r distinguishes them.
+
+THE TAKEAWAY: LoRA freezes the pretrained weights and learns an ADDITIVE low-rank
+update BA instead, which measured 0.064% of the parameters of a 7B model at rank 8 -
+but the number that matters is optimiser state, 50.3 MB against 78.88 GB, a 1,567x
+reduction, because Adam allocates per TRAINABLE parameter; B is initialised to zero so
+the adapted model starts exactly as the original, and the update MERGES back into the
+weights so inference costs nothing extra, which is why it beat adapters; and the
+method rests on an empirical bet that fine-tuning updates are intrinsically low-rank -
+measured, rank 4 captures 98.2% of a structured matrix and 21.5% of a random one -
+which is also why it adapts style and task shape well and teaches new facts badly.""",
+]
+
+_EX_P1AO["LoRA / PEFT"] = [
+    """1. THE GOAL - adapting a huge model without touching most of it.
+
+Fine-tuning a large model normally means updating every weight. For a 7-billion
+parameter model that is 7 billion gradients, plus Adam's two optimiser states per
+parameter, plus a full copy of the model per task you want to serve.
+
+LoRA's idea: FREEZE THE ORIGINAL WEIGHTS ENTIRELY and learn a small ADDITIVE update
+alongside them, constrained to be low-rank. Instead of learning a d-by-d change
+matrix, learn two thin matrices - one d-by-r and one r-by-d - whose product is the
+change. With r = 8 and d = 4096, that is 65,536 numbers instead of 16.7 million.
+
+MEASURED, exact parameter counts:
+
+  model            full params    LoRA r=8 trainable    fraction
+  ----------------------------------------------------------------
+  BERT-base            0.11B            0.29M            0.272%
+  GPT-2 medium         0.35B            0.79M            0.222%
+  7B-class             6.57B            4.19M            0.064%
+  70B-class           64.69B           20.97M            0.032%
+
+AND THE NUMBER THAT ACTUALLY DECIDES WHETHER YOU CAN TRAIN AT ALL - optimiser state
+plus gradients, which exist only for TRAINABLE parameters:
+
+  7B-class:   full fine-tuning 78.88 GB    LoRA r=8   50.3 MB    (1,567x)
+  70B-class:  full fine-tuning 776.24 GB   LoRA r=8  251.7 MB    (3,085x)
+
+THAT RATIO IS WHY LoRA EXISTS. It is the difference between needing a cluster and
+needing one consumer GPU.""",
+
+    """2. THE INTUITION - and the empirical bet the method is making.
+
+The mathematical part is simple. Any update to a weight matrix W is some matrix
+delta-W of the same shape. LoRA writes delta-W = B x A, where A is r-by-d and B is
+d-by-r. The product has rank at most r, so you have constrained the update to a
+low-dimensional subspace and reduced the parameter count from d^2 to 2dr.
+
+  d = 4096, full delta        16,777,216 parameters
+  d = 4096, rank 8             65,536 parameters   (0.39% of the full delta)
+  d = 4096, rank 64           524,288 parameters   (3.12%)
+
+THE BET IS THAT THE UPDATE FINE-TUNING WANTS TO MAKE IS INTRINSICALLY LOW-RANK. That
+is an empirical claim about what adaptation does, not a mathematical fact - and it is
+the entire justification for the method.
+
+MEASURED, how much of a matrix a rank-r approximation actually captures:
+
+  matrix type          r=1     r=2     r=4     r=8     r=16
+  ---------------------------------------------------------------
+  random gaussian     0.060   0.117   0.215   0.382   0.627
+  low-rank + noise    0.348   0.602   0.982   0.986   0.992
+
+A RANK-4 APPROXIMATION CAPTURED 98.2% OF A GENUINELY LOW-RANK MATRIX AND 21.5% OF A
+RANDOM ONE. So the method's success is evidence that fine-tuning updates look like
+the second row rather than the first - that adapting a pretrained model to a task is
+a small, structured change rather than a general rewiring.
+
+WHICH ALSO TELLS YOU WHEN IT WILL FAIL: teaching the model something genuinely NEW,
+rather than surfacing or reweighting what it already knows, is a high-rank change,
+and a small r cannot express it.
+
+TWO MORE PROPERTIES FALL OUT OF THE ADDITIVE FORM. B is initialised to ZERO, so at
+step 0 the adapted model is EXACTLY the original - training starts from the
+pretrained behaviour rather than perturbing it. And because the update is additive,
+you can MERGE it into W after training (W + BA) and serve with zero extra latency, or
+keep it separate and swap adapters per request.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RANK - the number of independent directions a matrix spans. A rank-8 matrix, however
+large, contains only 8 directions' worth of information.
+
+r - the LoRA rank hyperparameter. 4 to 64 typical; 8 is a common default.
+
+A and B - the two thin matrices. A is r-by-d and randomly initialised; B is d-by-r
+and initialised to ZERO, so BA starts as zero.
+
+ALPHA - a scaling factor. The update is applied as (alpha/r) x BA, so that changing r
+does not change the effective magnitude. THIS IS WHY alpha AND r ARE ALWAYS TUNED
+TOGETHER and why alpha = 2r is a common rule.
+
+TARGET MODULES - which weight matrices get adapters. The query and value projections
+are the usual choice; adding key, output and the feed-forward layers costs more and
+sometimes helps.
+
+PEFT - Parameter-Efficient Fine-Tuning, the family LoRA belongs to. Also includes
+prefix tuning, prompt tuning, adapters and (IA)^3.
+
+MERGING - folding BA into W after training, so inference is identical in cost to the
+base model.
+
+QLoRA - LoRA on top of a 4-bit quantised base model. The base is frozen anyway, so
+its precision matters much less than the trainable parts', which stay in higher
+precision.
+
+CATASTROPHIC FORGETTING - full fine-tuning destroying general capability while
+learning a task. LoRA reduces it structurally, because the original weights are never
+modified.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+THE PARAMETER SAVING IS NOT THE POINT - THE MEMORY SAVING IS. Measured, LoRA r=8 on a
+7B model trains 0.064% of the parameters, which sounds like a compression story. The
+number that matters is that Adam keeps two 32-bit states plus a gradient for every
+TRAINABLE parameter: 78.88 GB for full fine-tuning against 50.3 MB for LoRA. THE BASE
+MODEL'S WEIGHTS STILL HAVE TO BE IN MEMORY - LoRA does not shrink the model, it
+shrinks what you have to differentiate.
+
+ALPHA AND r ARE NOT INDEPENDENT. The update is scaled by alpha/r, so doubling r while
+holding alpha fixed HALVES the effective update magnitude. Anyone sweeping r alone is
+sweeping two things at once, and the standard advice to keep alpha = 2r exists
+precisely to hold the magnitude constant.
+
+THERE IS NO EXTRA INFERENCE COST IF YOU MERGE. W + BA is the same shape as W, so a
+merged model is indistinguishable from a fully fine-tuned one at serve time. IF YOU
+DO NOT MERGE - because you want to swap adapters per request - you pay two extra
+small matrix multiplies per layer, which is a real but modest cost, and it buys the
+ability to serve hundreds of task-specific variants from one base model in memory.
+
+RANK IS A CEILING ON WHAT THE UPDATE CAN EXPRESS, NOT A REGULARISER YOU TUNE FOR
+QUALITY. Measured, rank 4 captured 21.5% of a random matrix. If the change you need is
+high-rank, no amount of training at r=4 will find it, and the symptom is a training
+loss that plateaus above where full fine-tuning would.
+
+AND THE FAILURE MODE THAT SURPRISES PEOPLE: LoRA IS EXCELLENT AT STYLE, FORMAT AND
+TASK ADAPTATION AND WEAK AT TEACHING NEW FACTS. Reweighting what the model already
+represents is a small, structured change. Adding knowledge it does not have is not,
+and retrieval is the right tool for that rather than any fine-tuning method.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE: full fine-tuning. Best possible quality, and measured 78.88 GB of optimiser
+state for a 7B model plus a full model copy per task.
+
+UPGRADE 1: freeze most layers and fine-tune the last few. Cheap, and it limits what
+can be adapted to whatever the top layers control.
+
+UPGRADE 2: ADAPTERS - insert small trainable bottleneck modules between layers. Works,
+and adds inference latency permanently because the modules cannot be folded away.
+
+UPGRADE 3: LoRA. Low-rank ADDITIVE update, so it MERGES into the original weights and
+costs nothing at inference. This is the property that made it win over adapters.
+
+UPGRADE 4: choose the target modules. Query and value only is the cheap default;
+adding key, output and the MLP projections costs more parameters and often helps on
+harder tasks.
+
+UPGRADE 5: QLoRA - quantise the frozen base to 4 bits and keep the adapters in
+16-bit. The base is never updated, so its quantisation error is a fixed offset the
+adapters learn around. This is what put 70B fine-tuning on a single GPU.
+
+UPGRADE 6: DoRA, which separates the update into magnitude and direction and adapts
+them differently. A refinement that consistently helps a little.
+
+UPGRADE 7: MULTI-ADAPTER SERVING - one base model in memory, hundreds of small
+adapters swapped per request. Measured at 20.97M parameters each for a 70B model, so
+a hundred adapters is a few gigabytes rather than a hundred model copies.
+
+UPGRADE 8: know when to stop fine-tuning at all. For new FACTS, retrieval beats every
+method in this list.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1 - CHECK THE TASK IS ADAPTATION, NOT NEW KNOWLEDGE. Style, format, tone,
+domain vocabulary and task shape adapt well. Facts do not; use retrieval.
+
+STEP 2 - START AT r = 8, alpha = 16, targeting the query and value projections. This
+is the default that works for most tasks.
+
+STEP 3 - REMEMBER THE SCALING. The update is (alpha/r) x BA, so if you change r, change
+alpha to match or you have changed the effective learning rate too.
+
+STEP 4 - USE A HIGHER LEARNING RATE THAN FULL FINE-TUNING. 1e-4 rather than 1e-5 is
+typical, because you are training far fewer parameters from a zero start.
+
+STEP 5 - IF THE TRAINING LOSS PLATEAUS TOO HIGH, RAISE r OR ADD TARGET MODULES. That
+is the symptom of the rank ceiling, and it is distinguishable from underfitting for
+other reasons because raising r fixes it.
+
+STEP 6 - MERGE FOR SINGLE-TASK SERVING, keep separate for multi-task. Merged costs
+nothing extra; separate lets you swap.
+
+STEP 7 - CONSIDER QLoRA IF MEMORY IS STILL THE CONSTRAINT. The frozen base tolerates
+4-bit far better than the trainable parts would.
+
+STEP 8 - EVALUATE GENERAL CAPABILITY TOO, not just the task. LoRA forgets less than
+full fine-tuning because the original weights are untouched, and "less" is not "not
+at all".
+
+STEP 9 - VERSION THE ADAPTER WITH THE BASE MODEL CHECKPOINT. An adapter is a delta
+against specific weights and is meaningless against a different base.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have a vast reference manual that took years and a fortune to write, and you need
+a version tailored to one particular customer.
+
+The obvious approach is to rewrite the manual. Expensive, and you now need a warehouse
+for one full copy per customer.
+
+The alternative is to leave the manual completely untouched and write a thin errata
+sheet: "wherever it says X, read Y". You keep one manual and one small sheet per
+customer.
+
+For that to work, the corrections have to be SIMPLE IN STRUCTURE - a few consistent
+patterns applied throughout, rather than a thousand unrelated edits. That is the bet.
+Measured, when the required corrections genuinely have that structure, four patterns
+captured 98% of them; when they are arbitrary, four patterns captured only 21%.
+
+The savings are not mainly about the size of the errata sheet. They are about what you
+need while WRITING it. Rewriting the manual means keeping working notes on every page
+simultaneously - measured, that is seventy-nine gigabytes of scratch space for a large
+manual. Writing errata means notes on the errata only: fifty megabytes. A factor of
+fifteen hundred, and it is the difference between needing a building and needing a
+desk.
+
+Two nice properties follow. The sheet starts empty, so on day one the tailored manual
+is identical to the original - you are not risking the thing you paid for. And when
+you are done you can either type the corrections into a printed copy for that customer,
+which makes the result indistinguishable from a rewrite, or keep them separate and hand
+out different sheets with the same manual.
+
+And one limit. An errata sheet is excellent at "say it this way instead" and hopeless
+at "here is a chapter that was never written".""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+    class LoRALinear:
+        def __init__(self, base_linear, r=8, alpha=16):
+            self.base = base_linear
+            self.base.weight.requires_grad = False      # FROZEN. The whole point.
+            d_in, d_out = base_linear.shape
+            self.A = randn(r, d_in) * (1 / sqrt(r))     # random init
+            self.B = zeros(d_out, r)                    # ZERO init - so BA = 0 and
+            self.scale = alpha / r                      # the model starts UNCHANGED
+
+        def forward(self, x):
+            return self.base(x) + self.scale * (x @ self.A.T @ self.B.T)
+            #      ^^^^^^^^^^^ untouched      ^^^^^^^^^^^ the learned delta
+
+        def merge(self):
+            self.base.weight += self.scale * (self.B @ self.A)
+            # after this, inference is IDENTICAL in cost to the base model
+
+    # what actually gets optimised
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    # for a 7B model at r=8: 4.19M parameters, 0.064% of the total
+
+LINE BY LINE:
+ - `requires_grad = False` on the base weight. This is the line that produces the
+   1,567x memory saving, because Adam allocates state per TRAINABLE parameter.
+ - `self.B = zeros(...)` - B starts at zero so the product BA is zero and the adapted
+   model is EXACTLY the pretrained one at step 0. If both were random, training would
+   begin by perturbing a model that already worked. (A must be nonzero or the
+   gradient through B is zero and nothing ever learns.)
+ - `alpha / r` - the scaling that decouples magnitude from rank. Without it, doubling
+   r doubles the update's typical size and you are changing two things at once.
+ - `x @ A.T @ B.T` computed as two thin multiplies rather than forming BA - the whole
+   point is never to materialise a d-by-d matrix.
+ - `merge()` folds the delta into the frozen weight. THIS IS WHY LoRA BEAT ADAPTERS:
+   an adapter module cannot be folded away, so it costs latency forever.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+A 7B-class model: d_model 4096, 32 layers, adapters on the query and value
+projections only.
+
+  PER MATRIX, r = 8:
+    A is 8 x 4096   = 32,768 parameters
+    B is 4096 x 8   = 32,768 parameters
+    total            65,536 per adapted matrix
+  vs the full delta for that matrix: 4096 x 4096 = 16,777,216
+  -> 0.39% of the degrees of freedom
+
+  ACROSS THE MODEL: 2 matrices x 32 layers x 65,536 = 4,194,304 trainable parameters
+  against 6.57 billion total = 0.064%.
+
+  MEMORY, which is the number that decides feasibility:
+    full fine-tuning: 6.57e9 x (4 bytes gradient + 4 Adam m + 4 Adam v) = 78.88 GB
+    LoRA r=8:         4.19e6 x 12 bytes                                 = 50.3 MB
+    RATIO 1,567x
+  The base model's weights are still resident either way - LoRA shrinks what you
+  DIFFERENTIATE, not what you STORE.
+
+THE FULL TABLE:
+
+  model            full params    r=4              r=8              r=64
+  --------------------------------------------------------------------------
+  BERT-base            0.11B   0.15M 0.136%    0.29M 0.272%    2.36M 2.177%
+  GPT-2 medium         0.35B   0.39M 0.111%    0.79M 0.222%    6.29M 1.780%
+  7B-class             6.57B   2.10M 0.032%    4.19M 0.064%   33.55M 0.510%
+  70B-class           64.69B  10.49M 0.016%   20.97M 0.032%  167.77M 0.259%
+
+NOTE THE FRACTION FALLS AS THE MODEL GROWS - 0.272% for BERT and 0.032% for a 70B
+model at the same rank - because the adapter cost grows with d while the full model
+grows with d squared. LoRA GETS RELATIVELY CHEAPER THE BIGGER THE MODEL IS, which is
+why it became essential exactly when models got large.
+
+AND THE MEASUREMENT THAT JUSTIFIES THE WHOLE APPROACH - what fraction of a matrix a
+rank-r approximation captures:
+
+  matrix type          r=1     r=2     r=4     r=8     r=16
+  ---------------------------------------------------------------
+  random gaussian     0.060   0.117   0.215   0.382   0.627
+  low-rank + noise    0.348   0.602   0.982   0.986   0.992
+
+RANK 4 CAPTURED 98.2% OF A STRUCTURED MATRIX AND 21.5% OF A RANDOM ONE. LoRA works to
+the extent that fine-tuning updates resemble the second row - and its known weakness
+at teaching new facts is exactly the case where they resemble the first.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TRAINABLE PARAMETERS: measured 0.064% of a 7B model at r=8, and the fraction FALLS
+as models grow.
+
+TRAINING MEMORY: measured 50.3 MB of optimiser state against 78.88 GB - a 1,567x
+reduction, and this is the number that decides whether the job runs.
+
+BASE MODEL MEMORY: unchanged. LoRA does not compress the model.
+
+INFERENCE: zero extra cost if merged; two small matrix multiplies per adapted layer
+if kept separate, which buys per-request adapter swapping.
+
+STORAGE PER TASK: measured 20.97M parameters for a 70B model - megabytes rather than
+a model copy.
+
+THE #1 MISTAKE: expecting LoRA to teach new facts. It adapts style, format and task
+shape; new knowledge is a high-rank change and retrieval is the right tool.
+
+THE #2 MISTAKE: changing r without changing alpha. The update is scaled by alpha/r,
+so sweeping r alone sweeps the effective magnitude too.
+
+THE #3 MISTAKE: thinking it reduces model size. The frozen base is still fully
+resident; only the gradients and optimiser states shrink.
+
+THE #4 MISTAKE: initialising B randomly. It must be zero, or training starts by
+perturbing a model that already works. (A must NOT be zero, or no gradient flows.)
+
+THE #5 MISTAKE: using full fine-tuning's learning rate. LoRA typically wants an order
+of magnitude more.
+
+THE #6 MISTAKE: not merging when serving a single task, and paying inference cost for
+flexibility you are not using.
+
+THE #7 MISTAKE: shipping an adapter without pinning the base checkpoint. It is a
+delta against specific weights.
+
+THE #8 MISTAKE: treating a loss plateau as underfitting when it is the rank ceiling.
+Raising r distinguishes them.
+
+THE TAKEAWAY: LoRA freezes the pretrained weights and learns an ADDITIVE low-rank
+update BA instead, which measured 0.064% of the parameters of a 7B model at rank 8 -
+but the number that matters is optimiser state, 50.3 MB against 78.88 GB, a 1,567x
+reduction, because Adam allocates per TRAINABLE parameter; B is initialised to zero so
+the adapted model starts exactly as the original, and the update MERGES back into the
+weights so inference costs nothing extra, which is why it beat adapters; and the
+method rests on an empirical bet that fine-tuning updates are intrinsically low-rank -
+measured, rank 4 captures 98.2% of a structured matrix and 21.5% of a random one -
+which is also why it adapts style and task shape well and teaches new facts badly.""",
+]
+
 
 
 
