@@ -7403,3 +7403,988 @@ try-with-resources so a failing `close()` is suppressed rather than replacing th
 reserve checked exceptions for the narrow case where the immediate caller has a real alternative
 action.""",
 ]
+
+
+DEEP["Overriding vs overloading — and why static methods are not polymorphic"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two words that sound alike and are opposites
+
+OVERLOADING is several methods with the SAME NAME and DIFFERENT PARAMETERS in the same class.
+`println(int)`, `println(String)`, `println(Object)`. Which one runs is decided BY THE COMPILER, from
+the DECLARED TYPES of the arguments, before the program ever starts.
+
+OVERRIDING is a subclass replacing a method it inherited — same name, same parameters. Which one runs
+is decided AT RUNTIME, from the ACTUAL OBJECT.
+
+    THAT IS THE ENTIRE DISTINCTION, AND IT IS THE ONE THING TO SAY FIRST: OVERLOADING IS COMPILE TIME
+    AND USES THE DECLARED TYPE; OVERRIDING IS RUNTIME AND USES THE REAL TYPE.
+
+    Everything surprising about both features falls out of that sentence:
+
+    Object o = "hello";
+    print(o);            // calls print(Object). NOT print(String).
+
+    The object IS a String at runtime. The compiler does not care — the variable is DECLARED `Object`,
+    the choice among overloads was made at compile time, and nothing revisits it. Overloading has no
+    runtime component at all.
+
+    Animal a = new Dog();
+    a.speak();           // calls Dog.speak(). The DECLARED type is ignored.
+
+    Here the choice IS made at runtime, from the actual object. Same-looking code, opposite mechanism.
+
+THE EVERYDAY VERSION: overloading is a menu where the dish is chosen by what you WROTE on the order
+slip. Overriding is a dish where the recipe is chosen by which kitchen actually cooks it. Write "soup"
+and the slip decides which soup; who cooks it decides how that soup is made.
+
+TERMS AS THEY APPEAR:
+- STATIC TYPE (declared type): what the variable is declared as. Known at compile time.
+- DYNAMIC TYPE (runtime type): what the object actually is.
+- DYNAMIC DISPATCH: choosing the method body from the runtime type. What "polymorphism" means.
+- HIDING: what happens to static methods and fields, which look overridden and are not.""",
+
+"""2. THE INTUITION — one dispatch table, and three things that are not in it
+
+WHEN YOU CALL AN INSTANCE METHOD, the compiler picks the SIGNATURE and the JVM picks the BODY.
+
+    THE COMPILER'S JOB: from the declared types, choose which overload's signature is being invoked, and
+    emit an instruction naming it. This is finished at compile time and is never revisited.
+    THE JVM'S JOB: at the call, look at the actual object, find that signature in its class's method
+    table, and run whatever body is there.
+
+    SO EVERY CALL IS TWO DECISIONS, ONE PER PHASE. Overloading lives entirely in the first. Overriding
+    lives entirely in the second. Confusing them is the source of nearly every surprise in this topic.
+
+NOW THE THREE THINGS THAT ARE NOT IN THE RUNTIME TABLE — and are therefore NOT polymorphic:
+
+    STATIC METHODS. They belong to the CLASS, not to an instance. A subclass declaring the same static
+    signature does not override it — it HIDES it, and which one runs is decided from the DECLARED type
+    of the reference. `Animal a = new Dog(); a.describe();` calls `Animal.describe()` even though the
+    object is a Dog. WORSE, `a` may be null and the call still works, because the reference is never
+    dereferenced.
+
+    FIELDS. Fields are never polymorphic, in any object-oriented language that has them separate from
+    methods. `Animal a = new Dog(); a.name` reads `Animal.name` if both classes declare `name`. The
+    object has BOTH fields, and which one you see depends on the declared type of the expression.
+
+    PRIVATE METHODS. Not visible to the subclass, so a same-named method there is a NEW method, not an
+    override. Implicitly final in effect.
+
+    THE COMMON THREAD: dynamic dispatch applies to INSTANCE METHODS AND NOTHING ELSE. Every other member
+    is resolved from what the compiler could see.
+
+WHY OVERLOAD RESOLUTION FEELS ARBITRARY — it is not, it is three ordered phases:
+
+    PHASE 1: try to find a match using only WIDENING conversions (int → long → float → double). No
+             boxing, no varargs.
+    PHASE 2: if none, allow BOXING and unboxing.
+    PHASE 3: if still none, allow VARARGS.
+
+    THE PHASES ARE TRIED IN ORDER AND THE FIRST ONE THAT FINDS A MATCH WINS. Which is why, given
+    `f(long)` and `f(Integer)` called with an `int`, `f(long)` wins — widening is phase 1 and boxing is
+    phase 2. And why `f(int...)` loses to almost everything. This ordering exists for backward
+    compatibility: adding autoboxing and varargs in Java 5 must not have changed the meaning of any
+    existing program, so both were made last resorts.
+
+    WITHIN A PHASE, THE MOST SPECIFIC APPLICABLE METHOD WINS. `f(String)` beats `f(Object)` because
+    every String is an Object. If neither is more specific than the other — `f(String)` and
+    `f(Integer)` called with `null` — it is an AMBIGUITY COMPILE ERROR.""",
+
+"""3. THE MECHANISM — five invoke instructions, and what @Override buys you
+
+THE JVM HAS FIVE METHOD-CALL INSTRUCTIONS, and knowing which one a call compiles to tells you exactly
+what can happen at runtime:
+
+    invokestatic      a static method. NO receiver, NO dispatch. Chosen entirely at compile time.
+    invokespecial     constructors, `private` methods, and `super.x()`. NO dispatch — exactly the named
+                      method runs. This is why `super.toString()` cannot be intercepted by a subclass.
+    invokevirtual     a normal instance method on a class. DISPATCHED through the object's method table.
+    invokeinterface   an instance method through an interface reference. Dispatched too, historically
+                      via a slower search because a class's interface positions are not fixed.
+    invokedynamic     lambdas, method references, and string concatenation. The target is decided by a
+                      bootstrap method on first execution.
+
+    OVERRIDING IS `invokevirtual` AND `invokeinterface`. Those two are the whole of polymorphism.
+    Everything compiled to `invokestatic` or `invokespecial` is fixed before the program runs.
+
+THE METHOD TABLE (VTABLE). Each class has an array of method pointers; a subclass inherits its
+superclass's table and OVERWRITES the slots it overrides. A virtual call is therefore "load the class
+pointer from the object, index a fixed slot, jump" — a couple of instructions. AND THE JIT USUALLY
+REMOVES EVEN THAT: if only one type has ever appeared at a call site, it inlines that implementation
+behind a class check.
+
+THE RULES FOR A LEGAL OVERRIDE — each with a reason:
+    SAME NAME AND PARAMETER TYPES. Different parameters means you wrote an OVERLOAD, silently.
+    RETURN TYPE MAY BE COVARIANT (narrower). Java 5 onwards. `clone()` returning your own type.
+    ACCESS MAY WIDEN, NEVER NARROW. A `public` method cannot become `protected`, or a caller holding
+    the supertype could no longer do what the supertype promised.
+    CHECKED EXCEPTIONS MAY NARROW OR VANISH, NEVER BROADEN. Same reason.
+    `final`, `static` AND `private` METHODS CANNOT BE OVERRIDDEN.
+
+`@Override` IS THE MOST VALUABLE ANNOTATION IN JAVA, and the reason is precise: THE COMPILER CANNOT
+OTHERWISE TELL THE DIFFERENCE BETWEEN AN OVERRIDE AND AN ACCIDENTAL OVERLOAD.
+
+    Write `public boolean equals(MyClass other)` and you have created a NEW METHOD. It compiles. It
+    looks right. `Object.equals(Object)` is still inherited, so every collection calls THAT one, and
+    your `HashSet` silently contains duplicates. `@Override` turns this into a compile error, instantly.
+    THIS IS THE SINGLE MOST COMMON REAL BUG IN THIS ENTIRE TOPIC.
+
+BRIDGE METHODS, for completeness: when generics or covariant returns are involved, javac synthesises an
+extra method with the erased signature that casts and delegates. So `Comparable<Foo>.compareTo(Foo)`
+gets a hidden `compareTo(Object)` companion — which is what the runtime actually dispatches to, and
+why a generic override works at all after erasure.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — `equals(MyType)` INSTEAD OF `equals(Object)`. An overload, not an override. Collections use
+the inherited `Object.equals`, so sets contain duplicates and maps miss lookups. `@Override` catches it.
+
+CASE 2 — `Object o = "hi"; print(o);` CALLS `print(Object)`. The runtime type is irrelevant to overload
+selection. The most common demonstration of the compile-time rule.
+
+CASE 3 — STATIC METHOD "OVERRIDDEN". It is HIDDEN. Which runs depends on the DECLARED type, so
+`Animal a = new Dog(); a.describe();` runs `Animal.describe()`.
+
+CASE 4 — CALLING A STATIC METHOD THROUGH A NULL REFERENCE. `Animal a = null; a.describe();` works. The
+reference is never dereferenced because the call compiles to `invokestatic`.
+
+CASE 5 — FIELD HIDING. If both classes declare `name`, the object has BOTH, and which you see depends
+on the declared type of the expression. Fields are never polymorphic.
+
+CASE 6 — CALLING AN OVERRIDABLE METHOD FROM A CONSTRUCTOR. The subclass override runs BEFORE the
+subclass's fields are initialised, so it sees nulls and zeros. A genuinely nasty bug, and the reason
+Effective Java says constructors must not invoke overridable methods.
+
+CASE 7 — `null` PASSED TO OVERLOADS. It binds to the MOST SPECIFIC applicable type; if two are
+unrelated, it is an ambiguity compile error. Cast to disambiguate.
+
+CASE 8 — WIDENING BEATS BOXING. With `f(long)` and `f(Integer)`, an `int` argument calls `f(long)`.
+Phase 1 before phase 2, for backward compatibility with pre-Java-5 code.
+
+CASE 9 — VARARGS ALWAYS LOSES. `f(int, int)` beats `f(int...)` for two arguments, because varargs is
+phase 3.
+
+CASE 10 — `list.remove(1)` VS `list.remove(Integer.valueOf(1))`. Overload resolution silently choosing
+index over value on a `List<Integer>`. Both compile.
+
+CASE 11 — NARROWING ACCESS ON AN OVERRIDE. A compile error, and rightly: it would break the
+supertype's promise to its callers.
+
+CASE 12 — OVERLOADING ACROSS AN INHERITANCE BOUNDARY. Subclass overloads join the superclass's set, so
+adding a method in a superclass can silently change which overload an existing subclass call selects.
+This is why Effective Java advises against overloading with the same arity at all.
+
+CASE 13 — LAMBDAS AND OVERLOADS. Passing a lambda where two overloads take different functional
+interfaces is often ambiguous, because a lambda has no type of its own until a target type is chosen.""",
+
+"""5. THE ALTERNATIVES — designing so the distinction never bites
+
+DO NOT OVERLOAD WITH THE SAME NUMBER OF PARAMETERS. Effective Java Item 52, and it is the single most
+effective rule here: if two overloads have the same arity, a reader cannot tell which runs without
+knowing the declared types, and neither can a maintainer.
+
+    GIVE THEM DIFFERENT NAMES INSTEAD. `readFromFile(String)` and `readFromUrl(String)`. This is why
+    `ObjectOutputStream` has `writeInt`, `writeLong`, `writeBoolean` rather than eleven `write`
+    overloads — the API's author faced exactly this and chose names.
+
+STATIC FACTORY METHODS with descriptive names instead of overloaded constructors. `BigDecimal.valueOf`
+versus `new BigDecimal(...)` — where, notoriously, the `double` and `String` overloads behave
+differently and the wrong one is easy to reach.
+
+`@Override` ON EVERY OVERRIDE, ALWAYS. It costs nothing and converts the accidental-overload bug class
+into a compile error. Turn on the IDE inspection that requires it.
+
+PREFER COMPOSITION TO INHERITANCE when the hierarchy is getting deep. Overriding is a contract between
+a superclass and its subclasses that is almost never written down; composition makes it explicit.
+Effective Java Item 18: "design for inheritance or prohibit it" — and `final` on a class is a
+legitimate design choice, not laziness.
+
+SEALED CLASSES AND INTERFACES (Java 17) plus PATTERN-MATCHING `switch` — when you have a closed set of
+types and want behaviour selected per type. This gives you EXHAUSTIVENESS CHECKING, which dynamic
+dispatch never provided: add a subtype and every switch that does not handle it fails to compile.
+
+THE VISITOR PATTERN, historically, for double dispatch — choosing behaviour from the runtime types of
+TWO objects, which single dispatch cannot express. Largely superseded by sealed types and pattern
+matching, and worth knowing mainly to explain why those features were added.
+
+TEMPLATE METHOD — a `final` public method defining the sequence, calling `protected abstract` hooks.
+This is overriding used well: the extension points are declared, documented, and constrained.
+
+WHAT TO SAY: "Overloading is compile-time and uses declared types; overriding is runtime and uses the
+actual object. I avoid overloads with the same arity because the reader cannot tell which runs, always
+write `@Override` because the accidental `equals(MyType)` overload is a real bug the compiler will
+catch, and never call an overridable method from a constructor."
+
+""",
+
+"""6. HOW TO GET IT RIGHT — numbered steps
+
+STEP 1 — ASK "COMPILE TIME OR RUNTIME?" Overloading is compile time from declared types. Overriding is
+runtime from the object. Every surprise follows from getting this backwards.
+
+STEP 2 — PUT `@Override` ON EVERY OVERRIDE. Without it, a signature typo silently creates an overload.
+
+STEP 3 — WHEN YOU IMPLEMENT `equals`, ITS PARAMETER IS `Object`. Anything else is a new method and your
+collections will misbehave silently.
+
+STEP 4 — AVOID OVERLOADS WITH THE SAME ARITY. Use distinct names, or static factories.
+
+STEP 5 — NEVER CALL AN OVERRIDABLE METHOD FROM A CONSTRUCTOR. The override runs before the subclass's
+fields exist.
+
+STEP 6 — REMEMBER STATIC METHODS ARE HIDDEN, NOT OVERRIDDEN. Call them on the class, never through an
+instance reference — most IDEs warn, and the warning is right.
+
+STEP 7 — DO NOT SHADOW FIELDS. If a subclass needs a different value, use a protected accessor; fields
+are never polymorphic and hiding them produces two live values.
+
+STEP 8 — REMEMBER WIDENING BEATS BOXING BEATS VARARGS. When resolution surprises you, that ordering is
+almost always the reason.
+
+STEP 9 — CAST `null` WHEN PASSING IT TO OVERLOADS. `f((String) null)` states the intent and avoids the
+ambiguity error.
+
+STEP 10 — MAKE A CLASS `final` OR DESIGN IT FOR INHERITANCE, and document which methods may be
+overridden and what they may assume. An undocumented override contract is a bug waiting for a
+maintainer.
+
+STEP 11 — FOR A CLOSED SET OF TYPES, PREFER SEALED TYPES AND PATTERN MATCHING over a virtual method,
+when you want exhaustiveness checked at compile time.
+
+STEP 12 — WHEN AN OVERLOAD IS AMBIGUOUS TO YOU, IT IS AMBIGUOUS TO EVERY READER. Rename it.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'Overloading is several methods with the same name and different parameters. Which one runs is decided
+BY THE COMPILER, from the DECLARED types of the arguments. Overriding is a subclass replacing an
+inherited method with the same signature, and which one runs is decided AT RUNTIME from the actual
+object.
+
+So the sentence I'd lead with is: overloading is compile time and uses the declared type; overriding is
+runtime and uses the real type. Everything surprising falls out of that.
+
+The demonstration is two lines. `Object o = "hello"; print(o);` calls print(Object), not print(String).
+The object IS a String at runtime — the compiler doesn't care, because the variable is declared Object
+and the overload was chosen at compile time. Nothing revisits it. Overloading has no runtime component
+at all. Whereas `Animal a = new Dog(); a.speak();` calls Dog.speak and ignores the declared type.
+
+The three things that are NOT polymorphic are worth naming, because they all look like they should be.
+Static methods belong to the class, so a subclass declaring the same signature HIDES rather than
+overrides, and which runs is decided from the declared type — which also means calling a static method
+through a null reference works fine, because the reference is never dereferenced. Fields are never
+polymorphic either: if both classes declare `name`, the object has BOTH, and which you see depends on
+the declared type of the expression. And private methods aren't visible to the subclass, so a same-named
+method there is just a new method. The thread through all three: dynamic dispatch applies to instance
+methods and nothing else.
+
+Overload resolution feels arbitrary but it's three ordered phases. Phase one tries widening only —
+int to long to double. Phase two allows boxing. Phase three allows varargs. First phase to find a match
+wins. So with f(long) and f(Integer), an int argument calls f(long), because widening is phase one and
+boxing is phase two. That ordering exists for backward compatibility: adding autoboxing and varargs in
+Java 5 must not have changed the meaning of any existing program, so both were made last resorts.
+
+At the bytecode level, overriding is invokevirtual and invokeinterface — those two are the whole of
+polymorphism. invokestatic and invokespecial are fixed before the program runs, which is exactly why
+static methods and super calls can't be intercepted.
+
+The practical bug I'd flag hardest: writing `public boolean equals(MyClass other)`. That's an OVERLOAD,
+not an override. It compiles, it looks right, Object.equals(Object) is still inherited, so every
+collection calls that one and your HashSet silently contains duplicates. `@Override` turns it into a
+compile error instantly, which is why I'd put that annotation on every override without exception.
+
+And two design rules: don't overload with the same arity, because the reader can't tell which one runs
+— that's why ObjectOutputStream has writeInt and writeLong rather than eleven write overloads. And
+never call an overridable method from a constructor, because the subclass's override runs before the
+subclass's fields are initialised and sees nulls and zeros.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── OVERLOADING: the compiler decides, from the DECLARED type ───────
+    static void print(Object o) { System.out.println("Object"); }
+    static void print(String s) { System.out.println("String"); }
+
+    String s = "hi";  print(s);        // "String"  ← declared String
+    Object o = "hi";  print(o);        // "Object"  ← DECLARED Object. The runtime
+    //                                    type is String and it is IRRELEVANT: the
+    //                                    overload was chosen at compile time and
+    //                                    nothing revisits it.
+    print((String) o);                 // "String"  ← a cast changes the DECLARED type
+
+    // ── OVERRIDING: the JVM decides, from the ACTUAL object ─────────────
+    class Animal { String speak() { return "..."; } }
+    class Dog extends Animal { @Override String speak() { return "Woof"; } }
+    Animal a = new Dog();  a.speak();  // "Woof" ← declared type IGNORED
+
+    // ── STATIC METHODS ARE HIDDEN, NOT OVERRIDDEN ───────────────────────
+    class Animal { static String describe() { return "an animal"; } }
+    class Dog extends Animal { static String describe() { return "a dog"; } }
+    Animal a = new Dog();
+    System.out.println(a.describe());  // "an animal"  ← the DECLARED type wins
+    Animal n = null;
+    System.out.println(n.describe());  // "an animal" — NO NullPointerException,
+    //                                    because this compiles to invokestatic and
+    //                                    the reference is never dereferenced.
+
+    // ── FIELDS ARE NEVER POLYMORPHIC ────────────────────────────────────
+    class Animal { String name = "animal"; }
+    class Dog extends Animal { String name = "dog"; }
+    Dog d = new Dog();
+    Animal a = d;
+    System.out.println(a.name);        // "animal"   ← declared type
+    System.out.println(d.name);        // "dog"      ← SAME OBJECT, both fields exist
+    System.out.println(((Animal) d).name);  // "animal" — a cast selects the field
+
+    // ── THE BUG @Override EXISTS TO CATCH ───────────────────────────────
+    class Point {
+        int x, y;
+        public boolean equals(Point other) { return x == other.x && y == other.y; }
+    //                       ^^^^^ AN OVERLOAD. Object.equals(Object) is still
+    //   inherited, so every collection calls THAT one — reference equality.
+    }
+    var set = new HashSet<Point>();
+    set.add(new Point(1,1)); set.add(new Point(1,1));
+    System.out.println(set.size());    // 2. Silent duplicates.
+    @Override public boolean equals(Point o)   // ← COMPILE ERROR. Fixed instantly.
+    @Override public boolean equals(Object o)  // ← correct
+
+    // ── OVERLOAD RESOLUTION: three ordered phases ───────────────────────
+    static void f(long x)     { print("long");    }   // phase 1: widening
+    static void f(Integer x)  { print("Integer"); }   // phase 2: boxing
+    static void f(int... x)   { print("varargs"); }   // phase 3: varargs
+    f(5);                              // "long" — phase 1 finds a match and STOPS.
+    //   Backward compatibility: adding boxing and varargs in Java 5 could not be
+    //   allowed to change the meaning of any existing program.
+    f(null);                           // needs a cast: which reference type?
+
+    // ── THE CONSTRUCTOR TRAP ────────────────────────────────────────────
+    class Base { Base() { init(); } void init() { } }
+    class Sub extends Base {
+        private final List<String> items = new ArrayList<>();
+        @Override void init() { items.add("x"); }
+    //                          ^^^^^ NullPointerException. Base's constructor runs
+    //   FIRST, calls the override, and `items` has not been assigned yet — the
+    //   field initialiser runs AFTER the super constructor returns.
+    }""",
+
+"""9. THE TRACE — the same call site, two mechanisms
+
+SETUP:
+    class Animal { String speak() { return "..."; }  static String kind() { return "animal"; }
+                   String name = "animal"; }
+    class Dog extends Animal { String speak() { return "Woof"; }  static String kind() { return "dog"; }
+                              String name = "dog"; }
+    Animal a = new Dog();
+
+FOUR ACCESSES THROUGH THE SAME REFERENCE, and what each one resolves against:
+
+    expression      bytecode          resolved from        result      why
+    ---------------------------------------------------------------------------------
+    a.speak()       invokevirtual     THE OBJECT           "Woof"      dynamic dispatch
+    a.kind()        invokestatic      the DECLARED type    "animal"    no dispatch exists
+    a.name          getfield          the DECLARED type    "animal"    fields never dispatch
+    ((Dog)a).name   getfield          the CAST type        "dog"       the same object!
+    ---------------------------------------------------------------------------------
+    ONE OBJECT. ONE REFERENCE. FOUR ACCESSES, AND ONLY THE FIRST IS POLYMORPHIC. The instruction the
+    compiler emitted decides everything, and it emitted a different instruction for each row.
+
+NOW THE OVERLOAD TRACE — following the three phases:
+
+    given:  f(long), f(Integer), f(int...)     call:  f(5)   where 5 is an int
+    ---------------------------------------------------------------------------------
+    phase 1  widening only, no boxing, no varargs
+             f(long)     — int widens to long          APPLICABLE  ← MATCH FOUND
+             f(Integer)  — would need boxing           not eligible in this phase
+             f(int...)   — varargs                     not eligible in this phase
+             → phase 1 succeeded, so PHASES 2 AND 3 ARE NEVER TRIED
+    ---------------------------------------------------------------------------------
+    RESULT: "long". Not Integer, which looks like the closer match to a human. The phases exist so that
+    Java 5's autoboxing could not silently change the behaviour of any program written before it.
+
+    same overloads, call:  f(Integer.valueOf(5))
+    ---------------------------------------------------------------------------------
+    phase 1  f(Integer) — exact match, no conversion at all              MATCH
+    → "Integer". The argument's DECLARED type changed, so the answer changed.
+    ---------------------------------------------------------------------------------
+
+AND THE CONSTRUCTOR TRACE — the initialisation order that produces the null:
+
+    step  what runs                                    `items` is
+    ---------------------------------------------------------------------------------
+    1     `new Sub()` → Sub's constructor begins        null (default value)
+    2     it implicitly calls `super()` FIRST           null
+    3     Base's constructor body runs → `init()`       null
+    4     DISPATCH picks Sub.init() — the override      null
+    5     `items.add("x")`                              NullPointerException
+    6     (never reached) Sub's field initialisers      would have run HERE
+    7     (never reached) Sub's constructor body
+    ---------------------------------------------------------------------------------
+    DYNAMIC DISPATCH IS WORKING PERFECTLY. That is what makes this subtle: step 4 does exactly what
+    polymorphism promises — it picks the subclass's method — and the subclass's own state does not exist
+    yet, because field initialisers run AFTER the super constructor returns. The feature and the bug are
+    the same mechanism.
+
+WHAT PRODUCED WHAT:
+    THE COMPILER CHOOSING THE SIGNATURE   produced every "declared type wins" row: the overload result,
+                                          the static call, and both field reads.
+    THE JVM CHOOSING THE BODY             produced the one polymorphic row, and the constructor trap.
+    PHASE ORDERING                        produced "long" beating "Integer", and exists purely for
+                                          backward compatibility.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Overload resolution: entirely at compile time. Zero runtime cost.
+    Virtual dispatch: load the class pointer, index a fixed vtable slot, jump — a couple of
+    instructions, and usually inlined away by the JIT when only one type appears at the site.
+    `invokestatic` / `invokespecial`: no dispatch at all, fixed before the program runs.
+    `invokeinterface`: historically slower than `invokevirtual` because interface method positions are
+    not fixed across implementing classes.
+    Overload phases: 1 widening, 2 boxing, 3 varargs. First match wins; within a phase, most specific
+    wins; a tie is a compile error.
+
+THE #1 MISTAKE: `equals(MyType)` instead of `equals(Object)`. An overload, so collections silently use
+reference equality and sets contain duplicates. `@Override` prevents it entirely.
+
+THE #2 MISTAKE: expecting overload selection to use the runtime type. It never does.
+
+THE #3 MISTAKE: believing static methods are overridden. They are HIDDEN, and resolved from the
+declared type.
+
+THE #4 MISTAKE: expecting fields to be polymorphic. The object holds both, and the declared type
+selects.
+
+THE #5 MISTAKE: calling an overridable method from a constructor. The override runs before the
+subclass's fields are initialised.
+
+THE #6 MISTAKE: overloading with the same arity. No reader can tell which runs. Use distinct names.
+
+THE #7 MISTAKE: assuming boxing beats widening. Phase 1 before phase 2, always.
+
+THE #8 MISTAKE: passing an uncast `null` to overloads. Most specific wins, or it is ambiguous.
+
+THE #9 MISTAKE: narrowing access or broadening checked exceptions in an override. Compile errors, and
+correctly so — both would break the supertype's promise.
+
+THE #10 MISTAKE: omitting `@Override`. It is free and it converts a silent bug class into a compile
+error.
+
+THE #11 MISTAKE: adding an overload to a superclass and assuming subclasses are unaffected. Overload
+sets merge across the hierarchy, so an existing call can silently start selecting the new method.
+
+ONE-SENTENCE TAKEAWAY: overloading is resolved by the COMPILER from the DECLARED types — in three
+ordered phases where widening beats boxing beats varargs — while overriding is resolved by the JVM from
+the ACTUAL OBJECT, and only instance methods participate in that runtime dispatch, so static methods
+are HIDDEN and fields are shadowed with both values living in the same object and the declared type
+choosing between them; the practical consequences are that `Object o = "hi"; print(o)` calls
+`print(Object)`, that a static method call through a null reference does not throw, that writing
+`equals(MyType)` silently creates an overload which every collection ignores — which is why `@Override`
+belongs on every override — and that calling an overridable method from a constructor invokes the
+subclass's version before the subclass's fields exist.""",
+]
+
+
+DEEP["Abstract class vs interface — and what default methods changed"] = [
+"""1. THE GOAL IN PLAIN ENGLISH — two ways to say "these types share something"
+
+AN ABSTRACT CLASS is a partly-written class. It can have fields, constructors, private methods, and
+finished method bodies alongside the unfinished ones. You cannot instantiate it; a subclass fills in
+the gaps. A class may extend EXACTLY ONE of them.
+
+AN INTERFACE is a set of method signatures a type promises to provide. A class may implement AS MANY AS
+IT LIKES.
+
+    THAT USED TO BE THE WHOLE ANSWER: "abstract classes can have code and state, interfaces are pure
+    contracts, and you get one parent but many interfaces." Then Java 8 gave interfaces DEFAULT METHODS
+    — method bodies — and Java 9 gave them private methods, and half the traditional answer stopped
+    being true.
+
+    SO THE MODERN ANSWER HAS TO NAME WHAT STILL DIFFERS, AND IT IS SHORT: **STATE**. An interface
+    cannot have instance fields. It can have behaviour; it cannot have data. Plus: no constructors, and
+    still only one superclass.
+
+    AND — THIS IS THE PART MOST ANSWERS MISS — DEFAULT METHODS WERE NOT ADDED TO GIVE JAVA MULTIPLE
+    INHERITANCE OF BEHAVIOUR. They were added to solve a specific, urgent problem: how do you add
+    `stream()` and `forEach()` to `java.util.Collection` without breaking every implementation of it
+    ever written, anywhere in the world? Before Java 8, adding a method to an interface broke every
+    implementor. Default methods made INTERFACE EVOLUTION possible. The multiple-inheritance-of-behaviour
+    capability is a side effect, and the JDK authors said so explicitly.
+
+THE EVERYDAY VERSION: an abstract class is a half-built house — foundations, plumbing, some rooms
+finished — and you can only build on one plot. An interface is a building code: a list of things any
+house must provide. Java 8 let the building code include some standard fittings you get for free. It
+still cannot pour you a foundation, because a code is not a plot of land.
+
+TERMS AS THEY APPEAR:
+- DEFAULT METHOD: an interface method with a body, inherited by implementors. Java 8.
+- STATE: instance fields. The remaining hard line between the two.
+- DIAMOND PROBLEM: inheriting the same method from two places, with no obvious winner.""",
+
+"""2. THE INTUITION — what each one is FOR, once you know they overlap
+
+SINCE BOTH CAN CARRY BEHAVIOUR, THE CHOICE IS NO LONGER TECHNICAL. It is about what you are modelling:
+
+    AN INTERFACE DESCRIBES A CAPABILITY OR A ROLE. "This can be compared." "This can be closed." "This
+    can be serialised." It says nothing about what the thing IS. A `Duck` and a `Rocket` can both be
+    `Comparable` without having anything else in common — and that is exactly why interfaces support
+    multiple implementation: a type has many roles and only one identity.
+
+    AN ABSTRACT CLASS DESCRIBES A PARTIAL IDENTITY WITH SHARED MACHINERY. "Every AbstractList works like
+    this, and here are the fields and the invariants." It is inherited singly BECAUSE identity is
+    singular, and because inheriting fields from two places genuinely has no sane answer.
+
+    THAT ASYMMETRY — MANY ROLES, ONE IDENTITY — IS WHY JAVA CHOSE SINGLE INHERITANCE OF CLASSES AND
+    MULTIPLE OF INTERFACES, and it is a much better justification than "to avoid the diamond problem".
+
+THE DIAMOND PROBLEM, SINCE IT COMES UP: what if you inherit the same method from two parents?
+
+    WITH FIELDS IT IS GENUINELY UNANSWERABLE. If both parents declare `count`, does the child have one
+    or two? C++ answers with virtual inheritance and a memory layout most people never fully learn.
+    JAVA SIDESTEPS IT BY FORBIDDING STATE IN INTERFACES — which is precisely why the one remaining
+    difference is the one that matters.
+    WITH METHODS IT IS ANSWERABLE, and Java 8 answered it with three rules, in order:
+        1. A CLASS WINS. A method inherited from a superclass beats any interface default.
+        2. THE MORE SPECIFIC INTERFACE WINS. If `B extends A` and both define it, `B`'s is used.
+        3. OTHERWISE IT IS A COMPILE ERROR, and you must resolve it explicitly with `A.super.method()`.
+    RULE 3 IS THE IMPORTANT ONE: Java refuses to guess. Ambiguity is an error, not a silent choice.
+
+WHY "CLASS WINS" — the reason is compatibility, and it is worth knowing: a default method added to an
+interface in a later JDK must never override behaviour an existing class already had. Otherwise
+upgrading the JDK would silently change your program.
+
+THE MODERN PATTERN THAT USES BOTH — INTERFACE PLUS SKELETAL IMPLEMENTATION:
+
+    Declare the type as an INTERFACE, so callers depend on the capability and implementors are free.
+    Provide an ABSTRACT SKELETAL CLASS — `AbstractList`, `AbstractMap`, `AbstractSet` — that implements
+    the tedious parts for anyone who wants to extend it.
+    IMPLEMENTORS THEN CHOOSE: extend the skeleton for convenience, or implement the interface directly
+    when they already have a superclass. This is Effective Java Item 20, it is how the entire
+    collections framework is built, and it gets both benefits with neither constraint.""",
+
+"""3. THE MECHANISM — what each can hold, and what default methods actually compile to
+
+WHAT EACH CAN CONTAIN, precisely:
+
+                                    interface                    abstract class
+    instance fields                 NO — the hard line           yes
+    `static final` constants        yes (implicitly public        yes
+                                    static final)
+    constructors                    NO                            yes
+    abstract methods                yes (implicitly public)       yes
+    concrete methods                yes — `default` (Java 8)      yes
+    static methods                  yes (Java 8)                  yes
+    private methods                 yes (Java 9)                  yes
+    protected members               NO — everything is public      yes
+                                    except private methods
+    `final` methods                 NO — a default cannot be      yes
+                                    final
+    how many per class              MANY                          ONE
+
+    READ THE FIRST AND LAST ROWS TOGETHER — THEY ARE THE SAME FACT. Interfaces allow many because they
+    carry no state; classes allow one because they do.
+
+TWO SUBTLETIES ABOUT INTERFACE MEMBERS:
+
+    ALL INTERFACE FIELDS ARE `public static final`, IMPLICITLY. So an "interface constant" is a global
+    constant, and the old "constant interface" pattern — implementing an interface purely to import its
+    constants — is an anti-pattern (Effective Java Item 22): it leaks an implementation detail into the
+    type's public API forever. Use an enum or a final class of static members.
+    INTERFACE STATIC METHODS ARE NOT INHERITED. `MyList.of(...)` does not exist just because
+    `List.of(...)` does; you must call `List.of`. This is deliberate — it stops static helpers from
+    polluting every implementor.
+
+WHAT A DEFAULT METHOD COMPILES TO: an ordinary method in the interface's class file with a body, and
+`invokeinterface` at the call site dispatches to it if the implementing class provides nothing.
+`X.super.method()` compiles to `invokespecial` naming the interface — which is the ONLY way to reach a
+specific inherited default explicitly.
+
+WHY `Iterable.forEach` AND `Collection.stream` EXIST AS DEFAULTS: this is the concrete case the feature
+was built for. In 2014 there were millions of classes implementing `List` and `Collection` in code the
+JDK team could not see or change. Adding an abstract `stream()` would have broken every one of them at
+compile time. A DEFAULT METHOD ADDS THE CAPABILITY AND BREAKS NOBODY — and `Collection.removeIf` and
+`Map.getOrDefault`/`computeIfAbsent`/`merge` all arrived the same way.
+
+THE COST THEY ACCEPTED: a default method can only use the interface's own methods. It has no fields to
+read, so it must be expressible in terms of the contract alone. `forEach` is `for (T t : this)
+action.accept(t)` — nothing more is available to it. THAT LIMIT IS WHY DEFAULTS DID NOT TURN
+INTERFACES INTO CLASSES.
+
+FUNCTIONAL INTERFACES: exactly one abstract method, so a lambda can implement it. Default and static
+methods do not count towards that one, which is why `Comparator` can carry `thenComparing`, `reversed`
+and a dozen others and still be a lambda target. `@FunctionalInterface` makes the compiler enforce it.""",
+
+"""4. EDGE CASES AND FAILURE MODES
+
+CASE 1 — TRYING TO PUT STATE IN AN INTERFACE. A field there is `public static final` — one value shared
+by every implementor, not per-instance. People discover this by writing a "counter" that is global.
+
+CASE 2 — THE CONSTANT INTERFACE. Implementing an interface only to inherit its constants. It becomes
+part of your public API permanently and can never be removed. Use an enum or a utility class.
+
+CASE 3 — EXPECTING STATIC INTERFACE METHODS TO BE INHERITED. They are not. `MyImpl.of(...)` does not
+exist because `List.of(...)` does.
+
+CASE 4 — THE DIAMOND WITH TWO UNRELATED INTERFACES. Both define the same default and neither extends
+the other: COMPILE ERROR, and you must write `A.super.hello()`. Java refuses to guess.
+
+CASE 5 — A DEFAULT METHOD SILENTLY LOSING TO AN INHERITED CLASS METHOD. "Class wins" means a
+superclass's `toString` beats an interface default, even if the interface is much more specific to
+your intent.
+
+CASE 6 — ADDING A DEFAULT METHOD TO AN INTERFACE AND BREAKING A DIAMOND. Source-compatible for anyone
+implementing one interface; a compile error for anyone who implements two that now both define it. THE
+FEATURE THAT MAKES EVOLUTION SAFE HAS ITS OWN INCOMPATIBILITY MODE.
+
+CASE 7 — TRYING TO OVERRIDE `equals`, `hashCode` OR `toString` AS A DEFAULT METHOD. Explicitly
+forbidden by the language. Those come from `Object`, "class wins" would make the default unreachable
+anyway, and allowing it would let an interface change identity semantics.
+
+CASE 8 — A `@FunctionalInterface` THAT ACQUIRES A SECOND ABSTRACT METHOD. Every lambda using it stops
+compiling. The annotation exists to make this a declaration-site error rather than a use-site one.
+
+CASE 9 — DEEP ABSTRACT CLASS HIERARCHIES. Three or four levels of `protected` methods and template
+hooks, and no one can tell which class contributes which behaviour. Composition is usually the fix.
+
+CASE 10 — AN ABSTRACT CLASS WHOSE CONSTRUCTOR CALLS AN ABSTRACT METHOD. The subclass override runs
+before the subclass's fields are initialised, so it sees nulls.
+
+CASE 11 — A CLASS THAT CANNOT USE YOUR SKELETAL IMPLEMENTATION because it already has a superclass.
+This is exactly the scenario the interface-plus-skeleton pattern exists to handle, and forcing an
+abstract class instead makes your type unusable in that codebase.
+
+CASE 12 — RECORDS CANNOT EXTEND A CLASS. They can implement any number of interfaces. If you want a
+type usable by records, it must be an interface.""",
+
+"""5. THE ALTERNATIVES — and how to choose in practice
+
+CHOOSE AN INTERFACE WHEN:
+    you are describing a CAPABILITY or ROLE rather than an identity;
+    unrelated types should be able to provide it;
+    implementors may already have a superclass;
+    you want records, enums or lambdas to be able to implement it;
+    you want callers to depend on the smallest possible surface.
+    THIS IS THE DEFAULT for anything crossing a module or team boundary.
+
+CHOOSE AN ABSTRACT CLASS WHEN:
+    there is genuine SHARED STATE — fields with invariants the subclasses must not violate;
+    you need a constructor to establish those invariants;
+    you want `protected` members visible to subclasses and to nobody else;
+    you need to make some methods `final` to protect a template.
+
+CHOOSE BOTH — THE SKELETAL IMPLEMENTATION PATTERN, which is the answer that shows you have used this in
+anger. `Collection` / `AbstractCollection`, `List` / `AbstractList`, `Map` / `AbstractMap`. The
+interface is the type; the abstract class is a convenience. Implementors take the shortcut or not, as
+their own hierarchy allows.
+
+MODERN ALTERNATIVES THAT OFTEN BEAT BOTH:
+    COMPOSITION AND DELEGATION. "Has-a" instead of "is-a". No fragile base class, no hidden coupling
+    through `protected`, and the relationship is visible in a field rather than in a header line.
+    Effective Java Item 18, and it is the right answer more often than inheritance is.
+    SEALED INTERFACES (Java 17) + RECORDS + PATTERN-MATCHING `switch`. A closed set of implementations,
+    checked EXHAUSTIVELY at compile time. This is the shape modern Java reaches for when the set of
+    subtypes is known — and unlike virtual dispatch, adding a case makes every incomplete switch fail
+    to compile.
+    A FUNCTIONAL INTERFACE plus lambdas, when the abstraction is really one operation. A whole class
+    hierarchy for a strategy is often one `Function`.
+    ENUMS WITH BEHAVIOUR — constant-specific method bodies give you a fixed set of implementations with
+    no class hierarchy at all.
+
+WHAT NOT TO DO: an interface with a single implementation created "for testability". Modern mocking
+frameworks handle classes fine, and the extra type is pure indirection. ADD THE INTERFACE WHEN THERE IS
+A SECOND IMPLEMENTATION, or a real boundary.
+
+WHAT TO SAY: "Interfaces for capabilities and for anything crossing a boundary, abstract classes when
+there is genuine shared state with invariants, and the skeletal-implementation pattern when I want
+both. Default methods exist for INTERFACE EVOLUTION — they were how `stream()` was added to
+`Collection` without breaking the world — so I would not treat them as a licence for multiple
+inheritance of behaviour."
+
+""",
+
+"""6. HOW TO CHOOSE — numbered steps
+
+STEP 1 — ASK: IS THERE SHARED STATE? Instance fields with invariants mean abstract class. No state means
+interface. This is the only remaining hard technical line.
+
+STEP 2 — ASK: CAPABILITY OR IDENTITY? "Can be compared", "can be closed" — interface. "Is a kind of" with
+machinery — abstract class.
+
+STEP 3 — DEFAULT TO THE INTERFACE for anything a caller depends on. It leaves implementors free and it
+lets records, enums and lambdas participate.
+
+STEP 4 — IF YOU WANT TO OFFER CONVENIENCE, USE THE SKELETAL PATTERN. Interface as the type, abstract
+class as an optional base.
+
+STEP 5 — USE `default` FOR EVOLUTION, NOT FOR CONVENIENCE. If you are adding a method to a released
+interface, a default is the right tool. If you are designing something new, prefer an abstract method
+plus a skeleton.
+
+STEP 6 — DO NOT PUT STATE-LIKE CONSTANTS IN AN INTERFACE. Every field there is `public static final` and
+becomes permanent public API.
+
+STEP 7 — NEVER USE A CONSTANT INTERFACE. Use an enum or a final class with static members.
+
+STEP 8 — MARK SINGLE-ABSTRACT-METHOD INTERFACES `@FunctionalInterface`. It makes accidentally adding a
+second method an error at the declaration rather than at every lambda.
+
+STEP 9 — IF THE SET OF IMPLEMENTATIONS IS CLOSED, MAKE IT `sealed`. You gain exhaustiveness checking in
+`switch`, which no amount of virtual dispatch gives you.
+
+STEP 10 — PREFER COMPOSITION WHEN THE HIERARCHY PASSES TWO LEVELS. Deep abstract hierarchies hide which
+class contributes which behaviour.
+
+STEP 11 — NEVER CALL AN ABSTRACT METHOD FROM A CONSTRUCTOR. The override runs before the subclass's
+fields exist.
+
+STEP 12 — RESOLVE DIAMONDS EXPLICITLY WITH `A.super.method()`. Java will not guess, and that is a
+feature.""",
+
+"""7. THE ANSWER IN PLAIN LANGUAGE — what you would say out loud
+
+'The classic answer is: abstract classes can have code and state, interfaces are pure contracts, you get
+one superclass but many interfaces. Java 8 broke half of that, because default methods gave interfaces
+method bodies, and Java 9 gave them private methods too.
+
+So the modern answer has to name what actually still differs, and it's short: STATE. An interface cannot
+have instance fields. It can have behaviour, it cannot have data. Plus no constructors, and still only
+one superclass.
+
+And here's the part I think most answers miss. Default methods weren't added to give Java multiple
+inheritance of behaviour. They were added to solve one urgent problem: how do you add stream() and
+forEach() to java.util.Collection without breaking every implementation of it ever written? Before
+Java 8, adding a method to an interface broke every implementor at compile time, and in 2014 there were
+millions of classes implementing List in code the JDK team couldn't see. A default method adds the
+capability and breaks nobody. Default methods are INTERFACE EVOLUTION — the multiple-inheritance
+capability is a side effect.
+
+There's a nice consequence of that. A default method can only use the interface's own methods, because
+it has no fields to read. forEach is literally "for each t in this, action.accept(t)" and nothing more
+is available to it. That limit is exactly why defaults didn't turn interfaces into classes.
+
+On the diamond problem: with FIELDS it's genuinely unanswerable — if both parents declare a counter,
+does the child have one or two? C++ answers with virtual inheritance and a memory layout nobody fully
+learns. Java sidesteps it by forbidding state in interfaces, which is why the one remaining difference
+is the one that matters. With METHODS it's answerable, and Java 8 gave three rules: a class wins over
+any interface default; a more specific interface wins over a less specific one; and otherwise it's a
+COMPILE ERROR and you resolve it with A.super.method(). Java refuses to guess. And "class wins" is a
+compatibility rule — a default added in a later JDK must never silently override behaviour an existing
+class already had.
+
+How I'd actually choose: since both can carry behaviour, the choice isn't technical any more, it's
+about what you're modelling. An interface is a CAPABILITY or a role — "can be compared", "can be
+closed" — and says nothing about what the thing is, which is why a Duck and a Rocket can both be
+Comparable. An abstract class is a partial IDENTITY with shared machinery. Many roles, one identity —
+that asymmetry is the real reason Java has single class inheritance and multiple interface
+implementation, and it's a better justification than "to avoid the diamond".
+
+In practice I'd use both: the interface-plus-skeletal-implementation pattern. Collection and
+AbstractCollection, List and AbstractList. The interface is the type so callers depend on the
+capability; the abstract class is an optional convenience for implementors who don't already have a
+superclass. That gets both benefits with neither constraint, and it's how the whole collections
+framework is built.'""",
+
+"""8. THE CODE, LINE BY LINE
+
+    // ── WHAT AN INTERFACE CAN AND CANNOT HOLD ───────────────────────────
+    interface Greeter {
+        String MAX = "x";              // implicitly PUBLIC STATIC FINAL — a global
+        //                                constant, not per-instance state. People
+        //                                discover this by writing a broken counter.
+        // int count;                  // ✗ NOT ALLOWED. No instance fields. THE LINE.
+        // Greeter() { }               // ✗ NOT ALLOWED. No constructors.
+
+        String name();                 // implicitly public abstract
+
+        default String greet() {       // Java 8: a BODY
+            return "Hello, " + name() + prefix();
+        //                     ^^^^^^ it can only call the interface's OWN methods.
+        //   No fields exist to read. That limit is exactly why defaults did not
+        //   turn interfaces into classes.
+        }
+        private String prefix() { return "!"; }   // Java 9: shared helper, hidden
+        static Greeter of(String n) { return () -> n; }   // Java 8, NOT INHERITED
+    }
+    // MyGreeter.of(...) does NOT exist just because Greeter.of does. Deliberate.
+
+    // ── THE DIAMOND, AND JAVA REFUSING TO GUESS ─────────────────────────
+    interface A { default String hi() { return "A"; } }
+    interface B { default String hi() { return "B"; } }
+    class C implements A, B { }        // ✗ COMPILE ERROR: "inherits unrelated
+    //                                    defaults for hi() from types A and B"
+    class C implements A, B {
+        @Override public String hi() { return A.super.hi(); }
+    //                                 ^^^^^^^^^ compiles to invokespecial naming the
+    //   interface — the ONLY way to reach a specific inherited default explicitly.
+    }
+
+    // ── "CLASS WINS", AND WHY ───────────────────────────────────────────
+    class Base { public String hi() { return "Base"; } }
+    interface I { default String hi() { return "I"; } }
+    class D extends Base implements I { }
+    new D().hi();                      // "Base" — the CLASS wins, always.
+    // This is a COMPATIBILITY rule: a default added in a later JDK must never
+    // silently override behaviour an existing class already had.
+
+    // ── WHY DEFAULTS EXIST AT ALL ───────────────────────────────────────
+    // Java 8 needed to add these to java.util.Collection, which millions of classes
+    // implement in code the JDK team cannot see:
+    default Stream<E> stream()                     { ... }
+    default void forEach(Consumer<? super T> a)    { for (T t : this) a.accept(t); }
+    default boolean removeIf(Predicate<? super E>) { ... }
+    // ^ As ABSTRACT methods these would have broken every implementor on Earth at
+    //   compile time. As defaults they broke nobody. THAT is what the feature is for.
+
+    // ── AN ABSTRACT CLASS: state, constructor, protected, final ─────────
+    abstract class Animal {
+        protected final String name;        // ← STATE. The thing an interface cannot do.
+        protected Animal(String name) { this.name = name; }   // ← invariant established
+        public final String describe() {    // ← FINAL: the template cannot be broken
+            return name + " says " + speak();
+        }
+        protected abstract String speak();  // ← the hook subclasses fill in
+    }
+
+    // ── THE PATTERN THAT USES BOTH ──────────────────────────────────────
+    public interface Shape { double area(); String name(); }      // THE TYPE
+    public abstract class AbstractShape implements Shape {        // a CONVENIENCE
+        @Override public String name() { return getClass().getSimpleName(); }
+    }
+    class Circle extends AbstractShape { public double area() { return ...; } }
+    record Square(double side) implements Shape {      // ← a record CANNOT extend a
+        public double area() { return side * side; }   //   class, only implement an
+        public String name() { return "Square"; }      //   interface. Which is why
+    }                                                  //   the TYPE must be the
+    //                                                     interface.
+
+    // ── AND WHAT YOU MAY NOT DEFAULT ────────────────────────────────────
+    // interface X { default String toString() { ... } }   ✗ COMPILE ERROR
+    // equals, hashCode and toString come from Object; "class wins" would make the
+    // default unreachable anyway, and an interface must not redefine identity.""",
+
+"""9. THE TRACE — the same design, three ways, and what each forbids
+
+REQUIREMENT: every shape reports an area and a name; the name defaults to the class's simple name.
+
+    DESIGN 1 — ABSTRACT CLASS ONLY
+    consequence                                            verdict
+    ---------------------------------------------------------------------------------
+    `class Circle extends AbstractShape`                    fine
+    `class Circle extends JComponent` — already has a       ✗ IMPOSSIBLE. One
+    superclass                                                superclass, and it is
+                                                              already taken.
+    `record Square(double side)`                            ✗ IMPOSSIBLE. Records
+                                                              cannot extend a class.
+    `enum Tile implements ...`                              ✗ IMPOSSIBLE. Same reason.
+    ---------------------------------------------------------------------------------
+    THE ABSTRACT CLASS SPENT THE ONE INHERITANCE SLOT. Any type that already has a parent — or that is
+    a record or an enum — simply cannot participate.
+
+    DESIGN 2 — INTERFACE WITH A DEFAULT
+    consequence                                            verdict
+    ---------------------------------------------------------------------------------
+    every kind of type can implement it                     fine
+    the default `name()` is shared                          fine
+    a shared `final String label` field                     ✗ IMPOSSIBLE. No state.
+    validating in a constructor                             ✗ IMPOSSIBLE. No
+                                                              constructors.
+    making `describe()` final so no one breaks the template ✗ IMPOSSIBLE. Defaults
+                                                              cannot be final.
+    ---------------------------------------------------------------------------------
+    MAXIMUM FREEDOM FOR IMPLEMENTORS, NO ABILITY TO ENFORCE ANYTHING BEYOND THE SIGNATURES.
+
+    DESIGN 3 — INTERFACE + SKELETAL ABSTRACT CLASS
+    consequence                                            verdict
+    ---------------------------------------------------------------------------------
+    `Shape` is the type callers depend on                   fine
+    `AbstractShape` gives the shared machinery, state,      fine
+    constructor and final template
+    `class Circle extends AbstractShape`                    takes the shortcut
+    `class Widget extends JComponent implements Shape`      implements directly
+    `record Square(...) implements Shape`                   works
+    ---------------------------------------------------------------------------------
+    NOBODY IS FORCED INTO THE HIERARCHY AND NOBODY IS DENIED THE CONVENIENCE. This is why the entire
+    collections framework is built this way, and it is the answer that shows you have hit design 1's
+    wall in real code.
+
+NOW THE RESOLUTION TRACE — which body actually runs, given a diamond:
+
+    hierarchy                                    `new D().hi()`   rule that fired
+    ---------------------------------------------------------------------------------
+    D implements A                               "A"              only candidate
+    D implements A, B (unrelated defaults)       COMPILE ERROR    rule 3: Java refuses
+                                                                  to guess
+    D implements B, where `B extends A`          "B"              rule 2: more specific
+                                                                  interface wins
+    D extends Base implements I                  "Base"           rule 1: CLASS WINS
+    D implements A, B with an explicit override  whatever you     you resolved it with
+                                                 chose            A.super.hi()
+    ---------------------------------------------------------------------------------
+    ROW 2 IS THE DESIGN DECISION WORTH ADMIRING. Every other language with default-method-like features
+    picks a winner by some ordering rule; Java makes it a compile error and forces the author to state
+    the intent. Ambiguity becomes a conversation with the compiler rather than a surprise at runtime.
+
+    AND ROW 4 IS THE COMPATIBILITY GUARANTEE. If a future JDK adds `default String hi()` to an
+    interface you implement, and your class already has an inherited `hi()`, YOUR BEHAVIOUR DOES NOT
+    CHANGE. Without that rule, upgrading the JDK could silently alter running programs.
+
+WHAT PRODUCED WHAT:
+    NO STATE IN INTERFACES     produced the diamond being answerable at all, and produced design 2's
+                               entire list of "impossible" rows.
+    ONE SUPERCLASS             produced design 1's wall.
+    INTERFACE EVOLUTION        produced default methods, and therefore produced `Collection.stream()`
+                               existing without breaking a single implementor.""",
+
+"""10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    Interface: no instance fields, no constructors, everything implicitly public (except private
+    methods since 9), implemented by many; fields are implicitly `public static final`.
+    Abstract class: fields, constructors, `protected`, `final` methods; extended by ONE.
+    Default methods: Java 8, for interface EVOLUTION. Private interface methods: Java 9.
+    Diamond resolution: 1) class wins, 2) more specific interface wins, 3) compile error.
+    `equals`, `hashCode` and `toString` cannot be default methods.
+    Static interface methods are NOT inherited by implementors.
+    Dispatch cost: `invokeinterface` is historically slower than `invokevirtual`, and the JIT usually
+    inlines both away at a monomorphic call site.
+
+THE #1 MISTAKE: thinking default methods were about multiple inheritance. They exist so `Collection`
+could gain `stream()` without breaking every implementor on Earth.
+
+THE #2 MISTAKE: trying to keep per-instance state in an interface. Every field is `public static final`
+— one value, shared globally.
+
+THE #3 MISTAKE: the constant interface. It becomes permanent public API and can never be removed.
+
+THE #4 MISTAKE: expecting static interface methods to be inherited. They are not.
+
+THE #5 MISTAKE: assuming an interface default beats an inherited class method. Class wins, always, for
+compatibility.
+
+THE #6 MISTAKE: choosing an abstract class for a type that records, enums or already-parented classes
+must implement. You have spent their one inheritance slot.
+
+THE #7 MISTAKE: not offering a skeletal implementation alongside an interface. It costs one class and
+removes the entire trade-off.
+
+THE #8 MISTAKE: adding a default method to a released interface without considering diamonds. It is
+source-compatible for single implementors and a compile error for anyone implementing two interfaces
+that now both define it.
+
+THE #9 MISTAKE: an abstract class constructor calling an abstract method. The override runs before the
+subclass's fields exist.
+
+THE #10 MISTAKE: deep abstract hierarchies. Past two levels nobody can say which class contributes what.
+Compose instead.
+
+THE #11 MISTAKE: creating an interface with one implementation "for testability". Modern mocking handles
+classes; add it when there is a second implementation or a real boundary.
+
+THE #12 MISTAKE: using an open interface where the implementations are a known, closed set. `sealed`
+gives you exhaustiveness checking in `switch`, which dynamic dispatch never did.
+
+ONE-SENTENCE TAKEAWAY: after Java 8 gave interfaces method bodies the only hard technical differences
+left are STATE (interfaces have no instance fields), constructors, and one-superclass-versus-many — and
+the reason defaults were added was INTERFACE EVOLUTION, so `Collection.stream()` could exist without
+breaking millions of implementors, which is also why a default can only call the interface's own
+methods and why "class wins" in the diamond rules; choose an interface for a CAPABILITY and anything
+crossing a boundary, an abstract class when there is genuine shared state with invariants to protect,
+and in practice offer BOTH via the interface-plus-skeletal-implementation pattern the collections
+framework is built on — because an abstract class spends the implementor's one inheritance slot, which
+locks out records, enums, and every class that already has a parent.""",
+]
