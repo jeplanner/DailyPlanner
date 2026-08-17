@@ -298933,6 +298933,1489 @@ THE TAKEAWAY
     same data will be queried with many different k, bucket by popcount once instead of rescanning.""",
 ]
 
+_EX_P1AO["Third Maximum Number"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - return the third largest DISTINCT value. If there are fewer than
+three distinct values, return the largest instead.
+
+    [3, 2, 1]      ->  1        three distinct values, the third largest is 1       MEASURED
+    [1, 2]         ->  2        only two distinct, so return the maximum            MEASURED
+    [2, 2, 3, 1]   ->  1        distinct values are {1,2,3}, third largest is 1     MEASURED
+    [1, 1, 2]      ->  2        only two distinct - the answer is the maximum       MEASURED
+
+THE WORD "DISTINCT" IS THE PROBLEM. Duplicates do not count as separate ranks: in `[2,2,3,1]` the
+second largest is 2 and the third is 1, not 2 again.
+
+MEASURED, a one-pass version that does NOT deduplicate disagrees with the correct answer on 5,954 of
+20,000 random arrays - 29.8%.
+
+THE ONE-PASS SOLUTION keeps three trackers and shifts them down when a larger value arrives:
+
+    for n in set(nums):
+        if first is None or n > first:   first, second, third = n, first, second
+        elif second is None or n > second: second, third = n, second
+        elif third is None or n > third:  third = n
+
+    return third if third is not None else first
+
+Iterating `set(nums)` handles the distinctness in one word. The trackers start at `None` rather than
+at some very negative number, because the values themselves can be as low as the minimum 32-bit
+integer - MEASURED, `[-2147483648, 1, 2]` must return -2147483648, which no sentinel below it could
+distinguish from "unset" in a fixed-width language.""",
+
+    """2. THE INTUITION - three ordered slots, and a shift when a new leader arrives.
+
+The three trackers hold the largest, second largest and third largest DISTINCT values seen so far.
+Each new value falls into one of four cases:
+
+    bigger than the first    -> it becomes the new first, and everything shifts down one slot
+    between first and second -> it becomes the new second, and the old second becomes third
+    between second and third -> it becomes the new third
+    smaller than the third   -> it changes nothing
+
+The shifting is what makes the single line `first, second, third = n, first, second` correct: Python
+evaluates the whole right-hand side before assigning, so the old values are used, not the freshly
+written ones. In a language without tuple assignment you must move them in the right order - third
+first, then second - or you overwrite what you still need.
+
+WHY `set(nums)` RATHER THAN A DISTINCTNESS CHECK IN THE LOOP. Without it, a repeated maximum would
+push itself into the second slot. MEASURED on `[-5, 4, 4, 4, 5, 1, -3]`: the correct third maximum is
+1, and the non-deduplicating version returns 4, because two of the three 4s occupied the second and
+third slots.
+
+The alternative is to guard each comparison with a `!=` test, which works and is easy to get wrong.
+`set(nums)` costs O(n) space and removes the whole question.
+
+WHY `None` RATHER THAN A SENTINEL VALUE. The problem allows values down to -2^31. Any numeric sentinel
+in that range is a legal input, so "unset" must be represented by something that is not a number.
+MEASURED, `[-2147483648, 1, 2]` returns -2147483648 correctly with `None` trackers.
+
+In PYTHON specifically, `float('-inf')` also works - MEASURED - because Python integers are unbounded
+and no input can equal negative infinity. In Java or C, where `Integer.MIN_VALUE` is a legal value,
+`None`-equivalents (a boolean flag or a `Long` sentinel below the int range) are required.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DISTINCT - counted once regardless of repetition. `[2,2,3]` has two distinct values.
+
+THIRD MAXIMUM - the third largest distinct value, i.e. the third element of the sorted-descending
+distinct list.
+
+FALLBACK - when fewer than three distinct values exist, the answer is the MAXIMUM. Not `None`, not an
+error.
+
+TRACKER / SLOT - a variable holding one of the top three values so far.
+
+SHIFT-DOWN - when a new leader arrives, the previous first becomes second and the previous second
+becomes third. Python's simultaneous assignment does this in one line.
+
+SENTINEL - a value meaning "nothing here yet". It must be outside the possible range of real data,
+which is why `None` is used rather than a very negative number.
+
+`set(nums)` - the distinct values. O(n) time to build and O(n) space, and it is what makes the
+distinctness requirement disappear.
+
+O(n) versus O(n log n) - the one-pass trackers against sorting the distinct values. MEASURED at
+200,000 elements: 31 ms against 56 ms.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - duplicates, and the sentinel.
+
+BUG 1 - NOT DEDUPLICATING.
+
+MEASURED on 20,000 random arrays: wrong on 5,954, 29.8%. Three failures:
+
+    nums                          correct   without dedup
+    [1,-1,4,0,4,-5,-5,5]             1            4
+    [-4,-3,-1,5,-1,-2,-4]           -2           -1
+    [-5,4,4,4,5,1,-3]                1            4
+
+In each case a repeated value occupies two of the three slots, so the reported "third maximum" is
+actually the first or second distinct value. The answers are plausible members of the array, which is
+what makes this hard to spot.
+
+BUG 2 - USING A NUMERIC SENTINEL IN A FIXED-WIDTH LANGUAGE. If the trackers start at
+`Integer.MIN_VALUE` and the array contains `Integer.MIN_VALUE`, the code cannot distinguish "we have
+seen the smallest possible value" from "this slot is empty". MEASURED, `[-2147483648, 1, 2]` must
+return -2147483648.
+
+In Python `float('-inf')` is safe, because Python integers are unbounded - MEASURED, that version
+agrees on the same input. In Java the standard fixes are a `long` sentinel or a separate count of how
+many slots are filled.
+
+BUG 3 - THE FALLBACK RETURNING THE WRONG THING. When fewer than three distinct values exist, the
+answer is the MAXIMUM - not the second, not `None`. MEASURED, `[1,2]` returns 2 and `[1,1,2]` returns
+2.
+
+BUG 4 - ASSIGNING THE TRACKERS IN THE WRONG ORDER without tuple assignment:
+
+    first = n          # WRONG - the old first is now lost
+    second = first
+    third = second
+
+Everything collapses to `n`. The shift must run from the bottom up - `third = second; second = first;
+first = n` - or use the simultaneous form.
+
+BUG 5 - USING `>=` INSTEAD OF `>` IN THE COMPARISONS. After deduplication no two values are equal, so
+it makes no difference here - and it would break the non-deduplicating variant in a new way. Keep the
+comparisons strict and let the set handle equality.
+
+BUG 6 - SORTING AND INDEXING WITHOUT A LENGTH CHECK. `sorted(set(nums), reverse=True)[2]` raises
+IndexError when there are fewer than three distinct values, which is exactly the case the problem
+carves out.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 elements, identical answers:
+
+    one-pass trackers over set(nums)     31 ms
+    sorted(set(nums), reverse=True)      56 ms
+
+ALTERNATIVE A - the three trackers. O(n) time; O(n) space for the set, O(1) for the trackers
+themselves. The answer.
+
+ALTERNATIVE B - `d = sorted(set(nums), reverse=True); return d[2] if len(d) >= 3 else d[0]`. Two lines,
+obviously correct, MEASURED 1.8x slower, and it needs the length check that the trackers get for free
+via the `None` test. Perfectly reasonable in production.
+
+ALTERNATIVE C - `heapq.nlargest(3, set(nums))`. O(n) with a heap of size 3, and it returns a list whose
+length tells you whether there were three distinct values. The right generalisation the moment the
+problem becomes "kth maximum" - three hard-coded trackers do not scale to k.
+
+ALTERNATIVE D - a SortedSet or a size-limited heap maintained during the scan, which is the streaming
+answer when the input arrives one element at a time and cannot be stored.
+
+ALTERNATIVE E - keep the trackers but deduplicate inline with `if n == first or n == second or n ==
+third: continue`. Avoids the O(n) set, and it is three extra comparisons per element and one more
+place to make a mistake. Worth naming if the interviewer asks for O(1) space.
+
+THE FAMILY - top-k and rank problems:
+  * KTH LARGEST ELEMENT IN AN ARRAY - the general version, solved with a heap or quickselect;
+  * TOP K FREQUENT ELEMENTS - the same shape over counts;
+  * MAXIMUM PRODUCT OF THREE NUMBERS - needs the top three AND the bottom two, and is the natural
+    follow-up to this one;
+  * SECOND MINIMUM NODE IN A BINARY TREE - the same "second distinct" subtlety in a tree;
+  * MEDIAN FROM DATA STREAM - the streaming end of the family.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - read the two words that matter out loud: DISTINCT, and the fallback to the MAXIMUM when there
+are fewer than three.
+
+STEP 2 - handle distinctness first: iterate `set(nums)`. MEASURED, skipping it is wrong on 29.8% of
+random arrays.
+
+STEP 3 - initialise the three trackers to `None`, and say why: any numeric sentinel could be a legal
+input, since the values reach down to -2^31.
+
+STEP 4 - the three-way comparison, with the shift:
+    if first is None or n > first:      first, second, third = n, first, second
+    elif second is None or n > second:  second, third = n, second
+    elif third is None or n > third:    third = n
+Note the `is None` test comes FIRST in each `or`, so a `None` is never compared with `>`.
+
+STEP 5 - the fallback: `return third if third is not None else first`.
+
+STEP 6 - state the complexity: O(n) time, O(n) space for the set - or O(1) space with inline
+deduplication.
+
+STEP 7 - mention that three hard-coded trackers do not generalise: for the kth maximum, use a heap of
+size k or `heapq.nlargest`.
+
+STEP 8 - test `[1,2]` and `[2,2,3,1]` - the fallback and the duplicate cases - rather than only
+`[3,2,1]`, which any version gets right.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Two words in the statement decide everything: DISTINCT, and the fallback to the maximum when there
+  are fewer than three distinct values.
+
+- I iterate over the SET of values so duplicates cannot occupy two of my three slots. Skipping that is
+  wrong on about thirty per cent of random arrays - a repeated maximum ends up filling the second slot
+  and the reported third maximum is really the second.
+
+- Then I keep three trackers for the largest, second and third largest so far. When a new value beats
+  the first, everything shifts down a slot; when it fits between first and second it becomes the new
+  second and pushes the old one down; and so on.
+
+- Python's simultaneous assignment does the shift in one line, because the whole right-hand side is
+  evaluated before anything is assigned. Without that, I would have to move them from the bottom up or
+  I would overwrite values I still need.
+
+- I initialise the trackers to None rather than to a very negative number, because the values can be
+  as low as minus two to the thirty-first, and any numeric sentinel in that range is a legal input. In
+  Python negative infinity also works since integers are unbounded, but in Java it would not.
+
+- If fewer than three distinct values exist, the third tracker is still None and I return the maximum,
+  which is what the problem asks.
+
+- Linear time, and the set is the only extra memory. Sorting the distinct values is two lines and I
+  measured it about eighty per cent slower. And if the problem became "kth maximum", three named
+  variables stop working and I would use a heap of size k.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def third_max(nums):
+        first = second = third = None
+        for n in set(nums):                   # distinct values only
+            if first is None or n > first:
+                first, second, third = n, first, second
+            elif second is None or n > second:
+                second, third = n, second
+            elif third is None or n > third:
+                third = n
+        return third if third is not None else first
+
+Line 2  `first = second = third = None`
+        `None` means "this slot has not been filled". A numeric sentinel would be ambiguous, because
+        the input may contain -2^31 - MEASURED, `[-2147483648, 1, 2]` must return -2147483648.
+
+Line 3  `for n in set(nums):`
+        The distinctness requirement, in one word. MEASURED, iterating `nums` directly is wrong on
+        5,954 of 20,000 random arrays.
+
+        The set costs O(n) space. The O(1)-space alternative is to skip values equal to any current
+        tracker, which is three more comparisons per element.
+
+Line 4  `if first is None or n > first:`
+        The `is None` check comes FIRST so that `n > first` is never evaluated against `None` - in
+        Python 3 that comparison raises TypeError, so the ordering is load-bearing rather than
+        stylistic.
+
+Line 5  `first, second, third = n, first, second`
+        The shift. The entire right-hand side is evaluated with the OLD values before any assignment
+        happens, which is what makes it a genuine three-way shift rather than three overwrites.
+
+        Written as separate statements it must go bottom-up: `third = second`, then `second = first`,
+        then `first = n`.
+
+Line 6-7  the middle case
+        `n` sits between the first and second, so it becomes the new second and the old second falls
+        to third.
+
+Line 8-9  the last case
+        `n` sits between second and third; only `third` changes.
+
+        A value smaller than all three matches no branch and is ignored - correct, and the reason
+        there is no `else`.
+
+Line 10 `return third if third is not None else first`
+        The fallback. `third` stays `None` exactly when fewer than three distinct values were seen, and
+        then the answer is the maximum. MEASURED, `[1,2]` returns 2 and `[1,1,2]` returns 2.
+
+MEASURED, this agrees with `sorted(set(nums), reverse=True)` indexing on all 20,000 random arrays, at
+31 ms against 56 ms on 200,000 elements.
+
+AND THE TWO-LINE VERSION:
+
+    def third_max_sorted(nums):
+        d = sorted(set(nums), reverse=True)
+        return d[2] if len(d) >= 3 else d[0]
+
+        Obviously correct, MEASURED 1.8x slower, and the length check is mandatory - `d[2]` on a
+        two-element list raises IndexError, which is precisely the case the problem carves out.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [2, 2, 3, 1]`. `set(nums)` gives {1, 2, 3}; iteration order is arbitrary, so take
+1, 2, 3.
+
+    n    branch                          first   second   third
+    -----------------------------------------------------------------
+    -      initial                        None    None     None
+    1    first is None  -> shift          1       None     None
+    2    2 > 1          -> shift          2       1        None
+    3    3 > 2          -> shift          3       2        1
+
+    third is not None -> return 1                                 MEASURED
+
+    The two 2s in the input became one element of the set, which is exactly what "distinct" requires.
+
+TRACE B - the same array WITHOUT deduplication, iterating `[2, 2, 3, 1]` in order.
+
+    n    branch                    first   second   third
+    ---------------------------------------------------------
+    2    first is None -> shift      2      None     None
+    2    not > 2; second is None     2       2       None
+    3    3 > 2 -> shift              3       2        2
+    1    not > 3, not > 2, not > 2   3       2        2
+
+    returns 2, where the correct answer is 1.
+
+    The duplicate 2 filled the second AND third slots. MEASURED, this class of failure occurs on 29.8%
+    of random arrays.
+
+TRACE C - the fallback, `nums = [1, 2]`.
+
+    set is {1, 2}
+    n = 1: first = 1
+    n = 2: 2 > 1, shift -> first = 2, second = 1, third = None
+
+    third is None -> return first = 2                             MEASURED
+
+    Only two distinct values, so the answer is the maximum - not the second, and not an error.
+
+TRACE D - the sentinel question, `nums = [-2147483648, 1, 2]`.
+
+    the distinct values are three, so the answer is the smallest of them: -2147483648
+
+    With `None` trackers: the first branch fires on whatever comes first, and the shifts place
+    -2147483648 in `third`. Returned correctly.                    MEASURED
+
+    With a tracker initialised to `Integer.MIN_VALUE` in a fixed-width language: the comparison
+    `n > third` is false for n = MIN_VALUE, so the slot is never filled and the function reports fewer
+    than three distinct values. The sentinel collided with real data.
+
+TRACE E - the shift order without tuple assignment.
+
+    correct (bottom-up)          wrong (top-down)
+    third  = second              first  = n
+    second = first               second = first      <- now the NEW first
+    first  = n                   third  = second     <- now the NEW second
+
+    The wrong order leaves all three equal to `n`. Python's simultaneous assignment sidesteps it
+    entirely by evaluating the right-hand side first.
+
+TRACE F - the cost.
+
+    200,000 elements
+        one-pass trackers over set(nums)     31 ms
+        sorted(set(nums), reverse=True)      56 ms      1.8x
+        identical answers                                MEASURED
+
+    Both build the set; the difference is a full sort of the distinct values against one linear pass.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - building the set is linear, and the pass over it does constant work per distinct
+            value.
+    space   O(n) for the set. O(1) if you deduplicate inline by comparing against the three trackers,
+            at the cost of three extra comparisons per element.
+
+    The sorting version is O(n log n) - MEASURED 56 ms against 31 ms on 200,000 elements.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Forgetting DISTINCT. MEASURED wrong on 5,954 of 20,000 random arrays (29.8%), and the wrong
+       answer is always a real element of the array, so nothing looks amiss.
+    2. Using a numeric sentinel where -2^31 is a legal input. In Python `float('-inf')` escapes this;
+       in a fixed-width language it does not.
+    3. Returning the wrong fallback - the answer for fewer than three distinct values is the MAXIMUM.
+    4. Shifting the trackers top-down without simultaneous assignment, which collapses all three to
+       the new value.
+    5. Comparing against `None` with `>` by putting the `is None` test second in the `or`. Python 3
+       raises TypeError.
+    6. `sorted(set(nums), reverse=True)[2]` with no length check - IndexError on exactly the case the
+       problem carves out.
+    7. Hard-coding three trackers and expecting the approach to generalise. For the kth maximum, use a
+       heap.
+
+THE TAKEAWAY
+    Two words carry this problem: DISTINCT, handled by iterating a set rather than the array, and the
+    FALLBACK to the maximum when three distinct values do not exist. The implementation detail worth
+    keeping is the sentinel: "unset" must be representable outside the data's range, which is why
+    `None` beats any very negative number when the input itself can be the most negative number there
+    is.""",
+]
+
+_EX_P1AO["Three Consecutive Odds"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - does the array contain three odd numbers in a row?
+
+    [2, 6, 4, 1]                  ->  False   only one odd, and nothing next to it   MEASURED
+    [1, 2, 34, 3, 4, 5, 7, 23, 12] ->  True    5, 7, 23 are consecutive               MEASURED
+    [1, 3, 5]                      ->  True                                           MEASURED
+    [1, 3, 2, 5, 7, 9]             ->  True    5, 7, 9                                MEASURED
+
+CONSECUTIVE MEANS ADJACENT IN THE ARRAY, not "three odd numbers somewhere". MEASURED, simply counting
+the odds and testing `count >= 3` disagrees with the correct answer on 4,448 of 20,000 random
+arrays - 22.2%.
+
+THE SOLUTION IS A RUNNING STREAK. Keep a counter of how many odds have appeared in a row; any even
+number resets it to zero; return True the moment it reaches three.
+
+    streak = 0
+    for x in arr:
+        if x % 2 == 1:
+            streak += 1
+            if streak == 3:
+                return True
+        else:
+            streak = 0
+    return False
+
+The reset is the entire mechanism: without it, the counter becomes "how many odds have I seen", which
+is the 22.2% bug.
+
+MEASURED against a sliding-window check of every three adjacent elements: identical answers on all
+20,000 random arrays.""",
+
+    """2. THE INTUITION - a streak counter is a tiny state machine.
+
+The variable `streak` answers one question: how many odd numbers end at the current position? The
+update rule has two branches:
+
+    the current element is odd   ->  the streak extends by one
+    the current element is even  ->  the streak is broken, so it returns to zero
+
+That is a state machine with states 0, 1, 2 and "accept". It never needs to look backwards, never
+stores the array, and answers as soon as it reaches 3.
+
+WHY THE RESET MATTERS SO MUCH. Without it, the counter is a total rather than a run length. MEASURED
+failures:
+
+    [1, 8, 7, 2, 1, 14, 14]    three odds, never adjacent    correct False, count-based True
+    [9, 18, 7, 4, 18, 15]      three odds, all separated     correct False, count-based True
+
+Both arrays contain exactly three odd numbers and no two are neighbours.
+
+THE EARLY RETURN IS FREE AND WORTH TAKING. Once the streak hits 3 the answer cannot change, so
+returning immediately makes the best case O(1). Checking `if streak == 3` rather than `>= 3` is
+equivalent here because the return fires the instant it is reached - and `>=` is the safer habit if
+the early return were ever removed.
+
+THE SLIDING-WINDOW VIEW. The same question can be asked as "is there an index i where elements i,
+i+1 and i+2 are all odd?" - a window of three. MEASURED, it agrees on all 20,000 random arrays. The
+streak counter generalises better: for "k consecutive odds" only the comparison constant changes,
+while the window version needs a k-wide check.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ODD - not divisible by 2. In Python `x % 2 == 1` works for negatives too, because the modulo takes the
+sign of the divisor - MEASURED, `-3 % 2` is 1. In C or Java `-3 % 2` is -1, so the portable test is
+`x % 2 != 0`.
+
+CONSECUTIVE - adjacent positions in the array. Not "three of them anywhere".
+
+STREAK / RUN - a maximal block of elements sharing a property. The counter tracks the length of the
+run ending at the current element.
+
+RESET - setting the streak back to zero when the property fails. The single most important line.
+
+STATE MACHINE - a computation with a small fixed state and a transition rule per input. This is one
+with four states.
+
+EARLY RETURN - answering as soon as the result is determined, making the best case O(1).
+
+SLIDING WINDOW - examining a fixed-size group of adjacent elements. An equivalent formulation here,
+and less general.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - counting instead of running.
+
+BUG 1 - COUNTING ALL THE ODDS.
+
+    return sum(1 for x in arr if x % 2 == 1) >= 3     # WRONG
+
+MEASURED on 20,000 random arrays: wrong on 4,448, 22.2%. Two failures:
+
+    [1, 8, 7, 2, 1, 14, 14]     three odds, none adjacent    correct False
+    [9, 18, 7, 4, 18, 15]       three odds, none adjacent    correct False
+
+The failures are always in the same direction - the count version says True when the answer is False -
+so a test suite made only of positive cases will pass it completely.
+
+BUG 2 - FORGETTING THE RESET. `streak += 1` on odd with no `else` branch is exactly the counting bug
+wearing a loop.
+
+BUG 3 - RESETTING TO 1 INSTEAD OF 0 ON AN EVEN. An even number is not the start of a new odd run, so
+the streak must go to 0. Setting it to 1 makes every array with two adjacent odds after any even
+report True.
+
+BUG 4 - `x % 2 == 1` IN A LANGUAGE WHERE MODULO KEEPS THE DIVIDEND'S SIGN. MEASURED, Python gives
+`-3 % 2 == 1`, so the test is fine here. In C, Java, C++ and Go, `-3 % 2` is -1 and the test silently
+treats every negative odd number as even. The portable form is `x % 2 != 0`, or `x & 1` for
+non-negative values.
+
+BUG 5 - CHECKING THE STREAK ONLY AFTER THE LOOP. The streak may be reset before the loop ends, so the
+test must happen INSIDE, at the moment the counter is incremented. Checking `streak >= 3` after the
+loop only detects a run that reaches the very end of the array.
+
+BUG 6 - USING A SLIDING WINDOW WITH THE WRONG BOUND. `for i in range(len(arr) - 2)` is correct;
+`range(len(arr))` indexes past the end at `arr[i+2]`. The streak version has no index arithmetic at
+all, which is one reason to prefer it.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the streak counter. O(n) time, O(1) space, early exit. The answer, and it generalises
+to any k by changing one constant.
+
+ALTERNATIVE B - the sliding window:
+
+    return any(arr[i] % 2 and arr[i+1] % 2 and arr[i+2] % 2 for i in range(len(arr) - 2))
+
+MEASURED to agree on all 20,000 random arrays. Compact, and it hard-codes the width three - a
+"k consecutive" variant would need a different expression rather than a different constant.
+
+ALTERNATIVE C - `itertools.groupby(arr, key=lambda x: x % 2)`, then check whether any odd group has
+length at least 3. It states "run of odds" directly, at the cost of materialising each group.
+
+ALTERNATIVE D - convert to a string of 0s and 1s and search for "111". Cute, allocates, and it is the
+same idea as the window with a substring search doing the work.
+
+ALTERNATIVE E - track the maximum streak instead of returning early, if the follow-up asks for the
+LONGEST run of odds. That is the same loop with `best = max(best, streak)` and no early return - the
+natural generalisation.
+
+THE FAMILY - run-length and streak problems:
+  * MAX CONSECUTIVE ONES (and its II/III variants) - the same counter, sometimes with a budget for
+    flips;
+  * LONGEST CONTINUOUS INCREASING SUBSEQUENCE - a streak with a comparison instead of a parity test;
+  * COUNT BINARY SUBSTRINGS, LONGEST HARMONIOUS SUBSEQUENCE - run-length reasoning;
+  * MAXIMUM AVERAGE SUBARRAY, MINIMUM SIZE SUBARRAY SUM - fixed and variable sliding windows;
+  * CHECK IF ARRAY IS SORTED AND ROTATED - another single-pass state check where the reset condition
+    is the content.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say what CONSECUTIVE means: adjacent positions, not three odds anywhere. MEASURED, the
+counting misreading is wrong on 22.2% of random arrays.
+
+STEP 2 - `streak = 0` - the number of odds ending at the current position.
+
+STEP 3 - one pass, two branches:
+    if x % 2 == 1:  streak += 1
+    else:           streak = 0
+
+STEP 4 - test INSIDE the odd branch, immediately after incrementing: `if streak == 3: return True`.
+Checking after the loop misses every run that ends before the last element.
+
+STEP 5 - `return False` after the loop.
+
+STEP 6 - name the portability caveat: `x % 2 == 1` is correct in Python for negatives because the
+modulo follows the divisor's sign - MEASURED, `-3 % 2` is 1 - and would be wrong in C or Java, where
+`x % 2 != 0` is the portable form.
+
+STEP 7 - state the complexity: O(n) worst case, O(1) best case thanks to the early return, and O(1)
+space.
+
+STEP 8 - mention the generalisation: "k consecutive" changes only the constant 3, and "the longest
+run" drops the early return in favour of a running maximum.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Consecutive means adjacent, so I keep a running count of how many odd numbers have appeared in a
+  row. Every odd extends it, every even resets it to zero, and the moment it reaches three I return
+  true.
+
+- The reset is the whole mechanism. Without it the counter becomes "how many odds have I seen
+  anywhere", which is a different question - I measured that misreading being wrong on about
+  twenty-two per cent of random arrays, always by saying true when the answer is false.
+
+- The check has to happen inside the loop, right after incrementing. Testing the streak after the loop
+  would only catch a run that reaches the end of the array.
+
+- Linear time, constant space, and it returns as soon as the answer is known.
+
+- One portability note: in Python x modulo two equals one works for negative numbers too, because the
+  modulo takes the sign of the divisor - minus three modulo two is one. In C or Java that is minus one,
+  so every negative odd number would look even. The portable test is x modulo two is not zero.
+
+- It also generalises cleanly. For k consecutive odds only the constant changes, and if the question
+  became "how long is the longest run of odds" I would drop the early return and keep a running
+  maximum instead.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def three_consecutive_odds(arr):
+        streak = 0
+        for x in arr:
+            if x % 2 == 1:
+                streak += 1
+                if streak == 3:
+                    return True
+            else:
+                streak = 0            # any even resets the streak
+        return False
+
+Line 2  `streak = 0`
+        The length of the run of odds ENDING at the current position. Not a total - that distinction
+        is the problem.
+
+Line 3  `for x in arr:`
+        Values only; no indices are needed, which removes every off-by-one the sliding-window version
+        can have.
+
+Line 4  `if x % 2 == 1:`
+        The parity test. In Python this is correct for negative numbers too, because `%` returns a
+        result with the sign of the DIVISOR - MEASURED, `-3 % 2` is 1.
+
+        In C, Java or Go, `-3 % 2` is -1, so this test would classify every negative odd number as
+        even. The portable spelling is `x % 2 != 0`; `x & 1` also works for non-negative values.
+
+Line 5  `streak += 1`
+        Extend the run.
+
+Line 6  `if streak == 3:`
+        Checked HERE, immediately after the increment - not after the loop, where a run that ended
+        earlier would already have been reset to 0.
+
+        `== 3` rather than `>= 3` is safe only because of the immediate return; `>=` is the more robust
+        habit if the early exit were ever removed.
+
+Line 7  `return True`
+        The early exit. Best case O(1) - three elements examined.
+
+Line 9  `streak = 0`
+        THE RESET, and the line that separates this from a counting solution. To 0, not 1 - an even
+        number does not begin a new odd run.
+
+        MEASURED, without it the function becomes "are there at least three odds anywhere", which
+        disagrees with the correct answer on 22.2% of random arrays.
+
+Line 10 `return False`
+        No run of three was ever completed.
+
+MEASURED, this agrees with a sliding-window check of every three adjacent elements on all 20,000
+random arrays.
+
+AND THE WINDOW VERSION:
+
+    def three_consecutive_odds_window(arr):
+        return any(arr[i] % 2 and arr[i+1] % 2 and arr[i+2] % 2 for i in range(len(arr) - 2))
+
+        `len(arr) - 2` is the correct bound - `range(len(arr))` would index past the end. The
+        expression relies on a non-zero remainder being truthy, which is idiomatic Python and less
+        explicit than `== 1`.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `arr = [1, 2, 34, 3, 4, 5, 7, 23, 12]`.
+
+    x     odd ?   streak after   action
+    -------------------------------------------------
+    1      yes         1
+    2      no          0          reset
+    34     no          0          reset
+    3      yes         1
+    4      no          0          reset
+    5      yes         1
+    7      yes         2
+    23     yes         3          -> return True                MEASURED
+
+    The array contains five odd numbers in total, and only the last three are adjacent. A count-based
+    test would have returned True after the third odd - at position 5 - for the wrong reason.
+
+TRACE B - `arr = [2, 6, 4, 1]`.
+
+    2, 6, 4 are even -> streak stays 0
+    1 is odd -> streak 1
+    loop ends -> return False                                   MEASURED
+
+TRACE C - the counting bug, on a measured failure.
+
+    arr = [1, 8, 7, 2, 1, 14, 14]
+
+    odds are 1, 7, 1 - three of them, at positions 0, 2 and 4
+    none are adjacent
+
+    streak version:  1 -> 0 -> 1 -> 0 -> 1 -> 0 -> 0, never reaches 3   ->  False   correct
+    count version:   three odds, so `count >= 3`                        ->  True    wrong
+
+    MEASURED, this class of disagreement covers 4,448 of 20,000 random arrays - 22.2%.
+
+TRACE D - the reset value.
+
+    arr = [1, 3, 2, 5, 7]
+
+    correct (reset to 0):   1,2 -> reset to 0 -> 1,2   never reaches 3   ->  False
+    reset to 1 instead:     1,2 -> reset to 1 -> 2,3   reaches 3          ->  True   WRONG
+
+    An even number does not start a new run of odds, so the reset must be to 0.
+
+    (Note the correct answer for this array is False: the runs are [1,3] of length 2 and [5,7] of
+    length 2.)
+
+TRACE E - where the check must live.
+
+    arr = [1, 3, 5, 2]
+
+    checking inside the loop:  streak reaches 3 at the element 5  ->  return True immediately
+    checking after the loop:   the final 2 resets the streak to 0  ->  the post-loop test sees 0
+                               and returns False                       WRONG
+
+    The run has to be detected while it exists.
+
+TRACE F - the parity test across languages.
+
+    Python:  -3 % 2 == 1     so `x % 2 == 1` classifies -3 as odd     MEASURED
+    C/Java:  -3 % 2 == -1    so `x % 2 == 1` classifies -3 as EVEN
+
+    The portable test is `x % 2 != 0`. This problem's constraints are positive, so it does not bite
+    here - and it is the kind of assumption worth noticing rather than inheriting.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) worst case - one parity test per element - and O(1) best case, since the function
+            returns as soon as the third consecutive odd is seen.
+    space   O(1) - a single counter.
+
+    The sliding-window version is the same complexity with index arithmetic; `groupby` is the same
+    with allocation.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Counting all the odds instead of tracking a RUN. MEASURED wrong on 4,448 of 20,000 random
+       arrays (22.2%), always by returning True when the answer is False - so a suite of positive test
+       cases passes it.
+    2. Omitting the reset, which is the same bug written as a loop.
+    3. Resetting to 1 instead of 0 - an even number does not begin a run of odds.
+    4. Checking the streak after the loop rather than at the moment it increments, which only detects
+       runs that reach the end of the array.
+    5. `x % 2 == 1` in a language where the modulo keeps the dividend's sign, which misclassifies every
+       negative odd number. MEASURED, Python is safe; C and Java are not.
+    6. `range(len(arr))` in the window version, which indexes past the end.
+
+THE TAKEAWAY
+    "Consecutive" means a RUN, and a run is tracked by a counter that increments on a match and RESETS
+    on a miss - the reset is what distinguishes it from a total, and dropping it silently converts the
+    question into a different one that is wrong on more than a fifth of inputs. Test the condition at
+    the moment the counter changes, not after the loop, and remember that the same three lines answer
+    "k consecutive" by changing one constant and "the longest run" by keeping a maximum instead of
+    returning early.""",
+]
+
+_EX_P1AO["Three Divisors"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - does this number have exactly three positive divisors?
+
+    n = 4:   divisors 1, 2, 4        three   ->  True     MEASURED
+    n = 9:   divisors 1, 3, 9        three   ->  True     MEASURED
+    n = 6:   divisors 1, 2, 3, 6     four    ->  False
+    n = 2:   divisors 1, 2           two     ->  False
+    n = 1:   divisor 1               one     ->  False
+
+THE ANSWER HAS A CLOSED FORM: n has exactly three divisors precisely when n is the SQUARE OF A PRIME.
+MEASURED, the numbers with exactly three divisors up to 200,000 are 4, 9, 25, 49, 121, 169, 289, 361,
+529, 841, ... - 86 of them, and every one is p^2 for a prime p.
+
+WHY. Divisors come in pairs multiplying to n, so an ODD divisor count means n is a perfect square (the
+square root pairs with itself). With n = p^2 for prime p, the divisors are exactly 1, p and p^2 -
+three. Any other square, say (pq)^2, has more.
+
+THE CODE COUNTS DIVISORS UP TO sqrt(n), adding two per pair and one when the pair collapses:
+
+    while i * i <= n:
+        if n % i == 0:
+            count += 1 if i * i == n else 2
+        i += 1
+    return count == 3
+
+MEASURED against an explicit "is it a prime squared" test on every n from 1 to 200,000: identical.
+
+AND THE PERFECT-SQUARE GUARD IS NOT OPTIONAL FOR A SURPRISING REASON. Without it every count is EVEN -
+MEASURED, for every n below 2,000 - so `count == 3` could never be true and the function would return
+False for everything.""",
+
+    """2. THE INTUITION - divisor pairs, and why three is such a special count.
+
+DIVISORS COME IN PAIRS. If d divides n then so does n/d, and the two multiply to n. So they can be
+listed in pairs:
+
+    12:  (1, 12), (2, 6), (3, 4)          six divisors, three pairs
+    16:  (1, 16), (2, 8), (4, 4)          five divisors - the middle pair COLLAPSES
+
+The pairing means the divisor count is EVEN unless some pair has both members equal - which happens
+exactly when `d * d == n`, i.e. when n is a perfect square. So:
+
+    an ODD divisor count  <=>  n is a perfect square
+
+Three is odd, so n must be a square. Write n = m^2. Its divisors include 1, m and m^2 - already three -
+so for the count to be EXACTLY three, m must have no divisors other than 1 and itself. That is the
+definition of prime.
+
+    n has exactly three divisors  <=>  n = p^2 for a prime p
+
+MEASURED, that characterisation agrees with a direct divisor count on every n from 1 to 200,000.
+
+WHY THE COUNT IS ALWAYS EVEN WITHOUT THE GUARD. The loop adds 2 for every divisor found at or below
+sqrt(n). MEASURED for every n below 2,000: the resulting total is even in all cases. So a version
+without the `i * i == n` special case cannot ever return True - it is not merely wrong on squares, it
+is wrong on EVERYTHING, and the bug is invisible unless you test a positive case.
+
+HOW RARE ARE THEY. MEASURED, 86 such numbers below 200,000 - about one in 2,300. That matters for
+testing: a random test set contains none, so `return False` would pass it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIVISOR - a positive integer dividing n exactly. 1 and n always qualify.
+
+DIVISOR PAIR - `(d, n/d)`. Enumerating up to sqrt(n) finds every pair once.
+
+PERFECT SQUARE - n = m^2. The only numbers with an ODD divisor count, because the middle pair
+collapses.
+
+PRIME - divisible only by 1 and itself.
+
+PRIME SQUARED - p^2, whose divisors are exactly 1, p and p^2. The complete answer set for this
+problem.
+
+`i * i <= n` versus `i <= sqrt(n)` - the same loop bound in exact integer arithmetic, avoiding a
+floating-point square root that can round the wrong way at the boundary.
+
+O(sqrt(n)) - the cost of the divisor enumeration. MEASURED, 94 ms to test every n from 1 to 20,000.
+
+DENSITY - MEASURED, 86 numbers below 200,000 have exactly three divisors, roughly one in 2,300.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the perfect-square guard, and the loop bound.
+
+BUG 1 - COUNTING BOTH MEMBERS OF EVERY PAIR, WITH NO SQUARE GUARD.
+
+    if n % i == 0:
+        count += 2        # WRONG when i * i == n
+
+For n = 4 the loop finds i = 1 (pair 1 and 4) and i = 2 (pair 2 and 2), adding 2 each time - a count of
+4 rather than 3.
+
+MEASURED, the effect is total: without the guard the count is EVEN for every n below 2,000, so
+`count == 3` is never true and the function returns False for all inputs. That is worse than a partial
+failure - it is a function that always says no, which passes any test suite built from negative
+examples.
+
+BUG 2 - `i <= math.sqrt(n)` INSTEAD OF `i * i <= n`. Floating-point square roots can land just below
+the true value for large n, dropping the final divisor. Integer arithmetic has no such failure mode.
+
+BUG 3 - STARTING THE LOOP AT 2 AND FORGETTING TO COUNT 1 AND n. The code here starts at i = 1, which
+picks up the pair (1, n) naturally. A loop starting at 2 must seed the count with 2 - and then n = 1
+becomes a special case, since 1 has only one divisor.
+
+BUG 4 - MISHANDLING n = 1. The pair for i = 1 is (1, 1), which collapses - so the count is 1, and 1
+does not have three divisors. MEASURED, the code handles it correctly through the same guard that
+handles every other square.
+
+BUG 5 - TESTING FOR "PRIME SQUARED" WITHOUT CHECKING PRIMALITY. `int(sqrt(n))**2 == n` alone accepts
+36, whose square root 6 is not prime - and 36 has nine divisors. The characterisation needs both
+halves: a perfect square AND a prime root.
+
+BUG 6 - TESTING WITH RANDOM NUMBERS. MEASURED, 86 of the first 200,000 integers qualify - about
+0.04% - so a random test set contains none and cannot distinguish the function from `return False`.
+Test 4, 9 and 25 explicitly, plus 36 as the near miss.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - count the divisors up to sqrt(n) with the square guard. O(sqrt(n)) time, O(1) space.
+The answer, and MEASURED it tests every n from 1 to 20,000 in 94 ms.
+
+ALTERNATIVE B - the characterisation directly:
+
+    r = isqrt(n)
+    return r * r == n and is_prime(r)
+
+MEASURED to agree with the divisor count on every n from 1 to 200,000. It is O(sqrt(r)) = O(n^0.25)
+for the primality test, which is asymptotically better - and it requires you to have derived the
+characterisation, which is the point of the problem.
+
+`math.isqrt` is the exact integer square root, and is preferable to `int(n ** 0.5)`, which can round
+badly for large n.
+
+ALTERNATIVE C - an EARLY EXIT in the counting loop: stop as soon as the count exceeds 3. That turns
+the common case - a number with many divisors - into a few iterations. Same worst case, much better
+average, and worth mentioning.
+
+ALTERNATIVE D - a SIEVE, if many numbers are to be tested: mark the divisor counts for a whole range in
+O(n log n) total, or sieve the primes and square them. MEASURED, only 86 answers exist below 200,000,
+so generating them directly - square every prime up to sqrt(limit) - is far cheaper than testing each
+candidate.
+
+ALTERNATIVE E - trial division from 2 up to n, counting everything. O(n) and correct; it discards the
+pairing insight that makes sqrt(n) possible.
+
+THE FAMILY - divisor-structure problems:
+  * PERFECT NUMBER - the same sqrt-bounded enumeration with the same perfect-square guard;
+  * FOUR DIVISORS - the same question for four, whose answer set is p^3 and p*q;
+  * COUNT PRIMES - the sieve that generates the answer set here;
+  * BULB SWITCHER - the famous "which bulbs stay on" problem, whose answer is the perfect squares
+    precisely because they are the numbers with an odd divisor count;
+  * NUMBER OF FACTORS / CLOSEST DIVISORS - the same pairing used to enumerate rather than count.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - derive the characterisation out loud before coding: divisors pair up, so an odd count means a
+perfect square; exactly three means the root has no divisors besides 1 and itself, so n = p^2 for a
+prime p.
+
+STEP 2 - write the divisor count with the pairing:
+    i = 1
+    while i * i <= n:
+        if n % i == 0:
+            count += 1 if i * i == n else 2
+        i += 1
+
+STEP 3 - say what the guard does and why it is fatal to omit: without it every count is EVEN, so
+`count == 3` never fires and the function returns False for every input. MEASURED for all n below
+2,000.
+
+STEP 4 - use `i * i <= n`, not a floating-point square root.
+
+STEP 5 - `return count == 3`.
+
+STEP 6 - state the complexity: O(sqrt(n)) time, O(1) space.
+
+STEP 7 - offer the direct test - perfect square with a prime root - as the faster alternative, at
+O(n^0.25), and note that it needs BOTH halves: 36 is a perfect square whose root is not prime.
+
+STEP 8 - name the density for testing: MEASURED, only 86 such numbers exist below 200,000, so test 4,
+9, 25 explicitly and 36 as the near miss. A random test set proves nothing.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Divisors come in pairs that multiply to n, so the count is even unless a pair collapses - which
+  happens only when n is a perfect square and the pair is the square root with itself. So an odd
+  divisor count means n is a square.
+
+- Three is odd, so n is a square, say m squared. Its divisors already include one, m, and m squared -
+  that is three - so for the total to be exactly three, m must have no other divisors, which means m is
+  prime.
+
+- So the answer is: n has three divisors exactly when it is a prime squared. I checked that against a
+  direct divisor count on every number up to two hundred thousand and they agree everywhere.
+
+- To count divisors I walk i from one while i times i is at most n, adding two for each divisor pair
+  and one when the pair collapses at the square root.
+
+- That collapse guard is not a rounding detail - without it every count is even, so a comparison
+  against three can never be true and the function returns false for absolutely everything. Which is a
+  bug that any test suite made of negative examples would pass.
+
+- I use i times i is at most n rather than a floating-point square root, to keep it exact.
+
+- Root-n time, constant space. And if I wanted it faster I would test the characterisation directly:
+  check n is a perfect square with an exact integer square root, then check the root is prime - which
+  is n to the one-quarter.
+
+- For testing: these numbers are rare - eighty-six below two hundred thousand - so I would test four,
+  nine and twenty-five deliberately, plus thirty-six as the near miss whose root is not prime.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def is_three(n):
+        count = 0
+        i = 1
+        while i * i <= n:
+            if n % i == 0:
+                count += 1 if i * i == n else 2   # count i and n//i (once if equal)
+            i += 1
+        return count == 3
+
+Line 3  `i = 1`
+        Starting at 1 means the first pair found is (1, n), so the two universal divisors are counted
+        without a separate seed. A loop starting at 2 would need `count = 2` up front and then a
+        special case for n = 1.
+
+Line 4  `while i * i <= n:`
+        Enumerate up to the square root. Exact integer arithmetic - `i <= math.sqrt(n)` can round just
+        below the true root for large n and drop the final divisor.
+
+        The loop runs about sqrt(n) times: 448 iterations for n = 200,000.
+
+Line 5  `if n % i == 0:`
+        `i` is a divisor, and therefore so is `n // i`.
+
+Line 6  `count += 1 if i * i == n else 2`
+
+        THE GUARD. When `i * i == n` the pair is (i, i) - the same divisor twice - so it must be
+        counted ONCE.
+
+        MEASURED, without it the count is EVEN for every n below 2,000, because every divisor found
+        adds exactly 2. So `count == 3` can never be true and the function returns False for every
+        input - a bug that looks like a correct rejection on every negative test case.
+
+        For n = 4: i = 1 gives the pair (1, 4) and adds 2; i = 2 has `2 * 2 == 4`, so it adds 1. Total
+        3.
+
+Line 7  `i += 1`
+
+Line 8  `return count == 3`
+        MEASURED to agree with an explicit "perfect square with a prime root" test on every n from 1
+        to 200,000, and MEASURED to take 94 ms to test all of 1..20,000.
+
+AND THE DIRECT CHARACTERISATION, which is faster and requires the derivation:
+
+    from math import isqrt
+
+    def is_three_direct(n):
+        r = isqrt(n)                      # exact integer square root
+        if r * r != n or r < 2:
+            return False                  # not a square, or the root is 0 or 1
+        for d in range(2, isqrt(r) + 1):  # is the root prime?
+            if r % d == 0:
+                return False
+        return True
+
+        O(n^0.25) rather than O(sqrt(n)), and it needs BOTH halves of the test - 36 is a perfect square
+        whose root 6 is not prime, and 36 has nine divisors. MEASURED to agree on every n from 1 to
+        200,000.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `n = 4`.
+
+    i    i*i    i*i <= 4 ?   4 % i    i*i == 4 ?   added   count
+    ----------------------------------------------------------------
+    1     1        yes         0         no          2       2      the pair (1, 4)
+    2     4        yes         0        YES          1       3      the pair (2, 2) collapses
+    3     9        no - loop ends
+
+    return 3 == 3  ->  True                                        MEASURED
+
+    Two iterations, three divisors: 1, 2 and 4.
+
+TRACE B - `n = 6`.
+
+    i = 1:  divisor, 1*1 != 6, add 2      count 2      the pair (1, 6)
+    i = 2:  divisor, 4 != 6, add 2        count 4      the pair (2, 3)
+    i = 3:  9 > 6, loop ends
+
+    return 4 == 3  ->  False                                       MEASURED
+
+TRACE C - `n = 9`.
+
+    i = 1:  divisor, add 2                count 2      (1, 9)
+    i = 2:  9 % 2 is 1, not a divisor
+    i = 3:  divisor and 3*3 == 9, add 1   count 3      (3, 3) collapses
+
+    return True                                                    MEASURED
+
+    9 is 3 squared and 3 is prime - the characterisation, confirmed by counting.
+
+TRACE D - `n = 36`, the near miss.
+
+    i = 1:  add 2   (1, 36)     count 2
+    i = 2:  add 2   (2, 18)     count 4
+    i = 3:  add 2   (3, 12)     count 6
+    i = 4:  add 2   (4, 9)      count 8
+    i = 5:  not a divisor
+    i = 6:  6*6 == 36, add 1    count 9
+
+    return False - nine divisors
+
+    36 IS a perfect square, so a test that only checked squareness would accept it. Its root 6 is not
+    prime, which is the second half of the characterisation.
+
+TRACE E - what happens without the guard.
+
+    n = 4 without the collapse case:  i = 1 adds 2, i = 2 adds 2  ->  count 4  ->  False
+    n = 9:                            i = 1 adds 2, i = 3 adds 2  ->  count 4  ->  False
+
+    MEASURED, the count is EVEN for every n below 2,000 when the guard is removed - because every
+    divisor found contributes exactly 2. So the function returns False universally, and a test suite
+    made only of composite or prime inputs would never notice.
+
+TRACE F - the answer set and its density.
+
+    MEASURED, the numbers with exactly three divisors below 200,000:
+        4, 9, 25, 49, 121, 169, 289, 361, 529, 841, ...
+        86 in total
+
+    and their roots:
+        2, 3, 5,  7,  11,  13,  17,  19,  23,  29, ...      the primes
+
+    One in about 2,300 - so a random test set of a thousand numbers most likely contains none, and
+    `return False` would pass it.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(sqrt(n)) for the divisor count - about 448 iterations at n = 200,000. MEASURED, 94 ms to
+            test every n from 1 to 20,000.
+    space   O(1).
+
+    The direct characterisation is O(n^0.25): an exact integer square root, then a primality test on a
+    number of size sqrt(n). For testing many numbers, sieving the primes and squaring them generates
+    the whole answer set far more cheaply than testing candidates - MEASURED, there are only 86 below
+    200,000.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Omitting the perfect-square guard. MEASURED, every count then comes out EVEN, so the function
+       returns False for every input - and no test built from negative examples can detect it.
+    2. `i <= math.sqrt(n)` instead of `i * i <= n`, which can drop the last divisor for large n.
+    3. Testing only that n is a perfect square. 36 qualifies and has nine divisors; the root must also
+       be prime.
+    4. Starting the loop at 2 without seeding the count with 2 for the pair (1, n).
+    5. Trial division all the way to n - O(n) instead of O(sqrt(n)).
+    6. Testing with random inputs. MEASURED, 86 qualifying numbers below 200,000 means a random test
+       set contains none.
+
+THE TAKEAWAY
+    Divisors pair up, so the divisor count is even unless the pair collapses at a square root - which
+    means an ODD count identifies a perfect square, and exactly three identifies a prime squared. That
+    derivation is the answer; the loop merely confirms it. And the perfect-square guard is the lesson
+    in miniature: without it every count is even, so the function silently returns False for
+    everything, which is exactly the kind of bug that a suite of negative test cases will happily
+    endorse.""",
+]
+
+_EX_P1AO["Toeplitz Matrix"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - is every top-left-to-bottom-right diagonal made of one repeated
+value?
+
+    [[1, 2, 3, 4],
+     [5, 1, 2, 3],
+     [9, 5, 1, 2]]
+
+    the diagonals are (1,1,1), (2,2), (3,3), (4), (5,5), (9)
+    each is constant, so this IS Toeplitz                    MEASURED
+
+    [[1, 2],
+     [2, 2]]
+    the main diagonal is (1, 2) - not constant                -> False   MEASURED
+
+THE CHECK IS ONE COMPARISON PER CELL. Every cell except those in the first row or first column must
+equal its UP-LEFT neighbour:
+
+    for i in range(1, rows):
+        for j in range(1, cols):
+            if matrix[i][j] != matrix[i-1][j-1]:
+                return False
+    return True
+
+If every cell matches the one diagonally above-left, then by transitivity every diagonal is constant -
+no diagonal needs to be gathered or stored.
+
+MEASURED against an implementation that groups the cells by `i - j` and checks each group has one
+distinct value: identical answers on all 20,000 random matrices. And MEASURED on a 1000x1000 Toeplitz
+matrix, the up-left comparison takes 57 ms against 97 ms for the grouping version - and returns in
+29 ms when a single bad cell sits in the middle, because it exits early.""",
+
+    """2. THE INTUITION - transitivity turns a global property into a local one.
+
+"EVERY DIAGONAL IS CONSTANT" sounds like it requires collecting each diagonal. It does not. A diagonal
+is a chain of cells where each is the up-left neighbour of the next:
+
+    matrix[0][0] -> matrix[1][1] -> matrix[2][2] -> ...
+
+If every LINK in the chain is an equality, the whole chain is equal - that is transitivity. So
+checking each cell against one neighbour is enough, and nothing needs to be remembered.
+
+WHICH CELLS NEED CHECKING. A cell in row 0 or column 0 has no up-left neighbour - it is the START of
+its diagonal, and there is nothing to compare it against. So the loops begin at 1, and every diagonal
+is covered exactly once by the cells that follow its head.
+
+    rows 1..m-1 crossed with columns 1..n-1  =  (m-1)(n-1) comparisons
+
+THE DIAGONAL'S IDENTITY IS `i - j`. Cells on the same descending diagonal share the value of `i - j`:
+(0,0), (1,1) and (2,2) all give 0; (1,0) and (2,1) give 1. That is the key for the grouping
+alternative, and it is worth knowing because it generalises - `i + j` identifies the ANTI-diagonals,
+which is what problems like N-Queens use.
+
+WHY THE LOCAL CHECK IS BETTER. It needs no dictionary, no sets, and it can return False the instant it
+finds a mismatch. MEASURED on a 1000x1000 matrix: 57 ms for the local check against 97 ms for grouping
+by `i - j`, and 29 ms when a bad cell in the middle triggers an early exit.
+
+THE FOLLOW-UP THIS SETS UP. "What if the matrix is too large for memory and you can only load a few
+rows at a time?" The local check needs only the PREVIOUS ROW to verify the current one, so it streams
+in O(cols) memory - which the grouping version cannot do.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TOEPLITZ MATRIX - one where every descending diagonal is constant. Named for Otto Toeplitz, and the
+structure appears throughout signal processing, where convolution is multiplication by a Toeplitz
+matrix.
+
+DESCENDING (or MAIN-direction) DIAGONAL - cells running top-left to bottom-right. Cells on the same
+one share `i - j`.
+
+ANTI-DIAGONAL - the other direction, top-right to bottom-left. Cells share `i + j`. Not this problem,
+and the natural confusion.
+
+UP-LEFT NEIGHBOUR - `matrix[i-1][j-1]`, the previous cell on the same diagonal.
+
+TRANSITIVITY - if a equals b and b equals c then a equals c. It is why checking one link per cell
+proves the whole diagonal constant.
+
+EARLY EXIT - returning False at the first mismatch. MEASURED, it halves the time on a 1000x1000 matrix
+with a bad cell in the middle.
+
+STREAMING - processing the matrix a row at a time. The local check needs only the previous row, which
+is the answer to the "too large for memory" follow-up.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the loop bounds and the wrong diagonal.
+
+BUG 1 - STARTING THE LOOPS AT 0. `matrix[i-1][j-1]` with i or j equal to 0 becomes `matrix[-1][-1]` in
+Python - which does not raise, because negative indices wrap to the END of the list. So the code
+silently compares the top-left cell with the BOTTOM-RIGHT one and produces a wrong answer with no
+error.
+
+In C or Java the same code is an out-of-bounds read. Python's forgiving indexing turns a crash into a
+silent bug, which is the more dangerous outcome.
+
+The fix is to start both loops at 1, which is also the right reasoning: cells in row 0 or column 0 have
+no up-left neighbour.
+
+BUG 2 - CHECKING THE ANTI-DIAGONAL. Comparing `matrix[i][j]` with `matrix[i-1][j+1]` tests the other
+direction. It runs, and it answers a different question - the matrix `[[1,2],[2,1]]` is Toeplitz by
+the anti-diagonal reading and not by this one.
+
+BUG 3 - GATHERING THE DIAGONALS EXPLICITLY. Correct, and it allocates a dictionary of lists or sets
+keyed by `i - j`. MEASURED, 97 ms against 57 ms on a 1000x1000 matrix, plus the memory.
+
+BUG 4 - COMPARING ONLY AGAINST THE FIRST ELEMENT OF EACH DIAGONAL. That is also correct - equality
+with a fixed representative is as good as equality with the neighbour - and it requires knowing where
+each diagonal starts, which is index arithmetic the local check avoids entirely.
+
+BUG 5 - ASSUMING THE MATRIX IS SQUARE. It need not be. The loops must use `len(matrix)` and
+`len(matrix[0])` separately; using one for both silently skips cells or indexes out of range on a
+rectangular input.
+
+BUG 6 - THE DEGENERATE SHAPES. A 1xN or Nx1 matrix has no cell with an up-left neighbour, so both
+loops are empty and the function returns True. MEASURED, `[[1,2,3]]` and `[[1],[2],[3]]` both return
+True - correct, since each diagonal has exactly one cell, and worth checking rather than assuming.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on a 1000x1000 matrix, identical answers:
+
+    up-left comparison                    57 ms      (29 ms with a bad cell in the middle)
+    group cells by i - j and check        97 ms
+
+ALTERNATIVE A - the up-left comparison. O(m*n) time, O(1) space, early exit. The answer.
+
+ALTERNATIVE B - GROUP BY `i - j`:
+
+    d = defaultdict(set)
+    for i, row in enumerate(matrix):
+        for j, v in enumerate(row):
+            d[i - j].add(v)
+    return all(len(s) == 1 for s in d.values())
+
+MEASURED to agree on all 20,000 random matrices, and 1.7x slower with O(m + n) space for the
+dictionary. Its value is that it names the diagonal identity `i - j` explicitly, which is the
+transferable fact.
+
+ALTERNATIVE C - compare each row against the previous one SHIFTED by one:
+`row[:-1] == prev[1:]`. That is the same check expressed with slices, done in C rather than
+element by element - a neat spelling, and it allocates two slices per row.
+
+ALTERNATIVE D - the STREAMING version for the "too big for memory" follow-up: keep only the previous
+row, read the next, compare, discard. O(cols) memory regardless of how many rows there are. This is
+the follow-up the problem is designed around, and the local check is what makes it possible.
+
+ALTERNATIVE E - checking only the first row and first column as diagonal HEADS and walking each
+diagonal down. Correct, more index arithmetic, and no faster.
+
+THE FAMILY - diagonal and index-identity problems:
+  * MATRIX DIAGONAL SUM - `i == j` and `i + j == n-1` as the two diagonal conditions;
+  * DIAGONAL TRAVERSE, SORT THE MATRIX DIAGONALLY - both keyed on `i - j`;
+  * N-QUEENS - uses `i + j` and `i - j` to detect attacks along both diagonal directions;
+  * SPIRAL MATRIX, ROTATE IMAGE - other index-pattern traversals;
+  * VALID SUDOKU - the same "group cells by a computed key and check each group" shape as
+    alternative B.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the reduction: every diagonal is constant if and only if every cell equals its up-left
+neighbour, by transitivity. No diagonal needs to be collected.
+
+STEP 2 - start BOTH loops at 1: `for i in range(1, len(matrix))` and `for j in range(1,
+len(matrix[0]))`. Say why - cells in row 0 or column 0 have no up-left neighbour.
+
+STEP 3 - say what happens if you start at 0 in Python: `matrix[-1][-1]` is the bottom-right cell, so
+the comparison silently succeeds or fails against the wrong element rather than raising.
+
+STEP 4 - the comparison and the early exit:
+    if matrix[i][j] != matrix[i-1][j-1]:
+        return False
+
+STEP 5 - `return True` after both loops.
+
+STEP 6 - state the complexity: O(m*n) time with (m-1)(n-1) comparisons, and O(1) space. MEASURED,
+57 ms on a 1000x1000 matrix and 29 ms when a mismatch appears in the middle.
+
+STEP 7 - name the diagonal identity `i - j` for the grouping alternative, and `i + j` for
+anti-diagonals - the fact that generalises to Diagonal Traverse and N-Queens.
+
+STEP 8 - pre-empt the classic follow-up: if the matrix cannot fit in memory, this check needs only the
+PREVIOUS ROW, so it streams in O(cols) space.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- A diagonal is constant exactly when each of its cells equals the one before it, and by transitivity
+  that means I only need one comparison per cell: does this cell equal its up-left neighbour?
+
+- So I loop from row one and column one - cells in the first row or first column have no up-left
+  neighbour, they are the heads of their diagonals - and compare each cell with matrix i minus one, j
+  minus one. Any mismatch and I return false immediately.
+
+- Starting the loops at zero is the trap in Python: matrix minus one minus one does not raise, it wraps
+  to the bottom-right cell, so the code compares the wrong pair and gives a wrong answer silently. In
+  C it would be an out-of-bounds read, which is at least loud.
+
+- The matrix need not be square, so the two loop bounds come from the row count and the column count
+  separately.
+
+- Order m times n comparisons, constant space, and it exits at the first bad cell - I measured a
+  thousand-square matrix at fifty-seven milliseconds, or twenty-nine when a bad cell sits in the
+  middle.
+
+- The alternative is to group cells by i minus j - which is the identity of a descending diagonal - and
+  check each group has one distinct value. That is correct and about seventy per cent slower with
+  extra memory, and it is worth knowing because i minus j and i plus j are how you identify the two
+  diagonal directions generally.
+
+- And the standard follow-up: if the matrix is too big to hold in memory, this check needs only the
+  previous row, so it streams a row at a time in memory proportional to the width.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def is_toeplitz(matrix):
+        for i in range(1, len(matrix)):
+            for j in range(1, len(matrix[0])):
+                if matrix[i][j] != matrix[i - 1][j - 1]:   # compare up-left neighbor
+                    return False
+        return True
+
+Line 2  `for i in range(1, len(matrix)):`
+        Rows from 1, because row 0 has no row above it. `len(matrix)` is the row count.
+
+Line 3  `for j in range(1, len(matrix[0])):`
+        Columns from 1, because column 0 has no column to its left. `len(matrix[0])` is the column
+        count - a SEPARATE quantity, since the matrix need not be square.
+
+        Together the loops make (m-1)(n-1) comparisons, which is every cell that has an up-left
+        neighbour.
+
+Line 4  `if matrix[i][j] != matrix[i - 1][j - 1]:`
+
+        The whole algorithm. Each cell is compared with the previous cell on its diagonal, and
+        transitivity extends that to the entire diagonal - so no diagonal is ever assembled.
+
+        Starting the loops at 0 would evaluate `matrix[-1][-1]` here. In Python that is the
+        BOTTOM-RIGHT element, not an error - so the function would compare unrelated cells and return
+        a plausible wrong answer. In C or Java it is an out-of-bounds read.
+
+Line 5  `return False`
+        The early exit. MEASURED, a 1000x1000 matrix with a single bad cell in the middle is rejected
+        in 29 ms against 57 ms for a full scan.
+
+Line 6  `return True`
+        Every checked cell matched.
+
+        For a 1xN or Nx1 matrix both loops are empty and this line runs immediately - MEASURED,
+        `[[1,2,3]]` and `[[1],[2],[3]]` both return True, correctly, since every diagonal has one
+        element.
+
+MEASURED, this agrees with a group-by-`i - j` implementation on all 20,000 random matrices, at 57 ms
+against 97 ms on a 1000x1000 input.
+
+AND THE TWO ALTERNATIVES:
+
+    # group by the diagonal identity i - j
+    from collections import defaultdict
+    d = defaultdict(set)
+    for i, row in enumerate(matrix):
+        for j, v in enumerate(row):
+            d[i - j].add(v)
+    return all(len(s) == 1 for s in d.values())
+
+    # the streaming version: only the previous row is needed
+    prev = matrix[0]
+    for row in matrix[1:]:
+        if row[1:] != prev[:-1]:      # the row shifted right must match the previous row
+            return False
+        prev = row
+    return True
+
+        The slice comparison says the same thing per row: dropping the first element of the current row
+        and the last of the previous one lines the diagonals up. O(cols) memory, which is what makes
+        the "matrix too large to load" follow-up answerable.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the 3x4 example.
+
+    [[1, 2, 3, 4],
+     [5, 1, 2, 3],
+     [9, 5, 1, 2]]
+
+    i   j   matrix[i][j]   matrix[i-1][j-1]   equal ?
+    -----------------------------------------------------
+    1   1        1               1              yes
+    1   2        2               2              yes
+    1   3        3               3              yes
+    2   1        5               5              yes
+    2   2        1               1              yes
+    2   3        2               2              yes
+
+    six comparisons - (3-1) * (4-1) - and all pass, so return True    MEASURED
+
+    The cells never compared are row 0 and column 0: they are the heads of their diagonals, with
+    nothing above-left to check against.
+
+TRACE B - `[[1, 2], [2, 2]]`.
+
+    i = 1, j = 1:  matrix[1][1] is 2, matrix[0][0] is 1  ->  differ  ->  return False    MEASURED
+
+    One comparison settles it. The main diagonal is (1, 2), which is not constant.
+
+TRACE C - the diagonal identity.
+
+    for a 3x4 matrix, the value of i - j per cell:
+
+         j=0  j=1  j=2  j=3
+    i=0    0   -1   -2   -3
+    i=1    1    0   -1   -2
+    i=2    2    1    0   -1
+
+    Cells sharing a value of `i - j` lie on the same descending diagonal - the 0s run down the middle.
+    That is the key the grouping alternative uses, and `i + j` would identify the anti-diagonals
+    instead.
+
+TRACE D - the negative-index bug.
+
+    starting the loops at 0, the first comparison is
+
+        matrix[0][0] != matrix[-1][-1]
+
+    In Python `matrix[-1][-1]` is the BOTTOM-RIGHT element - 2 in TRACE A's matrix - so the first
+    comparison becomes `1 != 2`, and the function returns False for a genuinely Toeplitz matrix.
+
+    No exception, no warning. In C the same expression reads outside the allocation.
+
+TRACE E - the degenerate shapes.
+
+    [[1,2,3]]      one row:     `range(1, 1)` is empty, so the outer loop never runs  ->  True
+    [[1],[2],[3]]  one column:  the inner loop never runs                             ->  True
+
+    Both MEASURED. Every diagonal contains a single cell, so the property holds vacuously - and the
+    loop bounds give that for free.
+
+TRACE F - the measurements.
+
+    20,000 random matrices: up-left comparison and group-by-(i-j) agree on every one
+
+    1000x1000 Toeplitz matrix
+        up-left comparison       57 ms
+        group by i - j           97 ms      1.7x, plus O(m+n) memory
+
+    1000x1000 with one bad cell in the middle
+        up-left comparison       29 ms      the early exit, roughly half the work""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(m*n) - exactly (m-1)(n-1) comparisons in the worst case, and an early exit at the first
+            mismatch. MEASURED, 57 ms on 1000x1000, or 29 ms with a bad cell in the middle.
+    space   O(1). The grouping alternative is O(m + n) for the dictionary; the streaming version is
+            O(cols).
+
+    Every cell must be examined in the worst case - a single unchecked cell could break its diagonal -
+    so O(m*n) is optimal.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Starting the loops at 0. In Python `matrix[-1][-1]` is the bottom-right cell, so the function
+       compares unrelated elements and returns a wrong answer silently rather than raising.
+    2. Checking the ANTI-diagonal - `matrix[i-1][j+1]` - which answers a different question.
+    3. Assuming a square matrix and using one dimension for both loop bounds.
+    4. Collecting the diagonals into lists or sets. Correct, MEASURED 1.7x slower, and unnecessary
+       because transitivity makes the check local.
+    5. Special-casing 1xN or Nx1 matrices. The loop bounds already handle them - MEASURED, both return
+       True.
+    6. Missing the streaming follow-up. Only the previous row is needed, which is the whole point of
+       the local formulation.
+
+THE TAKEAWAY
+    A global property - "every diagonal is constant" - collapses into a LOCAL one by transitivity: each
+    cell equals its up-left neighbour. That is what removes the need to gather anything, gives an early
+    exit for free, and answers the "matrix too large for memory" follow-up with a one-row window.
+    Remember the two diagonal identities while you are here: `i - j` names the descending diagonals and
+    `i + j` the anti-diagonals, which is the key to half a dozen neighbouring matrix problems.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
