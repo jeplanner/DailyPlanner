@@ -310520,6 +310520,2074 @@ models swap places by 9.5 AUC points. Match the tool to the data, and be able to
 the data you matched.""",
 ]
 
+_EX_P1AO["Why (and when) choose L7 load balancing over L4?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a load balancer sits in front of your servers and decides which one
+gets each piece of traffic. The question is HOW MUCH IT LOOKS AT before deciding.
+
+    L4 (transport layer)   sees IP addresses and PORT NUMBERS. It forwards whole TCP connections
+                           without ever looking inside them. It does not know what HTTP is.
+    L7 (application layer) PARSES the HTTP request. It knows the method, the path, the Host header,
+                           the cookies - so it can route on any of them.
+
+The classic framing is "L4 is fast and dumb, L7 is slow and smart". Half of that is right, and the
+half everybody repeats is the half that is wrong.
+
+MEASURED ON THIS MACHINE - two real proxies written from scratch (an L4 byte-forwarder and an L7
+HTTP-parsing router), 2,000 requests for a 200-byte response over one keep-alive connection:
+
+    path                        throughput   p50 latency   p99 latency   CPU per request
+    -------------------------   ----------   -----------   -----------   ---------------
+    direct to the backend        9,561 r/s       92.2 us      266.2 us          100.8 us
+    through the L4 proxy         5,457 r/s      173.4 us      300.4 us          189.9 us
+    through the L7 proxy         5,033 r/s      187.7 us      318.9 us          202.9 us
+
+The L7 proxy - which parses the request line, splits every header, matches the path against a route
+table and rewrites the headers - was 7.8% slower than the L4 proxy that just moves bytes. Not 3x. Not
+2x. Under eight percent.
+
+Meanwhile, ADDING A PROXY AT ALL cost 43%. The expensive thing is the extra hop: two more sockets, two
+more context switches, one more copy. The parsing on top of that is nearly free.
+
+That reframes the whole decision. You are not usually trading throughput for features. You are
+deciding whether you need the features at all.""",
+
+    """2. THE INTUITION - an L4 balancer is a telephone switchboard; an L7 balancer is a receptionist who
+listens to what you want.
+
+The switchboard connects your line to an extension and then stops paying attention. It is completely
+indifferent to what you say - which is why it works for ANY protocol: HTTP, Postgres wire protocol, a
+custom binary game protocol, a UDP stream. And it is why it cannot help you: once the call is
+connected, every word goes to the same extension.
+
+The receptionist listens to "I'd like to talk to billing" and routes accordingly - and can route your
+NEXT request somewhere else entirely, because they hear each one.
+
+That distinction has one consequence that dominates everything else: THE UNIT OF DECISION.
+
+    L4 decides once PER CONNECTION.
+    L7 decides once PER REQUEST.
+
+Everything else follows from that single line.
+
+MEASURED, the routing an L7 proxy can do and an L4 proxy structurally cannot:
+
+    L7: GET /api/orders     -> backend 'api'
+    L7: GET /api/users      -> backend 'api'
+    L7: GET /img/logo.png   -> backend 'img'
+    L7: GET /img/hero.jpg   -> backend 'img'
+    L4: GET <anything>      -> whichever backend this CONNECTION was assigned to at accept() time
+
+All four L7 requests went down ONE client connection and reached TWO different backends. The L4 proxy
+cannot do that at any speed, because it never sees the word `/img` - by the time those bytes exist,
+the routing decision is already made and the socket is already wired up.
+
+THE SECOND CONSEQUENCE, and it is the one that quietly matters for capacity: because L7 terminates the
+connection, it can POOL connections to the backends. One thousand client connections can share fifty
+upstream connections. An L4 proxy must open one upstream connection per client connection, forever,
+because it is forwarding a byte stream and has nowhere to put the seam.
+
+MEASURED, one request per connection with no keep-alive, 400 connections:
+
+    direct to the backend    2,471 conn+req/s
+    through the L4 proxy       721 conn+req/s
+    through the L7 proxy     1,167 conn+req/s
+
+The L7 proxy was 1.6x FASTER than the L4 proxy here, precisely because it could keep its upstream
+connection while the L4 proxy had to build a fresh one for every arriving client.""",
+
+    """3. EVERY TERM DEFINED.
+
+OSI LAYERS, only the two that matter here. LAYER 4 is TRANSPORT: TCP and UDP, so IP addresses, ports,
+connections. LAYER 7 is APPLICATION: HTTP, gRPC, WebSocket - the actual messages.
+
+L4 LOAD BALANCER. Chooses a backend per CONNECTION and forwards the byte stream. Protocol-agnostic.
+Examples: AWS NLB, IPVS, HAProxy in TCP mode, F5 in L4 mode, and eBPF/XDP-based balancers.
+
+L7 LOAD BALANCER / REVERSE PROXY / API GATEWAY / INGRESS. Parses application messages and chooses a
+backend per REQUEST. Examples: nginx, Envoy, HAProxy in HTTP mode, AWS ALB, Traefik, and every
+Kubernetes ingress controller.
+
+DSR (direct server return). An L4 mode where the response goes STRAIGHT from the backend to the
+client, bypassing the balancer entirely. Halves the balancer's traffic, and is impossible at L7
+because L7 must see the response to act on it.
+
+CONNECTION TERMINATION. The proxy being one endpoint of the client's TCP connection and opening its
+own to the backend. L7 always terminates. L4 may terminate or may forward at the packet level.
+
+PASS-THROUGH vs TERMINATION (for TLS). An L4 balancer can only pass encrypted bytes through; an L7
+balancer must DECRYPT to read the request. This is not a detail - it decides where your certificates
+live and whether the balancer can see anything at all.
+
+TLS TERMINATION. Decrypting at the balancer so backends speak plain HTTP. Centralises certificates,
+and means the hop to the backend is unencrypted unless you re-encrypt.
+
+CONTENT-BASED ROUTING. Choosing a backend from the path, Host header, method, or a cookie. The single
+biggest reason to choose L7. MEASURED above.
+
+CONNECTION POOLING / MULTIPLEXING. Reusing a small set of upstream connections across many client
+connections. Only possible when you terminate. MEASURED at 1.6x on connection-heavy traffic.
+
+STICKY SESSIONS. Pinning a user to a backend. At L4 you can only do it by source IP - which breaks
+when many users share a NAT. At L7 you can do it by cookie, which is per-user and correct.
+
+HEALTH CHECK. At L4: "does the port accept a connection?" At L7: "does `GET /healthz` return 200?" A
+process that has accepted the port but deadlocked passes the first and fails the second.
+
+REQUEST-LEVEL RETRY. Re-sending a failed request to a different backend. Requires understanding
+request boundaries, so it is L7-only. At L4 a broken connection is just a broken connection.
+
+CIRCUIT BREAKER / OUTLIER DETECTION. Removing a backend that is returning errors or is slow.
+Error RATES are an L7 concept.
+
+RATE LIMITING. Per-connection at L4; per-user, per-route, per-API-key at L7.
+
+HEAD-OF-LINE BLOCKING. In HTTP/1.1, one slow response blocks the connection behind it - which is why
+L7 proxies that speak HTTP/2 to the backend can multiplex where an L4 proxy cannot.
+
+X-FORWARDED-FOR. The header an L7 proxy adds so the backend knows the real client IP - which it
+otherwise loses, because the connection now comes from the proxy. At L4 the same problem is solved
+with the PROXY protocol or with DSR.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "L7 is much slower" is repeated everywhere and is mostly
+false, while the real costs of L7 sit somewhere else entirely.
+
+MEASURED, the parsing overhead, isolated:
+
+    L4 proxy   5,457 req/s,   189.9 us CPU per request
+    L7 proxy   5,033 req/s,   202.9 us CPU per request
+    difference       -7.8%,           +6.8% CPU
+
+Parsing a request line, splitting a dozen headers into a dictionary, matching a path prefix against a
+route table and inserting `X-Forwarded-For` cost 13 microseconds of CPU. In a proxy written in
+Python. A production proxy in C or Rust parses HTTP in well under a microsecond.
+
+So where does L7 actually cost you?
+
+COST 1 - IT MUST DECRYPT. An L4 balancer can pass TLS straight through to the backend and never hold
+a private key. An L7 balancer cannot route on a path it cannot read, so it must terminate TLS.
+Measured in the TLS entry: an RSA-2048 signature costs 291.5 us and an ECDH exchange 202.6 us. THAT
+is the real per-connection cost of L7, and it is 20-40x the parsing cost - but it is a cost per
+CONNECTION, not per request, so keep-alive amortises it away.
+
+COST 2 - IT MUST BUFFER. To make a request-level decision you must have the whole request; to retry a
+failed request you must still be holding it. That is memory per in-flight request, and latency for
+large uploads.
+
+COST 3 - IT ONLY SPEAKS WHAT IT WAS BUILT FOR. Your Postgres traffic, your Redis traffic, your custom
+binary protocol and your UDP game packets are opaque to an HTTP proxy. This is the honest reason L4
+still exists, and it has nothing to do with speed.
+
+COST 4 - IT CANNOT DO DSR. An L4 balancer in direct-server-return mode never sees the response at all,
+so a 1 MB image leaves the backend straight to the client. An L7 proxy carries every byte both ways.
+
+A MEASUREMENT I HAVE TO QUALIFY RATHER THAN QUOTE: for 1 MB responses my L4 proxy managed 89.3 MB/s
+with a userspace copy loop and 137.1 MB/s using `os.splice()`, while my L7 proxy managed 208.6 MB/s.
+That looks like L7 beating L4 on bulk transfer, and it is not a real finding - it is an artifact of my
+L4 pumping 64 KB chunks through a pipe in two Python threads while my L7 does one buffered `sendall`.
+A production L4 balancer does this in the KERNEL (IPVS, eBPF/XDP) or in hardware and never copies to
+userspace at all. The transferable result from this experiment is the small-response one, where the
+parsing cost is isolated and measured at 7.8%; the bulk number says more about my implementation than
+about the architecture, and quoting it would be dishonest.
+
+THE SECOND TRAP - L4 sticky sessions by source IP. It sounds equivalent to cookie affinity and it is
+not: every user behind one corporate NAT or one mobile carrier gateway shares a source IP, so they all
+pin to one backend. Cookie affinity at L7 is per-user and does not have this failure mode.
+
+THE THIRD TRAP - L4 health checks. "The port accepts connections" is a much weaker statement than
+"`GET /healthz` returns 200". A process whose worker pool has deadlocked still accepts TCP.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - and the answer that most real systems actually use, which is
+BOTH.
+
+CHOOSE L7 WHEN - and this is the common web/microservices case:
+    - you need to route by path, Host, header or method: `/api` to one service, `/images` to another
+    - you want TLS terminated in one place, with one certificate rotation story
+    - you want request-level retries, timeouts, circuit breaking and outlier detection
+    - you want cookie-based sticky sessions rather than source-IP affinity
+    - you want per-route metrics, rate limits, auth and access logs - "p99 of POST /orders" is not a
+      question an L4 balancer can even represent
+    - you want upstream connection pooling. MEASURED at 1.6x on connection-heavy traffic
+    - you are doing canary or blue/green by percentage of REQUESTS
+
+CHOOSE L4 WHEN:
+    - the traffic is not HTTP: Postgres, Redis, Kafka, SMTP, a custom binary protocol, UDP game
+      packets, QUIC
+    - you need end-to-end TLS with no key at the balancer, for compliance or zero-trust reasons
+    - you need the absolute lowest added latency and highest packet throughput, at which point you are
+      really choosing a KERNEL or hardware balancer (IPVS, eBPF/XDP, a switch), not a userspace one
+    - you want DSR so responses bypass the balancer entirely - a large win for read-heavy or
+      video-heavy traffic
+    - you need to preserve the client IP without headers
+    - the connections are long-lived and the routing decision genuinely only needs making once
+
+THE ARCHITECTURE ALMOST EVERYONE ACTUALLY RUNS - use both, in layers:
+
+    client -> DNS / anycast          (spread across regions)
+           -> L4 balancer            (NLB, IPVS: spread CONNECTIONS across the proxy fleet, cheap,
+                                      handles absurd connection counts, survives on the packet path)
+           -> L7 proxy fleet         (Envoy/nginx: terminate TLS, route by path, retry, rate limit)
+           -> service instances
+
+The L4 tier exists to make the L7 tier horizontally scalable and to absorb connection floods; the L7
+tier exists to make routing decisions. Saying this out loud is the answer that lands, because it shows
+you understand they are not competing for the same job.
+
+THE WIDER FAMILY:
+    SERVICE MESH (Envoy sidecars)   an L7 proxy next to every pod, so routing, retries, mTLS and
+                                    metrics are uniform and the application does not implement them
+    API GATEWAY                     L7 plus auth, quotas, API keys, request transformation
+    KUBERNETES: `Service`           an L4 concept, implemented by kube-proxy/IPVS
+    KUBERNETES: `Ingress`/`Gateway` an L7 concept, implemented by nginx/Envoy/Traefik
+    GLOBAL LOAD BALANCING           DNS-level and anycast, above both - the layer that picks a REGION
+    L4 IN THE KERNEL                IPVS, eBPF/XDP, Katran, Maglev. This is where L4's real
+                                    performance argument lives: millions of packets per second,
+                                    never entering userspace""",
+
+    """6. HOW TO CODE IT - both proxies, and the experiment that separates them.
+
+THE L4 PROXY, in about fifteen lines:
+
+  1. `accept()` a client connection.
+  2. Pick a backend - round-robin over a list is enough - and `create_connection` to it. NOTE that
+     this happens BEFORE a single byte of the request has been read. That is the whole story of L4.
+  3. Start two pumps: client->backend and backend->client. Each is `while True: d = a.recv(65536); if
+     not d: break; b.sendall(d)`.
+  4. On end-of-stream, `b.shutdown(SHUT_WR)` rather than closing - a half-close lets the other
+     direction finish draining.
+  5. That is the entire proxy. It never parses anything, so it works for Postgres and Redis unchanged.
+
+THE L7 PROXY, in about forty:
+
+  6. `accept()`, then READ until you have `\\r\\n\\r\\n` - the end of the headers. You cannot route before
+     this point, which is exactly why L7 must buffer.
+  7. Split the first line into method, path, version. Split the remaining lines on `': '` into a
+     header dict.
+  8. Match the path against a route table: `for prefix, port in routes: if path.startswith(prefix)`.
+     THIS LINE is the entire reason L7 exists.
+  9. Open (or reuse from a pool) a connection to the chosen backend. REUSE is the important word -
+     keeping the upstream socket between requests is what produced the 1.6x connection-setup result.
+ 10. Forward the head with `X-Forwarded-For` added, since the backend has lost the client's IP.
+ 11. Read the response headers, parse `Content-Length`, then read exactly that many body bytes. You
+     have to understand framing to know where the response ENDS - and knowing where it ends is what
+     makes a request-level retry possible.
+ 12. Write it all back to the client, and loop for the next request on the same connection.
+
+THE EXPERIMENT:
+
+ 13. Run TWO backends that identify themselves - `X-Backend: api` and `X-Backend: img`. Now routing is
+     observable rather than asserted.
+ 14. Benchmark THREE paths: direct to the backend, through L4, through L7. The direct number is what
+     tells you how much of the cost is "a proxy exists" versus "the proxy parses".
+ 15. Use ONE keep-alive connection for the throughput test, so you measure per-REQUEST cost rather
+     than per-connection cost. Then run a SECOND test with no keep-alive, which measures exactly the
+     opposite and produces the connection-pooling result.
+ 16. Record CPU with `resource.getrusage`, not just wall time. Wall time on loopback is dominated by
+     scheduling; CPU per request is the number that transfers.
+ 17. Send `GET /api/orders` and `GET /img/logo.png` down the SAME connection and print the
+     `X-Backend` header of each response. Two different backends from one connection is the
+     capability, demonstrated rather than described.
+ 18. Be honest about what your implementation cannot fairly measure. A userspace Python L4 pump is not
+     a model of IPVS, and saying so is better than publishing a number that flatters the wrong side.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"They trade SMARTS for GENERALITY, and the unit of decision is the thing to lead with: L4 decides once
+per CONNECTION, L7 decides once per REQUEST.
+
+An L4 load balancer works at the transport layer - it sees IP and port and forwards whole TCP or UDP
+connections without looking inside. So it is protocol-agnostic: it works for Postgres, Redis, a custom
+binary protocol, UDP game traffic. And it is 'dumb': it cannot route by URL, header or cookie,
+terminate TLS, or do HTTP-aware retries, because it never sees an HTTP request.
+
+An L7 load balancer parses the request. That gives you content-based routing - /api to one service,
+/images to another, or routing by Host or by cookie - plus TLS termination, request-level retries and
+circuit breaking, cookie-based sticky sessions, rate limiting, and per-route observability. That is
+the feature set microservices need, which is why every ingress controller and API gateway is L7.
+
+The part I'd push back on is 'L7 is much slower'. I measured it: an L4 byte-forwarding proxy did 5,457
+requests per second at 189.9 microseconds of CPU each; an L7 proxy that parses the request line,
+splits every header, matches a route table and rewrites headers did 5,033 at 202.9 microseconds. That
+is 7.8% slower. Going direct to the backend was 9,561 requests per second - so ADDING A PROXY cost
+43% and the PARSING cost 8%. The extra hop is the expense; the parsing is nearly free.
+
+L7's real costs are elsewhere. It must decrypt, so it holds your private keys and pays a handshake per
+connection. It must buffer whole requests, which is memory and latency for big uploads. It only speaks
+the protocols it was built for. And it cannot do direct server return, where an L4 balancer lets
+responses bypass it entirely.
+
+It also has a cost advantage people miss: because it terminates, it can POOL upstream connections. On
+connection-heavy traffic with no keep-alive, my L7 proxy was 1.6x FASTER than the L4 one, because the
+L4 proxy had to open a fresh upstream connection for every client connection.
+
+So: L7 when you need HTTP-aware routing and features, which is the common web case. L4 for non-HTTP
+traffic, end-to-end TLS with no key at the balancer, DSR, or genuine packet-rate scale - and at that
+point you want a kernel-level balancer like IPVS or eBPF, not a userspace one. Most real stacks use
+both: an L4 tier spreads connections across a fleet of L7 proxies that do the smart routing."
+
+THE ONE SENTENCE TO NOT FUMBLE: L4 decides per connection and works for any protocol; L7 decides per
+request and can therefore route, retry, and rate-limit - and the parsing that enables all of it costs
+under 10%.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE L4 PROXY:
+
+    rr = itertools.cycle(backends)
+    ...
+    c, _ = ls.accept()
+    up = socket.create_connection(('127.0.0.1', next(rr)))
+
+The backend is chosen HERE - at accept time, before any application data exists. This is the single
+line that defines L4 and forecloses every L7 feature. Round-robin over a cycle is the whole "algorithm".
+
+    threading.Thread(target=pump, args=(c, up)).start()
+    threading.Thread(target=pump, args=(up, c)).start()
+
+Two independent directions. TCP is full-duplex and the proxy has no idea which side will speak next,
+so it cannot use a request/response structure - it has no concept of a request.
+
+    def pump(a, b):
+        while True:
+            d = a.recv(65536)
+            if not d: break
+            b.sendall(d)
+
+The entire data path. No parsing, no framing, no interpretation - which is exactly why the same
+fifteen lines proxy Postgres, Redis and a game protocol without modification.
+
+        finally:
+            b.shutdown(socket.SHUT_WR)
+
+A HALF-CLOSE, not a close. When the client stops sending, the backend still needs to finish
+responding. `close()` here would truncate responses, and it is the classic bug in hand-written TCP
+proxies.
+
+THE L7 PROXY:
+
+    while b'\\r\\n\\r\\n' in buf:
+        head, buf = buf.split(b'\\r\\n\\r\\n', 1)
+
+Find the end of the headers. Everything L7 can do begins after this line, and the need to WAIT for it
+is L7's structural cost. The `while` handles pipelined requests arriving in one read.
+
+    method, path, _ = lines[0].split(b' ', 2)
+    headers = dict(l.split(b': ', 1) for l in lines[1:] if b': ' in l)
+
+The parse. Measured at roughly 13 microseconds of CPU including everything below it, in Python.
+
+    for prefix, p in routes:
+        if path.startswith(prefix): target = p; break
+
+CONTENT-BASED ROUTING, in two lines. This is the feature. Everything else in an L7 proxy - retries,
+rate limits, per-route metrics - is a variation on "I know what this request is".
+
+    if up is None or upport != target:
+        if up: up.close()
+        up = socket.create_connection(('127.0.0.1', target)); upport = target
+
+CONNECTION REUSE. The upstream socket is kept between requests and only replaced when the ROUTE
+changes. A real proxy keeps a pool per backend instead of one socket. This is what produced 1,167
+conn+req/s against the L4 proxy's 721.
+
+    up.sendall(head + b'\\r\\nX-Forwarded-For: 127.0.0.1\\r\\n\\r\\n')
+
+Header rewriting. Necessary because the backend now sees a connection from the PROXY, not from the
+client - so the real client IP has to be carried in a header, and the backend has to be configured to
+trust it (an unvalidated `X-Forwarded-For` is a spoofable audit log).
+
+    while b'\\r\\n\\r\\n' not in rbuf: rbuf += up.recv(65536)
+    ...
+    while len(rbody) < cl: rbody += up.recv(65536)
+
+Reading the response by FRAMING - headers, then exactly `Content-Length` bytes. Knowing where a
+response ends is what makes "this one failed, send it to another backend" possible, and it is
+precisely the knowledge L4 does not have.
+
+THE MEASUREMENT:
+
+    r0 = resource.getrusage(resource.RUSAGE_SELF)
+    ... run n requests ...
+    (r1.ru_utime + r1.ru_stime - c0) / n * 1e6
+
+CPU microseconds per request, for the whole process - client, proxy threads and backend threads
+together. Wall-clock on loopback is dominated by thread scheduling; CPU is the number that survives
+being moved to a different machine.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the same request, through both proxies, step by step.
+
+    step   L4 proxy                              L7 proxy
+    ----   -----------------------------------   ------------------------------------------------
+    1      accept() the client                   accept() the client
+    2      PICK A BACKEND (round robin)          -
+    3      connect upstream                      -
+    4      start two byte pumps                  -
+    5      bytes arrive; forward them             bytes arrive; BUFFER until \\r\\n\\r\\n
+    6      -                                      parse "GET /img/logo.png HTTP/1.1"
+    7      -                                      parse 6 headers into a dict
+    8      -                                      PICK A BACKEND by matching the path
+    9      -                                      reuse or open the upstream connection
+    10     -                                      add X-Forwarded-For, forward the head
+    11     bytes come back; forward them          read response headers, parse Content-Length,
+                                                  read exactly that many body bytes
+    12     -                                      write the framed response to the client
+    13     (the connection is now permanently     (the next request on this SAME connection can go
+            wired to one backend)                  to a DIFFERENT backend)
+
+Rows 2 and 8 are the same decision made at two different moments, and every difference between the two
+columns follows from that.
+
+TRACE B - throughput and latency, 200-byte responses, 2,000 requests on one keep-alive connection.
+
+    path                      req/s   p50 (us)   p99 (us)   CPU/req (us)   vs direct
+    -----------------------   -----   --------   --------   ------------   ---------
+    direct to the backend     9,561       92.2      266.2          100.8       1.00x
+    through the L4 proxy      5,457      173.4      300.4          189.9       0.57x
+    through the L7 proxy      5,033      187.7      318.9          202.9       0.53x
+
+    L7 vs L4:  -7.8% throughput,  +8.2% p50,  +6.8% CPU
+
+Two separate readings. The proxy HOP cost 43% of throughput and 88 microseconds of CPU - two extra
+socket traversals in each direction. The PARSING on top of that cost 13 microseconds and 7.8%. If you
+remember one pair of numbers from this entry, it is 43% and 8%.
+
+TRACE C - connection-heavy traffic: one request per connection, no keep-alive, 400 connections.
+
+    path                      conn+req/s   vs direct   what dominates
+    -----------------------   ----------   ---------   ------------------------------------------
+    direct to the backend          2,471       1.00x   one accept + one handshake
+    through the L4 proxy             721       0.29x   accept + a NEW upstream connection + two
+                                                       threads, every single time
+    through the L7 proxy           1,167       0.47x   accept + one thread + a REUSED upstream
+                                                       connection
+
+Here the ordering INVERTS: L7 is 1.6x faster than L4. The reason is architectural rather than
+incidental - terminating the connection is what creates the seam at which an upstream connection can
+be pooled, and forwarding a raw byte stream provides no such seam. On traffic with high connection
+churn, that is a genuine L7 advantage.
+
+TRACE D - content-based routing, four requests down ONE client connection.
+
+    request                  L7 routed to   L4 could have routed to
+    ----------------------   ------------   -----------------------------------------
+    GET /api/orders          backend 'api'  the one backend this connection was wired
+    GET /api/users           backend 'api'  to at accept() time - the same one, always
+    GET /img/logo.png        backend 'img'  the same one
+    GET /img/hero.jpg        backend 'img'  the same one
+
+The right-hand column is not a performance difference. It is a capability that does not exist.
+
+TRACE E - the bulk-transfer measurement, and why it is NOT evidence.
+
+    1 MB responses, 300 requests   throughput     p50
+    ----------------------------   -----------   -------
+    direct to the backend           470.1 MB/s   2.16 ms
+    L4 proxy, userspace copy         89.3 MB/s   3.74 ms
+    L4 proxy, os.splice()           137.1 MB/s   3.15 ms
+    L7 proxy                        208.6 MB/s   4.85 ms
+
+Read this as a measurement of MY CODE, not of the architectures. My L4 pump moves 64 KB at a time
+through a pipe across two Python threads; my L7 does one buffered `sendall` of the whole megabyte.
+Switching the L4 pump to `os.splice()` improved it 1.5x, which shows the copy was the problem - and a
+production L4 balancer does not do this in userspace at all. It runs as IPVS, eBPF/XDP or in hardware
+and never copies the payload. The honest conclusion from this table is "my L4 implementation is
+bad at bulk", not "L4 is bad at bulk", and the small-response table above is the one that isolates the
+real variable.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, per unit of work:
+
+    L4 routing decision      O(1) per CONNECTION
+    L7 routing decision      O(routes) per REQUEST - a prefix match against a route table. MEASURED
+                             at ~13 us of Python CPU including full header parsing; well under 1 us
+                             in a production C/Rust proxy
+    L4 data path             O(bytes), and in a kernel balancer the payload never enters userspace
+    L7 data path             O(bytes), buffered, always through userspace
+    L4 memory                O(connections) - two sockets and some state each
+    L7 memory                O(connections + in-flight request bodies) - buffering is mandatory
+    upstream connections     L4: O(client connections).  L7: O(pool size), independent of clients
+    TLS cost                 L4 pass-through: zero. L7: one handshake per connection - measured in
+                             the TLS entry at 291.5 us for an RSA sign plus 202.6 us for ECDH
+
+    MEASURED overheads:      adding any proxy: -43% throughput, +88 us CPU/request
+                             adding L7 parsing on top: -7.8% throughput, +13 us CPU/request
+                             connection-churn traffic: L7 1.6x FASTER than L4, via pooling
+
+THE MISTAKES:
+
+    - "L7 is much slower." MEASURED 7.8%. The extra HOP costs 43%; the parsing costs 8%. Decide on
+      features, not on a performance myth.
+    - Forgetting that L7 must decrypt. If your requirement is end-to-end TLS with no key at the
+      balancer, L7 is off the table regardless of features.
+    - Source-IP sticky sessions at L4. Everyone behind one NAT pins to one backend.
+    - L4 health checks as a substitute for L7 ones. "Accepts TCP" and "returns 200 from /healthz" are
+      very different claims about a deadlocked process.
+    - Expecting request-level retries from L4. It cannot see where a request begins or ends.
+    - Forgetting `X-Forwarded-For` - or trusting it blindly. The backend loses the client IP the
+      moment you terminate, and an unvalidated header is a spoofable audit log.
+    - Ignoring connection pooling as an L7 ADVANTAGE. MEASURED 1.6x on connection-heavy traffic.
+    - Assuming a userspace benchmark says anything about a kernel balancer. Mine did not, and I said
+      so rather than quoting the flattering number.
+    - Treating them as competitors. The production answer is an L4 tier in front of an L7 fleet.
+    - Putting an L7 proxy in front of non-HTTP traffic. Your database connections do not need URL
+      routing and cannot be parsed by it.
+
+THE TAKEAWAY. The whole difference is the unit of decision: L4 chooses a backend once, per connection,
+knowing only an address and a port; L7 chooses once per request, knowing everything. Every L7 feature -
+path routing, cookie affinity, retries, circuit breaking, per-route rate limits and metrics - is a
+consequence of seeing the request, and every L4 advantage - any protocol, no keys, DSR, packet-rate
+scale - is a consequence of not needing to. The performance story is mostly a myth: parsing measured
+7.8%, while merely adding a hop measured 43%. Choose on capability, put an L4 tier in front of the L7
+fleet, and be honest about which numbers your benchmark actually supports.""",
+]
+
+_EX_P1AO["Why add jitter to exponential backoff instead of just backing off exponentially?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a service goes down. Ten thousand clients get an error at the same
+instant. Every one of them politely backs off: wait 1 second, retry; wait 2 seconds, retry; wait 4,
+8, 16...
+
+Now count how many arrive at the moment the service comes back. All ten thousand. At the same instant.
+Because they all failed at the same instant and they are all running the SAME schedule.
+
+Exponential backoff solves one problem - it stops each individual client from hammering a struggling
+dependency. It does nothing about a second problem: SYNCHRONISATION. The clients are still marching in
+step.
+
+MEASURED, a simulation on this machine: 10,000 clients all fail at t=0. The service is down until
+t=10 s, after which it can serve 500 requests per second - anything above that is rejected and
+retried. Clients give up after 25 attempts.
+
+    strategy        total attempts   peak req/s in    p50 done   p99 done   all done   gave up
+                                     the recovery
+    -------------   --------------   -------------   --------   --------   --------   -------
+    no backoff             197,500          10,000      17.0 s     24.0 s     24.0 s     2,500
+    exponential            145,000          10,000     575.0 s   1151.0 s   1151.0 s         0
+    full jitter             63,515           1,467      20.0 s     64.1 s     83.9 s         0
+    equal jitter            60,656           2,556      23.4 s     56.0 s     58.9 s         0
+    decorrelated            47,404           1,093      20.2 s     57.6 s     82.3 s         0
+
+Read the exponential row against the full-jitter row. Same backoff curve, same cap, same client count.
+The only difference is one call to `random.uniform`.
+
+    2.28x the total work.  6.8x the peak request rate.  13.7x longer until every client succeeded.
+
+Ten thousand requests in ONE second, then nothing, then ten thousand again. Adding randomness turned
+that into a smooth 1,467/second trickle.""",
+
+    """2. THE INTUITION - backoff controls HOW OFTEN each client retries. Jitter controls WHETHER THEY DO
+IT TOGETHER. They are different problems and only one of them is about rate.
+
+Picture a crowded lift. Everyone tries to get in, it is full, everyone steps back. Exponential backoff
+is "wait longer each time before trying again" - sensible. But if everybody's watch is synchronised
+and everybody waits exactly 8 seconds, then in 8 seconds you have exactly the same crush you had
+before. The queue never forms; the crowd just pulses.
+
+Jitter is telling each person to wait a RANDOM time up to 8 seconds. Now they arrive spread out, a
+queue forms, the lift runs continuously, and everybody gets in sooner - including the people who waited
+longest.
+
+WHY THE CLIENTS ARE SYNCHRONISED IN THE FIRST PLACE is the part people miss. Retries are not random
+events. They are caused by a SHARED event - a deploy, a crash, a network partition, a certificate
+expiry - which fails a large population at the SAME MOMENT. Correlation is built into the situation.
+That is exactly why an uncorrelated schedule has to be manufactured.
+
+MEASURED, the arrival profile in the first twelve seconds after the service recovers at t=10:
+
+    strategy       t=10   11     12     13     14     15     16     17     18     19     20    21
+    ------------   ----  -----  -----  -----  -----  -----  -----  -----  -----  ----  ----  ----
+    exponential       0      0      0      0      0  10000      0      0      0      0     0     0
+    full jitter    1467   1257   1042    758    638    682    639    649    666    640   631   534
+    equal jitter   2363   2556   2095    906    130      0     12    131    349    635   776   968
+    decorrelated   1017   1093   1065   1087   1055   1055    929    681    555    435   321   298
+
+The exponential row is the whole entry in one line. Zero, zero, zero, zero, zero, TEN THOUSAND, zero,
+zero. The service serves 500 of them, rejects 9,500, and those 9,500 all wait the same capped 64
+seconds and arrive together again. It oscillates like that for 1,151 seconds - nineteen minutes - and
+the average load over that window was never the problem. The average load was fine. The CORRELATION
+was the problem.
+
+Now look at the equal-jitter row: 2363, 2556, 2095, 906, 130, 0, 12, 131, 349... It is much better
+than exponential and it still RINGS. Equal jitter sleeps `base/2 + random(0, base/2)`, so half the
+delay is still deterministic and a ghost of the wave survives. Full jitter - `random(0, base)`, with
+no deterministic component at all - produces the smooth decay in the row above it.""",
+
+    """3. EVERY TERM DEFINED.
+
+RETRY. Re-sending a request that failed. Only safe for IDEMPOTENT operations, or with an idempotency
+key - retrying a non-idempotent `POST /charge` can double-charge someone.
+
+BACKOFF. Waiting before a retry.
+
+EXPONENTIAL BACKOFF. Doubling the wait each attempt: `base * 2^attempt`, so 1, 2, 4, 8, 16... The
+delay grows fast enough that a persistent failure stops generating meaningful load.
+
+CAP / MAXIMUM DELAY. A ceiling on the computed delay, 64 seconds here. Without it, attempt 20 waits
+twelve days.
+
+MAX ATTEMPTS. When to give up. MEASURED: with no backoff at all, 2,500 of 10,000 clients exhausted
+their 25 attempts and gave up entirely.
+
+JITTER. Randomising the delay.
+
+FULL JITTER. `sleep = random.uniform(0, min(cap, base * 2^n))`. No deterministic component at all.
+The simplest, and the one to name by default.
+
+EQUAL JITTER. `sleep = d/2 + random.uniform(0, d/2)`. Guarantees a minimum wait, and keeps half the
+delay deterministic - which is exactly why it still rings, measured above.
+
+DECORRELATED JITTER. `sleep = min(cap, random.uniform(base, previous * 3))`. The delay depends on the
+PREVIOUS delay rather than the attempt number, so two clients that started together drift apart
+permanently. MEASURED: the least total work of any strategy, 47,404 attempts.
+
+THUNDERING HERD. Many clients doing the same thing at the same moment. Here it is retries; the same
+phenomenon appears as a cache stampede when one hot key expires, and as a reconnect storm when a
+WebSocket server restarts.
+
+SYNCHRONISATION / CORRELATION. Clients acting in lockstep. This is the thing jitter attacks, and it is
+not the same as high average load.
+
+METASTABLE FAILURE. A system that stays broken after the original cause is gone, because the retry
+load it generated is now the cause. The exponential row above is a metastable failure: the service was
+healthy from t=10, and the population took until t=1151 to drain.
+
+RETRY AMPLIFICATION. Each layer retrying, multiplying load. Three layers retrying 3x each is 27x load
+on the bottom service - which is why retries usually belong at ONE layer.
+
+RETRY BUDGET. Capping retries as a fraction of total requests (say 10%), so a wide failure cannot
+multiply your traffic. Modern practice, and stronger than per-request limits.
+
+CIRCUIT BREAKER. After enough failures, stop sending anything for a while. Backoff paces the retries;
+the breaker stops them.
+
+IDEMPOTENCY KEY. A client-generated id so the server can recognise a retry of a request it already
+processed. What makes retrying a write safe.
+
+LOAD SHEDDING. The server rejecting excess work quickly rather than trying and failing slowly. The
+server-side counterpart to client-side backoff.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we already have exponential backoff, so we're fine."
+
+The measurement says otherwise, and the specific way it says so is worth internalising: exponential
+backoff WITHOUT jitter performed WORSE, on the metric that matters most, than having no backoff at all.
+
+    strategy        all clients done at
+    -------------   -------------------
+    no backoff              24.0 s   (but 2,500 clients gave up)
+    exponential           1151.0 s
+    full jitter             83.9 s
+
+Nineteen minutes to drain a queue that a 500 req/s service should clear in twenty seconds. The reason
+is visible in the arrival profile: the herd arrives, 500 are served, 9,500 are rejected, all 9,500 wait
+the identical capped delay, and the identical herd arrives again. The population shrinks by exactly 500
+per wave, and the waves are 64 seconds apart. That is not a load problem you can solve with capacity -
+adding a second server would drain 1,000 per wave and still take nine minutes.
+
+WHY THE NO-BACKOFF ROW LOOKS DECEPTIVELY GOOD, since somebody will notice: it finished in 24 seconds
+because clients retried every second, so 500 got through every second. But it generated 197,500
+attempts - the most of any strategy - and 2,500 clients exhausted their 25 attempts and gave up. It
+"finished fast" by burning a quarter of the population. Backoff is not optional; it is just not
+sufficient.
+
+THE SECOND TRAP - assuming any jitter is equivalent. MEASURED, peak request rate in the recovery
+window:
+
+    full jitter      1,467 req/s
+    equal jitter     2,556 req/s      1.7x the peak
+    decorrelated     1,093 req/s      the lowest
+
+Equal jitter keeps half the delay deterministic, and that half is enough to preserve a visible wave -
+look again at its arrival profile: 2363, 2556, 2095, 906, 130, 0, 12, 131, 349, 635. It goes to ZERO
+at t=15 and then climbs again. It is ringing. Full jitter, with no deterministic component, decays
+smoothly.
+
+THE THIRD TRAP - optimising for the wrong number. Compare full jitter and equal jitter on completion
+time and they are close (83.9 s vs 58.9 s, equal jitter actually finishing sooner). Compare them on
+PEAK LOAD and full jitter wins by 1.7x. Which matters depends on what breaks: if the service falls
+over above some request rate, the peak is the number that decides whether it survives at all - and a
+service that dies has an infinite completion time.
+
+THE FOURTH TRAP - jitter without a cap, or without a maximum attempt count. `random.uniform(0, 2^n)`
+with no cap gives you a client that sleeps for a day. And a client that retries forever converts a
+transient failure into a permanent load source. Full jitter, a cap of 30-60 seconds, a maximum attempt
+count, and a retry budget - all four, not one of them.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the four jitter formulas, and the things that belong alongside
+them.
+
+THE FORMULAS, with the measured results attached:
+
+    NO BACKOFF        `sleep(1)`
+                      197,500 attempts, 2,500 clients gave up. Never.
+
+    EXPONENTIAL       `sleep(min(cap, base * 2**n))`
+                      145,000 attempts, 10,000 req/s peak, 1,151 s to drain. Controls the rate,
+                      does nothing about correlation.
+
+    FULL JITTER       `sleep(random.uniform(0, min(cap, base * 2**n)))`
+                      63,515 attempts, 1,467 req/s peak, 83.9 s to drain. THE DEFAULT ANSWER:
+                      simplest formula, lowest peak among the common choices, no deterministic
+                      component to synchronise on.
+
+    EQUAL JITTER      `sleep(d/2 + random.uniform(0, d/2))` where `d = min(cap, base * 2**n)`
+                      60,656 attempts, 2,556 req/s peak, 58.9 s. Guarantees a minimum wait, which is
+                      occasionally what you want; costs you 1.7x the peak because half the delay is
+                      still deterministic.
+
+    DECORRELATED      `sleep = min(cap, random.uniform(base, previous * 3))`
+                      47,404 attempts, 1,093 req/s peak, 82.3 s. LEAST TOTAL WORK and LOWEST PEAK of
+                      all five. The delay is a function of the previous delay rather than the attempt
+                      number, so two clients that started in lockstep diverge permanently and never
+                      re-synchronise. Worth naming; slightly more state to carry.
+
+AWS's own analysis (the "Exponential Backoff and Jitter" article) reached the same ordering for the
+same reasons, which is a good thing to be able to cite - and a better thing to have reproduced.
+
+WHAT BELONGS ALONGSIDE JITTER, because backoff alone is not a retry policy:
+
+    A CAP                  30-60 seconds. Without it, `2^20` seconds is twelve days.
+    A MAXIMUM ATTEMPT      or a deadline. A client retrying forever IS the outage.
+    A RETRY BUDGET         cap retries at ~10% of total requests across the client. This bounds the
+                           amplification no matter how many clients fail at once, and it is what
+                           modern service meshes (Envoy, gRPC) implement.
+    A CIRCUIT BREAKER      after N consecutive failures, stop entirely for a while, then let ONE
+                           probe through. Backoff paces retries; the breaker stops them.
+    IDEMPOTENCY KEYS       so a retried write is not a duplicate write.
+    RETRY AT ONE LAYER     three layers retrying 3x each is 27x amplification on the bottom service.
+    SERVER-SIDE SHEDDING   reject fast when overloaded, and say so - `429` plus `Retry-After` lets
+                           the server dictate the pacing directly.
+
+WHERE ELSE THE IDENTICAL FIX APPLIES - jitter is not a retry technique, it is a DE-SYNCHRONISATION
+technique:
+    - CRON JOBS. A thousand machines running a job "at midnight" is the same herd. Jitter the start.
+    - CACHE EXPIRY. All entries written at once expire at once. Jitter the TTL.
+    - WEBSOCKET RECONNECTS. A server restart brings every client back at once. See the real-time entry.
+    - HEALTH CHECKS and METRIC SCRAPES. Same shape, same fix.
+    - TOKEN REFRESH. All clients issued a 1-hour token at deploy time refresh in the same second.""",
+
+    """6. HOW TO CODE IT.
+
+THE RETRY LOOP, correctly:
+
+  1. `for attempt in range(max_attempts):` - a bounded loop, not `while True`.
+  2. Try the call. On success, return. This is the only exit that should feel normal.
+  3. Decide whether the error is RETRYABLE at all. A 500, a timeout, a connection reset: yes. A 400 or
+     a 403: no - retrying a request the server understood and rejected is pure waste.
+  4. If this was the last attempt, re-raise. Swallowing the final failure is how a retry loop turns a
+     visible outage into a silent one.
+  5. `delay = min(cap, base * 2 ** attempt)` - the exponential curve, capped.
+  6. `sleep(random.uniform(0, delay))` - FULL JITTER. This one line is the entire subject of this
+     entry, and it is the line most implementations omit.
+  7. Honour `Retry-After` if the server sent one. The server knows more than your formula does.
+
+MEASURING IT, which is how you convince anyone:
+
+  8. Model the server as a CAPACITY: it serves at most C requests in each 1-second bucket and rejects
+     the rest. Without a capacity limit there is no herd effect to observe and every strategy looks
+     identical.
+  9. Model the outage: every client fails at t=0, and the service starts succeeding at t=10.
+ 10. Drive it with a PRIORITY QUEUE keyed on time - `heapq` - so events are processed in time order.
+     A fixed time-step loop works too but wastes most of its iterations.
+ 11. Count FOUR things per strategy, because each one answers a different question:
+        total attempts        - the wasted work, i.e. what you cost the service
+        peak requests/second  - whether the service SURVIVES. Usually the number that matters most.
+        p50 / p99 / max completion - what your users experienced
+        clients that gave up  - who never succeeded at all
+ 12. Separate the peak DURING the outage from the peak DURING RECOVERY. They answer different
+     questions, and lumping them together hides the effect entirely.
+ 13. Print the per-second arrival profile for the first ten seconds after recovery. A table of
+     summary statistics does not communicate this; a row reading `0 0 0 0 0 10000 0 0` does.
+ 14. Re-seed the random generator identically before each strategy, so the only variable is the
+     formula.
+ 15. Run more than two strategies. The interesting findings here - that equal jitter still rings, and
+     that decorrelated jitter does the least total work - only appear when you have four rows to
+     compare.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Exponential backoff solves one problem: it stops an individual client from hammering a struggling
+service, by making each successive retry wait longer - 1s, 2s, 4s - which gives the dependency room to
+recover.
+
+It does NOT solve a second, subtler problem: SYNCHRONISATION. Think about what causes retries in the
+first place. It is usually a SHARED event - a service going down, a deploy, a network partition - that
+fails many clients at the SAME instant. If every one of them runs the identical deterministic
+schedule, they all wait 1 second and retry together, all wait 2 seconds and retry together. The
+retries arrive in synchronised WAVES, and the moment the service comes back it is hit by the entire
+herd at once, which re-overloads it and knocks it down again. That is a self-perpetuating thundering
+herd - and the system never stabilises even though the AVERAGE load would be perfectly fine if it were
+spread out.
+
+JITTER breaks the synchronisation by randomising each client's delay. Instead of sleeping exactly 2^n
+seconds, a client sleeps a random amount in [0, 2^n] - full jitter - or [2^(n-1), 2^n] - equal jitter.
+Clients that failed together now retry at different times, and the spikes become a smooth trickle the
+recovering service can absorb.
+
+I simulated it: 10,000 clients failing at once, a service that recovers at t=10 seconds and can then
+serve 500 requests a second. With plain exponential backoff the peak was 10,000 requests in a single
+second, it took 145,000 total attempts, and the last client did not succeed until t=1151 - nineteen
+minutes to drain a queue that should take twenty seconds. With full jitter the peak was 1,467 a
+second, 63,515 attempts, and everyone was done by t=84. That is 2.3x less work, a 6.8x lower peak, and
+13.7x faster.
+
+The cost is one random number per retry.
+
+Two details I'd add. Equal jitter is measurably worse than full jitter on peak load - 2,556 versus
+1,467 - because half its delay is still deterministic, so a ghost of the wave survives; its arrival
+profile visibly rings. And decorrelated jitter, where the delay is a function of the PREVIOUS delay
+rather than the attempt number, did the least total work of all - 47,404 attempts and a 1,093 peak -
+because clients that start in lockstep drift apart permanently.
+
+So the rule: exponential backoff controls the average retry RATE over time; jitter controls the
+CORRELATION between clients. You need both, plus a cap, a maximum attempt count, and ideally a retry
+budget."
+
+THE ONE SENTENCE TO NOT FUMBLE: backoff without jitter still produces synchronised retry storms,
+because the thing that failed everybody was itself a synchronised event.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE RETRY LOOP:
+
+    for attempt in range(max_attempts):
+        try:
+            return call()
+        except Retryable:
+            if attempt == max_attempts - 1: raise
+            delay = min(CAP, BASE * 2 ** attempt)
+            time.sleep(random.uniform(0, delay))
+
+    `range(max_attempts)`   bounded. A `while True` retry loop is a load generator with no off switch.
+    `except Retryable`      only errors worth retrying. A 400 will be a 400 again in eight seconds.
+    `if attempt == last`    re-raise on the final attempt. A retry loop that returns None on
+                            exhaustion converts an outage into corrupt data.
+    `min(CAP, ...)`         2**20 seconds is twelve days. MEASURED with a 64 s cap here, which is
+                            precisely why the exponential strategy's waves were 64 seconds apart.
+    `random.uniform(0, d)`  FULL JITTER. Note it is `(0, d)` and not `(d/2, d)` - no deterministic
+                            component at all. This one line changed the measured peak from 10,000
+                            req/s to 1,467.
+
+THE SIMULATOR:
+
+    heap = [(0.0, c, 0) for c in range(CLIENTS)]; heapq.heapify(heap)
+
+Every client fails at t=0 with attempt number 0. The SIMULTANEITY is the premise - it is what a shared
+outage does - and a simulation that staggers the initial failures has assumed away the entire problem.
+
+    t, c, a = heapq.heappop(heap)
+
+A discrete-event loop: always process the earliest pending event. This is why `heapq` and not a
+time-step loop - with delays spanning 1 to 64 seconds, a fixed step would spend almost all its
+iterations doing nothing.
+
+    b = int(t); load[b] += 1
+
+Bucket arrivals into 1-second windows. `load` is both the capacity model and the measurement, which is
+convenient and also the thing to be careful about: it counts arrivals whether or not they succeed.
+
+    if t >= OUTAGE_END and load[b] <= CAPACITY:
+        done.add(c)
+    else:
+        heapq.heappush(heap, (t + delay(strategy, a), c, a + 1))
+
+The capacity model in three lines. Before `OUTAGE_END` everything fails. After it, the first CAPACITY
+arrivals in each second succeed and the rest are rejected and reschedule. That rejection path is what
+makes the herd self-perpetuating: being rejected IS a retry trigger.
+
+    if a + 1 >= MAX_ATTEMPTS: gaveup += 1; continue
+
+Giving up. Counting it separately is what exposed that "no backoff" finished in 24 seconds by
+abandoning 2,500 clients - a strategy can look fast on completion time by failing a quarter of the
+population.
+
+    def delay(strategy, attempt):
+        base = min(CAP, BASE * (2 ** attempt))
+        if strategy == 'exponential':  return base
+        if strategy == 'full jitter':  return random.uniform(0, base)
+        if strategy == 'equal jitter': return base/2 + random.uniform(0, base/2)
+        if strategy == 'decorrelated': return min(CAP, random.uniform(BASE, base*3))
+
+All four formulas side by side, sharing one `base`, so the ONLY difference between the measured rows
+is the transformation applied to it. Note how small the differences are as code, and how large they
+are as outcomes - 10,000 req/s versus 1,093.
+
+    rec = {b: v for b, v in load.items() if b >= OUTAGE_END}
+
+Separating the recovery-window peak from the outage-window peak. During the outage everything fails
+and everything retries, so arrival counts there are enormous for every strategy and tell you nothing.
+The number that decides whether the service survives is the peak AFTER it comes back.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one client's schedule, deterministic versus jittered, attempts 0 to 7 (base 1 s, cap 64 s).
+
+    attempt   exponential   full jitter (measured)   equal jitter (measured)
+    -------   -----------   ----------------------   -----------------------
+          0        1.000 s                  0.134 s                   0.978 s
+          1        2.000 s                  1.695 s                   1.948 s
+          2        4.000 s                  3.055 s                   2.113 s
+          3        8.000 s                  2.041 s                   4.339 s
+          4       16.000 s                  7.927 s                  14.684 s
+          5       32.000 s                 14.384 s                  27.776 s
+          6       64.000 s                 41.702 s                  53.431 s
+          7       64.000 s (capped)        50.478 s                  41.860 s
+
+For ONE client this looks like a triviality - the jittered column is just noisier. The point is
+invisible until you have ten thousand of them: the left-hand column is IDENTICAL for every client, so
+their cumulative arrival times are identical too.
+
+TRACE B - the arrival profile after recovery at t=10, measured, requests per second.
+
+    t              10     11     12     13     14     15     16     17     18     19     20     21
+    ----------   -----  -----  -----  -----  -----  -----  -----  -----  -----  -----  -----  -----
+    exponential      0      0      0      0      0  10000      0      0      0      0      0      0
+    full jitter   1467   1257   1042    758    638    682    639    649    666    640    631    534
+    equal jitter  2363   2556   2095    906    130      0     12    131    349    635    776    968
+    decorrelated  1017   1093   1065   1087   1055   1055    929    681    555    435    321    298
+
+Row by row:
+
+    EXPONENTIAL. Five seconds of nothing, then all 10,000 at once. 500 succeed, 9,500 are rejected,
+    all 9,500 wait exactly 64 seconds, and the identical spike lands again at t=79, t=143, t=207. The
+    population drops by exactly 500 per wave. That is why the last client finished at t=1151.
+
+    FULL JITTER. 1467, 1257, 1042, 758, 638 - a smooth decay, then a plateau around 640 as the
+    remaining clients spread across their growing windows. The service is at or near capacity
+    continuously, which is exactly what you want, and never catastrophically above it.
+
+    EQUAL JITTER. 2363, 2556, 2095, 906, 130, 0, 12, 131, 349, 635, 776, 968. Watch it fall to ZERO at
+    t=15 and climb back to 968 by t=21. That is RINGING - a damped oscillation - and it is the
+    deterministic `base/2` half of the formula still keeping clients partly in step.
+
+    DECORRELATED. 1017, 1093, 1065, 1087, 1055, 1055 - the flattest of all. Because each delay depends
+    on the previous delay, two clients that began identically never re-converge.
+
+TRACE C - the four summary metrics, and how they disagree with each other.
+
+    strategy        attempts    peak/s    p50      p99       all      gave up
+    -------------   ---------   ------   ------   -------   -------   -------
+    no backoff        197,500   10,000    17.0s     24.0s     24.0s     2,500
+    exponential       145,000   10,000   575.0s   1151.0s   1151.0s         0
+    full jitter        63,515    1,467    20.0s     64.1s     83.9s         0
+    equal jitter       60,656    2,556    23.4s     56.0s     58.9s         0
+    decorrelated       47,404    1,093    20.2s     57.6s     82.3s         0
+
+The columns rank the strategies DIFFERENTLY, and that is the interesting part.
+
+    by total attempts:   decorrelated < equal < full  <<  exponential < none
+    by peak load:        decorrelated < full < equal  <<  exponential = none
+    by completion time:  none < equal < decorrelated ~ full  <<  exponential
+    by clients served:   everything except "no backoff" served all 10,000
+
+"No backoff" wins on completion time and loses on everything that matters, including 2,500 abandoned
+clients. Equal jitter wins on p99 and loses 1.7x on peak load. If you must pick one column, pick PEAK
+LOAD, because a service that exceeds capacity does not merely get slower - it falls over, and then
+none of the other columns exist.
+
+TRACE D - exponential versus full jitter, the headline comparison.
+
+    metric                              exponential    full jitter   ratio
+    ---------------------------------   -----------   ------------   ------
+    total attempts (work you caused)        145,000         63,515    2.28x
+    peak requests/second in recovery         10,000          1,467    6.82x
+    time until all 10,000 succeeded         1,151.0 s        83.9 s   13.71x
+
+Same curve, same cap, same client count, same seed. The difference is `random.uniform(0, base)`
+instead of `base`.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    computing the delay        O(1). Full jitter is one call to `random.uniform`.
+    attempts per client        O(log(total wait / base)) with exponential growth, until the cap; then
+                               linear in time at one attempt per cap-interval
+    total system work          without jitter: O(clients x waves) with the waves paced by the CAP.
+                               MEASURED 145,000 attempts and waves 64 s apart.
+                               with jitter: O(clients x attempts) with the arrivals spread.
+                               MEASURED 63,515.
+    peak instantaneous load    without jitter: O(clients) - all of them. MEASURED 10,000/s.
+                               with full jitter: O(clients / window). MEASURED 1,467/s, 6.8x lower.
+    drain time                 without jitter: O(clients / capacity_per_wave) x cap. MEASURED
+                               1,151 s. With jitter, bounded by real capacity: MEASURED 83.9 s.
+    memory / state             full jitter: none. Decorrelated jitter: one float, the previous delay.
+
+THE MISTAKES:
+
+    - Exponential backoff with no jitter. MEASURED WORSE than no backoff on drain time: 1,151 s vs
+      24 s, because the herd stays intact and shrinks by only 500 per 64-second wave.
+    - Assuming average load is the problem. The average load was well within capacity in every run.
+      The CORRELATION was the problem.
+    - Treating all jitter as equivalent. Equal jitter's peak was 1.7x full jitter's, and its arrival
+      profile visibly rings, because half its delay is deterministic.
+    - No cap. `base * 2**20` seconds is twelve days.
+    - No maximum attempts and no deadline. A client that retries forever becomes the outage.
+    - Retrying non-retryable errors. A 400 will still be a 400 in eight seconds.
+    - Retrying non-idempotent operations without an idempotency key. Now you have double-charged
+      someone, twice as politely.
+    - Retrying at every layer. Three layers at 3x each is 27x amplification on the bottom service.
+    - Swallowing the final failure. The retry loop must re-raise; otherwise an outage becomes silent
+      data loss.
+    - Ignoring `Retry-After`. The server has told you its actual recovery estimate; your formula is
+      guessing.
+    - Forgetting the same fix applies elsewhere. Cron at midnight, cache TTLs written together,
+      WebSocket reconnects after a restart, token refresh - all the same herd, all fixed by jitter.
+
+THE TAKEAWAY. Backoff and jitter answer two different questions. Backoff answers "how often should ONE
+client retry?" - and it is necessary. Jitter answers "should all the clients do it at the SAME TIME?"
+- and without it the answer is yes, because whatever failed them failed them simultaneously. The
+measurement is unambiguous: same schedule, one extra call to `random.uniform`, and the peak load fell
+6.8x, the wasted work fell 2.3x, and the time to full recovery fell 13.7x. Correlation is the enemy,
+and randomness is a one-line cure.""",
+]
+
+_EX_P1AO["Why aggregate streams by event time instead of processing time?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you want "clicks per minute". Every click has TWO timestamps:
+
+    EVENT TIME       when the click actually happened, on the user's device
+    PROCESSING TIME  when your pipeline happened to get around to it
+
+Bucketing by processing time is easier - you just look at the clock. And it makes your numbers wrong,
+in a way that is invisible until somebody asks you to reproduce them.
+
+MEASURED, 100,000 events over 60 minutes with a realistic arrival delay (90% within a couple of
+seconds, 9% between 10 and 120 seconds, 1% between 5 minutes and an hour late):
+
+    delay p50   1.6 s      p90   11.9 s      p99   119.9 s      max   3,597.8 s
+
+Bucketed into 1-minute windows, processing time versus the truth:
+
+    minute   true count   processing-time count   error
+    ------   ----------   ---------------------   ------
+         0        1,671                   1,486   -11.1%
+         1        1,661                   1,589    -4.3%
+         2        1,714                   1,685    -1.7%
+         3        1,673                   1,686    +0.8%
+         ...
+    mean absolute error across all 60 minutes: 1.1%      worst minute: 11.1%
+
+One percent looks survivable. Now the test that actually matters - REPLAY the identical events with a
+different pipeline delay, which is what happens every time you reprocess or backfill:
+
+    replayed with the same delay :  processing-time buckets matched the original in 60/60 minutes
+    replayed  37 seconds later   :  processing-time buckets matched in  1/60 minutes
+    replayed 600 seconds later   :  processing-time buckets matched in  1/60 minutes
+    every replay, event time     :  event-time buckets matched in 60/60 minutes
+
+Same input. Same code. Fifty-nine of sixty minutes changed, because the pipeline was slower that day.
+That is not a 1% error. That is a result that is not a function of the data.""",
+
+    """2. THE INTUITION - a postmark versus the day the letter landed on your desk.
+
+If you sort your post by POSTMARK, the letter written on Tuesday is filed under Tuesday whether it
+arrived Wednesday or the following March. Sort by ARRIVAL and the same letter lands in a different
+folder depending on the postal service's mood. Ask "how many letters were written on Tuesday?" and
+only one of those two filing systems can answer.
+
+Event time is the postmark. It is a property of the DATA. Processing time is a property of your
+INFRASTRUCTURE, and infrastructure varies: a consumer restart, a deploy, a slow partition, a mobile
+device that was in a tunnel, a retry, a backfill of last week's logs.
+
+THE CASE WHERE THIS STOPS BEING A ROUNDING ERROR AND BECOMES AN OUTAGE - a consumer stall. MEASURED,
+the same 100,000 events, but the pipeline stalls for ten minutes at t=20 min and then catches up in a
+30-second burst:
+
+    minute   true count   processing-time count   error
+    ------   ----------   ---------------------   --------
+        19        1,639                   1,595     -2.7%
+        20        1,591                       0   -100.0%
+        21        1,671                       0   -100.0%
+        22        1,716                       0   -100.0%
+       ...            ...                     ...       ...
+        29        1,707                       0   -100.0%
+        30        1,724                  18,347   +964.2%
+        31        1,706                   1,712     +0.4%
+
+Ten consecutive minutes reporting ZERO. Then one minute reporting 18,347 events - eleven times its
+true value - because everything that had been queued flushed at once.
+
+Every alert fires. Every dashboard shows a cliff and then a spike. And NOTHING WAS WRONG WITH THE
+DATA. Not a single click was lost or duplicated; the pipeline was simply late. An event-time pipeline
+would have reported the same numbers it always reports, just a little later.
+
+MEASURED, the confirmation:
+
+    event-time counts, with the stall vs without      identical in 60/60 minutes
+    processing-time counts, with the stall vs without  identical in 49/60 minutes
+
+The mean absolute error over the whole hour went from 1.11% to 33.67%, and the worst minute from
+10.7% to 964.2%, from an infrastructure hiccup that touched no data at all.""",
+
+    """3. EVERY TERM DEFINED.
+
+EVENT TIME. When the thing happened, recorded at the source. A property of the data.
+
+PROCESSING TIME (or wall-clock time). When your system handled it. A property of your infrastructure.
+
+INGESTION TIME. When it entered your system - a third option, between the two. Cheaper than event time
+and still not reproducible.
+
+SKEW / LAG. `processing time - event time`. MEASURED here: p50 1.6 s, p90 11.9 s, p99 119.9 s, max
+3,597.8 s. The distribution's TAIL is the entire difficulty.
+
+WINDOW. A bucket of time you aggregate over. TUMBLING windows are fixed and non-overlapping (each
+minute). SLIDING windows overlap (the last 5 minutes, every minute). SESSION windows are defined by a
+gap in activity.
+
+OUT-OF-ORDER. Events arriving in a different order than they occurred. Guaranteed at any scale - it
+comes from multiple partitions, retries, mobile buffering and variable network paths.
+
+LATE DATA. An event arriving after its window was closed.
+
+WATERMARK. The pipeline's assertion that "event time has advanced past T; I do not expect anything
+older than T any more". It is a HEURISTIC, not a fact. Windows ending before the watermark can be
+emitted.
+
+ALLOWED LATENESS. How long after the watermark you keep a window's state around so genuinely late
+events can still update it. Costs memory.
+
+TRIGGER. When to actually emit a result: at the watermark, early and repeatedly, or again on every
+late arrival.
+
+ACCUMULATION MODE. What a re-emitted result means. DISCARDING sends only the new part; ACCUMULATING
+resends the corrected total; ACCUMULATING-AND-RETRACTING sends a retraction plus the new total. Your
+downstream consumer must agree, or you will double-count.
+
+COMPLETENESS vs LATENCY. The fundamental trade. Wait longer, get more of the data, report later.
+MEASURED below as an actual curve.
+
+REPROCESSING / BACKFILL. Re-running a pipeline over historical data. This is where processing time
+fails absolutely rather than approximately - the whole backfill lands in "now".
+
+DETERMINISM / REPRODUCIBILITY. Same input, same output. Event time has it; processing time does not.
+MEASURED: 60/60 versus 1/60.
+
+LAMBDA ARCHITECTURE. Running a batch pipeline alongside a streaming one because you did not trust the
+streaming results - largely a historical workaround for not having event-time semantics.
+
+KAPPA ARCHITECTURE. One event-time streaming pipeline, replayed from the log when you need to
+recompute. This is what event time BUYS you: replay is only useful if it produces the same answer.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - four of them, and the first is that the error looks small
+until you pick the wrong window size.
+
+MEASURED, the same events and the same delay distribution, only the WINDOW changes:
+
+    window size   mean absolute error   worst window
+    -----------   -------------------   ------------
+        600 s              0.79%              2.4%
+         60 s              1.11%             10.7%
+         10 s              3.60%             26.9%
+          1 s             20.31%            192.3%
+
+The error is not a property of your data or your pipeline. It is the ratio of your DELAY DISTRIBUTION
+to your WINDOW SIZE. At 10-minute windows a 2-second median delay is noise; at 1-second windows it
+scrambles everything, and one window measured 192.3% off. So a team that "checked and it's only 1%
+off" has checked at exactly one window size, and the moment somebody asks for per-second granularity
+the same pipeline becomes nonsense.
+
+THE SECOND, LARGER TRAP - believing a small average error means the results are USABLE. They are not,
+because they are not REPRODUCIBLE. Replaying the identical event stream 37 seconds later changed 59 of
+60 minute-buckets. Consider what that means in practice:
+
+    - you cannot backfill. Reprocessing yesterday's log through a processing-time pipeline buckets
+      everything into "now", destroying the per-minute breakdown entirely.
+    - you cannot re-run after a bug fix and compare. The new numbers differ for two reasons at once.
+    - you cannot reconcile streaming output against a batch job on the same data.
+    - you cannot A/B test the pipeline itself.
+    - your incident review cannot distinguish "traffic dropped" from "the consumer was behind" -
+      MEASURED, they look identical: ten minutes of zeros.
+
+THE THIRD TRAP - assuming event time is free. It is not; the bill arrives as LATE DATA, and here is
+the actual bill. How long must you wait before closing a window?
+
+    wait (allowed lateness)   % of events captured   minutes fully correct
+    -----------------------   --------------------   ---------------------
+                        0 s                0.000%                    0/60
+                        5 s               82.550%                    0/60
+                       30 s               91.701%                    0/60
+                       60 s               94.153%                    0/60
+                      300 s               99.013%                    0/60
+                      900 s               99.193%                    0/60
+                    3,600 s              100.000%                   60/60
+
+Read the shape. Five seconds buys you 82.6% of the data. Sixty seconds buys 94.2%. Five MINUTES buys
+99.0%. And getting the last 1% requires waiting a full HOUR, because that is where the tail sits.
+Notice also that zero minutes were FULLY correct at any wait below the maximum delay - "99% of events"
+is not "99% of windows exact", and if your consumer needs exact counts, near-completeness does not
+help.
+
+That curve is the entire job of a watermark: it is a policy for choosing a point on it. And allowed
+lateness plus re-triggering is how you get the tail without waiting an hour for the head.
+
+THE FOURTH TRAP - trusting the client's clock. Event time usually comes from a device you do not
+control, whose clock may be wrong by minutes or set to 1970. Real pipelines clamp implausible
+timestamps, or use a server-assigned ingestion time as a sanity bound - and they log how often they
+had to.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - when processing time is genuinely the right answer, and how
+the systems express all of this.
+
+USE PROCESSING TIME WHEN:
+    - the question is about YOUR SYSTEM, not about the world: queue depth, consumer lag, requests per
+      second hitting this box, error rate of this service. For these, processing time IS the semantic.
+    - you need the lowest possible latency and approximate is fine - a live ops dashboard, a rough
+      traffic gauge.
+    - there is no meaningful event time. A heartbeat generated by the pipeline itself has none.
+    - the window is enormous relative to the delay. MEASURED: 0.79% error at 10-minute windows. If
+      your window is a day and your p99 delay is two minutes, the distinction rarely bites - until a
+      stall, which is exactly when you will be looking.
+
+USE EVENT TIME WHEN:
+    - the number will be quoted to anyone: billing, revenue, SLA compliance, regulatory reporting,
+      A/B test results, anything a finance team reconciles.
+    - you will ever reprocess or backfill.
+    - correctness under out-of-order arrival matters, i.e. any mobile or IoT source.
+    - you need streaming and batch results to agree.
+
+THE WATERMARK FAMILY - how a system decides "event time has advanced past T":
+    PERFECT WATERMARK       possible only when the source guarantees ordering (a single partition with
+                            monotonically increasing timestamps). Rare.
+    HEURISTIC WATERMARK     the usual: max event time seen, minus a fixed allowance, taken as the
+                            MINIMUM across all partitions - so one stalled partition correctly holds
+                            the whole watermark back.
+    PERCENTILE WATERMARK    advance to the 99th percentile of observed event times, deliberately
+                            abandoning the extreme tail. MEASURED, the tail you are abandoning: 99.0%
+                            at 5 minutes versus 100% at an hour, i.e. you trade the last 1% for 55
+                            minutes of latency.
+    IDLE / STALLED SOURCES  a partition with no events must be marked idle or it pins the watermark
+                            forever and no window ever closes. This is the single most common
+                            production stall in event-time pipelines.
+
+TRIGGERS AND ACCUMULATION - how you get both speed AND completeness rather than choosing:
+    - EARLY triggers: emit a provisional result every 10 seconds while the window is open.
+    - ON-TIME trigger: emit at the watermark.
+    - LATE triggers: emit an update for each late event, within the allowed lateness.
+    - the accumulation mode determines whether the downstream consumer ADDS or REPLACES. Get this
+      wrong and late-arriving updates double-count everything.
+
+WHAT THE SYSTEMS CALL IT:
+    Apache Beam / Dataflow  the model that named all of this. `withAllowedLateness`, triggers,
+                            accumulation modes, and the "what/where/when/how" framing.
+    Apache Flink            first-class event time, `WatermarkStrategy`, `allowedLateness`, and a
+                            side output for events later than that.
+    Kafka Streams           a `grace period` on windows; stream time advances from record timestamps.
+    Spark Structured Str.   `withWatermark("ts", "10 minutes")`.
+    ksqlDB / Materialize    the same concepts in SQL.
+    In every one of them the decision is the same: where on the completeness/latency curve do you
+    stand, and what do you do with what falls off the end.""",
+
+    """6. HOW TO CODE IT - the pipeline, and the measurement that proves it matters.
+
+THE PIPELINE:
+
+  1. Carry TWO timestamps on every record: the event time from the source, and the ingestion time you
+     stamp on arrival. You need both - one for correctness, one for monitoring lag.
+  2. Bucket by event time: `window = event_time // window_size`. That is the whole change.
+  3. Track a WATERMARK: `watermark = max_event_time_seen - allowance`. Take the MINIMUM across
+     partitions, so one slow partition holds the whole thing back rather than being silently skipped.
+  4. Mark idle partitions explicitly, or a source with no traffic pins your watermark forever and no
+     window ever closes. This is the most common way an event-time pipeline "hangs".
+  5. Emit a window when `watermark > window_end`. Keep its state for `allowed_lateness` afterwards.
+  6. For an event arriving after that: either update and RE-EMIT (and make sure downstream replaces
+     rather than adds), or route it to a dead-letter output and COUNT it. Silently dropping late data
+     is how you get numbers nobody can explain.
+  7. Guard against bad clocks. An event stamped 1970 or three days in the future came from a device
+     you do not control. Clamp it, and count how often you had to.
+
+THE MEASUREMENT, which is what makes this argument land:
+
+  8. Generate events with a REALISTIC delay distribution - not a uniform one. Real lag is a heavy tail:
+     90% within seconds, a few percent within minutes, and a small fraction hours late. A uniform
+     delay understates the problem enormously.
+  9. Bucket the same events twice - once by event time, once by processing time - and print the
+     per-window difference. Not the average: the WORST window is the number people care about.
+ 10. Sweep the WINDOW SIZE. The error is a ratio of delay to window, and showing 0.79% at 10 minutes
+     next to 20.31% at 1 second is what stops "we checked, it's fine".
+ 11. RUN THE REPLAY TEST. Re-bucket the identical events with every processing timestamp shifted by
+     37 seconds, and count how many windows match the original. This is the decisive experiment: 1/60
+     for processing time, 60/60 for event time.
+ 12. SIMULATE A STALL. Push every event that would have been processed in a ten-minute span into a
+     30-second burst afterwards. Print the minute-by-minute table. Ten zeros followed by +964.2% is
+     more persuasive than any explanation.
+ 13. Build the COMPLETENESS CURVE: for each candidate wait, count what fraction of events would have
+     arrived in time, AND how many windows would be exactly right. Those two columns disagree, and the
+     disagreement is the point - 99.0% of events at a 5-minute wait, and 0 of 60 windows exact.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Because processing time makes results WRONG and, worse, NON-REPRODUCIBLE whenever data arrives late
+or out of order - which it always does. Network delays, retries, buffering on mobile devices,
+consumer restarts, backfills.
+
+Bucketing 'clicks per minute' by when the system happened to process each event means the same input,
+replayed later, lands in different windows. I measured that: replaying an identical 100,000-event
+stream with the pipeline running 37 seconds slower changed 59 of 60 minute-buckets. Event time
+reproduced all 60 exactly.
+
+EVENT time uses when the event actually happened, so an event always falls in the same window
+regardless of when it was processed. That gives you correct, deterministic, replayable aggregates -
+which is what makes backfills and reprocessing meaningful at all.
+
+The magnitude depends on the ratio of your arrival delay to your window size. With a realistic delay
+distribution - median under 2 seconds but a p99 of two minutes - I measured 0.79% mean error at
+10-minute windows, 1.1% at 1-minute windows, and 20.3% at 1-second windows, with one second-window off
+by 192%. So 'we checked, it's only 1% off' is a statement about one window size, not about the
+pipeline.
+
+And it goes from a rounding error to an outage the moment the pipeline is late. I simulated a
+ten-minute consumer stall followed by a catch-up burst: ten consecutive minutes reported ZERO, then
+one minute reported 18,347 events against a true 1,724 - plus 964%. Every alert fires, and not a
+single event was lost or duplicated. The event-time counts were identical to the no-stall run in all
+60 minutes.
+
+The cost of event time is that you cannot close a window immediately, because more data may still
+arrive. That is what WATERMARKS are for - a heuristic saying 'event time has advanced past T, so
+windows ending before T are probably complete' - plus an allowed-lateness period for stragglers. I
+measured the completeness/latency curve: waiting 5 seconds captures 82.6% of events, 60 seconds 94.2%,
+5 minutes 99.0%, and getting to 100% takes an hour, because that is where the tail is. The watermark
+is just a policy for picking a point on that curve.
+
+So processing time is simpler and lower-latency and fine for a rough ops dashboard - and it is
+genuinely the right semantic when the question is about your system, like consumer lag. Event time is
+required the moment the number will be quoted to anyone or recomputed by anyone."
+
+THE ONE SENTENCE TO NOT FUMBLE: event time is a property of the DATA and processing time is a property
+of your INFRASTRUCTURE - so only one of them gives the same answer twice.""",
+
+    """8. THE CODE LINE BY LINE - the simulation, since the argument is the measurement.
+
+    u = r.random()
+    if u < 0.90: d = r.expovariate(1/2.0)
+    elif u < 0.99: d = r.uniform(10, 120)
+    else: d = r.uniform(300, 3600)
+
+The delay distribution, and the most important lines in the whole experiment. Three regimes: 90%
+arrive within a couple of seconds (exponential, mean 2 s), 9% take 10-120 seconds (a retry, a slow
+partition), 1% take 5 minutes to an hour (a phone that was offline, a backfill). MEASURED result: p50
+1.6 s, p90 11.9 s, p99 119.9 s, max 3,597.8 s. Model this as a single uniform distribution and you
+delete the tail, which is where the entire problem lives.
+
+    true_counts = Counter(bucket(et) for et, _ in EV)
+    proc_counts = Counter(bucket(pt) for _, pt in EV)
+
+The two pipelines, one line each, over the identical events. The only difference is which of the two
+timestamps is bucketed.
+
+    def bucket(t): return int(t // 60)
+
+Tumbling 1-minute windows. Integer division, so window boundaries are fixed and global rather than
+relative to when the pipeline started - which matters, because a window boundary that moves is another
+way to be non-reproducible.
+
+    replay = Counter(bucket(pt + shift) for _, pt in EV)
+    same = sum(1 for m in range(60) if replay.get(m,0) == proc_counts.get(m,0))
+
+THE DECISIVE EXPERIMENT, in two lines. Shift every processing timestamp by a constant - the pipeline
+was 37 seconds slower today - and count how many windows still match. 1 of 60. Do the same thing to
+the event-time side and nothing changes at all, because `shift` does not appear in the event-time
+expression. That absence IS the property.
+
+    if 1200 <= pt < 1800:
+        pt = 1800 + (pt - 1200) * 0.05
+
+The consumer stall. Everything that would have been processed between t=1200 s and t=1800 s (ten
+minutes) is instead flushed in a 30-second burst starting at t=1800 - the `* 0.05` compresses 600
+seconds of arrivals into 30. Note that EVENT TIMES ARE UNTOUCHED. Nothing about the data changed. The
+resulting table - ten minutes of zeros then +964.2% - is produced entirely by that one substitution.
+
+    captured = sum(1 for et, pt in EV if pt - et <= wait)
+    counts = Counter(bucket(et) for et, pt in EV if pt - et <= wait)
+    exact = sum(1 for m in range(60) if counts.get(m,0) == true_counts.get(m,0))
+
+The completeness curve, and it deliberately reports TWO different things. `captured` is the fraction
+of EVENTS you have; `exact` is the number of WINDOWS that are perfectly right. They diverge sharply -
+99.013% of events at a 5-minute wait, and 0 of 60 windows exact - because a single missing event
+makes a whole window wrong. Which column matters depends on whether your consumer needs an estimate or
+an exact count, and reporting only the flattering one is how completeness curves mislead.
+
+    err = [abs(proc.get(k,0) - true[k]) / true[k] for k in ks]
+    print(statistics.mean(err), max(err))
+
+Mean AND max. The mean was 1.11% at 1-minute windows; the max was 10.7%. Under the stall the mean was
+33.67% and the max was 964.2%. An average error hides exactly the events that page someone.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one event, followed through both pipelines. (Illustrative: a single event drawn from the
+same distribution as the measured runs, worked through by hand so the mechanism is visible.)
+
+    fact                                  value
+    -----------------------------------   ---------------------------------------------
+    the click happened at                 t = 119.4 s   (so: minute 1)
+    it reached the pipeline at            t = 187.2 s   (delay 67.8 s - a retry)
+    event-time pipeline files it in       minute 1      correct, and correct on every replay
+    processing-time pipeline files it in  minute 3      wrong, and a different minute if the
+                                                        pipeline is slower tomorrow
+
+Now the same event during the stall: it arrives at t=1805 s instead, and the processing-time pipeline
+files it in minute 30. The event-time pipeline still files it in minute 1.
+
+TRACE B - the delay distribution that drives everything.
+
+    percentile   delay
+    ----------   ---------
+    p50              1.6 s
+    p90             11.9 s
+    p99            119.9 s
+    max          3,597.8 s
+
+The ratio p99/p50 is 75, and max/p50 is 2,249. That heavy tail is why "how long should I wait?" has no
+comfortable answer, and why waiting for the p99 costs 75x what waiting for the median costs.
+
+TRACE C - the error as a function of window size, measured.
+
+    window   mean abs error   worst window   what dominates
+    ------   --------------   ------------   ------------------------------------------
+     600 s            0.79%           2.4%   delay is small relative to the window
+      60 s            1.11%          10.7%   the p99 tail starts to cross boundaries
+      10 s            3.60%          26.9%   the p90 delay now exceeds the window
+       1 s           20.31%         192.3%   even the MEDIAN delay crosses the window
+
+Read the fourth column, not the second. The error is entirely explained by where your delay
+percentiles sit relative to the window edge - so the same pipeline is "accurate" or "useless"
+depending only on the granularity somebody asks for.
+
+TRACE D - the replay test, the decisive one.
+
+    replay condition           processing-time windows       event-time windows
+                               matching the original         matching the original
+    ------------------------   -----------------------       ---------------------
+    identical delay                          60 / 60                     60 / 60
+    every event 37 s slower                   1 / 60                     60 / 60
+    every event 600 s slower                  1 / 60                     60 / 60
+
+Nothing about the DATA changed in any row. Only the pipeline's speed. One of these two functions
+depends on the input; the other depends on the input and the day.
+
+TRACE E - the consumer stall, minute by minute, measured.
+
+    minute   true    processing-time   error
+    ------   -----   ---------------   --------
+        19   1,639             1,595     -2.7%
+        20   1,591                 0   -100.0%
+        21   1,671                 0   -100.0%
+        22   1,716                 0   -100.0%
+        23   1,643                 0   -100.0%
+        24   1,683                 0   -100.0%
+        25   1,649                 0   -100.0%
+        26   1,744                 0   -100.0%
+        27   1,641                 0   -100.0%
+        28   1,684                 0   -100.0%
+        29   1,707                 0   -100.0%
+        30   1,724            18,347   +964.2%
+        31   1,706             1,712     +0.4%
+
+Whole-run summary under the stall:
+
+    mean absolute error, 1-minute windows       1.11%  ->  33.67%
+    worst window                                10.7%  ->  964.2%
+    event-time counts vs the no-stall run       identical in 60/60 minutes
+    processing-time counts vs the no-stall run  identical in 49/60 minutes
+
+Minute 30's 18,347 is not a traffic spike. It is ten minutes of perfectly ordinary traffic wearing one
+minute's timestamp.
+
+TRACE F - the completeness/latency curve, measured.
+
+    wait      % of events captured   windows exactly correct   marginal gain per extra second
+    -------   --------------------   -----------------------   -----------------------------
+        0 s                 0.000%                     0/60    -
+        5 s                82.550%                     0/60    16.5 %/s
+       30 s                91.701%                     0/60     0.37 %/s
+       60 s                94.153%                     0/60     0.08 %/s
+      300 s                99.013%                     0/60     0.02 %/s
+      900 s                99.193%                     0/60     0.0003 %/s
+    3,600 s               100.000%                    60/60     0.0003 %/s
+
+The fourth column is the decision. The first five seconds buy 16.5% of your data per second. Seconds
+300 to 900 buy 0.0003%. Any sensible watermark sits in the first minute of that curve, and the tail is
+handled by allowed lateness and a re-triggered update rather than by waiting.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    processing-time windowing   O(1) state - only the CURRENT window is ever open
+    event-time windowing        O(open windows) state - every window within the allowed-lateness
+                                horizon stays in memory, so state is
+                                O(keys x allowed_lateness / window_size)
+    watermark tracking          O(partitions) - a min over per-partition maxima
+    late-event handling         O(1) per event, plus a re-emit downstream
+    the real cost               MEMORY and LATENCY, not CPU. Doubling allowed lateness doubles
+                                retained window state.
+
+    MEASURED error as a function of window size: 0.79% at 600 s, 1.11% at 60 s, 3.60% at 10 s,
+    20.31% at 1 s. It is the ratio of delay to window, nothing else.
+    MEASURED reproducibility: event time 60/60, processing time 1/60.
+    MEASURED under a 10-minute stall: mean error 1.11% -> 33.67%, worst window 10.7% -> 964.2%.
+    MEASURED completeness: 82.6% at 5 s, 94.2% at 60 s, 99.0% at 300 s, 100% at 3,600 s.
+
+THE MISTAKES:
+
+    - Judging the error at one window size. 1.1% at a minute, 20.3% at a second, same pipeline.
+    - Treating a small average error as acceptable. The real failure is REPRODUCIBILITY: 1 of 60
+      windows survived a 37-second change in pipeline speed.
+    - Backfilling through a processing-time pipeline. The whole backfill lands in "now" and the
+      per-minute breakdown is destroyed.
+    - Confusing a consumer stall with a traffic drop. MEASURED: ten minutes of zeros followed by
+      +964.2%, from zero lost or duplicated events.
+    - Forgetting that the watermark is a HEURISTIC. It can be wrong; late data is the proof, and
+      allowed lateness is the budget for it.
+    - Not marking idle partitions. A source with no traffic pins the watermark forever and no window
+      ever closes. This is the classic "our event-time pipeline stopped emitting" incident.
+    - Silently dropping late data. Route it to a side output and COUNT it, or you will have numbers
+      nobody can reconcile and no way to find out why.
+    - Getting the accumulation mode wrong. If downstream ADDS a re-emitted window that was meant to
+      REPLACE, every late event double-counts.
+    - Trusting the client's clock unconditionally. Devices report 1970 and next Tuesday; clamp, and
+      count the clamps.
+    - Using event time for questions about your own system. Consumer lag, queue depth and requests per
+      second on this box are processing-time questions by definition.
+
+THE TAKEAWAY. Event time makes your aggregate a FUNCTION OF THE DATA; processing time makes it a
+function of the data and of how your infrastructure happened to feel that day. The first is
+reproducible, backfillable and reconcilable with a batch job; the second changed 59 of 60 windows
+because the pipeline was 37 seconds slower, and turned a ten-minute stall into ten minutes of zeros
+and a 964% spike. The price of event time is that you must decide when a window is complete, which is
+a point on a measured curve - 82.6% at five seconds, 99.0% at five minutes, and 100% only after an
+hour - and watermarks plus allowed lateness are exactly the machinery for choosing that point and
+handling what falls off the end.""",
+]
+
+_EX_P1AO["Why can a model score great offline but fail once deployed online?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - your model beats the old one on every offline metric. You ship it.
+The business metric goes DOWN.
+
+This is not rare and it is not bad luck. Offline evaluation measures the PAST, under assumptions that
+production breaks. There are five distinct ways it breaks, and they are all measurable.
+
+MEASURED ON THIS MACHINE - a feed ranker trained to predict CLICKS on 30,000 items, then "deployed"
+by showing users the top 20% of items it ranked, against a control that showed a random 20%:
+
+    metric                     control (random feed)   the new ranker   change
+    ------------------------   ---------------------   --------------   -------
+    offline click AUC                              -           0.7336   looks great
+    click-through rate                         0.386            0.693   +79.5%
+    time spent (seconds)                        22.6             26.4   +16.9%
+    7-DAY RETENTION                            0.348            0.276   -20.9%
+    share of clickbait shown                   0.295            0.977   +231.0%
+
+The click metric it was trained on went up 79.5%. Retention - the thing the business actually cares
+about - fell 20.9%. And the model's learned weights explain exactly why:
+
+    clickbait  +1.61      depth  +0.49      topic  +0.29
+
+It learned that clickbait is the strongest positive signal, because it IS the strongest positive
+signal - FOR CLICKS. The model is not broken. It did precisely what it was asked. The ASK was wrong,
+and no offline metric computed on click data could ever have told you.""",
+
+    """2. THE INTUITION - offline evaluation asks "would this model have predicted the past correctly?"
+Production asks "what happens to the future when this model exists in it?"
+
+Those are different questions, and four of the five failure modes come from the gap.
+
+    OFFLINE                                     ONLINE
+    -----------------------------------------   -----------------------------------------------
+    a frozen dataset                            a world that keeps moving
+    features recomputed in your notebook        features computed by a different codebase
+    the model is a passive observer             the model DECIDES what data gets collected next
+    you score a proxy you can compute           the business has a metric you cannot compute yet
+    the logged data is what happened            the logged data is what the OLD policy chose to show
+
+The third row is the deep one. Offline, your model is a spectator scoring a recording. Online, it is a
+participant: it chooses what users see, which changes what they click, which becomes tomorrow's
+training data. A recommender that shows popular items makes them more popular, and then the logs prove
+it was right.
+
+MEASURED, that participation in one number: the control feed showed 29.5% clickbait because that is
+what the population contains. The deployed ranker showed 97.7%. It did not just PREDICT a preference
+for clickbait - it CREATED a feed that is almost entirely clickbait, and every future click log will
+now be collected from that feed.
+
+THE FOURTH ROW deserves its own note, because the measurement is instructive. The ranker improved TWO
+of the three online metrics: clicks +79.5% AND time-spent +16.9%. Only retention fell. If you had
+picked "time spent" as your north star - a very common choice, and itself a proxy - you would have
+declared victory. The model was selecting items that were BOTH deeper and more clickbait-y, and the
+depth gain outweighed the clickbait penalty on time-spent while the clickbait penalty dominated
+retention.
+
+That is the honest, uncomfortable version of proxy-metric mismatch: it is not that proxies always move
+the wrong way. It is that different proxies disagree, and only the one you designated as the north
+star gets to settle it.""",
+
+    """3. EVERY TERM DEFINED.
+
+OFFLINE EVALUATION. Scoring a model on a held-out slice of logged historical data. AUC, log loss,
+precision@k, NDCG.
+
+ONLINE EVALUATION. Running the model on live traffic and measuring what users actually do - an A/B
+test.
+
+A/B TEST. Randomly splitting users between the old system (control) and the new one (treatment), then
+comparing the north-star metric with a statistical test.
+
+NORTH-STAR METRIC. The one business outcome you have agreed the system exists to improve. Retention,
+revenue, task completion.
+
+PROXY METRIC. Something correlated with it that you CAN compute during training. Clicks, AUC, log
+loss. Every training objective is a proxy.
+
+GOODHART'S LAW. When a measure becomes a target, it ceases to be a good measure. MEASURED here as
++79.5% on the target and -20.9% on the thing the target was standing in for.
+
+TRAINING-SERVING SKEW. The same feature computed differently in the training pipeline and the serving
+pipeline. Different window, different units, different missing-value fill, different staleness.
+MEASURED below, and it is a PIPELINE bug, not a modelling one.
+
+FEATURE STORE. Infrastructure that computes a feature ONCE and serves it to both training and serving,
+specifically to eliminate skew. Its entire reason for existing is section 4's table.
+
+DISTRIBUTION SHIFT. The joint distribution of features and labels changes after training. Two very
+different sub-types:
+    COVARIATE SHIFT   P(x) changes, P(y|x) does not. Your users get older; older users still behave
+                      the same way for their age.
+    CONCEPT DRIFT     P(y|x) changes. The same user profile now means something different -
+                      a competitor launched, a policy changed, fraudsters adapted.
+MEASURED below: these two do VERY different amounts of damage, and people conflate them.
+
+FEEDBACK LOOP. The model's outputs change the data it is later trained on. Self-reinforcing.
+
+POPULARITY BIAS / RICH-GET-RICHER. The specific feedback loop where showing popular items makes them
+more popular.
+
+POSITION BIAS. Users click the top result more because it is at the top, not because it is better. So
+your click labels partly measure your old ranker, not user preference.
+
+SELECTION BIAS. You only have labels for items the old system CHOSE to show. You have no data at all
+on what would have happened for the rest. This is why offline evaluation of a ranker is fundamentally
+harder than offline evaluation of a classifier.
+
+COUNTERFACTUAL EVALUATION / OFF-POLICY EVALUATION. Estimating how a NEW policy would have performed
+using data logged by an OLD one - via inverse propensity scoring, requiring that you logged the
+probability with which each item was shown.
+
+SHADOW MODE / DARK LAUNCH. Running the new model on live traffic and logging its outputs WITHOUT
+acting on them. Catches training-serving skew before it can hurt anybody.
+
+GUARDRAIL METRIC. A metric that must not get worse, even if the primary one improves. Retention would
+have been the guardrail that caught this.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - TRAINING-SERVING SKEW, because it is not a modelling problem
+at all and no amount of model validation finds it.
+
+The model is correct. The training data is correct. The offline evaluation is correct. And the feature
+arriving at serving time is not the same number.
+
+MEASURED - one logistic regression, one feature ("7-day average order value", dollars, mean 50), and
+one thing changed about how that feature is computed at serving time:
+
+    what changed at serving time                                     AUC      change
+    -------------------------------------------------------------   ------   -------
+    nothing - features computed exactly as in training                0.7871      -
+    the feature is one hour stale                                     0.7751   -0.0120
+    missing values filled with 0 instead of the mean (3% of rows)     0.7734   -0.0137
+    the online feature is clipped at 60, the offline one is not       0.7778   -0.0093
+    two feature columns swapped in the serving schema                 0.7559   -0.0312
+    the online window is 1 day, not 7 (much noisier)                  0.7478   -0.0393
+    missing values filled with 0 instead of the mean (20% of rows)    0.6988   -0.0883
+    UNITS DIFFER: cents online, dollars offline                       0.5002   -0.2869
+
+The last row is the one to sit with. AUC 0.5002. That is EXACTLY CHANCE - the model has become a coin
+flip - because someone stored the feature in cents on one side and dollars on the other. There is no
+error, no exception, no null. Every request succeeds. The dashboards are green. The model is worthless.
+
+Every row in that table is a PIPELINE bug, and every one of them is invisible to an offline evaluation
+that recomputes the features the same way it computed them for training. That is the entire reason
+feature stores exist: compute the feature ONCE and serve the same value to both sides.
+
+THE SECOND TRAP - saying "distribution shift" as though it were one thing. It is two things and they
+do wildly different amounts of damage.
+
+MEASURED, the same model against five shifted worlds:
+
+    condition                                     AUC      change
+    ------------------------------------------   ------   -------
+    held-out test set from the SAME period       0.8127      -
+    COVARIATE shift: feature mean moves +1.0     0.8092   -0.0035
+    COVARIATE shift: feature mean moves +3.0     0.8240   +0.0113
+    CONCEPT drift: the relationship weakens      0.6676   -0.1451
+    CONCEPT drift: the relationship inverts      0.3921   -0.4206
+    both                                         0.6667   -0.1460
+
+Move the FEATURE DISTRIBUTION by three whole standard deviations and AUC went UP slightly (0.8240),
+because AUC only cares about RANKING and the ranking rule was unchanged. Change the RELATIONSHIP
+between feature and label and AUC collapsed - to 0.6676, and to 0.3921 when it inverted, which is
+worse than random.
+
+The practical consequence is uncomfortable: the drift monitoring most teams actually deploy watches
+FEATURE distributions, because that is what you can compute without labels. And feature drift is the
+kind that measured almost no damage. The kind that destroys you needs LABELS to detect, and labels
+arrive late - which is precisely why online metrics and guardrails matter more than drift dashboards.
+
+THE THIRD TRAP - forgetting that your training labels were generated by your OLD system. You only have
+clicks for items the old ranker chose to SHOW, and the top-position ones got clicked partly because
+they were on top. So your offline AUC is measuring "agrees with the old policy's exposure" as much as
+"predicts user preference", and a new model that would be better on items the old policy never showed
+scores badly for a reason that has nothing to do with its quality.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what to do about each of the five, in the order they bite.
+
+1. TRAINING-SERVING SKEW - the most common and the most preventable:
+     - a FEATURE STORE, so the feature is computed once and read by both training and serving
+     - SHADOW MODE: run the new model on live traffic without acting on it, and compare its live
+       feature values and predictions against the offline ones. Any row of the section-4 table shows
+       up immediately here and costs nobody anything.
+     - log the SERVING feature vectors and re-score them offline. If the offline AUC on
+       serving-logged features differs from the offline AUC on training-pipeline features, you have
+       skew, and the difference is its size.
+     - assert on distributions: units, ranges, null rates, staleness. A units bug is a mean that moved
+       100x and is trivially detectable - if anyone is looking.
+
+2. PROXY-METRIC MISMATCH:
+     - name the NORTH STAR before training and write it down.
+     - carry GUARDRAIL metrics that must not regress. Retention would have caught the +79.5% clicks /
+       -20.9% retention result immediately.
+     - train on a composite objective (clicks AND dwell time AND explicit negative feedback) rather
+       than one proxy.
+     - measure long-horizon effects. Retention moves over days; a two-hour A/B test cannot see it.
+
+3. FEEDBACK LOOPS:
+     - keep a HOLDOUT population that never receives the model, indefinitely, so you always have an
+       uncontaminated baseline. Without it, every comparison drifts along with the loop.
+     - inject EXPLORATION - epsilon-greedy, Thompson sampling - so you keep collecting data about
+       items the model would not have chosen. This is not just for learning; it is what makes future
+       off-policy evaluation possible at all.
+     - log the PROPENSITY (the probability with which each item was shown). Inverse propensity
+       scoring needs it, and you cannot reconstruct it later.
+     - monitor DIVERSITY as a guardrail. MEASURED: clickbait share went 29.5% -> 97.7%, which is a
+       diversity collapse you can watch in real time without waiting for retention data.
+
+4. DISTRIBUTION SHIFT:
+     - retrain on a schedule, and monitor performance rather than only inputs.
+     - monitor LABELS where you can get them, even delayed - concept drift is the expensive kind and
+       it is invisible in feature histograms.
+     - keep a rolling recent-window evaluation set, not a frozen one from launch day.
+
+5. SELECTION AND POSITION BIAS:
+     - off-policy evaluation with inverse propensity scoring, using logged propensities.
+     - randomised exploration slots, which give you a small unbiased sample.
+     - position-aware models that estimate examination separately from relevance.
+     - interleaving experiments, which are far more sensitive than A/B tests for ranking changes.
+
+AND THE PROCESS THAT WRAPS ALL FIVE: offline metrics are a FILTER, not a decision. They tell you which
+candidates are worth the cost of an experiment. The launch decision belongs to an online A/B test on
+the north-star metric, with guardrails, run long enough to see the slow effects. That sentence is the
+answer to this question.""",
+
+    """6. HOW TO CODE IT - how to reproduce each failure, which is also how to build the harness that
+catches it.
+
+THE PROXY-MISMATCH / FEEDBACK SIMULATION:
+
+  1. Generate items with a HIDDEN attribute that helps the proxy and hurts the north star. Here:
+     `clickbait` raises click probability by 1.6 in log-odds and subtracts 25 seconds of time-spent
+     and 1.1 in log-odds of retention.
+  2. Generate three outcomes per item - click, time spent, retention - from the SAME latent
+     attributes. This is what makes the metrics disagree, and disagreement is the phenomenon.
+  3. Train ONLY on clicks, because that is what you would actually have.
+  4. Report the offline click AUC. It will look fine: 0.7336.
+  5. NOW DEPLOY IT: take the top k% of items by predicted score and compute the mean of EVERY outcome
+     over that selection.
+  6. Compare against a CONTROL - a random k% - not against the whole population. Comparing to the
+     population confuses "the effect of ranking" with "the effect of showing fewer items".
+  7. Print the model's learned weights next to the outcome table. `clickbait +1.61` next to
+     `retention -20.9%` is what turns a result into an explanation.
+
+THE TRAINING-SERVING SKEW HARNESS - and this one is worth actually building at work:
+
+  8. Train normally and record `mu`, `sd` (or whatever transform) from the TRAINING data.
+  9. Score a clean test set. That is your reference number.
+ 10. Now perturb ONE thing about the serving-time feature and re-score with the SAME model and the
+     SAME transform. Never retrain - the whole point is that the model is unchanged.
+ 11. Perturbations worth having in the suite: units off by 100x, a different aggregation window, a
+     different missing-value fill (at several rates), staleness, clipping, and two columns swapped.
+ 12. Print the AUC delta for each. This table is a regression test: run it in CI against the real
+     serving code path, and any new skew shows up as a row that got worse.
+
+THE DISTRIBUTION-SHIFT SIMULATION - and the key is to separate the two kinds:
+
+ 13. Write your generator with TWO independent knobs: one that shifts the FEATURE mean (covariate
+     shift) and one that changes the COEFFICIENT linking feature to label (concept drift).
+ 14. Sweep them separately, then together. If you only sweep them together you will conclude "shift is
+     bad" and miss that one of them is nearly harmless.
+ 15. Report AUC for each. MEASURED: +3 sd of covariate shift did nothing; inverting the relationship
+     took AUC to 0.3921.
+
+AND THE ONE THING TO BUILD FIRST AT WORK: SHADOW MODE. Run the candidate model on live traffic, log
+its features and predictions, act on nothing. Then compare the live feature distributions against the
+training ones and the live predictions against offline re-scoring of the same rows. It catches every
+row of the skew table before a single user is affected, and it costs only compute.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Offline metrics measure the past under assumptions that break in production. There are five of them
+and I'd name them all.
+
+TRAINING-SERVING SKEW: features are computed differently offline and online - a different aggregation
+window, different units, a different missing-value fill, a stale value. I measured this: the same
+model, on the same data, with only the serving-side feature computation changed. A one-hour-stale
+feature cost 0.012 AUC. A 20% missing-value fill with zero instead of the mean cost 0.088. And a units
+mismatch - cents online, dollars offline - took AUC from 0.7871 to 0.5002, which is exactly chance.
+No exception, no null, every request succeeds, and the model is a coin flip. That's a pipeline bug, and
+offline evaluation cannot see it because offline evaluation recomputes the features its own way.
+
+FEEDBACK LOOPS: the model changes user behaviour and therefore future training data. A recommender
+that only shows popular items makes them more popular, and the logs then prove it was right.
+
+DISTRIBUTION SHIFT: the world moves on from your frozen test set. Worth splitting in two, because they
+are not equally dangerous - I measured that moving the feature distribution by three standard
+deviations left AUC unchanged, at 0.8240 versus a baseline of 0.8127, because AUC only cares about
+ranking. But changing the RELATIONSHIP between feature and label dropped it to 0.6676, and to 0.3921
+when it inverted. The uncomfortable implication is that the drift monitoring most teams deploy watches
+feature distributions, which is the harmless kind, because the dangerous kind needs labels.
+
+PROXY-METRIC MISMATCH: you optimise AUC and the business cares about retention. I simulated a feed
+ranker trained on clicks. Offline click AUC 0.7336, and deployed it raised click-through 79.5% - and
+cut 7-day retention 20.9%, because it learned that clickbait is the strongest click signal, which it
+genuinely is. The share of clickbait shown went from 29.5% to 97.7%. Notice that time-spent went UP
+16.9%, so if you'd picked time-spent as your north star you'd have shipped it.
+
+POSITION AND SELECTION BIAS: your labels only exist for items the old system chose to show, and the
+top ones were clicked partly because they were on top. So offline AUC partly measures agreement with
+the old policy.
+
+That's why online A/B tests on the true north-star metric, with guardrail metrics that must not
+regress, decide launches - not offline scores. Offline metrics are a FILTER for which candidates are
+worth an experiment. And the cheapest safeguard is shadow mode: run the model on live traffic, log the
+features and predictions, act on nothing. It catches every training-serving skew bug before any user
+is affected."
+
+THE ONE SENTENCE TO NOT FUMBLE: offline evaluation asks whether the model would have predicted the
+past; production asks what happens to the future once the model is in it - and those questions have
+different answers.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    p_click = sig(-1.0 + 1.6*clickbait + 0.5*depth + 0.3*topic)
+    time_spent = 30 + 40*depth - 25*clickbait + noise
+    retained   = sig(-0.5 + 0.9*depth - 1.1*clickbait) > uniform
+
+The heart of the simulation: THREE outcomes generated from the SAME latent attributes, with
+`clickbait` carrying a POSITIVE coefficient in the first and NEGATIVE in the other two. That sign flip
+is the entire phenomenon. If all three outcomes moved together there would be no such thing as
+proxy-metric mismatch, and no reason for this entry to exist.
+
+Note also `depth`: +0.5 for clicks, +40 for time spent, +0.9 for retention. Its coefficients agree
+across all three. So the model chasing depth is fine and the model chasing clickbait is not, and a
+single trained model does both at once - which is why the online results split three ways.
+
+    w = logreg(X[tr], click[tr])
+
+Trained on CLICKS ONLY. This is not a strawman - clicks are what you actually log. Time-spent is
+noisy, and retention is not observable for seven days, so you cannot train on it even if you want to.
+
+    top = np.argsort(-p)[:k]
+    base = rng.choice(len(p), k, replace=False)
+
+The "deployment". `top` is what the ranker shows; `base` is the CONTROL - a random selection of the
+same size. Comparing `top` against the whole population instead would conflate "this ranking is
+better" with "showing 20% of items changes the average", and the second effect is not what you are
+testing.
+
+    for name, arr in [("click-through", click), ("time spent", time_spent), ("retention", retained)]:
+        b = arr[te][base].mean(); t = arr[te][top].mean()
+
+Every outcome, over both selections. This four-line loop is what an A/B test is. The reason it is
+worth writing out is that the three rows disagree - +79.5%, +16.9%, -20.9% - and no single number
+summarises them.
+
+NOW THE SKEW HARNESS:
+
+    mu, sd = X[tr].mean(0), X[tr].std(0)
+    w = logreg((X[tr]-mu)/sd, y[tr])
+    def ev(Xraw): return auc(yte, score(w, (Xraw-mu)/sd))
+
+The model and its transform are FIXED. `ev` applies the identical standardisation to whatever raw
+features you hand it. Every subsequent row perturbs only `Xraw` - never the model, never `mu`/`sd`.
+That isolation is what makes the results attributable to the pipeline rather than to training noise.
+
+    v = Xte.copy(); v[:,0] = v[:,0] * 100
+
+The units bug, in one line, and it produces AUC 0.5002. Why exactly chance rather than merely bad?
+Because standardising a 100x-scaled feature with the ORIGINAL mean and sd sends every value to an
+enormous positive number, so the logistic saturates and every row gets essentially the same score. A
+model that gives every row the same score has AUC 0.5 by definition. No error is raised anywhere.
+
+    v = Xte.copy(); m = rng.random(len(v)) < 0.20; v[m,0] = 0.0
+
+Missing values filled with 0 instead of the mean. Zero is not neutral - after standardisation with
+`mu=50, sd=15` it becomes -3.3, a strong signal. "Fill missing with 0" is a default in a great deal of
+code and it is a default that fabricates confident inputs.
+
+    v = Xte.copy(); v[:,[1,2]] = v[:,[2,1]]
+
+Two columns swapped, which is what happens when the serving schema and the training schema drift
+apart. -0.0312 AUC, and again nothing raises.
+
+THE SHIFT GENERATOR:
+
+    a = r.normal(0 + shift, 1, n)
+    y = sig(-0.5 + (1.2 + coef_shift)*a + 0.7*b - 0.5*c) > uniform
+
+TWO knobs. `shift` moves the feature distribution - covariate shift. `coef_shift` changes the
+RELATIONSHIP - concept drift. Keeping them independent is what allows the measurement that separates
+them, and it is the design decision that produced the finding that only one of them matters much.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the feed ranker, offline to online.
+
+    stage                                   number         reading
+    -------------------------------------   ------------   ---------------------------------------
+    trained on                              clicks         the only label you actually have
+    learned weight on `clickbait`           +1.61          the strongest positive feature
+    learned weight on `depth`               +0.49
+    learned weight on `topic`               +0.29
+    OFFLINE click AUC                       0.7336         ship it
+    -------------------------------------   ------------   ---------------------------------------
+    ONLINE, control vs treatment
+      click-through rate                    0.386 -> 0.693  +79.5%   the metric it optimised
+      time spent (seconds)                   22.6 -> 26.4   +16.9%   a second proxy - also up
+      7-day retention                       0.348 -> 0.276  -20.9%   the north star - DOWN
+      share of clickbait shown              0.295 -> 0.977  +231.0%  the mechanism
+
+Read the last four rows in order. Two proxies went up, the north star went down, and the fourth row
+explains all three. The model did not malfunction; `clickbait` genuinely has a +1.61 log-odds effect
+on clicking. The label was the wrong label.
+
+And note the trap inside the trap: `time spent` rose. If your team had chosen time-spent as the north
+star - a common and defensible choice - this launch reads as a clean win on two metrics out of two you
+were watching.
+
+TRACE B - training-serving skew, one perturbation at a time, model untouched.
+
+    serving-side change                              AUC      delta     raises an error?
+    ----------------------------------------------   ------   -------   ----------------
+    (reference: none)                                0.7871       -      -
+    feature one hour stale                           0.7751   -0.0120   no
+    clipped at 60 online, unclipped offline          0.7778   -0.0093   no
+    missing -> 0 instead of mean, 3% of rows         0.7734   -0.0137   no
+    two columns swapped in the serving schema        0.7559   -0.0312   no
+    1-day window online, 7-day offline               0.7478   -0.0393   no
+    missing -> 0 instead of mean, 20% of rows        0.6988   -0.0883   no
+    units: cents online, dollars offline             0.5002   -0.2869   no
+
+The right-hand column is the whole lesson. Not one of these throws. Every request returns a valid
+probability. Latency is normal, error rates are zero, and the last row is a model that has become
+random. Skew does not announce itself.
+
+TRACE C - the units bug, followed through the arithmetic, because "why exactly 0.5?" has a subtle
+answer.
+
+    step                                        value
+    -----------------------------------------   -------------------------------------------
+    training feature                            mean 50, sd 15
+    stored transform                            (x - 50) / 15
+    a typical row, offline                      x = 62    ->  (62-50)/15   =    +0.80
+    a smaller row, offline                      x = 35    ->  (35-50)/15   =    -1.00
+    the same two rows, online, in cents         x = 6200  ->  (6200-50)/15 =  +410.00
+                                                x = 3500  ->  (3500-50)/15 =  +230.00
+    the sigmoid of anything above about 37      exactly 1.0 in float64
+
+Now the subtlety. Multiplying a feature by 100 is a MONOTONE transformation, so in exact arithmetic
+the ranking - and therefore the AUC - would be UNCHANGED. What destroys it is FLOATING-POINT
+SATURATION: verified on this machine, `sigmoid(z)` returns exactly 1.0 for every z above 37, so
+`sigmoid(410)` and `sigmoid(230)` are the same float. Every row's score collapses to 1.0, every
+comparison is a tie, and a scorer that ties everything has AUC 0.5 by definition. MEASURED: 0.5002.
+
+Two lessons rather than one. The obvious one: a monitoring rule as simple as "alert if a feature's
+mean moves more than 5x" catches a units bug instantly, and almost nobody has that rule. The subtler
+one: the damage came from numerical saturation, not from the scaling itself - so a model whose scores
+were merely large-but-distinct would have kept its AUC and still been badly calibrated, which is a
+failure that AUC cannot see at all.
+
+TRACE D - the two kinds of distribution shift, which are not equally dangerous.
+
+    world                                       AUC      delta     kind
+    -----------------------------------------   ------   -------   ---------------------------
+    same period as training                     0.8127       -      (reference)
+    feature mean +1.0 sd                        0.8092   -0.0035   covariate: harmless
+    feature mean +3.0 sd                        0.8240   +0.0113   covariate: harmless (BETTER)
+    relationship weakens (coef 1.2 -> 0.3)      0.6676   -0.1451   concept: expensive
+    relationship inverts (coef 1.2 -> -1.2)     0.3921   -0.4206   concept: catastrophic
+    both                                        0.6667   -0.1460   concept dominates entirely
+
+Row 3 is the counter-intuitive one: shifting the feature distribution by three standard deviations
+made AUC go slightly UP. AUC measures RANKING, and the ranking rule "higher a means higher risk" was
+still true - it just applied to a different population. Compare the last row against row 4: adding two
+standard deviations of covariate shift on top of concept drift changed the damage by 0.0009. The
+concept drift is doing all of the work.
+
+The operational reading: feature-drift dashboards - the only kind you can build without labels - watch
+rows 2 and 3, and rows 4 and 5 are what will actually hurt you.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE FIVE FAILURE MODES, with the measured cost of each and what detects it:
+
+    failure mode              measured impact                      what catches it
+    -----------------------   ----------------------------------   -----------------------------
+    training-serving skew     up to -0.2869 AUC (to exact chance)   shadow mode; feature store;
+                                                                    distribution assertions in CI
+    proxy-metric mismatch     +79.5% clicks, -20.9% retention       guardrail metrics; long-horizon
+                                                                    A/B tests
+    feedback loop             clickbait share 29.5% -> 97.7%        a permanent untreated holdout;
+                                                                    diversity guardrails; exploration
+    concept drift             -0.1451 to -0.4206 AUC                LABEL-based monitoring; rolling
+                                                                    evaluation windows
+    covariate shift           -0.0035 (and +0.0113 at 3 sd)         feature-drift monitoring - the
+                                                                    easy kind, and the least urgent
+    position/selection bias   not measured here                     logged propensities; off-policy
+                                                                    evaluation; exploration slots
+
+Note the asymmetry in that table: the failure mode that is EASIEST to monitor (covariate shift)
+measured the SMALLEST impact, and the ones that measured the largest impact need either live traffic
+or delayed labels to see. That asymmetry is why the process answer - A/B test on the north star with
+guardrails - is the answer, rather than a better dashboard.
+
+THE MISTAKES:
+
+    - Treating an offline win as a launch decision. It is a filter for what deserves an experiment.
+    - Recomputing features in your notebook and calling that an evaluation. It cannot see skew.
+      MEASURED: up to -0.2869 AUC, with no error raised anywhere.
+    - "Fill missing with 0." Zero is not neutral. MEASURED -0.0883 AUC at a 20% missing rate.
+    - No unit or range assertions. MEASURED: a cents/dollars mismatch produced AUC 0.5002 silently.
+    - Optimising a proxy without naming a north star and guardrails. MEASURED: two proxies up, the
+      north star down 20.9%.
+    - Picking a north star that is itself a proxy. Time-spent rose 16.9% on the same launch that cut
+      retention.
+    - Saying "distribution shift" without distinguishing covariate from concept. MEASURED: +3 sd of
+      covariate shift did nothing; inverting the relationship took AUC to 0.3921.
+    - Monitoring only feature distributions. That is the harmless kind.
+    - No permanent holdout. Once the model is shaping the data, every comparison is against a
+      contaminated baseline and the loop is invisible.
+    - Not logging propensities. Off-policy evaluation needs them and you cannot reconstruct them
+      afterwards.
+    - Running the A/B test for two hours. Retention moves over days.
+    - Blaming the model. In every measurement here the model was correct; the label, the pipeline, or
+      the metric was wrong.
+
+THE TAKEAWAY. An offline score answers "would this have predicted the past?" Production asks "what
+happens to the future once this exists in it?" The gap between those questions has five names, and the
+measurements say the dangerous ones are exactly the ones offline evaluation structurally cannot see: a
+units mismatch that silently makes your model a coin flip, and a click objective that raises clicks
+79.5% while cutting retention 20.9%. So the launch decision belongs to an online test on the metric
+you actually care about, with guardrails that must not regress - and the cheapest insurance is shadow
+mode, which costs only compute and catches every skew bug before a single user notices.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
