@@ -77,6 +77,38 @@ _BULLET_HEAD = re.compile(r"^[·•]\s")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
+def summarise_text(text, cap=SUMMARY_CAP):
+    """Pack as many complete sentences of `text` as fit under `cap`.
+
+    Split out from summarise() so the OTHER banks can use it. /java, /sql
+    and the behavioural bank each have a different field worth
+    summarising — `plain` for the language banks, the situation for a
+    STAR story — but the packing rule is the same everywhere, and having
+    one implementation means a fix to it fixes every page.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    text = _WS.sub(" ", _LEADING_BULLET.sub("", text)).strip()
+
+    out = ""
+    for part in _SENTENCE.split(text):
+        part = part.strip()
+        # Where the prose becomes a bulleted list, stop with it — a summary
+        # trailing off into "· STATE — what does dp[i] mean?" reads as
+        # truncated rather than as short.
+        if _BULLET_HEAD.match(part) or part.startswith(("·", "•")):
+            break
+        candidate = f"{out} {part}".strip() if out else part
+        if len(candidate) > cap:
+            break
+        out = candidate
+
+    if not out:                      # one sentence longer than the whole cap
+        out = text[:cap].rsplit(" ", 1)[0] + " …"
+    return out.strip()
+
+
 def summarise(entry, cap=SUMMARY_CAP):
     """The opening of an entry's answer, flattened to one line.
 
@@ -93,27 +125,7 @@ def summarise(entry, cap=SUMMARY_CAP):
     hard wraps at about 78 columns — so the newlines have to go before
     any of this means anything as a single line.
     """
-    text = (entry.get("answer") or "").strip()
-    if not text:
-        return ""
-    text = _WS.sub(" ", _LEADING_BULLET.sub("", text)).strip()
-
-    out = ""
-    for part in _SENTENCE.split(text):
-        part = part.strip()
-        # Where the answer stops being prose and becomes a bulleted list,
-        # stop with it — a summary trailing off into "· STATE — what does
-        # dp[i] mean?" reads as truncated rather than as short.
-        if _BULLET_HEAD.match(part) or part.startswith(("·", "•")):
-            break
-        candidate = f"{out} {part}".strip() if out else part
-        if len(candidate) > cap:
-            break
-        out = candidate
-
-    if not out:                      # one sentence longer than the whole cap
-        out = text[:cap].rsplit(" ", 1)[0] + " …"
-    return out.strip()
+    return summarise_text(entry.get("answer"), cap)
 
 
 def is_mandatory(entry):

@@ -50,6 +50,13 @@
   .q-head{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:11px 13px;cursor:pointer}
   .q-head input{width:18px;height:18px;flex:none;cursor:pointer}
   .q-head .t{flex:1;font-size:14.5px;font-weight:700;min-width:0;overflow-wrap:anywhere}
+
+  /* The card summary — a few lines of what this entry actually says, so the
+     list can be skimmed without opening anything. Derived from the entry's
+     plain-English answer and capped at the source (340 chars), so there is
+     no line-clamp here and nothing gets cut mid-sentence. */
+  .q-sum{flex:1 0 100%;font-size:12.5px;line-height:1.5;margin:1px 0 2px;
+         color:var(--color-text-secondary);overflow-wrap:anywhere}
   /* Plan, difficulty, trap and deep dive on their own row, in FIXED
      tracks. They used to trail a flex:1 title as plain flex children, so
      where each one landed depended on how long that card's title happened
@@ -215,6 +222,7 @@
           '<input type="checkbox" ' + (done[e.title] ? "checked" : "") +
                  ' data-title="' + esc(e.title) + '" title="Mark studied">' +
           '<span class="t">' + esc(e.title) + '</span>' +
+          (e.summary ? '<p class="q-sum">' + esc(e.summary) + '</p>' : '') +
           '<span class="q-chips">' + chips + '</span>' +
         '</div>' +
         '<div class="q-body"><div class="empty">Loading…</div></div>' +

@@ -32,6 +32,7 @@ from ai_sde_bank import (CATEGORIES as AI_SDE_CATEGORIES,
 # Imported for the scheduler's bank registry only. java_bank is a plain
 # data module — it imports no routes, so this cannot cycle.
 import java_bank
+import sql_bank
 import ai_sde_recall
 import ai_sde_summary
 from supabase_client import get, post, update
@@ -538,6 +539,12 @@ PREP_BANKS = {
         "label": "Java prep",
         "page": "/java",
     },
+    "sql": {
+        "project": "SQLPrep",
+        "desc": "SQL interview prep. Topics scheduled from /sql land here.",
+        "label": "SQL prep",
+        "page": "/sql",
+    },
     "behavioral": {
         "project": "InterviewPrep",
         "desc": "Behavioural / TPM interview prep. Questions scheduled from "
@@ -552,6 +559,7 @@ PREP_BANKS = {
 _BANK_SOURCES = {
     "ai_sde":     (lambda: AI_SDE_ENTRIES,     "title", "ai"),
     "java":       (lambda: java_bank.ENTRIES,  "title", "j"),
+    "sql":        (lambda: sql_bank.ENTRIES,   "title", "sq"),
     "behavioral": (lambda: QUESTIONS,          "q",     "q"),
 }
 
@@ -805,18 +813,17 @@ def prep_schedule():
 
     # ── 1. The project task — the record of what she planned ────────
     #
-    # NOTE THE ABSENT start_time. The calendar page draws BOTH sources:
-    # planner_v2.js fetches /api/v2/events AND /api/v2/project-tasks, then
-    # renders `taskData.filter(t => t.start_time)` as chips alongside the
-    # events. Setting it here put the same topic on the grid twice — once
-    # as its event, once as its task — which is what "tasks repeating
-    # twice in the calendar" was.
+    # THE TASK KEEPS ITS start_time. The calendar page draws BOTH sources -
+    # planner_v2.js fetches /api/v2/events AND /api/v2/project-tasks - so
+    # writing a time to both once drew the topic twice, which is what
+    # "repeating twice in the calendar" was.
     #
-    # The event is the one that survives, because it is the row the grid
-    # treats as a real appointment: its own end_time (so the block is the
-    # topic's actual prep length rather than the flat 30 minutes the task
-    # renderer assumes) and the Google mirror hangs off it. The task keeps
-    # plan_date as the record of which day it belongs to.
+    # The first fix was to strip start_time from the task. That removed the
+    # duplicate and broke something else: the project list and the todo then
+    # showed a scheduled topic with no time against it, which is not
+    # actionable. So the duplicate is now removed where it is created - the
+    # grid dedupes tasks against events by title and start time - and the
+    # task keeps the time it needs.
     task_payload = {
         "user_id": user_id,
         "project_id": project_id,
@@ -824,6 +831,7 @@ def prep_schedule():
         "status": "open",
         "priority": "medium",
         "plan_date": plan_date,
+        "start_time": start_time,
         "due_date": plan_date,
         "notes": f"{spec['label']} topic · scheduled from {spec['page']}",
         "is_deleted": False,

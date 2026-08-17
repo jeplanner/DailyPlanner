@@ -25,6 +25,7 @@ from flask import Blueprint, jsonify, render_template, request
 
 from services.login_service import login_required
 
+import ai_sde_summary
 import java_bank
 
 logger = logging.getLogger("daily_plan")
@@ -35,6 +36,12 @@ java_prep_bp = Blueprint("java_prep", __name__)
 #: What the collapsed card header and the filters actually read. Everything
 #: else arrives per-card from /api/java/entry/<id>.
 _LIST_FIELDS = ("title", "cat", "difficulty", "frequency", "version")
+
+#: The card summary. Derived from `plain` rather than `answer`, because for
+#: a LANGUAGE bank the plain-English answer IS the summary — it was written
+#: to be the first thing read. Shipped in the list rather than fetched
+#: separately: 45 entries of a few hundred characters is a few KB, where the
+#: AI/SDE bank's 1,120 made it a 50 KB decision.
 
 #: Held as an explicit list rather than "everything not in _LIST_FIELDS", so
 #: that adding a field to the bank is a conscious decision about which side of
@@ -60,6 +67,7 @@ def _build_list():
         row["has_trap"] = bool(e.get("gotcha"))
         row["has_deep"] = bool(e.get("examples"))
         row["cat_label"] = java_bank.CATEGORIES.get(e["cat"], e["cat"])
+        row["summary"] = ai_sde_summary.summarise_text(e.get("plain"))
         rows.append(row)
     return rows
 

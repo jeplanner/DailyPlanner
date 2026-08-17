@@ -1002,6 +1002,9 @@ def test_a_timed_task_draws_on_its_own_day_only():
     grid = re.search(r"const timedTasks = taskData\.filter\((.*?)\);", js, re.S).group(1)
     assert "plan_date" in grid, "the grid still ignores which day a task belongs to"
     assert "start_time" in grid
+    # ...and it dedupes against the events, because a scheduled prep topic
+    # writes both rows on purpose and both need their time.
+    assert "evKeys" in grid, "the grid no longer dedupes tasks against events"
     # ...and the endpoint has to actually send it.
     py = open("routes/projects.py", encoding="utf-8").read()
     sel = re.search(r'"select": "task_id,task_text,priority,project_id,[^"]*"'

@@ -391,8 +391,22 @@ async function loadAllEvents() {
     // Wednesday and every day after, until it was marked done.
     // Tasks with no plan_date keep the old behaviour so nothing that was
     // scheduled before this fix silently vanishes off the grid.
+    //
+    // AND THEN DEDUPE AGAINST THE EVENTS. A prep topic scheduled from a
+    // study page writes BOTH a calendar event and a project task, on
+    // purpose: the event is what the grid draws, the task is what the
+    // project list and the todo show — and the task needs to keep its time
+    // or the todo entry is useless. Without this filter both are drawn and
+    // the same topic appears on the day twice, which is what "repeating
+    // twice" was. Matching on title + start time is enough because that is
+    // exactly what the scheduler writes to both rows.
+    const evKeys = new Set(
+      eventData.map(e => (e.title || "").trim().toLowerCase() + "|" + (e.start_time || ""))
+    );
     const timedTasks = taskData.filter(
-      t => t.start_time && (!t.plan_date || t.plan_date === ds)
+      t => t.start_time
+        && (!t.plan_date || t.plan_date === ds)
+        && !evKeys.has((t.task_text || "").trim().toLowerCase() + "|" + t.start_time)
     );
 
     const combined = [
@@ -630,7 +644,22 @@ function scrollToNow() {
 function scrollTo7AM() {
   const scroll = document.getElementById("gcal-scroll");
   if (!scroll) return;
-  scroll.scrollTop = 7 * HOUR_HEIGHT - 20;
+
+  // 7am is a sensible default for a day that starts in the morning, and it
+  // was silently HIDING anything scheduled before it. Study topics booked
+  // with no time land at 00:00 — deliberately, so they sit at the top of
+  // the day the way an all-day row does — and 00:00 is seven hours above
+  // this scroll position, so the calendar looked empty while the entries
+  // were there the whole time.
+  //
+  // So: start at 7am, unless the day actually has something earlier, in
+  // which case start just above THAT.
+  let earliest = 7 * 60;
+  (eventsMap.get(currentDate) || []).forEach(ev => {
+    const m = minutes(ev.start_time);
+    if (typeof m === "number" && !isNaN(m) && m < earliest) earliest = m;
+  });
+  scroll.scrollTop = Math.max(0, (earliest / 60) * HOUR_HEIGHT - 20);
 }
 
 /* ══════════════════════════════════════════════════════════════

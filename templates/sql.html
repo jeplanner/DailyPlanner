@@ -1,0 +1,348 @@
+{# SQL bank — browse.
+
+   THE FEATURE THIS PAGE HAS THAT THE OTHER BANKS DO NOT: every result on it
+   was produced by actually running the query. sql_bank.verify() re-runs all
+   45 against sqlite on every test run and fails the build if a stated result
+   has drifted. So the "Result" block is not a remembered answer, and the
+   page says so rather than expecting to be trusted.
+
+   Same shape as /java otherwise: thin list, bodies fetched per card.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SQL — DailyPlanner</title>
+{# Needed by prep-scheduler.js: interview_prep_bp is not CSRF-exempt. #}
+<meta name="csrf-token" content="{{ csrf_token() }}">
+{% include "_pwa_head.html" %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="{{ url_for('static', filename='js/prep-scheduler.js') }}"></script>
+<style>
+  body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);
+       margin:0;overflow-x:hidden}
+  .wrap{max-width:860px;margin:0 auto;padding:16px 16px 72px}
+  h1{font-size:22px;font-weight:900;letter-spacing:-.02em;margin:6px 0 2px}
+  .sub{color:var(--color-text-secondary);font-size:13px;margin:0 0 6px}
+  .sub a{color:var(--color-primary);font-weight:700;text-decoration:none}
+  .verified{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;
+       color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;
+       padding:3px 10px;margin:0 0 12px}
+  html.dark .verified{color:#6ee7b7;background:#052e26;border-color:#065f46}
+
+  .btn{font:inherit;font-weight:700;border:1px solid var(--color-border);
+       background:var(--color-surface);color:var(--color-text);border-radius:10px;
+       padding:8px 12px;cursor:pointer}
+  .btn.sm{padding:5px 9px;font-size:12.5px}
+  .btn.on{border-color:var(--color-primary);color:var(--color-primary)}
+
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .controls select,.controls input[type=text]{font:inherit;font-size:14px;padding:9px 11px;
+       border:1px solid var(--color-border);border-radius:10px;
+       background:var(--color-bg);color:var(--color-text)}
+  .controls input.search{flex:1;min-width:150px}
+  .prog{font-size:12.5px;font-weight:700;color:var(--color-text-secondary)}
+
+  .rung{margin:18px 0 6px;font-size:12px;font-weight:800;letter-spacing:.09em;
+        text-transform:uppercase;color:var(--color-text-secondary)}
+  .rung .n{color:var(--color-text)}
+
+  .q-card{border:1px solid var(--color-border);border-radius:12px;margin-bottom:8px;
+          background:var(--color-surface);overflow:hidden}
+  .q-card.done{border-color:#34d399}
+  .q-head{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:11px 13px;cursor:pointer}
+  .q-head input[type=checkbox]{width:18px;height:18px;flex:none;cursor:pointer}
+  .q-head .t{flex:1;font-size:14.5px;font-weight:700;min-width:0;overflow-wrap:anywhere}
+
+  /* The card summary — a few lines of what this entry actually says, so the
+     list can be skimmed without opening anything. Derived from the entry's
+     plain-English answer and capped at the source (340 chars), so there is
+     no line-clamp here and nothing gets cut mid-sentence. */
+  .q-sum{flex:1 0 100%;font-size:12.5px;line-height:1.5;margin:1px 0 2px;
+         color:var(--color-text-secondary);overflow-wrap:anywhere}
+  /* Chips on their own row in FIXED tracks, so difficulty sits under
+     difficulty all the way down the list. Same reasoning as /java: the
+     content varies enough that natural widths never line up. */
+  .q-head .q-chips{display:grid;align-items:center;gap:6px;flex:1 0 100%;
+        grid-template-columns:86px 64px 78px 72px minmax(0,1fr);min-width:0;margin-top:1px}
+  .q-head .q-chips .slot{display:flex;align-items:center;min-width:0}
+  .chip{flex:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;
+        border:1px solid var(--color-border);color:var(--color-text-secondary);
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chip.easy{border-color:#34d399;color:#059669}
+  .chip.medium{border-color:#fbbf24;color:#b45309}
+  .chip.hard{border-color:#f87171;color:#dc2626}
+  .chip.trap{border-color:#f472b6;color:#db2777}
+  .chip.port{border-color:#a78bfa;color:#7c3aed}
+  .chip.sch{border-color:var(--color-primary);color:var(--color-primary)}
+
+  .q-body{display:none;padding:0 13px 13px;border-top:1px solid var(--color-border)}
+  .q-card.open .q-body{display:block}
+  .fld{margin-top:12px;overflow-wrap:anywhere}
+  .lbl{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+       color:var(--color-text-secondary);margin-bottom:4px}
+  .fld p{margin:0;font-size:14px;line-height:1.55;white-space:pre-wrap}
+  pre{margin:0;background:var(--color-bg);border:1px solid var(--color-border);
+      border-radius:10px;padding:11px;overflow-x:auto;font-size:12.5px;line-height:1.5;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  /* The query and its result, paired. The result gets the green edge because
+     it is the part that was machine-checked. */
+  .fld.query pre{border-left:3px solid var(--color-primary)}
+  .fld.result pre{border-left:3px solid #34d399;background:#f6fefa}
+  html.dark .fld.result pre{background:#08211a}
+  .fld.trap{background:#fdf2f8;border-left:3px solid #db2777;border-radius:0 8px 8px 0;
+       padding:9px 11px;margin-top:12px}
+  html.dark .fld.trap{background:#2a0f1d}
+  .fld.port{background:#f5f3ff;border-left:3px solid #7c3aed;border-radius:0 8px 8px 0;
+       padding:9px 11px;margin-top:12px}
+  html.dark .fld.port{background:#1e1b3a}
+
+  .schemabar{display:flex;align-items:center;justify-content:space-between;gap:8px;
+       margin-top:12px}
+  .tags{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0 2px}
+  .tag{font-size:11px;font-weight:600;color:#4338ca;background:#eef2ff;
+       border:1px solid #c7d2fe;border-radius:999px;padding:2px 9px}
+  html.dark .tag{background:#1e1b4b;border-color:#3730a3;color:#c7d2fe}
+  .empty{padding:26px 12px;text-align:center;color:var(--color-text-secondary);font-size:14px}
+
+  @media (max-width:640px){
+    .wrap{padding:12px 11px 64px}
+    h1{font-size:19px}
+    .controls{flex-direction:column;align-items:stretch}
+    .controls select,.controls input.search,.controls button{width:100%;box-sizing:border-box}
+    /* Five fixed tracks do not fit at 360px; wrap them instead. */
+    .q-head .q-chips{display:flex;flex-wrap:wrap}
+    .q-head .q-chips .slot:empty{display:none}
+    pre{font-size:11.5px;-webkit-overflow-scrolling:touch}
+  }
+</style>
+</head>
+<body>
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+<div class="wrap">
+  <h1>SQL</h1>
+  <p class="sub">The queries you can be asked to write on a whiteboard, in teaching
+  order — reading rows, joining them, grouping them, the NULL rules that break all
+  three, window functions, and the traps.</p>
+  <p class="verified">✓ every result on this page was produced by running the query</p>
+
+  <div class="controls">
+    <input type="text" class="search" id="q" placeholder="Search titles and tags…">
+    <select id="cat"><option value="">All rungs</option></select>
+    <select id="diff">
+      <option value="">Any difficulty</option>
+      <option>Easy</option><option>Medium</option><option>Hard</option>
+    </select>
+    <button class="btn sm" id="fTrap" title="Only entries with a trap">Traps</button>
+    <button class="btn sm" id="fPort" title="Only entries where engines disagree">Portability</button>
+    <button class="btn sm" id="fTodo" title="Hide what you have marked studied">To study</button>
+    <span class="prog" id="prog"></span>
+  </div>
+
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Progress is a personal note — localStorage, no table, no round trip.
+  // Keyed by TITLE rather than index, so inserting an entry does not
+  // shuffle every mark.
+  var KEY = "sql-bank-done";
+  var done = {};
+  try { done = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { done = {}; }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) {} }
+
+  var ALL = [], CATS = [], bodies = {}, schemas = {};
+  var onlyTrap = false, onlyPort = false, onlyTodo = false;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  fetch("/api/sql", {credentials: "same-origin"})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      ALL = d.entries; CATS = d.categories;
+      var sel = $("cat");
+      CATS.forEach(function (c) {
+        var o = document.createElement("option");
+        o.value = c.key; o.textContent = c.label; sel.appendChild(o);
+      });
+      render();
+    })
+    .catch(function () {
+      $("list").innerHTML = '<div class="empty">Could not load the bank.</div>';
+    });
+
+  function matches(e) {
+    var q = $("q").value.trim().toLowerCase();
+    if (q && e.title.toLowerCase().indexOf(q) === -1) return false;
+    if ($("cat").value && e.cat !== $("cat").value) return false;
+    if ($("diff").value && e.difficulty !== $("diff").value) return false;
+    if (onlyTrap && !e.has_trap) return false;
+    if (onlyPort && !e.has_portability) return false;
+    if (onlyTodo && done[e.title]) return false;
+    return true;
+  }
+
+  function slot(inner) { return '<span class="slot">' + inner + "</span>"; }
+  function chip(text, cls) { return '<span class="chip ' + cls + '">' + esc(text) + "</span>"; }
+
+  function card(e) {
+    // Every slot is emitted even when empty, so the fixed grid tracks line
+    // up between cards — a chip omitted rather than left blank would slide
+    // the next one into its column.
+    var chips =
+      PrepScheduler.button("sql", e.title, e.id) +
+      slot(e.difficulty ? chip(e.difficulty, e.difficulty.toLowerCase()) : "") +
+      slot(e.has_trap ? chip("trap", "trap") : "") +
+      slot(e.has_portability ? chip("portable?", "port") : "") +
+      slot(e.schema ? chip(e.schema, "sch") : "");
+    return '' +
+      '<div class="q-card' + (done[e.title] ? " done" : "") + '" data-id="' + e.id + '">' +
+        '<div class="q-head">' +
+          '<input type="checkbox" ' + (done[e.title] ? "checked" : "") +
+                 ' data-title="' + esc(e.title) + '" title="Mark studied">' +
+          '<span class="t">' + esc(e.title) + "</span>" +
+          (e.summary ? '<p class="q-sum">' + esc(e.summary) + "</p>" : "") +
+          '<span class="q-chips">' + chips + "</span>" +
+        "</div>" +
+        '<div class="q-body"><div class="empty">Loading…</div></div>' +
+      "</div>";
+  }
+
+  function render() {
+    var rows = ALL.filter(matches);
+    var total = ALL.length, marked = ALL.filter(function (e) { return done[e.title]; }).length;
+    $("prog").textContent = marked + " / " + total + " studied";
+    if (!rows.length) {
+      $("list").innerHTML = '<div class="empty">Nothing matches those filters.</div>';
+      return;
+    }
+    // Grouped by the LADDER, in teaching order — never alphabetical, or
+    // window functions land before SELECT.
+    var html = "";
+    CATS.forEach(function (c) {
+      var group = rows.filter(function (e) { return e.cat === c.key; });
+      if (!group.length) return;
+      html += '<div class="rung">' + esc(c.label) + ' <span class="n">' + group.length + "</span></div>";
+      group.forEach(function (e) { html += card(e); });
+    });
+    $("list").innerHTML = html;
+  }
+
+  function field(label, value, cls) {
+    if (!value || !String(value).trim()) return "";
+    return '<div class="fld ' + (cls || "") + '"><div class="lbl">' + esc(label) + "</div>" +
+           "<p>" + esc(value) + "</p></div>";
+  }
+  function block(label, value, cls) {
+    if (!value || !String(value).trim()) return "";
+    return '<div class="fld ' + (cls || "") + '"><div class="lbl">' + esc(label) + "</div>" +
+           "<pre>" + esc(value) + "</pre></div>";
+  }
+
+  function body(d) {
+    var h = "";
+    h += field("In plain English", d.plain);
+    h += field("The answer", d.answer);
+    h += block("The query", d.query, "query");
+    // Labelled as verified because it is: sql_bank.verify() re-runs this
+    // exact query and fails the build if the result has drifted.
+    h += block("Result — from running it", d.output, "result");
+    h += field("The trap", d.gotcha, "trap");
+    h += field("Not the same everywhere", d.portability, "port");
+    h += field("Also", d.example);
+    h += field("Pitfalls", d.pitfalls);
+    h += field("Follow-ups", d.followups);
+    h += field("How to remember", d.mnemonic);
+    if (d.tags && d.tags.length) {
+      h += '<div class="tags">' + d.tags.map(function (t) {
+        return '<span class="tag">#' + esc(t) + "</span>";
+      }).join("") + "</div>";
+    }
+    if (d.schema) {
+      h += '<div class="schemabar">' +
+           '<span class="lbl" style="margin:0">Schema: ' + esc(d.schema) + "</span>" +
+           '<button class="btn sm" data-schema="' + esc(d.schema) + '">Show the tables</button>' +
+           "</div><div class=\"schemaslot\"></div>";
+    }
+    return h;
+  }
+
+  // The Plan button and its panel come from prep-scheduler.js, shared with
+  // /ai-sde, /java and /interview-prep. It listens in the CAPTURE phase, so
+  // a press is handled and stopped before the card-toggle listener below.
+  PrepScheduler.attach($("list"));
+
+  $("list").addEventListener("click", function (ev) {
+    var card = ev.target.closest(".q-card");
+    if (!card) return;
+
+    if (ev.target.matches('input[type=checkbox]')) {
+      var t = ev.target.getAttribute("data-title");
+      if (ev.target.checked) { done[t] = 1; card.classList.add("done"); }
+      else { delete done[t]; card.classList.remove("done"); }
+      save();
+      var marked = ALL.filter(function (e) { return done[e.title]; }).length;
+      $("prog").textContent = marked + " / " + ALL.length + " studied";
+      return;
+    }
+
+    // Show the tables a query runs against. Fetched once per schema and
+    // cached, rather than repeated on all 45 cards.
+    var sb = ev.target.closest("[data-schema]");
+    if (sb) {
+      ev.stopPropagation();
+      var name = sb.getAttribute("data-schema");
+      var slotEl = card.querySelector(".schemaslot");
+      if (slotEl.innerHTML) { slotEl.innerHTML = ""; sb.textContent = "Show the tables"; return; }
+      sb.textContent = "Hide the tables";
+      if (schemas[name]) { slotEl.innerHTML = "<pre>" + esc(schemas[name]) + "</pre>"; return; }
+      fetch("/api/sql/schema/" + encodeURIComponent(name), {credentials: "same-origin"})
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          schemas[name] = d.sql;
+          slotEl.innerHTML = "<pre>" + esc(d.sql) + "</pre>";
+        })
+        .catch(function () { slotEl.innerHTML = '<div class="empty">Could not load it.</div>'; });
+      return;
+    }
+
+    var id = card.dataset.id;
+    var open = card.classList.toggle("open");
+    if (!open) return;
+    var slotB = card.querySelector(".q-body");
+    if (slotB.dataset.loaded) return;
+    if (bodies[id]) { slotB.innerHTML = body(bodies[id]); slotB.dataset.loaded = "1"; return; }
+    fetch("/api/sql/entry/" + encodeURIComponent(id), {credentials: "same-origin"})
+      .then(function (r) { return r.json(); })
+      .then(function (d) { bodies[id] = d; slotB.innerHTML = body(d); slotB.dataset.loaded = "1"; })
+      .catch(function () { slotB.innerHTML = '<div class="empty">Could not load this entry.</div>'; });
+  });
+
+  $("q").addEventListener("input", render);
+  $("cat").addEventListener("change", render);
+  $("diff").addEventListener("change", render);
+  $("fTrap").addEventListener("click", function () {
+    onlyTrap = !onlyTrap; this.classList.toggle("on", onlyTrap); render();
+  });
+  $("fPort").addEventListener("click", function () {
+    onlyPort = !onlyPort; this.classList.toggle("on", onlyPort); render();
+  });
+  $("fTodo").addEventListener("click", function () {
+    onlyTodo = !onlyTodo; this.classList.toggle("on", onlyTodo); render();
+  });
+})();
+</script>
+</body>
+</html>
