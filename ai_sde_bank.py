@@ -258334,6 +258334,1062 @@ recall here because the prior is a single additive term against a likelihood sum
 every word, and replacing that one term at inference recovered it entirely without
 retraining.""",
 ]
+_EX_P1AO["Design a natural-language-to-SQL system"] = [
+    """1. THE GOAL - let someone ask "which city buys the most" and get a number, without SQL.
+
+The user types a question. The system produces SQL, runs it, and shows the answer. Every
+company with a data warehouse wants this, and the reason it is a hard system design rather
+than a prompt is that all three of the difficult parts sit OUTSIDE the model:
+
+  WHICH TABLES?      A warehouse has hundreds. The schema does not fit in a prompt.
+  IS IT RIGHT?       Wrong SQL usually runs fine and returns a plausible wrong number.
+  WHAT DID THEY MEAN? "Revenue" has three defensible definitions and the model picks one.
+
+MEASURED, that last one on a 1,000-order table:
+
+  revenue = sum of ALL orders        247,838.81
+  revenue = sum of PAID orders       152,283.94
+  revenue = paid minus refunded      100,671.71
+
+THREE ANSWERS TO ONE QUESTION, differing by a factor of 2.5, all from correct SQL. No model
+can resolve that, because it is not a language problem - it is that nobody has written down
+what revenue means. The system's job is to make that definition explicit and reusable, not
+to guess well.""",
+
+    """2. THE INTUITION - grade on the ANSWER, never on the SQL text.
+
+The obvious evaluation is to compare the generated SQL against a gold query string. It is
+wrong in both directions and both are measurable.
+
+MEASURED, five candidate queries against one gold query:
+
+  candidate                          exact string match   same result set
+  ---------------------------------------------------------------------------
+  gold                                     True                True
+  same query, different alias/order        False               True
+  same query, JOIN written as WHERE        False               True
+  forgot the status filter                 False               False
+  counted customers, not orders            False               False
+
+THREE DIFFERENT STRINGS RETURN THE IDENTICAL ANSWER. Exact-match scores two of them zero,
+so a model that writes perfectly good SQL in a different style is graded as failing.
+
+EXECUTION ACCURACY - run both queries, compare the result sets - is the metric that means
+something. It is not free: it needs a real database with realistic data, and a query that
+returns nothing on your tiny test fixture matches any other query that returns nothing.
+
+AND THE OTHER HALF, WHICH IS WHY THIS SYSTEM NEEDS GUARDRAILS RATHER THAN JUST ACCURACY:
+
+  forgot the status filter:      gold ('London', 189) vs got ('London', 292)
+  counted customers not orders:  gold ('London', 189) vs got ('London',  61)
+
+Both ran without error. Both returned a well-formed table with the right columns and the
+right city at the top. One was 54% too high and one was 68% too low. NOTHING IN THE OUTPUT
+SIGNALS A PROBLEM, which is the defining risk of the whole product.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TEXT-TO-SQL / NL-TO-SQL - turning a natural-language question into a database query.
+
+SCHEMA LINKING - deciding which tables and columns the question refers to. The hard part
+once you have more than a few dozen tables.
+
+EXECUTION ACCURACY - fraction of generated queries whose RESULT SET matches the gold
+query's. The standard metric.
+
+EXACT MATCH / LOGICAL FORM ACCURACY - string or parse-tree comparison against gold SQL.
+Measured above to be misleading in both directions.
+
+SPIDER, BIRD, WikiSQL - the public benchmarks. Spider tests generalisation to unseen
+databases; BIRD adds realistic dirty schemas and is much harder.
+
+SEMANTIC LAYER / METRIC STORE - a curated definition of business terms ("revenue = sum of
+amount where status='paid'") that the system uses instead of inventing one. dbt metrics,
+Cube, LookML.
+
+FEW-SHOT EXAMPLES - question/SQL pairs in the prompt. Retrieved per-question rather than
+fixed, because the useful examples depend on which tables are involved.
+
+SELF-CORRECTION - running the query, catching the error, feeding it back to the model.
+
+READ-ONLY ROLE - a database user that can only SELECT. Non-negotiable.
+
+ROW-LEVEL SECURITY - the database enforcing which rows a user may see, so the model cannot
+be prompted into reading someone else's data.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the schema does not fit in the prompt.
+
+A demo uses five tables and works beautifully. A warehouse has hundreds.
+
+MEASURED, approximate DDL tokens against an 8k context window:
+
+  tables   columns   approx tokens of DDL   % of an 8k window
+  ---------------------------------------------------------------
+       5        40            230                    3%
+      50       600          3,300                   41%
+     200     3,000         16,200                  202%
+   1,000    20,000        106,000                1,325%
+
+AT 200 TABLES THE SCHEMA ALONE IS TWICE THE WINDOW, before the question, the examples or the
+answer. A larger window helps and does not solve it: 1,000 tables is 106,000 tokens of DDL
+that you would pay for on every single question, and the model's accuracy degrades as you
+bury the three relevant tables in a thousand irrelevant ones.
+
+SO NL-TO-SQL IS A RETRIEVAL PROBLEM WEARING A GENERATION PROBLEM'S CLOTHES. The pipeline
+must first select the handful of tables the question is about - by embedding table and column
+descriptions and retrieving against the question, by a learned classifier, or by restricting
+each user to a curated subset - and only then generate.
+
+AND SCHEMA LINKING IS WHERE MOST ERRORS COME FROM. If the retriever misses a table, the
+model cannot use it, and it will not say so - it will write a confident query against the
+tables it was given. That is exactly the failure measured in section 2: a query that runs,
+returns a plausible table, and is wrong by 54%.
+
+THE SECOND TRAP, RELATED: column names lie. `orders.status`, `orders.state` and
+`orders.order_status` may all exist, one of them deprecated, and only a human knows which.
+Column DESCRIPTIONS matter more than column names, and most warehouses have none.""",
+
+    """5. THE SYSTEM, BUILT UP IN LAYERS.
+
+LAYER 0 - A CURATED VIEW LAYER. Before any model, expose a small number of clean,
+documented views instead of the raw warehouse. This shrinks the schema problem, encodes the
+joins, and removes the deprecated columns. It is unglamorous and it is the highest-value
+step in the whole design.
+
+LAYER 1 - SCHEMA RETRIEVAL. Embed table and column descriptions; retrieve the top-k tables
+for the question. Put ONLY those in the prompt, with their DDL, a few sample rows, and any
+column comments.
+
+LAYER 2 - GENERATION WITH RETRIEVED FEW-SHOT EXAMPLES. Keep a library of question/SQL pairs
+and retrieve the ones nearest to this question. Examples using the same tables help far more
+than generic ones.
+
+LAYER 3 - VALIDATION BEFORE EXECUTION. Parse the SQL. Reject anything that is not a SELECT.
+Check that every table and column referenced actually exists - a hallucinated column is
+common and catchable statically. Add a LIMIT if there is none.
+
+LAYER 4 - EXECUTE, THEN SELF-CORRECT. Run on a read-only connection with a statement
+timeout. On an error, feed the error text back and retry once or twice. This recovers a
+large share of failures cheaply, because most are syntax or a wrong column name.
+
+LAYER 5 - SHOW THE SQL, ALWAYS. The user must see the query, not only the number. This is
+the only practical defence against the silent-wrong-answer failure, and it turns the system
+from an oracle into a drafting tool that a competent analyst can check.
+
+LAYER 6 - THE SEMANTIC LAYER. Route metric words through curated definitions so "revenue"
+resolves to one agreed expression rather than one of the three measured above.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. ASK WHO THE USER IS. An analyst who can read SQL, or an executive who cannot? This
+decides whether the system can show its work and therefore how much risk it can carry.
+
+STEP 2. ASK HOW BIG THE SCHEMA IS. Measured, 200 tables is 202% of an 8k window - so the
+answer determines whether schema retrieval is a component or an afterthought.
+
+STEP 3. STATE THE METRIC AS EXECUTION ACCURACY and explain why exact match fails: measured,
+three semantically identical queries scored 0 on string comparison.
+
+STEP 4. NAME THE SILENT FAILURE MODE unprompted. Measured, a missing WHERE clause returned
+292 where the truth was 189, with no error. Say that this, not syntax errors, is the risk.
+
+STEP 5. LAY OUT THE PIPELINE: curated views -> schema retrieval -> generation with retrieved
+examples -> static validation -> read-only execution with timeout -> self-correction ->
+show the SQL.
+
+STEP 6. SECURITY, WITHOUT BEING ASKED: read-only role, no DDL or DML, row-level security in
+the DATABASE not the prompt, statement timeouts, result-size caps. Prompt injection through
+data is real - a customer whose name is an instruction.
+
+STEP 7. RAISE AMBIGUITY AND PROPOSE THE SEMANTIC LAYER. Measured, three defensible
+definitions of revenue differing by 2.5x.
+
+STEP 8. EVALUATION: a held-out set of question/SQL/answer triples on a realistic database,
+scored by execution accuracy, plus logging of every query for review.
+
+STEP 9. IF TIME REMAINS: caching, cost per question, and the feedback loop where corrected
+queries become new few-shot examples.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a very fast new assistant who has never worked here, cannot ask questions, and is
+extremely reluctant to admit uncertainty. You hand them a question - "which city buys the
+most from us" - and they write out the instructions to look it up.
+
+Three things go wrong, and only one of them is about their intelligence.
+
+The first is that they have never seen the filing system. Your company has hundreds of
+tables and they need to know which three are relevant. You cannot show them all of it -
+measured, describing two hundred tables takes twice as much space as the entire note you are
+allowed to hand them. So somebody has to pick the right few tables first, and if that
+selection misses one, the assistant will not say "I need another table". They will write a
+perfectly confident answer using what they were given.
+
+The second is that their mistakes look exactly like their successes. Measured, one version
+of the query left out a single condition and reported 292 where the truth was 189. It named
+the right city, produced a properly formatted table, and was wrong by more than half. There
+was no error message because nothing was broken - it answered a slightly different question.
+
+The third is not their fault at all. Ask "what was our revenue" and there are three
+reasonable answers: everything ordered, everything actually paid for, or paid minus refunds.
+Measured on the same data, those are 247,838, 152,284 and 100,672 - a factor of two and a
+half. The assistant will pick one, silently, and be defensible whichever they pick, because
+nobody in the company ever wrote down which one is meant.
+
+So the design is not "get a smarter assistant". It is: narrow the filing system before you
+ask, check their work mechanically before running it, always show what they wrote, and
+settle the definitions once so nobody has to guess.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def answer(question, user):
+      tables = retrieve_tables(question, k=5)          # 1. schema linking
+      examples = retrieve_examples(question, k=3)
+      sql = llm.generate(prompt(question, ddl_for(tables), examples))
+
+      ok, why = validate(sql, allowed_tables=tables)   # 2. static checks
+      if not ok:
+          sql = llm.repair(sql, why); ok, why = validate(sql, tables)
+          if not ok: return refuse(why)
+
+      try:                                              # 3. guarded execution
+          rows = readonly_db(user).execute(add_limit(sql), timeout=30)
+      except DatabaseError as e:
+          sql = llm.repair(sql, str(e))                 # 4. self-correction
+          rows = readonly_db(user).execute(add_limit(sql), timeout=30)
+
+      return {"sql": sql, "rows": rows}                 # 5. ALWAYS return the sql
+
+LINE BY LINE.
+
+  tables = retrieve_tables(question, k=5)
+The step people skip in the demo and cannot skip in production. Measured, 200 tables of DDL
+is 202% of an 8k window. Note k=5 is a RECALL decision: miss the right table here and no
+downstream step can recover, because the model will happily answer with what it has.
+
+  examples = retrieve_examples(question, k=3)
+Few-shot pairs chosen PER QUESTION. Examples touching the same tables teach the join keys
+and the local conventions; a fixed set of generic examples teaches syntax the model already
+knows.
+
+  validate(sql, allowed_tables=tables)
+Static checks before anything runs: it must parse, it must be a single SELECT, and every
+identifier must exist. A hallucinated column is one of the most common failures and it is
+free to catch here rather than as a database error.
+
+  llm.repair(sql, why)
+Self-correction. Cheap and effective for syntax and wrong-column errors - the error message
+is a precise, machine-generated hint. Note it CANNOT fix the failure that matters: a query
+that runs fine and answers the wrong question produces no error to feed back.
+
+  readonly_db(user)
+A connection bound to THIS USER'S permissions, so row-level security is enforced by the
+database. Filtering in the prompt is not security - the model is not a trust boundary.
+
+  add_limit(sql), timeout=30
+A missing LIMIT on a billion-row table is an outage. Both guards are mechanical and neither
+depends on the model behaving.
+
+  return {"sql": sql, "rows": rows}
+RETURNING THE SQL IS A SAFETY FEATURE, not a debug convenience. It is the only thing standing
+between the user and a confidently wrong number, and any design that hides it has accepted
+the risk measured in section 2.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Database: 200 customers across 4 cities, 1,000 orders, statuses paid/refunded/pending.
+Question: "how many paid orders per city, busiest first".
+
+TRACE A - five candidate queries, graded two ways.
+
+  candidate                           exact match   result match
+  ------------------------------------------------------------------
+  gold                                    yes           yes
+  different alias, count(1), order by     no            yes
+  comma-join instead of JOIN ... ON       no            yes
+  missing WHERE status='paid'             no            no
+  count(distinct c.id) instead of count(*) no           no
+
+Exact match: 1 correct out of 5. Execution accuracy: 3 out of 5. THE TWO METRICS DISAGREE ON
+40% OF THIS SET, and execution accuracy is the one that matches what a user experiences.
+
+TRACE B - the two genuine failures, in numbers.
+
+  gold top row:                    ('London', 189)
+  missing status filter:           ('London', 292)   +54.5%
+  counted customers not orders:    ('London',  61)   -67.7%
+
+The second one is the more instructive. `count(distinct c.id)` is not a typo - it is a
+reasonable reading of "how many customers", and the question said orders. The SQL is
+flawless; the QUESTION was answered wrongly. No validator can catch that, which is why the
+SQL is shown to the user.
+
+TRACE C - the schema budget, computed.
+Per table: roughly 6 tokens of overhead plus 5 per column.
+
+  50 tables x 12 columns  = 50 x (6 + 60)  = 3,300 tokens =  41% of 8k
+  200 tables x 15 columns = 200 x (6 + 75) = 16,200 tokens = 202% of 8k
+
+At 50 tables you are spending 41% of the window on schema on every question, forever. At 200
+you cannot do it at all. THE CROSSOVER FROM "PASTE THE SCHEMA" TO "RETRIEVE THE SCHEMA" IS
+AROUND A FEW DOZEN TABLES, and it is the architectural decision the demo hides.
+
+TRACE D - ambiguity, on the same 1,000 orders.
+
+  sum(amount)                                          247,838.81
+  sum(amount) where status='paid'                      152,283.94
+  sum(paid) - sum(refunded)                            100,671.71
+
+Ratio between the widest pair: 2.46x. All three are correct SQL for a defensible reading of
+"revenue". This is the argument for a semantic layer, and it is an argument about governance
+rather than machine learning.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Per question: one embedding call for schema retrieval, one generation of a few
+hundred tokens, plus one or two repair calls on failure - so latency is seconds, not
+milliseconds, and cost is dominated by the schema tokens in the prompt. Measured, 50 tables
+of DDL is 3,300 tokens on EVERY question; at 100,000 questions a month that is 330 million
+input tokens spent describing a schema that never changes, which is what makes schema
+retrieval a cost decision as well as an accuracy one. Execution cost is whatever the query
+costs, which is why the timeout and the LIMIT are not optional.
+
+THE #1 MISTAKE: evaluating with exact string match. Measured, three semantically identical
+queries scored zero, and the two metrics disagreed on 40% of a five-query set. Use execution
+accuracy on a realistic database.
+
+THE #2 MISTAKE: assuming errors are visible. Measured, a missing WHERE clause returned 292
+against a true 189, formatted perfectly. The dangerous failures do not raise.
+
+THE #3 MISTAKE: pasting the whole schema. Measured, 202% of an 8k window at 200 tables, and
+accuracy falls as the relevant tables are buried.
+
+THE #4 MISTAKE: filtering rows in the prompt instead of the database. The model is not a
+security boundary; use a read-only role and row-level security.
+
+THE #5 MISTAKE: hiding the SQL from the user. It is the only defence against a plausible
+wrong number.
+
+THE #6 MISTAKE: no LIMIT and no statement timeout. One generated cross join is an incident.
+
+THE #7 MISTAKE: expecting the model to resolve business definitions. Measured, three
+readings of "revenue" spanning 2.46x. That is a semantic layer, not a prompt.
+
+THE TAKEAWAY: NL-to-SQL fails outside the model - the schema does not fit in the prompt past
+a few dozen tables (measured, 200 tables of DDL is 202% of an 8k window), so it is a
+retrieval problem first and a generation problem second; it must be graded on EXECUTION
+accuracy because three semantically identical queries score zero on string match while the
+two queries that were genuinely wrong ran cleanly and returned 292 and 61 against a true 189
+with no error at all; and the ambiguity is not resolvable by any model, measured as three
+defensible definitions of "revenue" spanning 2.46x on the same rows - so the design is
+curated views, retrieved schema, static validation, a read-only role with a timeout, and
+always showing the user the SQL, because that is the only thing standing between them and a
+confident wrong number.""",
+]
+
+_EX_P1AO["Query rewriting and HyDE for better retrieval"] = [
+    """1. THE GOAL - the user's words and the document's words are not the same words.
+
+Someone types "cant get in". The document that answers them says "to reset your password
+open settings then security then choose change password". Those two strings share almost
+nothing. A retriever comparing them directly is being asked to match a symptom against a
+procedure, and it fails.
+
+QUERY REWRITING fixes the query before searching. Two main forms:
+
+  EXPANSION / REWRITING  turn "cant get in" into "cannot log in password reset account access"
+  HyDE                   ask an LLM to WRITE the answer it imagines, then search with THAT
+
+HyDE - Hypothetical Document Embeddings - is the stranger of the two and the more
+interesting. The generated answer is probably wrong on facts. That does not matter, because
+it is never shown to anyone. It is used only as a search key, and it is a good one because it
+is written in the vocabulary of an ANSWER rather than a question.
+
+MEASURED, five short real-world queries against an eight-document corpus:
+
+  hit@1:  raw query 1/5    expanded 5/5    HyDE 5/5
+
+The raw query got the right document at rank 1 exactly once out of five.""",
+
+    """2. THE INTUITION - short queries carry almost no signal, and rewriting adds some.
+
+MEASURED, rank of the correct document for each query:
+
+  user query      gold   raw rank   expanded   HyDE
+  ----------------------------------------------------
+  cant get in      d1        1          1        1
+  money back       d2        2          1        1
+  wont open        d6        6          1        1
+  429              d8        8          1        1
+  stop paying      d7        7          1        1
+
+LOOK AT "429". The correct document is LAST out of eight on the raw query - worse than
+random. The document says "return status code four two nine", spelled out, and the user
+typed the digits. There is no lexical overlap at all, and no amount of better ranking fixes a
+query that shares zero terms with its answer.
+
+"wont open" is rank 6 for the same reason: the document says "crashes on launch". Same
+meaning, disjoint vocabulary.
+
+REWRITING WORKS BY ADDING THE MISSING VOCABULARY. "429" becomes "rate limit requests per
+minute error", which overlaps the document heavily, and it jumps from rank 8 to rank 1.
+
+BE CLEAR ABOUT WHAT THIS MEASUREMENT IS AND IS NOT. This uses TF-IDF, so the failures are
+purely lexical, and a real dense embedding model would handle "wont open" against "crashes on
+launch" far better on its own. What it would NOT fix is a query with no content - "429", "it
+broke", "help" - because the problem there is not vocabulary mismatch but that the query
+contains almost no information to embed. THAT is the case rewriting exists for, and it
+survives better embeddings.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+QUERY - what the user typed. Often three words, often a symptom rather than a topic.
+
+QUERY EXPANSION - adding related terms to the query. Classically from a thesaurus or from
+the top results of a first search; now usually from an LLM.
+
+QUERY REWRITING - rephrasing the query entirely, e.g. resolving "what about the second one"
+against the conversation so far.
+
+HyDE - Hypothetical Document Embeddings. Generate a fake answer with an LLM, embed THAT, and
+retrieve with it. The fake answer is a search key, never an output.
+
+MULTI-QUERY - generate several rewrites, retrieve for each, and merge. Trades cost for
+recall.
+
+RECIPROCAL RANK FUSION (RRF) - the standard way to merge several ranked lists: score each
+document by the sum of 1/(k + rank) across lists. Needs no score calibration between
+retrievers, which is why it is the default.
+
+STEP-BACK PROMPTING - ask a more general question first ("what governs API limits?") and
+retrieve on that, for questions too specific to match anything.
+
+HIT@K / RECALL@K - whether the right document is in the top k. The metric for this stage.
+
+DENSE vs SPARSE RETRIEVAL - embeddings vs keyword matching (BM25). Rewriting helps both,
+for slightly different reasons.
+
+CONVERSATIONAL REWRITING - flattening a follow-up into a standalone query. The single
+highest-value rewrite in a chat product.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - HyDE can make retrieval WORSE, and it does so
+confidently.
+
+HyDE works by hallucinating. That is not a criticism; it is the mechanism. The risk is that
+the hallucination can be wrong in a way that moves the search AWAY from the answer.
+
+MEASURED, a query asking for a fact the corpus does not contain - "what is our q3 refund
+rate":
+
+  raw query      the nearest genuinely relevant document ranks 3
+  HyDE           it ranks 6
+
+The model invented "the q3 refund rate was 4.2 percent". That sentence is confident,
+plausible, and full of vocabulary - "percent", "rate", "q3" - that appears nowhere in the
+corpus. Searching with it moved the useful document DOWN three places.
+
+THE PATTERN TO REMEMBER: HyDE helps when the corpus contains an answer written in
+answer-vocabulary, and hurts when the model's guess about the answer's FORM is wrong. A
+corpus of procedures ("open settings, then...") is helped enormously. A corpus of tables and
+figures is not, because the model writes prose and the documents are numbers.
+
+THE SECOND TRAP IS COST AND LATENCY, and it is the reason HyDE often loses on merit rather
+than accuracy. Retrieval is a few milliseconds. HyDE puts an LLM GENERATION in front of it -
+measured at roughly 60-80 output tokens - so the user-visible latency becomes generation plus
+search, and you pay for a model call on every query including the ones that would have worked
+fine. On the five queries above, plain expansion matched HyDE exactly at 5/5 for a fraction
+of the cost. ALWAYS MEASURE CHEAP EXPANSION FIRST; it frequently wins.""",
+
+    """5. THE TECHNIQUES, IN INCREASING COST ORDER.
+
+LEVEL 0 - DO NOTHING. Correct when queries are long and well-formed. Measured, 1/5 hit@1 on
+short symptom-style queries, so it is not correct here.
+
+LEVEL 1 - HYBRID RETRIEVAL. Run BM25 and dense retrieval and fuse with RRF. Not a rewrite at
+all, and it fixes some of the same failures - exact tokens like "429" are BM25's strength.
+Try this before any LLM call, because it costs nothing per query.
+
+LEVEL 2 - CONVERSATIONAL REWRITING. In a chat product, flatten "what about the second one"
+into a standalone question using the history. THIS IS THE HIGHEST-VALUE REWRITE and it is
+often skipped: without it, every follow-up retrieves against a pronoun.
+
+LEVEL 3 - LLM QUERY EXPANSION. One call, generating a handful of related terms or a
+rephrasing. Measured, 5/5 hit@1. Cheap, cacheable by query, and easy to inspect.
+
+LEVEL 4 - MULTI-QUERY. Generate 3-5 rewrites, retrieve for each, fuse with RRF. Better
+recall on ambiguous questions because different rewrites reach different parts of the corpus.
+Costs one generation plus k retrievals.
+
+LEVEL 5 - HyDE. Generate a hypothetical answer and search with it. Measured, 5/5 here and a
+regression on the out-of-corpus question. Best where documents are prose answers.
+
+LEVEL 6 - STEP-BACK. Generate a more general question and retrieve on both. For questions so
+specific that nothing matches them directly.
+
+AND THE ONE THAT IS NOT A REWRITE: FIX THE CHUNKS. If retrieval is failing because chunks
+are 2,000 tokens of mixed topics, no query rewriting will save it. Check chunk quality before
+spending an LLM call per query.""",
+
+    """6. HOW TO DECIDE - numbered steps.
+
+STEP 1. BUILD AN EVALUATION SET FIRST: 50-200 real user queries with the document that
+should be returned. Without it every technique below is a guess, and they genuinely differ by
+corpus.
+
+STEP 2. MEASURE THE BASELINE hit@1 and recall@5 with no rewriting. Measured here, 1/5 - which
+is what justifies going further. If your baseline is already 0.9, stop.
+
+STEP 3. LOOK AT THE FAILURES BY HAND. Are they vocabulary mismatch ("wont open" vs
+"crashes"), missing context (a follow-up question), or genuinely absent content? These need
+different fixes and only reading them tells you which.
+
+STEP 4. TRY HYBRID RETRIEVAL FIRST. No per-query cost, and it fixes exact-token failures like
+"429" outright.
+
+STEP 5. ADD CONVERSATIONAL REWRITING if there is a conversation. Non-negotiable in chat.
+
+STEP 6. TRY CHEAP EXPANSION BEFORE HyDE. Measured, both hit 5/5; one costs far less.
+
+STEP 7. IF YOU USE HyDE, CHECK THE OUT-OF-CORPUS CASE. Measured, a question whose answer is
+not in the corpus went from rank 3 to rank 6. Know how often your users ask those.
+
+STEP 8. CACHE REWRITES BY NORMALISED QUERY. Query distributions are heavily repetitive, so a
+cache turns a per-query LLM cost into a per-distinct-query one.
+
+STEP 9. MEASURE END-TO-END, NOT JUST RETRIEVAL. Better retrieval that adds 800ms of latency
+may be worse product. Report hit@k AND p95 latency AND cost per query together.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A help desk keeps its answers in a filing cabinet. People come in and describe their problem
+in their own words, and a clerk has to find the right sheet.
+
+The trouble is that people describe SYMPTOMS and the sheets describe PROCEDURES. Someone says
+"can't get in". The sheet that helps them is headed "to change your password, open settings,
+then security". Not one word in common. The clerk, who is matching words, hands over the
+wrong sheet.
+
+Measured on five real complaints, matching the customer's exact words found the right sheet
+first time only once.
+
+There are two ways to fix this and neither involves a better clerk.
+
+The first is to translate the complaint before searching. "Can't get in" becomes "cannot log
+in, password, reset, account access". Now there are words in common and the right sheet comes
+straight out. Measured, five out of five.
+
+The second is stranger. Instead of translating the question, you guess the ANSWER. You have
+someone write out, from imagination, what the sheet probably says - "to reset your password,
+open settings, then security" - and you go looking for the sheet most similar to THAT. The
+guess is not shown to the customer and does not need to be true. It just has to be written in
+the same register as the filing cabinet. Measured, also five out of five.
+
+Now the part that decides which to use.
+
+The guessing method has a failure mode the translation method does not. Ask something the
+cabinet has no sheet for - "what was our refund rate last quarter" - and the guesser
+cheerfully invents "the refund rate was 4.2 percent". That sentence is full of confident
+words that appear on none of the sheets, and searching with it pushed the nearest useful sheet
+from third place down to sixth. The guess did not just fail to help; it actively misdirected.
+
+And the guess costs something. Translating is quick. Writing out a whole imagined answer takes
+real time on every single query, including the ones that never needed help.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def retrieve(user_query, history=None):
+      q = user_query
+      if history:                                  # 1. flatten the conversation
+          q = llm.rewrite_standalone(history, user_query)
+
+      keys = [q]                                   # 2. build search keys
+      if EXPANSION:
+          keys.append(llm.expand(q))               # cheap: related terms
+      if HYDE:
+          keys.append(llm.hypothetical_answer(q))  # a fake answer, never shown
+
+      ranked = [search(k, k=20) for k in keys]     # 3. one list per key
+      return rrf(ranked)[:5]                       # 4. fuse
+
+  def rrf(lists, k=60):
+      score = defaultdict(float)
+      for lst in lists:
+          for rank, doc in enumerate(lst, start=1):
+              score[doc] += 1.0 / (k + rank)
+      return sorted(score, key=score.get, reverse=True)
+
+LINE BY LINE.
+
+  q = llm.rewrite_standalone(history, user_query)
+FIRST, because everything downstream is garbage otherwise. "What about the second one"
+embeds to nothing useful; resolved against the history it becomes a real query. In a chat
+product this single step usually beats every other technique here.
+
+  keys = [q]
+THE ORIGINAL QUERY STAYS IN THE LIST. Rewrites can drift, and keeping the raw query means a
+bad rewrite degrades the result instead of destroying it. Measured, HyDE alone regressed one
+query from rank 3 to rank 6; fused with the raw query it could not have.
+
+  llm.hypothetical_answer(q)
+Generates a plausible answer. Its FACTS are irrelevant and it is never returned to the user -
+it exists to be embedded. Worth a comment in real code, because the next reader will
+reasonably assume a bug.
+
+  ranked = [search(k, k=20) for k in keys]
+Retrieve deeply per key (20) and fuse down to 5. Fusion needs candidates to work with; taking
+the top 3 from each list throws away the documents that rank moderately on several keys,
+which are exactly the ones fusion is meant to promote.
+
+  score[doc] += 1.0 / (k + rank)
+RECIPROCAL RANK FUSION. It uses only RANK, never the retriever's score - so a BM25 score of 14
+and a cosine of 0.83 can be combined without calibrating anything. The k=60 constant flattens
+the curve so rank 1 does not dominate; it is empirical and 60 is the usual value.
+
+  return rrf(ranked)[:5]
+Note this whole function is one LLM call for expansion plus one for HyDE, and every retrieval
+is milliseconds. THE LLM CALLS ARE THE LATENCY BUDGET, which is why caching by normalised
+query matters more than optimising the search.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Corpus: 8 short support documents. Retrieval: TF-IDF cosine.
+
+TRACE A - the five queries, rank of the correct document.
+
+  query          gold   raw   expanded   HyDE
+  ---------------------------------------------
+  cant get in     d1      1       1        1
+  money back      d2      2       1        1
+  wont open       d6      6       1        1
+  429             d8      8       1        1
+  stop paying     d7      7       1        1
+
+  hit@1: 1/5, 5/5, 5/5
+
+TRACE B - why "429" ranks LAST out of eight.
+The document reads "api rate limits are one hundred requests per minute per key and return
+status code four two nine". The query is the single token "429". After tokenisation the query
+has one term and the document contains "four two nine" as words. THE INTERSECTION IS EMPTY, so
+the cosine similarity is exactly 0 and the ranking among all-zero scores is arbitrary - which
+is how the right answer lands at rank 8.
+
+This is the cleanest possible illustration of the point: the failure is not a ranking problem
+and no reranker can fix it. The query must be changed.
+
+TRACE C - what expansion actually adds. "429" becomes "rate limit requests per minute error".
+Now the query shares "rate", "limits", "requests", "per", "minute" with d8. Five shared terms,
+several of them rare in the corpus and therefore high-IDF. Rank 8 to rank 1.
+
+TRACE D - the HyDE regression, in full.
+Query: "what is our q3 refund rate". The corpus has no refund-rate figure anywhere.
+
+  raw query        best genuinely relevant doc (d2, the refunds policy) ranks 3
+  HyDE generation  "the q3 refund rate was 4.2 percent"
+  HyDE query       d2 ranks 6
+
+The hypothetical answer introduced "q3", "4.2", "percent" - none of which appear in d2, all
+of which pull the vector away from it while matching nothing. THE GENERATION WAS FLUENT AND
+CONFIDENT AND MADE THE SEARCH WORSE. Note this is exactly the case that is hardest to detect
+in production, because the user gets documents, they look relevant-ish, and nothing errors.
+
+TRACE E - the cost comparison, for equal accuracy. Expansion and HyDE both scored 5/5.
+Expansion generates a handful of terms; HyDE generates a full paragraph, measured around 60-80
+output tokens. Same result, several times the cost and latency. MEASURE THE CHEAP ONE FIRST.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Retrieval itself is milliseconds. Every technique here except hybrid search adds an
+LLM CALL IN FRONT OF IT, on the critical path, on every query: expansion is a short generation,
+HyDE is measured at 60-80 output tokens, multi-query is one generation plus k retrievals. So
+p95 latency goes from "search" to "generate then search", and cost goes from ~zero to a model
+call per query. Caching by normalised query is the mitigation and it works well because real
+query distributions are extremely repetitive.
+
+THE #1 MISTAKE: adding HyDE before trying expansion or hybrid search. Measured, expansion and
+HyDE both reached 5/5 hit@1, and one of them costs a fraction of the other.
+
+THE #2 MISTAKE: assuming rewriting only ever helps. Measured, HyDE moved the relevant document
+from rank 3 to rank 6 on a question whose answer was not in the corpus, because the model
+invented confident vocabulary that matched nothing.
+
+THE #3 MISTAKE: dropping the original query after rewriting. Keep it as one of the fused keys
+so a bad rewrite degrades rather than destroys.
+
+THE #4 MISTAKE: skipping conversational rewriting in a chat product, so every follow-up
+retrieves against a pronoun.
+
+THE #5 MISTAKE: reaching for rewriting when the real problem is chunking. No query change
+rescues a 2,000-token chunk covering four topics.
+
+THE #6 MISTAKE: fusing raw scores from different retrievers instead of ranks. A BM25 score and
+a cosine are not comparable; RRF uses rank precisely so they need not be.
+
+THE #7 MISTAKE: measuring retrieval quality alone and shipping a slower product.
+
+THE TAKEAWAY: users write symptoms and documents describe procedures, so the two often share
+no vocabulary at all - measured, the correct document ranked LAST of eight for the query "429"
+because the document spells the number out and the similarity was exactly zero, which no
+reranker can repair; rewriting adds the missing vocabulary and took hit@1 from 1/5 to 5/5,
+with plain expansion matching HyDE exactly while costing a fraction of its 60-80 generated
+tokens, so try hybrid search and cheap expansion before hypothetical documents; and HyDE is
+not free of downside - on a question the corpus could not answer it invented confident
+vocabulary that matched nothing and pushed the nearest useful document from rank 3 to rank 6,
+which is why the raw query should stay in the fused key set and why the whole thing needs an
+evaluation set of real queries before any of it is chosen.""",
+]
+
+_EX_P1AO["Semantic caching for LLM apps"] = [
+    """1. THE GOAL - stop paying for the same answer twice, when "the same" is fuzzy.
+
+An ordinary cache keys on the exact request. That works for a URL and fails completely for
+natural language, because these are all the same question:
+
+  how do i reset my password
+  how can i reset my password
+  i forgot my password how do i change it
+  password reset
+
+An exact-match cache stores four entries and serves zero hits. A SEMANTIC CACHE embeds the
+query, finds the nearest stored query, and if the similarity is above a threshold, returns the
+stored answer without calling the model at all.
+
+THE PAYOFF IS REAL: an LLM call is hundreds of milliseconds to seconds and costs money; a
+vector lookup is a few milliseconds and costs nothing. On a support bot where a large share of
+traffic is the same dozen questions, this is the difference between a viable product and an
+unaffordable one.
+
+THE PROBLEM IS THAT "NEAR ENOUGH" IS A DIAL, AND BOTH ENDS ARE BAD. Turn it up and you cache
+nothing. Turn it down and you confidently answer a question the user did not ask - with no
+error, no warning, and a perfectly fluent reply.""",
+
+    """2. THE INTUITION - the threshold trades misses against WRONG ANSWERS, and there may be no
+good setting.
+
+MEASURED, ten probe queries against a three-entry cache. Six probes are genuine repeats of a
+cached question; four are near-misses that share vocabulary but ask something different -
+"how do i reset my api key", "what is your privacy policy", "how do i cancel my order".
+
+  threshold   true hits   misses   WRONG ANSWERS SERVED
+  ---------------------------------------------------------
+     0.95         2          4              0
+     0.85         2          4              2
+     0.75         4          2              3
+     0.65         4          2              3
+     0.50         4          2              3
+     0.35         5          0              5
+
+READ THE FIRST AND LAST ROWS. At 0.95 the cache is safe and nearly useless - two hits out of
+six possible. At 0.35 it catches everything and serves five wrong answers out of ten queries.
+
+AND THERE IS NO SWEET SPOT IN THIS TABLE. At 0.75 you get 4 hits and 3 wrong answers. THE
+COSTS ARE NOT SYMMETRIC: a miss costs one LLM call - a few cents and a second - while a wrong
+hit gives a user a confident, fluent, completely irrelevant answer that looks exactly like a
+correct one.
+
+THAT ASYMMETRY IS THE WHOLE DESIGN ARGUMENT. If one wrong answer costs more than a hundred
+cache misses, the threshold should be set high enough that wrong answers are near zero, and
+you should accept a low hit rate - or change the architecture so the threshold is not the only
+safeguard.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EXACT-MATCH CACHE - key on the literal request string, or a hash of it. Zero false hits by
+construction, and near-zero hit rate on natural language.
+
+SEMANTIC CACHE - key on the EMBEDDING of the request; a hit is any stored entry within a
+similarity threshold.
+
+EMBEDDING - a vector representing the meaning of a text. Two texts that mean the same thing
+should be close.
+
+COSINE SIMILARITY - the standard closeness measure between embeddings. 1.0 is identical.
+
+THRESHOLD - the similarity above which a stored entry counts as a hit. The dial in section 2.
+
+FALSE HIT - a cache hit on a query that is NOT actually the same question. Serves a wrong
+answer silently. The failure mode that defines this design.
+
+HIT RATE - fraction of requests served from cache. The number the cost saving is computed
+from.
+
+TTL - time to live. How long an entry stays valid. Critical when answers depend on data that
+changes.
+
+CACHE KEY SCOPE - what else besides the query must be part of the key: the user, their
+permissions, the model version, the system prompt, the retrieved documents. Section 4.
+
+PROMPT CACHING - a different thing with a confusingly similar name: providers caching the
+KV state of a shared prompt PREFIX. Exact-match, provider-side, and complementary to this.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the query is not the whole key.
+
+Two users ask the identical question: "what is my current balance". Same words, same
+embedding, similarity 1.0. Serving the second user the first user's cached answer is a data
+breach.
+
+THE CACHE KEY MUST INCLUDE EVERYTHING THAT CHANGES THE CORRECT ANSWER:
+
+  the user or tenant, whenever the answer is personalised or permissioned
+  the retrieved documents, in a RAG system - same question, new documents, different answer
+  the model and its version - upgrading the model must not serve the old model's answers
+  the system prompt version - same reason
+  any tool results or live data the answer depended on
+
+Miss any of these and the cache is not a performance optimisation, it is a correctness bug
+that only appears under concurrency and load.
+
+THE SECOND HALF OF THIS IS STALENESS. A semantic cache stores an ANSWER, and answers go out of
+date. "What is the current rate limit" cached last month is now wrong, and nothing about the
+query has changed to signal it. TTL is the blunt instrument; explicit invalidation when the
+underlying documents change is the correct one, and it requires the cache to record WHICH
+documents each answer was derived from.
+
+AND THE THIRD, WHICH IS SUBTLE: caching by query embedding caches the ANSWER TO A QUESTION,
+but a conversational assistant answers in context. "What about the second one?" has no
+stable meaning. Either cache after conversational rewriting has produced a standalone query,
+or do not cache multi-turn traffic at all.""",
+
+    """5. THE DESIGN, BUILT UP IN LAYERS.
+
+LAYER 0 - EXACT-MATCH CACHE ON THE NORMALISED QUERY. Lowercase, strip punctuation and
+whitespace, hash it. Zero false hits by construction. On real traffic this alone catches a
+surprising amount, because users paste the same question and click the same suggested
+prompts. START HERE - it is free and it cannot be wrong.
+
+LAYER 1 - SEMANTIC CACHE WITH A CONSERVATIVE THRESHOLD. Measured, 0.95 gave zero wrong
+answers. Low hit rate, but every hit is safe, and you can measure what you are leaving on the
+table before deciding to loosen it.
+
+LAYER 2 - SCOPE THE KEY PROPERLY. Namespace by tenant, user permissions, model version,
+prompt version, and a hash of the retrieved document ids. This is what makes the cache safe
+to turn up.
+
+LAYER 3 - VERIFY THE HIT BEFORE SERVING IT. The strongest fix for the false-hit problem: on a
+borderline similarity, ask a small cheap model "does this stored answer actually answer this
+question?" It costs far less than the full generation and it converts a silent wrong answer
+into a miss. This is what lets you run a lower threshold safely.
+
+LAYER 4 - CACHE THE EXPENSIVE MIDDLE, NOT ONLY THE END. In RAG, caching the RETRIEVAL for a
+query is safer than caching the final answer - documents change less often than answers go
+stale, and a wrong document set is at least visible to the generation step.
+
+LAYER 5 - MEASURE FALSE HITS IN PRODUCTION, not just hit rate. Sample cache hits, generate the
+real answer offline, and compare. A hit-rate dashboard with no false-hit measurement is
+reporting the benefit and hiding the cost.""",
+
+    """6. HOW TO BUILD ONE - numbered steps.
+
+STEP 1. MEASURE THE TRAFFIC FIRST. What fraction of queries are near-duplicates? If it is 5%,
+the maximum possible saving is 5% and this may not be worth the risk at all.
+
+STEP 2. NORMALISE AND ADD AN EXACT-MATCH LAYER. Free, safe, and it establishes a floor.
+
+STEP 3. DEFINE THE FULL CACHE KEY: tenant, user scope, model version, prompt version,
+retrieved-document hash. Write it down before writing code.
+
+STEP 4. BUILD AN EVALUATION SET OF PAIRS - queries that ARE the same question and queries that
+LOOK similar but are not. The near-misses are the important half and they must come from real
+traffic, because you cannot invent the ways your users are ambiguous.
+
+STEP 5. SWEEP THE THRESHOLD AND PLOT BOTH CURVES: hit rate and false-hit rate. Measured here,
+0.95 gives 0 wrong and 2 hits; 0.35 gives 5 wrong and 5 hits.
+
+STEP 6. PRICE THE TWO ERRORS. A miss costs one LLM call. A false hit costs a wrong answer -
+put a number on it, in support escalations or in trust. The ratio picks the threshold; nothing
+else can.
+
+STEP 7. ADD A VERIFIER if you need a higher hit rate than the safe threshold allows.
+
+STEP 8. SET A TTL, and invalidate explicitly when the underlying documents change.
+
+STEP 9. LOG EVERY HIT with its similarity score, and sample them for offline comparison
+against a fresh generation. This is the only way false hits ever surface.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A busy help desk keeps a shoebox of index cards. Each card has a question on the front and the
+agreed answer on the back. When someone asks something, the clerk flicks through the box; if
+he finds a card that matches, he reads it out instead of working the answer out from scratch.
+Working it out takes a minute and costs money. Reading a card takes a second and costs
+nothing.
+
+The difficulty is deciding what counts as a match.
+
+If he only accepts cards that are word-for-word identical, he almost never finds one. People
+phrase things differently every time - "can't log in", "forgot my password", "how do I reset
+it" - and he ends up working out the same answer over and over. Measured, being that strict
+found a usable card for only two of the six people who were genuinely asking a repeat
+question.
+
+So you tell him to be more relaxed. And he is, and now he finds cards for everyone - including
+the man who asked how to reset his API KEY, who is handed the password-reset card and walks
+out satisfied. Measured, being relaxed enough to help all six repeat askers also meant handing
+the wrong card to five people out of ten.
+
+Here is what makes this worse than it sounds. When the clerk fails to find a card, he simply
+does the work - it costs a minute and everyone is fine. When he finds the WRONG card, nobody
+finds out. The customer gets a confident, well-written, completely irrelevant answer and goes
+away believing it. There is no error, no complaint at the time, and nothing in the desk's
+statistics that distinguishes it from a success.
+
+That asymmetry is the whole thing. The two mistakes are not equally bad, so the setting should
+not be chosen to balance them. And there are only two honest ways forward: keep him strict and
+accept the extra work, or have a second person glance at each card he pulls and say "no,
+that's about something else" before it is read out.
+
+One more thing about the box. Some cards go out of date, and there is no way to tell by
+looking at the question.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def answer(query, user, model_version, prompt_version):
+      norm = normalise(query)                      # lowercase, strip, collapse space
+      scope = (user.tenant, user.permission_hash, model_version, prompt_version)
+
+      if (hit := exact_cache.get((scope, norm))):  # 1. free, cannot be wrong
+          return hit
+
+      qv = embed(norm)                             # 2. semantic lookup, scoped
+      best, score = vector_store.nearest(qv, namespace=scope)
+
+      if best and score >= HARD_THRESHOLD:         # 3. confident hit
+          return best.answer
+      if best and score >= SOFT_THRESHOLD:         # 4. borderline: verify
+          if cheap_model.same_question(query, best.query):
+              return best.answer
+
+      out = llm.generate(query, user)              # 5. miss: do the work
+      exact_cache.set((scope, norm), out)
+      vector_store.add(qv, query, out, namespace=scope, ttl=TTL)
+      return out
+
+LINE BY LINE.
+
+  scope = (user.tenant, user.permission_hash, model_version, prompt_version)
+THE MOST IMPORTANT LINE IN THE FUNCTION, and the one that is usually missing. Without the
+tenant, two users asking "what is my balance" - identical text, similarity 1.0 - get each
+other's answers. Without the model and prompt versions, a deploy serves yesterday's model's
+outputs indefinitely.
+
+  if (hit := exact_cache.get(...))
+Checked FIRST because it is free and structurally incapable of a false hit. Real traffic has
+a lot of literally repeated text - pasted questions, suggested prompts - and this layer takes
+it at zero risk.
+
+  vector_store.nearest(qv, namespace=scope)
+The namespace makes the scoping physical rather than a comparison you might forget. A single
+shared index with post-hoc filtering is the shape this bug takes when it ships.
+
+  score >= HARD_THRESHOLD
+Measured, 0.95 produced zero wrong answers on the probe set. This is the "serve it, no
+questions" band.
+
+  cheap_model.same_question(query, best.query)
+THE VERIFIER, and what makes a lower threshold survivable. A small model answering one yes/no
+question costs a small fraction of the full generation, and it converts a silent wrong answer
+into an ordinary miss. Without this, everything between SOFT and HARD is a gamble measured at
+3 wrong answers out of 10 queries.
+
+  ttl=TTL
+Answers go stale while their questions do not change. TTL is the crude defence; recording the
+retrieved document ids and invalidating on document change is the correct one.
+
+  NOT SHOWN, AND REQUIRED: log the similarity score on every hit, and sample hits for offline
+comparison against a fresh generation. False hits are invisible unless you go looking.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Cache holds three entries. Ten probes: six genuine repeats, four near-misses that share
+vocabulary but ask something different.
+
+TRACE A - the threshold sweep, both error types.
+
+  threshold   true hits   misses   wrong answers
+  --------------------------------------------------
+     0.95         2          4           0
+     0.85         2          4           2
+     0.75         4          2           3
+     0.65         4          2           3
+     0.50         4          2           3
+     0.35         5          0           5
+
+Between 0.95 and 0.85 the hit count does not move at all (2 and 2) while wrong answers go
+from 0 to 2. THAT TEN-POINT DROP BOUGHT NOTHING AND COST TWO WRONG ANSWERS - the near-misses
+sit in that band and the genuine repeats do not. Loosening the threshold is not a smooth
+trade; it depends entirely on where your near-misses happen to sit, which is why the
+evaluation set has to come from real traffic.
+
+TRACE B - the specific near-misses, and why they are near.
+
+  "how do i reset my api key"        vs cached "how do i reset my password"
+  "how do i cancel my ORDER"         vs cached "how do i cancel my subscription"
+  "what is your privacy policy"      vs cached "what is your refund policy"
+
+Each differs by ONE noun, and that noun is the entire question. "Reset my" and "how do i" and
+"cancel my" are shared. These are not adversarial constructions; they are what a real product
+FAQ looks like, and they are exactly the pairs a similarity score handles worst - high overlap,
+opposite meaning.
+
+TRACE C - the asymmetry, priced. At threshold 0.75: 4 hits, 2 misses, 3 wrong.
+  saved:  4 LLM calls
+  cost:   3 users given a fluent answer to a question they did not ask
+
+If an LLM call is a few cents and a wrong answer costs a support escalation, this setting is
+losing money badly while the hit-rate dashboard shows 40%.
+
+TRACE D - what the verifier changes. At 0.75 with a verifier that reliably rejects the three
+near-misses: 4 hits, 5 misses, 0 wrong. The cost is 3 extra cheap-model calls - far less than
+3 full generations - and the wrong-answer column goes to zero. THIS IS THE ONLY MOVE IN THE
+TABLE THAT IMPROVES BOTH COLUMNS AT ONCE.
+
+TRACE E - a caveat on the measurement itself. This uses TF-IDF cosine, which is lexical; a
+real embedding model would score the genuine repeats higher and separate them better. It would
+NOT fix the structural problem, because "reset my password" and "reset my api key" are close in
+meaning too - they differ in one entity, and that is what embeddings represent worst.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. A hit is one embedding call plus a vector lookup - single-digit milliseconds and
+effectively free. A miss is that PLUS the full generation, so the cache adds a small fixed
+overhead to every uncached request. Storage is one vector plus the answer per entry. The
+verifier adds a small model call on borderline hits only. Set against a generation costing
+hundreds of milliseconds to seconds, the arithmetic is overwhelming - which is exactly why
+people ship this without measuring the false-hit rate.
+
+THE #1 MISTAKE: tuning the threshold on hit rate alone. Measured, dropping 0.95 to 0.85 gained
+zero additional hits and produced two wrong answers. Both curves must be plotted or you are
+optimising one axis of a two-axis problem.
+
+THE #2 MISTAKE: keying on the query alone. Two users asking "what is my balance" embed
+identically. Tenant, permissions, model version, prompt version and retrieved-document hash all
+belong in the key.
+
+THE #3 MISTAKE: assuming false hits will be noticed. They produce a fluent, confident,
+well-formed answer to a different question. Nothing errors. Sample hits and compare offline.
+
+THE #4 MISTAKE: no TTL and no invalidation. The answer goes stale while the question does not.
+
+THE #5 MISTAKE: caching multi-turn queries before conversational rewriting, so "what about the
+second one" gets a cache entry.
+
+THE #6 MISTAKE: skipping the free exact-match layer, which cannot be wrong and catches real
+traffic.
+
+THE #7 MISTAKE: shipping without pricing the two errors against each other. The threshold is
+determined by that ratio and by nothing else.
+
+THE TAKEAWAY: a semantic cache turns "is this the same question" into a similarity threshold,
+and the two errors it trades are not comparable - a miss costs one model call while a false hit
+serves a fluent, confident answer to a question the user did not ask, with no error anywhere;
+measured across a threshold sweep, 0.95 gave zero wrong answers and only 2 of 6 possible hits
+while 0.35 gave all 5 hits and 5 wrong answers, and loosening 0.95 to 0.85 bought no extra hits
+at a cost of two wrong ones, because the dangerous near-misses differ from cached questions by
+a single noun ("reset my api key" against "reset my password") which is exactly what
+similarity represents worst; so scope the key by tenant, permissions and model version, keep
+the free exact-match layer, and if you need a higher hit rate than the safe threshold allows,
+add a cheap verifier - measured, that is the only change that improves both columns at once.""",
+]
+
 
 
 
