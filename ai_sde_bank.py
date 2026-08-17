@@ -312588,6 +312588,1905 @@ you actually care about, with guardrails that must not regress - and the cheapes
 mode, which costs only compute and catches every skew bug before a single user notices.""",
 ]
 
+_EX_P1AO["Why denormalize a database if normalization is the 'correct' design?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - normalisation says "store every fact exactly once". A seller's name
+lives in the `sellers` table and nowhere else, so changing it is one UPDATE and it can never be
+half-changed.
+
+That is unambiguously the correct design for WRITES. The bill arrives on READS: to show a product page
+you now have to reassemble the answer from five tables with a JOIN, every single time, for every
+single visitor.
+
+Denormalisation is the deliberate decision to store a fact more than once - copy the seller's name
+onto every product row, precompute the review average - so the read is one row instead of five joins.
+You buy read speed with write complexity and a standing risk of inconsistency.
+
+MEASURED ON THIS MACHINE - a real SQLite database: 2,000 sellers, 40 categories, 100,000 products,
+400,558 reviews, 100,000 inventory rows, built both ways.
+
+    A CATEGORY LIST PAGE (50 products with seller name, rating and review aggregate)
+        normalised, join + 2 correlated aggregates    284.6 us per page
+        denormalised, one wide table                   94.4 us per page      3.0x faster
+
+    A SELLER RENAME
+        normalised, UPDATE sellers                       5.8 us CPU   (1 row)
+        denormalised, UPDATE product_page              214.6 us CPU   (~50 rows)   36.8x
+
+Three times faster to read, thirty-seven times more expensive to write. That is the whole trade, and
+the useful thing is that it gives you an actual break-even point rather than an opinion.""",
+
+    """2. THE INTUITION - normalisation is a filing cabinet; denormalisation is a printed report.
+
+The cabinet holds each fact on exactly one card. Correcting a fact is one edit and it is instantly
+true everywhere. Answering a question means walking to five drawers and cross-referencing.
+
+The report is a pre-assembled page with everything already on it. Reading is instant. Correcting a
+fact means finding and reprinting every report that mentions it - and until you have finished, some
+reports are lying.
+
+THE ARITHMETIC THAT DECIDES IT, computed from the measurements above:
+
+    read saving per page view      284.6 - 94.4  =  190.2 us
+    extra write cost per rename    214.6 - 5.8   =  208.8 us CPU
+    break-even                     208.8 / 190.2 =  1.10 page views per rename
+
+Above roughly TWO page views per seller rename, denormalising is a net win. Real product catalogues
+see millions of page views per rename, so the answer is not close - it is thousands of times past the
+break-even.
+
+But run the same arithmetic on a table where the ratio is inverted - an audit log, an order-status
+field that changes six times per order, a live inventory count - and the same reasoning says
+"normalise", loudly. It is the SAME calculation with different inputs, which is why "denormalise for
+performance" is not advice; it is a decision that needs two numbers.
+
+THE SECOND INTUITION - the read gain is not uniform, and it grows with how much reassembly the query
+does. MEASURED:
+
+    fetching ONE product page (5-table join, 2 aggregates)      14.2 us -> 8.5 us      1.7x
+    fetching a 50-product LIST page                            284.6 us -> 94.4 us     3.0x
+    fetching a 200-product LIST page                           1179.1 us -> 379.8 us   3.1x
+
+A single row by primary key is barely worth denormalising - the join was already cheap. The gain
+appears when the query touches MANY rows, because the join and the correlated aggregate are paid PER
+ROW. That is why the classic denormalisation targets are list pages, feeds, dashboards and rollups,
+not single-record lookups.""",
+
+    """3. EVERY TERM DEFINED.
+
+NORMALISATION. Organising tables so every fact is stored once, with relationships expressed by foreign
+keys. Formally, a progression of normal forms.
+
+1NF. Atomic values - no lists stuffed into a column.
+2NF. No non-key column depends on only PART of a composite key.
+3NF. No non-key column depends on another non-key column. "The key, the whole key, and nothing but the
+key."
+BCNF and beyond. Stricter still; rarely the deciding factor in practice.
+
+UPDATE ANOMALY. The same fact stored in many rows, so an update that misses some leaves the database
+self-contradictory. MEASURED below at 18,341 disagreeing rows.
+INSERT ANOMALY. You cannot record one fact without inventing another (no seller row until they have a
+product).
+DELETE ANOMALY. Removing one fact destroys an unrelated one (deleting the last order deletes the
+customer).
+
+DENORMALISATION. Deliberately duplicating data to avoid joins on read. Deliberate is the operative
+word - the same shape arrived at by accident is just a bad schema.
+
+THE FORMS IT TAKES:
+    a COPIED COLUMN         `seller_name` on every product row
+    a PRECOMPUTED AGGREGATE `review_count`, `review_avg`
+    a WIDE ROW              every column a page needs, in one table
+    an EMBEDDED DOCUMENT    the whole object graph as one JSON/BSON document
+    a MATERIALISED VIEW     a query result stored as a table and refreshed
+
+MATERIALISED VIEW. Denormalisation the DATABASE maintains for you, on a refresh policy you choose. The
+best first option, because the consistency problem becomes the engine's rather than yours.
+
+WRITE AMPLIFICATION. One logical change becoming many physical writes. MEASURED: one rename touched up
+to 80 rows in this dataset.
+
+FAN-OUT. How many copies a single source fact has. Here, products per seller: 50 on average, 80 worst
+case.
+
+EVENTUAL CONSISTENCY. The copies converge, eventually. The window in between is when your product page
+shows the old seller name.
+
+CDC (change data capture). Streaming the write-ahead log so a consumer can update derived copies.
+The industrial way to keep denormalised copies fresh without embedding the logic in every writer.
+
+READ-HEAVY / WRITE-HEAVY. The ratio that decides everything here. Compute it before arguing.
+
+OLTP vs OLAP. Transaction processing (many small writes, normalise) versus analytics (huge reads,
+denormalise aggressively - star schemas exist for exactly this reason).
+
+WIDE-COLUMN / DOCUMENT STORE. Cassandra, DynamoDB, MongoDB. Joins are absent or expensive by design, so
+denormalisation is not an optimisation there - it is the data model. "Query-first design" means
+building a table per access pattern.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the inconsistency is not hypothetical, and it appears the
+moment you have two writes without one transaction.
+
+MEASURED, after this session updated `sellers` and `product_page` through separate statements:
+
+    rows where the denormalised copy disagrees with the source of truth:   18,341
+
+Eighteen thousand product pages showing a seller name that is no longer the seller's name. Nothing
+errored. Every query succeeded. There is no constraint that can catch this, because a copied column is
+just a column - the database has no idea it is supposed to equal something else.
+
+That is the whole cost, stated concretely: you have taken on a consistency invariant that the database
+was previously enforcing for you, and you now have to enforce it yourself, in every code path that
+writes, forever - including the ones written next year by someone who does not know the copy exists.
+
+THE SECOND TRAP - measuring the write cost with WALL CLOCK and concluding it is free. My first
+measurement said exactly that:
+
+    normalised seller rename    9.72 ms wall
+    denormalised seller rename  9.50 ms wall     "1.0x - denormalising costs nothing!"
+
+Both numbers are dominated by the COMMIT - the fsync at the end - which is the same whether you
+updated one row or fifty. Measuring CPU instead, over 200 renames in one transaction:
+
+    normalised     5.8 us CPU
+    denormalised 214.6 us CPU     36.8x
+
+Same operation, two conclusions, and the first one is an artefact of the benchmark. If you are going
+to justify a schema decision with numbers, make sure the number you measured is the one that scales.
+
+THE THIRD TRAP - denormalising the wrong query. MEASURED, the gain by query shape:
+
+    one product by primary key      1.7x
+    a 50-row list page              3.0x
+    a 200-row list page             3.1x
+
+Denormalising to speed up a primary-key lookup buys 1.7x and costs you 36.8x on writes plus a
+permanent consistency obligation. Profile first; the join you assumed was expensive may already be
+answered from an index. In the measured plan, the normalised single-page query was five
+`SEARCH ... USING INTEGER PRIMARY KEY` steps plus two indexed subqueries - all seeks, no scans. There
+was very little to win.
+
+THE FOURTH TRAP - forgetting that the fan-out is not uniform. Average products per seller was 50; the
+largest seller had 80. In a real catalogue that distribution is Zipf, so ONE seller may own hundreds of
+thousands of rows, and their rename is not a 214-microsecond operation - it is a background job with a
+progress bar. Denormalisation converts a constant-time write into a write whose cost depends on the
+fan-out of the specific row you touched.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - things to try before duplicating data, and how to keep the
+copies honest when you do.
+
+BEFORE YOU DENORMALISE, in order:
+    1. FIX THE INDEX. See the query-plan entry: 42.9 ms to 42 us from one composite index, measured.
+       Most "the joins are slow" complaints are one missing index, and an index costs you no
+       consistency risk at all.
+    2. CHECK THE PLAN. A join over indexed foreign keys is a seek, not a scan. Measured here: the
+       5-table product-page join ran entirely on primary-key seeks and denormalising it bought 1.7x.
+    3. CACHE THE RENDERED RESULT. Redis in front of the query gives you the read speed with an
+       explicit, bounded staleness window and a TTL you control - and you can delete the cache. You
+       cannot un-denormalise a schema on a Tuesday afternoon.
+    4. A COVERING INDEX. Sometimes the "wide row" you want already exists as an index.
+
+WHEN YOU DO DENORMALISE, in increasing order of how much you take on yourself:
+    MATERIALISED VIEW       the database maintains the copy. `REFRESH MATERIALIZED VIEW`, or an
+                            incrementally-maintained one. Least code, and the staleness is a policy
+                            rather than a bug.
+    TRIGGERS                the database updates the copy on write. Correct and transactional, and
+                            invisible - triggers are the classic "why is this table slow" mystery.
+    CDC / A STREAM          read the write-ahead log and update the copy downstream. Scales, decouples,
+                            and is eventually consistent by construction. This is how large systems do
+                            it.
+    APPLICATION LOGIC       update both places in the same transaction. Simplest to write, easiest to
+                            forget in the fourth code path. MEASURED consequence: 18,341 rows adrift.
+    A NIGHTLY REBUILD       for aggregates where a day of staleness is acceptable. Underrated.
+
+AND THE RECONCILIATION JOB, which is the part people skip: a periodic query that COUNTS the
+disagreements, exactly like the one above. If you have duplicated data and you do not have that job,
+you do not know whether your copies are right - you are assuming it.
+
+WHERE DENORMALISATION IS NOT A CHOICE:
+    WIDE-COLUMN / DOCUMENT STORES  Cassandra and DynamoDB have no joins. You design a table per query
+                                   and duplicate freely; "query-first design" is the official name.
+    ANALYTICS / OLAP               star and snowflake schemas denormalise dimensions on purpose;
+                                   columnar engines make the wide row cheap to scan.
+    CACHES AND SEARCH INDEXES      an Elasticsearch document IS a denormalised copy, with all the same
+                                   staleness questions.
+    READ REPLICAS OF DERIVED DATA  the materialised feed, the leaderboard, the counter.
+
+THE RULE TO STATE: normalise for correctness by DEFAULT, and denormalise DELIBERATELY where a measured
+read cost demands it - with a named owner for the consistency invariant and a job that checks it.""",
+
+    """6. HOW TO CODE IT - the schema pair, and the measurement that decides between them.
+
+THE NORMALISED SCHEMA:
+
+  1. One table per ENTITY: `sellers`, `categories`, `products`, `reviews`, `inventory`.
+  2. Foreign keys, and an INDEX on every one of them. A join without an index on the join column is
+     the actual reason most people conclude joins are slow.
+  3. The read is a join plus, usually, a correlated aggregate for the review count and average.
+
+THE DENORMALISED SCHEMA:
+
+  4. One WIDE table per PAGE, not per entity: `product_page` carries the product's own columns plus
+     `seller_name`, `seller_rating`, `seller_country`, `category_name`, `review_count`, `review_avg`,
+     `qty`, `warehouse`.
+  5. Keep the foreign key (`seller_id`) alongside the copy. It is what makes the reconciliation query
+     and the rename UPDATE possible, and dropping it is a mistake people make.
+  6. Index it on `(category_name, price)` - the list page's filter and sort - so you are comparing
+     two well-indexed schemas rather than a tuned one against an untuned one.
+  7. Populate it with one INSERT ... SELECT from the normalised tables. That statement is also your
+     rebuild-from-scratch job, which you will want.
+
+THE MEASUREMENT:
+
+  8. Benchmark the LIST page, not just the single-record page. The gain scales with rows touched -
+     1.7x for one row, 3.0x for fifty - and the list page is where the decision is really made.
+  9. Measure the write side as CPU (`resource.getrusage`), across many statements in ONE transaction.
+     Wall-clock per statement is dominated by the commit's fsync and will tell you denormalisation is
+     free. It is not.
+ 10. Compute the BREAK-EVEN: `(write_cost_denorm - write_cost_norm) / (read_cost_norm -
+     read_cost_denorm)`. That is "how many reads per write before this pays", and it is the sentence
+     that ends the argument.
+ 11. Print the FAN-OUT distribution, not just the average: `SELECT seller_id, count(*) c FROM
+     product_page GROUP BY seller_id ORDER BY c DESC LIMIT 1`. The worst case is what will hurt you.
+ 12. WRITE THE RECONCILIATION QUERY and run it. `SELECT count(*) FROM product_page pp JOIN sellers s
+     ON s.id = pp.seller_id WHERE pp.seller_name <> s.name`. It returned 18,341 here, which is a more
+     persuasive argument about consistency risk than any paragraph.
+ 13. Print the EXPLAIN QUERY PLAN for both. If the normalised plan is already all index seeks, the
+     honest conclusion may be "do not denormalise this".""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Normalisation - no redundant data - optimises WRITE integrity and storage. Every fact lives in one
+place, so an update touches one row and there are no update, insert or delete anomalies. What it costs
+you is that reads must JOIN to reassemble the data, and that gets expensive at scale or under a
+read-heavy load.
+
+Denormalisation deliberately DUPLICATES data - a copied column, a precomputed aggregate, a wide row,
+an embedded document - so reads are fast and joins are avoided. You trade write complexity and a risk
+of inconsistency for read performance.
+
+I measured the trade on a real database - 100,000 products, 400,000 reviews, built both ways. A
+50-product category list page took 284.6 microseconds normalised and 94.4 denormalised, so 3x faster.
+A seller rename took 5.8 microseconds of CPU normalised, touching one row, and 214.6 denormalised,
+touching about fifty rows - 36.8x. Divide those and you get a break-even of about 1.1 page views per
+rename, so for a product catalogue it is not a close call.
+
+Two details I'd raise. The gain depends on how much reassembly the query does: a single product by
+primary key was only 1.7x, because that join was already all index seeks, while the 50-row list page
+was 3x and a 200-row page 3.1x. So profile before duplicating - the join you assume is expensive may
+already be cheap.
+
+And the consistency cost is real and immediate. After updating the two tables through separate
+statements in my test, 18,341 product rows disagreed with the sellers table. Nothing errored - a
+copied column is just a column, and the database has no idea it is meant to equal something else. So
+denormalising means taking on an invariant the database used to enforce, in every code path that
+writes, forever.
+
+So: denormalise when reads vastly outnumber writes, when join cost genuinely dominates, when you are
+on a NoSQL or wide-column store that lacks cheap joins, or when you must precompute heavy rollups -
+and keep the copies in sync with the least code you can get away with: a materialised view first, then
+triggers, then CDC, and application logic last. Plus a reconciliation job that counts the
+disagreements, or you will not know whether it is working.
+
+Normalise for correctness by default; denormalise deliberately where measured read performance demands
+it."
+
+THE ONE SENTENCE TO NOT FUMBLE: normalisation makes writes correct and reads expensive, denormalisation
+does the reverse - and the break-even is a number you can compute, not an opinion.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    CREATE TABLE products(id INTEGER PRIMARY KEY, title TEXT, price REAL,
+                          seller_id INTEGER, category_id INTEGER);
+
+The normalised design. `seller_id` is a POINTER, not a copy - which is why a seller rename is one
+UPDATE and can never be partially applied.
+
+    CREATE INDEX i_rev ON reviews(product_id);
+    CREATE INDEX i_prod_cat ON products(category_id, price);
+
+Indexes on every join and filter column. Without these you are not benchmarking normalisation against
+denormalisation, you are benchmarking a bad schema against a good one - and joins will look far worse
+than they are.
+
+    SELECT p.id, p.title, p.price, s.name, s.rating,
+           (SELECT count(*) FROM reviews r WHERE r.product_id = p.id),
+           (SELECT avg(stars) FROM reviews r WHERE r.product_id = p.id)
+      FROM products p JOIN sellers s ON s.id = p.seller_id
+     WHERE p.category_id = ? ORDER BY p.price LIMIT 50
+
+The normalised list page. Note the two CORRELATED SUBQUERIES - they run once PER ROW, so for 50
+products that is 100 index lookups on top of the join. This is exactly why the gain grows with the row
+count: 1.7x at one row, 3.0x at fifty.
+
+    CREATE TABLE product_page(
+      id INTEGER PRIMARY KEY, title TEXT, price REAL,
+      seller_id INTEGER, seller_name TEXT, seller_rating REAL, ...
+      review_count INTEGER, review_avg REAL, qty INTEGER, warehouse TEXT);
+
+The denormalised table. `seller_id` is KEPT alongside `seller_name` - the id is what makes the rename
+UPDATE and the reconciliation query possible. Dropping the foreign key because "we have the name now"
+is the mistake that turns a maintainable copy into an orphan.
+
+    INSERT INTO product_page
+      SELECT p.id, p.title, p.price, s.id, s.name, s.rating, s.country, c.name,
+             COALESCE(r.n,0), COALESCE(r.a,0.0), i.qty, i.warehouse
+        FROM products p JOIN sellers s ... LEFT JOIN (SELECT product_id, count(*) n, avg(stars) a
+             FROM reviews GROUP BY product_id) r ON r.product_id = p.id
+
+Populating it. This single statement is also your REBUILD job - when the copies drift, this is how you
+fix them, and having it written down from day one is the difference between a recoverable mistake and
+a data-archaeology project. The `COALESCE` handles products with no reviews; a `LEFT JOIN` producing
+NULL where you expected 0 is a classic denormalisation bug.
+
+    UPDATE sellers      SET name = ? WHERE id = ?;          -- 1 row
+    UPDATE product_page SET seller_name = ? WHERE seller_id = ?;   -- ~50 rows
+
+The two writes. In production these MUST be in one transaction, and the fact that they are two
+statements at all is the entire consistency risk. Measured: 5.8 us CPU versus 214.6.
+
+    r0 = resource.getrusage(resource.RUSAGE_SELF)
+    for _ in range(200): cur.execute(sql, args())
+    con.commit()
+
+Measuring CPU across 200 statements with ONE commit. The commit's fsync is a fixed cost that swamps
+per-statement work - measuring wall-clock per statement produced "1.0x, denormalising is free", which
+is wrong by a factor of 37.
+
+    SELECT count(*) FROM product_page pp JOIN sellers s ON s.id = pp.seller_id
+     WHERE pp.seller_name <> s.name
+
+The reconciliation query, and the most important line in this entry. It is four lines, it runs in
+seconds, and it returned 18,341. If you denormalise, schedule this. If it has never been run, your
+copies are not verified - they are assumed.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the same page, both ways, measured.
+
+    query                                   normalised   denormalised   gain
+    -------------------------------------   ----------   ------------   -----
+    ONE product page (5 joins + 2 aggs)        14.2 us         8.5 us    1.7x
+    a 50-product list page                    284.6 us        94.4 us    3.0x
+    a 200-product list page                  1179.1 us       379.8 us    3.1x
+
+And the plans, which explain the first row:
+
+    normalised (one page):  SEARCH p USING INTEGER PRIMARY KEY | SEARCH s USING INTEGER PRIMARY KEY
+                            | SEARCH c USING INTEGER PRIMARY KEY | SEARCH i USING INTEGER PRIMARY KEY
+                            | CORRELATED SCALAR SUBQUERY 1 | SEARCH r USING COVERING INDEX
+                            | CORRELATED SCALAR SUBQUERY 2 | SEARCH r USING INDEX
+    denormalised:           SEARCH product_page USING INTEGER PRIMARY KEY
+
+Eight plan nodes against one - and only 1.7x, because all eight are SEEKS. A well-indexed join is
+cheap. The 3.0x on the list page is the same eight nodes executed FIFTY TIMES.
+
+TRACE B - the write side, and the benchmark that lied.
+
+    measurement                                normalised   denormalised   ratio
+    ----------------------------------------   ----------   ------------   ------
+    wall clock, one rename + commit               9.72 ms        9.50 ms    1.0x  <- WRONG
+    CPU, 200 renames in one transaction            5.8 us       214.6 us   36.8x  <- right
+    rows touched                                        1             47      47x
+    worst-case rows touched (largest seller)            1             80      80x
+
+The first row is the trap. Both numbers are the fsync. The second row measures the work that actually
+scales with your write volume.
+
+TRACE C - the break-even, derived from the two measurements.
+
+    read saving per page view       284.6 - 94.4  =  190.2 us
+    extra write cost per rename     214.6 -  5.8  =  208.8 us CPU
+    break-even                      208.8 / 190.2 =    1.10 page views per rename
+
+    so:  a catalogue at 10,000 views per rename    -> denormalise, by four orders of magnitude
+         an order-status field changed 6x per read -> normalise, by an order of magnitude
+         a nightly-refreshed dashboard             -> denormalise; the write cost is paid once
+
+The SAME formula, three different answers, because the inputs differ. This is the calculation that
+"denormalise for performance" is standing in for.
+
+TRACE D - the consistency failure, counted.
+
+    action                                                          result
+    -------------------------------------------------------------  ---------------------------
+    updated `sellers` and `product_page` in separate statements     both succeeded
+    rows where product_page.seller_name <> sellers.name             18,341
+    errors raised                                                   0
+    constraints violated                                            0
+    queries that returned a wrong seller name                       18,341
+
+Nothing in the database noticed. A copied column is a column; the engine has no idea it is supposed to
+equal something else. Under normalisation this state is not merely unlikely - it is unrepresentable.
+
+TRACE E - the fan-out distribution, which is what makes the worst case worse than the average.
+
+    products per seller   value
+    -------------------   ------------------------------------------------
+    average               50      (100,000 products / 2,000 sellers)
+    maximum here          80
+    in a REAL catalogue   Zipf-distributed - one seller may own 10% of the
+                          catalogue, so their rename is a background job
+
+Denormalisation converts a constant-cost write into one whose cost depends on the fan-out of the
+particular row you touched - which means your p99 write latency is now a property of your data
+distribution.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    normalised read       O(rows returned x joins), each join an index seek.
+                          MEASURED 14.2 us for 1 row, 284.6 us for 50, 1179.1 us for 200 - linear in
+                          rows, with a constant per row that is the join plus the aggregates.
+    denormalised read     O(rows returned), one seek. MEASURED 8.5 / 94.4 / 379.8 us.
+    normalised write      O(1) rows. MEASURED 5.8 us CPU.
+    denormalised write    O(fan-out) rows. MEASURED 214.6 us CPU, 47 rows average, 80 worst.
+    storage               normalised stores each fact once; denormalised stores it once per copy.
+    consistency           normalised: enforced by the schema, cost zero.
+                          denormalised: enforced by YOU, in every write path, forever.
+    break-even            (write_delta) / (read_delta) reads per write. MEASURED 1.10 here.
+
+THE MISTAKES:
+
+    - Denormalising without measuring. The single-page join measured 1.7x, all index seeks. That is
+      not worth a permanent consistency obligation.
+    - Measuring the write cost with wall clock. MEASURED "1.0x" (the fsync) versus a real 36.8x.
+    - Fixing a slow join by duplicating rather than by indexing. See the query-plan entry: 1,014x from
+      one composite index, with zero consistency risk.
+    - Dropping the foreign key once you have the copied name. You have just removed the ability to
+      update the copy and to reconcile it.
+    - Two writes without one transaction. MEASURED result: 18,341 disagreeing rows, silently.
+    - No reconciliation job. If you never count the disagreements you are assuming, not knowing.
+    - Forgetting the fan-out distribution. The average was 50 and the max was 80 here; in a real
+      catalogue the max is enormous and its rename is a background job.
+    - Denormalising a write-heavy table. Run the break-even the other way and it says normalise.
+    - Reaching for application logic first. Materialised views, then triggers, then CDC, then hand-
+      written updates - in that order, because each step moves the invariant further from you.
+    - Treating it as a permanent decision made once. It is per-query and per-table, and it changes as
+      the read:write ratio changes.
+
+THE TAKEAWAY. Normalisation and denormalisation are not right and wrong; they are two sides of one
+arithmetic. Storing a fact once makes every write cheap and correct and every read a reassembly job.
+Storing it many times makes reads a single row and hands you an invariant the database used to
+enforce. Measured on real data: 3.0x faster reads, 36.8x more expensive writes, a break-even at 1.1
+reads per write, and 18,341 rows silently wrong the first time two writes were not in one transaction.
+Normalise by default, compute your ratio, denormalise where the number says so - and write the
+reconciliation query the same day you write the copy.""",
+]
+
+_EX_P1AO["Why did QUIC/HTTP/3 build a new protocol over UDP instead of just improving TCP?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - TCP is forty years old, extremely well understood, and implemented
+everywhere. So why did Google build a replacement on top of UDP - a protocol with no reliability, no
+ordering and no congestion control at all - and then rebuild all three by hand?
+
+Two reasons, and only one of them is technical.
+
+REASON ONE, DEPLOYABILITY. TCP lives in the OPERATING SYSTEM KERNEL, and every router, firewall, NAT
+box and load balancer between you and the server INSPECTS it. Change TCP's wire format and the
+middleboxes drop or mangle your packets. So a new TCP feature takes a decade and often cannot deploy
+at all. UDP is treated as an opaque datagram, so nobody in the middle has an opinion about its
+contents - and QUIC lives in USER SPACE, in the browser, so it ships with a browser update.
+
+REASON TWO, A LIMIT YOU CANNOT PATCH. TCP delivers ONE ORDERED BYTE STREAM. HTTP/2 multiplexes many
+requests over one connection, so a single lost packet stalls the delivery of EVERY stream behind it,
+even the ones whose data has already arrived. Fixing that requires per-stream sequencing at the
+TRANSPORT layer - which is a different protocol, not a TCP option.
+
+MEASURED, a simulation of one connection carrying ten resources of very different sizes (4 to 800
+packets), 50 ms RTT, a lost packet costing one RTT to repair, averaged over 200 trials:
+
+    loss    TCP: first resource done   QUIC: first resource done   gain
+    -----   ------------------------   -------------------------   -----
+    0.0%                     40.0 ms                     40.0 ms   1.00x
+    0.5%                     47.0 ms                     40.5 ms   1.16x
+    1.0%                     52.5 ms                     40.7 ms   1.29x
+    2.0%                     62.0 ms                     42.0 ms   1.47x
+    5.0%                     74.5 ms                     44.8 ms   1.66x
+
+The first small resource - the stylesheet that unblocks rendering - arrives 1.29x sooner at 1% loss
+and 1.66x sooner at 5%, purely because it is no longer waiting behind somebody else's lost packet.""",
+
+    """2. THE INTUITION - one conveyor belt versus ten.
+
+TCP is a single conveyor belt, and the rule is that boxes must come off in the order they went on. If
+box 400 falls off, boxes 401 to 900 pile up at the end - they have ARRIVED, they are sitting there, and
+the receiver is forbidden to hand them over until 400 is replaced. HTTP/2 put ten different customers'
+orders on that one belt, so one dropped box holds up all ten.
+
+QUIC gives each customer their own belt. A dropped box stalls one customer and nobody else. Same wire,
+same loss, completely different consequence.
+
+THE THING TO SAY CAREFULLY, because it is where people overstate the case: this does NOT make the
+overall transfer faster. MEASURED, the last resource to finish:
+
+    loss    TCP last   QUIC last
+    -----   --------   ---------
+    0.0%     851.5ms     851.5ms
+    1.0%     870.2ms     870.2ms
+    5.0%     891.0ms     891.0ms
+
+Identical. The biggest resource finishes when it finishes, because it is the one everything else was
+queued behind. What QUIC changes is WHO WAITS FOR WHOM. Look at one representative trial at 1% loss,
+all ten resources, in packet-size order:
+
+    size (packets)     4      8     12     20     30     60    120    200    400    800
+    TCP done (ms)   40.0   58.5   75.0  140.0  140.0  209.5  349.0  466.0  697.0  876.0
+    QUIC done (ms)  40.0   58.5   75.0  103.5  140.0  209.5  330.0  466.0  697.0  876.0
+
+The 20-packet resource finished at 103.5 ms instead of 140.0 - a 36.5 ms saving on a small file,
+caused entirely by not inheriting a stall from a large one. The 800-packet resource is unchanged. On a
+web page, the small resources are the CSS, the fonts and the JavaScript that gate rendering, so this is
+exactly the asymmetry you want.
+
+THE SECOND INTUITION - the handshake. TCP and TLS are separate protocols stacked on each other, so
+they handshake separately and you pay for both. QUIC has TLS 1.3 BUILT IN, so the crypto and the
+transport negotiate in the same flight.
+
+    stack                                    RTTs to first byte    at 20ms    50ms    150ms   300ms
+    --------------------------------------   ------------------   -------   ------   ------   ------
+    HTTP/1.1 or /2 over TCP + TLS 1.3                         3     60 ms   150 ms   450 ms   900 ms
+    HTTP/1.1 or /2 over TCP + TLS 1.2                         4     80 ms   200 ms   600 ms  1200 ms
+    HTTP/3 over QUIC, new connection                          2     40 ms   100 ms   300 ms   600 ms
+    HTTP/3 over QUIC, resumed (0-RTT)                         1     20 ms    50 ms   150 ms   300 ms
+
+One round trip saved on every new connection, two on a resumed one. At a 150 ms RTT - a mobile user on
+another continent - that is 150 to 300 milliseconds, per origin, before anything happens.""",
+
+    """3. EVERY TERM DEFINED.
+
+QUIC. A transport protocol running over UDP, providing reliability, ordering, congestion control,
+independent streams and TLS 1.3 encryption. Originally Google's; standardised as RFC 9000.
+
+HTTP/3. HTTP semantics carried over QUIC. HTTP/1.1, /2 and /3 all express the same requests and
+responses; what changes underneath is the transport.
+
+OSSIFICATION. The internet's inability to change a protocol because too many devices depend on its
+current shape. The reason this entry exists.
+
+MIDDLEBOX. Anything between the endpoints that inspects or rewrites traffic: NAT, firewall, load
+balancer, transparent proxy, carrier-grade NAT, "WAN accelerator". Middleboxes parse TCP headers and
+frequently rewrite them - which is why an unfamiliar TCP option or flag combination is often dropped
+rather than forwarded.
+
+TCP FAST OPEN. A real, standardised, deployable-in-theory TCP extension that saves a round trip. It
+has existed since 2014 and is still widely disabled, because middleboxes drop connections carrying it.
+This is the canonical evidence for ossification.
+
+MPTCP (Multipath TCP). Another well-designed TCP extension with famously painful deployment. Same
+reason.
+
+HEAD-OF-LINE (HOL) BLOCKING. Later, already-arrived data being withheld because earlier data is
+missing. It exists at two levels:
+    HTTP/1.1  at the HTTP layer - one response at a time per connection. Fixed by HTTP/2.
+    TCP       at the TRANSPORT layer - one ordered byte stream. NOT fixed by HTTP/2, and unfixable
+              inside TCP. Fixed by QUIC.
+
+STREAM. An independently ordered sequence of bytes within a connection. QUIC has many per connection;
+TCP has exactly one.
+
+USER SPACE vs KERNEL SPACE. QUIC's implementation lives in the application (the browser, the server
+process). TCP's lives in the OS. That single fact is why QUIC can change on a six-week browser release
+cycle and TCP changes on a decade-long OS-upgrade cycle.
+
+CONNECTION ID. QUIC identifies a connection by an opaque id rather than by the (source IP, source
+port, destination IP, destination port) 4-tuple. This is what makes CONNECTION MIGRATION possible.
+
+CONNECTION MIGRATION. Keeping a connection alive across an IP change - walking out of the house and
+switching from Wi-Fi to 5G. A TCP connection is DEFINED by its 4-tuple, so changing IP necessarily
+kills it and every request restarts. A QUIC connection survives.
+
+0-RTT / EARLY DATA. Sending application data in the first flight of a resumed connection. Fast, and
+REPLAYABLE by an attacker - so idempotent requests only.
+
+AMPLIFICATION ATTACK. Sending a small spoofed UDP packet to make a server send a large reply to a
+victim. QUIC limits a server to sending 3x what it has received until the client's address is
+validated - a defence TCP got for free from its handshake.
+
+ACK / RETRANSMISSION. QUIC's acknowledgements carry more information than TCP's (more ACK ranges,
+explicit packet-number spaces), which makes loss recovery measurably better, and it can evolve because
+it is not on the wire in a form middleboxes parse.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "UDP is faster than TCP, that's why QUIC uses it."
+
+That is not the reason and it is not true. UDP does not go faster; it does LESS. QUIC then reimplements
+everything UDP left out - reliability, ordering, flow control, congestion control - in user space, and
+those implementations are not free. What UDP provides is not speed. It is INDIFFERENCE: no middlebox
+has an opinion about a UDP payload, so QUIC can put whatever it likes inside, including things
+middleboxes would have rejected in a TCP header.
+
+Say it as: "UDP is the only path that is both deployable through today's internet AND open to
+redesigning the transport." That sentence is the whole answer.
+
+THE SECOND TRAP - claiming HTTP/2 fixed head-of-line blocking. It fixed the HTTP-layer version (one
+response at a time per connection) and made the TRANSPORT-layer version WORSE, because it put many
+streams onto one TCP connection where before browsers used six. Under loss, HTTP/2 over TCP can be
+slower than HTTP/1.1 with six connections, precisely because one lost packet now stalls everything
+instead of one sixth of everything.
+
+THE THIRD TRAP - overstating what QUIC's stream independence buys. MEASURED above: the LAST resource
+finishes at exactly the same time (851.5, 870.2, 891.0 ms - identical in both columns). If you claim
+"QUIC makes pages load faster" without qualification, an interviewer who has read the benchmarks will
+push back, because the aggregate numbers are often close. The precise claim is:
+
+    - the FIRST small resource arrives 1.29x sooner at 1% loss, 1.66x at 5% - measured
+    - the MEDIAN resource arrives 1.08x sooner at 1% loss (190.0 -> 176.3 ms) - measured
+    - the LAST resource arrives at the same time - measured
+    - and the handshake saves one full round trip, or two on resumption - which on a 150 ms path is
+      150-300 ms and is the LARGER effect for most real pages
+
+THE FOURTH TRAP - forgetting the costs, of which there are several real ones:
+    - QUIC runs in USER SPACE, so every packet crosses the syscall boundary. Early deployments burned
+      2-3x the CPU of kernel TCP per byte; GSO/GRO and kernel offload have narrowed it, not closed it.
+    - No hardware offload. NICs have done TCP segmentation and checksums for twenty years; QUIC's
+      encryption and framing are new and largely unaccelerated.
+    - Some networks block or throttle UDP outright, so every QUIC client needs a TCP fallback path -
+      which means you now maintain both.
+    - It is encrypted almost end to end, including most of the transport header, so your existing
+      network debugging tools see very little. That opacity is deliberate - it is what prevents the
+      next generation of ossification - and it is genuinely inconvenient.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what else was tried, and where each protocol generation put
+the fix.
+
+WHY NOT JUST FIX TCP - the four attempts, and what happened:
+    TCP FAST OPEN (2014)     saves a round trip on resumption. Standardised, implemented, and widely
+                             disabled because middleboxes drop it. The textbook ossification story.
+    MPTCP                    use several paths at once. Deployed by Apple for Siri and almost nowhere
+                             else, for the same reason.
+    SCTP                     a 1990s transport with MULTIPLE STREAMS - it solved head-of-line blocking
+                             correctly, twenty years early. Effectively undeployable on the public
+                             internet because it is neither TCP nor UDP, so NATs drop it. This is the
+                             most direct evidence for the thesis: the right protocol existed and could
+                             not be deployed.
+    NEW TCP OPTIONS          any new option risks being stripped or causing the connection to be reset.
+    And even a perfect TCP change would still deliver ONE ordered byte stream, so it could not fix
+    transport-level head-of-line blocking at all.
+
+WHERE EACH GENERATION PUT THE FIX:
+    HTTP/1.1        one request at a time per connection. Browsers opened ~6 connections per origin to
+                    work around it, and people sharded across domains to get more.
+    HTTP/2          multiplexing over ONE connection, header compression (HPACK), prioritisation.
+                    Removed HTTP-layer HOL blocking, and concentrated the transport-layer version.
+    HTTP/3 / QUIC   independent streams, merged transport+TLS handshake, connection migration,
+                    better loss recovery, and evolvability. Removes transport-layer HOL blocking.
+
+THE REST OF THE QUIC FEATURE SET, worth naming because they are all consequences of "we got to design
+the transport":
+    CONNECTION MIGRATION   a connection id instead of a 4-tuple, so walking from Wi-Fi to 5G does not
+                           kill your download. TCP cannot do this by construction.
+    ALWAYS ENCRYPTED       TLS 1.3 is mandatory and most of the transport header is encrypted too -
+                           which is what keeps middleboxes from ossifying QUIC the way they ossified
+                           TCP.
+    PLUGGABLE CONGESTION   CUBIC, BBR, or your own, changed with a software update rather than a
+                           kernel upgrade.
+    UNRELIABLE DATAGRAMS   an extension for media, which is TCP's other structural limitation.
+
+AND THE PATTERN TO RECOGNISE, which generalises well beyond networking: when you cannot change a layer
+because too many parties depend on its current shape, you TUNNEL over something nobody inspects and
+rebuild what you need above it. The same move appears as containers over the kernel ABI, WebAssembly
+over the browser, and JSON over HTTP where a better RPC protocol could not get through firewalls.""",
+
+    """6. HOW TO CODE IT - you cannot implement QUIC in an interview, but you can SIMULATE the property
+that motivates it, and that simulation is the argument.
+
+SIMULATING HEAD-OF-LINE BLOCKING:
+
+  1. Model resources as packet counts of VERY DIFFERENT sizes - `[4, 8, 12, 20, 30, 60, 120, 200, 400,
+     800]`. If every stream is the same size, the effect largely disappears, which is why so many
+     naive simulations show nothing.
+  2. Interleave them into one send order, round-robin, so they genuinely share a connection.
+  3. Give each packet a send time and a base arrival time of `sent + RTT/2`.
+  4. Mark each packet lost with probability `p`; a lost packet arrives one full RTT later.
+  5. TCP MODE: maintain ONE `head` variable. `head = max(head, arrival)` for every packet in order,
+     and every packet's delivery time is that shared `head`. That single shared variable IS
+     head-of-line blocking - one line of code.
+  6. QUIC MODE: maintain `head[stream]`, one per stream. Identical loop, identical losses, per-stream
+     ordering.
+  7. Record each stream's completion time, and report FIRST, MEDIAN and LAST separately. Reporting
+     only the last hides the entire effect - measured, the last is identical in both modes.
+  8. Average over ~200 trials. A single trial is dominated by where the losses happened to land.
+  9. Sweep the loss rate. The gain is zero at 0% and grows with loss, which is the shape that makes
+     the mechanism obvious: 1.00x, 1.16x, 1.29x, 1.47x, 1.66x.
+
+COUNTING HANDSHAKE ROUND TRIPS:
+
+ 10. Count them explicitly rather than quoting them: TCP SYN/SYN-ACK is 1, TLS 1.3 is 1, the HTTP
+     request/response is 1 - three. TLS 1.2 is 2, making four. QUIC merges the first two into 1,
+     making two. A resumed QUIC connection with 0-RTT is one.
+ 11. Multiply by real RTTs (20, 50, 150, 300 ms) to turn a protocol fact into a user-visible number.
+     "One round trip" is abstract; "300 ms before anything happens on a mobile connection" is not.
+
+WHAT YOU CAN CHECK ON A REAL MACHINE:
+
+ 12. `curl --http3 -sI https://www.cloudflare.com` if your curl was built with HTTP/3 support, and
+     compare the `alt-svc: h3=":443"` header a server advertises over HTTP/2 - that header is how a
+     browser learns to try QUIC at all.
+ 13. `ss -u` or `tcpdump -i any udp port 443` shows QUIC traffic; note that beyond the connection id
+     you can see essentially nothing, which is the opacity point made concrete.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Two barriers made fixing TCP impractical, and only one of them is a protocol problem.
+
+The first is OSSIFICATION. TCP lives in the OS kernel and is inspected - and often 'helped' - by
+middleboxes everywhere: routers, firewalls, NAT, load balancers. Any change to TCP's wire format tends
+to be dropped or mangled by them, so new TCP features take a decade and often cannot deploy at all.
+TCP Fast Open is the standard example: standardised in 2014, still widely disabled because middleboxes
+break connections that carry it. SCTP is the sharper one - it had multiple independent streams in the
+1990s, which is exactly the fix, and it is undeployable on the public internet because it is neither
+TCP nor UDP so NATs drop it. UDP is treated as opaque datagrams, which sidesteps all of that.
+
+The second is a limit that cannot be patched. TCP delivers a SINGLE ORDERED BYTE STREAM. HTTP/2
+multiplexes many requests onto one connection, so one lost packet blocks delivery of ALL streams -
+transport-level head-of-line blocking - even for streams whose data has already arrived. Fixing that
+needs per-stream sequencing at the transport, which is a different protocol, not a TCP option.
+
+So QUIC puts reliability, ordering and independent streams in USER SPACE over UDP. You get no
+cross-stream head-of-line blocking, a merged transport-plus-TLS handshake at 1-RTT or 0-RTT on
+resumption, connection migration across IP changes - because a QUIC connection is identified by a
+connection id rather than by the 4-tuple - and the ability to EVOLVE through a browser update instead
+of a kernel and middlebox upgrade.
+
+I'd be careful about how much I claim for the stream independence, because I simulated it. On one
+connection carrying ten resources from 4 to 800 packets at 1% loss, the FIRST small resource arrived
+1.29x sooner under QUIC and 1.66x sooner at 5% loss - but the LAST resource finished at exactly the
+same time in both, because that is the one everything else was queued behind. So it improves WHO waits
+for whom, which matters because the small resources are the ones that unblock rendering. The handshake
+saving is arguably the bigger everyday win: three round trips to first byte over TCP+TLS 1.3 versus
+two for QUIC and one on resumption, which at a 150 ms RTT is 150 to 300 milliseconds per origin.
+
+And it is not free: user-space packet handling costs more CPU than kernel TCP, there is no hardware
+offload, some networks block UDP so you need a TCP fallback, and the near-total encryption of the
+transport header makes network debugging much harder - which is deliberate, because that opacity is
+what stops QUIC being ossified in turn.
+
+So it wasn't 'UDP beats TCP'. It was 'UDP is the only path that is both deployable through today's
+internet AND open to redesigning the transport.'"
+
+THE ONE SENTENCE TO NOT FUMBLE: UDP was not chosen for speed - it was chosen because nothing in the
+middle of the internet inspects it, which is the only way a new transport could actually be deployed.""",
+
+    """8. THE CODE LINE BY LINE - the head-of-line simulation, which is where the argument lives.
+
+    SIZES = [4, 8, 12, 20, 30, 60, 120, 200, 400, 800]
+
+Ten resources spanning 200x in size. This choice is the experiment. Make every stream the same size
+and the effect largely vanishes, because there is no small resource to be held up by a large one - and
+a real web page is exactly this shape: a tiny stylesheet and a huge hero image on the same connection.
+
+    while any(remaining):
+        for s in range(len(sizes)):
+            if remaining[s]: order.append(s); remaining[s] -= 1
+
+Round-robin interleaving, which is what multiplexing means. Without it the streams are sequential and
+there is nothing to block.
+
+    sent_at = [i * per_packet_ms for i in range(len(order))]
+    lost = [r.random() < loss for _ in order]
+
+Send times and losses. Note that BOTH modes get the IDENTICAL loss pattern (same seed) - the only
+variable in the whole experiment is how delivery is ordered.
+
+    # TCP
+    head = 0.0
+    for i, s in enumerate(order):
+        a = sent_at[i] + rtt_ms/2
+        if lost[i]: a += rtt_ms
+        head = max(head, a)
+        done[s] = max(done[s], head)
+
+ONE `head` variable, shared by every stream. `head = max(head, a)` says: nothing can be delivered
+before anything sent earlier. That single shared variable is transport-level head-of-line blocking,
+and it is genuinely one line of difference.
+
+    # QUIC
+    head = [0.0] * len(sizes)
+    for i, s in enumerate(order):
+        a = sent_at[i] + rtt_ms/2
+        if lost[i]: a += rtt_ms
+        head[s] = max(head[s], a)
+        done[s] = max(done[s], head[s])
+
+`head` becomes a LIST, indexed by stream. Identical arithmetic otherwise. A loss on stream 7 now
+raises `head[7]` and nothing else. That is the entire protocol difference, expressed as a data
+structure change - which is a fair reflection of what QUIC actually did.
+
+    if lost[i]: a += rtt_ms
+
+Retransmission modelled as one extra round trip - the fast-retransmit case rather than a full timeout.
+This is deliberately CONSERVATIVE: a real timeout costs far more and would flatter QUIC further, so
+the measured gains here are a lower bound.
+
+    return mean(firsts), mean(meds), mean(lasts)
+
+Three statistics, not one. Reporting only the LAST would have shown a 1.00x gain at every loss rate
+and concluded that stream independence does nothing - which is exactly the mistake the benchmarking
+literature keeps making. The FIRST and MEDIAN are where the effect is.
+
+    for tr in range(trials):   # 200
+
+Averaging. In a single trial the answer is dominated by whether the loss happened to land early or
+late; at 1% loss on 1,654 packets there are only about 16 losses, so the variance is large.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the mechanism, four packets, by hand. Two streams, A (small) and B (large), interleaved.
+
+    packet   stream   sent   arrives   TCP delivery      QUIC delivery
+    ------   ------   ----   -------   ---------------   ---------------
+    1        B        0.0      25.0    25.0              25.0
+    2        A        0.5      25.5    25.5              25.5
+    3        B        1.0      76.0    76.0              76.0
+                                       (LOST, +50 ms)
+    4        A        1.5      26.5    76.0  <- BLOCKED  26.5
+
+Packet 4 belongs to stream A, arrived at 26.5 ms, and is sitting in the receiver's buffer. Under TCP
+it cannot be handed to the application until packet 3 is repaired at 76.0 ms, because TCP promises a
+single ordered byte stream and packet 3 comes first in it. Under QUIC, stream A has its own ordering
+and packet 3 is not part of it, so packet 4 is delivered immediately.
+
+Stream A finished at 76.0 ms instead of 26.5 - 2.9x later - because of a loss in a stream it has
+nothing to do with. That is the whole phenomenon in four rows.
+
+TRACE B - the full simulation, 10 resources, 1,654 packets, 50 ms RTT, 200 trials per row.
+
+    loss    lost pkts   TCP first   TCP med   TCP last    QUIC first   QUIC med   QUIC last   first gain
+    -----   ---------   ---------   -------   --------    ----------   --------   ---------   ----------
+    0.0%          0.0      40.0ms    171.8      851.5        40.0ms       171.8       851.5       1.00x
+    0.1%          1.7      41.7ms    173.9      853.5        40.1ms       172.0       853.5       1.04x
+    0.5%          8.1      47.0ms    182.4      861.8        40.5ms       173.9       861.8       1.16x
+    1.0%         16.3      52.5ms    190.0      870.2        40.7ms       176.3       870.2       1.29x
+    2.0%         32.9      62.0ms    200.0      880.2        42.0ms       179.6       880.2       1.47x
+    5.0%         82.7      74.5ms    212.0      891.0        44.8ms       189.5       891.0       1.66x
+
+Three readings from one table.
+
+    THE FIRST COLUMN GROWS UNDER TCP AND BARELY MOVES UNDER QUIC: 40.0 -> 74.5 ms versus 40.0 -> 44.8.
+    The small resource is being dragged along by everyone else's losses.
+    THE LAST COLUMN IS IDENTICAL: 851.5/870.2/891.0 in both. Nothing was made faster overall.
+    THE GAIN GROWS WITH LOSS: 1.00x at no loss, 1.66x at 5%. Zero effect on a clean network is exactly
+    what you would predict, and it is what makes the mechanism credible.
+
+TRACE C - one representative trial at 1% loss, all ten resources.
+
+    size (packets)     4      8     12     20     30     60    120    200    400    800
+    TCP done (ms)   40.0   58.5   75.0  140.0  140.0  209.5  349.0  466.0  697.0  876.0
+    QUIC done (ms)  40.0   58.5   75.0  103.5  140.0  209.5  330.0  466.0  697.0  876.0
+    difference       0.0    0.0    0.0   36.5    0.0    0.0   19.0    0.0    0.0    0.0
+
+Only two resources moved, and both moved EARLIER: the 20-packet one by 36.5 ms and the 120-packet one
+by 19.0 ms. Nothing got worse. That is the shape of the benefit - it is not a uniform speedup, it is
+the removal of a few specific, arbitrary stalls that happen to land on whichever stream was unlucky.
+
+TRACE D - handshake round trips, and what they cost at real distances.
+
+    stack                                    RTTs   20ms    50ms    150ms   300ms
+    --------------------------------------   ----   -----   -----   -----   ------
+    TCP + TLS 1.2 + request                     4    80ms   200ms   600ms  1200ms
+    TCP + TLS 1.3 + request                     3    60ms   150ms   450ms   900ms
+    QUIC, new connection                        2    40ms   100ms   300ms   600ms
+    QUIC, resumed with 0-RTT                    1    20ms    50ms   150ms   300ms
+
+    saving, TCP+TLS1.3 -> QUIC new             1 RTT   20ms    50ms   150ms   300ms
+    saving, TCP+TLS1.3 -> QUIC 0-RTT           2 RTT   40ms   100ms   300ms   600ms
+
+For a page pulling from five origins on a 150 ms mobile path, the new-connection saving alone is
+5 x 150 = 750 ms of pure setup removed. That is a larger and far more reliable effect than the
+head-of-line result, and it is the one to lead with when asked "does it actually help".""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, in the units that matter:
+
+    round trips to first byte    TCP+TLS1.2: 4.  TCP+TLS1.3: 3.  QUIC: 2.  QUIC 0-RTT: 1.
+                                 MEASURED as time: 150-300 ms saved per origin at a 150 ms RTT.
+    effect of one lost packet    TCP: blocks ALL streams behind it - O(all in-flight data).
+                                 QUIC: blocks ONE stream - O(that stream's in-flight data).
+    first-resource latency       MEASURED 1.00x / 1.16x / 1.29x / 1.47x / 1.66x at 0/0.5/1/2/5% loss.
+    median-resource latency      MEASURED 1.08x at 1% loss (190.0 -> 176.3 ms).
+    last-resource latency        MEASURED 1.00x at every loss rate. No aggregate speedup.
+    IP change                    TCP: connection dies, everything restarts. QUIC: connection survives
+                                 via the connection id. Unquantified here, and worth an order of
+                                 magnitude on a mobile handover.
+    CPU per byte                 QUIC is WORSE - user space, no hardware offload. Early deployments
+                                 measured 2-3x kernel TCP; narrowed by GSO/GRO, not eliminated.
+    deployment time              a browser release cycle versus a decade of OS and middlebox upgrades.
+                                 This is the number the whole design optimises for.
+
+THE MISTAKES:
+
+    - "UDP is faster." It is not faster; it does less. It was chosen because nothing inspects it.
+    - Saying HTTP/2 fixed head-of-line blocking. It fixed the HTTP-layer one and CONCENTRATED the
+      transport-layer one by putting all streams on a single TCP connection.
+    - Claiming QUIC makes pages load faster, flatly. MEASURED: the last resource finishes at the same
+      time. The precise claims are the first-resource gain and the handshake round trip.
+    - Forgetting the handshake saving, which is the bigger and more dependable effect for real pages.
+    - Not mentioning connection migration. It is the feature TCP structurally cannot have, because a
+      TCP connection IS its 4-tuple.
+    - Ignoring the costs: user-space CPU, no NIC offload, UDP blocked on some networks so you need a
+      TCP fallback, and near-total header encryption that blinds your existing tooling.
+    - Missing SCTP. It is the strongest evidence for the thesis - the right protocol existed decades
+      ago and could not be deployed, which is precisely why the fix had to arrive disguised as UDP.
+    - Treating 0-RTT as free. It is replayable by design; idempotent requests only.
+
+THE TAKEAWAY. QUIC is not a claim that UDP is better than TCP. It is a claim that TCP could not be
+changed - because middleboxes forbid it and because a single ordered byte stream cannot express
+independent streams at all - and that UDP is the only envelope the internet will carry without
+opening. Everything else follows: reliability and ordering move to user space, TLS merges into the
+transport and saves a round trip, streams get their own ordering so one lost packet stops stalling
+nine unrelated downloads, a connection id replaces the 4-tuple so it survives an IP change, and the
+whole thing can now evolve on a browser release cycle. The measured effects are real but specific -
+1.29x on the first small resource at 1% loss, an identical finish for the largest, and one to two
+round trips saved on every connection - and knowing which of those is which is what separates
+understanding the protocol from repeating the headline.""",
+]
+
+_EX_P1AO["Why do LSM/append-only stores delete with tombstones instead of removing the data?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you ask Cassandra to delete a row. It writes MORE data. It writes a
+little record saying "this key was deleted at time T", and the row you asked it to remove stays exactly
+where it was, sometimes for days.
+
+That sounds like a bug. There are two reasons it is not, and the second one is the important one.
+
+REASON ONE, MECHANICAL: the on-disk files are IMMUTABLE. An LSM store writes sorted files (SSTables)
+once and never edits them. There is no "delete the bytes in the middle of an SSTable" operation,
+because the whole design - fast sequential writes, no random I/O, no in-place update - depends on the
+files never changing. Every operation is an APPEND. A delete has to be an append too.
+
+REASON TWO, DISTRIBUTED: even if you COULD erase the bytes, physically deleting on one replica is not
+enough. A replica that was down when the delete happened still HAS the row. When it comes back,
+anti-entropy repair compares it with the others, sees "present here, absent there", and cannot tell
+"deleted" from "never written" - so it RESURRECTS the row.
+
+MEASURED, a simulation on this machine: 3 replicas, 20,000 deleted keys, one replica down for 35% of
+the window, followed by an anti-entropy repair that resolves conflicts by newest timestamp:
+
+    physical delete (remove the bytes)   6,463 of 20,000 deleted keys came BACK  =  32.31%
+    tombstone      (write a marker)          0 of 20,000                         =   0.00%
+
+Nearly a third of your deletions undone. A tombstone is an explicit "deleted as of T" record: it is
+itself an append, so it fits the immutable model, and it PROPAGATES, so every replica learns the row
+is gone rather than having to infer it from an absence.""",
+
+    """2. THE INTUITION - you cannot prove something is absent by looking at an empty space.
+
+Two librarians compare their catalogues. Yours has no card for "Moby Dick". Mine has one. What do we
+conclude?
+
+    - maybe I acquired it and you never did          -> you should add it
+    - maybe you removed it and I have not heard      -> I should remove it
+
+The empty space is identical in both cases. There is nothing in your catalogue that distinguishes
+"never had it" from "had it, threw it out". So the only safe default is to add it back - and that is
+exactly what a repair process does, which is why the physical delete lost 32% of its deletions above.
+
+A TOMBSTONE turns the absence into a POSITIVE STATEMENT: "this was removed on Tuesday at 14:02". Now
+the comparison is between a record and a record, and the newer one wins. That is all a tombstone is -
+a delete expressed as a write, so that it can be compared, replicated and ordered like every other
+write.
+
+THE SECOND INTUITION - the same argument explains why the tombstone cannot be thrown away too early.
+
+MEASURED, tombstones with compaction purging any tombstone older than `gc_grace`, with a replica down
+for 0.35 of the window:
+
+    gc_grace   deleted keys resurrected   verdict
+    --------   ------------------------   ------------
+        0.10                    32.90%    RESURRECTION
+        0.25                    31.47%    RESURRECTION
+        0.40                    18.23%    RESURRECTION
+        0.60                     6.07%    RESURRECTION
+        0.80                     0.49%    RESURRECTION
+        1.00                     0.00%    SAFE
+
+Purging a tombstone before every replica has seen it is EXACTLY THE SAME as never having written one -
+the evidence is gone and you are back to comparing an absence with a presence. That is why
+`gc_grace_seconds` defaults to ten days in Cassandra: it is not a performance knob, it is a promise
+that no replica will be offline longer than that. Miss the promise and deleted data comes back, which
+is the single most feared operational failure in these systems.
+
+Notice also the shape of that column - 32.90%, 31.47%, 18.23%, 6.07%, 0.49%, 0.00%. It degrades
+GRADUALLY. A too-short grace period does not fail loudly; it quietly resurrects a fraction of your
+deletions, and the fraction depends on how long your replicas happened to be down.""",
+
+    """3. EVERY TERM DEFINED.
+
+LSM TREE (log-structured merge tree). A write-optimised storage engine: writes go to an in-memory
+table, which is flushed to an immutable sorted file, and files are periodically merged. Used by
+Cassandra, RocksDB, LevelDB, HBase, ScyllaDB, and by the storage layer of many newer databases.
+
+MEMTABLE. The in-memory sorted structure new writes land in.
+
+SSTABLE (sorted string table). An immutable on-disk file of sorted key/value pairs. IMMUTABLE is the
+word that forces everything in this entry.
+
+APPEND-ONLY. Every operation adds a record; nothing is ever edited in place. This is what makes writes
+sequential and therefore fast.
+
+TOMBSTONE. A record meaning "this key was deleted at time T". It has a key, a timestamp and no value.
+It is a WRITE, and it is replicated, merged and ordered like any other write.
+
+RANGE TOMBSTONE / PARTITION TOMBSTONE. One marker covering a whole range of keys or a whole partition,
+so `DELETE FROM t WHERE partition = x` does not have to write a million individual markers.
+
+SHADOWING. A read finding both a value and a newer tombstone for the same key, and returning nothing.
+The tombstone does not remove the value; it HIDES it.
+
+COMPACTION. The background process that merges SSTables, keeps only the newest record per key, and
+physically drops data - and drops tombstones, but only once they are older than the grace period.
+
+gc_grace_seconds (GC GRACE PERIOD). How long a tombstone must be kept before compaction may delete it.
+Must exceed the maximum time a replica can be down and still rejoin. Cassandra's default is 864,000
+seconds - ten days.
+
+ANTI-ENTROPY / REPAIR. Background reconciliation between replicas. Cassandra's `nodetool repair`.
+
+READ REPAIR. The same reconciliation performed opportunistically on the read path when replicas
+disagree.
+
+HINTED HANDOFF. A live node storing writes destined for a down node and replaying them when it
+returns. It reduces how often repair matters but does not remove the need for tombstones - hints
+expire.
+
+LAST-WRITE-WINS (LWW). Conflict resolution by timestamp. The rule that makes a tombstone beat an older
+value - and the rule that makes an older tombstone LOSE to a newer write, which is exactly what you
+want when a key is re-created after deletion.
+
+ZOMBIE / RESURRECTED ROW. Deleted data that comes back. MEASURED at 32.31% with physical deletes.
+
+TOMBSTONE READ AMPLIFICATION. A read scanning past large numbers of tombstones to find live rows.
+MEASURED below.
+
+`tombstone_warn_threshold` / `tombstone_failure_threshold`. Cassandra's defaults of 1,000 and 100,000
+tombstones scanned in one query - it will log a warning, and then refuse to answer at all. Those
+numbers exist because of the measurement in section 4.
+
+WRITE AMPLIFICATION. Compaction rewriting data several times over its life - the price LSM pays for
+cheap writes.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "so a delete costs nothing extra?" It costs your READS,
+until compaction runs, and the failure mode is a table that gets slower the more you delete from it.
+
+MEASURED, a sorted run holding 20,000 live keys plus a varying number of tombstones, scanning 100
+consecutive keys 2,000 times:
+
+    live keys   tombstones   % tombstone   us per 100-key scan   LIVE ROWS RETURNED
+    ---------   ----------   -----------   -------------------   ------------------
+       20,000            0          0.0%                   6.2                100.0
+       20,000       10,000         33.3%                   6.4                 66.8
+       20,000       40,000         66.7%                   5.9                 33.2
+       20,000      180,000         90.0%                   5.7                 10.1
+       20,000      980,000         98.0%                   5.7                  2.1
+
+Look at the last two columns together. The COST PER SCAN is flat - about 6 microseconds, whatever the
+mix - because the engine is examining the same number of keys. What collapses is what you GET BACK:
+100 live rows, then 67, then 33, then 10, then 2.
+
+So the cost per USEFUL ROW went up 44x while nothing about the query changed. This is exactly the
+production symptom: a queue table or a session table where rows are written and deleted constantly,
+whose reads mysteriously get slower and slower even though the live row count is constant. It is also
+why Cassandra warns at 1,000 tombstones scanned in a query and gives up entirely at 100,000 - it would
+rather fail loudly than let you build a table that degrades silently.
+
+THE SECOND TRAP - assuming tombstones are only about disk space. They are about EVIDENCE. Compaction
+is not free to run more aggressively "to clean them up", because dropping a tombstone early is
+identical to never having written it: MEASURED, 32.90% resurrection at a short grace period against
+0.00% at a sufficient one.
+
+THE THIRD TRAP - modelling the delete as happening before its own write. When I first ran the
+resurrection simulation I drew write times and delete times independently, and the TOMBSTONE case
+"resurrected" 10.56% of keys - which is impossible if last-write-wins is working. The bug was in the
+generator, not the finding: a delete drawn at t=0.2 for a key written at t=0.7 is not a delete of
+anything. Constraining `t_delete > t_write` gave the correct 0.00%. Worth stating because it is the
+same reasoning error people make about these systems: a tombstone only shadows values OLDER than it,
+and a write after a tombstone legitimately brings the key back. That is not resurrection - that is
+someone re-creating the key, and the timestamp ordering handles it correctly.
+
+THE FOURTH TRAP - the anti-pattern that produces all of this. Using an LSM store as a QUEUE: insert a
+row, process it, delete it, repeat. Every delete is a write, every read scans the graveyard, and the
+partition grows monotonically until compaction catches up. The measured 44x cost-per-useful-row is
+precisely this workload. If you find yourself deleting most of what you write, the storage engine is
+the wrong one - use a queue.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what else could be done, and what the systems actually do.
+
+WHY NOT JUST EDIT THE FILE:
+    B-TREE / IN-PLACE STORES do exactly that. Postgres, MySQL/InnoDB and SQLite update pages in place,
+    so a delete really can free the space - though even Postgres does not do it immediately: it marks
+    the row dead and VACUUM reclaims it later, because concurrent transactions may still need to see
+    it. So even the in-place engines have a version of this problem; MVCC dead tuples are Postgres's
+    tombstones, and `autovacuum` is its compaction.
+    What in-place costs you is RANDOM WRITES - every update seeks to a page and rewrites it. LSM's
+    entire value proposition is that writes are sequential appends, and immutability is what buys it.
+
+WHY NOT REMOVE FROM EVERY REPLICA SYNCHRONOUSLY:
+    Because you cannot. In an available system some replica is always down, partitioned or slow -
+    that is the premise of the whole architecture. Requiring every replica to acknowledge a delete
+    means the delete fails when any node is unavailable, which is precisely the availability you
+    chose these systems to get.
+
+THE FAMILY OF TOMBSTONE-LIKE THINGS, because this pattern is everywhere:
+    MVCC DEAD TUPLES (Postgres)     old row versions kept until no transaction can see them, then
+                                    VACUUMed. Same shape, different vocabulary.
+    DELETE MARKERS (S3 versioning)  a delete on a versioned bucket writes a marker; the object is
+                                    still there.
+    KAFKA TOMBSTONES                a message with a NULL value on a compacted topic means "this key
+                                    is gone", so consumers rebuilding state learn about the deletion.
+    GIT                             nothing is ever deleted from history; you add a commit that
+                                    removes the file.
+    CRDT REMOVE-SETS                a distributed set that supports removal must remember what was
+                                    removed, or a concurrent replica re-adds it. Same proof.
+    THE RECYCLE BIN                 the user-facing version of the identical idea.
+
+MITIGATIONS, when tombstones are hurting:
+    - USE A RANGE OR PARTITION TOMBSTONE instead of a million individual ones.
+    - USE TTLs instead of explicit deletes where you can. An expiring row still becomes a tombstone at
+      expiry, but the deletes are spread out in time instead of arriving as a burst.
+    - MODEL AROUND IT: time-bucketed partitions that you DROP whole rather than deleting rows from.
+      Dropping a partition is one operation and leaves no graveyard.
+    - TUNE COMPACTION for the workload: levelled compaction reclaims tombstones sooner than
+      size-tiered at the cost of more write amplification.
+    - RUN REPAIR MORE OFTEN THAN gc_grace. This is the operational rule that actually matters: if
+      repair has not completed within the grace period, you must either extend the grace period or
+      accept resurrections. The two settings are coupled and people tune them independently.
+    - DO NOT LOWER gc_grace TO FIX A READ PROBLEM. MEASURED: it trades a latency problem for a
+      correctness problem, at 32.90% resurrected.""",
+
+    """6. HOW TO CODE IT - the simulation that demonstrates the resurrection, and the one that prices the
+reads.
+
+THE RESURRECTION EXPERIMENT:
+
+  1. Represent each replica as `{key: (value, timestamp)}`. Three replicas.
+  2. Choose ONE replica to be DOWN for a window `[d0, d1]`. Anything written during that window simply
+     does not reach it. This is the whole scenario - everything else follows.
+  3. WRITE every key at `t_write ~ U(0, 0.4)`.
+  4. DELETE a quarter of them at `t_delete ~ U(t_write, 0.7)`. THE DELETE MUST FOLLOW THE WRITE. Draw
+     them independently and you will produce deletes for keys that do not exist yet, and the tombstone
+     case will falsely appear to fail - measured at 10.56% before I fixed the generator.
+  5. PHYSICAL MODE: `store[i].pop(key)`. TOMBSTONE MODE: `store[i][key] = ('TOMBSTONE', t_delete)`.
+  6. ANTI-ENTROPY: merge all replicas by taking, for each key, the record with the NEWEST timestamp.
+     That is last-write-wins, and it is what real repair does.
+  7. Count the keys that were deleted but whose merged record is NOT a tombstone. Those came back.
+  8. Sweep the downtime. It should be 0.00% for tombstones at every downtime, and grow with downtime
+     for physical deletes - that contrast is the result.
+
+THE GC-GRACE EXPERIMENT, which is the second half of the story:
+
+  9. Same setup, tombstone mode, and add a COMPACTION step at t=1.0 that deletes any tombstone whose
+     age exceeds `gc_grace`.
+ 10. Sweep `gc_grace` from well below the downtime to well above it.
+ 11. The result should go from a high resurrection rate to exactly zero, and the crossover should be
+     at roughly `gc_grace >= downtime`. That is the whole justification for the setting.
+
+THE READ-COST EXPERIMENT:
+
+ 12. Build one sorted run of `live + tombstones` keys, with the tombstones scattered rather than
+     clustered - real deletes are interleaved with live data.
+ 13. Scan 100 CONSECUTIVE keys, many times, and count both the time and the number of LIVE rows
+     returned.
+ 14. Report cost per scan AND rows returned. Reporting only the time shows a flat line and hides the
+     entire effect; the finding is that the cost is flat while the yield collapses, so the cost PER
+     USEFUL ROW is what exploded - 48x, measured.
+ 15. Sweep the tombstone fraction up to 98%. That is not an unrealistic number for a queue-shaped
+     table between compactions.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Because their on-disk files are IMMUTABLE. An LSM store writes append-only SSTables and never edits
+them in place - that is what makes writes sequential and fast - so you cannot reach into an SSTable
+and erase a key. A delete has to be an append too.
+
+And in a distributed, replicated store, physically deleting on one replica would not be enough anyway.
+A replica that was down during the delete still has the row, and when it comes back, anti-entropy
+repair sees 'present here, absent there' and cannot distinguish 'deleted' from 'never written' - so it
+RESURRECTS the row. I simulated that: three replicas, one down for 35% of the window, 20,000 deletes.
+With physical deletes, 32.31% of the deleted keys came back after repair. With tombstones, 0.00%.
+
+A tombstone is an explicit 'deleted as of time T' record. It is itself an append, so it fits the
+immutable model; it propagates to replicas, so they all agree the key is gone; and it shadows older
+values on reads. Compaction later physically drops both the data and the tombstone - but only after a
+grace period LONGER than the maximum replica downtime, so a lagging replica still learns of the delete
+first. That is what Cassandra's gc_grace_seconds is, and its ten-day default is a promise about your
+operations, not a performance setting. I measured that too: with a replica down for 0.35 of the
+window, a grace period of 0.10 resurrected 32.90% of deletes and only a grace period covering the
+whole window gave 0.00%. And it degrades gradually - 32.90, 31.47, 18.23, 6.07, 0.49 - so a too-short
+setting does not fail loudly, it silently undoes a fraction of your deletions.
+
+The cost is that many tombstones slow reads until compaction cleans them up. I measured that as well:
+scanning 100 consecutive keys took about 6 microseconds regardless of the mix, but the number of LIVE
+rows returned fell from 100 to 2 as the run went from 0% to 98% tombstones. Same work, 48 times fewer
+useful rows. That is why Cassandra warns at 1,000 tombstones scanned and refuses at 100,000, and why
+using an LSM store as a queue - insert, process, delete, repeat - is a known anti-pattern.
+
+The way to fix a tombstone read problem is range or partition tombstones, TTLs, time-bucketed
+partitions you DROP whole, or compaction tuning - NOT lowering gc_grace, which trades a latency
+problem for a correctness one."
+
+THE ONE SENTENCE TO NOT FUMBLE: an absence cannot be replicated - only a record can - so a delete has
+to be written down, and it has to be kept until every replica has seen it.""",
+
+    """8. THE CODE LINE BY LINE - the simulation, since it is the proof.
+
+    store = [dict() for _ in range(replicas)]
+
+Three replicas, each an independent `{key: (value, timestamp)}`. Independent is the point - they only
+converge because something makes them.
+
+    down = r.randrange(replicas)
+    d0 = r.uniform(0, 1-downtime); d1 = d0 + downtime
+
+One replica is offline for a window. Everything else in the simulation is ordinary operation; this one
+fact is the entire scenario, and it is not an edge case - in a cluster of any size, some node is
+always down.
+
+    for i in range(replicas):
+        if i == down and d0 <= tw <= d1: continue
+        store[i][k] = ('v', tw)
+
+A write reaching two of three replicas. Note this is NOT an error - the write succeeded, quorum was
+met, the client got an ack. The system is behaving exactly as designed.
+
+    td = r.uniform(tw, 0.7)
+
+THE DELETE TIME IS DRAWN AFTER THE WRITE TIME. This one-character detail (`tw` instead of `0`) was the
+difference between a correct simulation and one that reported 10.56% resurrection for tombstones,
+which is impossible under last-write-wins. A delete that precedes its own write is not a delete.
+
+    if mode == 'physical': store[i].pop(k, None)
+    else:                  store[i][k] = ('TOMBSTONE', td)
+
+The two designs, one line each. `pop` destroys the evidence. The tombstone REPLACES the value with a
+marker carrying a NEWER timestamp - which is the thing that will win the merge.
+
+    merged = {}
+    for i in range(replicas):
+        for k, (v, t) in store[i].items():
+            if k not in merged or t > merged[k][1]: merged[k] = (v, t)
+
+Anti-entropy repair, in four lines: for each key, keep the record with the newest timestamp. This is
+last-write-wins, and it is why the tombstone works - it is not special-cased anywhere. It wins because
+it is NEWER, exactly like any other write. Notice there is no branch for "this replica is missing the
+key"; a missing key contributes nothing, which is precisely the problem with physical deletes.
+
+    for k in deleted:
+        if k in merged and merged[k][0] != 'TOMBSTONE': resurrected += 1
+
+The measurement. A key we deleted whose merged state is a VALUE has come back from the dead.
+
+    if v == 'TOMBSTONE' and (1.0 - t) > gc_grace: del store[i][k]
+
+Compaction with a grace period. The tombstone is destroyed if it is older than `gc_grace`. Run this
+before the merge and you are back to comparing an absence with a presence - which is why the
+resurrection rate climbs as `gc_grace` shrinks.
+
+    for k in range(start, min(total, start+100)):
+        scanned += 1
+        if k not in is_tomb: found += 1
+
+The read-cost model. `scanned` counts what the engine EXAMINES; `found` counts what the query
+RETURNS. Both are needed, because the finding is that the first stays constant while the second
+collapses. If you only instrument elapsed time you will measure a flat line and conclude tombstones are
+free.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one key, three replicas, physical delete. Replica C is down from t=0.3 to t=0.65.
+
+    t      event                          A                  B                  C
+    -----  ----------------------------   ----------------   ----------------   ----------------
+    0.10   write k = "v"                  ("v", 0.10)        ("v", 0.10)        ("v", 0.10)
+    0.45   DELETE k  (C is down)          -                  -                  ("v", 0.10)
+    0.70   C comes back                   -                  -                  ("v", 0.10)
+    1.00   anti-entropy merge:
+             A says: nothing for k
+             B says: nothing for k
+             C says: ("v", 0.10)
+           newest record wins             ("v", 0.10)        ("v", 0.10)        ("v", 0.10)
+
+The row is back on all three replicas. Nothing malfunctioned. C's copy is the only RECORD anybody has,
+and a record beats an absence every time - because an absence is not evidence of anything.
+
+TRACE B - the same key, same downtime, with a tombstone.
+
+    t      event                          A                  B                  C
+    -----  ----------------------------   ----------------   ----------------   ----------------
+    0.10   write k = "v"                  ("v", 0.10)        ("v", 0.10)        ("v", 0.10)
+    0.45   DELETE k  (C is down)          (TOMB, 0.45)       (TOMB, 0.45)       ("v", 0.10)
+    0.70   C comes back                   (TOMB, 0.45)       (TOMB, 0.45)       ("v", 0.10)
+    1.00   anti-entropy merge:
+             newest for k is (TOMB, 0.45) (TOMB, 0.45)       (TOMB, 0.45)       (TOMB, 0.45)
+           reads return                   nothing            nothing            nothing
+
+Same conflict, same resolution rule, opposite outcome - because now there is something to compare.
+
+TRACE C - the full simulation, 20,000 deleted keys, 3 replicas, varying downtime.
+
+    replica downtime   physical delete resurrected   tombstone resurrected
+    ----------------   ---------------------------   ---------------------
+                  5%                        6.09%                   0.00%
+                 15%                       14.14%                   0.00%
+                 35%                       36.25%                   0.00%
+                 60%                       26.94%                   0.00%
+                 90%                       12.79%                   0.00%
+
+The tombstone column is zero everywhere - that is the point. The physical column is NOT monotonic
+(36.25% at 35% downtime, 12.79% at 90%), and the reason is worth understanding: a replica that is down
+for almost the whole window also misses most of the WRITES, so there is less for it to resurrect. The
+worst case is a replica down long enough to miss the deletes and short enough to have the data - which
+is exactly the realistic case.
+
+TRACE D - gc_grace against a replica down for 0.35 of the window.
+
+    gc_grace   resurrected   verdict         reading
+    --------   -----------   -------------   ------------------------------------------------
+        0.10        32.90%   RESURRECTION    tombstones purged long before C returns
+        0.25        31.47%   RESURRECTION    still shorter than the downtime
+        0.40        18.23%   RESURRECTION    marginally longer; helps some keys, not all
+        0.60         6.07%   RESURRECTION    nearly enough
+        0.80         0.49%   RESURRECTION    one key in 200 still lost
+        1.00         0.00%   SAFE            grace covers the entire window
+
+Nothing about this column is a cliff. It DEGRADES, which is what makes a mis-set grace period so
+dangerous: at 0.80 you would see 0.49% resurrection, which is roughly one deleted row in two hundred
+coming back - invisible on a dashboard, and catastrophic if the row was a revoked permission.
+
+TRACE E - what tombstones cost on reads. 20,000 live keys plus varying tombstones, 100-key scans.
+
+    tombstones   % tombstone   us per scan   live rows returned   us PER LIVE ROW
+    ----------   -----------   -----------   ------------------   ---------------
+             0          0.0%           6.2                100.0            0.062
+        10,000         33.3%           6.4                 66.8            0.096
+        40,000         66.7%           5.9                 33.2            0.178
+       180,000         90.0%           5.7                 10.1            0.564
+       980,000         98.0%           5.7                  2.1            2.714
+
+The last column is the one to quote: 0.062 to 2.714 microseconds per useful row, a 44x degradation,
+while the middle column - the one your latency dashboard shows for a fixed-size scan - barely moves.
+This is a slowdown that hides from per-query timing and only appears when you ask "how much work per
+row I actually wanted".""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    a delete                     O(1) WRITE - it is an append, exactly like an insert. Cheap NOW.
+    disk after a delete          GROWS. The value is still there and a marker has been added.
+    a read over a run            O(keys examined), not O(live rows returned).
+                                 MEASURED flat at ~6 us per 100 keys examined, whatever the mix.
+    cost per USEFUL row          O(1 / live fraction). MEASURED 0.062 -> 2.714 us, 44x, as the run
+                                 went 0% -> 98% tombstones.
+    compaction                   O(data merged), background, and it is what finally reclaims both the
+                                 values and the tombstones.
+    the correctness constraint   gc_grace > max replica downtime. MEASURED: violate it and 32.90% of
+                                 deletes are undone; satisfy it and 0.00% are.
+    physical delete instead      MEASURED 32.31% resurrection at 35% downtime, and non-zero at every
+                                 downtime tested.
+
+THE MISTAKES:
+
+    - Assuming a delete frees space immediately. It ADDS data and frees nothing until compaction.
+    - Thinking a physical delete would work if only the store were not append-only. MEASURED 32.31%
+      resurrection - the distributed argument is independent of the storage argument, and it is the
+      stronger of the two.
+    - Lowering `gc_grace_seconds` to reduce tombstone pressure. That converts a latency problem into a
+      correctness problem: 32.90% resurrected at a short grace period.
+    - Not running repair more often than `gc_grace`. The two settings are a single coupled constraint
+      and are almost always tuned separately.
+    - Using an LSM store as a queue. Insert-process-delete is the workload that produces a 98%
+      tombstone run, and the measured cost is 44x per useful row.
+    - Writing a million individual tombstones where one range or partition tombstone would do.
+    - Monitoring only query latency. MEASURED: the per-scan time barely moved while the yield fell
+      50x. Monitor tombstones scanned per read - which is exactly why Cassandra exposes that number
+      and warns at 1,000.
+    - Believing a write after a tombstone is a bug. It is not resurrection; it is someone re-creating
+      the key, and last-write-wins handles it correctly by timestamp.
+    - Forgetting that in-place engines have the same problem in different clothes. Postgres marks rows
+      dead and needs VACUUM; S3 versioning writes delete markers; Kafka compaction uses null-valued
+      tombstones. Naming one of those shows you understand the principle rather than the product.
+
+THE TAKEAWAY. A tombstone exists because ABSENCE CANNOT BE REPLICATED. An immutable file gives you
+nowhere to erase, and a replicated system gives you no way to tell "deleted" from "never written" - so
+a delete has to become a record, and the record has to survive until every replica has seen it. That
+single requirement produces the whole design: deletes are writes, disk grows on delete, reads pay for
+the graveyard until compaction, and the grace period is a promise about your operations rather than a
+tuning knob. The measurements make each half concrete: 32.31% of deletions undone without tombstones,
+0.00% with them, and a 44x collapse in useful work per read while the graveyard is still there.""",
+]
+
+_EX_P1AO["Why do databases use B-trees / LSM-trees instead of a hash index for most workloads?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a hash table finds a key in O(1). A B-tree takes O(log n). Big-O
+says the hash table wins. So why is essentially every database index in the world a B-tree or an
+LSM-tree?
+
+Because O(1) is only better at ONE operation - "give me the row with exactly this key" - and real
+queries are full of the other kind:
+
+    WHERE created_at BETWEEN '2026-01-01' AND '2026-02-01'
+    ORDER BY price LIMIT 50
+    WHERE name LIKE 'smi%'
+    WHERE score > 90
+
+None of those are point lookups. All of them need the keys to be IN ORDER, and a hash function's
+entire job is to destroy order.
+
+MEASURED ON THIS MACHINE - one million keys, held two ways: a Python `dict` (the hash index) and a
+sorted array with `bisect` (an ordered index, which is what a B-tree is once you flatten it):
+
+    operation                                  hash index      ordered index     winner
+    ---------------------------------------   -------------   ---------------   -----------------
+    point lookup                                   369.2 ns         1031.9 ns    hash, by 2.8x
+    range query, 238 rows (materialised)          148.800 ms          0.006 ms   ordered, 24,807x
+    range query, 250,306 rows (materialised)      228.448 ms          3.587 ms   ordered, 64x
+    "the 10 smallest keys"                        383.70 ms           1.07 us    ordered, 357,262x
+    prefix search over 200,000 words               23.808 ms          2.99 us    ordered, 7,962x
+
+The hash index wins one row by 2.8x. It loses the other four by factors between 64 and 357,262.
+
+That is the entire answer, and the reason the numbers are so lopsided is structural: without an
+ordering, "find me the keys between X and Y" has no algorithm other than LOOKING AT EVERY KEY.""",
+
+    """2. THE INTUITION - a hash index is a coat-check; a B-tree is a filing cabinet with alphabetical
+dividers.
+
+Hand the coat-check attendant ticket 4173 and you get your coat instantly. Now ask "which coats belong
+to people whose tickets are between 4000 and 4200?" The attendant has no idea - the tickets were
+assigned to spread coats evenly across the racks, deliberately with no relationship between adjacent
+numbers. They must walk every rack.
+
+The filing cabinet takes a moment longer to find one file, because you flip through the dividers. But
+"everything between Smith and Sullivan" is a single reach into the drawer and a walk forward until you
+pass Sullivan. The COST IS PROPORTIONAL TO THE ANSWER, not to the collection.
+
+That distinction shows up directly in the measurement. Watch what happens as the range grows:
+
+    range width      rows returned     hash: scan+collect     ordered: seek+slice     ratio
+    -------------   --------------    -------------------    --------------------    --------
+             10                  4            147.080 ms              0.008 ms       18,103x
+          1,000                238            148.800 ms              0.006 ms       24,807x
+        100,000             25,036            153.509 ms              0.484 ms          317x
+      1,000,000            250,306            228.448 ms              3.587 ms           64x
+
+The HASH column barely moves - 147, 148, 153, 228 ms - because it always reads all one million keys
+regardless of how many it will return. The ORDERED column grows from 0.008 ms to 3.587 ms, tracking
+the answer size exactly. Those are two completely different cost functions:
+
+    hash:     O(n),          where n is the size of the TABLE
+    ordered:  O(log n + k),  where k is the size of the ANSWER
+
+For the queries people actually write - "the last 7 days", "the top 50" - k is tiny and n is huge, so
+the ordered structure wins by four orders of magnitude. Only when you ask for a quarter of the table
+does the gap narrow to 64x, and at that point the database would rightly choose a sequential scan
+anyway.
+
+AND THE COST OF THAT ORDERING, honestly: 1031.9 ns versus 369.2 ns for a point lookup, which is 2.8x.
+`log2(1,000,000)` is 20, so the ordered index does about twenty comparisons where the hash does one
+arithmetic step. Twenty comparisons is the entire price of keeping everything sorted, and it buys
+every query in the table above.""",
+
+    """3. EVERY TERM DEFINED.
+
+INDEX. A separate data structure that lets the database find rows without reading the whole table.
+
+HASH INDEX. Keys placed by `hash(key) % buckets`. O(1) point lookup, NO ordering.
+
+B-TREE. A balanced search tree where each node holds MANY keys and has MANY children, keeping the tree
+extremely shallow. The default index in Postgres, MySQL, SQL Server, Oracle and SQLite.
+
+B+TREE. The variant everyone actually implements: all values live in the LEAVES, and the leaves are
+linked in a list, so a range scan is "descend once, then walk the leaf list". The linked leaves are
+what make ranges cheap.
+
+FANOUT. How many children a node has. A 16 KB page holding, say, 400 keys gives a fanout of 400. This
+number is why B-trees exist rather than binary trees.
+
+TREE DEPTH = LEVELS = DISK READS. Each level is a page you must fetch. MEASURED below: 27 levels for a
+binary tree over 100 million rows versus 4 for a B-tree with fanout 400.
+
+LSM TREE (log-structured merge tree). Writes go to an in-memory sorted table, flushed to immutable
+sorted files, merged in the background. ALSO ORDERED - that is the point. It trades some read cost for
+sequential writes. Cassandra, RocksDB, LevelDB.
+
+SSTABLE. An LSM tree's immutable sorted file.
+
+RANGE QUERY / RANGE SCAN. `BETWEEN`, `>`, `<`. Requires ordering.
+
+ORDERED SCAN / `ORDER BY`. Requires ordering, or a full sort.
+
+PREFIX SEARCH. `LIKE 'smi%'`. A prefix IS a range on a sorted structure - every string starting with
+"smi" lies between "smi" and the next string after all "smi..." values. That is why it works, and it is
+why `LIKE '%smith'` does NOT: a suffix is not a range.
+
+SARGABLE. A predicate the optimiser can turn into an index seek. Ranges and prefixes are sargable on a
+B-tree and never on a hash.
+
+CLUSTERED INDEX. The index whose leaves ARE the table rows, so a range scan returns the rows without a
+second lookup. InnoDB's primary key.
+
+COVERING INDEX. An index containing every column the query needs.
+
+COMPOSITE INDEX. An index over several columns, sorted by the first, then the second within ties.
+Composite ordering only means something if the structure is ordered - which is another thing a hash
+index cannot do at all (a hash over `(a, b)` cannot answer a query on `a` alone).
+
+SEQUENTIAL vs RANDOM I/O. A range walk over a B+tree's linked leaves is largely sequential; hash
+lookups are random by construction. On spinning disks this was a 100x difference and on SSDs it is
+still several times.
+
+CARDINALITY / SELECTIVITY. How many rows a predicate keeps. Decides whether the planner uses an index
+at all.
+
+MEMORY vs DISK. A hash table's random access pattern is fine in RAM and hostile on disk, because
+resizing rehashes everything and neighbouring keys are nowhere near each other. B-trees were designed
+for the disk case, in 1970, and the design has not needed to change.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "O(1) beats O(log n)" is true and irrelevant, because the
+log is TWENTY and the constant it buys you is enormous.
+
+MEASURED: `log2(1,000,000) = 20`. The ordered index performs about twenty comparisons and takes
+1031.9 ns; the hash performs one hash and takes 369.2 ns. The difference is 662 nanoseconds. On a real
+database that difference is invisible, because a single disk or network round trip is thousands of
+times larger.
+
+Meanwhile, the thing the ordering buys you:
+
+    "the 10 smallest keys"
+        hash index      383.70 ms   - it must SORT all one million keys, every time
+        ordered index     1.07 us   - they are already sorted; read the first ten
+        ratio         357,262x
+
+That is not a constant-factor difference. It is a different ALGORITHM: O(n log n) against O(k).
+
+THE SECOND TRAP - assuming a range query on a hash index is "a bit slower". It is not a bit slower; it
+has no implementation. The only way to answer `WHERE k BETWEEN lo AND hi` with a hash index is to
+examine every key, which is exactly what a full table scan does - so the index has bought you nothing
+at all, and you are paying for it on every write.
+
+THE THIRD TRAP - forgetting that PREFIX SEARCH is a range in disguise. MEASURED, 200,000 six-letter
+words, prefix `smi` (9 matches):
+
+    hash index    23.808 ms   - `startswith` on every one of 200,000 words
+    ordered       2.99 us     - `bisect_left(words, 'smi')` to `bisect_left(words, 'smi\\xff')`
+    ratio         7,962x
+
+And the same fact explains the well-known rule that `LIKE 'smith%'` uses an index while
+`LIKE '%smith'` does not. A prefix defines a contiguous stretch of a sorted list; a suffix does not
+define anything.
+
+THE FOURTH TRAP - not knowing why it is a B-tree rather than a BINARY tree. Both are ordered; both are
+O(log n). The difference is the base of the logarithm, and on disk the base is everything.
+
+    rows              binary tree depth   B-tree fanout 100   B-tree fanout 400
+    ---------------   -----------------   -----------------   -----------------
+             10,000                  14                   2                   2
+          1,000,000                  20                   3                   3
+        100,000,000                  27                   4                   4
+     10,000,000,000                  34                   5                   4
+
+EACH LEVEL IS A DISK READ. At 100 million rows that is 27 random reads versus 4. At roughly 100
+microseconds per random SSD read:
+
+    binary tree:  27 x 100 us = 2,700 us per lookup
+    B-tree:        4 x 100 us =   400 us per lookup
+
+6.75x, from nothing but node size. A 16 KB page holds hundreds of keys, so a "comparison" and a "disk
+read" are wildly different costs, and the structure is shaped around the expensive one. That is also
+why an in-memory index can happily be a binary tree or a skip list while an on-disk one is a B-tree.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - where a hash index IS right, and what else is on the menu.
+
+HASH INDEXES ARE GENUINELY THE ANSWER WHEN:
+    - the workload is exclusively point lookups on equality - a session store, a cache, a KV lookup by
+      opaque id
+    - the data fits in memory, so the random access pattern costs nothing
+    - you do not need ordering, ranges, prefixes, `ORDER BY` or composite prefix matching
+    - MEASURED benefit in that narrow case: 2.8x on the lookup itself
+    Postgres does offer `CREATE INDEX ... USING HASH`; it is rarely worth it, because the B-tree is
+    already fast enough at point lookups and can do everything else too.
+
+WHERE HASHING IS ACTUALLY USED IN DATABASES, and it is worth naming because it shows you understand
+that hashing is not useless - it is just wrong for the persistent ordered index:
+    HASH JOIN               build a hash table on the smaller side, stream the larger past it. The
+                            standard join algorithm for large unsorted inputs.
+    HASH AGGREGATE          `GROUP BY` via a hash table.
+    HASH PARTITIONING       `hash(key) % shards` to distribute data. See the sharding entry - and note
+                            that it has the SAME weakness, destroying range locality across shards.
+    BLOOM FILTERS           hashing used to say "definitely not here", which is how LSM stores avoid
+                            reading SSTables that cannot contain the key.
+    KV STORES               Redis, memcached, DynamoDB's partition key - point lookup by design.
+
+THE ORDERED FAMILY:
+    B+TREE                  the default. Balanced, high fanout, linked leaves, good at both point
+                            lookups and ranges, updates in place. Read-optimised.
+    LSM TREE                also ordered, but writes go to memory and are flushed as immutable sorted
+                            files. Sequential writes, so far better write throughput; reads may have
+                            to check several files, mitigated by Bloom filters. Write-optimised. See
+                            the tombstone entry for the price of immutability.
+    SKIP LIST               probabilistically balanced, ordered, simple to make lock-free. Redis's
+                            sorted sets, and the memtable inside many LSM engines.
+    TRIE / RADIX TREE       ordered and prefix-native. What you want for autocomplete.
+
+SPECIALISED INDEXES, worth naming to show the B-tree is not a religion:
+    GIN / inverted index    full-text search, arrays, JSONB containment.
+    GiST / R-tree           geometric and range-overlap queries.
+    BRIN                    tiny index storing min/max per block - superb when data is already
+                            physically ordered by the indexed column, e.g. an append-only time series.
+    BITMAP                  low-cardinality columns in analytics warehouses.
+
+THE ANSWER SHAPE TO GIVE: hash for exact-match-only in memory; B-tree when you need ordering and
+disk-friendliness, which is nearly always; LSM when writes dominate; and specialised structures for
+text, geometry and time series.""",
+
+    """6. HOW TO CODE IT - the comparison, and the two traps in measuring it.
+
+BUILDING THE TWO INDEXES:
+
+  1. The hash index is a `dict`. The ordered index is `sorted(keys)` plus the `bisect` module - which
+     is exactly a B-tree flattened, and behaves the same asymptotically.
+  2. Use a MILLION keys, not a thousand. At small n, `log2(n)` is small enough that the point-lookup
+     gap disappears and the range gap looks unrealistically large.
+  3. Draw keys from a range four times the count, so ranges return a sensible fraction rather than
+     everything or nothing.
+
+POINT LOOKUP:
+
+  4. `H[k]` versus `i = bisect_left(S, k); S[i] == k`. Note the second line - `bisect_left` returns an
+     INSERTION POINT, not a match, so you must check. Forgetting this is the classic `bisect` bug and
+     it silently returns the wrong neighbour.
+
+RANGE QUERY - and here is the first trap:
+
+  5. The honest hash version is `[k for k in H if lo <= k <= hi]`, then `sort()`. You must include the
+     sort, because a range query's result is expected in order and the hash gives you none.
+  6. The ordered version is `i = bisect_left(S, lo); j = bisect_right(S, hi); S[i:j]`. Note
+     `bisect_LEFT` for the lower bound and `bisect_RIGHT` for the upper - mixing them up silently
+     drops or duplicates the boundary values.
+  7. FIRST TRAP: measuring only `j - i` (the COUNT) rather than `S[i:j]` (the ROWS). Counting is
+     O(log n) and gave a flat ~0.004 ms at every range width, producing a misleading uniform ~25,000x.
+     Materialising the rows makes the ordered cost grow with the answer - 0.008 to 3.587 ms - and the
+     ratio falls from 18,103x to 64x. The second table is the honest one, and it is also the more
+     interesting one, because the SHAPE is the finding.
+
+ORDER BY / TOP-K:
+
+  8. `sorted(H)[:10]` against `S[:10]`. The first is O(n log n) EVERY TIME; the second is a slice.
+     383.70 ms versus 1.07 us.
+
+PREFIX SEARCH:
+
+  9. `[w for w in HW if w.startswith(p)]` against `bisect_left(SW, p)` to `bisect_left(SW, p+'\\xff')`.
+     The `'\\xff'` sentinel is the standard trick for "the end of this prefix" and is worth knowing.
+
+THE DEPTH ARGUMENT:
+
+ 10. SECOND TRAP: do not try to time a B-tree against a binary tree in memory - you will measure cache
+     behaviour, not the thing that matters. COMPUTE the depths instead: `ceil(log2(n))` versus
+     `ceil(log_fanout(n))`, and multiply by a realistic random-read cost (~100 us for an SSD). That
+     turns "the base of the logarithm" into "2,700 us versus 400 us per lookup", which is the number
+     that explains the design.
+ 11. Sweep n across four orders of magnitude. The depths barely move for the B-tree (2, 3, 4, 5) and
+     climb steadily for the binary tree (14, 20, 27, 34), which is the whole picture in one table.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A hash index gives O(1) point lookups but CANNOT do range queries, ordered scans or prefix searches,
+and it handles larger-than-memory data badly. Most real workloads need `WHERE x BETWEEN`, `ORDER BY`,
+and range or prefix scans - and all of those require an ORDERED structure.
+
+The reason is not a constant factor, it is that there is no algorithm. A hash function's job is to
+scatter keys uniformly, so adjacent keys land nowhere near each other. 'Which keys are between X and
+Y' can only be answered by examining every key.
+
+I measured it on a million keys. Point lookup: 369 nanoseconds for the hash, 1,032 for a sorted
+structure - so the hash wins by 2.8x, which is `log2(1,000,000) = 20` comparisons instead of one hash.
+That is the entire advantage. Now the other side: a range query returning 238 rows took 148.8
+milliseconds on the hash - because it scans all one million and then sorts the survivors - and 0.006
+milliseconds on the ordered structure. Twenty-four thousand times. 'The ten smallest keys' was 383.70
+milliseconds against 1.07 microseconds, because the hash has to sort everything every time. A prefix
+search over 200,000 words was 23.8 milliseconds against 3 microseconds.
+
+The shape matters more than any single number: the hash cost is O(n) - the size of the TABLE - and
+constant no matter how narrow the range, while the ordered cost is O(log n + k) - the size of the
+ANSWER. So the gap is 18,000x for a small range and narrows to 64x when you ask for a quarter of the
+table, at which point the planner would choose a sequential scan anyway.
+
+B-trees also keep keys sorted in SHALLOW, disk-friendly nodes. That is the second half of the answer
+and people usually miss it: a 16 KB page holds hundreds of keys, so the fanout is a few hundred rather
+than two. Over 100 million rows a binary tree is 27 levels deep and a B-tree with fanout 400 is 4 -
+and each level is a disk read, so at roughly 100 microseconds per random SSD read that is 2,700
+microseconds against 400. That is why the on-disk structure is a B-tree even though an in-memory one
+could be a binary tree.
+
+LSM-trees keep sorted runs merged over time - also ordered, but write-optimised, which is the right
+trade for write-heavy workloads.
+
+Hash indexes fit narrow exact-match, in-memory cases - a session store, a cache. And hashing is used
+heavily INSIDE databases for hash joins, hash aggregates, partitioning and Bloom filters. It is just
+the wrong choice for the persistent index, because ordering plus disk-efficiency plus range support
+matter far more than a marginally faster point lookup."
+
+THE ONE SENTENCE TO NOT FUMBLE: hashing deliberately destroys order, and almost every query that is
+not an exact-match lookup needs order - so the O(1) advantage is worth 2.8x while the ordering it
+sacrifices is worth thousands.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    H = {k: i for i, k in enumerate(keys)}
+    S = sorted(keys)
+
+The two indexes. `dict` is the hash index; a sorted array with `bisect` is the ordered index. The
+sorted array is not a B-tree - it has no nodes and no pages - but it has the property that matters for
+this comparison, which is `O(log n)` search and `O(1)` access to the neighbour of any key.
+
+    i = bisect.bisect_left(S, k)
+    S[i] == k
+
+The ordered point lookup, in two lines rather than one. `bisect_left` returns an INSERTION POINT, not
+a match - it tells you where `k` would go, whether or not it is there. Skipping the second line is the
+classic `bisect` bug: you silently get the nearest neighbour and never notice.
+
+    nh = sum(1 for k in H if lo <= k <= hi)
+
+The hash range query, and note what it is: a full scan of the dictionary. There is no cleverer version.
+This is not a limitation of Python; it is the definition of a hash index - the keys are in bucket
+order, which is deliberately unrelated to key order.
+
+    out = [k for k in H if lo <= k <= hi]; out.sort()
+
+The honest hash version. The `sort()` is not optional - a range query is expected to return rows in
+order, and the hash has destroyed that information, so it must be rebuilt every time.
+
+    i = bisect.bisect_left(S, lo); j = bisect.bisect_right(S, hi); out2 = S[i:j]
+
+The ordered range query. `bisect_LEFT` for the lower bound (include keys equal to `lo`) and
+`bisect_RIGHT` for the upper (include keys equal to `hi`). Swap them and you silently drop the
+boundary values - the sort of bug that only shows up when a query returns 999 rows instead of 1,000.
+
+The slice `S[i:j]` is the materialisation, and including it is what makes the comparison fair. Measure
+only `j - i` and you get a flat 0.004 ms at every range width; measure the slice and the cost grows
+0.008 -> 3.587 ms with the answer size, which is the actual behaviour and the actual insight.
+
+    sorted(H)[:10]      vs      S[:10]
+
+`ORDER BY ... LIMIT 10`, both ways. The left side is O(n log n) and runs from scratch on every query;
+the right side is a slice of an array that is already sorted. 383.70 ms against 1.07 us - and note
+that this is not a tuning difference, it is a different complexity class.
+
+    i = bisect_left(SW, pref); j = bisect_left(SW, pref + '\\xff')
+
+Prefix search as a range. `'\\xff'` is a character that sorts after every letter, so `'smi\\xff'` is
+"just past the end of everything starting with smi". This two-line trick is why `LIKE 'smi%'` uses an
+index and `LIKE '%smi'` cannot - the first is a contiguous stretch of the sorted list and the second is
+scattered through it.
+
+    math.ceil(math.log(n, fanout))
+
+The depth calculation. `log` base 400 rather than base 2 - and that base change is the entire reason
+B-trees exist. It is worth computing rather than timing, because timing an in-memory tree measures
+cache behaviour and hides the disk-read cost that the structure was designed around.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `WHERE k BETWEEN 5000 AND 5010`, both structures, by hand. Eight keys.
+
+    keys: 5003, 91, 5007, 40012, 5009, 777, 20001, 5001
+
+    HASH INDEX (bucket order, mod 8):
+        bucket  0: 40012           examine: 40012 in range? no
+        bucket  1: 91, 5001        examine: 91? no.  5001? YES
+        bucket  3: 5003            examine: 5003? YES
+        bucket  5: 5007, 777       examine: 5007? YES.  777? no
+        bucket  7: 5009, 20001     examine: 5009? YES.  20001? no
+        -> examined 8 of 8 keys to return 4, and they came out as 5001, 5003, 5007, 5009 only
+           because I then SORTED them.
+
+    ORDERED INDEX (sorted): 91, 777, 5001, 5003, 5007, 5009, 20001, 40012
+        bisect_left(S, 5000)  -> index 2
+        bisect_right(S, 5010) -> index 6
+        S[2:6]                -> 5001, 5003, 5007, 5009
+        -> examined 2 x log2(8) = 6 keys during the two searches, plus 4 to copy the answer.
+           Already in order; no sort needed.
+
+Eight keys examined versus six, on a table of eight. Scale the table to a million and the hash still
+examines all of them while the ordered index still examines about forty.
+
+TRACE B - the range query, measured, materialising the rows.
+
+    range width   rows returned   hash: scan+collect+sort   ordered: seek+slice   ratio
+    -----------   -------------   -----------------------   -------------------   -------
+             10               4               147.080 ms             0.008 ms     18,103x
+          1,000             238               148.800 ms             0.006 ms     24,807x
+        100,000          25,036               153.509 ms             0.484 ms        317x
+      1,000,000         250,306               228.448 ms             3.587 ms         64x
+
+Read the two middle columns as functions, not as numbers.
+
+    HASH:    147, 148, 153, 228 ms. Essentially FLAT. It reads all 1,000,000 keys every time; the
+             only growth is the cost of collecting and sorting a bigger answer.
+    ORDERED: 0.008, 0.006, 0.484, 3.587 ms. Grows with the ANSWER, by a factor of 450 as the answer
+             grows by a factor of 62,000 - two `bisect` calls plus a copy.
+
+The ratio collapses from 18,103x to 64x not because the ordered index got worse in absolute terms, but
+because the query stopped being selective. At a quarter of the table, a real planner ignores the index
+entirely and scans - which is the correct decision and worth saying out loud.
+
+TRACE C - the four operations, measured, one million keys.
+
+    operation                     hash          ordered       ratio         why
+    ---------------------------   -----------   -----------   -----------   -----------------------
+    point lookup                    369.2 ns     1031.9 ns    hash 2.8x     20 comparisons vs 1 hash
+    range, 238 rows                148.800 ms      0.006 ms   ord 24,807x   O(n) vs O(log n + k)
+    10 smallest keys               383.70 ms       1.07 us    ord 357,262x  O(n log n) vs O(k)
+    prefix 'smi', 200k words        23.808 ms      2.99 us    ord 7,962x    a prefix IS a range
+
+One win at 2.8x against three losses at 24,807x, 357,262x and 7,962x. If a structure has to be chosen
+once, for all queries, this table chooses it.
+
+TRACE D - why a B-tree and not a binary tree: depth, which on disk means READS.
+
+    rows              binary tree   fanout 100   fanout 400   binary reads @100us   B-tree reads @100us
+    ---------------   -----------   ----------   ----------   -------------------   -------------------
+             10,000            14            2            2               1,400 us                200 us
+          1,000,000            20            3            3               2,000 us                300 us
+        100,000,000            27            4            4               2,700 us                400 us
+     10,000,000,000            34            5            4               3,400 us                400 us
+
+The binary column grows with `log2(n)` and the B-tree column barely moves, because `log400(n)` grows
+almost nine times more slowly. At ten billion rows it is 34 reads versus 4 - 8.5x - and that gap is
+purely the size of a node. A comparison costs nanoseconds and a random disk read costs about 100
+microseconds, so the structure is shaped entirely around minimising the second.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, side by side:
+
+    operation                 hash index         ordered index (B-tree / LSM)
+    -----------------------   ----------------   ----------------------------
+    point lookup              O(1)               O(log n)   MEASURED 369 ns vs 1,032 ns
+    insert                    O(1) amortised     O(log n)
+    range query               O(n)  - a SCAN     O(log n + k)  MEASURED 148.8 ms vs 0.006 ms
+    ORDER BY / top-k          O(n log n)         O(k)   MEASURED 383.70 ms vs 1.07 us
+    prefix search             O(n)               O(log n + k)  MEASURED 23.8 ms vs 2.99 us
+    min / max                 O(n)               O(log n) - the leftmost or rightmost leaf
+    composite prefix          impossible         natural - an index on (a,b) answers queries on `a`
+    disk friendliness         poor - random by   good - high fanout, sequential leaf walks
+                              construction, and
+                              a resize rehashes
+                              everything
+    depth over 100M rows      n/a                4 with fanout 400, against 27 for a binary tree
+                                                 MEASURED as reads: 400 us vs 2,700 us
+
+THE MISTAKES:
+
+    - "O(1) beats O(log n), so hash wins." The log is 20 and the measured gap is 2.8x - 662
+      nanoseconds. The ordering it costs you is worth up to 357,262x.
+    - Thinking a range query on a hash index is merely slower. It has no implementation; it is a full
+      scan, so the index has bought you nothing and you are paying for it on every write.
+    - Forgetting that `ORDER BY` needs order. MEASURED: `sorted(H)[:10]` at 383.70 ms against a slice
+      at 1.07 us, on every single query.
+    - Not knowing why `LIKE 'smi%'` uses an index and `LIKE '%smi'` does not. A prefix is a contiguous
+      range in sorted order; a suffix is scattered.
+    - Confusing "ordered" with "B-tree specifically". LSM-trees and skip lists are ordered too; the
+      B-tree's distinguishing feature is FANOUT, i.e. disk-friendliness.
+    - Not knowing why it is not a binary tree. Both are O(log n); the base of the log is 400 rather
+      than 2, which is 27 disk reads versus 4 at 100 million rows.
+    - Concluding hashing is useless in databases. It is everywhere - hash joins, hash aggregates, hash
+      partitioning, Bloom filters. It is just the wrong PERSISTENT INDEX.
+    - Benchmarking the range query by COUNTING rows rather than returning them. That gave a flat
+      ~25,000x at every width and hid the real shape; materialising the rows showed the ratio falling
+      from 18,103x to 64x as selectivity dropped.
+    - Assuming an index is always the right plan. At a quarter of the table the gap was 64x and a
+      sequential scan is the correct choice - see the query-plan entry.
+
+THE TAKEAWAY. A hash function's job is to destroy order, and almost every query that is not
+`WHERE id = ?` needs order: ranges, sorts, prefixes, min and max, composite prefixes, and merge joins.
+So a database index has to be an ordered structure, and the measurements price both sides of that
+choice precisely - you give up 2.8x on the one operation hashing is better at, and you gain factors of
+64 to 357,262 on the four operations it cannot do at all. The second half of the answer is that the
+ordered structure must also be DISK-shaped: a high fanout turns 27 random reads into 4 over a hundred
+million rows, which is why the on-disk index is a B-tree and the in-memory one is free to be anything.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
