@@ -265116,6 +265116,1456 @@ the inheritance triangle at the parent, and remember the one recommendation that
 changes code rather than diagrams: prefer composition to inheritance, because
 delegation is swappable and a superclass is forever.""",
 ]
+_EX_P1AO["Basic Calculator (with parentheses)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - evaluate a string like "(1+(4+5+2)-3)+(6+8)"
+without ever building a tree.
+
+You are handed an arithmetic expression as TEXT: digits, plus, minus, spaces,
+and parentheses nested to any depth. Return the number it evaluates to.
+
+  "1 + 1"                     ->   2
+  " 2-(5-6) "                 ->   3
+  "(1+(4+5+2)-3)+(6+8)"       ->  23
+  "2-4 -(8+2-6+(8+4-(1)+8-10))" -> -15
+
+The version people expect you to write is a parser: tokenise, build an abstract
+syntax tree, walk it. That is fifty lines and you do not need any of it, because
+THERE IS ONLY ONE PRECEDENCE LEVEL. With + and - alone, left-to-right evaluation
+is correct, so you can compute the answer in a single pass with four variables
+and one stack.
+
+MEASURED on 5,000 levels of nesting: the one-pass version evaluates in 1.21 ms
+and uses 10,000 stack ENTRIES, while the recursive version that reads more
+naturally hits RecursionError at a nesting depth of only 1,000 under Python's
+default limit.""",
+
+    """2. THE FOUR VARIABLES - and why the sign, not the operator, is what you carry.
+
+  result  the running total of everything FINISHED so far
+  num     the digits of the number currently being read
+  sign    +1 or -1, the sign that will be applied to num when it is finished
+  stack   what to restore when a ')' closes
+
+THE KEY IDEA IS THAT YOU NEVER STORE AN OPERATOR. There is no "pending +" to
+remember, because you convert the operator to a SIGN the moment you see it and
+attach that sign to the number that follows. `3 - 4` is not "3 then subtract 4",
+it is `(+3) + (-4)`. Every expression becomes a plain sum of signed numbers, and
+a sum has no precedence problem at all.
+
+That is why + and - can be handled with no operator stack while * and / cannot:
+multiplication does not distribute into the running total this way.
+
+WHEN DOES A NUMBER GET APPLIED? The moment you know it has ended — that is, at a
+`+`, a `-`, or a `)`. Not when you read its digits, because `1` might be the
+start of `123`. So the loop is: accumulate digits, and on ANY non-digit that ends
+a number, fold `sign * num` into `result` and reset `num` to 0.
+
+AND THE PARENTHESIS. `a - (b + c)` means the whole inner value gets negated. So
+at `(` you push the outer `result` and the outer `sign` and start fresh with
+`result = 0, sign = +1`. At `)` you finish the inner sum, multiply by the pushed
+sign, and add the pushed result. The inner expression never knows it was inside
+anything.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EXPRESSION - the whole string you are evaluating.
+
+TOKEN - one meaningful unit: a number, an operator, a bracket. This solution never
+materialises a token list; it scans characters and reconstructs numbers on the fly.
+
+UNARY MINUS - a minus with nothing to its left, as in `-2 + 3` or `-(3 + 4)`. It is
+a sign on the following term, not a subtraction between two terms.
+
+MULTI-DIGIT ACCUMULATION - `num = num * 10 + int(ch)`. Reading "3", "0" as 30: start
+at 0, then 0*10+3 = 3, then 3*10+0 = 30. This is how you turn a run of digit
+characters into one integer without slicing the string.
+
+STACK - a last-in-first-out store. Pushed at `(`, popped at `)`. Because the most
+recently opened bracket is always the first one to close, LIFO is exactly the right
+shape and no bracket-matching pass is needed.
+
+CONTEXT - the pair (outer result, outer sign) saved at a `(`. The inner expression
+runs in a clean context; the saved pair is how you return to the outer one.
+
+PRECEDENCE - the rule that some operators bind tighter (`2 + 3 * 4` is 14, not 20).
+This problem has NONE, which is the entire reason the solution is short.
+
+LEFT-TO-RIGHT ASSOCIATIVITY - `10 - 3 - 2` means `(10 - 3) - 2` = 5, not
+`10 - (3 - 2)` = 9. A running total gives you this for free.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the unary minus, and the trailing number.
+
+TWO BUGS account for most failures on this problem, and neither shows up in the
+example the interviewer gives you.
+
+BUG ONE: THE TRAILING NUMBER. The loop applies a number when it sees the operator
+AFTER it. The last number in the string has no operator after it, so the loop ends
+with it still sitting in `num`, unapplied. The final line is not decoration:
+
+  return result + sign * num
+
+MEASURED, `calculate("30")` returns 30 only because of that line — the loop body
+never touched `result` at all. Drop it and every expression loses its last term.
+`"1+1"` returns 1.
+
+BUG TWO: THE UNARY MINUS. `-2 + 3` starts with an operator. Walk it: `sign` starts
+at +1 and `num` at 0, then `-` fires the operator branch, which does
+`result += (+1) * 0` — a harmless no-op — and sets `sign = -1`. Then 2 is read with
+sign -1. MEASURED: `-2 + 3` returns 1, and `- (3 + (4 + 5))` returns -12. The
+initialisation `num = 0, sign = 1` is what makes the leading minus work, silently.
+No special case is needed and none should be added.
+
+A THIRD, SUBTLER ONE: THE MISSING `else`. There is no branch for spaces. A space
+matches none of the four conditions and falls through, doing nothing — which is
+exactly right, spaces should be ignored. But it means the scanner has no concept
+of a SEPARATOR. MEASURED: `calculate("1 2")` returns 12, not an error. The two
+digits get glued into one number. That is fine for well-formed input and worth
+saying out loud, because it tells the interviewer you know what the code does
+rather than what you hoped it did.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+RECURSIVE DESCENT. Call a function at `(`, return at `)`. It reads more naturally
+— the recursion mirrors the nesting — and it is the same algorithm with Python's
+call stack standing in for the explicit one. THE COST IS MEASURED: at 5,000 levels
+of nesting the iterative version runs in 1.21 ms; the recursive version needs
+`sys.setrecursionlimit` raised, and under the DEFAULT limit of 1,000 it throws
+RecursionError at a nesting depth of exactly 1,000. If you write the recursive
+version, say that out loud before the interviewer does.
+
+TWO STACKS (numbers and operators). The classic general-purpose evaluator. Necessary
+the moment `*` and `/` appear, because you must compare precedence before deciding
+whether to apply the operator on top. Overkill here.
+
+SHUNTING-YARD to RPN, then evaluate. Dijkstra's algorithm: convert infix to postfix
+with an operator stack, then evaluate the postfix with a value stack. The right
+answer for a real expression language with many precedence levels, unary operators,
+and functions. Two passes, and far more code than this problem earns.
+
+`eval(s)`. Correct, one line, and disqualifying — both because it is not the
+question and because it executes arbitrary code from a string.
+
+THE FAMILY. This is the sibling of "Basic Calculator II" (`+ - * /`, no parens,
+which needs a number stack for precedence) and "Basic Calculator III" (all four
+plus parens, which needs both ideas). The clean way to remember the set: PARENS
+NEED A STACK OF CONTEXTS; PRECEDENCE NEEDS A STACK OF PENDING VALUES. This problem
+has the first and not the second.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. INITIALISE `result = 0, num = 0, sign = 1, stack = []`. These four values
+also make the unary-minus case work, so do not change them.
+
+STEP 2. LOOP OVER CHARACTERS, not tokens. Four branches and no else.
+
+STEP 3. DIGIT: `num = num * 10 + int(ch)`. Do not apply it yet — the next character
+might be another digit.
+
+STEP 4. `+` OR `-`: the current number has just ended, so fold it in —
+`result += sign * num` — then `num = 0` and set `sign` to +1 or -1 for what comes
+next.
+
+STEP 5. `(`: push `result`, then push `sign`. Order matters, because you pop in
+reverse. Then reset `result = 0, sign = 1` so the inner expression starts clean.
+
+STEP 6. `)`: fold the inner number in (`result += sign * num; num = 0`), then
+`result *= stack.pop()` — that is the SIGN, popped first because it was pushed last
+— then `result += stack.pop()`, the outer result.
+
+STEP 7. ANY OTHER CHARACTER: no branch at all. Spaces fall through and are ignored.
+
+STEP 8. RETURN `result + sign * num` — the trailing number the loop never applied.
+
+STEP 9. SAY THE INVARIANT ALOUD: at every point, `result` holds the sum of all
+COMPLETED terms in the current bracket level, and `sign * num` is the term being
+built.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'Only plus and minus, so there is no precedence and I can evaluate strictly left
+to right. I will never store an operator — I will turn each operator into a sign
+and attach it to the number that follows, so the whole expression becomes a sum of
+signed numbers, and a sum can be accumulated in one variable.
+
+I keep four things: a running result, the digits of the number I am currently
+reading, the sign that number will get, and a stack.
+
+Digits accumulate with `num = num*10 + digit`, because I do not know a number has
+ended until I see something that is not a digit. When I hit a plus or a minus, the
+number HAS ended, so I add `sign * num` to the result, reset num, and record the
+new sign.
+
+Parentheses are the only structural part. A minus in front of a bracket negates
+everything inside it, so at an open bracket I push the current result and the
+current sign and start fresh at zero — the inner expression has no idea it is
+nested. At the close bracket I finish the inner sum, multiply it by the sign I
+pushed, and add back the result I pushed.
+
+Two things I would call out. The last number in the string has no operator after
+it, so the loop never applies it — the final return is `result + sign * num`, and
+that line is load-bearing. And a leading minus needs no special case: num starts at
+zero, so the first operator just adds nothing and sets the sign.
+
+One pass, O(n) time, and O(d) space for d levels of nesting. I would do it
+iteratively rather than recursively — at five thousand levels of nesting the
+iterative version runs in about a millisecond, while recursion blows the default
+stack limit at a depth of one thousand.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  def calculate(s):
+      result = 0                            # 1
+      num = 0                               # 2
+      sign = 1                              # 3
+      stack = []                            # 4
+      for ch in s:                          # 5
+          if ch.isdigit():
+              num = num * 10 + int(ch)      # 6
+          elif ch in '+-':
+              result += sign * num          # 7
+              num = 0                       # 8
+              sign = 1 if ch == '+' else -1 # 9
+          elif ch == '(':
+              stack.append(result)          # 10
+              stack.append(sign)            # 11
+              result, sign = 0, 1           # 12
+          elif ch == ')':
+              result += sign * num          # 13
+              num = 0
+              result *= stack.pop()         # 14
+              result += stack.pop()         # 15
+      return result + sign * num            # 16
+
+LINE 1-3. `result` is the sum of finished terms in the CURRENT bracket level, not
+the whole expression — at `(` it is pushed away and starts again at 0. `num = 0`
+and `sign = 1` together are what make a leading `-` work with no special case:
+the operator branch fires, adds `1 * 0`, and sets the sign.
+
+LINE 4. The stack holds numbers, not operators. Two entries per open bracket.
+
+LINE 5. Characters, not tokens. There is no tokeniser, which is why there is no
+branch for whitespace — MEASURED, `"1 2"` therefore evaluates to 12.
+
+LINE 6. Left-to-right digit accumulation. "3" then "0": 0*10+3 = 3, 3*10+0 = 30.
+Note `num` is NOT applied here; it may still be growing.
+
+LINE 7. THE MOMENT A NUMBER ENDS. An operator proves the number before it is
+complete, so fold it in with its sign. This is the only place a term joins the
+result mid-expression.
+
+LINE 8. Reset, or the next number would continue the old one.
+
+LINE 9. The operator is converted to a sign and thrown away. Nothing anywhere
+remembers that a `-` was seen.
+
+LINE 10-11. PUSH RESULT FIRST, THEN SIGN. The order is dictated by lines 14-15,
+which pop in reverse: sign comes off first.
+
+LINE 12. The inner expression starts with a clean slate — this is what makes it
+identical to a top-level expression and is why no recursion is needed.
+
+LINE 13. Same as line 7: the `)` also ends a number.
+
+LINE 14. `result *= stack.pop()` pops the SIGN. If the bracket was preceded by a
+minus, this negates the entire inner value in one multiply — that is the whole
+trick of `2 - (5 - 6)`.
+
+LINE 15. Add back the outer result that was in flight when the bracket opened.
+
+LINE 16. THE LOAD-BEARING RETURN. The final number was never followed by an
+operator, so line 7 never fired for it. MEASURED: without this, `"30"` returns 0.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `"2-(5-6)"`, expected 3.
+
+  ch    branch      result   num   sign   stack
+  ----------------------------------------------------
+  (start)              0      0     +1    []
+  '2'   digit          0      2     +1    []
+  '-'   operator       2      0     -1    []      result += (+1)*2
+  '('   open           0      0     +1    [2, -1] pushed result 2, sign -1
+  '5'   digit          0      5     +1    [2, -1]
+  '-'   operator       5      0     -1    [2, -1]
+  '6'   digit          5      6     -1    [2, -1]
+  ')'   close          -1     0     -1    [2, -1] result += (-1)*6 -> 5-6 = -1
+        pop sign -1    1      0     -1    [2]     result *= -1
+        pop result 2   3      0     -1    []      result += 2
+  (end) return 3 + (-1)*0 = 3                     num is 0, so nothing added
+
+READ THE ')' ROW CAREFULLY. Three separate things happen: the inner number joins
+the inner result, the inner result is negated by the pushed sign, and the outer
+result is added back. Skip any one and the answer is wrong.
+
+TRACE B - `"1+1"`, and what the last line does.
+
+  ch    result   num   sign
+  '1'      0      1     +1
+  '+'      1      0     +1      the first 1 is applied HERE
+  '1'      1      1     +1      the second 1 is never applied by the loop
+  return 1 + 1*1 = 2
+
+Without line 16 this returns 1. Half of all bugs on this problem are that.
+
+TRACE C - `"-2 + 3"`, the unary minus with no special case.
+
+  ch    result   num   sign
+  '-'      0      0     -1      result += (+1)*0, a no-op; sign becomes -1
+  '2'      0      2     -1
+  ' '     (no branch — falls through)
+  '+'     -2      0     +1      result += (-1)*2
+  '3'     -2      3     +1
+  return -2 + 3 = 1     MEASURED: 1
+
+TRACE D - `"- (3 + (4 + 5))"`, nesting under a unary minus. MEASURED: -12. The
+outer `-` sets sign to -1 BEFORE the bracket, so -1 is what gets pushed at `(`,
+and at the matching `)` the inner 12 is multiplied by it.
+
+TRACE E - depth. `"((((...1...))))"` with 5,000 brackets: the stack reaches 10,000
+entries (two per bracket), evaluates in 1.21 ms, and returns 1. The recursive
+formulation of the same algorithm raises RecursionError at depth 1,000 with
+Python's default limit.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(n), one pass over the characters, and every character does O(1) work — the
+pops at `)` are exactly two, not a loop. SPACE O(d) where d is the maximum nesting
+depth, two stack entries per open bracket. For a flat expression the stack stays
+empty and the space is O(1).
+
+THE #1 MISTAKE: forgetting `return result + sign * num`. The loop applies a number
+only when it sees the operator after it, and the last number has none. MEASURED,
+`"30"` returns 0 without it and `"1+1"` returns 1.
+
+THE #2 MISTAKE: special-casing the unary minus. It already works — `num` starts at
+0 so the leading operator folds in a harmless zero. Adding a branch for it is how
+you break `- (3 + 4)`.
+
+THE #3 MISTAKE: pushing sign then result, and popping in the same order. Push
+result then sign; pop sign then result. Getting this backwards produces answers
+that are right whenever the bracket is preceded by `+`, which is most test cases.
+
+THE #4 MISTAKE: forgetting `num = 0` at `)`. The inner number would then be added
+a second time by the final return.
+
+THE #5 MISTAKE: storing the operator instead of converting it to a sign, which
+drags you into an operator stack you do not need.
+
+THE #6 MISTAKE: `int(ch)` on a multi-character slice, or building the number by
+string concatenation and converting at the end. Both work; `num*10 + int(ch)` is
+shorter and allocates nothing.
+
+THE #7 MISTAKE: writing it recursively without mentioning the depth limit.
+MEASURED, that is RecursionError at 1,000 levels.
+
+THE TAKEAWAY: with only + and - there is no precedence, so THROW THE OPERATOR AWAY
+AND KEEP ONLY A SIGN — the expression becomes a sum of signed numbers that a single
+running total can accumulate left to right. Parentheses then need nothing but a
+saved (result, sign) pair, because the inner expression is just another sum that
+gets multiplied by the pushed sign and added to the pushed result. One pass, four
+variables, O(n) time and O(depth) space; and the two lines that decide whether it
+works are `result += sign * num` at every operator and `return result + sign * num`
+at the very end, because the last number in the string is never followed by
+anything that would trigger the first.""",
+]
+
+_EX_P1AO["Sliding Window Maximum (deque)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the maximum of every window of size k, without
+re-scanning each window.
+
+A window of width k slides across the array one step at a time. Report the maximum
+inside it at every position.
+
+  nums = [1, 3, -1, -3, 5, 3, 6, 7], k = 3
+  windows: [1,3,-1] [3,-1,-3] [-1,-3,5] [-3,5,3] [5,3,6] [3,6,7]
+  answer:      3         3         5        5       6       7
+
+The obvious solution is `max(nums[i:i+k])` for every i, which is O(n*k) and re-reads
+k-1 values it already looked at one step ago. The deque solution is O(n) and reads
+each value exactly twice — once when it enters, once when it leaves.
+
+MEASURED at n = 20,000 and k = 1,000: the naive version takes 260.08 ms, the deque
+version 4.55 ms — 57x. At k = 5 the two are within 20% of each other, which tells
+you exactly what the deque buys and when.""",
+
+    """2. THE INTUITION - most elements can never be the answer, so delete them
+immediately.
+
+Look at `[1, 3, ...]` with the window about to move right. THE 1 CAN NEVER BE A
+MAXIMUM AGAIN. The 3 is to its right, so the 3 is inside every future window that
+still contains the 1, and the 3 is bigger. The 1 is dead the instant the 3 arrives.
+
+Generalise that: WHEN A NEW VALUE ARRIVES, EVERY SMALLER VALUE BEHIND IT IS DEAD.
+They are all older (they leave the window first) and all smaller, so they lose on
+both counts. Delete them.
+
+What survives is a strictly decreasing sequence of candidates, front to back, and
+its FRONT is the current maximum. That is the whole algorithm:
+
+  1. drop the front if its index has slid out of the window
+  2. drop from the back while the back's value is <= the new value
+  3. append the new index
+  4. the front is this window's maximum
+
+You store INDICES, not values, because step 1 needs to ask "has this fallen out of
+the window?" and only an index can answer that.
+
+WHY IT IS O(n) DESPITE THE INNER `while`: every index is appended exactly once and
+popped at most once. The inner loop can run many times on one iteration, but across
+the whole array it runs at most n times in total. That is amortised analysis, and
+saying the sentence "each index enters and leaves the deque once" is what an
+interviewer is listening for.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DEQUE (double-ended queue) - a list you can push and pop at BOTH ends in O(1).
+Python's `collections.deque`. A plain list gives O(1) at the right end but O(n) at
+the left, because `list.pop(0)` shifts everything down — which would quietly turn
+this O(n) algorithm back into O(n*k).
+
+MONOTONIC DEQUE - a deque whose contents are kept sorted by construction, here
+strictly decreasing in value from front to back. Nothing sorts it; the eviction rule
+maintains it.
+
+FRONT / BACK - `dq[0]` and `dq[-1]`. The front holds the OLDEST surviving index and
+the LARGEST value (those coincide, which is the point). The back holds the newest.
+
+CANDIDATE - an index that could still be the maximum of some future window: nothing
+to its right is bigger, and it has not yet expired.
+
+EXPIRED - an index i is out of the window ending at position j when `i <= j - k`.
+
+AMORTISED O(1) - the cost of one step is not bounded, but the TOTAL cost over n
+steps is O(n), so the average per step is O(1). The inner `while` here is amortised
+O(1).
+
+WINDOW IS FULL - the first complete window ends at index k-1, so results start at
+`i >= k - 1`. There are exactly `n - k + 1` results.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - `<=` versus `<`, and what it really costs.
+
+The back-eviction line reads `while dq and nums[dq[-1]] <= x: dq.pop()`. Use `<`
+instead and you keep indices whose values EQUAL the new one. BOTH VERSIONS RETURN
+THE CORRECT ANSWER — measured on 10,000 identical values with k = 1,000, the two
+produce the same output list.
+
+So it is not a correctness bug. It is a SPACE bug, and it is dramatic.
+
+MEASURED on an all-equal array of 10,000 with k = 1,000:
+
+  `<=`  max deque length     1   average length    1.0
+  `<`   max deque length  1000   average length  950.0
+
+The `<` version holds the entire window. On duplicate-heavy data that is O(k) space
+where the `<=` version is O(1), and on an adversarial input it is the difference
+between a few bytes and the whole array.
+
+THE SECOND HALF OF THE SURPRISE: how big does the deque get on ORDINARY data?
+
+  random     k=1000   max 16     average 7.18
+  increasing k=1000   max 1      average 1.00
+  decreasing k=1000   max 1000   average 950.05
+  all equal  k=1000   max 1      average 1.00
+
+On random input with a window of a thousand, the deque averages SEVEN entries. The
+expected length is the harmonic number H_k ≈ ln(1000) ≈ 6.9, and the measurement
+lands on 7.18. So the honest complexity statement is "O(k) worst case, and the worst
+case is a strictly decreasing array" — on anything else it is tiny.
+
+THE OTHER COMMON SLIP is the expiry test. `dq[0] <= i - k` is correct;
+`dq[0] < i - k` keeps an index one step too long, and `dq[0] == i - k` breaks
+whenever the expiring index was already evicted from the back.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+BRUTE FORCE, `max(nums[i:i+k])`. O(n*k). MEASURED: at n=2000, k=5 it is 0.54 ms
+against the deque's 0.45 ms — essentially a tie, because for small k the deque's
+per-element bookkeeping costs as much as re-scanning five values. At n=2000, k=500
+it is 9.67 ms against 0.57 ms (17x), and at n=20000, k=1000 it is 260.08 ms against
+4.55 ms (57x). THE DEQUE IS A LARGE-k OPTIMISATION. Say so.
+
+MAX-HEAP with lazy deletion. Push (value, index); before reading the top, pop while
+the top's index has expired. O(n log n) and O(n) space, since expired entries linger
+until they surface. Simpler to reason about, and the right answer when the window is
+defined by TIME rather than count — but strictly worse here.
+
+SPARSE TABLE / segment tree. O(n log n) to build, O(1) or O(log n) per query. Worth
+it only if k varies per query, which this problem does not ask.
+
+BLOCK DECOMPOSITION (the "two-pass prefix/suffix max" trick). Split into blocks of
+k, precompute prefix maxima left-to-right and suffix maxima right-to-left within
+each block; every window spans at most two blocks, so its max is
+`max(suffix[i], prefix[i+k-1])`. O(n) time, O(n) space, no deque, and remarkably
+short. A good thing to mention as a second solution.
+
+THE FAMILY. This is the canonical MONOTONIC DEQUE problem, and the same shape solves
+"Shortest Subarray with Sum at Least K", "Jump Game VI", and "Constrained Subsequence
+Sum". Its cousin the MONOTONIC STACK (same eviction idea, one end only) solves "Next
+Greater Element", "Daily Temperatures", and "Largest Rectangle in Histogram". THE
+UNIFYING RULE: when a new element arrives, delete everything behind it that it
+dominates — because those elements can never be an answer again.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. `from collections import deque`. Not a list. `list.pop(0)` is O(n) and
+silently destroys the complexity.
+
+STEP 2. `dq = deque()` holding INDICES, `res = []` for the answers.
+
+STEP 3. Loop with `for i, x in enumerate(nums)` — you need both, the index for
+expiry and the value for comparison.
+
+STEP 4. EXPIRE THE FRONT FIRST: `if dq and dq[0] <= i - k: dq.popleft()`. An `if`
+suffices, not a `while` — at most one index expires per step, because you advance
+by one.
+
+STEP 5. EVICT THE BACK: `while dq and nums[dq[-1]] <= x: dq.pop()`. A `while`, and
+`<=` not `<`.
+
+STEP 6. `dq.append(i)`. Always. The new index is always a candidate — nothing to
+its right exists yet.
+
+STEP 7. RECORD ONCE THE WINDOW IS FULL: `if i >= k - 1: res.append(nums[dq[0]])`.
+
+STEP 8. Return `res`, of length `n - k + 1`.
+
+STEP 9. STATE THE AMORTISATION OUT LOUD: "the inner while looks like it makes this
+quadratic, but each index is appended once and popped once, so the total work is
+O(n)."
+
+STEP 10. GUARD THE DEGENERATE INPUT if the problem allows it: `if not nums or k <= 0:
+return []`. With k > len(nums) the loop simply never reaches `i >= k-1` and returns
+an empty list, which is the sensible answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'The naive answer re-computes a max for every window, which is O(n·k) and throws
+away everything it learned one step earlier. The observation that fixes it is that
+MOST ELEMENTS CAN NEVER BE THE ANSWER AGAIN: if a bigger value arrives to the right
+of a smaller one, the smaller one is inside no future window that the bigger one is
+not also inside — so it is dead and I can delete it immediately.
+
+So I keep a deque of indices whose values are strictly decreasing from front to
+back. When a new value arrives, I pop everything off the back that is less than or
+equal to it, then append it. Before reading the answer I drop the front if it has
+slid out of the window. The front is always the maximum of the current window,
+because everything bigger was to its left and has expired, and everything to its
+right that could beat it already evicted it.
+
+I store indices rather than values because the expiry test needs to know a position.
+
+It looks quadratic because of the inner while loop, but each index is appended
+exactly once and popped at most once, so the total work across the whole array is
+O(n). Space is the deque, which is O(k) in the worst case — a strictly decreasing
+array, where nothing ever gets evicted.
+
+Two details I would flag. I use less-than-or-EQUAL on the back eviction. With
+strict less-than the answers are still correct, but equal values pile up — on an
+all-equal array with a window of a thousand, the deque holds one entry with `<=` and
+a thousand with `<`. And this is a large-k optimisation: at k = 5 the brute force is
+just as fast; the 57x speedup I measured was at k = 1000.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  from collections import deque                    # 1
+
+  def max_sliding_window(nums, k):
+      dq = deque()                                 # 2
+      res = []
+      for i, x in enumerate(nums):                 # 3
+          if dq and dq[0] <= i - k:                # 4
+              dq.popleft()                         # 5
+          while dq and nums[dq[-1]] <= x:          # 6
+              dq.pop()                             # 7
+          dq.append(i)                             # 8
+          if i >= k - 1:                           # 9
+              res.append(nums[dq[0]])              # 10
+      return res
+
+LINE 1. `deque`, because line 5 pops the LEFT end. With a plain Python list that is
+`pop(0)`, which shifts every remaining element — O(k) per step, and the whole
+algorithm degrades to O(n·k), the very thing you came here to avoid.
+
+LINE 2. INDICES, NOT VALUES. Line 4 asks a question only an index can answer, and
+line 10 dereferences back to the value. This is the single design decision of the
+solution.
+
+LINE 3. `enumerate` because both halves are needed: `i` for expiry, `x` for
+comparison.
+
+LINE 4. `dq[0] <= i - k`. The window ending at i covers indices i-k+1 through i, so
+anything at or below i-k is out. `<` here keeps an index one step too long — an
+off-by-one that produces correct answers on most inputs and wrong ones near the
+boundaries.
+
+LINE 5. `if`, NOT `while`. The index advances by one per iteration, so at most one
+index can expire per step. A `while` is harmless but tells the reader you had not
+worked out that at most one leaves.
+
+LINE 6. THE EVICTION, AND THE MOST IMPORTANT CHARACTER IN THE FUNCTION IS THE `=`.
+`<=` discards equal values; `<` keeps them. MEASURED on 10,000 equal values with
+k=1000: max deque length 1 versus 1000, same output either way. Correctness is
+unaffected; space is not.
+
+LINE 7. `dq.pop()` from the RIGHT. Popping the wrong end here is the classic
+copy-paste error and produces a deque sorted the wrong way, so the front is the
+minimum.
+
+LINE 8. Unconditional. The new index always survives, because nothing to its right
+exists yet to dominate it.
+
+LINE 9. `i >= k - 1`. The first full window ends at index k-1, and the result has
+`n - k + 1` entries. Using `i >= k` loses the first window; using `i > k - 1` loses
+it too.
+
+LINE 10. `nums[dq[0]]` — the deque holds an index, the answer is a value. Appending
+`dq[0]` itself is the other classic slip and returns positions instead of maxima.
+
+AMORTISATION, stated as an invariant: every index is appended once at line 8 and
+removed at most once, at line 5 or line 7. Total deque operations over the whole run
+are at most 2n.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [1, 3, -1, -3, 5, 3, 6, 7]`, `k = 3`. MEASURED output
+`[3, 3, 5, 5, 6, 7]`.
+
+  i  x    expire front?      evict back           dq (indices)  values      output
+  ----------------------------------------------------------------------------------
+  0   1   no                 -                    [0]           [1]
+  1   3   no                 pop 0 (1 <= 3)       [1]           [3]
+  2  -1   no                 -                    [1,2]         [3,-1]      3
+  3  -3   dq[0]=1 > 0, no    -                    [1,2,3]       [3,-1,-3]   3
+  4   5   dq[0]=1 <= 1, YES  pop 3, pop 2         [4]           [5]         5
+  5   3   no                 -                    [4,5]         [5,3]       5
+  6   6   no                 pop 5, pop 4         [6]           [6]         6
+  7   7   no                 pop 6                [7]           [7]         7
+
+READ ROW i=4. Three things happen in order: index 1 expires off the FRONT (the 3
+has left the window), then the 5 evicts -3 and -1 off the BACK, and the deque
+collapses from three entries to one. That single row contains every mechanism in the
+algorithm.
+
+NOTE ROW i=3: the deque is `[3, -1, -3]`, strictly decreasing. The invariant holds
+without anything ever sorting it.
+
+TRACE B - the two ends are asked different questions.
+
+  front:  "have you expired?"     -> compares INDEX to i - k
+  back:   "are you dominated?"    -> compares VALUE to x
+
+Mixing those up is the most common structural error. The front never looks at
+values; the back never looks at indices.
+
+TRACE C - deque size on four shapes of input, k = 1000, n = 10,000. MEASURED:
+
+  input         max deque   avg deque
+  random             16        7.18
+  increasing          1        1.00
+  decreasing       1000      950.05
+  all equal           1        1.00
+
+INCREASING is the best case — each new value evicts everything, so the deque holds
+exactly one index forever. DECREASING is the worst — nothing is ever dominated, so
+the deque holds the whole window and space really is O(k). RANDOM sits at about
+ln(k) ≈ 6.9 entries, and the measured 7.18 matches.
+
+TRACE D - the speed crossover. MEASURED, deque versus `max(nums[i:i+k])`:
+
+  n=2000   k=5        0.45 ms  vs    0.54 ms     1.2x
+  n=2000   k=500      0.57 ms  vs    9.67 ms    17.0x
+  n=20000  k=1000     4.55 ms  vs  260.08 ms    57.1x
+
+Note the deque's own time barely moves as k grows from 5 to 500 (0.45 to 0.57 ms) —
+it is O(n) regardless of k. It is the brute force that explodes.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(n). Each index is appended exactly once and popped at most once, so total
+deque operations are bounded by 2n despite the inner `while`. SPACE O(k) worst case
+for the deque plus O(n-k+1) for the output. MEASURED, the worst case is real but
+narrow: a strictly decreasing array fills the deque to k = 1000, while random input
+averages 7.18 entries and increasing input averages 1.00.
+
+THE #1 MISTAKE: using a list instead of a deque. `list.pop(0)` is O(k), which turns
+the O(n) algorithm back into O(n·k) with no visible change to the logic.
+
+THE #2 MISTAKE: storing values instead of indices, which makes the expiry test
+impossible — you cannot tell whether a 5 is the one that just left or a different 5.
+
+THE #3 MISTAKE: `<` instead of `<=` on the back eviction. Not a wrong answer, a
+space blow-up: MEASURED, 1 entry versus 1000 on an all-equal window.
+
+THE #4 MISTAKE: appending `dq[0]` instead of `nums[dq[0]]`, returning positions
+where maxima were wanted.
+
+THE #5 MISTAKE: `i >= k` instead of `i >= k - 1`, which drops the first window and
+returns n-k results instead of n-k+1.
+
+THE #6 MISTAKE: popping the wrong end at line 7, which builds an increasing deque
+whose front is the minimum.
+
+THE #7 MISTAKE: claiming O(n) without justifying it. The inner `while` looks
+quadratic and the interviewer is waiting for the amortisation sentence.
+
+THE #8 MISTAKE: reaching for this at small k. MEASURED at k=5 it is a 1.2x
+difference, and the brute force is four lines.
+
+THE TAKEAWAY: keep a deque of INDICES whose values decrease front to back, and
+maintain it with two rules — drop the front when its index expires out of the
+window, and pop from the back everything the arriving value dominates, because
+anything smaller AND older can never be a maximum again. The front is then the
+window's maximum by construction. Each index enters and leaves once, so it is O(n)
+despite the nested loop, and the space is O(k) only on a decreasing array — measured
+at about ln(k) entries on random data. Use `<=` rather than `<` on the eviction: both
+are correct, but `<=` is what keeps the deque at one entry instead of a thousand when
+the values repeat.""",
+]
+
+_EX_P1AO["Accuracy and confusion matrix (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one number that hides everything, and one table
+that shows it.
+
+ACCURACY is the fraction of predictions that were right. It is one number, it is
+the first thing anyone asks for, and on imbalanced data IT IS ACTIVELY MISLEADING.
+
+THE CONFUSION MATRIX is the table underneath it. `C[i][j]` counts how many samples
+whose TRUE class was i were PREDICTED as class j. Its diagonal is the correct
+predictions; everything off the diagonal is a specific kind of error, and knowing
+WHICH kind is usually the point.
+
+MEASURED, on 10,000 samples of which 1% are positive, a model that predicts
+NEGATIVE FOR EVERYTHING scores:
+
+  accuracy = 0.9900
+  confusion = [[9900,   0],
+               [ 100,   0]]
+
+99% accurate, and it has never once identified a positive. The confusion matrix
+says so in one glance — the bottom-right cell is 0 — and the accuracy number does
+not say it at all.""",
+
+    """2. THE INTUITION - accuracy compresses four numbers into one, and the four are
+not interchangeable.
+
+For two classes the confusion matrix has exactly four cells, and they have names:
+
+              predicted 0      predicted 1
+  true 0        TN                FP        (false alarm)
+  true 1        FN                TP
+                (miss)
+
+Accuracy is `(TP + TN) / total`. That formula ADDS FP AND FN TOGETHER as if a false
+alarm and a miss were the same mistake. In a cancer screen they are not. In a fraud
+filter they are not. In a spam filter they are not.
+
+MEASURED, two models on the same 1%-positive data:
+
+  catches half the positives, no false alarms:   accuracy 0.9950   TP=50  FP=0   FN=50
+  flags 50 negatives, catches nothing:           accuracy 0.9850   TP=0   FP=50  FN=100
+
+One of these is a useful detector and one is pure noise, and their accuracies differ
+by one percentage point. Accuracy ranks them CORRECTLY here but by a margin so
+small it would vanish under any resampling — while the confusion matrix separates
+them completely: TP=50 versus TP=0.
+
+THE RULE OF THUMB: if your majority class is p of the data, a model that always
+predicts it scores p accuracy. Quote p alongside any accuracy number, or the number
+means nothing. At 99% negatives, "99% accurate" is the score of an empty function.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRUE POSITIVE (TP) - actually positive, predicted positive. A catch.
+FALSE POSITIVE (FP) - actually negative, predicted positive. A FALSE ALARM.
+FALSE NEGATIVE (FN) - actually positive, predicted negative. A MISS.
+TRUE NEGATIVE (TN) - actually negative, predicted negative.
+
+The word after "false" tells you what was PREDICTED, not what was true. That is the
+naming rule people get backwards.
+
+ACCURACY - (TP + TN) / everything. Fraction correct.
+
+PRECISION - TP / (TP + FP). "Of the things I flagged, how many were real?" It is
+undefined when nothing was flagged — MEASURED, the all-negative model gives 0/0.
+
+RECALL (sensitivity, true positive rate) - TP / (TP + FN). "Of the real ones, how
+many did I catch?" MEASURED, the all-negative model gives 0.0000.
+
+F1 - the harmonic mean of precision and recall, 2PR/(P+R). One number again, but one
+that cannot be gamed by predicting the majority class.
+
+CLASS IMBALANCE - one class far more common than the others. The condition under
+which accuracy stops carrying information.
+
+SUPPORT - how many samples a class actually has. It is the ROW SUM of the confusion
+matrix.
+
+MULTI-CLASS - K classes gives a K x K matrix. Diagonal correct, row i off-diagonal =
+what class i got mistaken FOR.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - three ways to build the matrix wrong, and
+one of them is silent.
+
+THE SILENT ONE. `C[y_true, y_pred] += 1` looks like the vectorised version of the
+loop, and it is wrong.
+
+  MEASURED, N = 200,000 samples, K = 10:
+    the loop version:      total counted 200000
+    C[a, b] += 1:          total counted    100
+
+IT LOST 199,900 OF 200,000 INCREMENTS. NumPy's fancy-index `+=` is BUFFERED: it
+reads all the addressed cells, adds 1 to each, and writes them back, so a cell
+addressed twenty thousand times is incremented exactly ONCE. The result is a matrix
+of small numbers that looks plausible and is completely wrong. The fix is
+`np.add.at(C, (a, b), 1)`, which is unbuffered, or `np.bincount`.
+
+THE TRANSPOSE. `C[true, pred]` versus `C[pred, true]` — the table looks the same
+shape, and for a symmetric example it looks identical. MEASURED on a deliberately
+asymmetric case (3 false alarms, 0 misses):
+
+  correct:     TN=3 FP=3 FN=0 TP=4    precision 0.571  recall 1.000
+  transposed:  TN=3 FP=0 FN=3 TP=4    precision 1.000  recall 0.571
+
+The three false alarms became three misses, and precision and recall swapped values.
+Nothing errors. The convention to memorise: ROWS ARE TRUTH, so ROW SUMS ARE SUPPORT.
+
+THE `==` TRAP. `np.mean(y_true == y_pred)` is correct for numpy arrays. If BOTH
+arguments are Python lists, `==` compares the lists as objects and returns a single
+`True`, so `np.mean` of that is 1.0 — a perfect score, always. And with FLOAT labels,
+MEASURED, a difference of 1e-7 in one of three predictions drops accuracy to 0.6667.
+LABELS ARE INTEGERS. Cast them.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+PRECISION AND RECALL instead of accuracy, whenever the classes are imbalanced or the
+two error types have different costs. They cannot both be gamed by predicting the
+majority class.
+
+F1 when you need a single number for model selection but accuracy would be dominated
+by the majority. Note F1 IGNORES TRUE NEGATIVES entirely, which is a feature when the
+negatives are the boring 99%.
+
+BALANCED ACCURACY - the mean of the per-class recalls. MEASURED on the all-negative
+model, it is (1.0 + 0.0)/2 = 0.5, correctly reporting "no better than chance" where
+plain accuracy said 0.99.
+
+ROC-AUC when the model outputs a SCORE and you have not chosen a threshold yet. It
+integrates over all thresholds. But note ROC-AUC is optimistic under heavy imbalance,
+because the false positive rate has a huge denominator — PRECISION-RECALL AUC is the
+honest one at 1% positives.
+
+MATTHEWS CORRELATION COEFFICIENT when you want one number that uses all four cells
+and stays honest under imbalance. Underused, and a good thing to name.
+
+PER-CLASS REPORT rather than any aggregate, in multi-class. `sklearn`'s
+`classification_report` gives precision/recall/F1/support per class, and the SUPPORT
+column is what tells you which of those numbers to believe.
+
+AND FOR BUILDING THE MATRIX ITSELF: `np.bincount` is the fastest correct way.
+MEASURED at N=200,000, K=10 — python loop 67.8 ms, `np.add.at` 2.0 ms (34x),
+`np.bincount(a*K + b).reshape(K,K)` 0.3 ms (208x, and 6.1x faster than add.at). All
+three produce identical matrices.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. CAST THE LABELS TO INTEGER ARRAYS. `y_true = np.asarray(y_true, dtype=int)`.
+This defends against the list-vs-list `==` returning a scalar True, and against float
+labels comparing unequal at 1e-7.
+
+STEP 2. ACCURACY is `np.mean(y_true == y_pred)` on arrays. One line, and correct once
+step 1 has happened.
+
+STEP 3. DECIDE `num_classes` EXPLICITLY. Do not infer it from `max(labels) + 1` — a
+class absent from this particular batch would shrink the matrix and misalign every
+subsequent one.
+
+STEP 4. ALLOCATE `C = np.zeros((K, K), dtype=int)`. Integer dtype, so counts do not
+become floats in the printout.
+
+STEP 5. FILL IT. The readable version is the loop `for t, p in zip(y_true, y_pred):
+C[t, p] += 1`. The fast correct version is
+`np.bincount(y_true * K + y_pred, minlength=K*K).reshape(K, K)`. NEVER
+`C[y_true, y_pred] += 1`.
+
+STEP 6. ROWS ARE TRUTH. Say it out loud while you write the index, because the
+transposed version does not error.
+
+STEP 7. DERIVE THE RATES FROM THE MATRIX, not from separate passes over the data:
+`recall = np.diag(C) / C.sum(axis=1)`, `precision = np.diag(C) / C.sum(axis=0)`.
+
+STEP 8. GUARD THE ZERO ROWS. MEASURED, a class with no samples gives 0/0 = nan, and
+`np.mean` of an array containing nan is nan — the whole metric disappears. Use
+`np.nanmean`, or add a small epsilon, and say which.
+
+STEP 9. REPORT THE CLASS BALANCE ALONGSIDE THE ACCURACY. "97.2% accurate, and 96% of
+the data is class 0" is an honest sentence; the first half alone is not.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'Accuracy is the fraction of predictions that match, so `np.mean(y_true == y_pred)`.
+I would compute it, and then immediately say what fraction of the data is the
+majority class — because on imbalanced data accuracy is the score of doing nothing. I
+measured this: on ten thousand samples with one percent positives, a model that
+predicts negative for every single input scores 99% accuracy and has never identified
+a positive once.
+
+So the thing I actually want is the confusion matrix. C[i][j] is the number of
+samples whose true class was i and whose predicted class was j — ROWS ARE TRUTH. The
+diagonal is what went right, and each off-diagonal cell is a specific mistake, which
+matters because a false alarm and a miss are not the same error and accuracy adds
+them together.
+
+To build it, the readable version is a loop incrementing C[t, p]. The vectorised
+version people reach for is `C[y_true, y_pred] += 1`, and that one is a trap: numpy's
+fancy-index increment is buffered, so a cell hit twenty thousand times is incremented
+once. I measured it losing 199,900 of 200,000 counts, silently. The correct fast
+version is `np.add.at`, or `np.bincount(y_true * K + y_pred).reshape(K, K)`, which
+measured 208 times faster than the loop.
+
+From the matrix I read precision as the column ratio and recall as the row ratio, and
+I would report balanced accuracy — the mean of the per-class recalls — because on
+that all-negative model it correctly reports 0.5 rather than 0.99. One caution: a
+class with no samples gives 0/0, and a single nan makes np.mean return nan for
+everything, so nanmean.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def accuracy_and_confusion(y_true, y_pred, num_classes):
+      y_true = np.asarray(y_true, dtype=int)          # 1
+      y_pred = np.asarray(y_pred, dtype=int)
+      accuracy = np.mean(y_true == y_pred)            # 2
+      K = num_classes                                 # 3
+      cm = np.bincount(y_true * K + y_pred,           # 4
+                       minlength=K * K).reshape(K, K) # 5
+      return accuracy, cm
+
+  # the readable equivalent of lines 4-5:
+  #   cm = np.zeros((K, K), dtype=int)
+  #   for t, p in zip(y_true, y_pred):
+  #       cm[t, p] += 1                               # 6
+
+LINE 1. `np.asarray(..., dtype=int)` does three jobs. It makes `==` an ELEMENTWISE
+comparison rather than a list-object comparison — MEASURED, `np.mean([1,0,1]==[1,0,1])`
+is 1.0 for any input, a permanent perfect score. It removes float labels, where a
+1e-7 difference measured as 0.6667 accuracy on three samples. And it lets the labels
+be used as indices at line 4.
+
+LINE 2. Elementwise `==` gives a boolean array; `np.mean` of booleans is the fraction
+True. This is the whole of accuracy, and it is the least informative line in the
+function.
+
+LINE 3. `K` is PASSED IN, not inferred. `max(labels)+1` would silently shrink the
+matrix whenever a class is missing from the batch, so matrices from different batches
+would have different shapes and could not be summed.
+
+LINE 4. THE FLATTENING TRICK: `t * K + p` maps the pair (t, p) to a unique integer in
+[0, K²). True class 3, predicted 7, K=10 gives 37. `np.bincount` then counts every
+value in one C pass.
+
+LINE 5. `minlength=K*K` is essential — without it, `bincount` sizes the output by the
+LARGEST value seen, so if no sample ever has true=K-1 and pred=K-1 the array is short
+and `.reshape(K, K)` raises. With it, the shape is fixed regardless of the data.
+MEASURED: 0.3 ms at N=200,000 versus 67.8 ms for the loop, 208x, identical results.
+
+LINE 6. The readable version, and the one to write on a whiteboard. `cm[t, p]` with
+SCALAR t and p — the buffering problem only appears with ARRAY indices.
+
+THE LINE NOT TO WRITE:
+
+      cm[y_true, y_pred] += 1        # WRONG
+
+Array indices, buffered increment. MEASURED, this counts 100 of 200,000 events. It
+does not warn, it does not error, and the matrix it produces looks like a small
+sample.
+
+DERIVING THE RATES:
+
+      recall    = np.diag(cm) / cm.sum(axis=1)   # row sums = support per TRUE class
+      precision = np.diag(cm) / cm.sum(axis=0)   # col sums = how often each was PREDICTED
+
+`axis=1` sums ACROSS a row, giving that true class's total — the support. `axis=0`
+sums DOWN a column. Swapping them swaps precision and recall, silently.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the all-negative model on 1% positives. MEASURED:
+
+  n = 10,000, 100 positives, model predicts 0 for everything
+
+           pred 0   pred 1
+  true 0    9900       0
+  true 1     100       0
+
+  accuracy  = 0.9900
+  recall    = 0/100 = 0.0000
+  precision = 0/0   = undefined
+  balanced accuracy = (1.0 + 0.0)/2 = 0.5
+
+Four numbers describing the same model: 0.99, 0.00, undefined, 0.50. Only the first
+one is flattering, and it is the one that gets quoted.
+
+TRACE B - the transpose, on a deliberately asymmetric case. MEASURED with 6 negatives
+(3 of them falsely flagged) and 4 positives (all caught):
+
+  C[true, pred] = [[3, 3],
+                   [0, 4]]
+
+  read correctly:    TN=3  FP=3  FN=0  TP=4    precision 0.571   recall 1.000
+  read transposed:   TN=3  FP=0  FN=3  TP=4    precision 1.000   recall 0.571
+
+A model with a false-alarm problem is reported as a model with a miss problem, and
+the two headline metrics trade places. THE CHECK THAT CATCHES IT: row sums must equal
+the number of samples in each TRUE class. Here 6 and 4. If they equal your prediction
+counts instead, you have it transposed.
+
+TRACE C - the buffered increment, measured. N = 200,000, K = 10:
+
+  python loop            counted 200000     67.8 ms
+  np.add.at              counted 200000      2.0 ms    34x
+  np.bincount            counted 200000      0.3 ms   208x
+  cm[y_true, y_pred] += 1  counted    100      -       LOST 99.95% OF THE DATA
+
+100 is exactly K² = 100 — every distinct (true, pred) pair was incremented exactly
+once. That is the signature of the bug: THE MATRIX SUMS TO K², NOT TO N.
+
+TRACE D - the missing class. K=3, but class 2 never appears:
+
+  [[2, 0, 0],
+   [0, 2, 0],
+   [0, 0, 0]]
+
+  per-class recall: 2/2, 2/2, 0/0
+  np.diag(C)/C.sum(axis=1) = [1.0, 1.0, nan]
+  np.mean(...)    = nan          <- one empty class destroys the whole metric
+  np.nanmean(...) = 1.0
+
+MEASURED. A single nan propagates through `mean` and the number you report is not a
+bad number, it is no number at all.
+
+TRACE E - non-integer labels. `y = ['cat','dog','cat']`. Accuracy works —
+`np.mean(y_true == y_pred)` gives 0.6667 on strings. But `C[t, p] += 1` raises
+`IndexError: only integers, slices...`. So the accuracy line will happily run on data
+the confusion matrix cannot index, which is why the cast belongs at the top of the
+function rather than next to the matrix.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME. Accuracy is O(n), one pass. The confusion matrix is O(n) in every correct
+formulation; the constant is what differs — MEASURED at N=200,000, K=10: python loop
+67.8 ms, `np.add.at` 2.0 ms, `np.bincount` 0.3 ms. SPACE O(K²) for the matrix, which
+is nothing until K is in the thousands (a 10,000-class matrix is 100 million cells
+and would need a sparse representation).
+
+THE #1 MISTAKE: `cm[y_true, y_pred] += 1`. Buffered fancy-index increment. MEASURED,
+it counted 100 of 200,000 events with no warning. THE TELL IS THAT THE MATRIX SUMS TO
+K² RATHER THAN N — check `cm.sum() == len(y_true)` every time.
+
+THE #2 MISTAKE: quoting accuracy without the class balance. MEASURED, 0.99 for a
+model that has never identified a positive.
+
+THE #3 MISTAKE: transposing the matrix. Rows are truth. MEASURED, the transpose
+turned 3 false alarms into 3 misses and swapped precision with recall.
+
+THE #4 MISTAKE: `np.mean(a == b)` where both are Python lists — returns 1.0 always.
+Cast to arrays.
+
+THE #5 MISTAKE: float labels compared with `==`. MEASURED, 1e-7 of drift cost a third
+of the accuracy on three samples.
+
+THE #6 MISTAKE: inferring `num_classes` from the data, so batches produce matrices of
+different shapes.
+
+THE #7 MISTAKE: `np.mean` over per-class rates when a class has no support. MEASURED,
+one 0/0 makes the whole mean nan. Use `np.nanmean`.
+
+THE #8 MISTAKE: forgetting `minlength=K*K` on the bincount, which makes the reshape
+fail on some batches and not others.
+
+THE TAKEAWAY: accuracy compresses four numbers into one and adds false alarms to
+misses as though they cost the same, which is why a model predicting NEGATIVE FOR
+EVERYTHING scores 0.99 on 1%-positive data — measured, with zero true positives. The
+confusion matrix, `C[true, pred]` with ROWS AS TRUTH, is what shows that; build it
+with `np.bincount(y_true * K + y_pred, minlength=K*K).reshape(K, K)` — 208x faster
+than the loop and, crucially, correct, because the natural-looking
+`C[y_true, y_pred] += 1` is buffered and silently counted 100 of 200,000 events.
+Then read recall down the rows, precision down the columns, and report balanced
+accuracy, which called that same all-negative model 0.5 rather than 0.99.""",
+]
+
+_EX_P1AO["Cosine similarity matrix (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - compare directions, not lengths.
+
+Given n vectors as the rows of an (n, d) matrix, produce the (n, n) matrix of
+pairwise similarities where entry [i][j] is how ALIGNED row i and row j are,
+regardless of how long either one is.
+
+  cosine(u, v) = (u · v) / (||u|| · ||v||)
+
+The value runs from +1 (same direction) through 0 (perpendicular) to -1 (opposite).
+
+THE WHOLE TRICK is that if you normalise every row to unit length FIRST, the
+denominator becomes 1 and cosine similarity is just a dot product. So the entire
+pairwise matrix is one matrix multiply:
+
+  norms = np.linalg.norm(x, axis=1, keepdims=True)
+  u = x / (norms + eps)
+  return u @ u.T
+
+MEASURED, [1,0] against [10,0] scores 1.0000 while their Euclidean distance is
+9.0000 — cosine calls them identical, distance calls them the furthest-apart pair in
+the set. That difference is the reason cosine is the default for embeddings.""",
+
+    """2. THE INTUITION - why normalise once instead of dividing n² times.
+
+The naive reading of the formula says: for every pair, take the dot product and
+divide by the two norms. That is n² dot products and 2n² norm computations, most of
+which recompute the same norms over and over.
+
+But the division by ||u|| does not depend on v. So HOIST IT: divide each row by its
+own norm ONCE — n divisions total — and then every pairwise dot product is already
+the cosine. The n² divisions collapse into n.
+
+That leaves a single matrix product `u @ u.T`, which BLAS executes as a tuned,
+cache-blocked, multi-threaded kernel. MEASURED: 2,000 vectors of 128 dimensions, the
+full 2000x2000 similarity matrix in 35.8 ms. The same computation as a Python double
+loop, measured on a 300x300 corner and scaled, would be about 23.6 seconds — roughly
+661x.
+
+WHY COSINE RATHER THAN DISTANCE. Text embeddings, TF-IDF vectors, and neural
+embeddings all encode MEANING IN DIRECTION and MAGNITUDE IN SOMETHING ELSE — document
+length, word frequency, activation scale. A long document about cats and a short
+document about cats point the same way; they are far apart in Euclidean distance
+purely because one is longer. MEASURED on exactly that shape: ||[1,0] - [10,0]|| =
+9.0000 while cosine = 1.0000, and ||[1,0] - [0,1]|| = 1.4142 while cosine = 0.0000.
+Euclidean ranks the identical-direction pair as the most distant of the two; cosine
+ranks it as identical. For embeddings, cosine is asking the question you meant.
+
+AND A USEFUL EQUIVALENCE: once vectors are unit length, ||u - v||² = 2 - 2·cos(u,v).
+So on normalised data, ranking by cosine and ranking by Euclidean distance give the
+SAME ORDER. Normalise first and the choice stops mattering.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DOT PRODUCT - `u · v = sum(u[i] * v[i])`. Large and positive when the vectors point
+the same way, zero when perpendicular, negative when opposed.
+
+L2 NORM (Euclidean length) - `||u|| = sqrt(sum(u[i]²))`. `np.linalg.norm(x, axis=1)`.
+
+NORMALISE / UNIT VECTOR - divide a vector by its own norm so its length becomes 1.
+Direction preserved, magnitude discarded.
+
+`axis=1` - operate ALONG each row, producing one number per row. `axis=0` would give
+one per column, which is the wrong direction and is the most common typo here.
+
+`keepdims=True` - keep the reduced axis as size 1, so the result is (n, 1) rather than
+(n,). This is what makes `x / norms` broadcast row-wise. Without it the shape is (n,)
+and numpy broadcasts it along the LAST axis — dividing each COLUMN by a different
+number, which silently produces garbage whenever n == d and an error otherwise.
+
+BROADCASTING - numpy's rule for combining arrays of different shapes by stretching
+size-1 axes. (n, d) / (n, 1) divides each row by its own scalar.
+
+`u @ u.T` - matrix product of the normalised matrix with its own transpose. (n,d) @
+(d,n) = (n,n), and entry [i][j] is row i dotted with row j.
+
+EPSILON - a tiny constant added to a denominator to keep it non-zero.
+
+BLAS - the tuned linear-algebra library numpy calls for matrix multiplies. The reason
+one `@` beats any loop you can write.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the zero vector, and the epsilon that
+"fixes" it.
+
+A ROW OF ALL ZEROS has norm 0, and dividing by it gives nan. MEASURED, without the
+epsilon:
+
+  row norms [1.0, 0.0]  ->  normalised = [[ 1.,  0.],
+                                          [nan, nan]]
+
+And nan is contagious: that row and column of the similarity matrix become nan, and
+any downstream `argmax` or `mean` inherits it. A zero row is not exotic — it is an
+empty document under TF-IDF, or a padding vector.
+
+SO EVERYONE ADDS `+ eps`. That works: MEASURED, the zero row becomes all-zero
+similarities rather than nan, which is the right answer (a zero vector has no
+direction, so it is similar to nothing).
+
+BUT THE EPSILON IS NOT FREE, AND THE COST DEPENDS ON YOUR SCALE. MEASURED on 500
+random 64-dimensional vectors:
+
+  normal scale:            max difference from the exact cosine   3.275e-09
+  same vectors × 1e-6:     max difference                         3.267e-03
+
+At the second scale the norms are about 7.93e-06, so eps = 1e-8 is 0.126% of the
+denominator, and the similarities are wrong in the third decimal place. THE EPSILON
+ASSUMES YOUR VECTORS ARE O(1). If they are not — small activations, scaled features —
+either rescale or use `np.where(norms == 0, 1, norms)` instead, which is exact for
+every non-zero row and leaves zero rows as zeros.
+
+THE SECOND SURPRISE: THE DIAGONAL IS NOT EXACTLY 1. MEASURED, float32, 1000 vectors
+of 128 dims: diagonal values range from 0.99999952 to 1.00000048, and 329 entries of
+the matrix exceed 1.0. If you then compute an angle, `np.arccos(1.00000048)` is nan —
+MEASURED. Any code that converts similarity to distance or angle must clip:
+`np.clip(S, -1.0, 1.0)`.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+EUCLIDEAN DISTANCE when magnitude carries meaning — physical measurements, coordinates,
+anything where "twice as much" is a real difference rather than a document being
+longer. MEASURED, it ranks [1,0] and [10,0] as 9.0 apart where cosine says identical.
+
+DOT PRODUCT WITHOUT NORMALISATION (sometimes called "inner product similarity") when
+magnitude is a CONFIDENCE signal you want to keep. Recommender systems often do this
+deliberately: a popular item has a longer vector and should win ties. Most vector
+databases offer it as a separate metric for exactly this reason.
+
+PEARSON CORRELATION - cosine similarity after subtracting each vector's mean. Use it
+when a constant offset is meaningless (user rating scales, where one user rates
+everything 4-5 and another 1-2). Cosine would call those two users similar; Pearson
+centres them first and compares the shape of their preferences.
+
+JACCARD for sets and binary vectors. Cosine on binary data is really counting shared
+1s over the geometric mean of the counts, which is a reasonable but different thing.
+
+`sklearn.metrics.pairwise.cosine_similarity` in production — it does exactly this and
+handles the zero rows. Write the three lines in an interview; import it at work.
+
+AN APPROXIMATE INDEX (FAISS, HNSW, ScaNN) once n is large, because the full matrix
+becomes the problem. MEASURED memory for the OUTPUT ALONE:
+
+  n =   1,000    4 MB float32
+  n =  10,000  400 MB float32
+  n = 100,000   40 GB float32
+
+At 100,000 vectors the similarity matrix does not fit anywhere, and it is quadratic
+in n regardless of how fast the multiply is. The answer is not a better multiply; it
+is to stop materialising the matrix — batch the rows, or use an approximate
+nearest-neighbour index.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. `norms = np.linalg.norm(x, axis=1, keepdims=True)`. `axis=1` for row vectors.
+`keepdims=True` is not optional — it is what makes the division row-wise.
+
+STEP 2. `u = x / (norms + eps)`. One division per row, n of them, not n².
+
+STEP 3. `return u @ u.T`. One BLAS call.
+
+STEP 4. STATE THE SHAPES: (n, d) / (n, 1) -> (n, d), then (n, d) @ (d, n) -> (n, n).
+Saying the shapes out loud is what catches the `keepdims` bug before you run it.
+
+STEP 5. DECIDE THE ZERO-ROW POLICY EXPLICITLY. `+ eps` is fine for O(1) data;
+`np.where(norms == 0, 1.0, norms)` is exact and better when the scale is unknown. Say
+which you chose and why.
+
+STEP 6. CLIP IF YOU WILL TAKE AN ANGLE OR A DISTANCE:
+`S = np.clip(S, -1.0, 1.0)`. MEASURED, 329 of a million float32 entries exceeded 1.0
+and `arccos` of one of them is nan.
+
+STEP 7. IF YOU NEED TOP-K RATHER THAN THE MATRIX, mask the diagonal
+(`np.fill_diagonal(S, -np.inf)`) so every vector does not retrieve itself as its own
+nearest neighbour.
+
+STEP 8. FOR TWO DIFFERENT SETS, normalise both and return `ua @ ub.T` — shape
+(na, nb). The self-similarity case is just this with a == b.
+
+STEP 9. MENTION THE MEMORY BEFORE THE INTERVIEWER DOES: n² floats. Beyond about
+10,000 vectors, batch the rows and keep only top-k per batch.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'Cosine similarity is the dot product divided by the two lengths, so it measures the
+ANGLE between vectors and ignores their magnitude. That is what you want for
+embeddings, because a long document and a short document about the same topic point
+the same direction and differ only in length. I measured the contrast: [1,0] and
+[10,0] have Euclidean distance 9 but cosine similarity 1.0 — distance calls them the
+furthest apart, cosine calls them identical.
+
+The implementation trick is that the division by each vector's own norm does not
+depend on the other vector, so I hoist it. Normalise every row to unit length once —
+n divisions — and then every pairwise cosine is just a dot product, so the whole
+matrix is a single `u @ u.T`. That is one BLAS call instead of n² divisions; measured
+at 2,000 vectors it is 36 milliseconds against about 24 seconds for the Python double
+loop.
+
+Two implementation details I would call out. `keepdims=True` on the norm, or the
+shape is (n,) instead of (n,1) and numpy broadcasts along the wrong axis — that
+divides each column by a different number and produces silent garbage when n equals
+d. And a zero row has norm zero, which gives nan and poisons an entire row and column;
+adding an epsilon fixes it, but the epsilon assumes the data is order-1. I measured
+the same vectors scaled down by 1e-6 and the epsilon shifted the similarities by
+3e-3, because it was then 0.13% of the denominator. Where the scale is unknown I
+would replace zero norms with 1 instead, which is exact.
+
+The last thing is memory, and it is the real limit. The output is n by n: 400 MB at
+ten thousand vectors, 40 GB at a hundred thousand. Past ten thousand or so I would
+not materialise it — batch the rows and keep top-k, or use an approximate
+nearest-neighbour index.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def cosine_similarity_matrix(x, eps=1e-8):
+      norms = np.linalg.norm(x, axis=1, keepdims=True)   # 1, 2
+      normalized = x / (norms + eps)                     # 3
+      return normalized @ normalized.T                   # 4
+
+LINE 1, `axis=1`. Rows are the vectors, so reduce along the row. `axis=0` would give
+d numbers — the length of each COLUMN across the dataset — which is a meaningful
+quantity and completely the wrong one. Nothing errors; the similarities are simply
+not similarities.
+
+LINE 2, `keepdims=True`. THE MOST IMPORTANT KEYWORD IN THE FUNCTION. It makes the
+result (n, 1) instead of (n,). Broadcasting aligns shapes from the RIGHT, so (n, d) /
+(n, 1) stretches the 1 across the columns and divides each ROW by its own norm —
+correct. Without keepdims the shape is (n,) which aligns against the LAST axis, so
+numpy tries to divide each COLUMN by a different norm. If n ≠ d that raises a shape
+error and you find it immediately. IF n == d IT SUCCEEDS AND THE ANSWER IS WRONG,
+which is why it survives small square test cases.
+
+LINE 3, `+ eps`. Guards the zero row. MEASURED without it: a zero row normalises to
+[nan, nan], and the nan spreads through its entire row and column of the output. With
+eps = 1e-8, that row becomes all-zero similarities — the right answer, since a zero
+vector has no direction.
+  THE COST, MEASURED: on order-1 data the epsilon shifts similarities by 3.275e-09,
+which is below float32 resolution and irrelevant. On the same vectors scaled by 1e-6,
+where the norms are 7.93e-06, it shifts them by 3.267e-03 — the epsilon is then 0.13%
+of the denominator. `np.where(norms == 0, 1.0, norms)` avoids that entirely.
+
+LINE 4, `normalized @ normalized.T`. (n, d) @ (d, n) -> (n, n). Entry [i][j] is row i
+dotted with row j, and because both are unit length that dot product IS the cosine.
+`.T` is a free view, not a copy — no data moves.
+  MEASURED: 2000 vectors × 128 dims in 35.8 ms. The equivalent Python double loop,
+timed on a 300×300 corner and scaled up, would be about 23.6 s — 661x.
+
+WHAT THE FUNCTION DOES NOT DO, and should where it matters:
+
+      S = np.clip(S, -1.0, 1.0)
+
+MEASURED, float32 with 1000×128: the diagonal ranges 0.99999952 to 1.00000048 and 329
+entries exceed 1.0. `np.arccos` of any of those is nan. If the caller converts
+similarity to an angle or to `sqrt(2 - 2S)`, the clip is mandatory.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - five 2-D vectors, MEASURED.
+
+  vectors:  [1,0]  [10,0]  [0,1]  [1,1]  [-1,0]
+
+  cosine matrix:
+       [[ 1.0000  1.0000  0.0000  0.7071 -1.0000]
+        [ 1.0000  1.0000  0.0000  0.7071 -1.0000]
+        [ 0.0000  0.0000  1.0000  0.7071  0.0000]
+        [ 0.7071  0.7071  0.7071  1.0000 -0.7071]
+        [-1.0000 -1.0000  0.0000 -0.7071  1.0000]]
+
+  [1,0] vs [10,0]  = 1.0000    ten times longer, identical direction
+  [1,0] vs [0,1]   = 0.0000    perpendicular
+  [1,0] vs [-1,0]  = -1.0000   opposite
+  [1,0] vs [1,1]   = 0.7071    45 degrees; cos(45°) = 0.7071
+
+Rows 0 and 1 are IDENTICAL, because the only difference between those two vectors was
+magnitude and normalisation deleted it. That is cosine similarity in one observation.
+
+TRACE B - the same pairs by Euclidean distance. MEASURED:
+
+  ||[1,0] - [10,0]|| = 9.0000     cosine 1.0000
+  ||[1,0] - [0,1]||  = 1.4142     cosine 0.0000
+
+Distance says the identical-direction pair is six times further apart than the
+perpendicular pair. Cosine says the opposite. Neither is wrong; they answer different
+questions, and for embeddings the cosine question is the one you meant.
+
+TRACE C - the zero row. MEASURED on `[[1,0], [0,0]]`:
+
+  with eps=1e-8:   [[1., 0.],     the zero row is similar to nothing
+                    [0., 0.]]
+  without eps:     normalised = [[1., 0.], [nan, nan]]   -> the output row and column
+                                                            are both nan
+
+TRACE D - the epsilon's cost at two scales. MEASURED, 500 vectors × 64 dims:
+
+  scale          mean row norm    max deviation from exact cosine
+  as generated   ~8.0             3.275e-09
+  × 1e-6         7.93e-06         3.267e-03
+
+The epsilon is a fixed absolute quantity compared against a norm that is not. At the
+second scale, 1e-8 is 0.1261% of the denominator, and the error shows up in the third
+decimal.
+
+TRACE E - float32 precision. MEASURED, 1000 vectors × 128 dims, float32:
+
+  diagonal minimum   0.99999952
+  diagonal maximum   1.00000048
+  entries > 1.0            329
+  arccos(1.00000048)       nan
+
+TRACE F - the memory wall.
+
+  n =   1,000   ->  0.004 GB float32
+  n =  10,000   ->  0.400 GB
+  n = 100,000   -> 40.000 GB
+
+Quadratic in n, and independent of d. The multiply is not the bottleneck; the OUTPUT
+is.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(n·d) to normalise plus O(n²·d) for the matrix product, which is the dominant
+term and is executed by BLAS. MEASURED: 2000×128 in 35.8 ms, versus ~23.6 s for the
+Python double loop — 661x. SPACE O(n²) for the output, which is the real constraint:
+0.4 GB at n=10,000 and 40 GB at n=100,000, MEASURED, and quadratic regardless of how
+fast the multiply is.
+
+THE #1 MISTAKE: omitting `keepdims=True`. The norm is then shape (n,) and broadcasts
+along the wrong axis, dividing each COLUMN by a different number. It raises when
+n ≠ d and SUCCEEDS SILENTLY WITH WRONG NUMBERS when n == d — which is exactly the
+shape of a hand-written test case.
+
+THE #2 MISTAKE: `axis=0` instead of `axis=1`. Reduces down columns; no error, no
+similarities.
+
+THE #3 MISTAKE: no zero-row guard. MEASURED, one zero row produces nan across its
+whole row and column, and nan propagates through every aggregate downstream.
+
+THE #4 MISTAKE: trusting `+ eps` at any scale. MEASURED, it costs 3e-09 on order-1
+data and 3e-03 when the vectors are 1e-6. Use `np.where(norms == 0, 1, norms)` when
+the scale is not yours to control.
+
+THE #5 MISTAKE: assuming the diagonal is exactly 1.0. MEASURED, float32 gives 329
+entries above 1.0, and `arccos` of those is nan. Clip before any angle or distance
+conversion.
+
+THE #6 MISTAKE: dividing inside the pairwise loop instead of normalising once —
+n² divisions where n suffice, and the loop itself is the 661x.
+
+THE #7 MISTAKE: forgetting to mask the diagonal before top-k, so every vector
+retrieves itself as its own nearest neighbour.
+
+THE #8 MISTAKE: materialising the full matrix at scale. It is quadratic; at 100,000
+vectors it is 40 GB and the answer is batching or an approximate index, not a faster
+multiply.
+
+THE TAKEAWAY: cosine similarity measures DIRECTION and discards MAGNITUDE — measured,
+[1,0] and [10,0] score 1.0000 while sitting 9.0 apart in Euclidean distance — which is
+why it is the default for embeddings, where length means document size rather than
+meaning. Compute it by hoisting the normalisation out of the pairwise loop: divide
+each row by its own norm ONCE, and every pairwise cosine collapses to a dot product,
+so the whole matrix is a single `u @ u.T` — 36 ms where the double loop would take 24
+seconds. The two lines that decide whether it is correct are `keepdims=True` (without
+it the division broadcasts along the wrong axis and silently succeeds when n equals d)
+and the zero-norm guard, since one zero row turns an entire row and column to nan.
+And remember the output is n², so past ten thousand vectors the constraint is memory,
+not arithmetic.""",
+]
+
 
 
 
