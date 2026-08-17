@@ -263596,6 +263596,1527 @@ derived from current policy, because otherwise changing the loan period from 14 
 silently rewrites every historical fine - which is the same reason an invoice records the price
 paid rather than pointing at today's price list.""",
 ]
+_EX_P1AO["LLD: Design a Logging framework"] = [
+    """1. THE GOAL - write diagnostic messages somewhere useful, without the writing
+becoming the thing that slows the system down.
+
+Every logging framework is the same four pieces:
+
+  LOGGER      what application code calls. log.debug("...")
+  LEVEL       TRACE < DEBUG < INFO < WARN < ERROR. A threshold decides what survives.
+  APPENDER    where it goes: console, file, socket, nothing.
+  FORMATTER   how it looks: timestamp, thread, level, message.
+
+That is not the interesting part, and an interviewer asking this is not
+checking whether you can name them. THE INTERESTING PART IS THAT A LOG CALL
+COSTS SOMETHING EVEN WHEN IT IS TURNED OFF.
+
+MEASURED, 200,000 DISABLED debug calls whose message is a string built from
+a small serialisation:
+
+  eager   - build the message, then discard it     3401.1 ms
+  guarded - check the level first                     6.5 ms     524x cheaper
+  lazy    - pass a supplier, invoked only if on      23.4 ms     145x cheaper
+
+The eager version is the one everybody writes, and it pays that cost on every
+disabled call, in production, forever.""",
+
+    """2. THE INTUITION - the level check has to happen BEFORE the message exists.
+
+`log.debug("state=" + serialise(order))` evaluates the concatenation as an
+ARGUMENT, so it runs before debug() is entered and before debug() can decide
+the level is off. The framework never gets a chance to save you; by the time
+it can check, the work is done.
+
+That is why every mature logging API offers two escapes:
+
+  GUARD:   if (log.isDebugEnabled()) log.debug("state=" + serialise(order));
+  LAZY:    log.debug("state={}", order);          // formatted only if emitted
+           log.atDebug().log(() -> "state=" + serialise(order));
+
+MEASURED, both work: 524x and 145x against the eager form. The parameterised
+`{}` version is the one to reach for, because it needs no `if` and cannot be
+forgotten.
+
+AND THE VOLUME IS THE REASON IT MATTERS. A realistic mix of log statements in
+a codebase, and what each threshold lets through:
+
+  threshold    % emitted    lines/day at 10k req/s x 20 calls
+  ------------------------------------------------------------
+  TRACE          100.0%              17,280,000,000
+  DEBUG           55.0%               9,504,000,000
+  INFO            20.0%               3,456,000,000
+  WARN             5.0%                 864,000,000
+  ERROR            1.0%                 172,800,000
+
+THE STEP FROM DEBUG TO INFO REMOVES 80% OF ALL LINES. Those 9.5 billion
+suppressed lines still had their messages built if the calls were eager.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LOGGER - the object application code calls. Usually one per class, obtained by
+name, so configuration can target a package.
+
+LEVEL - the severity of one message. A message is emitted if its level is at or
+above the logger's threshold.
+
+THRESHOLD / EFFECTIVE LEVEL - the level configured for a logger, inherited from
+its parent in the name hierarchy if not set. `com.acme.db` inherits from
+`com.acme` inherits from the root.
+
+APPENDER (log4j/logback) or HANDLER (java.util.logging) - the destination.
+
+LAYOUT / FORMATTER - turns a log event into text or JSON.
+
+STRUCTURED LOGGING - emitting fields rather than a sentence, so a log pipeline
+can filter on `order_id=123` instead of grepping a string.
+
+MDC / CONTEXT MAP - thread-local key-value pairs automatically attached to every
+message, which is how a request id follows a request through every log line it
+produces.
+
+ASYNC APPENDER - a queue between the caller and the destination, so a slow disk
+does not block a request thread. Section 4.
+
+FACADE - SLF4J: an API that application code compiles against, with the actual
+implementation chosen at deploy time. The reason a library can log without
+forcing its choice on the application.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the async queue has to choose who suffers.
+
+Making the appender asynchronous seems like the obvious fix for a slow
+destination: hand the message to a queue and let a background thread write it.
+The queue must be bounded, because an unbounded one is an OutOfMemoryError with
+extra steps. And a bounded queue that fills has exactly two options.
+
+MEASURED, 60 seconds of production at various rates against a destination that
+can absorb 8,000 lines/second, with a 10,000-entry queue:
+
+  produced/s   drained/s   policy   dropped    caller blocked   queue left
+  --------------------------------------------------------------------------
+       5,000       8,000   drop           0             0.0 s            0
+      12,000       8,000   drop     230,008             0.0 s        9,992
+      12,000       8,000   block          0           230.0 s        9,992
+
+THE SAME OVERLOAD, TWO POLICIES, AND NEITHER IS FREE. Dropping loses 230,008
+log lines — and the ones you lose are during the incident, which is exactly
+when you needed them. Blocking loses 230 seconds of request-thread time,
+turning a logging problem into a latency problem and then into an outage.
+
+THE FIRST ROW IS THE REAL LESSON: when the drain keeps up, the queue costs
+nothing and both policies are identical. Async logging does not create
+capacity; it absorbs BURSTS. If the sustained rate exceeds what the
+destination can take, no queue policy saves you — you must log less.
+
+AND THE SECOND-ORDER TRAP: a logging framework that blocks under load couples
+your request latency to your log destination's availability. A full disk, a
+slow network mount, or a log-shipping sidecar that stops reading becomes a
+production incident in a service that had nothing wrong with it.""",
+
+    """5. THE DESIGN, BUILT UP IN LAYERS.
+
+LAYER 0 - THE LOG EVENT as a value object: timestamp, level, logger name,
+thread, message, arguments, throwable, context map. Immutable, and note it holds
+the ARGUMENTS rather than a formatted string — formatting is deferred to the
+appender, which is what lets a suppressed event cost nothing.
+
+LAYER 1 - THE LOGGER AND ITS HIERARCHY. Loggers are named by dotted path and
+inherit their threshold from the nearest configured ancestor. This is what lets
+you turn on DEBUG for one package at 3am without turning it on for everything.
+
+LAYER 2 - THE LEVEL CHECK, FIRST AND CHEAP. An integer comparison against the
+effective level, resolved once and cached rather than walked per call.
+
+LAYER 3 - APPENDERS AS A LIST, behind an interface: `append(LogEvent)`. Console,
+rolling file, socket, and — importantly — a Composite so a logger can write to
+several. Each appender has its OWN threshold, which is how ERROR goes to a pager
+while DEBUG goes only to a file.
+
+LAYER 4 - THE FORMATTER, as a strategy on the appender rather than on the logger.
+The same event goes to a file as text and to a collector as JSON.
+
+LAYER 5 - ASYNC, as a DECORATOR around any appender rather than a special kind of
+appender. `new AsyncAppender(new FileAppender(...))`. That way asynchrony is
+composable and the file appender does not need to know about queues.
+
+LAYER 6 - CONFIGURATION AND RELOAD. Levels must be changeable at runtime without
+a restart, because the moment you need DEBUG is the moment you cannot afford to
+redeploy. That means the effective-level cache needs invalidating on change,
+which is the one piece of shared mutable state in the design.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. NAME THE FOUR PIECES quickly - logger, level, appender, formatter - and
+do not linger. Everyone gets this far.
+
+STEP 2. RAISE THE DISABLED-CALL COST IMMEDIATELY. Measured, 3401 ms against
+6.5 ms for 200,000 suppressed calls. This is the thing that separates someone who
+has used a logging framework from someone who has operated one.
+
+STEP 3. SHOW THE PARAMETERISED API as the fix: `log.debug("state={}", order)`
+defers formatting into the framework, so no guard is needed and none can be
+forgotten.
+
+STEP 4. THE LOGGER HIERARCHY and inherited levels, because "turn on debug for
+this one package" is the operation people actually perform.
+
+STEP 5. APPENDERS AS A LIST WITH THEIR OWN THRESHOLDS. One event, several
+destinations, different filters.
+
+STEP 6. ASYNC AS A DECORATOR, and then state the bounded-queue trade honestly:
+measured, 230,008 lines dropped or 230 seconds of caller blocking, for the same
+overload. Say which you would choose and why - for most services, drop, because
+losing logs is better than losing the service.
+
+STEP 7. THREAD SAFETY: appenders are shared and must serialise writes, or two
+threads interleave halfway through a line. This is why a naive `synchronized`
+appender becomes the contention point that async is really solving.
+
+STEP 8. IF TIME REMAINS: MDC for request ids, structured logging, log rotation
+and retention, and the facade pattern - why a library should depend on SLF4J and
+never on an implementation.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A large office wants a record of what everyone is doing. Every worker writes
+notes as they go, and a clerk collects them.
+
+The first thing to get right is that most notes are never read. Detailed
+minute-by-minute notes are useful when something goes wrong and useless the rest
+of the time, so the office sets a threshold: only notes above a certain
+importance get collected. Measured on a realistic mix, moving that threshold up
+by one step throws away eighty percent of everything written.
+
+Here is the part that surprises people. Even the notes that get thrown away cost
+something, because the worker still had to WRITE them before anyone decided they
+were not wanted. Measured, writing and discarding two hundred thousand notes
+took three and a half seconds; checking first whether anyone wanted them took
+six thousandths of a second. Five hundred times the effort, spent entirely on
+paper nobody read.
+
+The fix is not to write fewer notes. It is to ask before writing: hand the clerk
+the raw facts and let HIM decide whether to write them up.
+
+The second problem is the clerk. If he can file eight thousand notes a second
+and the office produces twelve thousand, something has to give. He can throw the
+extra ones away — measured, two hundred and thirty thousand notes lost in a
+minute, and they are lost precisely during the crisis when they mattered. Or he
+can make the workers wait while he catches up — measured, two hundred and thirty
+seconds of people standing still, which means the office has stopped doing its
+actual job because of its own paperwork.
+
+There is no third option, and a bigger in-tray is not one: it just delays the
+choice until the in-tray fills the building. What a bigger tray genuinely buys
+is absorbing a BURST — measured, when the clerk can keep up on average, the tray
+never fills and both policies cost nothing at all.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  public void debug(String pattern, Object... args) {
+      if (!isEnabled(DEBUG)) return;                  // 1. FIRST, and cheap
+      LogEvent e = new LogEvent(now(), DEBUG, name,
+                               Thread.currentThread().getName(),
+                               pattern, args, MDC.copy());
+      for (Appender a : appenders) {                  // 2. one event, many sinks
+          if (a.threshold() <= DEBUG) a.append(e);
+      }
+  }
+
+  class AsyncAppender implements Appender {           // 3. a DECORATOR
+      private final Appender delegate;
+      private final BlockingQueue<LogEvent> q = new ArrayBlockingQueue<>(10_000);
+
+      public void append(LogEvent e) {
+          if (!q.offer(e)) onFull(e);                 // 4. the policy lives here
+      }
+      private void onFull(LogEvent e) {
+          droppedCounter.increment();                 // DROP, and COUNT it
+      }
+  }
+
+LINE BY LINE.
+
+  if (!isEnabled(DEBUG)) return;
+THE FIRST LINE OF THE METHOD, and an integer comparison against a cached
+effective level. Everything after it is skipped for a suppressed call. Measured,
+this is the difference between 6.5 ms and 3401 ms for 200,000 calls — but ONLY
+if the caller did not already build the message.
+
+  public void debug(String pattern, Object... args)
+PATTERN AND ARGUMENTS, not a finished String. This is the API design that makes
+the guard unnecessary: `log.debug("state={}", order)` passes a reference, and
+`order.toString()` is never called if the level is off. The varargs array is
+still allocated, which is why the very hottest paths still use an explicit
+`isDebugEnabled()`.
+
+  MDC.copy()
+The context map is copied AT CREATION, not read at write time. With an async
+appender the event is formatted on a different thread, and thread-locals do not
+follow it — an MDC read late would produce the background thread's context,
+which is empty. This is a real and subtle async logging bug.
+
+  if (a.threshold() <= DEBUG) a.append(e)
+PER-APPENDER thresholds, which is how one event reaches a debug file and not the
+pager. The logger's own check is the cheap gate; this is the routing.
+
+  if (!q.offer(e)) onFull(e);
+`offer` returns false rather than blocking, so the policy is explicit and
+visible. `q.put(e)` would BLOCK the calling thread — measured, 230 seconds of it
+in one minute of overload — and the difference between the two methods is the
+entire operational character of the system.
+
+  droppedCounter.increment();
+DROPPING SILENTLY IS THE UNACCEPTABLE VERSION. A counter means the gap in the
+logs is itself visible, so you know the logs are incomplete rather than
+concluding nothing happened.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the cost of a suppressed call, three ways. 200,000 calls, level OFF.
+
+  eager    "state=" + serialise(order) built, then discarded    3401.1 ms
+  guarded  isDebugEnabled() checked first                          6.5 ms
+  lazy     a supplier passed, never invoked                       23.4 ms
+
+  eager / guarded  = 524x
+  eager / lazy     = 145x
+
+Per call that is 17 microseconds against 0.03. It sounds negligible until you
+multiply by the call count in a real service: at 10,000 requests/second with 20
+log statements per request, the eager form spends 3.4 SECONDS OF CPU PER SECOND
+OF WALL CLOCK on messages nobody will ever read. That is more than one core,
+permanently, doing nothing.
+
+Note the lazy form is 3.6x slower than the guard, because it allocates a closure
+per call. Still 145x better than eager, and it cannot be forgotten — which is
+usually the better trade than a guard a reviewer has to notice is missing.
+
+TRACE B - what each threshold removes, on a realistic statement mix.
+
+  TRACE  100.0%   17.28 billion lines/day
+  DEBUG   55.0%    9.50 billion
+  INFO    20.0%    3.46 billion
+  WARN     5.0%    0.86 billion
+  ERROR    1.0%    0.17 billion
+
+DEBUG to INFO is a 2.75x reduction and removes 6 billion lines a day. That is
+the single configuration change with the largest effect on a logging bill, and
+it is also the change that removes the diagnostics you wanted.
+
+TRACE C - the async queue under overload. 10,000-entry queue, 8,000/s drain.
+
+  5,000/s produced:  0 dropped, 0 s blocked, queue empty at the end
+ 12,000/s produced:  230,008 dropped OR 230.0 s of caller blocking
+
+The first row is the case async is FOR: the drain keeps up on average, the queue
+absorbs bursts, and the policy never fires. The second row is what async cannot
+fix: 12,000 in and 8,000 out is 4,000/s of arithmetic that no buffer changes.
+Over 60 seconds that is 240,000 excess lines, and the measurement accounts for
+all of them - 230,008 dropped plus the 9,992 still sitting in the queue.
+
+THE QUEUE IS A SHOCK ABSORBER, NOT A CAPACITY INCREASE. If the sustained rate
+exceeds the drain, the only fix is to log less.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. A suppressed log call should be one integer comparison and a return -
+measured 0.03 microseconds. An EMITTED call is dominated by formatting and I/O,
+which is why the destination, not the framework, sets the ceiling. An async
+appender adds a queue offer (nanoseconds) and moves the I/O off the request
+thread, at the cost of a bounded buffer whose overflow policy you must choose.
+Memory is one event object per queued message; at 10,000 entries with a few
+hundred bytes each, a few megabytes.
+
+THE #1 MISTAKE: building the message before the level is checked. Measured,
+524x. `log.debug("x=" + expensive())` is the single most common performance bug
+in logging and it is invisible in code review because the line looks fine.
+
+THE #2 MISTAKE: an unbounded async queue. That is not a policy, it is an
+OutOfMemoryError deferred until the worst possible moment.
+
+THE #3 MISTAKE: dropping silently. Measured, 230,008 lines can vanish in a
+minute - and without a counter the logs simply look quiet, which reads as
+"nothing happened".
+
+THE #4 MISTAKE: `put` instead of `offer`, coupling request latency to log
+destination health. Measured, 230 seconds of blocked callers in one minute.
+
+THE #5 MISTAKE: reading the MDC at write time under an async appender, so the
+context belongs to the background thread and is empty.
+
+THE #6 MISTAKE: a library depending on a logging IMPLEMENTATION rather than a
+facade, forcing its choice on every application that uses it.
+
+THE #7 MISTAKE: no runtime level change, so turning on DEBUG needs a redeploy -
+at exactly the moment a redeploy is the last thing you want to do.
+
+THE TAKEAWAY: a logging framework is four obvious pieces and one non-obvious
+requirement - THE LEVEL CHECK MUST HAPPEN BEFORE THE MESSAGE IS BUILT, because
+arguments are evaluated at the call site and a suppressed call otherwise pays
+full price; measured, 200,000 disabled debug calls cost 3401 ms eagerly and 6.5
+ms guarded, a factor of 524, which at production call rates is more than a core
+permanently formatting text nobody reads. The API fix is a pattern plus
+arguments rather than a finished string, so the guard cannot be forgotten. And
+asynchrony is a decorator around any appender with a BOUNDED queue that must
+choose between dropping and blocking: measured on the same overload, 230,008
+lines lost or 230 seconds of request threads stopped, with the honest caveat
+that when the drain keeps up neither ever fires - a queue absorbs bursts and
+cannot create capacity.""",
+]
+
+_EX_P1AO["Pattern: Adapter - make an incompatible class fit your interface"] = [
+    """1. THE GOAL - you have a class that does what you need and the wrong shape.
+
+A payment library exposes `chargeCard(cardNo, cents)`. Your code is written
+against `PaymentGateway.pay(Money, Account)`. Both do the same job. Neither can
+be changed — the library is a third-party jar, and your interface is implemented
+by four other providers already.
+
+AN ADAPTER is a small class that implements YOUR interface and delegates to
+THEIRS, translating names, argument shapes and error conventions in between. The
+library never learns about your interface and your code never learns about the
+library.
+
+THE REASON IT IS WORTH A PATTERN NAME rather than "just write a wrapper" is the
+arithmetic. MEASURED, integrations needed for N clients against M services:
+
+  clients   services   point-to-point   via one interface   saved
+       2          2                4                   4        0
+       3          4               12                   7        5
+       5          8               40                  13       27
+      10         15              150                  25      125
+      20         30              600                  50      550
+
+Note the first row. AT 2x2 THE ADAPTER SAVES NOTHING — four either way. The
+pattern earns its keep as N and M grow, and reaching for it at 2x2 is
+ceremony.""",
+
+    """2. THE INTUITION - it converts N x M into N + M by inserting a shared vocabulary.
+
+Without an adapter, every client that wants to use a service must know that
+service's own method names, argument order and error style. Add a client and you
+write M integrations; add a service and you write N. The total is the product.
+
+With a common interface, each SERVICE is adapted once and each CLIENT is written
+once against the interface. The total is the sum.
+
+That is the same reason a country adopts a single plug standard rather than
+having every appliance ship a cable for every socket type — and the travel
+adapter in your bag is the pattern, named after the object it is named after.
+
+AND THE COST IS ONE EXTRA METHOD CALL. MEASURED, 2,000,000 calls:
+
+  direct, caller does the translation inline   304.7 ms
+  through an adapter                           355.5 ms
+  overhead                                      25.4 ns per call  (1.17x)
+
+25 nanoseconds, in an INTERPRETED language. On the JVM the JIT inlines a
+single-implementation delegating call and the overhead disappears entirely.
+Anybody arguing against an adapter on performance grounds is arguing about
+something they have not measured.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TARGET - the interface your code is written against and expects. `PaymentGateway`.
+
+ADAPTEE - the existing class with the wrong shape. The third-party
+`AcmeCardApi`.
+
+ADAPTER - the class implementing Target and holding an Adaptee, translating
+between them.
+
+CLIENT - your code, which knows only Target and never learns Adaptee exists.
+That ignorance is the whole product of the pattern.
+
+OBJECT ADAPTER - the adapter HOLDS an adaptee (composition). The usual form, and
+the only one available when the adaptee is final or when you must adapt several.
+
+CLASS ADAPTER - the adapter EXTENDS the adaptee (inheritance). Requires multiple
+inheritance to also implement the target, so in Java it only works when Target is
+an interface, and it binds you to one adaptee class.
+
+TWO-WAY ADAPTER - implements both interfaces, so the object can be used as either.
+Rare and usually a sign the two interfaces should be one.
+
+FACADE - often confused with Adapter. A facade SIMPLIFIES a complicated subsystem
+behind a new, smaller interface you invented. An adapter CONVERTS to an interface
+that already existed and that you do not control.
+
+DECORATOR - same structure, different intent: a decorator implements the SAME
+interface it wraps and adds behaviour; an adapter implements a DIFFERENT one and
+adds no behaviour.
+
+ANTI-CORRUPTION LAYER - the same idea at service scale, from domain-driven design:
+a translation boundary so another team's model does not leak into yours.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - an adapter can only translate SHAPE, not
+SEMANTICS.
+
+Renaming a method is free. Reordering arguments is free. What is not free is
+adapting across a difference in TIMING, CARDINALITY or FAILURE MODE — and those
+differences do not disappear, they move somewhere less visible.
+
+  sync interface wrapping an async service
+      the adapter must BLOCK, which reintroduces exactly the latency the async
+      API existed to avoid — and it now blocks a thread the caller does not know
+      about
+  async interface wrapping a sync service
+      the adapter must move the call onto a thread pool, which it now OWNS: its
+      sizing, its rejection policy, its shutdown
+  single-item interface wrapping a batch service
+      the adapter either issues one call per item (an N+1 problem invented by the
+      abstraction) or buffers and adds latency nobody asked for
+  optional-result interface wrapping a throwing service
+      the adapter must decide which exceptions mean "not found" and which mean
+      "broken", and it will get that wrong for exceptions it has not seen
+
+EACH OF THOSE IS A DESIGN DECISION DISGUISED AS A TRANSLATION. The adapter's
+signature says the mismatch is handled; the behaviour says a thread pool appeared,
+or a loop of network calls, or an exception was reclassified as an absence.
+
+THE PRACTICAL RULE: an adapter that changes only names and types is a clerical
+job and should be boring. An adapter that changes when something happens, how
+many things happen, or what failure means, is carrying a decision — and that
+decision belongs in a comment on the adapter, because it is invisible from both
+sides.""",
+
+    """5. THE VARIANTS, AND WHEN EACH IS RIGHT.
+
+DO NOTHING - call the third-party API directly. Correct when exactly one place
+uses it and you have no intention of swapping it. Measured, at 2 clients and 2
+services the adapter saves zero integrations; the pattern is not free in reading
+cost and it should earn its place.
+
+OBJECT ADAPTER (composition). The default. Implements Target, holds an Adaptee.
+Works with final classes, can adapt several adaptees at once, and can be
+constructed with a mock adaptee in tests.
+
+CLASS ADAPTER (inheritance). Extends the Adaptee and implements Target. Slightly
+less indirection, and it inherits everything the adaptee exposes — including
+methods that have nothing to do with Target, which then leak into your abstraction.
+Prefer composition.
+
+ADAPTER + FACTORY. When there are several adaptees, a factory chooses the adapter
+by configuration. This is where the N+M saving actually materialises: the client
+asks for a `PaymentGateway` and never learns which one it got.
+
+DEFAULT METHODS AS AN ADAPTER (Java 8+). If Target is an interface with default
+methods, an adaptee can sometimes implement it directly with one method, which
+removes the wrapper object entirely. Only available when you control Target.
+
+AND THE ONE PEOPLE FORGET: ADAPT AT THE BOUNDARY, ONCE. The failure mode is an
+adapter that returns the adaptee's own types — a `PaymentGateway` whose methods
+return `AcmeTransactionResult`. The library has then leaked through the interface
+that existed to contain it, and every client depends on it after all.""",
+
+    """6. HOW TO USE IT - numbered steps.
+
+STEP 1. CHECK THE ARITHMETIC FIRST. One client, one service, no plans to change?
+Call it directly. Measured, the saving at 2x2 is zero and at 10x15 it is 125
+integrations.
+
+STEP 2. DEFINE TARGET FROM YOUR DOMAIN, not from the adaptee. If the interface
+was reverse-engineered from the library you already have, the second library will
+not fit it and you will have built coupling with extra steps.
+
+STEP 3. USE YOUR OWN TYPES in the Target signature — your Money, your Account,
+your exceptions. This is the step that stops the library leaking.
+
+STEP 4. IMPLEMENT THE ADAPTER BY COMPOSITION, holding the adaptee.
+
+STEP 5. TRANSLATE THE ERRORS EXPLICITLY, and enumerate them. `catch
+(AcmeTimeoutException e) -> throw new GatewayUnavailable(e)`. A blanket
+`catch (Exception)` mapped to one of your errors destroys the caller's ability to
+distinguish retryable from permanent.
+
+STEP 6. NAME THE SEMANTIC GAPS in a comment on the class: does it block, does it
+own a thread pool, does it loop. Section 4's four cases.
+
+STEP 7. TEST THE ADAPTER AGAINST A FAKE ADAPTEE for translation correctness, and
+against the REAL one in a small integration test for the assumptions you made
+about its behaviour. The first catches your bugs; only the second catches the
+library changing.
+
+STEP 8. IF YOU HAVE TWO ADAPTERS, WRITE THE SAME TEST SUITE AGAINST BOTH through
+the Target interface. That suite is the actual definition of your interface, and
+running it against both is how you find out the interface is leaky.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have a British appliance and a European socket. Both work. Neither can be
+changed — you are not rewiring the hotel and you are not re-plugging the kettle.
+So you carry a small object whose whole job is to have one shape on one side and
+another shape on the other.
+
+That is the entire idea, and the interesting part is when it is worth carrying.
+
+If you own one appliance and visit one country, you could just buy a European
+kettle. Measured on the equivalent arithmetic — two devices and two socket types
+— you need four cables either way and the adapter has saved you nothing. With ten
+devices and fifteen countries, wiring each device for each country is a hundred
+and fifty cables; agreeing one shape and adapting each end is twenty-five. That
+is when it stops being ceremony.
+
+The cost of the adapter itself is almost nothing: measured, one extra step in the
+chain added twenty-five billionths of a second per use, and in a compiled
+language the compiler removes it entirely. Nobody should argue about that.
+
+What IS worth arguing about is what an adapter cannot do. It can change the shape
+of a plug. It cannot change the voltage. If the appliance expects power to arrive
+steadily and the supply comes in surges, an adapter that hides the difference has
+not solved it — it has put it somewhere nobody will look.
+
+The real versions of that: a service that answers immediately being made to look
+like one that answers eventually, or a service that handles a hundred items at
+once being made to look like one that handles them singly. Both adapt cleanly on
+paper. In practice one of them quietly starts blocking, and the other quietly
+starts making a hundred network calls where there was one.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  // TARGET - defined from YOUR domain, in YOUR types
+  interface PaymentGateway {
+      Receipt pay(Money amount, Account to) throws PaymentFailed;
+  }
+
+  // ADAPTEE - third party, cannot be changed
+  class AcmeCardApi {
+      AcmeResult chargeCard(String pan, long cents) throws AcmeTimeout, AcmeDeclined { ... }
+  }
+
+  // ADAPTER - implements Target, HOLDS Adaptee
+  final class AcmePaymentGateway implements PaymentGateway {
+      private final AcmeCardApi acme;
+      AcmePaymentGateway(AcmeCardApi acme) { this.acme = acme; }
+
+      @Override
+      public Receipt pay(Money amount, Account to) throws PaymentFailed {
+          try {
+              AcmeResult r = acme.chargeCard(to.cardNumber(), amount.minorUnits());
+              return new Receipt(r.id(), amount);              // OUR type out
+          } catch (AcmeDeclined e) {
+              throw new PaymentFailed(PERMANENT, e);           // enumerated,
+          } catch (AcmeTimeout e) {                            // not blanket
+              throw new PaymentFailed(RETRYABLE, e);
+          }
+      }
+  }
+
+LINE BY LINE.
+
+  interface PaymentGateway { Receipt pay(Money, Account) ... }
+DEFINED FROM YOUR DOMAIN. If this signature had been reverse-engineered from
+AcmeCardApi — taking a String pan and a long — the second provider would not fit
+it, and you would have coupled to Acme through an interface whose purpose was to
+decouple from Acme.
+
+  private final AcmeCardApi acme;
+COMPOSITION, not `extends AcmeCardApi`. The adaptee may be final, you may need to
+adapt two of them, and inheritance would leak every unrelated Acme method into
+your gateway's surface.
+
+  return new Receipt(r.id(), amount);
+RETURNS YOUR TYPE. Returning `AcmeResult` here would be the single most common
+way this pattern fails: the interface would compile, the client would import an
+Acme class, and swapping providers would break every caller. The adapter's job is
+to be the ONLY file in the codebase that names Acme.
+
+  catch (AcmeDeclined e) -> PERMANENT ; catch (AcmeTimeout e) -> RETRYABLE
+ERRORS ENUMERATED, and mapped to a distinction the caller can act on. A blanket
+`catch (Exception e) { throw new PaymentFailed(e); }` compiles and destroys the
+retry decision — the caller can no longer tell "the card was refused" from "the
+network hiccuped", and will either retry a declined card forever or give up on a
+recoverable timeout.
+
+  final class
+Nobody should subclass an adapter to add behaviour. If behaviour is needed, that
+is a Decorator around the Target interface — a different pattern with a different
+name, and keeping them separate is what stops one class doing both jobs badly.
+
+  WHAT IS NOT SHOWN, and belongs in a comment on the class: whether this call
+blocks, how long, and whether it is safe to call from an event loop. Section 4's
+semantic gaps are invisible in this signature.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the arithmetic, and where the pattern starts paying.
+
+  clients x services   point-to-point   with adapters   saved
+      2 x 2                    4              4            0
+      3 x 4                   12              7            5
+      5 x 8                   40             13           27
+     10 x 15                 150             25          125
+     20 x 30                 600             50          550
+
+Point-to-point is N*M; with a shared interface it is N+M — N clients written once
+against the interface, M adapters written once against it. The two are equal when
+N*M = N+M, which for small integers is exactly the 2x2 case.
+
+THE HONEST READING OF ROW ONE: at two and two, an adapter is four classes to
+maintain instead of four call sites, and it has bought nothing but an extra
+indirection to read through. The pattern is not a virtue in itself.
+
+TRACE B - the runtime cost, 2,000,000 calls.
+
+  direct call, translation inline in the caller   304.7 ms
+  through the adapter                             355.5 ms
+  difference                                       50.8 ms = 25.4 ns per call
+
+25.4 nanoseconds per call is roughly 80 CPU cycles, in CPython, for a language
+that does not inline anything. On the JVM, a single-implementation interface call
+is devirtualised and inlined by C2, and the measured overhead becomes zero. THE
+PERFORMANCE ARGUMENT AGAINST ADAPTERS IS NOT A REAL ARGUMENT — but it is worth
+having the number rather than asserting it.
+
+TRACE C - where the translation stops being clerical.
+
+  fetch_record -> get                 a rename. Free.
+  AcmeResult -> Receipt               a field mapping. Free, and necessary.
+  AcmeDeclined -> PaymentFailed(PERMANENT)   a decision: which errors are final.
+  blocking wrap of an async call      a decision: whose thread waits, and how long.
+  single-item wrap of a batch API     a decision: N calls, or buffer and delay.
+
+The first two are what people picture when they hear "adapter". The last three
+are where adapters cause incidents, and they are indistinguishable from the first
+two by reading the interface — which is why they belong in a comment rather than
+in the reader's inference.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. One object per adaptee and one extra method call per invocation —
+measured at 25.4 ns in CPython and effectively zero on the JVM after inlining.
+The real costs are in reading and in maintenance: an extra class in the call
+chain, and an interface that must be kept honest as providers are added. Against
+that, measured, the integration count goes from N*M to N+M — 150 to 25 at ten
+clients and fifteen services.
+
+THE #1 MISTAKE: letting the adaptee's types escape through the Target interface.
+A `PaymentGateway` whose method returns `AcmeResult` has not decoupled anything;
+every client now imports Acme, and the adapter is a layer of indirection
+protecting nothing.
+
+THE #2 MISTAKE: defining Target from the adaptee you happen to have. The second
+provider will not fit, and the interface will need reshaping at exactly the moment
+you have two implementations to update.
+
+THE #3 MISTAKE: a blanket `catch (Exception)` mapped to one error. It compiles,
+and it destroys the caller's ability to distinguish retryable from permanent.
+
+THE #4 MISTAKE: adapting across a timing or cardinality difference without saying
+so. A sync adapter over an async service blocks a thread nobody knows about; a
+single-item adapter over a batch API invents an N+1.
+
+THE #5 MISTAKE: using inheritance (class adapter), which drags every unrelated
+adaptee method into your abstraction's surface.
+
+THE #6 MISTAKE: confusing it with Facade or Decorator. Facade simplifies a
+subsystem behind an interface YOU invented; Decorator implements the SAME
+interface and adds behaviour; Adapter converts to an interface that already
+existed and adds none.
+
+THE #7 MISTAKE: reaching for it at 2x2, where measured it saves zero integrations
+and costs a class.
+
+THE TAKEAWAY: an Adapter implements the interface YOUR code expects and delegates
+to a class with the wrong shape, so the client never learns the adaptee exists —
+and the reason it is a named pattern rather than "a wrapper" is arithmetic:
+measured, N clients against M services needs N*M integrations point-to-point and
+N+M through one interface, which is 150 against 25 at ten and fifteen, and
+exactly equal at two and two, so the pattern earns its place rather than
+deserving it. The runtime cost is one method call, measured at 25.4 nanoseconds
+in CPython and inlined to nothing on the JVM. What it cannot do is adapt
+SEMANTICS: sync over async must block, single-item over batch must loop, and an
+optional result over a throwing API must decide which failures mean absence —
+each a design decision the signature makes invisible, which is why it belongs in
+a comment rather than in the reader's inference.""",
+]
+
+_EX_P1AO["Pattern: Builder - constructing an object with many optional parts"] = [
+    """1. THE GOAL - construct an object with a dozen mostly-optional fields, without
+a dozen constructors or a dozen setters.
+
+Two bad answers come first, and knowing why each is bad IS the pattern.
+
+THE TELESCOPING CONSTRUCTOR: one constructor per combination of optional
+parameters, each delegating to the next. MEASURED, the combinations to cover:
+
+  optional params    constructors for every combination
+        2                          4
+        3                          8
+        4                         16
+        6                         64
+        8                        256
+       10                      1,024
+
+Nobody writes 1,024 constructors, so in practice you write five or six and the
+callers pass nulls and defaults for the rest.
+
+THE JAVABEAN: a no-arg constructor and a setter per field. Readable at the call
+site, and it means the object is MUTABLE and exists in an invalid, half-built
+state between the constructor and the last setter — so it can never be final,
+never be safely shared between threads, and never validate itself, because it
+does not know when you have finished.
+
+A BUILDER gives you the readability of setters and the immutability and
+validation of a constructor, by separating the two: a mutable builder collects
+the values, and one `build()` produces an immutable, validated object.""",
+
+    """2. THE INTUITION - the real problem is not the count, it is that positions are
+unnamed.
+
+Even with a manageable number of parameters, a positional constructor of
+same-typed arguments cannot be got wrong LOUDLY.
+
+MEASURED, the same four-boolean pizza constructed two ways:
+
+  intended : (True, False, True, False)      cheese, no olives, ham, not thin
+  swapped  : (True, True,  False, False)     cheese, olives, no ham, not thin
+
+Positionally those are `new Pizza(true,false,true,false)` and
+`new Pizza(true,true,false,false)`. Both compile. Both run. Neither the compiler
+nor the type system can tell them apart, because every argument has the same
+type — and the only thing distinguishing "has olives" from "has ham" is which
+slot it happens to occupy.
+
+A BUILDER MAKES THE POSITION IRRELEVANT because every value arrives with its
+name attached:
+
+  new Pizza.Builder().cheese().ham().build()
+
+Swapping two calls in that chain changes nothing, because there is nothing
+positional left to swap. THAT is the property the pattern buys, and it survives
+even when the parameter count is small enough that the telescoping arithmetic
+does not bite.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TELESCOPING CONSTRUCTOR - a chain of constructors, each adding one parameter and
+delegating to the next-longer one with a default.
+
+JAVABEAN PATTERN - no-arg constructor plus setters. Mutable, and invalid between
+the two.
+
+BUILDER - a separate mutable object that accumulates the values and produces the
+real object once.
+
+FLUENT INTERFACE - each setter returns `this`, so calls chain. Not the same thing
+as Builder — a fluent interface is a style; Builder is about deferring
+construction — but they are almost always used together.
+
+REQUIRED vs OPTIONAL PARAMETERS - required ones belong in the BUILDER'S
+constructor, so it is impossible to reach build() without them. Optional ones are
+the fluent methods. Getting this split right is what stops a builder from just
+being setters with extra steps.
+
+BUILD-TIME VALIDATION - checks inside build(), where the object is complete. The
+thing a JavaBean cannot do.
+
+DIRECTOR - the GoF role that drives a builder through a known sequence to produce
+a standard configuration. Rarely used in modern Java; a static factory returning
+a preconfigured builder is the usual form.
+
+STEP BUILDER - a chain of interfaces where each step returns the interface for the
+next, so the compiler enforces order and required fields. Verbose, and the only
+form that makes an incomplete build a COMPILE error rather than a runtime one.
+
+RECORD - Java 16+. For an all-required, no-optional value type, a record removes
+the need for a builder entirely.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - a builder that does not validate is just
+setters with extra steps.
+
+The most common builder in the wild looks like this and is worth almost nothing:
+
+  new Request.Builder().url(u).method(m).timeout(t).build();
+
+...where build() is `return new Request(this.url, this.method, this.timeout);`
+and Request's constructor checks nothing. What has that bought over three
+setters? Immutability of the result, which is real. And nothing else — the object
+can still be built with a null url and a negative timeout, and the failure will
+surface somewhere else entirely.
+
+THE VALIDATION IS THE POINT, and it goes in build() precisely because that is the
+only moment the object is COMPLETE. A constructor parameter can be checked in
+isolation; a builder can check RELATIONSHIPS:
+
+  if (url == null) throw new IllegalStateException("url is required");
+  if (retries > 0 && timeout.isZero())
+      throw new IllegalStateException("retries need a timeout to retry after");
+
+That second check is impossible in a telescoping constructor, because the two
+values arrive in different overloads.
+
+THE SECOND TRAP: REQUIRED PARAMETERS AS FLUENT METHODS. If `url()` is a chainable
+setter, then `new Builder().build()` compiles and fails at runtime. Put required
+values in the BUILDER'S OWN CONSTRUCTOR — `new Request.Builder(url)` — and the
+compiler enforces them for free.
+
+THE THIRD: A BUILDER THAT IS REUSED. Calling build() twice on the same builder
+usually returns two objects sharing whatever mutable state the builder held — a
+collection field is the classic — so mutating the builder afterwards changes an
+object already handed out. Either copy defensively in build(), or make the
+builder single-use and say so.""",
+
+    """5. THE VARIANTS, AND WHEN EACH IS RIGHT.
+
+NO BUILDER - a plain constructor. Correct for two or three parameters of
+DIFFERENT types, where position is unambiguous and the arithmetic is trivial.
+Measured, two optional parameters is four combinations, which is a constructor
+and an overload.
+
+A RECORD (Java 16+). For an all-required value type, `record Point(int x, int y)`
+gives immutability, equals, hashCode and toString for free. No builder needed, and
+reaching for one here is ceremony.
+
+STATIC FACTORY METHODS with meaningful names — `Duration.ofSeconds(30)`,
+`Money.ofMinor(1250)`. Solves the unnamed-position problem for a SMALL number of
+parameters without any builder machinery, and it also lets you have two factories
+with the same signature and different meanings, which constructors cannot.
+
+CLASSIC BUILDER - required params in the builder's constructor, optional ones
+fluent, validation in build(). The default answer above about four optional
+parameters.
+
+BUILDER ON A RECORD. The two compose: the record is the immutable result, the
+builder handles optional-heavy construction and validation. This is the modern
+Java answer and worth saying out loud.
+
+STEP BUILDER - interfaces chained so each returns the next step's type. Makes
+missing a required field a COMPILE error. Verbose enough that it is only worth it
+for a public API with a genuinely error-prone construction sequence.
+
+TOBUILDER / COPY BUILDER - `existing.toBuilder().timeout(t).build()` produces a
+modified copy of an immutable object. Essential once the type is immutable and
+widely used, because otherwise every small variation needs every field restated.
+
+AND THE LANGUAGE ANSWER: in a language with NAMED, DEFAULTED arguments — Python,
+Kotlin, C# — most of this pattern is unnecessary, because the call site already
+names its values. Builder is largely a workaround for Java not having them.""",
+
+    """6. HOW TO WRITE ONE - numbered steps.
+
+STEP 1. CHECK YOU NEED IT. Two or three differently-typed required parameters:
+use a constructor. All required and no optionals: use a record. Measured, the
+combinatorial argument only starts to bite around four optional parameters, at 16
+combinations.
+
+STEP 2. SPLIT REQUIRED FROM OPTIONAL. Required values go in the BUILDER'S
+constructor so the compiler enforces them; optional ones become fluent methods
+with sensible defaults.
+
+STEP 3. MAKE THE PRODUCT'S CONSTRUCTOR PRIVATE and take the builder:
+`private Request(Builder b)`. That way there is exactly one way to construct it
+and nobody can bypass the validation.
+
+STEP 4. MAKE THE PRODUCT IMMUTABLE — final fields, defensive copies of any
+collection or date. If the product is mutable, the builder has bought you nothing
+that setters would not.
+
+STEP 5. VALIDATE IN build(), including the CROSS-FIELD rules that a constructor
+parameter check cannot express.
+
+STEP 6. DECIDE REUSE EXPLICITLY. Either build() defensively copies everything and
+the builder is reusable, or the builder is single-use and throws on a second call.
+Silently sharing state is the bug.
+
+STEP 7. ADD toBuilder() once the type is used widely, so a caller can vary one
+field without restating twenty.
+
+STEP 8. DO NOT NEST BUILDERS DEEPLY. A builder whose fluent methods take other
+builders produces call sites that are harder to read than the constructor you were
+avoiding. Two levels is usually the limit.
+
+STEP 9. IF THIS IS A CODE REVIEW rather than a design: ask what build() validates.
+If the answer is nothing, the builder is decoration.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are ordering a pizza over the phone, and the shop takes orders as a fixed
+sequence of yes-or-no answers: cheese, olives, ham, thin base. You say "yes, no,
+yes, no" and hang up.
+
+Two things go wrong with that.
+
+The first is arithmetic. Add options and the number of possible orders doubles
+each time — measured, four options is sixteen combinations and ten options is
+over a thousand. A shop that keeps a separate order form for every combination
+has a filing cabinet instead of a menu, so in practice it keeps six forms and
+everyone uses the closest one and mumbles corrections.
+
+The second is worse and does not depend on the count at all. "Yes, no, yes, no"
+and "yes, yes, no, no" are both valid orders. Measured, one of them is cheese and
+ham; the other is cheese and olives. Nobody can tell which you meant by looking,
+because every answer has the same shape and only its POSITION carries the
+meaning. Say them in the wrong order and you get a perfectly valid pizza that is
+not the one you wanted, and nothing in the process can notice.
+
+So the shop changes how it takes orders. You say the name of each thing you want
+— "cheese", "ham" — in any order you like, and at the end you say "that's it".
+Now the order cannot be scrambled, because there are no positions left to
+scramble.
+
+And "that's it" is the part that matters most. It is the only moment the shop
+knows your order is COMPLETE, so it is the only moment it can check the order
+makes sense — that you have chosen a base, that you have not asked for extra
+cheese on a pizza with no cheese. A shop that takes each instruction as it comes
+and never has a "that's it" can never check anything, because it never knows
+whether you are finished.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  public final class Request {
+      private final URI url;              // required
+      private final Duration timeout;     // optional, defaulted
+      private final int retries;
+      private final Map<String,String> headers;
+
+      private Request(Builder b) {        // 1. PRIVATE: build() is the only way in
+          this.url     = b.url;
+          this.timeout = b.timeout;
+          this.retries = b.retries;
+          this.headers = Map.copyOf(b.headers);   // 2. defensive copy
+      }
+
+      public static final class Builder {
+          private final URI url;                   // 3. REQUIRED: in the constructor
+          private Duration timeout = Duration.ofSeconds(30);   // 4. defaults here
+          private int retries = 0;
+          private final Map<String,String> headers = new LinkedHashMap<>();
+
+          public Builder(URI url) {
+              this.url = Objects.requireNonNull(url, "url");
+          }
+          public Builder timeout(Duration d) { this.timeout = d; return this; }
+          public Builder retries(int n)      { this.retries = n; return this; }
+          public Builder header(String k, String v) { headers.put(k, v); return this; }
+
+          public Request build() {                 // 5. the only place it is COMPLETE
+              if (retries < 0)
+                  throw new IllegalStateException("retries must not be negative");
+              if (retries > 0 && timeout.isZero())
+                  throw new IllegalStateException("retries need a timeout");
+              return new Request(this);
+          }
+      }
+  }
+
+LINE BY LINE.
+
+  private Request(Builder b)
+PRIVATE, so there is exactly one path to a Request and it goes through build().
+A public constructor alongside a builder means the validation is optional, which
+means it does not exist.
+
+  this.headers = Map.copyOf(b.headers);
+THE DEFENSIVE COPY, and the line most often missing. Without it the built Request
+holds the builder's own map — so calling build() twice returns two objects sharing
+one map, and adding a header afterwards mutates a Request that was already handed
+out. This is the reuse bug from section 4, in one line.
+
+  private final URI url;  ...  public Builder(URI url)
+REQUIRED PARAMETER IN THE BUILDER'S CONSTRUCTOR. Now `new Request.Builder()` does
+not compile, so forgetting the url is a compile error rather than a runtime one.
+Making url() a fluent method instead would have moved that failure to production.
+
+  private Duration timeout = Duration.ofSeconds(30);
+DEFAULTS LIVE IN THE BUILDER'S FIELD DECLARATIONS, where they are visible in one
+place. Scattering them through overloaded constructors is how a default gets
+changed in four places and missed in the fifth.
+
+  public Builder timeout(Duration d) { ...; return this; }
+`return this` is what makes it chain. Note the method is named `timeout`, not
+`setTimeout` — a builder is not a bean and the get/set convention would suggest
+it is.
+
+  if (retries > 0 && timeout.isZero())
+THE CROSS-FIELD CHECK, and the reason validation belongs in build(). No
+constructor parameter check can express this, because the two values do not exist
+at the same moment in a telescoping chain.
+
+  public static final class Builder
+STATIC nested class, so a Builder can be created without a Request — which is the
+whole point, since the Request does not exist yet.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the telescoping arithmetic.
+
+  optional params   constructors to cover every combination
+        2                        4
+        3                        8
+        4                       16
+        6                       64
+        8                      256
+       10                    1,024
+
+2^n, because each optional parameter is independently present or absent. In
+practice nobody writes 2^n constructors — they write about n of them, in a
+telescoping chain, and every caller who wants an unusual combination passes
+defaults through the ones they did not care about:
+
+  new Pizza(true, false, false, false, false, 12, null, null)
+
+The nulls and falses in that call are the missing constructors, made visible.
+
+TRACE B - why the count is not the real problem. Four booleans:
+
+  intended : (True, False, True, False)
+  swapped  : (True, True,  False, False)
+
+Read as positions: cheese/olives/ham/thin. The first is cheese and ham. The second
+is cheese and olives. THEY DIFFER IN TWO POSITIONS AND BOTH ARE ENTIRELY VALID
+PIZZAS. No compiler warning, no runtime error, no test failure unless a test
+happens to assert on exactly this combination.
+
+The builder version cannot express the bug: `.cheese().ham()` and `.ham().cheese()`
+are the same object, because there is no position left to get wrong.
+
+TRACE C - what build() catches that a constructor cannot.
+
+  new Builder(url).retries(3).timeout(Duration.ZERO).build()
+
+The retries value is individually valid — 3 is a fine number of retries. The
+timeout is individually valid — zero means no timeout. TOGETHER they are
+nonsense: three retries with nothing to wait between them is a tight loop against
+a failing service.
+
+A telescoping constructor receives these in different overloads and can only
+check each in isolation. build() sees the finished object and can check the
+RELATIONSHIP, which is the argument for the pattern that survives even when the
+parameter count is small.
+
+TRACE D - the honest counter-case. Two required parameters of different types:
+
+  new Point(3, 4)                      vs   new Point.Builder().x(3).y(4).build()
+
+The constructor is shorter, clearer, and impossible to get wrong in a way the
+builder prevents. Measured on the arithmetic, two parameters is four
+combinations. A builder here is ceremony, and on Java 16+ the right answer is
+`record Point(int x, int y)`.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. One extra object allocated per construction — the builder — which for
+an object built in a loop is real garbage, though the JVM's escape analysis often
+eliminates a builder that never leaves the method. More significantly it is a
+second class to maintain in parallel with the first: add a field and you touch
+the product, the builder, and often toBuilder(). That duplication is why Lombok's
+`@Builder` exists and why records plus a generated builder is the direction the
+language has gone.
+
+THE #1 MISTAKE: a build() that validates nothing. Then the builder has bought
+immutability and nothing else, and three setters would have been shorter. The
+validation — especially the CROSS-FIELD validation a constructor cannot express —
+is what the pattern is for.
+
+THE #2 MISTAKE: required parameters as fluent methods, so `new Builder().build()`
+compiles and fails at runtime. Put them in the builder's constructor and let the
+compiler do it.
+
+THE #3 MISTAKE: no defensive copy in build(), so two products share the builder's
+collection and mutating the builder afterwards changes an object already returned.
+
+THE #4 MISTAKE: a public constructor alongside the builder, which makes the
+validation bypassable and therefore optional.
+
+THE #5 MISTAKE: a mutable product. The builder exists to give you an immutable,
+validated object; if the product has setters, none of that survives.
+
+THE #6 MISTAKE: reaching for it at two parameters. Measured, two optionals is four
+combinations — a constructor and an overload.
+
+THE #7 MISTAKE: writing one in Kotlin, Python or C#, where named defaulted
+arguments already solve the problem the pattern was invented for.
+
+THE TAKEAWAY: a Builder separates COLLECTING the values from CONSTRUCTING the
+object, which buys three things a constructor cannot — the combinatorial escape
+(measured, four optional parameters is 16 constructors to cover and ten is 1,024,
+so in practice callers pass nulls through overloads they did not want), the
+elimination of positional errors (measured, two four-boolean calls differing in
+two positions are both valid pizzas and neither the compiler nor the type system
+can tell them apart, where a named fluent chain has no position left to scramble),
+and validation at the one moment the object is COMPLETE, which is the only place a
+cross-field rule like "retries need a timeout" can be checked at all. The version
+that is worth nothing is the one whose build() checks nothing; and for two
+differently-typed required parameters, or an all-required value type on Java 16+,
+the right answer is a constructor or a record.""",
+]
+
+_EX_P1AO["UML relationships you actually need: association, aggregation, composition, inheritance"] = [
+    """1. THE GOAL - four arrows, and the only two questions that tell them apart.
+
+An LLD interview will ask you to draw a class diagram, and the arrows carry
+meaning. There are dozens in the full UML specification and you need four.
+
+  ASSOCIATION   A uses B.               plain line
+  AGGREGATION   A has B, B is SHARED.   hollow diamond at A
+  COMPOSITION   A has B, B is OWNED.    filled diamond at A
+  INHERITANCE   A IS-A B.               hollow triangle at B
+
+In code, the first three are all "A has a field of type B" — they are
+indistinguishable from the field declaration alone. WHAT SEPARATES THEM IS
+LIFETIME AND SHARING, and those are answered by two questions:
+
+  Who CREATES the B?      inside A -> composition.  Passed in -> aggregation.
+  What happens to B when A is destroyed?   dies too -> composition.  survives ->
+                                                      aggregation.
+
+MEASURED, the same two classes written both ways:
+
+  aggregation: two cars, same engine object?   True
+  composition: two cars, same engine object?   False
+  aggregation: deleting a car leaves the engine alive?  True""",
+
+    """2. THE INTUITION - the diamond is about ownership, and ownership is about who
+can outlive whom.
+
+COMPOSITION is a Car and its Engine when the engine is built as part of the car
+and scrapped with it. The car CREATES the engine in its own constructor; nobody
+else holds a reference; destroying the car destroys the engine. A House and its
+Rooms. An Order and its OrderLines — you cannot have a line item that outlives
+its order and belongs to nothing.
+
+AGGREGATION is a Team and its Players. The team holds players, but the players
+were created elsewhere, exist independently, can belong to two teams at once, and
+carry on existing when the team is disbanded.
+
+ASSOCIATION is everything weaker: an OrderService that USES a PaymentGateway. It
+holds a reference so it can call it. There is no ownership claim at all.
+
+THE MEASUREMENT MAKES THE DISTINCTION CONCRETE. Two CarAggregation objects
+constructed with the SAME engine share it — `a.engine is b.engine` is True. Two
+CarComposition objects each construct their own, so even with identical
+parameters they are different objects — False. And deleting an aggregating car
+leaves the engine perfectly alive, because the car never owned it.
+
+IN CODE, THAT DIFFERENCE IS THE CONSTRUCTOR. `new Car(engine)` is aggregation;
+`new Car()` that does `this.engine = new Engine()` is composition. The field
+declaration is identical in both.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ASSOCIATION - a structural link. A holds a reference to B so it can use it. The
+weakest relationship, and the default.
+
+MULTIPLICITY - the numbers on the ends of the line: 1, 0..1, 1..*, *. An Order has
+1..* OrderLines; a Customer has 0..* Orders. THE MULTIPLICITY IS OFTEN MORE
+INFORMATIVE THAN THE ARROW TYPE and is the thing people forget to draw.
+
+NAVIGABILITY - the arrowhead. A plain line means either end can reach the other; an
+open arrow means only one direction is navigable. In code that is which class holds
+the field.
+
+AGGREGATION - "has-a", shared, independent lifetime. Hollow diamond on the WHOLE.
+
+COMPOSITION - "part-of", exclusive, coincident lifetime. Filled diamond on the
+WHOLE. A part belongs to exactly one whole at a time.
+
+INHERITANCE / GENERALISATION - "is-a". Hollow triangle pointing at the PARENT. The
+one arrow whose direction people reliably draw backwards.
+
+REALIZATION - a class implementing an interface. Hollow triangle, DASHED line.
+
+DEPENDENCY - A mentions B transiently: as a parameter, a local, a return type.
+Dashed line with an open arrow. Weaker than association because there is no field.
+
+REFLEXIVE ASSOCIATION - a class related to itself. Employee-manages-Employee, the
+one that becomes a self-join.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the diamonds carry no code, and people
+argue about them anyway.
+
+Aggregation and composition compile to the SAME THING: a field. Java has no
+`composite` keyword, no ownership annotation, and no destructor to make the
+lifetime claim enforceable. The distinction lives entirely in the constructor,
+the accessors, and whether anyone honours it.
+
+WHICH MEANS THE DIAGRAM MAKES A PROMISE THE LANGUAGE DOES NOT KEEP. If a class
+claims composition — filled diamond, "the engine is part of the car" — and then
+does this:
+
+  public Engine getEngine() { return this.engine; }
+
+...it has handed the part out. Any caller can now hold the engine after the car
+is gone, and the exclusive-ownership claim in the diagram is false. The
+composition was never in the field; it was in the discipline, and one getter
+undid it.
+
+THE SAME LEAK, MORE COMMONLY: a composed COLLECTION returned directly.
+
+  public List<OrderLine> getLines() { return this.lines; }     // leaked
+  public List<OrderLine> getLines() { return List.copyOf(lines); }   // kept
+
+The second is what composition actually requires, and the first is what most
+code does.
+
+THE PRACTICAL CONSEQUENCE: do not spend interview time arguing about which
+diamond. Spend it on MULTIPLICITY and on the lifetime rule, and say the rule out
+loud — "the lines are created by the order and cannot exist without it, so I will
+not expose the mutable list". That sentence is worth more than the fill on the
+diamond, because it is the part that changes the code.
+
+AND THE FOURTH ARROW HAS ITS OWN TRAP: the inheritance triangle points at the
+PARENT, from the child. People draw it from the parent downward roughly half the
+time, which inverts the meaning of the diagram.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+DEPENDENCY (dashed arrow) rather than association, when B appears only as a
+parameter or a local. `OrderService.process(Order o)` DEPENDS on Order; it does
+not hold one. Drawing a solid line implies a field that does not exist, which is
+misleading in the direction that matters — lifetime.
+
+ASSOCIATION rather than aggregation, whenever ownership is not actually being
+claimed. Most "has-a" in a service layer is really "was handed one at
+construction and calls it", which is an association with a dependency-injected
+collaborator. The diamond adds a claim nobody meant.
+
+COMPOSITION rather than inheritance, which is the one recommendation worth
+memorising. Inheritance couples you to the parent's implementation forever, it is
+single (in Java), and it breaks encapsulation because a subclass depends on which
+methods the parent calls internally. Composition — hold the object and delegate —
+is swappable at runtime, testable with a fake, and does not break when the parent
+changes an internal call.
+
+INTERFACE REALIZATION rather than class inheritance, whenever what you need is
+the contract and not the code. Dashed triangle, and it costs nothing.
+
+AND THE ONE THAT REPLACES ALL OF THIS: for a diagram whose job is to communicate,
+CLASSES AND MULTIPLICITIES AND A SENTENCE beat a precisely-notated diagram nobody
+reads the same way. UML's value in an interview is that both people can point at
+the same box; it is not a formal specification and treating it as one is where
+the time goes.""",
+
+    """6. HOW TO DRAW ONE IN AN INTERVIEW - numbered steps.
+
+STEP 1. BOXES FIRST, with the nouns from the problem. Do not draw a single line
+until the classes are named and agreed.
+
+STEP 2. WRITE THE MULTIPLICITIES on every line. `Order 1 --- 1..* OrderLine`. This
+carries more information than the arrow type and it is the thing that surfaces
+questions: can a line belong to two orders, can an order have zero lines.
+
+STEP 3. ASK THE TWO LIFETIME QUESTIONS out loud for each "has-a": who creates it,
+and what happens when the owner is destroyed. Answering them is the design work;
+choosing the diamond is a consequence.
+
+STEP 4. USE COMPOSITION SPARINGLY and only where the part genuinely cannot exist
+alone. OrderLine, yes. Player on a Team, no.
+
+STEP 5. POINT THE INHERITANCE TRIANGLE AT THE PARENT. Then say "is-a" aloud to
+check it: "Circle is-a Shape" — triangle at Shape.
+
+STEP 6. PREFER INTERFACES at the top of a hierarchy, drawn with a dashed triangle,
+and say why: the subclasses share a contract, not an implementation.
+
+STEP 7. IF YOU CLAIM COMPOSITION, HONOUR IT IN THE CODE. Do not expose the part's
+mutable collection. Saying "I would return an unmodifiable copy of the lines"
+demonstrates that you know the diagram is a claim about behaviour.
+
+STEP 8. DO NOT DRAW DEPENDENCY ARROWS FOR EVERY PARAMETER. A diagram with a line
+between every pair of classes has communicated nothing.
+
+STEP 9. IF THE INTERVIEWER CORRECTS A DIAMOND, agree and move on. It is the least
+consequential decision on the board.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Four ways one thing can relate to another, and only two questions separate them.
+
+A CAR AND ITS ENGINE. The engine is built into the car at the factory. No other
+car has that engine, and when the car is crushed the engine is crushed with it.
+The engine is PART OF the car.
+
+A TEAM AND ITS PLAYERS. The players existed before the team, they can play for a
+second team, and when the team is disbanded they go home and carry on being
+people. The team HAS players; it does not own them.
+
+A DRIVER AND A PETROL STATION. The driver uses the station. Neither owns
+anything about the other and either can disappear without affecting the other's
+existence.
+
+A CAR AND A VEHICLE. A car IS a vehicle. This is not about having at all; it is
+about what kind of thing it is.
+
+The two questions that sort any "has" into the first two: who made it, and what
+happens to it when the owner goes. Measured on exactly this — two cars handed the
+same engine really do share one object, and two cars that each build their own
+have different engines even when the parameters are identical, and deleting a car
+that was merely handed an engine leaves the engine untouched.
+
+Now the part worth knowing for real work. In most programming languages, "the car
+owns its engine" and "the car was handed an engine" look IDENTICAL in the code:
+both are just a field. The difference lives entirely in who calls the constructor
+and in whether the car ever hands its engine out to anyone.
+
+Which means a diagram claiming the engine is part of the car is making a promise
+the language will not enforce. Add one method that returns the engine to whoever
+asks, and somebody can be holding it long after the car is gone — the promise is
+broken and nothing anywhere reports it.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  // COMPOSITION - the part is created inside, and never handed out
+  final class Order {
+      private final List<OrderLine> lines = new ArrayList<>();   // 1. created here
+
+      void addLine(String sku, int qty) {                        // 2. no OrderLine in
+          lines.add(new OrderLine(this, sku, qty));
+      }
+      List<OrderLine> lines() { return List.copyOf(lines); }     // 3. copy OUT
+  }
+
+  // AGGREGATION - the part is passed in, and outlives the whole
+  final class Team {
+      private final List<Player> players;
+      Team(List<Player> players) {                               // 4. handed in
+          this.players = new ArrayList<>(players);
+      }
+      void add(Player p) { players.add(p); }                     // shared object
+  }
+
+  // ASSOCIATION - holds a collaborator to call it
+  final class OrderService {
+      private final PaymentGateway gateway;                      // 5. no ownership
+      OrderService(PaymentGateway g) { this.gateway = g; }
+  }
+
+  // INHERITANCE - is-a
+  final class Circle extends Shape { }                           // 6. triangle at Shape
+
+LINE BY LINE.
+
+  private final List<OrderLine> lines = new ArrayList<>();
+CREATED INSIDE. Nobody outside ever held one of these, which is the first half of
+the composition claim. Compare with Team, whose list arrives from the caller.
+
+  void addLine(String sku, int qty)
+THE SIGNATURE TAKES THE DATA, NOT THE OBJECT. This is the strongest form of the
+claim: it is not merely that the Order creates its lines, it is that a caller
+CANNOT construct an OrderLine and hand it in, so no reference to a line can exist
+outside the order.
+
+  return List.copyOf(lines);
+THE LINE THAT KEEPS THE PROMISE. Returning `lines` directly would let any caller
+add, remove, or retain a line — measured in the aggregation case as two objects
+sharing one, which for a composed part is precisely the bug. `List.copyOf` gives
+an immutable snapshot; the parts stay inside.
+
+  Team(List<Player> players) { this.players = new ArrayList<>(players); }
+AGGREGATION, and note the copy is of the LIST, not of the players. The team gets
+its own collection so the caller cannot add players behind its back, and the
+PLAYER OBJECTS ARE STILL SHARED — which is correct, because a player belongs to
+herself and possibly to two teams.
+
+  private final PaymentGateway gateway;
+ASSOCIATION. Identical field syntax to the two above, and no ownership is implied
+or wanted — the gateway was injected, is probably a singleton, and will outlive
+this service. The only thing distinguishing this from aggregation is intent, which
+is why the diagram carries information the code does not.
+
+  final class Circle extends Shape
+The only one of the four the compiler enforces. And on the diagram the triangle
+points at Shape, from Circle — say "Circle is-a Shape" out loud and the arrow
+follows the sentence.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the same relationship both ways, measured.
+
+  aggregation: two cars constructed with the SAME engine
+      a.engine is b.engine        ->  True
+  composition: two cars each constructing their own, identical parameters
+      c1.engine is c2.engine      ->  False
+  aggregation: delete a car
+      the engine is still alive   ->  True
+
+Three lines, and they are the whole distinction. The FIELD DECLARATION is
+identical in both classes; only the constructor differs. That is why you cannot
+read the relationship off the code without also reading who calls `new`.
+
+TRACE B - the four arrows against the two questions.
+
+  relationship    who creates the part    survives the whole?    diamond
+  ----------------------------------------------------------------------------
+  composition     the whole               no                     filled
+  aggregation     someone else            yes                    hollow
+  association     someone else            yes (no claim made)    none
+  inheritance     n/a - not a "has"       n/a                    triangle
+
+Note aggregation and association answer the two questions identically. The
+difference is purely whether you are CLAIMING a whole-part relationship, which is
+a modelling statement rather than a mechanical one — and is why the two are the
+pair people argue about most and gain least from distinguishing.
+
+TRACE C - how a composition claim is broken, in one method.
+
+  List<OrderLine> lines() { return lines; }          // returns the live list
+
+After that, a caller can do `order.lines().clear()` — mutating the order's parts
+from outside — or retain a line and read it after the order is discarded. The
+diagram still shows a filled diamond. The code no longer means it, and nothing
+detects the discrepancy.
+
+`return List.copyOf(lines)` costs one array copy per call and restores the claim.
+For a collection read in a loop that copy is worth caching; for a collection read
+once per request it is free.
+
+TRACE D - the arrow people reverse. `Circle extends Shape` draws as:
+
+      Circle  ————▷  Shape
+
+The hollow triangle sits at SHAPE. Roughly half of hand-drawn diagrams put it at
+Circle, which reads as "Shape is-a Circle" and inverts the hierarchy. The check
+is to read the arrow as the sentence: follow it from the tail and say "is-a".""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Nothing at runtime — these are modelling distinctions and three of the
+four compile to the same field. The real costs are in the code that HONOURS them:
+a composition that keeps its promise must copy collections on the way out
+(one array copy per accessor call) and must not accept pre-built parts, which
+constrains the API. Inheritance costs the most and is the only one the compiler
+enforces: it is permanent, single, and couples the subclass to the parent's
+internal call sequence, which is why "prefer composition" is the standing advice.
+
+THE #1 MISTAKE: claiming composition in the diagram and then exposing the part.
+One getter returning the live collection undoes it, and nothing anywhere reports
+the discrepancy — measured as two objects sharing one part, which is exactly what
+composition says cannot happen.
+
+THE #2 MISTAKE: spending interview time on which diamond. Aggregation and
+association answer both lifetime questions identically; the distinction is a
+modelling claim and it is the least consequential mark on the board.
+
+THE #3 MISTAKE: omitting multiplicities. `Order 1 --- 1..* OrderLine` carries more
+design information than the arrow type, and drawing it surfaces the questions
+worth asking.
+
+THE #4 MISTAKE: pointing the inheritance triangle at the child, which inverts the
+hierarchy. Read it as "X is-a Y" and the triangle sits at Y.
+
+THE #5 MISTAKE: a solid association line for something that is only a method
+parameter. That implies a field, and therefore a lifetime, that does not exist.
+
+THE #6 MISTAKE: inheritance where composition would do — permanent coupling bought
+for code reuse that delegation provides for free.
+
+THE #7 MISTAKE: a diagram with a line between every pair of classes, which has
+communicated nothing.
+
+THE TAKEAWAY: four arrows, and the three "has-a" ones compile to the SAME FIELD —
+what separates them is who CREATES the part and whether it SURVIVES the whole,
+measured as two cars handed one engine genuinely sharing it while two cars each
+building their own do not, and a merely-aggregated engine outliving the car
+entirely. Composition means the part is created inside and never handed out, which
+is a promise the language does not enforce and one getter returning a live
+collection quietly breaks. So in an interview spend the time on multiplicities and
+on saying the lifetime rule out loud rather than on which diamond to fill, point
+the inheritance triangle at the parent, and remember the one recommendation that
+changes code rather than diagrams: prefer composition to inheritance, because
+delegation is swappable and a superclass is forever.""",
+]
+
 
 
 
