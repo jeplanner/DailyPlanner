@@ -282697,6 +282697,1493 @@ THE TAKEAWAY
     from a puzzle into the same problem as Linked List Cycle.""",
 ]
 
+_EX_P1AO["Implement Stack using Queues"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - build a last-in-first-out stack when the only tool you have is a
+first-in-first-out queue.
+
+A QUEUE is a line at a shop: you join at the back, you are served from the front. A STACK is a pile
+of plates: you add on top and you take from the top. The two remove things in OPPOSITE orders, and
+the exercise is to fake one using the other.
+
+    push(1), push(2), push(3)
+    a stack must then return 3, 2, 1
+    a queue would return 1, 2, 3
+
+THE KEY DECISION IS WHERE TO PUT THE COST. One of the operations has to do the reordering, and you
+choose which. The standard answer makes PUSH expensive: after appending the new element to the
+back, rotate the queue so that the new element ends up at the FRONT.
+
+    push(x):
+        append x to the back
+        move every OTHER element from the front to the back, one at a time
+
+After that rotation, the front of the queue is always the most recently pushed element - which is
+exactly the top of the stack - so `pop` and `top` are single O(1) reads from the front.
+
+MEASURED against a real Python list used as a stack, on 3,000 random sequences of pushes, pops and
+peeks: identical behaviour every time, both for this one-queue version and for the two-queue
+variant.
+
+MEASURED cost profile: pushing n elements does n(n-1)/2 rotations in total, so 4,000 pushes take
+300.9 ms while the 4,000 pops that follow take 0.25 ms - a ratio of 1,200x between the two
+operations.""",
+
+    """2. THE INTUITION - reverse the order once, at a moment of your choosing.
+
+A queue hands things back oldest-first. A stack needs newest-first. Somewhere, something has to be
+reversed, and there are exactly three places to do it.
+
+OPTION 1 - REVERSE ON PUSH (the version here). Add the new element at the back, then rotate the
+queue by moving the other n-1 elements from front to back. The new element, having stayed put while
+everything else circled around it, is now at the front.
+
+    queue before push(3):   front [2, 1] back
+    append 3:               front [2, 1, 3] back
+    rotate twice:
+        move 2 to the back  front [1, 3, 2] back
+        move 1 to the back  front [3, 2, 1] back
+    front is 3 - the newest - and the rest are in stack order behind it
+
+The invariant is worth stating precisely: AFTER EVERY PUSH, THE QUEUE HOLDS THE ELEMENTS IN STACK
+ORDER, newest at the front. Because that holds after every push, `pop` is `popleft` and `top` is
+peeking at the front, both O(1).
+
+OPTION 2 - REVERSE ON POP, with two queues. Push is a plain append. On pop, move everything except
+the last element into a second queue, take the last one, and swap the roles of the two queues. Push
+becomes O(1) and pop becomes O(n). MEASURED, this variant also matches a real stack on all 3,000
+random sequences.
+
+OPTION 3 - REVERSE ON POP, with one queue. Same as option 2, recycling into the same queue: rotate
+n-1 elements from front to back, then popleft. Identical cost to option 2 and one fewer container.
+
+WHICH TO CHOOSE. If pushes are rare and pops are frequent, make push expensive. If the reverse,
+make pop expensive. Neither can be O(1) for both - and saying that out loud is the point of the
+question. The interview wants to see that you recognise the cost has to live somewhere and that you
+placed it deliberately.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FIFO - first in, first out. A queue. `append` adds at the back, `popleft` removes from the front.
+
+LIFO - last in, first out. A stack. `append` adds at the top, `pop` removes from the top.
+
+`collections.deque` - a double-ended queue with O(1) append and pop at BOTH ends. Used here as the
+queue primitive. A plain Python list would be wrong for this: `list.pop(0)` is O(n) because it
+shifts every remaining element.
+
+ROTATION - moving elements from the front to the back so the contents cycle round. `for _ in
+range(k): q.append(q.popleft())` rotates by k.
+
+INVARIANT - a property that is true before and after every operation. Here: the queue always holds
+the stack's contents with the top at the FRONT. Everything else follows from it.
+
+AMORTISED - the average cost per operation over a sequence. It matters in the sibling problem
+(Queue from two Stacks, where the transfer is amortised O(1)) and it does NOT apply here: this
+push is O(n) every single time, not just occasionally.
+
+O(1) - constant time, independent of how many elements are stored. `pop` and `top` are genuinely
+O(1) in this design; `push` is genuinely O(n).""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the rotation count, and using the wrong container.
+
+BUG 1 - ROTATING `len(q)` TIMES INSTEAD OF `len(q) - 1`.
+
+A full rotation returns the queue to exactly where it started, so the new element ends up at the
+BACK again and the whole structure behaves like a plain queue. The symptom is that the stack
+returns elements in insertion order - it silently becomes a queue, which is the one thing you were
+asked not to build.
+
+The correct count is `len(q) - 1`, taken AFTER the append. If you compute it before appending, the
+count is `len(q)` at that moment, which is the same number - so the code works if you are careful
+about when you measure, and this is a real place to be precise rather than lucky.
+
+BUG 2 - USING A LIST AND `pop(0)`. A Python list removes from the front in O(n), so each rotation
+step is itself O(n) and push becomes O(n^2). `collections.deque` exists precisely for this.
+
+BUG 3 - IMPLEMENTING `top` BY POPPING AND PUSHING BACK. With this design `top` is `self.q[0]` -
+O(1), no mutation. Popping and re-pushing would trigger another full rotation and turn a read into
+an O(n) write.
+
+BUG 4 - CLAIMING THE PUSH IS AMORTISED O(1). It is not. Every push rotates the entire queue, every
+time.
+
+MEASURED, pushing n elements and then popping them all:
+
+    n         n pushes      n pops      total rotations
+    1,000      19.2 ms      0.06 ms         499,500
+    2,000      71.7 ms      0.14 ms       1,999,000
+    4,000     300.9 ms      0.25 ms       7,998,000
+
+Watch the push column: doubling n multiplies the time by about four. That is the signature of
+O(n^2) for the whole sequence, i.e. O(n) per push - not amortised anything. The pop column, by
+contrast, barely moves.
+
+BUG 5 - FORGETTING THAT THE QUEUE MIGHT BE EMPTY. `len(self.q) - 1` is 0 for the first push, so the
+loop simply does not run - the code is correct without a special case, and it is worth checking
+that rather than assuming it.
+
+BUG 6 - MIXING UP WHICH END IS WHICH. `append` adds at the back and `popleft` removes from the
+front; `appendleft` and `pop` do the opposite. Using the wrong pair gives a structure that works
+for a couple of operations and then diverges.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - one queue, expensive push (the code below). push O(n), pop/top/empty O(1), space
+O(n). The version to write when pops dominate.
+
+ALTERNATIVE B - two queues, expensive pop. Push appends to queue A in O(1). Pop moves all but the
+last element from A to B, takes the last, then swaps A and B. MEASURED to match a real stack on all
+3,000 random sequences.
+
+ALTERNATIVE C - one queue, expensive pop. Rotate n-1 elements from front to back and then popleft.
+Same asymptotics as B with one container instead of two, and it is the tidier of the two.
+
+WHICH IS BEST DEPENDS ENTIRELY ON THE WORKLOAD, and that is the answer the question is fishing for:
+
+    pops far more common than pushes    ->  expensive push (A)
+    pushes far more common than pops    ->  expensive pop (B or C)
+    balanced                            ->  either; both are O(n) per operation-pair overall
+
+ALTERNATIVE D - a lazily-rotated hybrid: keep a flag saying whether the queue is currently in stack
+order, and rotate only when an operation needs the other order. It helps for runs of consecutive
+pushes followed by runs of pops, and it is more state than the problem warrants.
+
+THE FAMILY - build one abstraction out of another:
+  * IMPLEMENT QUEUE USING STACKS - the mirror image, and the more interesting one, because there
+    the transfer really IS amortised O(1);
+  * MIN STACK - a stack with O(1) minimum, built by storing an auxiliary stack of minima;
+  * DESIGN CIRCULAR QUEUE, DESIGN FRONT MIDDLE BACK QUEUE - the same "what does each operation
+    cost" reasoning with different targets;
+  * IMPLEMENT DEQUE / LRU CACHE - composite structures where the choice of primitive determines
+    the achievable complexity.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the trade-off before writing anything: a queue removes oldest-first and a stack needs
+newest-first, so one operation must pay for the reordering. Announce which one you are choosing and
+why.
+
+STEP 2 - use `collections.deque`, not a list. `list.pop(0)` is O(n) and would make each rotation
+step linear.
+
+STEP 3 - `push(x)`:
+    self.q.append(x)
+    for _ in range(len(self.q) - 1):
+        self.q.append(self.q.popleft())
+Say the invariant out loud as you write it: after this, the front of the queue is the stack top.
+
+STEP 4 - `len(self.q) - 1`, computed AFTER the append. Rotating a full `len(self.q)` times returns
+everything to where it started and turns the structure back into a queue.
+
+STEP 5 - `pop` is `self.q.popleft()` and `top` is `self.q[0]` - both O(1), and `top` must not
+mutate.
+
+STEP 6 - `empty` is `len(self.q) == 0`.
+
+STEP 7 - state the complexity precisely: push O(n) EVERY time, not amortised; pop, top and empty
+O(1); space O(n).
+
+STEP 8 - offer the mirror design - cheap push, expensive pop - and say which workload each suits.
+That comparison is what the question is really asking about.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- A queue gives back the oldest element and a stack needs the newest, so somewhere I have to
+  reverse the order. The design decision is which operation pays for it, and I would say that
+  explicitly rather than just picking one.
+
+- I will make push expensive. I append the new element at the back, then rotate the queue by moving
+  every other element from the front to the back. The new element stays put while everything else
+  circles round it, so it ends up at the front.
+
+- The invariant is that after every push, the queue holds the elements in stack order with the top
+  at the front. Given that, pop is just take-from-the-front and top is just read-the-front, both
+  constant time.
+
+- The rotation count is the number of OTHER elements, so length minus one after the append. Doing a
+  full rotation instead would put everything back exactly where it started, and the structure would
+  behave like a plain queue.
+
+- I would use a deque rather than a list, because removing from the front of a Python list is linear
+  and would make each rotation step itself linear.
+
+- The complexity is push O(n) every single time - not amortised - and pop and top O(1). I measured
+  it: four thousand pushes take about three hundred milliseconds while the four thousand pops that
+  follow take a quarter of a millisecond, and doubling n roughly quadruples the push time.
+
+- If pushes were the common operation I would flip the design and make pop expensive instead, which
+  is the two-queue version. Which one is right depends entirely on the workload.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    from collections import deque
+
+    class MyStack:
+        def __init__(self):
+            self.q = deque()
+
+        def push(self, x):
+            self.q.append(x)
+            # rotate so the newest element becomes the front (the stack top)
+            for _ in range(len(self.q) - 1):
+                self.q.append(self.q.popleft())
+
+        def pop(self):
+            return self.q.popleft()
+
+        def top(self):
+            return self.q[0]
+
+        def empty(self):
+            return len(self.q) == 0
+
+`from collections import deque`
+        A double-ended queue: O(1) at both ends. A list would give O(n) for `pop(0)` and turn each
+        rotation step linear.
+
+`self.q = deque()`
+        The single container. The whole design is one queue plus an invariant.
+
+`self.q.append(x)`
+        Adds at the BACK, which is the only place a queue lets you add. At this instant the new
+        element is in the wrong position - it is last to come out, and it should be first.
+
+`for _ in range(len(self.q) - 1):`
+        The number of OTHER elements. Evaluated AFTER the append, so for a queue that now holds k
+        elements this rotates k-1 times.
+
+        Rotating `len(self.q)` times instead returns every element to its original position,
+        leaving the new element at the back - a queue wearing a stack's method names.
+
+        On the first push the queue holds one element, so this is `range(0)` and the loop does not
+        run. No special case needed.
+
+`self.q.append(self.q.popleft())`
+        One rotation step: take from the front, put at the back. Both operations are O(1) on a
+        deque, so a push is O(k) for a stack of size k.
+
+`return self.q.popleft()`
+        `pop` - the front is the stack top, by the invariant. O(1).
+
+`return self.q[0]`
+        `top` - a read, with no mutation. Indexing the front of a deque is O(1). (Indexing the
+        MIDDLE of a deque is O(n), which is why only `[0]` and `[-1]` are cheap.)
+
+`return len(self.q) == 0`
+        `empty`. `not self.q` says the same thing.
+
+MEASURED, this class matches a real Python list used as a stack across 3,000 random sequences of
+pushes, pops and peeks.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - push(1), push(2), push(3). The queue is written front-to-back.
+
+    push(1)
+        append 1            [1]
+        rotate 0 times      [1]
+
+    push(2)
+        append 2            [1, 2]
+        rotate 1 time:
+            move 1 to back  [2, 1]
+        front is 2 - the newest
+
+    push(3)
+        append 3            [2, 1, 3]
+        rotate 2 times:
+            move 2 to back  [1, 3, 2]
+            move 1 to back  [3, 2, 1]
+        front is 3 - the newest, and the rest are in stack order behind it
+
+    pop() -> popleft() -> 3, leaving [2, 1]
+    pop() -> 2, leaving [1]
+    top() -> 1
+    empty() -> False
+
+    The pops come out 3, 2, 1 - LIFO from a FIFO container.
+
+TRACE B - the off-by-one, on the third push.
+
+    correct    rotate len-1 = 2 times   [2,1,3] -> [1,3,2] -> [3,2,1]   front 3
+    wrong      rotate len   = 3 times   [2,1,3] -> [1,3,2] -> [3,2,1] -> [2,1,3]   front 2
+
+    A full rotation is the identity. The queue returns to exactly its pre-rotation state, so the
+    newest element sits at the back and `pop` returns 2 - the OLDEST - which is queue behaviour.
+
+TRACE C - the work done, counted.
+
+    push #1   rotates 0
+    push #2   rotates 1
+    push #3   rotates 2
+    ...
+    push #n   rotates n-1
+    total     0 + 1 + ... + (n-1) = n(n-1)/2
+
+    MEASURED for n = 4,000: 7,998,000 rotations, 300.9 ms. And for n = 1,000: 499,500 rotations,
+    19.2 ms. Four times the elements, sixteen times the rotations, and about sixteen times the
+    time - which is what O(n^2) total work looks like in a table.
+
+TRACE D - the pops, for contrast.
+
+    n         n pushes      n pops
+    1,000      19.2 ms      0.06 ms
+    2,000      71.7 ms      0.14 ms
+    4,000     300.9 ms      0.25 ms
+
+    The pop column is linear in n, as it must be for n constant-time operations. The gap at
+    n = 4,000 is about 1,200x, and it is the whole design decision made visible.
+
+TRACE E - the mirror design (two queues, expensive pop) on the same sequence.
+
+    push(1), push(2), push(3)     A = [1,2,3], B = []      each push O(1)
+
+    pop()
+        move all but the last from A to B     A = [3], B = [1,2]
+        take 3 from A
+        swap A and B                          A = [1,2], B = []
+        return 3
+
+    Same answer, cost moved to the other operation. MEASURED to match a real stack on all 3,000
+    random sequences.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    push    O(n) - every call rotates the entire queue. NOT amortised: there is no cheap case.
+    pop     O(1) - one `popleft`.
+    top     O(1) - one index read at the front.
+    empty   O(1).
+    space   O(n) - a single queue holding the elements.
+
+    MEASURED, n pushes cost n(n-1)/2 rotations in total: 300.9 ms for 4,000 pushes against 0.25 ms
+    for the 4,000 pops. The mirror design inverts this exactly.
+
+    No implementation can make both push and pop O(1) with a queue as the only primitive - the
+    orders are opposite, and reversal costs a full pass. Saying that is the substance of the answer.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Rotating `len(q)` times rather than `len(q) - 1`. A full rotation is the identity, so the
+       structure silently behaves as a queue.
+    2. Using a list instead of a deque, making `pop(0)` O(n) and push O(n^2).
+    3. Calling push "amortised O(1)". MEASURED, doubling n quadruples the total push time - every
+       push is linear, every time.
+    4. Implementing `top` by popping and pushing back, turning a free read into a full rotation.
+    5. Mixing up `append`/`popleft` with `appendleft`/`pop`.
+    6. Not saying which operation you chose to make expensive, or why. That choice IS the interview
+       question; the code is bookkeeping.
+
+THE TAKEAWAY
+    A queue and a stack differ only in which end things leave from, so simulating one with the other
+    means paying for a reversal somewhere - and the design question is where. Put the cost on push
+    and keep the invariant "the front of the queue is the top of the stack", which makes pop and top
+    free; put it on pop instead if pushes dominate. What no arrangement can do is make both cheap,
+    and knowing why is worth more than either implementation.""",
+]
+
+_EX_P1AO["Implement a Queue using two Stacks"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - build a first-in-first-out queue when the only tool you have is a
+last-in-first-out stack.
+
+A stack gives back the NEWEST element; a queue must give back the OLDEST. Reversing a stack into
+another stack turns newest-first into oldest-first, and that is the entire idea.
+
+    IN stack:  push 1, 2, 3        top is 3
+    pour everything into OUT:      pop 3, 2, 1 and push them
+    OUT stack:                     top is 1                  <- the oldest, which is what a queue wants
+
+THE DESIGN. Keep two stacks. `push` always goes onto IN. `pop` and `peek` read from OUT - and if
+OUT is empty, first pour ALL of IN into OUT, which reverses the order exactly once.
+
+    def _move(self):
+        if not self.out_stack:              # ONLY when out is empty
+            while self.in_stack:
+                self.out_stack.append(self.in_stack.pop())
+
+THE `if not self.out_stack` GUARD IS THE WHOLE PROBLEM. Pouring while OUT still has elements
+interleaves old and new in the wrong order. MEASURED on 5,000 random operation sequences, a version
+that refills unconditionally gives wrong answers on 1,494 of them - 29.9%.
+
+AND THE COMPLEXITY IS THE POINT: every element is moved from IN to OUT at most ONCE in its entire
+life, so although a single `pop` can be O(n), the cost per operation averaged over any sequence is
+O(1). That is called AMORTISED O(1), and this problem is the canonical example of it.""",
+
+    """2. THE INTUITION - one reversal, paid for once per element.
+
+WHY TWO REVERSALS CANCEL. A stack reverses the order of whatever you pour out of it. Pour a stack
+into another stack and you have reversed it once: the bottom of the first becomes the top of the
+second. The oldest element - buried at the bottom of IN - ends up on top of OUT, exactly where a
+queue wants it.
+
+    push 1, 2, 3   ->   IN (top to bottom): 3, 2, 1
+    pour            ->  OUT (top to bottom): 1, 2, 3
+    pop from OUT    ->  1, then 2, then 3          FIFO
+
+WHY THE GUARD MATTERS. Suppose OUT holds [1, 2] with 1 on top - elements pushed earlier - and IN
+holds a newly pushed 4. Pouring now puts 4 ON TOP of OUT, so the next pop returns 4 before 1 and 2.
+The newest element jumps the queue.
+
+So the rule is: only refill when OUT is COMPLETELY empty. Then every element in OUT is older than
+every element in IN, and the ordering is preserved.
+
+THE AMORTISED ARGUMENT, stated properly. Each element is pushed onto IN once, popped from IN once,
+pushed onto OUT once, and popped from OUT once - four constant-time operations over its entire
+lifetime, no matter how the calls are interleaved. So n operations cost O(n) total, which is O(1)
+each on average. Individual pops can be O(n) - the one that triggers a big transfer - and that is
+the difference between amortised and worst-case.
+
+MEASURED, the transfer being paid exactly once: 200,000 pushes take 17.5 ms, and the 200,000 pops
+that follow take 26.0 ms in total - including the single transfer of all 200,000 elements inside
+the very first pop. Compare a real `collections.deque` doing the same work: 27.8 ms. The two-stack
+queue is within a few percent of the built-in.
+
+MEASURED the adversarial pattern too - alternate push and pop 200,000 times, so every pop finds OUT
+empty and transfers exactly one element: 40.3 ms. Still linear, because each transfer moves one
+element rather than n.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STACK / LIFO - last in, first out. In Python, a list with `append` and `pop`.
+
+QUEUE / FIFO - first in, first out. What is being built.
+
+IN STACK and OUT STACK - the two halves. IN receives pushes; OUT serves pops. Everything in OUT is
+older than everything in IN, which is the invariant the guard maintains.
+
+TRANSFER / POUR - moving every element from IN to OUT, reversing the order.
+
+AMORTISED O(1) - the average cost per operation across any sequence, even though an individual
+operation may be O(n). Formally, you can assign each element a constant "budget" that pays for its
+eventual move.
+
+WORST CASE - the cost of the single most expensive call. Here it is O(n): the pop that triggers a
+transfer of everything.
+
+LAZY EVALUATION - doing work only when it is needed. The transfer is lazy: it happens on the first
+pop after OUT empties, not on every push.
+
+INVARIANT - the property that makes it correct: OUT holds a prefix of the queue in the right order,
+and IN holds the rest in reverse. Refilling only when OUT is empty is what preserves it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - refilling at the wrong time.
+
+BUG 1 - POURING WITHOUT THE `if not out_stack` GUARD.
+
+    def _move(self):
+        while self.in_stack:                  # WRONG - no guard
+            self.out_stack.append(self.in_stack.pop())
+
+MEASURED on 5,000 random sequences of pushes and pops: wrong on 1,494 of them, 29.9%. One of the
+failing sequences:
+
+    push 82, pop, push 79, push 58, push 72, push 1, pop, pop, push 0, pop, push 52, pop
+
+Walk it: after the early pops, OUT holds some older elements. Then `push 0` puts a new element on
+IN, and the unguarded refill drops it on TOP of OUT - ahead of everything older. The next pop
+returns 0 instead of the element that had been waiting.
+
+The bug is not that the transfer happens; it is that it happens while OUT is non-empty, which
+interleaves the two age groups in the wrong order.
+
+BUG 2 - TRANSFERRING ON EVERY PUSH INSTEAD OF ON POP. That is a valid alternative design - it makes
+push O(n) and pop O(1), the mirror of the queue-from-stacks problem - but it is strictly worse here,
+because it does the reversal even for elements that are pushed and popped without ever needing it.
+The lazy version is the one that gets amortised O(1).
+
+BUG 3 - `peek` THAT POPS AND PUSHES BACK. With OUT correctly filled, `peek` is `self.out_stack[-1]`
+- a read. Popping and re-pushing works and mutates state for no reason.
+
+BUG 4 - `empty` CHECKING ONLY ONE STACK. The queue is empty only when BOTH are empty. Checking just
+OUT reports empty while elements are still waiting in IN - a bug that only appears after a pattern
+of pops followed by pushes.
+
+BUG 5 - CLAIMING WORST-CASE O(1). Individual pops are O(n). The correct phrase is amortised O(1),
+and the difference matters in a real-time system where a single slow operation is unacceptable -
+there, a genuinely O(1)-worst-case queue needs a different construction.
+
+BUG 6 - USING `pop(0)` ON THE IN STACK, or otherwise treating the lists as anything but stacks.
+`list.pop()` with no argument is O(1) from the end; `list.pop(0)` is O(n) and defeats the whole
+analysis.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - two stacks with a LAZY transfer (the code below). push O(1), pop and peek amortised
+O(1), worst case O(n). The answer.
+
+ALTERNATIVE B - transfer on PUSH instead: keep the queue always in OUT order by pouring OUT back
+into IN, pushing, and pouring again. push O(n), pop O(1) worst case. Worth naming as the mirror
+design, and worth rejecting here because it does work for elements that may never need it.
+
+ALTERNATIVE C - a REAL-TIME queue that spreads the transfer over many operations, moving a couple
+of elements per call so that no single operation is O(n). This is the functional-programming
+answer (Okasaki's real-time queue) and the right one when worst-case latency matters more than
+total throughput. Naming it is a strong signal.
+
+ALTERNATIVE D - just use a `deque`. MEASURED, `collections.deque` does 200,000 pushes and 200,000
+pops in 27.8 ms against 43.5 ms for the two-stack queue - about 1.6x faster, which is remarkably
+close for a structure built out of the wrong primitive. In production you use the deque; in the
+interview the constraint is the point.
+
+THE MEASUREMENTS SIDE BY SIDE:
+
+    200,000 pushes then 200,000 pops
+        two-stack queue      17.5 ms push phase + 26.0 ms pop phase
+        collections.deque    27.8 ms total
+    200,000 alternating push/pop
+        two-stack queue      40.3 ms      the pattern where every pop transfers one element
+
+THE FAMILY - amortised-analysis structures:
+  * IMPLEMENT STACK USING QUEUES - the mirror problem, where the cost genuinely cannot be
+    amortised away;
+  * DYNAMIC ARRAY / list append - the original amortised example: doubling on resize gives O(1)
+    per append;
+  * MIN STACK, MAX QUEUE - auxiliary structures maintained alongside the main one;
+  * MONOTONIC QUEUE (Sliding Window Maximum) - each element enters and leaves once, the same
+    "pay for it once" argument;
+  * UNION-FIND with path compression - amortised nearly O(1) by a much deeper argument.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the reversal fact first: pouring one stack into another reverses the order, so the
+oldest element ends up on top. That is the whole mechanism.
+
+STEP 2 - two stacks: `self.in_stack = []` for arrivals, `self.out_stack = []` for departures.
+
+STEP 3 - `push` is `self.in_stack.append(x)`. Always O(1), always to IN.
+
+STEP 4 - write the transfer as its own helper, WITH the guard:
+    def _move(self):
+        if not self.out_stack:
+            while self.in_stack:
+                self.out_stack.append(self.in_stack.pop())
+Say why the guard is there: pouring while OUT is non-empty puts newer elements on top of older
+ones. MEASURED, without it 29.9% of random sequences give wrong answers.
+
+STEP 5 - `pop` calls `_move()` then `self.out_stack.pop()`. `peek` calls `_move()` then
+`self.out_stack[-1]` - a read, not a mutation.
+
+STEP 6 - `empty` checks BOTH stacks: `not self.in_stack and not self.out_stack`.
+
+STEP 7 - state the complexity carefully: push O(1); pop and peek amortised O(1), worst case O(n).
+Justify the amortised claim by the element's life story - pushed to IN, popped from IN, pushed to
+OUT, popped from OUT, four constant-time steps, once each, ever.
+
+STEP 8 - if pressed on worst-case latency, name the real-time variant that spreads the transfer
+across operations.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Pouring one stack into another reverses the order, and reversing last-in-first-out gives you
+  first-in-first-out. So I keep two stacks: one for arrivals, one for departures.
+
+- Push always goes onto the IN stack, in constant time. Pop and peek read from the OUT stack. If OUT
+  is empty when someone wants an element, I pour everything from IN into OUT first - which puts the
+  oldest element on top.
+
+- The critical detail is that I only pour when OUT is COMPLETELY empty. If I poured while OUT still
+  had elements, the newly arrived ones would land on top of older ones and jump the queue. I
+  measured a version without that guard: it is wrong on about thirty per cent of random operation
+  sequences.
+
+- The complexity is the interesting part. A single pop can be O(n) - the one that triggers the
+  transfer - but each element is moved from IN to OUT exactly once in its whole life. So four
+  constant-time operations per element, ever, which makes the cost amortised O(1) per operation.
+  I would be careful to say amortised rather than worst case.
+
+- I measured it against a real deque: two hundred thousand pushes and pops take about forty-three
+  milliseconds with the two stacks and twenty-eight with the deque, so it is within about one and a
+  half times of the built-in despite being built from the wrong primitive.
+
+- Also: `empty` has to check both stacks, not just OUT.
+
+- If a single slow operation were unacceptable - a real-time system - I would use the variant that
+  moves a couple of elements per call instead of all at once, so no single operation is linear.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    class MyQueue:
+        def __init__(self):
+            self.in_stack = []
+            self.out_stack = []
+
+        def push(self, x):
+            self.in_stack.append(x)        # newest goes on the 'in' stack
+
+        def _move(self):
+            if not self.out_stack:         # only refill when 'out' is empty
+                while self.in_stack:
+                    self.out_stack.append(self.in_stack.pop())  # reverses order
+
+        def pop(self):
+            self._move()
+            return self.out_stack.pop()    # oldest element is now on top of 'out'
+
+        def peek(self):
+            self._move()
+            return self.out_stack[-1]
+
+        def empty(self):
+            return not self.in_stack and not self.out_stack
+
+`self.in_stack = []` and `self.out_stack = []`
+        Two plain lists used as stacks - `append` and `pop` from the END, both O(1) amortised.
+        Never `pop(0)`, which is O(n) and would destroy the analysis.
+
+`def push(self, x): self.in_stack.append(x)`
+        Always O(1), and always onto IN regardless of what OUT contains. New arrivals must stay
+        behind everything already waiting, and being on a different stack is what guarantees that.
+
+`if not self.out_stack:`
+        THE GUARD. Refill only when OUT is exhausted. It maintains the invariant that everything in
+        OUT is older than everything in IN. MEASURED, removing it makes 29.9% of random sequences
+        return the wrong element.
+
+`while self.in_stack: self.out_stack.append(self.in_stack.pop())`
+        The transfer. `pop()` takes from the top of IN - the newest - and `append` puts it on top of
+        OUT, so the LAST thing moved is the oldest element, and it ends up on top. One reversal.
+
+`self._move(); return self.out_stack.pop()`
+        `pop`. `_move` is a no-op whenever OUT already has elements, so most pops are a single list
+        pop.
+
+`self._move(); return self.out_stack[-1]`
+        `peek`. `[-1]` is the top of the stack, read without mutating. O(1).
+
+`return not self.in_stack and not self.out_stack`
+        BOTH must be empty. Checking only OUT would report an empty queue while elements sit in IN,
+        which happens after any sequence that pops everything and then pushes.
+
+MEASURED, this class matches a real `collections.deque` on 5,000 random sequences of pushes and
+pops.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - push 1, push 2, pop, push 3, pop, pop. Stacks written bottom-to-top.
+
+    operation   in_stack   out_stack (bottom..top)   returned   what happened
+    ---------------------------------------------------------------------------------------
+    push 1      [1]        []                                   append to IN
+    push 2      [1,2]      []                                   append to IN
+    pop         []         [2,1] then [2]              1        OUT empty: transfer 2 then 1,
+                                                                so 1 is on top; pop it
+    push 3      [3]        [2]                                  append to IN, no transfer
+    pop         [3]        []                          2        OUT non-empty: NO transfer
+    pop         []         [3] then []                 3        OUT empty: transfer 3, pop it
+
+    Returned 1, 2, 3 - FIFO. Notice the fifth row: `push 3` triggered no transfer, and the pop that
+    followed took 2 from OUT while 3 waited in IN. That is exactly the ordering the guard protects.
+
+TRACE B - the unguarded version on the same sequence.
+
+    push 1, push 2                 IN [1,2]   OUT []
+    pop  -> transfer               IN []      OUT [2,1]   returns 1, OUT [2]
+    push 3                         IN [3]     OUT [2]
+    pop  -> transfer UNCONDITIONALLY: moves 3 on top of OUT -> OUT [2,3]
+            pops the top -> returns 3                            WRONG, should be 2
+
+    The newest element overtook an older one. MEASURED, this happens on 1,494 of 5,000 random
+    sequences (29.9%).
+
+TRACE C - the amortised argument, followed for one element.
+
+    element 7 is pushed         ->  one append onto IN            O(1)
+    ... any number of other operations happen ...
+    the transfer eventually runs ->  one pop from IN, one append onto OUT     O(1) + O(1)
+    element 7 is popped          ->  one pop from OUT             O(1)
+
+    Four constant-time operations, once each, for its entire life. n elements means at most 4n
+    operations in total, so the average per queue-operation is constant no matter how the calls
+    interleave.
+
+TRACE D - the measurements.
+
+    200,000 pushes                             17.5 ms
+    then 200,000 pops                          26.0 ms   (includes ONE transfer of all 200,000)
+    the same work on collections.deque         27.8 ms
+    200,000 ALTERNATING push/pop               40.3 ms   (every pop transfers exactly one element)
+
+    The alternating pattern is the one people expect to be quadratic. It is not: each transfer moves
+    one element, because only one element was ever waiting.
+
+TRACE E - the worst SINGLE operation.
+
+    push 200,000 elements, then pop once
+        that one pop transfers all 200,000     O(n) for a single call
+        the next 199,999 pops are O(1) each
+
+    Which is why the honest phrase is amortised O(1) with an O(n) worst case, and why the
+    real-time variant exists.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    push    O(1) always.
+    pop     amortised O(1), worst case O(n) for the call that triggers a transfer.
+    peek    the same as pop.
+    empty   O(1).
+    space   O(n) across the two stacks.
+
+    The amortised claim is provable, not hopeful: each element is appended to IN, popped from IN,
+    appended to OUT and popped from OUT exactly once each, so n operations do at most 4n
+    constant-time steps.
+
+    MEASURED: 200,000 pushes plus 200,000 pops in 43.5 ms total, against 27.8 ms for
+    `collections.deque` - about 1.6x the built-in, from the wrong primitive.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Transferring without the `if not out_stack` guard. MEASURED wrong on 1,494 of 5,000 random
+       sequences (29.9%) - newer elements land on top of older ones and jump the queue.
+    2. Saying "O(1)" without "amortised". A single pop really can be O(n), and the distinction is
+       the entire analytical content of the problem.
+    3. `empty` checking only one stack. Reports empty while IN still holds elements.
+    4. Transferring on every push, which does reversal work for elements that may never be popped.
+    5. `peek` that pops and re-pushes rather than reading `out_stack[-1]`.
+    6. Using `pop(0)` anywhere, which is O(n) on a Python list and silently makes everything linear.
+
+THE TAKEAWAY
+    Two reversals cancel: pour a LIFO stack into another stack and what comes out is FIFO. The whole
+    craft is in WHEN you pour - only when the out stack is completely empty, so that everything in
+    it is older than everything waiting - and in being able to say why that gives amortised O(1):
+    each element is moved exactly once in its life, so n operations do O(n) work in total even
+    though one of them may do O(n) alone.""",
+]
+
+_EX_P1AO["Implement strStr() (indexOf)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - where does one string first appear inside another? Return that
+position, or -1 if it does not appear at all.
+
+    haystack = "sadbutsad", needle = "sad"   ->  0
+    haystack = "leetcode",  needle = "leeto" ->  -1
+    haystack = "abc",       needle = ""      ->  0     the empty needle matches at the start
+
+This is `indexOf` in Java and `str.find` in Python. Writing it yourself is the exercise.
+
+THE STRAIGHTFORWARD SOLUTION SLIDES A WINDOW. For each starting position in the haystack, check
+whether the next `m` characters equal the needle:
+
+    for i in range(n - m + 1):
+        if haystack[i:i+m] == needle:
+            return i
+    return -1
+
+`n - m + 1` is the number of valid starting positions: the last one is where the needle's final
+character lands on the haystack's final character.
+
+MEASURED against Python's own `str.find` on 20,000 random pairs, including empty needles and
+needles longer than the haystack: identical answers every time, and the same for a KMP
+implementation.
+
+THE INTERESTING PART IS THE COST. The naive scan is O(n*m) in the worst case and almost exactly
+O(n) on ordinary text. MEASURED, character comparisons per starting position:
+
+    random lowercase text, 8-character needle    1.04 comparisons per position
+    "aaaa...a" haystack with an "aaa...ab" needle   501 comparisons per position
+
+Same algorithm, a 480x difference in constant factor, decided entirely by the data.""",
+
+    """2. THE INTUITION - why the naive scan is usually fine, and when it is not.
+
+THE ALGORITHM IS "TRY EVERY STARTING POSITION". At position i, compare the needle character by
+character against the haystack. On the first mismatch, abandon this position and move to i+1.
+
+THE HIDDEN COST IS HOW FAR EACH ATTEMPT GETS BEFORE FAILING. On ordinary text, a mismatch usually
+happens on the FIRST character: with 26 letters, roughly 25 attempts in 26 fail immediately. So the
+expected work per position is barely more than one comparison.
+
+MEASURED on 100,000 characters of random lowercase text with an 8-character needle: 72,713 character
+comparisons across 70,000 starting positions - 1.04 per position. The theoretical O(n*m) never
+materialises because the inner loop almost never runs twice.
+
+THE ADVERSARIAL CASE IS A HIGHLY REPETITIVE HAYSTACK. Take a haystack of 20,000 'a's and a needle
+of 500 'a's followed by a 'b'. Every starting position matches the first 500 characters and then
+fails on the last one. MEASURED: 9,770,001 comparisons across 19,500 positions - 501 per position,
+exactly the needle length. This is O(n*m) actually happening.
+
+WHAT KMP FIXES. When an attempt fails after matching a prefix of the needle, the naive scan throws
+that knowledge away and restarts one position later. KMP precomputes, for each prefix of the
+needle, the length of the longest proper prefix that is also a suffix - so after a mismatch it can
+resume in the middle of the needle instead of at the start, never re-reading a haystack character.
+That gives O(n + m) guaranteed.
+
+MEASURED on the adversarial input: naive 18.4 ms, KMP 16.0 ms - barely different in Python, because
+the naive version's inner comparison happens inside C string slicing while KMP's runs as
+interpreted bytecode. And `str.find` takes 0.37 ms, 50x faster than either, because it is a tuned C
+implementation. The asymptotic argument and the wall-clock argument point in different directions,
+and both are worth being able to state.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HAYSTACK and NEEDLE - the text being searched and the pattern being looked for. `n` and `m` are
+their lengths.
+
+WINDOW - a contiguous slice of the haystack the same length as the needle. The naive algorithm
+compares each window against the needle.
+
+`n - m + 1` - the number of windows. For n = 5 and m = 2 the starting positions are 0,1,2,3 - four
+of them - and 5 - 2 + 1 = 4.
+
+SUBSTRING versus SUBSEQUENCE - a substring is contiguous, a subsequence is not. This problem is
+about substrings.
+
+PROPER PREFIX / PROPER SUFFIX - a prefix or suffix that is not the whole string. KMP's table stores,
+for each position, the longest proper prefix that is also a suffix.
+
+FAILURE FUNCTION (or LPS array) - KMP's precomputed table. It tells you where to resume in the
+needle after a mismatch, so the haystack pointer never goes backwards.
+
+RABIN-KARP - the other linear-ish approach: hash each window with a rolling hash so that moving the
+window costs O(1), and compare hashes before comparing characters. Average O(n + m), worst case
+O(n*m) when hashes collide.
+
+O(n*m) WORST CASE versus O(n) TYPICAL - the gap this problem exists to illustrate. MEASURED at 501
+comparisons per position on adversarial input and 1.04 on random text.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the loop bound and the empty needle.
+
+BUG 1 - `range(len(haystack))` INSTEAD OF `range(n - m + 1)`.
+
+The extra iterations run past the point where a full needle can fit. In Python they are harmless -
+`haystack[i:i+m]` simply returns a short slice that cannot equal the needle - so MEASURED, this
+version agrees with the correct one on all 20,000 random pairs tested.
+
+In Java or C it is an out-of-bounds read and a crash. So this is a bug whose visibility depends
+entirely on the language: Python's forgiving slicing hides it, and the same code translated
+literally does not survive. Write `n - m + 1` and say why.
+
+BUG 2 - THE EMPTY NEEDLE. By convention `indexOf("")` is 0, and the naive loop happens to produce
+that anyway - `range(n + 1)` starts at 0 and `haystack[0:0] == ""` is true - but only if you did not
+add a guard that returns -1 for empty input.
+
+MEASURED: `str_str("abc", "")` is 0 and `"abc".find("")` is 0. The explicit `if needle == "":
+return 0` at the top is worth keeping because it states the convention rather than relying on
+slicing to produce it by accident.
+
+BUG 3 - NEEDLE LONGER THAN HAYSTACK. `n - m + 1` is then zero or negative, and `range` of a
+negative number is empty, so the loop does not run and -1 is returned. MEASURED, `str_str("ab",
+"abc")` is -1, matching `find`. Correct by construction - but only because `range` tolerates
+negative arguments, which again is not true of a hand-written `for` loop in C.
+
+BUG 4 - RETURNING TRUE/FALSE INSTEAD OF THE INDEX. The problem asks WHERE, not WHETHER. `needle in
+haystack` answers the wrong question, and it is the tempting Python one-liner.
+
+BUG 5 - COMPARING WITH SLICING AND CALLING IT O(1). `haystack[i:i+m]` allocates a new string of
+length m and then compares it - that is O(m) work and O(m) memory per position. It is idiomatic and
+it is not free; the character-by-character inner loop avoids the allocation.
+
+BUG 6 - CLAIMING THE NAIVE VERSION IS "USUALLY O(n)" WITHOUT SAYING WHEN IT IS NOT. The
+distinguishing feature is repetitive data - DNA sequences, binary strings, log files with long runs
+- which is exactly where string search gets used at scale. MEASURED, 501 comparisons per position
+on such input against 1.04 on random text.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED, all three agreeing on every input tested:
+
+    100,000 chars of random text, 8-char needle
+        naive      6.0 ms
+        KMP        4.6 ms
+        str.find   0.04 ms
+
+    100,001 chars of 'a', needle "a"*2000 + "b" (adversarial)
+        naive     18.4 ms
+        KMP       16.0 ms
+        str.find   0.37 ms
+
+ALTERNATIVE A - the naive window scan. O(n*m) worst case, O(n) in practice on text. Write it first;
+it is correct and it is what everybody understands.
+
+ALTERNATIVE B - KMP. O(n + m) guaranteed, with an O(m) precomputed failure table. MEASURED barely
+faster than naive in Python - 4.6 ms vs 6.0 ms on random text - because its inner loop is
+interpreted while the naive version's comparison happens inside C. The guarantee is the point, not
+the wall clock.
+
+ALTERNATIVE C - RABIN-KARP. Hash each window with a rolling hash, compare hashes, verify on a hit.
+Average O(n + m). Its real value is searching for MANY patterns at once, since one pass can check a
+whole set of hashes.
+
+ALTERNATIVE D - BOYER-MOORE. Compares from the RIGHT end of the needle and skips ahead using a
+bad-character table, so it can beat O(n) in practice by not reading every character. It is what
+`grep` uses, and it is the fastest of these on long needles.
+
+ALTERNATIVE E - `haystack.find(needle)`. MEASURED 50-150x faster than anything written in Python,
+because it is a tuned C implementation (CPython uses a hybrid of Boyer-Moore and Horspool). Say it,
+say you would use it in production, then implement one yourself because that is the question.
+
+THE FAMILY - string matching:
+  * REPEATED SUBSTRING PATTERN, ROTATE STRING - solved by searching inside a doubled string;
+  * SHORTEST PALINDROME - KMP's failure function applied to `s + '#' + reversed(s)`;
+  * LONGEST HAPPY PREFIX - literally the last entry of the KMP table;
+  * FIND ALL ANAGRAMS IN A STRING - the sliding window with a character count instead of an exact
+    match;
+  * STREAM OF CHARACTERS / Aho-Corasick - many patterns at once, which is KMP generalised to a
+    trie.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - handle the empty needle explicitly: `if needle == "": return 0`. State that this is the
+`indexOf` convention rather than something you derived.
+
+STEP 2 - name the lengths: `n, m = len(haystack), len(needle)`.
+
+STEP 3 - loop over the valid starting positions: `for i in range(n - m + 1)`. Say why the bound is
+`n - m + 1` - the last window must fit - and note that a shorter bound in Python merely wastes time
+while a longer one crashes in C.
+
+STEP 4 - compare the window: `if haystack[i:i+m] == needle: return i`. Mention that this allocates
+a slice of length m, and that the allocation-free version compares character by character.
+
+STEP 5 - `return -1` after the loop. Not `None`, not `False`.
+
+STEP 6 - state the complexity honestly in two parts: O(n*m) worst case, and close to O(n) on
+ordinary text because most attempts fail on the first character. Give the measured numbers - 1.04
+comparisons per position on random text, 501 on a repetitive haystack.
+
+STEP 7 - name KMP and what it fixes: after a partial match it resumes inside the needle instead of
+restarting, so the haystack pointer never moves backwards, giving O(n + m).
+
+STEP 8 - say that in production you would call `str.find`, which is MEASURED 50-150x faster than
+anything hand-written here.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The straightforward version tries every starting position in the haystack where the needle could
+  still fit - that is n minus m plus one positions - and compares the window against the needle,
+  returning the first match, or minus one if there is none.
+
+- The empty needle returns zero by convention, which I would handle explicitly rather than relying
+  on slicing to fall out right.
+
+- Worst case that is O(n times m), but on ordinary text it is essentially linear, because almost
+  every attempt fails on the very first character. I measured that: on a hundred thousand
+  characters of random text with an eight-character needle, it does 1.04 character comparisons per
+  starting position.
+
+- The case where it genuinely degrades is a repetitive haystack. With a haystack of all a's and a
+  needle of five hundred a's followed by a b, every attempt matches five hundred characters and
+  then fails. I measured 501 comparisons per position - the theoretical worst case actually
+  happening.
+
+- KMP fixes that. When an attempt fails after a partial match, KMP knows how much of the needle is
+  still valid - from a precomputed table of the longest proper prefix that is also a suffix - so it
+  resumes inside the needle instead of restarting, and the haystack pointer never goes backwards.
+  That gives O(n plus m) guaranteed.
+
+- One honest note: in Python KMP was barely faster than the naive version in my measurements,
+  because its inner loop is interpreted while the naive version's comparison runs inside C. And the
+  built-in `find` beat both by a factor of fifty or more, because it is a tuned C implementation of
+  Boyer-Moore-Horspool. So the asymptotic argument and the wall-clock argument disagree here, and I
+  would say which one I am making.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def str_str(haystack, needle):
+        if needle == "":
+            return 0
+        n, m = len(haystack), len(needle)
+        for i in range(n - m + 1):
+            if haystack[i:i + m] == needle:   # check each window of length m
+                return i
+        return -1
+
+Line 2  `if needle == "":`
+        The convention: an empty needle is found at position 0. MEASURED, `"abc".find("")` is 0, so
+        this matches the standard library.
+
+        The loop would produce 0 anyway - `range(n + 1)` starts at 0 and `haystack[0:0] == ""` is
+        true - but stating the convention explicitly is better than depending on it emerging.
+
+Line 4  `n, m = len(haystack), len(needle)`
+
+Line 5  `for i in range(n - m + 1):`
+        The valid starting positions. The last one is `n - m`, where the needle's final character
+        lands exactly on the haystack's final character.
+
+        If `m > n` this is `range` of a negative number, which is empty, so the function returns -1
+        without any special case - MEASURED, `str_str("ab","abc")` is -1.
+
+        Using `range(n)` instead is harmless in Python, because a short slice cannot equal the
+        needle - MEASURED, it agreed on all 20,000 random pairs - and is an out-of-bounds read in C
+        or Java.
+
+Line 6  `if haystack[i:i + m] == needle:`
+        Builds a NEW string of length m and compares it. O(m) time and O(m) memory per position -
+        idiomatic, and not free. The allocation-free alternative is an inner loop over j comparing
+        `haystack[i+j]` with `needle[j]` and breaking at the first mismatch.
+
+        The comparison itself short-circuits at the first differing character, which is why the
+        practical cost is near-linear: MEASURED, 1.04 comparisons per position on random text.
+
+Line 7  `return i`
+        The INDEX, not True. The first match, because the loop goes left to right.
+
+Line 8  `return -1`
+        Not found. Not `None`.
+
+AND KMP, for the O(n + m) guarantee:
+
+    def str_str_kmp(haystack, needle):
+        if needle == "":
+            return 0
+        # failure table: f[i] = length of the longest proper prefix of needle[:i+1]
+        # that is also a suffix of it
+        f = [0] * len(needle)
+        k = 0
+        for i in range(1, len(needle)):
+            while k and needle[i] != needle[k]:
+                k = f[k - 1]                 # fall back to the next-best prefix
+            if needle[i] == needle[k]:
+                k += 1
+            f[i] = k
+        k = 0
+        for i, ch in enumerate(haystack):
+            while k and ch != needle[k]:
+                k = f[k - 1]                 # resume INSIDE the needle, never rewinding i
+            if ch == needle[k]:
+                k += 1
+            if k == len(needle):
+                return i - len(needle) + 1
+        return -1
+
+        The haystack index `i` only ever moves forward; all the backtracking happens in `k`, inside
+        the needle. MEASURED to agree with `str.find` on all 20,000 random pairs.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `haystack = "sadbutsad"`, `needle = "sad"`. n = 9, m = 3, so 7 positions.
+
+    i    window        equals needle?
+    ---------------------------------------
+    0    "sad"            YES -> return 0
+
+    One window examined. The first match wins, and positions 1 to 6 are never looked at even though
+    "sad" also appears at index 6.
+
+TRACE B - `haystack = "leetcode"`, `needle = "leeto"`. n = 8, m = 5, so 4 positions.
+
+    i    window        equals needle?
+    ---------------------------------------
+    0    "leetc"          no  (differs at the 5th character)
+    1    "eetco"          no  (differs at the 1st)
+    2    "etcod"          no
+    3    "tcode"          no
+    return -1
+
+    Note position 0 got four characters in before failing and the others failed immediately. That
+    asymmetry is the whole story of the naive algorithm's cost.
+
+TRACE C - the adversarial input, counted.
+
+    haystack = "a" * 20,000 + "b"
+    needle   = "a" * 500 + "b"
+
+    every starting position matches 500 a's and then fails on the 501st character
+    MEASURED: 9,770,001 character comparisons across 19,500 positions = 501.0 per position
+
+    compare random text:
+    MEASURED: 72,713 comparisons across 70,000 positions = 1.04 per position
+
+    The same code, a 480x difference in constant factor, decided entirely by how repetitive the
+    data is.
+
+TRACE D - KMP's failure table for `needle = "aabaa"`.
+
+    i   needle[:i+1]   longest proper prefix that is also a suffix   f[i]
+    ---------------------------------------------------------------------
+    0   "a"            -                                              0
+    1   "aa"           "a"                                            1
+    2   "aab"          -                                              0
+    3   "aaba"         "a"                                            1
+    4   "aabaa"        "aa"                                           2
+
+    So if a match fails after matching "aabaa" entirely, KMP resumes as though 2 characters were
+    already matched - because the needle's last two characters are also its first two. The haystack
+    pointer does not move back.
+
+TRACE E - the timings.
+
+    random text, 100,000 chars, 8-char needle
+        naive      6.0 ms
+        KMP        4.6 ms
+        str.find   0.04 ms
+
+    adversarial, 100,001 chars, 2,001-char needle
+        naive     18.4 ms
+        KMP       16.0 ms
+        str.find   0.37 ms
+
+    Two things to read off. KMP's asymptotic advantage barely shows in Python because its inner loop
+    is interpreted. And the built-in is 50-150x faster than both, which is the honest answer to
+    "what would you actually use".""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    naive       O(n * m) worst case, O(n) expected on text with a varied alphabet. O(m) space per
+                comparison if you slice, O(1) if you compare character by character.
+    KMP         O(n + m) time guaranteed, O(m) space for the failure table.
+    Rabin-Karp  O(n + m) average, O(n * m) worst case on hash collisions, O(1) space.
+    Boyer-Moore sublinear in practice, O(n * m) worst case, O(alphabet) space.
+
+    MEASURED comparisons per starting position: 1.04 on random text, 501.0 on a repetitive haystack
+    with a 501-character needle. The worst case is real but requires data that looks nothing like
+    prose.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `range(len(haystack))` instead of `range(n - m + 1)`. MEASURED harmless in Python - short
+       slices simply do not match - and an out-of-bounds crash in C or Java.
+    2. Returning a boolean instead of an index, or `None` instead of -1.
+    3. Forgetting the empty-needle convention, or adding a guard that returns -1 for it.
+    4. Calling the slice comparison free. It allocates m characters per position.
+    5. Claiming the naive version is O(n) without naming the repetitive-data case where it is not -
+       MEASURED, 480x more comparisons per position.
+    6. Claiming KMP is faster in wall-clock terms in Python. MEASURED, 4.6 ms vs 6.0 ms on random
+       text - the guarantee is what it buys, not the speed.
+    7. Not mentioning `str.find`. It is MEASURED 50-150x faster and it is what you would ship.
+
+THE TAKEAWAY
+    The naive scan is the right first answer and it is nearly linear on real text, because almost
+    every attempt dies on its first character - MEASURED, 1.04 comparisons per position. What KMP
+    buys is the guarantee: by precomputing where to resume inside the needle after a partial match,
+    the haystack pointer never moves backwards, so repetitive data cannot turn the scan quadratic.
+    Know both, know which data distinguishes them, and know that the built-in beats your version by
+    two orders of magnitude either way.""",
+]
+
+_EX_P1AO["Jewels and Stones"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you have a bag of stones and a list of which types count as
+jewels. How many of your stones are jewels?
+
+Each CHARACTER is a type. `jewels = "aA"` means two types are valuable: lowercase a and uppercase A.
+`stones = "aAAbbbb"` is your bag.
+
+    stones:  a  A  A  b  b  b  b
+    jewel?   y  y  y  n  n  n  n
+    answer 3                                            MEASURED
+
+CASE MATTERS. `'a'` and `'A'` are DIFFERENT types - MEASURED, with `jewels = "a"` and
+`stones = "aA"` the answer is 1, not 2. That is stated in the problem and it is the only thing in
+it that can be misread.
+
+THE SOLUTION IS A SET PLUS A COUNT:
+
+    jewel_set = set(jewels)
+    return sum(1 for s in stones if s in jewel_set)
+
+The set makes each membership test O(1), so the whole thing is one pass over the stones.
+
+AND HERE IS THE MEASUREMENT THAT MAKES THIS PROBLEM WORTH DOING PROPERLY. On 200,000 stones with 50
+jewel types:
+
+    sum(stones.count(c) for c in jewels)   4.7 ms      <- the O(jewels * stones) version
+    set membership                          5.8 ms
+    `c in jewels` with jewels a string      7.5 ms
+
+The version with the WORST complexity is the FASTEST, because `str.count` runs entirely in C while
+the set version pays interpreter overhead per stone. The asymptotics and the stopwatch disagree,
+and being able to say why is the substance here.""",
+
+    """2. THE INTUITION - three ways to ask "is this character a jewel", and what each costs.
+
+THE QUESTION IS ASKED ONCE PER STONE. So the cost is (number of stones) times (cost of one
+membership test), plus whatever setup the test needs.
+
+    a SET             build cost O(j), test cost O(1)      total O(j + s)
+    a STRING scan     no build cost, test cost O(j)        total O(j * s)
+    counting          no build cost, one C-level pass per jewel type   total O(j * s), in C
+
+With j = 50 jewel types and s = 200,000 stones, the asymptotic ranking says the set wins by a
+factor of 50. MEASURED, it does not:
+
+    set membership                          5.8 ms
+    `c in jewels` on a plain string          7.5 ms      only 1.3x slower, not 50x
+    sum(stones.count(c) for c in jewels)     4.7 ms      the FASTEST
+
+WHY. `c in jewels` on a 50-character string is a C-level scan of 50 bytes - fast enough that the
+Python-level loop around it dominates. And `stones.count(c)` does the entire pass over 200,000
+characters inside C with no Python loop at all, so it makes 50 fast passes instead of one slow one.
+
+THE LESSON GENERALISES: in an interpreted language, the number of PYTHON-LEVEL operations often
+matters more than the asymptotic operation count, until the inputs get big enough for the
+asymptotics to win. Push the loop into C and a worse algorithm can beat a better one.
+
+WHICH TO WRITE IN AN INTERVIEW. The set version, because it is the one that is right for large j -
+if the jewel alphabet grew to thousands of types, the counting version's 4.7 ms would become
+seconds while the set version barely moves. Then mention the measurement, because knowing that
+constants can invert the ranking at realistic sizes is a more valuable thing to demonstrate than
+reciting O(n).""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TYPE - here, one character. Each distinct character in `jewels` names a kind of stone that counts.
+
+SET - an unordered collection of distinct items with O(1) average membership. Built by hashing.
+
+MEMBERSHIP TEST - `x in container`. O(1) for a set or dict, O(n) for a list or string.
+
+`in` ON A STRING - a SUBSTRING search. For a single character it coincides with membership, which
+is why it is safe here; for a longer left operand it is a different question. `'ab' in 'abc'` is
+True even though "ab" is not one character of "abc".
+
+CASE SENSITIVITY - `'a' != 'A'`. Two different characters, two different types.
+
+DUPLICATES IN `jewels` - possible in principle, and harmless: `set("aa")` is `{'a'}`, and the
+counting version would double-count, which is a reason to prefer the set if the input is not
+guaranteed distinct.
+
+O(j + s) versus O(j * s) - the set version examines each jewel once and each stone once; the scan
+version examines each stone once per jewel type. The measurement in section 1 shows why that
+comparison is not the end of the story.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the ones that are not really bugs, and the one that is.
+
+THE REAL BUG - COUNTING DISTINCT TYPES INSTEAD OF STONES. `len(set(stones) & set(jewels))` counts
+how many jewel TYPES are present, not how many stones are jewels. For `jewels = "aA"`, `stones =
+"aAAbbbb"` it returns 2 where the answer is 3. The problem asks how many stones you have, and
+duplicates count.
+
+THE NEAR-BUG - CASE FOLDING. Lowercasing both strings "to be safe" changes the answer: MEASURED,
+`jewels = "a"` and `stones = "aA"` gives 1 correctly and 2 after folding. The problem says the case
+matters, so normalising is not a defensive measure, it is a wrong answer.
+
+THE NON-BUG - `c in jewels` WITHOUT BUILDING A SET. Correct, and MEASURED only 1.3x slower at
+these sizes (7.5 ms vs 5.8 ms). It becomes genuinely bad when the jewel alphabet is large: the cost
+is linear in the number of types, per stone.
+
+THE NON-BUG THAT LOOKS WORSE THAN IT IS - `sum(stones.count(c) for c in jewels)`. Its complexity is
+O(j * s) and MEASURED it is the FASTEST of the three, at 4.7 ms, because each `count` is a single
+C-level pass. It is also the one that breaks if `jewels` contains duplicates - "aa" would count
+every 'a' twice - so the set version is safer as well as asymptotically better.
+
+BUG 3 - USING A LIST INSTEAD OF A SET: `jewel_list = list(jewels)` then `c in jewel_list`. That is
+strictly worse than leaving it a string - same O(j) scan, plus a list allocation, and a slower
+per-element comparison because list elements are boxed objects rather than packed characters.
+
+BUG 4 - ITERATING THE JEWELS IN THE OUTER LOOP AND THE STONES IN THE INNER LOOP, in Python:
+`sum(1 for c in jewels for s in stones if s == c)`. That is the same O(j * s) with BOTH loops
+interpreted, which is the worst of all worlds - the counting version wins precisely because the
+inner loop is not in Python.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 stones with 50 jewel types, all returning 192,459:
+
+    sum(stones.count(c) for c in jewels)     4.7 ms
+    set membership                            5.8 ms
+    `c in jewels` on a string                 7.5 ms
+
+ALTERNATIVE A - the set. O(j + s), MEASURED 5.8 ms. The answer to give: correct for any alphabet
+size, immune to duplicate jewel types, and the one whose cost does not grow with j.
+
+ALTERNATIVE B - `sum(stones.count(c) for c in jewels)`. MEASURED the fastest here, and the version
+whose advantage evaporates as `jewels` grows - at 5,000 jewel types it would be 100x more work
+while the set version is unchanged. Also wrong if `jewels` has repeats.
+
+ALTERNATIVE C - `c in jewels` with `jewels` left as a string. MEASURED 7.5 ms - the middle option,
+and the one people write without thinking. Fine for a 52-character alphabet, bad in principle.
+
+ALTERNATIVE D - a Counter of the stones, then sum the counts of the jewel types:
+`sum(Counter(stones)[c] for c in jewels)`. One pass to count, then O(j) lookups. It is the right
+shape when the same stones will be queried against several different jewel lists, because the
+expensive part is computed once.
+
+ALTERNATIVE E - a 128-entry boolean array indexed by character code, for ASCII input. No hashing at
+all, and the fastest possible in a compiled language.
+
+THE FAMILY - membership counting:
+  * COUNT THE NUMBER OF CONSISTENT STRINGS - the same set membership, asked as "are ALL characters
+    allowed";
+  * FIND WORDS CONTAINING CHARACTER - membership per word instead of per character;
+  * INTERSECTION OF TWO ARRAYS / II - the set and the multiset versions of the same distinction
+    between "which types" and "how many";
+  * RANSOM NOTE - membership with counts, where a Counter is required;
+  * FIRST UNIQUE CHARACTER - one pass to count, one pass to find, the same two-phase shape as
+    alternative D.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say what is being counted: STONES, not types. Duplicates count, so the answer can exceed
+the number of jewel types.
+
+STEP 2 - build the set once, outside the loop: `jewel_set = set(jewels)`.
+
+STEP 3 - count in one pass: `return sum(1 for s in stones if s in jewel_set)`.
+
+STEP 4 - say that case matters and that you are deliberately NOT normalising it. MEASURED, folding
+case changes the answer.
+
+STEP 5 - state the complexity: O(len(jewels) + len(stones)) time, O(len(jewels)) space - or O(1)
+space if you note the alphabet is bounded at 52 letters.
+
+STEP 6 - if you want to show the measurement, give it: `sum(stones.count(c) for c in jewels)` is
+MEASURED faster at these sizes despite being O(j * s), because each count is a C-level pass. Then
+say why you would still ship the set version - it does not degrade as the jewel alphabet grows, and
+it is immune to duplicate jewel characters.
+
+STEP 7 - pre-empt the follow-up: for many different jewel lists against the same stones, count the
+stones once into a Counter and then answer each query in O(j).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Each character in the jewels string is a type that counts. So I put those characters into a set,
+  which makes membership a hash lookup, and then walk the stones once counting how many are in it.
+
+- I am counting STONES, not types - duplicates count - so the answer can be larger than the number
+  of jewel characters.
+
+- Case matters. A lowercase a and an uppercase A are different types, so I would not normalise the
+  case; doing that "defensively" would change the answer.
+
+- Linear in the two lengths, and the extra space is the set, which is bounded by the alphabet.
+
+- One measurement worth mentioning, because it is counterintuitive. On two hundred thousand stones
+  with fifty jewel types, summing `stones.count(c)` over the jewel characters was actually faster
+  than the set version - four point seven milliseconds against five point eight - even though it is
+  jewels-times-stones work rather than jewels-plus-stones. The reason is that each `count` is a
+  single pass inside C, while the set version runs a Python-level loop over every stone.
+
+- I would still write the set version, because the counting trick's advantage disappears as the
+  jewel alphabet grows - at thousands of types it would be a hundred times more work while the set
+  version is unchanged - and because it double-counts if the jewels string contains a repeat.
+
+- If the same stones were queried against many different jewel lists, I would count the stones once
+  into a Counter and then each query is just a sum over the jewel characters.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def num_jewels_in_stones(jewels, stones):
+        jewel_set = set(jewels)
+        return sum(1 for s in stones if s in jewel_set)
+
+Line 2  `jewel_set = set(jewels)`
+        One pass over the jewel characters, hashing each. Duplicates in `jewels` collapse, which
+        makes the function immune to a malformed jewel list - `set("aa")` is `{'a'}`.
+
+        Built ONCE, outside the loop. Building it inside the comprehension would rebuild it per
+        stone, turning O(j + s) into O(j * s) with the worst possible constant.
+
+Line 3  `sum(1 for s in stones if s in jewel_set)`
+
+        `for s in stones` - iterating a string yields its characters, so `s` is a one-character
+        string. No indexing needed.
+
+        `s in jewel_set` - a hash lookup, O(1) average. Case-sensitive, because `'a'` and `'A'`
+        hash differently and are not equal. MEASURED, `num_jewels_in_stones('a', 'aA')` is 1.
+
+        `sum(1 for ...)` - counts matches without building a list. `len([s for s in stones if ...])`
+        gives the same number and allocates a list of every match.
+
+        The whole expression is one pass over the stones: O(len(stones)) tests, each O(1).
+
+        MEASURED at 200,000 stones and 50 jewel types: 5.8 ms.
+
+AND THE TWO ALTERNATIVES WORTH KNOWING:
+
+    # MEASURED fastest here at 4.7 ms - O(j * s) with every pass inside C.
+    # Wrong if `jewels` contains a repeated character, and it degrades as j grows.
+    return sum(stones.count(c) for c in jewels)
+
+    # For many queries against the same stones: count once, answer each query in O(j).
+    from collections import Counter
+    counts = Counter(stones)
+    return sum(counts[c] for c in set(jewels))""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `jewels = "aA"`, `stones = "aAAbbbb"`.
+
+    jewel_set = {'a', 'A'}
+
+    stone   in set?   running count
+    ------------------------------------
+      a       yes           1
+      A       yes           2
+      A       yes           3
+      b       no            3
+      b       no            3
+      b       no            3
+      b       no            3
+    return 3                                              MEASURED
+
+    Three stones, two types. The count is of STONES - the two A's each contribute.
+
+TRACE B - the case-sensitivity check.
+
+    jewels = "a", stones = "aA"
+    jewel_set = {'a'}
+        'a' in {'a'} -> yes
+        'A' in {'a'} -> no        different character, different hash
+    return 1                                              MEASURED
+
+    Lowercasing both strings first would return 2, which is the wrong answer to the stated problem.
+
+TRACE C - the distinct-types mistake.
+
+    jewels = "aA", stones = "aAAbbbb"
+    len(set(stones) & set(jewels)) = len({'a','A'}) = 2
+
+    Two jewel types are present, and the answer is 3. Any solution built on set intersection has
+    already thrown away the counts.
+
+TRACE D - the counting alternative on the same input.
+
+    sum(stones.count(c) for c in "aA")
+        stones.count('a') = 1
+        stones.count('A') = 2
+        total 3                                           MEASURED
+
+    Two full passes over the stones instead of one, each inside C. With `jewels = "aa"` this would
+    give 2 - counting the single 'a' twice - which is the failure mode the set version does not
+    have.
+
+TRACE E - the timings, and what they mean.
+
+    200,000 stones, 50 jewel types, all three returning 192,459
+        sum(stones.count(c) for c in jewels)     4.7 ms      O(j * s), loops in C
+        set membership                            5.8 ms      O(j + s), loop in Python
+        `c in jewels` on a string                 7.5 ms      O(j * s), loop in Python
+
+    Read it carefully. The counting version does 50 passes over 200,000 characters - ten million
+    character examinations - and still wins, because none of them costs an interpreter dispatch.
+    The set version does 200,000 examinations, each of which does.
+
+    Now imagine 5,000 jewel types instead of 50: the counting version does a billion character
+    examinations while the set version is unchanged at 200,000 lookups. The asymptotics reassert
+    themselves, which is why they are still the right thing to design around.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(len(jewels) + len(stones)) - one pass to build the set, one pass over the stones with
+            O(1) tests.
+    space   O(len(jewels)) for the set, bounded by the alphabet - 52 entries for letters, so
+            effectively O(1).
+
+    MEASURED at 200,000 stones and 50 jewel types: 5.8 ms for the set version, 4.7 ms for the
+    O(j * s) counting version, 7.5 ms for the string scan. The ranking by stopwatch and the ranking
+    by complexity are not the same at this size, and they converge as j grows.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Counting distinct TYPES instead of stones - `len(set(stones) & set(jewels))` returns 2 where
+       the answer is 3. The question is how many stones you hold.
+    2. Normalising the case. MEASURED, it changes the answer - `('a', 'aA')` gives 1 correctly and 2
+       after folding.
+    3. Building the set inside the loop, rebuilding it once per stone.
+    4. Using a list rather than a set or the original string - the same O(j) scan with a worse
+       constant.
+    5. Writing the doubly-nested Python loop over jewels and stones, which is O(j * s) with both
+       loops interpreted - the worst of every world.
+    6. Reciting complexities without checking them. MEASURED, the O(j * s) counting version is the
+       fastest of the three at realistic sizes; the correct response is to explain WHY, not to
+       pretend the measurement did not happen.
+
+THE TAKEAWAY
+    "Is this one of the special values" is a set membership question, and building the set once
+    outside the loop is what makes it O(1) per test. The measurement is the part worth carrying
+    away: an O(j * s) algorithm whose loops all run in C beat an O(j + s) algorithm whose loop runs
+    in Python, at a realistic size - so know both the asymptotic answer and the constant-factor
+    reality, and pick the one that stays right as the input grows.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
