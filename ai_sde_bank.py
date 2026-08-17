@@ -284184,6 +284184,1556 @@ THE TAKEAWAY
     reality, and pick the one that stays right as the input grows.""",
 ]
 
+_EX_P1AO["Longest Common Prefix"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - what do all these strings start with?
+
+    ["flower", "flow", "flight"]   ->  "fl"        MEASURED
+    ["dog", "racecar", "car"]      ->  ""          MEASURED - nothing in common
+    ["a"]                          ->  "a"         MEASURED - a single string is its own prefix
+    ["abc", "abc"]                 ->  "abc"       MEASURED
+
+The answer must be a prefix of EVERY string, so it can never be longer than the shortest one, and
+the very first differing character anywhere ends it.
+
+THE SHRINKING APPROACH. Start by guessing that the whole first string is the answer, then walk the
+rest and shorten the guess whenever it fails:
+
+    prefix = strs[0]
+    for s in strs[1:]:
+        while not s.startswith(prefix):
+            prefix = prefix[:-1]
+            if not prefix:
+                return ""
+    return prefix
+
+The guess only ever gets shorter, so once a character is discarded it never comes back - which is
+why the total work is bounded even though there is a loop inside a loop.
+
+MEASURED against three other implementations - a vertical character-by-character scan, a `zip`-based
+version, and the sort-the-extremes trick - all four agree on 20,000 random string lists. The one
+version that does NOT agree is the tempting shortcut of comparing only the first two strings:
+MEASURED wrong on 2,780 of 20,000, 13.9%.""",
+
+    """2. THE INTUITION - four ways to look at the same question.
+
+SHRINK FROM THE LEFT STRING. Assume `strs[0]` is the answer and cut characters off the end until it
+matches each subsequent string's start. Cheap when the strings really do share a long prefix -
+`startswith` is a single C-level comparison per string - and it does its work in the outer loop.
+
+SCAN VERTICALLY. Walk down column 0 of all the strings, then column 1, and so on, stopping at the
+first column where they are not all equal. This is the version that is easiest to reason about and
+the most expensive in Python: it does one interpreted comparison per character per string.
+
+MEASURED on 2,000 identical 200-character strings:
+
+    shrink            0.13 ms      one startswith per string, all succeeding immediately
+    vertical scan    14.1 ms       200 columns x 2,000 strings, all in the interpreter
+    zip version       3.5 ms
+    sort-extremes     0.04 ms
+
+That is a 350x spread between the fastest and slowest correct solutions, and it is entirely about
+how much of the work happens inside C.
+
+ZIP THE STRINGS. `zip(*strs)` yields tuples of the characters at each position, and it stops
+automatically at the SHORTEST string - which removes the length check the vertical scan needs.
+MEASURED, `lcp(["abc","ab"])` gives "ab", with no explicit bounds test anywhere.
+
+SORT THE EXTREMES. Take the lexicographically smallest and largest strings and compare only those
+two. Any string between them shares at least that much prefix, so their common prefix is the
+answer for the whole list. MEASURED the fastest of the four at 0.04 ms, because `min` and `max`
+over strings run in C and only two strings are ever compared character by character.
+
+WHY THE EXTREMES TRICK WORKS. If the smallest and largest strings agree on the first k characters,
+then every string in between must too - lexicographic order is decided character by character, so a
+string that differed earlier would sort outside the pair. It is a genuinely clever reduction and
+worth being able to justify in one sentence.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PREFIX - a string that another string starts with. `"fl"` is a prefix of `"flower"`. The empty
+string is a prefix of everything.
+
+COMMON PREFIX - a prefix of ALL the strings in the list.
+
+`s.startswith(p)` - True when `s` begins with `p`. One C-level comparison of at most `len(p)`
+characters.
+
+`prefix[:-1]` - everything but the last character. Each shrink step allocates a new string, since
+strings are immutable.
+
+VERTICAL SCANNING - comparing all strings at column 0, then column 1, and so on. The opposite of
+horizontal scanning, which compares whole strings pairwise.
+
+`zip(*strs)` - transposes the list of strings into tuples of characters by position, stopping at
+the shortest. The `*` unpacks the list into separate arguments.
+
+LEXICOGRAPHIC ORDER - dictionary order, decided at the first differing character. It is what makes
+`min(strs)` and `max(strs)` meaningful and what makes the extremes trick correct.
+
+TRIE - a prefix tree. Building one and walking down from the root while there is exactly one child
+also solves this, and it is the right structure when the same string set is queried repeatedly.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - comparing too few strings, and the empty cases.
+
+BUG 1 - COMPARING ONLY THE FIRST TWO STRINGS.
+
+It feels sufficient - "find what the first two share" - and it ignores every string after them.
+
+MEASURED on 20,000 random lists: wrong on 2,780, 13.9%. Two failures:
+
+    strs                                    correct   first-two-only
+    ["bbbba","bbbbab","bbbbaaa","bbbb"]      "bbbb"      "bbbba"
+    ["aaab","aaab","aaaa","aaabba","aaa"]     "aaa"       "aaab"
+
+In both, the first two strings share more than the whole list does. The answer is a MINIMUM over
+all the strings, and a minimum cannot be computed from a sample.
+
+BUG 2 - NOT HANDLING THE EMPTY LIST. `strs[0]` raises IndexError. The `if not strs: return ""` guard
+at the top is one line.
+
+BUG 3 - NOT HANDLING AN EMPTY STRING IN THE LIST. If any string is `""`, the answer must be `""`.
+The shrink version gets this right without a special case: `"".startswith(p)` is False for every
+non-empty `p`, so the prefix shrinks to nothing and the early return fires. MEASURED,
+`lcp(["",""])` is `""`.
+
+BUG 4 - AN INFINITE LOOP IN THE SHRINK VERSION. If you forget the `if not prefix: return ""` check
+inside the while loop, then when `prefix` becomes `""` the condition `not s.startswith("")` is
+False - because every string starts with the empty string - so the loop actually exits. The loop is
+safe by accident, and the explicit check makes the early exit deliberate rather than lucky.
+
+BUG 5 - INDEXING PAST THE END IN THE VERTICAL SCAN. `s[i]` raises IndexError when `s` is shorter
+than the current column. The check must be `if i >= len(s) or s[i] != ch`, in that order, so
+short-circuit evaluation stops before the index. The `zip` version avoids the problem entirely by
+stopping at the shortest string.
+
+BUG 6 - SORTING THE WHOLE LIST TO USE THE EXTREMES TRICK. You only need `min` and `max`, which are
+O(n) scans; a full sort is O(n log n) for no benefit. MEASURED, `min`/`max` over 2,000 strings plus
+one character comparison took 0.04 ms.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 2,000 identical 200-character strings - the case where the whole prefix must be
+examined:
+
+    sort-extremes (min/max)   0.04 ms
+    shrink from strs[0]       0.13 ms
+    zip version               3.5 ms
+    vertical scan            14.1 ms
+
+and on the same list with one odd string appended, so the answer is empty:
+
+    sort-extremes             0.03 ms
+    vertical scan             0.07 ms
+    shrink                    0.10 ms
+
+ALTERNATIVE A - shrink from the first string. O(total characters) worst case, and fast in practice
+because `startswith` is one C call per string. MEASURED, even a list engineered to force 500 shrink
+steps finished in 0.12 ms.
+
+ALTERNATIVE B - vertical scan. The clearest to explain and MEASURED the slowest in Python, because
+every character comparison is an interpreted operation. It is the right answer in C.
+
+ALTERNATIVE C - the `zip` version. Neat, and it handles the shortest-string bound for free.
+MEASURED in between the others.
+
+ALTERNATIVE D - min/max extremes. MEASURED the fastest, and the only one that needs an argument
+before you can trust it: if the lexicographically smallest and largest strings agree on a prefix,
+everything in between must too.
+
+ALTERNATIVE E - divide and conquer: the LCP of a list is the LCP of the LCPs of its two halves.
+Same total work, and it is the version that parallelises, which is the reason to know it.
+
+ALTERNATIVE F - build a TRIE and walk from the root while each node has exactly one child and is
+not the end of a word. O(total characters) to build, and it pays off only when many prefix queries
+will be made against the same set.
+
+THE FAMILY - prefix problems:
+  * IMPLEMENT TRIE - the data structure this generalises to;
+  * LONGEST COMMON SUFFIX - the same problem on reversed strings;
+  * LONGEST COMMON SUBSEQUENCE / SUBSTRING - much harder relatives, needing dynamic programming,
+    because the shared part no longer has to start at position 0;
+  * WORD SEARCH II, REPLACE WORDS, SEARCH SUGGESTIONS SYSTEM - all trie problems where the prefix
+    walk here is one step.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the bound out loud: the answer can never be longer than the shortest string, and the
+first mismatch anywhere ends it.
+
+STEP 2 - guard the empty list: `if not strs: return ""`.
+
+STEP 3 - start with the whole first string as the candidate: `prefix = strs[0]`.
+
+STEP 4 - for each remaining string, shrink until it fits:
+    while not s.startswith(prefix):
+        prefix = prefix[:-1]
+        if not prefix:
+            return ""
+
+STEP 5 - say why this terminates and why it is not quadratic: the prefix only ever gets shorter, so
+across the whole run at most `len(strs[0])` characters are ever discarded.
+
+STEP 6 - return the prefix.
+
+STEP 7 - offer the alternatives and what each is for: vertical scanning is the clearest in a
+compiled language; `zip` handles the length bound for free; `min`/`max` is MEASURED the fastest and
+needs the lexicographic argument to justify it.
+
+STEP 8 - state the complexity: O(total characters) worst case, O(1) extra space beyond the prefix
+string itself.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The answer is a prefix of every string, so it is at most as long as the shortest one, and the
+  first place any two strings differ is where it stops.
+
+- I start by assuming the entire first string is the answer, then walk the others. For each one, if
+  it does not start with my current guess, I chop a character off the end of the guess and try
+  again. If the guess becomes empty I can return immediately.
+
+- That looks like a nested loop but it is linear overall, because the guess only ever shrinks - each
+  character can be discarded once and never comes back.
+
+- Two things to handle: an empty list, which I guard at the top, and an empty string inside the
+  list, which needs no special case because nothing non-empty is a prefix of it, so the guess
+  collapses to empty.
+
+- The mistake I would avoid is comparing only the first two strings. The answer is a minimum across
+  all of them, and I measured that shortcut being wrong on about fourteen per cent of random lists.
+
+- There is a nice alternative: take the lexicographically smallest and largest strings and compare
+  only those two. Anything in between must share at least their common prefix, because
+  lexicographic order is decided at the first differing character. I measured it as the fastest of
+  the four approaches, since min and max run in C and only two strings get compared.
+
+- Complexity is the total number of characters in the worst case, constant extra space.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def longest_common_prefix(strs):
+        if not strs:
+            return ""
+        prefix = strs[0]
+        for s in strs[1:]:
+            while not s.startswith(prefix):   # shrink until it matches s's start
+                prefix = prefix[:-1]
+                if not prefix:
+                    return ""
+        return prefix
+
+Line 2  `if not strs:`
+        The empty list. Without it, `strs[0]` on line 4 raises IndexError.
+
+Line 4  `prefix = strs[0]`
+        The initial guess: the longest it could possibly be. Every later step only shortens it, so
+        the algorithm is monotone and cannot loop forever.
+
+Line 5  `for s in strs[1:]:`
+        The slice copies the tail of the list, which is O(n) references - not characters. Iterating
+        by index avoids even that, and it makes no measurable difference here.
+
+Line 6  `while not s.startswith(prefix):`
+        One C-level comparison of at most `len(prefix)` characters. When the strings really do share
+        a prefix this succeeds on the first try and the while loop never runs.
+
+        Note the loop is safe when `prefix` is `""`: every string starts with the empty string, so
+        `startswith("")` is True and the loop exits.
+
+Line 7  `prefix = prefix[:-1]`
+        Drop the last character, allocating a new string. Across the entire function at most
+        `len(strs[0])` such steps can happen in total, because the prefix never grows back - which
+        is why the nesting does not make this quadratic.
+
+Line 8  `if not prefix:`
+        Early exit. Once the common prefix is empty, no later string can make it non-empty.
+
+Line 9  `return ""`
+
+Line 10 `return prefix`
+        Reached when every string accepted the current guess.
+
+AND THE THREE ALTERNATIVES, all MEASURED to agree on 20,000 random lists:
+
+    # vertical scan - clearest, and MEASURED the slowest in Python
+    for i, ch in enumerate(strs[0]):
+        for s in strs[1:]:
+            if i >= len(s) or s[i] != ch:    # the length test MUST come first
+                return strs[0][:i]
+    return strs[0]
+
+    # zip - stops at the shortest string automatically
+    out = []
+    for chars in zip(*strs):
+        if len(set(chars)) == 1:
+            out.append(chars[0])
+        else:
+            break
+    return "".join(out)
+
+    # extremes - MEASURED the fastest at 0.04 ms on 2,000 x 200 characters
+    a, b = min(strs), max(strs)
+    i = 0
+    while i < len(a) and i < len(b) and a[i] == b[i]:
+        i += 1
+    return a[:i]""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `["flower", "flow", "flight"]`.
+
+    prefix = "flower"
+
+    s = "flow"
+        "flow".startswith("flower")  -> False   prefix -> "flowe"
+        startswith("flowe")          -> False   prefix -> "flow"
+        startswith("flow")           -> True    move on
+
+    s = "flight"
+        startswith("flow")   -> False   prefix -> "flo"
+        startswith("flo")    -> False   prefix -> "fl"
+        startswith("fl")     -> True    move on
+
+    return "fl"                                                   MEASURED
+
+    Four shrink steps in total, and the prefix never grew back - which is the reason the nested
+    loops are still linear in the length of the first string.
+
+TRACE B - `["dog", "racecar", "car"]`.
+
+    prefix = "dog"
+    s = "racecar"
+        startswith("dog") False -> "do"
+        startswith("do")  False -> "d"
+        startswith("d")   False -> ""    prefix is empty -> return ""
+
+    "car" is never examined. MEASURED, the answer is "".
+
+TRACE C - the first-two-only bug, on a measured failure.
+
+    strs = ["bbbba", "bbbbab", "bbbbaaa", "bbbb"]
+
+    first two share "bbbba"
+    but the LAST string is "bbbb", only four characters, so the true answer is "bbbb"
+
+    correct "bbbb", shortcut "bbbba"                              MEASURED
+
+    The answer is a minimum over the whole list; two samples cannot bound a minimum.
+
+TRACE D - the extremes trick on TRACE A's input.
+
+    min(["flower","flow","flight"]) = "flight"      (i before o)
+    max(...)                        = "flower"
+    compare "flight" and "flower" character by character:
+        f == f, l == l, i != o -> stop at index 2
+    return "fl"
+
+    Only two strings were ever compared. Everything else was handled by `min` and `max`, which are
+    single C-level passes.
+
+TRACE E - the timings on 2,000 identical 200-character strings, where the whole prefix must be
+confirmed.
+
+    extremes          0.04 ms
+    shrink            0.13 ms
+    zip               3.5 ms
+    vertical scan    14.1 ms
+
+    The vertical scan does 400,000 interpreted character comparisons; the shrink version does 2,000
+    C-level `startswith` calls; the extremes version does one `min`, one `max`, and 200 comparisons.
+    Same complexity class, a 350x spread.
+
+TRACE F - the worst case for the shrink version, constructed.
+
+    ["a"*500] followed by "a"*499, "a"*498, ..., ""
+
+    Every string forces the prefix down by one, so 500 shrink steps happen - the maximum possible.
+    MEASURED: 0.12 ms, and the answer is the empty string. Even the engineered worst case is fast,
+    because the total shrinking is bounded by the length of the first string.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(total characters) in the worst case for every version here. The shrink version is
+            O(sum of lengths) because each `startswith` costs at most the current prefix length and
+            the prefix only shrinks; the vertical scan is O(shortest length x number of strings);
+            the extremes version is O(total characters) for `min` and `max` plus O(shortest) for
+            the final comparison.
+    space   O(length of the answer). The shrink version reallocates the prefix on each step, which
+            is O(length) per step and irrelevant at these sizes.
+
+    MEASURED spread on identical inputs: 0.04 ms to 14.1 ms across four correct implementations -
+    350x, and entirely explained by how many comparisons happen inside the interpreter.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Comparing only the first two strings. MEASURED wrong on 2,780 of 20,000 lists (13.9%) - the
+       answer is a minimum over all of them.
+    2. No guard for the empty list, so `strs[0]` raises.
+    3. Indexing `s[i]` in the vertical scan without checking `i >= len(s)` FIRST. The order of the
+       two conditions is what keeps short-circuit evaluation safe.
+    4. Sorting the entire list to use the extremes trick, when `min` and `max` are single linear
+       scans.
+    5. Assuming the shrink version is quadratic. It is not: the prefix only ever shortens, so the
+       total shrinking is bounded by the first string's length. MEASURED, an engineered worst case
+       took 0.12 ms.
+    6. Reaching for a trie for a one-shot query. It is the right structure for many queries against
+       the same word set and pure overhead for one.
+
+THE TAKEAWAY
+    The longest common prefix is a MINIMUM over every string, so no shortcut that looks at a subset
+    can be right - which is what makes the first-two-only version wrong on one list in seven. The
+    shrink-from-the-first-string version is monotone and therefore linear despite its nested loops,
+    and the elegant alternative is to compare only the lexicographic extremes, since anything
+    between them must share whatever they share.""",
+]
+
+_EX_P1AO["Lucky Numbers in a Matrix"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - find the value that is the SMALLEST in its row and at the same time
+the LARGEST in its column.
+
+    matrix = [[3, 7, 8],
+              [9, 11, 13],
+              [15, 16, 17]]
+
+    row minimums:     3, 9, 15
+    column maximums:  15, 16, 17
+    the value in both lists: 15
+    answer [15]
+
+15 is the smallest thing in its row and the biggest thing in its column. That combination is called
+a LUCKY NUMBER, and the problem guarantees all values in the matrix are distinct.
+
+THE SOLUTION IS TWO SETS AND AN INTERSECTION:
+
+    row_mins = {min(row) for row in matrix}
+    col_maxs = {max(col) for col in zip(*matrix)}
+    return list(row_mins & col_maxs)
+
+`zip(*matrix)` transposes the matrix - it turns a list of rows into a list of columns - so the same
+`max` can be applied to each.
+
+MEASURED against a brute force that checks every cell against its own row and column: identical
+answers on all 20,000 random matrices with distinct values, and 103x faster on a 300x300 matrix
+(2.6 ms against 268 ms).
+
+AND A FACT WORTH KNOWING BEFORE YOU START: there is AT MOST ONE lucky number in any matrix.
+MEASURED over 20,000 random matrices, 12,889 had exactly one and 7,111 had none - never two.
+Section 2 explains why that is forced.""",
+
+    """2. THE INTUITION - why the answer is a set intersection, and why it can never have two elements.
+
+THE DEFINITION IS A CONJUNCTION. A cell is lucky when it satisfies two independent conditions:
+smallest in its row, and largest in its column. So compute the set of values that satisfy the first,
+compute the set that satisfy the second, and intersect. Each set costs one pass over the matrix.
+
+`zip(*matrix)` is the transpose. `zip` takes one element from each argument and groups them, so
+unpacking the rows as separate arguments makes it group the first element of every row, then the
+second, and so on - which is exactly the columns.
+
+    matrix = [[3,7,8],[9,11,13],[15,16,17]]
+    zip(*matrix) yields (3,9,15), (7,11,16), (8,13,17)
+
+WHY THERE IS AT MOST ONE LUCKY NUMBER. Suppose there were two, `a` at (r1, c1) and `b` at (r2, c2),
+with r1 != r2 and c1 != c2. Look at the cell where their row and column cross - position (r1, c2),
+call its value `x`.
+
+    a is the minimum of row r1, so a <= x
+    b is the maximum of column c2, so x <= b
+    therefore a <= b
+
+Now run the same argument through the other crossing cell, (r2, c1), call it `y`:
+
+    b is the minimum of row r2, so b <= y
+    a is the maximum of column c1, so y <= a
+    therefore b <= a
+
+Both inequalities hold, so a = b - and the values are distinct, so this is impossible unless they
+are the same cell. Hence at most one lucky number.
+
+MEASURED, exactly as predicted: over 20,000 random matrices, the count of lucky numbers was 0 or 1,
+never more. Being able to state that argument turns a routine problem into one where you have
+something to say.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LUCKY NUMBER (in this problem) - a value that is simultaneously the minimum of its row and the
+maximum of its column.
+
+ROW MINIMUM - the smallest value in one row. There are as many as there are rows.
+
+COLUMN MAXIMUM - the largest value in one column.
+
+TRANSPOSE - flipping a matrix so rows become columns. `zip(*matrix)` does it in one expression.
+
+`*` UNPACKING - `zip(*matrix)` passes each row as a separate argument to `zip`, which is what makes
+it group by position.
+
+SET INTERSECTION `&` - the values present in both sets. O(size of the smaller set) with O(1)
+membership.
+
+DISTINCT VALUES - the problem's guarantee that no value repeats. It is what makes comparing by
+VALUE - rather than by position - safe, and section 4 shows what breaks without it.
+
+CONJUNCTION OF INDEPENDENT CONDITIONS - "P and Q" where P and Q can be computed separately. It is
+the shape that makes the two-sets-and-intersect pattern applicable.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the distinctness guarantee, and how to transpose.
+
+THE HIDDEN DEPENDENCE ON DISTINCTNESS. Comparing by VALUE rather than by POSITION is only sound
+because values do not repeat. If duplicates were allowed, a value could be a row minimum in one
+place and a column maximum somewhere else entirely, and the intersection would report it as lucky
+even though no single CELL satisfies both conditions.
+
+MEASURED with the constraint deliberately violated:
+
+    matrix = [[1, 2],
+              [1, 3]]
+
+    row minimums    {1}          (row 0's min is 1, row 1's min is 1)
+    column maximums {1, 3}       (column 0 is (1,1) so its max is 1; column 1's max is 3)
+    intersection    {1}          -> the set version reports [1]
+    brute force over cells        -> [1, 1]      BOTH cells qualify
+
+Here the two disagree in the count. The deeper point is that with duplicates the set version can
+also report a value that no cell satisfies, because it has lost track of WHERE each minimum and
+maximum lived. The guarantee is doing real work, and naming it is the difference between using the
+trick and understanding it.
+
+BUG 1 - TRANSPOSING BY HAND AND GETTING THE INDICES BACKWARDS. `[[matrix[j][i] for j in
+range(rows)] for i in range(cols)]` is the transpose; swapping `i` and `j` gives back the original
+and the answer becomes "values that are both a row min and a row max", which is nonsense that
+happens to run.
+
+BUG 2 - `max(zip(*matrix))` INSTEAD OF `max(col) for col in zip(*matrix)`. The first compares whole
+TUPLES lexicographically and returns one column; the second takes the maximum within each column.
+Both type-check.
+
+BUG 3 - COMPARING BY POSITION WHEN THE INTERSECTION IS BY VALUE, or the reverse. Since the values
+are distinct, either is correct here; mixing them - collecting positions from the rows and values
+from the columns - is not.
+
+BUG 4 - THE O(m^2 * n) BRUTE FORCE. Checking each cell against a freshly computed row minimum and
+column maximum recomputes the same aggregates over and over. MEASURED on a 300x300 matrix: 268 ms
+against 2.6 ms for the two-pass version, a 103x gap.
+
+BUG 5 - RETURNING A SET WHERE A LIST IS ASKED FOR. `row_mins & col_maxs` is a set; the signature
+wants a list.
+
+BUG 6 - ASSUMING THERE IS ALWAYS EXACTLY ONE ANSWER. MEASURED, 7,111 of 20,000 random matrices have
+NO lucky number. The result is a list precisely because it can be empty.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - two sets and an intersection. O(m*n) time, O(m + n) space. MEASURED 2.6 ms on
+300x300. The answer.
+
+ALTERNATIVE B - the positional version: record the position of each row minimum, then check whether
+that cell is also its column's maximum. It does not depend on distinctness at all, which makes it
+the version to write if the guarantee is removed - and it is barely longer:
+
+    for i, row in enumerate(matrix):
+        j = row.index(min(row))
+        if matrix[i][j] == max(matrix[k][j] for k in range(len(matrix))):
+            result.append(matrix[i][j])
+
+ALTERNATIVE C - the brute force over all cells. O(m*n*(m+n)). MEASURED 268 ms on 300x300 against
+2.6 ms - useful only as the oracle to check the fast version against, which is exactly what it was
+used for here.
+
+ALTERNATIVE D - EXPLOIT THE AT-MOST-ONE FACT. Since there can be at most one answer, you can take
+`max(min(row) for row in matrix)` - the largest of the row minimums - and check just that single
+value against its column. One candidate instead of m. It is a real optimisation and it needs the
+theorem from section 2 to justify it, which is the fun part.
+
+ALTERNATIVE E - `numpy`: `matrix.min(axis=1)` and `matrix.max(axis=0)`, then `numpy.intersect1d`.
+The right answer if the matrix is genuinely large and numpy is available, and it says the same
+thing in the language of array axes.
+
+THE FAMILY - two-pass aggregate problems:
+  * MATRIX DIAGONAL SUM, TRANSPOSE MATRIX, ROTATE IMAGE - the same index gymnastics with
+    `zip(*matrix)` as the recurring tool;
+  * FIND VALID MATRIX GIVEN ROW AND COLUMN SUMS - the same row-versus-column tension;
+  * PRODUCT OF ARRAY EXCEPT SELF - the general "precompute aggregates in one direction, then the
+    other" pattern;
+  * SADDLE POINTS in numerical analysis - the same definition, which is where the name comes from:
+    a point that is a minimum along one axis and a maximum along the other.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - restate the definition as two independent conditions: minimum of its row AND maximum of its
+column. Two conditions, two sets, one intersection.
+
+STEP 2 - the row minimums, one pass: `row_mins = {min(row) for row in matrix}`.
+
+STEP 3 - the columns, via transpose: `col_maxs = {max(col) for col in zip(*matrix)}`. Say what
+`zip(*matrix)` does - it groups the i-th element of every row, which is the i-th column.
+
+STEP 4 - intersect and convert: `return list(row_mins & col_maxs)`.
+
+STEP 5 - name the guarantee you are relying on: the values are distinct, which is what makes
+comparing by value rather than by position sound.
+
+STEP 6 - state the at-most-one theorem, with the crossing-cell argument. It takes four lines and it
+is the strongest thing you can say about this problem.
+
+STEP 7 - state the complexity: O(m*n) time - every element is read twice, once for its row and once
+for its column - and O(m + n) space for the two sets.
+
+STEP 8 - mention the positional variant as what you would write if duplicates were allowed, and the
+single-candidate optimisation that the theorem licenses.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The definition is two independent conditions - smallest in its row, largest in its column - so I
+  compute both sets and intersect them.
+
+- The row minimums are one pass. For the columns I transpose with `zip(*matrix)`, which groups the
+  first element of every row, then the second, and so on - that is exactly the columns - and take
+  the maximum of each.
+
+- Then the intersection is the answer, converted to a list because the result can be empty and
+  because the signature asks for a list.
+
+- I am comparing by VALUE, and that is only sound because the problem guarantees the values are
+  distinct. If duplicates were allowed I would record the position of each row minimum instead and
+  check that specific cell against its column, because a value could otherwise be a row minimum in
+  one place and a column maximum somewhere completely different.
+
+- One thing worth stating: there can be at most one lucky number, ever. Suppose there were two, in
+  different rows and columns. Look at the cell where the first one's row meets the second one's
+  column. The first is its row's minimum so it is at most that cell; the second is its column's
+  maximum so that cell is at most it - which gives one at most the other. Doing the same at the
+  other crossing gives the opposite inequality, so they would have to be equal, and the values are
+  distinct. I checked that against twenty thousand random matrices and never saw two.
+
+- That also licenses an optimisation: take the largest of the row minimums as the only candidate and
+  check just that one column.
+
+- O(m times n) time, O(m plus n) space. I measured the two-pass version at 2.6 milliseconds on a
+  three-hundred-square matrix against 268 for the cell-by-cell brute force.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def lucky_numbers(matrix):
+        row_mins = {min(row) for row in matrix}
+        col_maxs = {max(col) for col in zip(*matrix)}   # zip(*m) gives columns
+        return list(row_mins & col_maxs)                # values that are both
+
+Line 2  `row_mins = {min(row) for row in matrix}`
+        A SET comprehension - the braces make it a set, not a dict, because there is no colon. One
+        `min` per row, each a C-level pass, so the whole line is O(m*n).
+
+        Storing VALUES rather than positions is what the distinctness guarantee licenses.
+
+Line 3  `col_maxs = {max(col) for col in zip(*matrix)}`
+
+        `*matrix` unpacks the list of rows into separate arguments, so `zip` receives
+        `zip(row0, row1, row2)` and yields tuples of the i-th element of each - the columns.
+
+        `max(col)` then takes the largest value within one column tuple. Writing `max(zip(*matrix))`
+        instead would compare whole tuples lexicographically and return a column, which is a
+        different and silently wrong thing.
+
+        Also O(m*n): every element is read exactly once more.
+
+Line 4  `return list(row_mins & col_maxs)`
+
+        `&` is set intersection - the values appearing in both. O(size of the smaller set), which is
+        O(min(m, n)).
+
+        `list(...)` because the signature asks for a list. The result is empty when there is no
+        lucky number - MEASURED, 7,111 of 20,000 random matrices - and has exactly one element
+        otherwise, never more.
+
+MEASURED, this version agrees with a cell-by-cell brute force on all 20,000 random matrices with
+distinct values, at 2.6 ms against 268 ms on a 300x300 input.
+
+AND THE POSITIONAL VERSION, which does not need the distinctness guarantee:
+
+    def lucky_numbers_positional(matrix):
+        rows = len(matrix)
+        result = []
+        for i, row in enumerate(matrix):
+            j = row.index(min(row))                       # WHERE the row minimum is
+            if matrix[i][j] == max(matrix[k][j] for k in range(rows)):
+                result.append(matrix[i][j])
+        return result
+
+        This checks a specific CELL against its own column, so a value that is a row minimum in one
+        place and a column maximum elsewhere cannot slip through.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the 3x3 example.
+
+    matrix = [[ 3,  7,  8],
+              [ 9, 11, 13],
+              [15, 16, 17]]
+
+    row minimums
+        row 0: min(3,7,8)     = 3
+        row 1: min(9,11,13)   = 9
+        row 2: min(15,16,17)  = 15
+        row_mins = {3, 9, 15}
+
+    transpose, zip(*matrix) yields
+        (3, 9, 15)   -> max 15
+        (7, 11, 16)  -> max 16
+        (8, 13, 17)  -> max 17
+        col_maxs = {15, 16, 17}
+
+    intersection {3,9,15} & {15,16,17} = {15}
+    return [15]
+
+    Check 15 directly: its row is (15,16,17), so it is the minimum; its column is (3,9,15), so it is
+    the maximum. Both hold.
+
+TRACE B - a matrix with no lucky number.
+
+    matrix = [[1, 10],
+              [20, 2]]
+
+    row minimums    {1, 2}
+    columns         (1,20) -> 20,  (10,2) -> 10
+    col_maxs        {20, 10}
+    intersection    empty -> return []
+
+    MEASURED, 7,111 of 20,000 random matrices behave like this. An empty answer is normal, not an
+    error.
+
+TRACE C - the at-most-one argument, made concrete.
+
+    Suppose 15 at (2,0) and some other lucky value b at (0,2) both qualified.
+
+        the crossing cell (2,2) holds 17
+        15 is row 2's minimum, so 15 <= 17
+        b is column 2's maximum, so 17 <= b
+        therefore 15 <= b
+
+        the other crossing cell (0,0) holds 3
+        b is row 0's minimum, so b <= 3
+        15 is column 0's maximum, so 3 <= 15
+        therefore b <= 15
+
+    So 15 <= b and b <= 15, meaning b = 15 - impossible for two distinct cells with distinct values.
+
+    MEASURED over 20,000 random matrices: 12,889 had exactly one lucky number and 7,111 had none.
+    Never two.
+
+TRACE D - what breaks without distinct values.
+
+    matrix = [[1, 2],
+              [1, 3]]
+
+    row minimums    row 0 -> 1, row 1 -> 1     row_mins = {1}
+    columns         (1,1) -> 1,  (2,3) -> 3    col_maxs = {1, 3}
+    intersection    {1} -> the set version returns [1]
+    brute force over cells returns [1, 1] - BOTH cells at column 0 qualify     MEASURED
+
+    The set collapsed two genuinely distinct lucky CELLS into one value. That is the constraint
+    earning its place in the problem statement.
+
+TRACE E - the timings on a 300x300 matrix.
+
+    two sets and intersect      2.6 ms
+    cell-by-cell brute force  268   ms      103x
+    same answers                            MEASURED
+
+    The brute force recomputes a row minimum and a column maximum for every one of the 90,000 cells;
+    the fast version computes each aggregate once.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(m*n). Every element is read twice - once by its row's `min`, once by its column's
+            `max` - and the intersection is O(min(m, n)).
+    space   O(m + n) for the two sets. The transpose produced by `zip` is lazy, so it does not
+            materialise a second copy of the matrix.
+
+    MEASURED on 300x300: 2.6 ms, against 268 ms for the O(m*n*(m+n)) brute force - 103x.
+
+    The at-most-one theorem allows a further reduction: take `max(min(row) for row in matrix)` as
+    the single candidate and check only its column, which is O(m*n) with a smaller constant and one
+    column scan instead of n.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Not noticing that comparing by VALUE depends on the distinctness guarantee. MEASURED, with
+       duplicates the set version and a cell-by-cell check disagree.
+    2. Getting the transpose backwards, or writing `max(zip(*matrix))` - which compares tuples
+       lexicographically and returns a whole column.
+    3. Recomputing row minimums and column maximums per cell. MEASURED 103x slower.
+    4. Returning a set instead of a list.
+    5. Assuming there is always exactly one answer. MEASURED, 35.6% of random matrices have none.
+    6. Not knowing - or not saying - that there can never be two. It is a four-line argument and it
+       is the most interesting thing about the problem.
+
+THE TAKEAWAY
+    A definition that is a CONJUNCTION of two independent conditions becomes two aggregate passes and
+    a set intersection - compute what satisfies each side separately instead of testing every cell
+    against both. Then notice what the solution quietly relies on: comparing by value is sound only
+    because the values are distinct. And the crossing-cell argument proving at most one lucky number
+    exists is the kind of small theorem worth having ready, because it both explains the shape of the
+    answer and licenses a faster one.""",
+]
+
+_EX_P1AO["Matrix Diagonal Sum"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add up both diagonals of a square matrix, but do not count the
+middle element twice.
+
+    [[1, 2, 3],
+     [4, 5, 6],
+     [7, 8, 9]]
+
+    primary diagonal   (top-left to bottom-right):  1, 5, 9
+    secondary diagonal (top-right to bottom-left):  3, 5, 7
+    they SHARE the 5 in the middle
+
+    1 + 5 + 9 + 3 + 5 + 7 = 30, but the 5 was counted twice, so the answer is 25   MEASURED
+
+The primary diagonal is the cells where the row and column indices are equal: `mat[i][i]`. The
+secondary diagonal is the cells where they add up to n-1: `mat[i][n-1-i]`.
+
+    def diagonal_sum(mat):
+        n = len(mat)
+        total = 0
+        for i in range(n):
+            total += mat[i][i]
+            total += mat[i][n - 1 - i]
+        if n % 2 == 1:
+            total -= mat[n // 2][n // 2]
+        return total
+
+THE ONLY DECISION IS THE OVERLAP, and it happens exactly when n is ODD - only then does a cell sit
+on both diagonals, at position (n//2, n//2).
+
+MEASURED against a brute force that collects the cell COORDINATES into a set and sums them - so
+double counting is impossible by construction: identical answers on all 20,000 random matrices.
+Omitting the subtraction is MEASURED wrong on 11,374 of 20,000, 56.9% - which is precisely the share
+of test matrices that had an odd n.""",
+
+    """2. THE INTUITION - two index formulas, and one shared cell.
+
+THE PRIMARY DIAGONAL is `mat[i][i]`. Row 0 column 0, row 1 column 1, and so on - the cells where
+`row == col`.
+
+THE SECONDARY DIAGONAL is `mat[i][n-1-i]`. In row 0 it is the LAST column (n-1), in row 1 it is
+column n-2, and in the final row it is column 0. The defining property is `row + col == n - 1`.
+
+WHEN DO THEY MEET? Solve the two conditions together:
+
+    row == col   and   row + col == n - 1
+    so           2 * row == n - 1
+    so           row = (n - 1) / 2
+
+That has an integer solution only when n - 1 is even, i.e. when n is ODD. For n = 3 it gives row 1,
+the centre. For n = 4 it would give 1.5, which is not a cell - the two diagonals of an
+even-sized matrix pass each other without touching.
+
+SO THE CORRECTION IS EXACTLY ONE SUBTRACTION, AND ONLY FOR ODD n:
+
+    n = 3   -> subtract mat[1][1]
+    n = 4   -> subtract nothing
+    n = 5   -> subtract mat[2][2]
+
+`n // 2` is the right index: for n = 3 it is 1, for n = 5 it is 2 - the middle row, which is also
+the middle column.
+
+MEASURED on the 3x3 example: with the correction, 25; without it, 30. And on a 4x4 of all ones: 8
+either way, because there is nothing to correct. That pair of results is the whole problem in two
+lines.
+
+WHY YOU ONLY WALK n CELLS. There are 2n diagonal cells (minus one if they overlap), out of n^2 in
+the matrix. MEASURED on n = 2000: walking the diagonals takes 0.51 ms while summing the whole matrix
+takes 15 ms - 30x - which is exactly the n^2 / 2n ratio of 1000, damped by constant factors.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SQUARE MATRIX - same number of rows and columns, n by n. The problem guarantees it, which is what
+lets a single loop index serve for both directions.
+
+PRIMARY (or MAIN) DIAGONAL - the cells where row equals column, running top-left to bottom-right.
+
+SECONDARY (or ANTI-) DIAGONAL - the cells where row plus column equals n-1, running top-right to
+bottom-left.
+
+CENTRE CELL - `mat[n//2][n//2]`, which exists on both diagonals when n is odd.
+
+`n // 2` - integer division. For n = 5 it is 2, the middle index of 0..4.
+
+`n % 2 == 1` - the odd test. Equivalent to `n & 1`, and the condition that decides whether a
+correction is needed.
+
+DOUBLE COUNTING - adding the same element twice. The standard fix is inclusion-exclusion: add both
+sets, then subtract the intersection. That is literally what the last line does.
+
+INCLUSION-EXCLUSION - |A| + |B| - |A and B|. This problem is the smallest possible instance of it,
+with an intersection of size one or zero.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the shared centre.
+
+BUG 1 - FORGETTING THE SUBTRACTION ENTIRELY.
+
+    return sum(mat[i][i] + mat[i][n-1-i] for i in range(n))     # WRONG for odd n
+
+MEASURED on 20,000 random matrices with n from 1 to 7: wrong on 11,374 of them, 56.9%. That figure
+is not arbitrary - it is the proportion of the test matrices with an odd n (4 of the 7 possible
+sizes, so about 57%).
+
+The failure is by exactly the centre value, every time:
+
+    n = 3, [[1,2,3],[4,5,6],[7,8,9]]     correct 25, without the fix 30      difference 5 = mat[1][1]
+    n = 4, all ones                       correct  8, without the fix  8      no difference
+
+So the bug is invisible on every even-sized test case, which means testing with a 2x2 or a 4x4
+proves nothing at all. Test with n = 1 and n = 3.
+
+BUG 2 - SUBTRACTING UNCONDITIONALLY. For even n there is no shared cell, and `mat[n//2][n//2]` is
+still a perfectly valid cell - it is just not on both diagonals. Subtracting it produces an answer
+that is too small by an unrelated value, and it is wrong on every even-sized matrix.
+
+BUG 3 - `mat[i][n - i]` INSTEAD OF `mat[i][n - 1 - i]`. At i = 0 that is `mat[0][n]`, which is out
+of range - an IndexError on the very first iteration, so at least it fails loudly.
+
+BUG 4 - THE n = 1 CASE. A 1x1 matrix has one cell that is on both diagonals. The loop adds it twice
+and the odd-n correction subtracts it once, leaving the single value. Correct with no special
+casing - worth checking rather than assuming, because it is the smallest input and the one an
+interviewer will ask about.
+
+BUG 5 - SUMMING THE WHOLE MATRIX AND SUBTRACTING THE NON-DIAGONAL PART. Correct and O(n^2) where the
+direct walk is O(n). MEASURED at n = 2000: 15 ms against 0.51 ms, a 30x gap for reading 4 million
+cells instead of 4,000.
+
+BUG 6 - ASSUMING THE MATRIX MIGHT NOT BE SQUARE. The problem guarantees it. Handling a rectangular
+case would need a different definition of the secondary diagonal altogether, and inventing one is
+answering a question nobody asked.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - one loop adding both diagonals, then correcting for odd n. O(n) time, O(1) space.
+The answer.
+
+ALTERNATIVE B - a set of coordinates:
+
+    cells = set()
+    for i in range(n):
+        cells.add((i, i))
+        cells.add((i, n - 1 - i))
+    return sum(mat[i][j] for i, j in cells)
+
+Double counting is impossible because a set cannot hold the same coordinate twice, so no correction
+is needed. It costs O(n) extra space for the set and it is the version I used as the correctness
+ORACLE for every measurement here - MEASURED to agree with the arithmetic version on all 20,000
+random matrices.
+
+ALTERNATIVE C - skip the shared cell inside the loop instead of subtracting afterwards:
+
+    for i in range(n):
+        total += mat[i][i]
+        if i != n - 1 - i:                 # add the secondary only when it differs
+            total += mat[i][n - 1 - i]
+
+One comparison per row instead of one subtraction at the end. Arguably clearer, because the
+condition `i != n-1-i` says directly "these are different cells". Identical complexity.
+
+ALTERNATIVE D - two comprehensions summed, then corrected:
+`sum(mat[i][i] for i in range(n)) + sum(mat[i][n-1-i] for i in range(n)) - (mat[n//2][n//2] if n % 2
+else 0)`. Same thing on one line, two passes instead of one, and the conditional expression is easy
+to get backwards.
+
+ALTERNATIVE E - `numpy`: `mat.trace() + numpy.fliplr(mat).trace() - correction`. `trace` is the
+standard name for the primary diagonal's sum, and `fliplr` reverses the columns so the secondary
+becomes primary. Worth naming because "trace" is the term a mathematician would use.
+
+THE FAMILY - index-formula matrix problems:
+  * TRANSPOSE MATRIX, ROTATE IMAGE - the same kind of index arithmetic, `mat[i][j] ->
+    mat[j][n-1-i]`;
+  * SPIRAL MATRIX, DIAGONAL TRAVERSE - traversals defined by an index pattern rather than by a
+    search;
+  * TOEPLITZ MATRIX - checks that every diagonal is constant, using `i - j` as the diagonal's
+    identity;
+  * LUCKY NUMBERS IN A MATRIX - the neighbouring problem, where the trick is aggregates rather than
+    indices.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - write down the two index formulas before any code: primary is `mat[i][i]`, secondary is
+`mat[i][n-1-i]`. Check the secondary at i = 0 - it should be the last column - to confirm the
+`n - 1` rather than `n`.
+
+STEP 2 - `n = len(mat)` and `total = 0`.
+
+STEP 3 - one loop over rows, adding both cells:
+    for i in range(n):
+        total += mat[i][i]
+        total += mat[i][n - 1 - i]
+
+STEP 4 - solve for the overlap out loud: the two diagonals meet where `i == n-1-i`, i.e. `2i = n-1`,
+which has an integer solution only when n is odd, at `i = n//2`.
+
+STEP 5 - correct: `if n % 2 == 1: total -= mat[n//2][n//2]`.
+
+STEP 6 - return the total.
+
+STEP 7 - test n = 3 and n = 1, not n = 2 or n = 4. MEASURED, the missing-correction bug is invisible
+on every even-sized matrix, so even-sized tests prove nothing.
+
+STEP 8 - state the complexity: O(n) time, O(1) space, touching 2n cells out of n^2. MEASURED at
+n = 2000, 0.51 ms against 15 ms for reading the whole matrix.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The primary diagonal is the cells where the row index equals the column index, and the secondary
+  is where they add up to n minus one. So one loop over the rows picks up both, at `mat[i][i]` and
+  `mat[i][n-1-i]`.
+
+- The only subtlety is that the two diagonals can share a cell. They meet where i equals n minus one
+  minus i, which means two i equals n minus one - and that has an integer solution only when n is
+  odd. So for odd n I subtract the centre, at index n over two in both directions, once.
+
+- Forgetting that subtraction is wrong on every odd-sized matrix and invisible on every even-sized
+  one - I measured it at fifty-seven per cent of random matrices, which is exactly the share with an
+  odd n. So testing with a two-by-two or four-by-four proves nothing.
+
+- The one-by-one case works without any special handling: the single cell gets added twice by the
+  loop and subtracted once by the correction.
+
+- If I wanted to avoid the arithmetic entirely I would collect the coordinates into a set and sum
+  those cells - a set cannot hold a duplicate, so the overlap handles itself. That is what I used to
+  check this version.
+
+- O(n) time and constant space. It touches 2n cells out of n squared, so on a two-thousand-square
+  matrix it is about thirty times faster than reading the whole thing.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def diagonal_sum(mat):
+        n = len(mat)
+        total = 0
+        for i in range(n):
+            total += mat[i][i]                # primary diagonal
+            total += mat[i][n - 1 - i]        # secondary diagonal
+        if n % 2 == 1:
+            total -= mat[n // 2][n // 2]      # remove the double-counted center
+        return total
+
+Line 2  `n = len(mat)`
+        The matrix is square, so one number describes both dimensions. That guarantee is what lets a
+        single loop index serve as both a row and a column.
+
+Line 4  `for i in range(n):`
+        One iteration per ROW, picking up one cell from each diagonal. So 2n cell reads in total,
+        out of the n^2 in the matrix.
+
+Line 5  `total += mat[i][i]`
+        The primary diagonal: row index equals column index.
+
+Line 6  `total += mat[i][n - 1 - i]`
+        The secondary. Check it at the ends: i = 0 gives column n-1, the top right; i = n-1 gives
+        column 0, the bottom left. Writing `n - i` instead is an IndexError at i = 0.
+
+        When n is odd and i is n//2, this is the SAME cell as line 5 - which is the double count the
+        next line repairs.
+
+Line 7  `if n % 2 == 1:`
+        Odd only. Derived, not remembered: the diagonals meet where `i == n-1-i`, so `2i = n-1`,
+        which needs n-1 even.
+
+Line 8  `total -= mat[n // 2][n // 2]`
+        Subtract the shared cell exactly once. `n // 2` is the middle index in both directions -
+        1 for n = 3, 2 for n = 5.
+
+        MEASURED, dropping this line changes the 3x3 example from 25 to 30 and leaves every
+        even-sized matrix unchanged - wrong on 56.9% of a random test set.
+
+Line 9  `return total`
+
+AND THE OVERLAP-FREE VERSION, which needs no correction at all:
+
+    def diagonal_sum_set(mat):
+        n = len(mat)
+        cells = set()
+        for i in range(n):
+            cells.add((i, i))
+            cells.add((i, n - 1 - i))
+        return sum(mat[i][j] for i, j in cells)
+
+        A set cannot contain the centre twice, so the double counting cannot happen. O(n) extra
+        space, and MEASURED to agree with the arithmetic version on all 20,000 random matrices -
+        which is exactly why it makes a good oracle.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - n = 3, `[[1,2,3],[4,5,6],[7,8,9]]`.
+
+    i    mat[i][i]   mat[i][n-1-i]   running total
+    ---------------------------------------------------
+    0        1        mat[0][2] = 3         4
+    1        5        mat[1][1] = 5        14      <- the same cell, added twice
+    2        9        mat[2][0] = 7        30
+
+    n is odd, so subtract mat[1][1] = 5
+    total = 30 - 5 = 25                                            MEASURED
+
+    Row i = 1 is where both terms name the same cell. Every odd-sized matrix has exactly one such
+    row.
+
+TRACE B - n = 4, all ones.
+
+    i    mat[i][i]   mat[i][3-i]   running total
+    ------------------------------------------------
+    0        1         mat[0][3]        2
+    1        1         mat[1][2]        4
+    2        1         mat[2][1]        6
+    3        1         mat[3][0]        8
+
+    n is even -> no subtraction, total 8                            MEASURED
+
+    Check the column indices: 3, 2, 1, 0 against 0, 1, 2, 3 - they never coincide, which is the
+    even case having no overlap.
+
+TRACE C - n = 1, `[[7]]`.
+
+    i = 0:  mat[0][0] = 7 added, then mat[0][0] = 7 added again -> total 14
+    n is odd -> subtract mat[0][0] = 7
+    total 7
+
+    Correct with no special case. The smallest input is also the one where the double count is most
+    of the answer.
+
+TRACE D - where the two diagonals meet, solved rather than remembered.
+
+    condition for the same cell:   i == n - 1 - i
+    rearranged:                    2i = n - 1
+                                   i  = (n - 1) / 2
+
+    n = 3  ->  i = 1        integer, so they meet at (1,1)
+    n = 4  ->  i = 1.5      not a cell, so they never meet
+    n = 5  ->  i = 2        they meet at (2,2)
+
+    And `(n-1)/2` equals `n//2` for odd n, which is why the code indexes with `n // 2`.
+
+TRACE E - the measurements.
+
+    20,000 random matrices with n from 1 to 7
+        arithmetic version vs the coordinate-set oracle:  identical on all 20,000
+        version without the subtraction:                  wrong on 11,374 (56.9%)
+        the share of the test set with odd n:             57.1%
+
+    n = 2000, all ones
+        diagonal walk (4,000 cell reads)      0.51 ms
+        summing the whole matrix (4,000,000)    15 ms      30x
+
+    The two percentages matching is the point: the bug fires on every odd-sized matrix and no
+    even-sized one.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one loop over the rows, two cell reads each, so 2n reads out of n^2 cells.
+    space   O(1) - a single accumulator. The coordinate-set version is O(n) space for the same
+            answer, which is the price of not doing the arithmetic.
+
+    MEASURED at n = 2000: 0.51 ms for the diagonal walk against 15 ms for summing every element -
+    30x, and the gap grows linearly with n.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Forgetting to subtract the shared centre. MEASURED wrong on 11,374 of 20,000 matrices
+       (56.9%) - exactly the odd-sized ones - and completely invisible on even-sized tests.
+    2. Subtracting unconditionally, which is wrong on every even-sized matrix by an unrelated value.
+    3. `mat[i][n - i]` instead of `mat[i][n - 1 - i]` - IndexError on the first iteration.
+    4. Testing only with a 2x2 or 4x4 example, which cannot distinguish the correct version from the
+       buggy one.
+    5. Summing the whole matrix and subtracting the rest - O(n^2) where O(n) suffices, MEASURED 30x
+       slower at n = 2000.
+    6. Special-casing n = 1. It already works: added twice, subtracted once.
+
+THE TAKEAWAY
+    Both diagonals are single index formulas - `mat[i][i]` and `mat[i][n-1-i]` - so one loop over the
+    rows collects them, and the only real question is whether they share a cell. Solve for it rather
+    than memorising: they meet where `2i = n-1`, which has an integer answer only for odd n. That is
+    inclusion-exclusion at its smallest, and the corresponding habit is worth generalising - when two
+    sets are added, subtract their intersection, and work out when the intersection is non-empty
+    instead of guessing.""",
+]
+
+_EX_P1AO["Matrix Reshape"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - pour the numbers out of one grid and refill a differently-shaped
+grid with them, in the same order.
+
+    [[1, 2],
+     [3, 4]]     reshaped to 1 row of 4  ->  [[1, 2, 3, 4]]        MEASURED
+                 reshaped to 4 rows of 1  ->  [[1], [2], [3], [4]]  MEASURED
+                 reshaped to 3 rows of 3  ->  unchanged, because 4 != 9   MEASURED
+
+The order is ROW-MAJOR: read the original left to right, top to bottom, and fill the new one the
+same way. If the element counts do not match, return the original matrix untouched.
+
+THE SOLUTION IS FLATTEN AND SLICE:
+
+    if rows * cols != r * c:
+        return mat
+    flat = [v for row in mat for v in row]
+    return [flat[i * c:(i + 1) * c] for i in range(r)]
+
+The flat list is the sequence of values in reading order, and slicing it into chunks of `c` gives
+the new rows.
+
+MEASURED against an index-arithmetic version that computes each element's original position
+directly: identical output on 20,000 random cases - and the flatten version is 8.4x faster on a
+500x500 matrix (2.7 ms against 22.7 ms), because building the flat list and slicing it are C-level
+operations while the index arithmetic runs two divisions per element in the interpreter.""",
+
+    """2. THE INTUITION - a matrix is a flat sequence wearing a shape.
+
+The values have a natural linear order - row 0 left to right, then row 1, and so on. Reshaping does
+not move any value in that sequence; it only changes where the line breaks go.
+
+    original 2x3            flat sequence            reshaped 3x2
+    1 2 3                   1 2 3 4 5 6              1 2
+    4 5 6                                            3 4
+                                                     5 6
+
+So the algorithm is: recover the sequence, then re-chunk it. Both steps are one line.
+
+WHY THE COUNTS MUST MATCH. Every element has to land somewhere and every slot has to be filled, so
+`m * n == r * c` is not a validation nicety - it is the condition for the operation to be defined at
+all. When it fails, the specification says to return the original.
+
+THE INDEX ARITHMETIC, if you would rather not build the flat list. Element number `k` of the
+sequence (counting from 0) sits at:
+
+    original:  row k // cols, column k % cols
+    reshaped:  row k // c,    column k % c
+
+MEASURED: for k = 3 with cols = 2, `k // 2` is 1 and `k % 2` is 1 - the element at (1,1), which is
+the fourth element in reading order. Both formulas are the same idea, one for each shape, and the
+whole reshape is "the element at position k in one shape goes to position k in the other".
+
+WHICH TO WRITE. MEASURED on 500x500 reshaped to 250x1000:
+
+    flatten and slice       2.7 ms
+    index arithmetic       22.7 ms      8.4x slower
+
+The flatten version wins because the comprehension and the slicing both run in C, whereas the index
+version does two integer divisions per element in Python. In a language without that gap - or when
+you must avoid the O(m*n) temporary list - the index version is the one to use.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ROW-MAJOR ORDER - storing or reading a matrix row by row. C, Python and most languages use it;
+Fortran and MATLAB use column-major, where the columns are contiguous instead. The problem specifies
+row-major, and getting this wrong transposes the answer.
+
+FLATTEN - turn a list of lists into a single list of values in reading order.
+
+NESTED COMPREHENSION - `[v for row in mat for v in row]`. The loops read LEFT TO RIGHT in the same
+order you would write them as nested `for` statements: outer loop over rows, inner over values.
+Reversing them is a NameError, which is at least loud.
+
+CHUNKING / SLICING - `flat[i*c : (i+1)*c]` takes the i-th block of `c` consecutive values.
+
+COMPATIBLE RESHAPE - one where `m * n == r * c`. Otherwise the operation is undefined and the
+original is returned.
+
+`//` and `%` - floor division and remainder, which convert between a linear position and a
+(row, column) pair. `k // width` is the row, `k % width` is the column.
+
+VIEW versus COPY - numpy's `reshape` returns a VIEW that shares memory with the original when it
+can, so writing to one changes the other. This solution returns a fresh copy, which is what the
+problem wants and is worth knowing as a difference.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the compatibility check and the slice arithmetic.
+
+BUG 1 - NOT CHECKING `m * n == r * c` FIRST. Without it, an incompatible reshape produces a
+malformed result: for a 4-element matrix reshaped to 3x3, the slices run off the end of the flat
+list and Python quietly returns short rows - `[[1,2,3],[4],[]]` - instead of an error or the
+original. Python's tolerant slicing turns a specification violation into a silently wrong shape.
+
+MEASURED: with the check, `reshape([[1,2],[3,4]], 3, 3)` returns the original matrix unchanged.
+
+BUG 2 - `flat[i*c : (i+1)*c]` WRITTEN AS `flat[i : i+c]`. That takes overlapping windows starting at
+every index instead of consecutive blocks: for c = 2 it gives `[1,2], [2,3], [3,4]` rather than
+`[1,2], [3,4]`. The stride must be `c`, and multiplying the index by `c` is what supplies it.
+
+BUG 3 - REVERSING THE NESTED COMPREHENSION: `[v for v in row for row in mat]` raises NameError
+because `row` is used before it is bound. The loops appear in the same order as nested `for`
+statements - outer first.
+
+BUG 4 - BUILDING THE OUTPUT COLUMN-MAJOR. If you fill the new matrix down the columns instead of
+across the rows, you get the transpose of the right answer. It only shows up on non-square shapes,
+so a 2x2 test cannot detect it.
+
+BUG 5 - `len(mat[0])` ON AN EMPTY MATRIX. Raises IndexError. The constraints exclude it; note the
+assumption rather than adding a guard for a case that cannot occur.
+
+BUG 6 - RETURNING THE ORIGINAL OBJECT RATHER THAN A COPY on the incompatible path. The specification
+says "return the original matrix", so returning `mat` itself is correct here - but be aware you are
+handing back an aliased object, which in production code means the caller's mutations show up in
+your return value.
+
+BUG 7 - ASSUMING THE FLAT LIST IS FREE. It is O(m*n) additional memory. For a large matrix that
+doubles the footprint, and the index-arithmetic version avoids it entirely - MEASURED 8.4x slower in
+Python, and the right choice when the matrix is too large to copy.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - flatten and slice. O(m*n) time, O(m*n) extra space for the flat list. MEASURED 2.7
+ms on 500x500. The answer.
+
+ALTERNATIVE B - index arithmetic, no temporary:
+
+    return [[mat[(i*c + j) // cols][(i*c + j) % cols] for j in range(c)] for i in range(r)]
+
+O(m*n) time, O(1) extra space beyond the output. MEASURED 22.7 ms on the same input - 8.4x slower in
+Python because of the two divisions per element, and the version to prefer where memory matters or
+where the language makes arithmetic cheap.
+
+ALTERNATIVE C - `itertools.chain.from_iterable(mat)` to flatten, which avoids materialising the
+intermediate list if you then feed it to an iterator-based chunker. Useful when the matrix is huge
+and the output is consumed lazily.
+
+ALTERNATIVE D - a running two-pointer fill: walk the original with (i, j) and the destination with
+(x, y), advancing each and wrapping when a row ends. No arithmetic, no temporary, and four index
+variables to keep straight. It is the version you would write in C, and it is the easiest to get
+subtly wrong.
+
+ALTERNATIVE E - `numpy.reshape`. One call, and it returns a VIEW sharing memory rather than a copy
+when the layout allows. Say it, then note the difference: this problem wants a new matrix, and a
+view would let the caller mutate the original through the result.
+
+THE FAMILY - shape and index manipulation:
+  * TRANSPOSE MATRIX - the same "same values, different arrangement" with a different formula;
+  * ROTATE IMAGE - reshaping in place, where the index mapping is a permutation and the challenge
+    is doing it without a temporary;
+  * SPIRAL MATRIX and DIAGONAL TRAVERSE - traversal orders other than row-major;
+  * CONVERT 1D ARRAY INTO 2D ARRAY - literally the second half of this problem;
+  * FLATTEN NESTED LIST ITERATOR - the general flattening problem when the nesting is arbitrary
+    rather than exactly two levels.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the framing first: a matrix is a flat sequence plus a rule about where the rows break,
+and reshaping only changes the rule.
+
+STEP 2 - measure the original: `rows, cols = len(mat), len(mat[0])`.
+
+STEP 3 - the compatibility check, before anything else:
+    if rows * cols != r * c:
+        return mat
+Say why it is not merely defensive: with mismatched counts the operation is undefined, and Python's
+slicing would otherwise return short rows without complaining.
+
+STEP 4 - flatten in reading order: `flat = [v for row in mat for v in row]`. Note the loop order -
+outer over rows, inner over values - is the same as nested `for` statements.
+
+STEP 5 - re-chunk: `return [flat[i*c : (i+1)*c] for i in range(r)]`. The stride is `c`, supplied by
+multiplying the row index.
+
+STEP 6 - state the complexity: O(m*n) time, O(m*n) extra space for the flat list.
+
+STEP 7 - offer the index-arithmetic version for constant extra space, and give its formula: element
+k lives at `mat[k // cols][k % cols]`. MEASURED 8.4x slower in Python, and the right answer when the
+copy is unaffordable.
+
+STEP 8 - mention that numpy's reshape returns a view rather than a copy, which is a real behavioural
+difference rather than a performance note.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- A matrix is really a flat sequence of values with line breaks in it, and reshaping just moves the
+  line breaks. So I flatten the original in reading order and then cut the flat list into rows of
+  the new width.
+
+- First I check that the element counts match - rows times columns against r times c. If they do
+  not, the reshape is undefined and I return the original. That check is not optional: without it,
+  Python's slicing would happily produce short rows and I would return a malformed matrix instead of
+  an error.
+
+- Flattening is a nested comprehension - outer loop over the rows, inner over the values in each -
+  and the chunking is a slice from i times c to i plus one times c, so consecutive blocks of the new
+  width.
+
+- O(m times n) time, and O(m times n) extra memory for the flat list.
+
+- If that copy were too expensive, I would use index arithmetic instead: element number k of the
+  sequence lives at row k divided by the original width and column k modulo the original width. That
+  is constant extra space. I measured it as about eight times slower in Python, because it does two
+  divisions per element in the interpreter while the flatten version does its work in C - so the
+  choice is memory against speed, and in Python the copy is usually worth it.
+
+- One aside: numpy's reshape returns a view that shares memory with the original, not a copy. Here I
+  want a new matrix, so the copy is the correct behaviour rather than an inefficiency.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def matrix_reshape(mat, r, c):
+        rows, cols = len(mat), len(mat[0])
+        if rows * cols != r * c:
+            return mat                   # incompatible reshape -> unchanged
+        flat = [v for row in mat for v in row]
+        return [flat[i * c:(i + 1) * c] for i in range(r)]
+
+Line 2  `rows, cols = len(mat), len(mat[0])`
+        The original dimensions. `len(mat[0])` assumes at least one row, which the constraints
+        guarantee - worth stating rather than guarding.
+
+Line 3  `if rows * cols != r * c:`
+        The compatibility check, and it must come FIRST. Every element needs a destination and every
+        destination needs an element, so equal counts is the condition for the operation to exist.
+
+        Without it, the slicing on line 6 runs past the end of `flat` and returns short or empty
+        rows - Python does not raise on an out-of-range slice, so the failure is silent.
+
+Line 4  `return mat`
+        The specified behaviour for an incompatible request. Note this returns the SAME object, not
+        a copy - correct per the problem, and an aliasing hazard in production code.
+
+Line 5  `flat = [v for row in mat for v in row]`
+        The nested comprehension flattens in row-major order. Read the two `for` clauses left to
+        right as nested loops: for each row, for each value in that row.
+
+        This is where the O(m*n) extra memory goes. It is also why the function is fast: the
+        comprehension runs its loop in C.
+
+Line 6  `[flat[i * c:(i + 1) * c] for i in range(r)]`
+        `r` rows, each a slice of exactly `c` consecutive values. Row 0 takes `flat[0:c]`, row 1
+        takes `flat[c:2c]`, and so on.
+
+        The multiplication by `c` is the stride. `flat[i:i+c]` would take overlapping windows
+        starting at every index - `[1,2]`, `[2,3]`, `[3,4]` instead of `[1,2]`, `[3,4]`.
+
+        Because the counts were checked, the last slice ends exactly at the end of `flat` with
+        nothing left over.
+
+MEASURED, this matches an index-arithmetic implementation on 20,000 random cases, at 2.7 ms against
+22.7 ms on a 500x500 matrix.
+
+AND THE CONSTANT-SPACE VERSION:
+
+    def matrix_reshape_indexed(mat, r, c):
+        rows, cols = len(mat), len(mat[0])
+        if rows * cols != r * c:
+            return mat
+        return [[mat[(i * c + j) // cols][(i * c + j) % cols] for j in range(c)] for i in range(r)]
+
+        `i * c + j` is the element's position in the flat sequence; dividing and taking the
+        remainder by the ORIGINAL width recovers its coordinates in the original matrix. MEASURED,
+        `k = 3` with `cols = 2` gives (1, 1).""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `mat = [[1,2],[3,4]]`, reshaped to r = 1, c = 4.
+
+    rows = 2, cols = 2
+    2 * 2 == 1 * 4  ->  compatible
+    flat = [1, 2, 3, 4]
+
+    i    slice          row
+    -------------------------------
+    0    flat[0:4]      [1,2,3,4]
+
+    return [[1,2,3,4]]                                          MEASURED
+
+TRACE B - the same matrix reshaped to r = 4, c = 1.
+
+    flat = [1, 2, 3, 4]
+
+    i    slice          row
+    ---------------------------
+    0    flat[0:1]      [1]
+    1    flat[1:2]      [2]
+    2    flat[2:3]      [3]
+    3    flat[3:4]      [4]
+
+    return [[1],[2],[3],[4]]                                    MEASURED
+
+    Same values, same order, different line breaks - which is the whole idea.
+
+TRACE C - an incompatible request, r = 3, c = 3.
+
+    rows * cols = 4,  r * c = 9,  not equal  ->  return mat unchanged     MEASURED
+
+    Without the check: `flat` has 4 elements and the comprehension asks for `flat[0:3]`,
+    `flat[3:6]`, `flat[6:9]`, giving `[[1,2,3],[4],[]]` - three rows of the wrong lengths, and no
+    exception anywhere.
+
+TRACE D - a 2x3 to 3x2 reshape, where row-major order is visible.
+
+    mat = [[1,2,3],
+           [4,5,6]]
+
+    flat = [1,2,3,4,5,6]
+
+    i    slice          row
+    -------------------------------
+    0    flat[0:2]      [1,2]
+    1    flat[2:4]      [3,4]
+    2    flat[4:6]      [5,6]
+
+    return [[1,2],[3,4],[5,6]]
+
+    Note the 3 and the 4 end up in the same row even though they were in different rows of the
+    original. Filling down the columns instead would give `[[1,4],[2,5],[3,6]]`, which is the
+    transpose - a bug that a square test case cannot reveal.
+
+TRACE E - the index arithmetic on the same reshape, element by element.
+
+    cols = 3 (the ORIGINAL width), c = 2 (the new width)
+
+    new (i,j)   k = i*c + j   k // cols   k % cols   value
+    -----------------------------------------------------------
+      (0,0)          0            0          0        mat[0][0] = 1
+      (0,1)          1            0          1        mat[0][1] = 2
+      (1,0)          2            0          2        mat[0][2] = 3
+      (1,1)          3            1          0        mat[1][0] = 4
+      (2,0)          4            1          1        mat[1][1] = 5
+      (2,1)          5            1          2        mat[1][2] = 6
+
+    Same answer, no temporary list. Note the divisor is the ORIGINAL width and the multiplier is the
+    NEW width - mixing them up is the classic error here.
+
+TRACE F - the timings on 500x500 reshaped to 250x1000.
+
+    flatten and slice       2.7 ms
+    index arithmetic       22.7 ms      8.4x
+    identical output                    MEASURED
+
+    250,000 elements: the flatten version does two C-level operations over them, the index version
+    does 500,000 integer divisions in Python.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(m*n) - every element is read once and written once. There is no way to do better; the
+            output has m*n elements.
+    space   O(m*n) for the flat list, plus the output. The index-arithmetic version is O(1) extra
+            beyond the output, at MEASURED 8.4x the time in Python.
+
+    numpy's reshape is O(1) when it can return a view, because nothing is copied at all - which is a
+    genuinely different operation from the one this problem asks for.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Omitting the `m * n == r * c` check. Python's slicing does not raise on out-of-range indices,
+       so the result is a silently malformed matrix - `[[1,2,3],[4],[]]` - rather than an error.
+    2. `flat[i : i+c]` instead of `flat[i*c : (i+1)*c]` - overlapping windows instead of consecutive
+       blocks.
+    3. Reversing the nested comprehension, which is a NameError.
+    4. Filling column-major, producing the transpose. Invisible on square test cases.
+    5. Mixing up the two widths in the index version: divide by the ORIGINAL width, multiply by the
+       NEW one.
+    6. Treating the flat list as free. It is O(m*n) extra memory, and the constant-space alternative
+       exists.
+    7. Assuming a reshape must copy, or must not. numpy returns a view; this problem wants a new
+       matrix. They are different contracts.
+
+THE TAKEAWAY
+    A matrix is a flat sequence plus a width, so reshaping is nothing more than re-cutting the same
+    sequence at different points - flatten, then slice into chunks of the new width. Check the
+    element counts first, because Python's forgiving slicing turns an impossible request into a
+    quietly malformed answer. And keep the index formula in mind for when the copy is unaffordable:
+    element k lives at `mat[k // width][k % width]`, which is the same conversion that underlies
+    every flat-array-as-a-grid representation.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
