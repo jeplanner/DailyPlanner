@@ -266565,6 +266565,1504 @@ and the zero-norm guard, since one zero row turns an entire row and column to na
 And remember the output is n², so past ten thousand vectors the constraint is memory,
 not arithmetic.""",
 ]
+_EX_P1AO["Dropout forward (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - randomly delete neurons during training so no
+single one becomes load-bearing.
+
+During training, dropout picks a random fraction p of the activations and sets them
+to zero. Different ones every batch. At inference it does nothing at all.
+
+WHY THAT HELPS: if a unit can be deleted at any moment, no other unit can afford to
+depend on it. The network is forced to spread each piece of evidence across several
+units instead of building a fragile chain — and that redundancy is what generalises.
+
+THE ONE DETAIL THAT MATTERS is the scaling. Zeroing 50% of the activations halves
+their sum, so a layer that sees a certain input scale during training would see twice
+that at inference. INVERTED DROPOUT fixes this at training time by dividing the
+survivors by (1 - p), so the expected value is unchanged and inference needs no
+adjustment whatsoever.
+
+MEASURED, on all-ones input:
+
+  p     inverted-dropout mean   naive (zero, no scale) mean
+  0.1        1.0004                    0.9002
+  0.5        1.0006                    0.5005
+  0.9        0.9973                    0.1004
+
+The inverted version holds the mean at 1.0. The naive version scales it by (1-p),
+which is exactly the train/inference mismatch you would then have to undo.""",
+
+    """2. THE INTUITION - a Bernoulli mask, and where the 1/(1-p) comes from.
+
+Take one activation x. With probability (1 - p) it survives and becomes x/(1-p);
+with probability p it becomes 0. Its expected value is
+
+  E[out] = (1 - p) · x/(1-p)  +  p · 0  =  x
+
+UNCHANGED. That single line is the whole justification for inverted dropout, and it
+is worth writing on the board because it shows the 1/(1-p) is not a fudge factor —
+it is exactly what makes the expectation an identity.
+
+TWO PLACES YOU COULD PUT THE SCALE. The original 2012 paper scaled at INFERENCE:
+train with plain zeroing, then multiply every activation by (1-p) at test time.
+INVERTED dropout moves the scale into training instead. Both are mathematically
+equivalent in expectation; inverted wins in practice for one engineering reason —
+INFERENCE BECOMES AN EXACT NO-OP, so the deployed model has no dropout-shaped
+branches in it and changing p does not change the inference path.
+
+WHAT IT COSTS: variance. The mean is preserved, but the mask itself is random and
+that randomness is injected into every forward pass. MEASURED, the variance of the
+mask is exactly p/(1-p):
+
+  p      measured mask variance     p/(1-p)
+  0.1          0.1115               0.1111
+  0.5          1.0000               1.0000
+  0.9          8.9427               9.0000
+
+At p = 0.9 each activation is multiplied by a random number with variance 9. That is
+why high dropout rates need more epochs to converge — the gradient signal is buried
+in mask noise.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ACTIVATION - the output of a neuron for one input, before or after the nonlinearity.
+Dropout is applied to a whole layer of them at once.
+
+DROP RATE p - the probability that any given activation is zeroed. `p=0.5` for dense
+layers is the classic; 0.1-0.2 for convolutional layers; 0.1 inside transformers.
+
+KEEP RATE - `1 - p`. Some frameworks take one and some take the other, and mixing
+them up turns 10% dropout into 90% dropout. PyTorch and TensorFlow both take the DROP
+rate; TensorFlow 1's `tf.nn.dropout` originally took the KEEP rate, which is the
+historical source of the confusion.
+
+MASK - the array of 0s and 1/(1-p)s, sampled fresh for every forward pass and the
+same shape as the activations.
+
+INVERTED DROPOUT - scaling the survivors by 1/(1-p) at TRAINING time, so inference is
+a no-op. What every framework does today.
+
+CO-ADAPTATION - two units learning to compensate for each other's errors, so neither
+works alone. The failure dropout was invented to prevent.
+
+TRAINING FLAG - the boolean that switches dropout off. `model.eval()` in PyTorch,
+`training=False` in Keras. FORGETTING IT IS THE #1 DROPOUT BUG IN PRODUCTION.
+
+MC DROPOUT - deliberately leaving dropout ON at inference and averaging many
+stochastic passes, to get an uncertainty estimate.
+
+REGULARISER - anything that reduces overfitting by limiting what the model can
+express. Dropout is one; L2 is another.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - forgetting to turn it off, and how much
+damage that does.
+
+The guard `if not training: return x` is one line, and leaving dropout active at
+inference is the most common way to ship a model that is quietly worse than the one
+you evaluated.
+
+IT IS HARD TO SPOT because the model still works. The mean activation is right —
+that is what inverted dropout guarantees — so nothing looks broken. What changes is
+the VARIANCE, and therefore the argmax.
+
+MEASURED, 1,000 samples, a 128-unit hidden layer, 10 classes. How often does a
+dropout-active forward pass agree with the clean one?
+
+  p = 0.1  ->  agrees 75.3% of the time
+  p = 0.5  ->  agrees 43.3% of the time
+
+At p = 0.5 the prediction is a coin flip against the model's own answer. And running
+the same input twice gives different outputs — a nondeterminism bug that surfaces as
+"the API returns different results for the same request".
+
+THE SECOND TRAP: p = 1.0. `keep = 0`, and the mask becomes `False / 0`, which is
+0/0 = nan. MEASURED, the entire array becomes nan — not zeros, nan, which then
+poisons every gradient in the network. Guard `p == 1` or forbid it.
+
+THE THIRD: `p == 0` still costs you. Without the early return the code samples a
+full-size random array and multiplies by it, which for a large layer is real time and
+memory spent to compute the identity. The `if not training or p == 0` guard covers
+both.
+
+THE FOURTH, AND THE SUBTLE ONE: sampling the mask ONCE and reusing it across batches.
+The regularisation comes from the mask CHANGING. A fixed mask is not dropout, it is
+permanently deleting those units.""",
+
+    """5. THE ALTERNATIVES, AND WHERE DROPOUT IS THE WRONG TOOL.
+
+BATCH NORMALISATION largely displaced dropout in convolutional networks. It
+regularises through the noise in batch statistics, and it converges faster. THE TWO
+INTERACT BADLY: dropout changes the variance of its layer's activations between train
+and test, which is exactly what BatchNorm's running statistics are estimating, so
+BatchNorm's stored variance is wrong at inference. The standard advice is to use one
+or the other in a given block, and if both, put dropout AFTER the BatchNorm.
+
+L2 / WEIGHT DECAY constrains weight magnitude rather than deleting units. Cheaper, no
+train/test asymmetry, no variance injection. Usually used TOGETHER with dropout, not
+instead of it.
+
+DROPCONNECT drops individual WEIGHTS instead of activations. More thorough,
+substantially more expensive, rarely worth it.
+
+SPATIAL DROPOUT (Dropout2d) drops entire feature MAPS in a convolutional layer.
+Ordinary dropout on a conv layer is weak, because adjacent pixels in a feature map are
+strongly correlated — deleting one pixel leaves its neighbours to carry the same
+information. Dropping the whole channel actually removes a feature.
+
+STOCHASTIC DEPTH drops whole residual BLOCKS. The dropout idea scaled up to
+architecture level.
+
+LAYER-SPECIFIC RATES rather than one global p: in transformers, dropout goes on the
+attention weights and the residual connections at 0.1, not 0.5. A 0.5 rate in a
+modern transformer will simply prevent it from training.
+
+AND THE HONEST ANSWER FOR VERY LARGE MODELS: when the training set is large relative
+to the parameter count, dropout often helps nothing and slows convergence. Many recent
+large language models train with dropout set to 0.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. GUARD FIRST: `if not training or p == 0: return x`. Two bugs closed in one
+line — inference leakage and wasted work at p = 0.
+
+STEP 2. `keep = 1 - p`. Name it, because `1 - p` appearing three times is how the
+sign gets flipped in one of them.
+
+STEP 3. SAMPLE THE MASK: `rng.random(x.shape) < keep`. A boolean array, True with
+probability `keep`. Note `<` not `<=` — with `<=`, `rng.random()` returning exactly 0
+would keep a unit it should have dropped, which is a negligible bias but free to get
+right.
+
+STEP 4. SCALE IT: `/ keep`. The boolean array becomes floats of 0 and 1/keep in one
+operation. This is the inverted-dropout step and the whole reason inference is a
+no-op.
+
+STEP 5. APPLY: `return x * mask`. Elementwise.
+
+STEP 6. TAKE THE RNG AS A PARAMETER, do not reach for global `np.random`. It makes
+the function testable and makes a training run reproducible.
+
+STEP 7. SAMPLE A FRESH MASK EVERY CALL. Never cache it.
+
+STEP 8. IF YOU NEED THE BACKWARD PASS, RETURN THE MASK. The gradient of `x * mask`
+with respect to x is `grad * mask` — the same mask, including the 1/keep, so the
+scale is applied consistently in both directions.
+
+STEP 9. SAY THE EXPECTATION ARGUMENT ALOUD: "(1-p)·x/(1-p) + p·0 = x, so the mean is
+unchanged and inference needs no correction."
+
+STEP 10. MENTION THE VARIANCE COST: the mask's variance is p/(1-p), which is 1.0 at
+p = 0.5 and 9.0 at p = 0.9.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'Dropout zeroes a random fraction p of activations during training, resampled every
+forward pass, so no unit can rely on any particular other unit being present. That
+forces redundancy, and the redundancy is what generalises.
+
+The implementation is three lines: sample a Bernoulli mask, scale it, multiply. The
+only thing worth thinking about is the scale. If I just zero things, I remove a
+fraction p of the signal, so the layer downstream sees a different input scale during
+training than at inference. Inverted dropout fixes that on the training side by
+dividing the survivors by one-minus-p, which makes the expectation exactly x —
+one-minus-p times x-over-one-minus-p, plus p times zero. That means inference is a
+pure no-op, which is why every framework does it this way.
+
+I measured that: on all-ones input, inverted dropout keeps the mean at 1.0 for p from
+0.1 to 0.9, while plain zeroing gives 0.90, 0.50 and 0.10.
+
+The first line of the function is the guard — if not training, return x unchanged.
+Leaving dropout on at inference is the classic production bug and it is hard to spot,
+because the mean is still correct so nothing looks broken. What breaks is the
+variance: I measured a dropout-active forward pass agreeing with the clean one only
+43% of the time at p = 0.5, and the same input gives different answers on repeated
+calls.
+
+The cost of dropout is variance. The mask has variance p over one-minus-p, so at
+p = 0.5 that is 1.0 and at p = 0.9 it is 9.0 — measured — which is why high rates need
+more epochs. And I would not use 0.5 everywhere: dense layers, yes; conv layers want
+spatial dropout at 0.1 to 0.2, because adjacent pixels are correlated and dropping one
+removes nothing; transformers use 0.1 on attention and residuals.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def dropout_forward(x, p, training, rng):
+      if not training or p == 0:                    # 1
+          return x
+      keep = 1 - p                                  # 2
+      mask = (rng.random(x.shape) < keep) / keep    # 3, 4
+      return x * mask                               # 5
+
+LINE 1. THE MOST IMPORTANT LINE IN THE FUNCTION. `not training` is the inference
+no-op; `p == 0` skips allocating a full-size random array to multiply by ones.
+MEASURED consequence of losing the first half: at p = 0.5 the prediction disagrees
+with the clean forward pass 56.7% of the time, and the same input returns different
+answers on repeat calls.
+
+LINE 2. `keep = 1 - p`, named once. Also the value that would be 0 at p = 1 — worth a
+guard, because line 3 then computes `False / 0` which is 0/0 = NAN, not zero.
+MEASURED: the whole array becomes nan.
+
+LINE 3, THE SAMPLE. `rng.random(x.shape)` gives uniforms in [0, 1); comparing `< keep`
+gives True with probability exactly `keep`. Elementwise and independent — one Bernoulli
+draw per activation, which is what makes a fresh pattern every batch. Passing `rng` in
+rather than calling `np.random` globally is what makes a training run reproducible.
+
+LINE 4, THE SCALE — the `/ keep` on the same line. The boolean array is promoted to
+float and becomes 0 or 1/keep. THIS IS THE INVERTED-DROPOUT STEP. Its justification
+is one line of algebra: E[out] = keep · x/keep + p · 0 = x. MEASURED, that holds to
+three decimals at every rate tested, while omitting it scales the mean by exactly
+(1-p): 0.9002, 0.5005, 0.1004 at p = 0.1, 0.5, 0.9.
+
+LINE 5. Elementwise multiply. The zeroed positions contribute nothing; the survivors
+are amplified.
+
+FOR THE BACKWARD PASS, return the mask too:
+
+      dx = dout * mask
+
+The SAME mask, 1/keep included. Dropped units get zero gradient, which is correct —
+they did not participate — and surviving units get their gradient amplified by the
+same factor their activation was, which keeps the forward and backward scales
+consistent.
+
+WHAT IS NOT HERE, AND SHOULD BE FOR CONV LAYERS: this drops individual elements. On a
+feature map, neighbouring pixels carry nearly the same information, so element-wise
+dropout removes almost nothing. `Dropout2d` masks whole CHANNELS —
+`rng.random((N, C, 1, 1))` broadcast over the spatial dimensions.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the expectation, measured on 10,000 x 100 ones.
+
+  p      inverted mean   inverted var    naive mean
+  0.0       1.0000          0.0000          1.0000
+  0.1       1.0004          0.1108          0.9002
+  0.5       1.0006          1.0000          0.5005
+  0.9       0.9973          8.9786          0.1004
+
+READ THE TWO OUTER COLUMNS TOGETHER. Inverted dropout holds the mean at 1.0 while the
+variance grows from 0 to 9. Naive dropout holds the variance lower but drags the mean
+down by exactly (1-p) — which is the train/inference mismatch, in one column.
+
+TRACE B - the mask variance against theory, 200,000 samples:
+
+  p      measured      p/(1-p)
+  0.1     0.1115        0.1111
+  0.3     0.4284        0.4286
+  0.5     1.0000        1.0000
+  0.7     2.3338        2.3333
+  0.9     8.9427        9.0000
+
+Five for five. The noise dropout injects is p/(1-p), and it is superlinear — going
+from p=0.5 to p=0.9 multiplies it by nine.
+
+TRACE C - leaving dropout on at inference. 1,000 inputs, 128 hidden units, 10 classes,
+20 stochastic draws each:
+
+  p = 0.1  ->  argmax agrees with the clean pass 75.3% of the time
+  p = 0.5  ->  argmax agrees 43.3% of the time
+
+Every disagreement is a wrong answer the offline evaluation never saw.
+
+TRACE D - MC dropout, which is the same thing done DELIBERATELY. Averaging N
+stochastic passes at p = 0.5:
+
+  passes    argmax agrees with clean    mean absolute logit error
+     1            44.8%                        9.0582
+     5            67.4%                        4.0703
+    20            84.6%                        2.0125
+   100            91.8%                        0.9021
+
+The logit error falls as 1/sqrt(N) — 9.06, 4.07, 2.01, 0.90 across a 100x increase in
+passes, which is the 10x reduction Monte Carlo predicts. AND IT NEVER FULLY CONVERGES
+TO THE CLEAN ANSWER, because averaging the logits of many masked networks is not the
+same function as one unmasked network. That gap is the point of MC dropout: the spread
+across passes is the uncertainty estimate.
+
+TRACE E - p = 1.0. `keep = 0`, `(rng.random(...) < 0) / 0` is `False / 0` = 0/0.
+MEASURED, every entry is nan. Not an exception, not zeros — nan, which propagates
+through the loss and turns every weight in the network to nan on the first backward
+pass.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(N) for N activations, one random draw and one multiply each. The random
+sampling dominates and is typically 2-3x the cost of the multiply, which is why the
+`p == 0` early return is worth having. SPACE O(N) for the mask, which must be kept
+until the backward pass — dropout is not free in memory during training. At inference:
+zero of both.
+
+THE #1 MISTAKE: forgetting the training guard. MEASURED, at p = 0.5 the prediction
+agrees with the clean model only 43.3% of the time, and repeated calls on the same
+input give different answers. Nothing errors, and the mean activation is still
+correct, so it survives review.
+
+THE #2 MISTAKE: scaling by the wrong factor, or not at all. MEASURED, plain zeroing
+scales the mean by exactly (1-p), so the layer downstream sees a systematically
+different input at inference.
+
+THE #3 MISTAKE: confusing the drop rate with the keep rate. `dropout(0.9)` is 90%
+DROPPED in PyTorch and TensorFlow 2, and was 90% KEPT in TensorFlow 1's
+`tf.nn.dropout`. The model still trains; it just trains badly.
+
+THE #4 MISTAKE: p = 1.0, which is 0/0 and gives nan rather than zeros. MEASURED.
+
+THE #5 MISTAKE: caching the mask. The regularisation comes entirely from resampling.
+
+THE #6 MISTAKE: element-wise dropout on convolutional feature maps, where neighbouring
+pixels are correlated enough that dropping one removes nothing. Use spatial dropout.
+
+THE #7 MISTAKE: dropout immediately before BatchNorm, which corrupts the running
+variance estimates that BatchNorm relies on at inference.
+
+THE #8 MISTAKE: p = 0.5 in a transformer. Modern architectures use 0.1, and large
+models often use 0.
+
+THE TAKEAWAY: dropout deletes a random fraction of activations each forward pass so no
+unit can depend on another, and the entire implementation is a Bernoulli mask scaled by
+1/(1-p) — that scale is what makes E[out] exactly x, measured as a mean of 1.0000 at
+every rate where plain zeroing gives (1-p). Because the scale lives on the training
+side, INFERENCE IS A LITERAL NO-OP, which is why the first line of the function is the
+training guard: leaving dropout on at test time preserves the mean, so nothing looks
+wrong, while the argmax agrees with the clean model only 43% of the time at p = 0.5.
+The cost you are paying is variance, p/(1-p) — 1.0 at p = 0.5 and 9.0 at p = 0.9 —
+which is why aggressive rates need more epochs and why modern architectures use 0.1
+rather than the textbook 0.5.""",
+]
+
+_EX_P1AO["Gradient descent step (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one step downhill, and it is four lines.
+
+Gradient descent is the loop underneath almost every model that learns. One step is:
+
+  pred  = X @ w                      what the model currently says
+  error = pred - y                   how wrong it is, per sample
+  grad  = (X.T @ error) * (2/n)      which direction increases the loss
+  w     = w - lr * grad              move the opposite way
+
+The loss being minimised is mean squared error, `MSE = (1/n)·sum((Xw - y)²)`, and the
+gradient of that with respect to w is exactly `(2/n)·Xᵀ(Xw - y)`. Everything else in
+deep learning is this with a more complicated way of computing `grad`.
+
+THE ONE PARAMETER THAT DECIDES WHETHER IT WORKS is the learning rate, and it has a
+hard mathematical threshold rather than a matter of taste. MEASURED on a 500x5
+problem: the loss surface's largest curvature is L = 2.2004, the theory says gradient
+descent diverges above `lr = 2/L = 0.9089`, and the measurement lands on it exactly —
+lr = 0.90 converges to within 5e-05, lr = 0.9089 sits at 0.9988 and does not improve,
+lr = 0.91 wanders to 3.35, and lr = 0.95 reaches 6.3e+18.""",
+
+    """2. THE INTUITION - the gradient points uphill, so subtract it; and the step size is
+bounded by the curvature.
+
+THE DIRECTION. `Xᵀ(Xw - y)` is the direction in weight space that most rapidly
+INCREASES the squared error. You want less error, so you move the other way — hence
+the minus in `w - lr * grad`. That sign is the entire algorithm and flipping it gives
+gradient ASCENT, which diverges immediately and unmistakably.
+
+WHY `Xᵀ`. `error` has one entry per SAMPLE (length n); `w` has one entry per FEATURE
+(length d). `Xᵀ` is the (d, n) matrix that converts between them: `Xᵀ @ error` asks,
+for each feature, how much that feature's values line up with the current residuals.
+A feature that is large exactly where you are over-predicting gets a large positive
+gradient and its weight comes down.
+
+WHY THERE IS A CEILING ON THE STEP SIZE. Near the minimum the loss is a bowl, and the
+curvature of that bowl in the steepest direction is L (the largest eigenvalue of the
+Hessian, `(2/n)·XᵀX`). A step of size lr multiplies the distance-to-optimum along that
+direction by `|1 - lr·L|`. That factor is below 1 — so you get closer — only while
+`lr < 2/L`. AT EXACTLY 2/L YOU OSCILLATE FOREVER WITHOUT MOVING; above it, each step
+overshoots further than the last and the distance grows geometrically.
+
+MEASURED, that is not an approximation. L = 2.2004, 2/L = 0.9089, and:
+
+  lr = 0.85    -> converges to 2.4e-15
+  lr = 0.90    -> converges to 5.1e-05
+  lr = 0.9089  -> stuck at 0.9988
+  lr = 0.91    -> 3.3457
+  lr = 0.95    -> 6.3e+18""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+X - the design matrix, shape (n, d): n samples, d features, one sample per ROW.
+y - the targets, length n. w - the weights, length d.
+
+RESIDUAL / ERROR - `pred - y`. NOT `y - pred`; that flips the sign of the gradient
+and turns descent into ascent.
+
+GRADIENT - the vector of partial derivatives of the loss with respect to each weight.
+It points in the direction of steepest INCREASE.
+
+LEARNING RATE (lr, step size) - how far to move along the negative gradient. The one
+hyperparameter of plain gradient descent.
+
+MSE - mean squared error, `(1/n)·Σ(pred - y)²`. Its derivative brings down a factor of
+2 and the 1/n stays, giving the `2/n`.
+
+HESSIAN - the matrix of second derivatives, here `(2/n)·XᵀX`. It describes the
+curvature of the bowl.
+
+L (SMOOTHNESS CONSTANT) - the largest eigenvalue of the Hessian. The steepest
+curvature, and what bounds the learning rate at `2/L`.
+
+CONDITION NUMBER - largest eigenvalue over smallest. How elongated the bowl is. A
+well-conditioned problem is a round bowl; a badly-conditioned one is a narrow valley,
+and gradient descent zig-zags across it.
+
+BATCH / STOCHASTIC / MINI-BATCH - whether one step uses all n samples, one sample, or
+a subset. This code is full-batch.
+
+CONVERGENCE - the weights stop changing. For a convex problem like this there is one
+minimum, so it is the answer; `np.linalg.lstsq` computes it directly.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the learning rate has no universal value,
+because the `2/n` and the feature scale both move the threshold.
+
+MISTAKE ONE: DROPPING THE `2/n`. It looks like a constant you could fold into the
+learning rate, and it is — but only if you also change the learning rate. MEASURED at
+lr = 0.1 on the same problem:
+
+  grad × (2/n)   ->  ||w - w*|| = 2.7e-15    (converged)
+  grad × (1/n)   ->  ||w - w*|| = 2.6e-08    (converged, slower)
+  grad × 1       ->  ||w - w*|| = inf        (DIVERGED)
+
+Without the 1/n, the gradient is 500 times larger on a 500-sample problem, so the same
+learning rate is effectively 500x. It overflows. THIS IS WHY A LEARNING RATE THAT
+WORKED ON A SMALL DATASET EXPLODES ON A LARGE ONE if the normalisation is wrong — the
+sum grows with n and the mean does not.
+
+MISTAKE TWO: NOT SCALING THE FEATURES. The maximum stable learning rate is 2/L, and L
+depends on the SCALE of the columns of X. MEASURED, multiplying one feature column by
+1000:
+
+  original:        condition number 1.260,     max stable lr 0.9089
+  one column ×1000: condition number 1.05e+06,  max stable lr 1.036e-06
+
+The usable learning rate fell by a factor of a million, because it is now set by the
+one huge feature while the others need a million times more steps. MEASURED: the
+well-scaled problem reaches 2.7e-15 in 200 STEPS at lr = 0.1; the badly-scaled one is
+still at 1.76 after 200,000 STEPS at its maximum stable rate.
+
+STANDARDISING THE FEATURES IS NOT A NICETY. It is the difference between 200 steps and
+never.
+
+MISTAKE THREE: assuming smaller is safer. MEASURED, steps to reach ||w - w*|| < 1e-6:
+
+  lr = 0.001  ->  8,384 steps
+  lr = 0.01   ->    832
+  lr = 0.1    ->     77
+  lr = 0.5    ->      8
+  lr = 0.9    ->    698
+
+The optimum is not the smallest stable rate — it is near the middle. At 0.001 you
+converge, eventually, a thousand times slower than necessary. And note lr = 0.9,
+still stable, takes 698 steps: the region just below the divergence threshold is slow
+too, because the steps oscillate across the valley.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+THE CLOSED FORM. For linear regression the answer is `w = (XᵀX)⁻¹Xᵀy`, or better
+`np.linalg.lstsq(X, y)`, which is exact and needs no learning rate. USE IT whenever d
+is small enough that a d×d solve is cheap — which is up to a few thousand features.
+Gradient descent on linear regression is a teaching device, not a recommendation.
+
+MINI-BATCH SGD, once n is large. Each step uses a subset, so it costs O(batch·d)
+instead of O(n·d) and you take many more steps per epoch. The gradient is noisy, and
+that noise is itself mildly regularising.
+
+MOMENTUM. Accumulate a velocity, `v = βv + grad; w -= lr·v`. It damps the zig-zag
+across a narrow valley, which is precisely the badly-conditioned case measured above,
+and it improves the dependence on the condition number from κ to sqrt(κ).
+
+ADAM. Per-parameter adaptive step sizes from running estimates of the gradient's mean
+and variance. Its real value is that it partially compensates for unscaled features —
+which is why it is the default when you do not want to think about the learning rate.
+It does not remove the need to standardise, it just makes the failure less total.
+
+NEWTON'S METHOD / L-BFGS. Use the curvature, not just the slope. Newton converges in
+one step on a quadratic like this, but needs the d×d Hessian; L-BFGS approximates it
+from recent gradients and is the right choice for medium-sized convex problems.
+
+LEARNING RATE SCHEDULES. Start near the stability limit for speed, decay for
+precision. MEASURED, that is exactly what the step counts argue for: 8 steps at
+lr = 0.5 to get within 1e-6, but the same rate would be too large for a
+badly-conditioned problem.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. STANDARDISE X FIRST, outside this function — subtract each column's mean,
+divide by its standard deviation. MEASURED, this is worth a factor of a million in the
+usable learning rate.
+
+STEP 2. `n = X.shape[0]`. The number of SAMPLES, i.e. the first axis. Using
+`X.shape[1]` here divides by the feature count and silently rescales your learning
+rate.
+
+STEP 3. `pred = X @ w`. Shapes (n, d) @ (d,) -> (n,).
+
+STEP 4. `error = pred - y`. PREDICTION MINUS TARGET, in that order. The reverse gives
+ascent.
+
+STEP 5. `grad = (X.T @ error) * (2.0 / n)`. (d, n) @ (n,) -> (d,), same shape as w —
+which is the shape check worth stating out loud.
+
+STEP 6. `2.0 / n`, not `2 / n`, if you are ever in a language with integer division.
+In Python 3 it is the same, but writing the float is free.
+
+STEP 7. `return w - lr * grad`. MINUS. Returning a new array rather than mutating in
+place keeps the function testable.
+
+STEP 8. LOOP IT AND WATCH THE LOSS. If it grows, the learning rate is above 2/L —
+halve it. If it falls but slowly and monotonically, raise it.
+
+STEP 9. STOP ON A CRITERION, not a fixed count: `||w_new - w_old|| < tol`, or a
+maximum iteration cap.
+
+STEP 10. IF THERE IS AN INTERCEPT, append a column of ones to X rather than tracking b
+separately. The same update then handles it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'One step of batch gradient descent on mean squared error. I compute the predictions
+X times w, subtract the targets to get the residuals, and then the gradient of MSE
+with respect to w is two over n times X-transpose times those residuals. Then I step
+in the opposite direction: w minus learning rate times gradient.
+
+X-transpose is doing the shape conversion — the residual vector has one entry per
+sample and the weight vector has one entry per feature, and X-transpose maps between
+them. Concretely it asks, for each feature, how strongly that feature lines up with
+the residuals; a feature that is large exactly where I am over-predicting gets a large
+gradient and its weight comes down.
+
+The two-over-n matters more than it looks. It is the derivative of the MEAN, not the
+sum, and if I drop it the gradient scales with n. I measured that at a learning rate of
+0.1 on 500 samples: with the two-over-n it converges to machine precision, and without
+any normalisation it overflows to infinity.
+
+The learning rate has a hard ceiling, not a soft one. It is two divided by the largest
+eigenvalue of the Hessian, and on this problem that was 0.9089 — I measured 0.90
+converging, 0.9089 stuck, and 0.95 reaching ten to the eighteenth. Below the ceiling
+the choice is about speed: to reach a fixed accuracy took 8,384 steps at 0.001, 77 at
+0.1, and 8 at 0.5.
+
+And the practical point that matters more than any of it: feature scaling. The ceiling
+2/L is set by the largest-scale feature. I multiplied one column by a thousand and the
+maximum stable learning rate fell by a factor of a million — the well-scaled problem
+converged in 200 steps and the badly-scaled one had not converged after 200,000. So
+standardise the columns before you tune anything.
+
+For linear regression specifically I would use the closed form or lstsq. This loop is
+what you need when the model is not linear.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def gd_step(X, y, w, lr):
+      n = X.shape[0]                     # 1
+      pred = X @ w                       # 2
+      error = pred - y                   # 3
+      grad = (X.T @ error) * (2.0 / n)   # 4, 5
+      return w - lr * grad               # 6
+
+LINE 1. `X.shape[0]` is the number of SAMPLES. `shape[1]` would be the feature count
+— a plausible-looking typo that silently rescales the gradient by d/n and therefore
+changes the effective learning rate by that factor.
+
+LINE 2. `(n, d) @ (d,) -> (n,)`. One prediction per sample. If `y` were shape (n, 1)
+instead of (n,), the next line would broadcast to (n, n) — a silent shape bug that
+turns a 500-element residual into a 250,000-element matrix and produces a gradient
+that is wrong but finite. Assert the shapes.
+
+LINE 3. `pred - y`, IN THAT ORDER. `y - pred` negates the gradient, so line 6 moves
+uphill. The symptom is unmistakable — the loss grows monotonically from the first step
+— but people reach for the learning rate first.
+
+LINE 4. `X.T @ error`: `(d, n) @ (n,) -> (d,)`, the same shape as `w`. THAT SHAPE
+MATCH IS THE CHECK. It also says what the operation means — feature j's gradient is
+the dot product of column j of X with the residuals.
+
+LINE 5. `* (2.0 / n)`. The 2 comes from differentiating the square; the 1/n from the
+mean. MEASURED at lr = 0.1: with `2/n` the run converges to 2.7e-15, with `1/n` to
+2.6e-08, and with NO scaling it overflows to inf — because the unnormalised gradient
+is 500x larger on 500 samples. Folding the constant into `lr` is legitimate; dropping
+it and keeping the same `lr` is not.
+
+LINE 6. `w - lr * grad`. MINUS, because `grad` points uphill. Returning a new array
+rather than doing `w -= ...` avoids mutating a caller's array — which matters if the
+caller kept a reference to the previous weights to test for convergence.
+
+THE LINE THAT IS NOT HERE, and which decides whether any of this works:
+
+      X = (X - X.mean(0)) / X.std(0)
+
+MEASURED: unscaled, one feature 1000x the others, the condition number went from 1.260
+to 1.05e+06 and the maximum stable learning rate from 0.9089 to 1.04e-06. The scaled
+problem converged in 200 steps; the unscaled one was still at ||w - w*|| = 1.76 after
+200,000.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+The problem: n = 500 samples, d = 5 features, standard normal X, true weights
+[3, -2, 0.5, 1, -1], noise 0.1. The closed-form answer is
+[2.9976, -1.9925, 0.5032, 0.9881, -0.9981].
+
+TRACE A - the divergence threshold, measured against theory. The Hessian is
+`(2/n)·XᵀX`; its largest eigenvalue is L = 2.2004, so theory says the boundary is
+`2/L = 0.9089`. After 200 steps from w = 0:
+
+  lr        ||w - w*||        verdict
+  0.85      2.43e-15          converged to machine precision
+  0.90      5.06e-05          converging, but slowly
+  0.9089    0.998839          STUCK — oscillating, not improving
+  0.91      3.3457            drifting away
+  0.95      6.32e+18          diverged
+  1.00      4.73e+39          diverged hard
+
+The predicted boundary and the measured boundary agree to four significant figures.
+This is not a heuristic.
+
+TRACE B - steps to reach ||w - w*|| < 1e-6:
+
+  lr = 0.001  ->  8,384
+  lr = 0.01   ->    832
+  lr = 0.05   ->    161
+  lr = 0.1    ->     77
+  lr = 0.3    ->     20
+  lr = 0.5    ->      8
+  lr = 0.7    ->     23
+  lr = 0.9    ->    698
+
+A U-SHAPE, not a monotone one. Too small is slow for the obvious reason; too large is
+slow because the iterate oscillates across the bowl and only the average moves inward.
+The sweet spot here is around 0.5, roughly half the stability limit.
+
+TRACE C - the normalisation, at lr = 0.1 fixed, 200 steps:
+
+  gradient scaled by 2/n   ->  2.75e-15
+  gradient scaled by 1/n   ->  2.61e-08
+  gradient unscaled        ->  inf (overflow in the matmul)
+
+TRACE D - conditioning. Multiply feature 0 by 1000:
+
+                        condition number    max stable lr
+  original                    1.260            0.9089
+  one column × 1000        1.05e+06         1.036e-06
+
+  well-scaled,   200 steps at lr=0.1                    ->  ||w - w*|| = 2.75e-15
+  badly-scaled, 200,000 steps at 90% of max stable lr   ->  ||w - w*|| = 1.75946
+
+A thousand times more steps and it is not within two units of the answer. The number
+that changed is not the algorithm — it is the shape of the bowl.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME per step O(n·d): one matrix-vector product forward, one backward. SPACE O(n + d)
+beyond the data. Total cost is steps × O(n·d), and the STEP COUNT is what the learning
+rate and the conditioning control — MEASURED, 8,384 steps versus 8 on the same problem,
+and 200,000-and-still-wrong when the features were unscaled.
+
+Compare the closed form: O(n·d² + d³), exact, no hyperparameter. For linear regression
+with d in the hundreds, it wins outright.
+
+THE #1 MISTAKE: not standardising the features. MEASURED, one column at 1000x cost a
+factor of a million in the usable learning rate and made the problem effectively
+unsolvable by gradient descent.
+
+THE #2 MISTAKE: `y - pred` instead of `pred - y`. Gradient ascent. The loss rises
+monotonically from step one.
+
+THE #3 MISTAKE: dropping the `2/n`. MEASURED, the same learning rate that converges
+to 2.7e-15 with it overflows to inf without it, because the gradient scales with n.
+
+THE #4 MISTAKE: treating the learning rate as a matter of taste. It has a hard
+threshold at 2/L, and MEASURED, the predicted 0.9089 is exactly where behaviour flips.
+
+THE #5 MISTAKE: assuming smaller is safer. MEASURED, lr = 0.001 needed 8,384 steps
+where 0.5 needed 8.
+
+THE #6 MISTAKE: `X.shape[1]` for n.
+
+THE #7 MISTAKE: `y` shaped (n, 1) rather than (n,), so `pred - y` broadcasts to
+(n, n). No error, wrong gradient.
+
+THE #8 MISTAKE: a fixed iteration count with no convergence check and no divergence
+check. Watch the loss; if it rises, halve the rate.
+
+THE TAKEAWAY: one gradient-descent step is predict, subtract, multiply by Xᵀ, scale
+by 2/n, and move the OPPOSITE way — and the only real decision is the learning rate,
+which is not a matter of taste but has a hard ceiling at 2/L, measured at 0.9089 on a
+problem whose theoretical threshold was 0.9089. Below that ceiling the choice is
+speed: 8,384 steps at lr=0.001 versus 8 at lr=0.5, a U-shaped curve whose optimum sits
+near half the limit. But the number that actually decides whether gradient descent is
+usable is the FEATURE SCALE, because L is set by the largest column — measured, one
+feature multiplied by 1000 dropped the usable learning rate by a factor of a million
+and turned a 200-step problem into one that was still wrong after 200,000. Standardise
+first; tune second.""",
+]
+
+_EX_P1AO["L2 regularization (ridge) loss and gradient (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add a penalty on big weights, so the model prefers
+the simplest explanation that fits.
+
+L2 regularisation adds one term to the loss:
+
+  total_loss = data_loss + lambda * sum(w**2)
+  total_grad = data_grad + 2 * lambda * w
+
+That is the whole implementation. Two lines, and they turn a model that memorises the
+training set into one that generalises.
+
+WHY IT WORKS: with more features than the data can pin down, there are many weight
+vectors that fit the training data equally well, and the unregularised fit picks an
+arbitrary one — typically with enormous weights that cancel each other out. Those
+cancellations are fitted to the noise and do not survive contact with new data. The
+penalty breaks the tie in favour of small weights.
+
+MEASURED on 60 samples and 40 features:
+
+  lambda      ||w||    train MSE    test MSE
+    0.00      7.012      0.4533      3.5556
+    1.00      6.553      0.5006      2.6084
+  100.00      2.209     13.4004     25.5042
+
+Lambda = 1 makes the training fit slightly WORSE (0.4533 -> 0.5006) and the test error
+27% BETTER (3.5556 -> 2.6084). That trade is the entire point.""",
+
+    """2. THE INTUITION - two things it is doing at once, and both are useful.
+
+AS A PENALTY. Every unit of weight magnitude now costs you loss, so the optimiser only
+grows a weight when the data pays for it. A feature that helps a little gets a small
+weight; a feature that is pure noise gets driven toward zero. It never reaches exactly
+zero — that is L1's job — but it shrinks.
+
+AS A NUMERICAL FIX. The ridge solution is `w = (XᵀX + λI)⁻¹Xᵀy`. Adding `λI` to the
+diagonal is what makes the matrix INVERTIBLE when it otherwise is not. MEASURED with
+50 features and only 30 samples:
+
+  XᵀX is 50x50 but has rank 30 -> singular, cannot invert
+  condition number 1.293e+18
+
+  + 1e-08·I  ->  condition number 1.392e+10
+  + 1e-03·I  ->  condition number 1.392e+05
+  + 1.0·I    ->  condition number 1.402e+02
+
+That is where the name RIDGE comes from — you are adding a ridge along the diagonal.
+Even a numerically negligible lambda takes the problem from unsolvable to solvable,
+which is why `sklearn`'s LinearRegression is often quietly worse than Ridge with a tiny
+alpha on wide data.
+
+AS WEIGHT DECAY IN A LOOP. In gradient descent the update becomes
+`w -= lr·(data_grad + 2λw)`, which is `w·(1 - 2·lr·λ) - lr·data_grad`. THE WEIGHT IS
+MULTIPLIED BY A CONSTANT SLIGHTLY BELOW 1 ON EVERY STEP — it decays exponentially
+toward zero unless the data gradient keeps pushing it back. That is the name "weight
+decay", and it is the same thing seen from the optimiser's side.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+L2 NORM SQUARED - `sum(w**2)`, also written `||w||²`. The penalty. Squared, so the
+derivative is linear and there is no absolute value to make it non-differentiable.
+
+LAMBDA (λ, called `alpha` in scikit-learn) - the strength dial. 0 means no
+regularisation; large means the weights are crushed toward zero regardless of the data.
+
+RIDGE REGRESSION - linear regression with an L2 penalty. Closed form
+`w = (XᵀX + λI)⁻¹Xᵀy`.
+
+LASSO - the L1 version, `λ·sum(|w|)`. Drives weights to EXACTLY zero, so it selects
+features. Not differentiable at zero, so it needs a different optimiser.
+
+ELASTIC NET - both penalties at once.
+
+WEIGHT DECAY - the same idea named from the update rule: multiply w by slightly less
+than 1 each step. Identical to L2 for plain SGD, and NOT identical under Adam — which
+is why `AdamW` exists as a separate optimiser.
+
+OVERFITTING - fitting the noise in the training set. The symptom is a training error
+that keeps falling while the test error rises.
+
+CONDITION NUMBER - largest eigenvalue over smallest. How close a matrix is to being
+non-invertible.
+
+BIAS / INTERCEPT - the constant term. Usually EXEMPT from the penalty, for a reason
+worth measuring.
+
+SHRINKAGE - what the penalty does to the weights: pulls them proportionally toward
+zero without changing their relative pattern much.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - penalising the bias, which quietly destroys
+the fit.
+
+The one-line implementation `grad = 2*lam*w` penalises EVERY element of w. If you
+appended a column of ones to X so the intercept lives inside w, you are now penalising
+the intercept, and that is wrong.
+
+WHY IT IS WRONG. The penalty says "prefer small weights". For a slope, small means
+"this feature matters less", which is a sensible prior. For the intercept, small means
+"the target is near zero" — which is a statement about the UNITS your target happens
+to be measured in. Predicting house prices in dollars rather than millions of dollars
+should not change how much regularisation you want.
+
+MEASURED, on data whose true intercept is 50.0:
+
+  lambda      bias penalised              bias exempt
+    0.0    intercept 50.0571, MSE 0.2272   intercept 50.0571, MSE 0.2272
+    1.0    intercept 49.8042, MSE 0.2906   intercept 50.0561, MSE 0.2273
+  100.0    intercept 33.2377, MSE 280.12   intercept 49.9872, MSE 0.8999
+
+AT LAMBDA = 100 THE PENALISED-BIAS MODEL HAS A TRAINING ERROR OF 280 AGAINST 0.90. The
+penalty dragged the intercept from 50 down to 33, and every prediction is off by 17.
+The slopes could not compensate; they were being penalised too.
+
+THE FIX is a masked identity: `np.eye(d)` with the bias entry zeroed, so the ridge is
+added everywhere except the intercept. Or centre y and X first, which makes the
+intercept zero and the question moot.
+
+THE SECOND TRAP IS THE SAME ONE FROM A DIFFERENT ANGLE: the penalty is not invariant
+to feature scale. A feature measured in millimetres needs a weight 1000x larger than
+the same feature in metres, and L2 punishes it 1,000,000x harder. STANDARDISE BEFORE
+YOU REGULARISE, always, or lambda means something different for every column.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+L1 (LASSO) when you want FEATURE SELECTION. Its gradient is `λ·sign(w)`, a constant
+push toward zero that does not shrink as w does — so weights actually reach exactly
+zero and stay there. L2's gradient is `2λw`, which vanishes as w approaches zero, so
+it shrinks but never eliminates. Use L1 when you want a sparse model you can read; use
+L2 when you want a stable one.
+
+ELASTIC NET when features are correlated. L1 alone picks one of a correlated group
+arbitrarily and zeroes the rest; adding an L2 term makes it spread the weight across
+them, which is more stable across resamples.
+
+EARLY STOPPING. Stop training before the weights grow large. For linear models this is
+provably close to L2 — the number of steps plays the role of 1/λ. Free, and requires no
+tuning beyond a validation set you already have.
+
+DROPOUT for neural networks. Regularises by injecting noise rather than by penalising
+magnitude. Usually used alongside L2, not instead of it.
+
+MORE DATA, which is the only fix that has no downside. The measurement above needed
+regularisation because there were 40 features and 60 samples; at 6,000 samples the
+unregularised fit would be fine.
+
+AND THE DEFAULT WORTH REMEMBERING: for anything trained with Adam, use `AdamW` rather
+than adding an L2 term to the loss. Adam divides the gradient by a running estimate of
+its magnitude, and an L2 term added to the loss gets divided too — so weights with
+large gradients get LESS decay, which is the opposite of the intent. AdamW applies the
+decay directly to the weights, outside the adaptive scaling.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. STANDARDISE X FIRST. Without it, lambda means a different amount of
+regularisation for every column.
+
+STEP 2. DECIDE WHERE THE BIAS LIVES. Either keep it out of `w` entirely, or build a
+mask so the penalty skips it. MEASURED, getting this wrong cost a factor of 300 in
+training error at lambda = 100.
+
+STEP 3. `penalty = lam * np.sum(w ** 2)`. A scalar, ADDED to the data loss. It is not
+a separate loss; you are optimising their sum.
+
+STEP 4. `grad = 2 * lam * w`. Same shape as w, ADDED to the data gradient.
+
+STEP 5. BE CONSISTENT ABOUT THE FACTOR OF 2. Half the literature defines the penalty as
+`(λ/2)·sum(w²)` so the gradient is exactly `λw`. Both are fine; using one convention's
+lambda with the other's gradient is a silent 2x error in the regularisation strength.
+
+STEP 6. FOR THE CLOSED FORM: `np.linalg.solve(X.T@X + lam*np.eye(d), X.T@y)`. Use
+`solve`, not `inv` — it is faster and more stable.
+
+STEP 7. FOR GRADIENT DESCENT, note the update is
+`w = w*(1 - 2*lr*lam) - lr*data_grad`. Say "weight decay" out loud; it is the same
+thing.
+
+STEP 8. TUNE LAMBDA ON A VALIDATION SET, on a LOG GRID — 1e-4, 1e-3, ... 1e2. The
+useful range spans orders of magnitude and the curve is U-shaped.
+
+STEP 9. REPORT BOTH ERRORS. MEASURED, the right lambda made the TRAINING error worse
+(0.4533 -> 0.5006) while improving test error by 27%. If your training error improved,
+you did not regularise.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'L2 regularisation adds lambda times the sum of the squared weights to the loss, so
+its gradient contribution is two lambda w, added to the data gradient. Two lines.
+
+What it buys you is a preference for small weights. When there are more features than
+the data can pin down, lots of weight vectors fit the training set equally well, and
+the unregularised solution picks one with huge coefficients that cancel each other —
+fitted to the noise. The penalty breaks that tie toward the simplest fit. I measured it
+on sixty samples and forty features: lambda equals one made the training error slightly
+worse, 0.45 to 0.50, and the test error 27% better, 3.56 to 2.61. If your training error
+improves, you have not regularised anything.
+
+It is also a numerical fix. The ridge solution adds lambda times the identity to X
+transpose X, and that is what makes the matrix invertible when there are more features
+than samples. I measured a case with fifty features and thirty samples: the condition
+number was 1.3e18, and adding even 1e-8 on the diagonal brought it to 1.4e10, while
+lambda equals one brought it to 140.
+
+Two things I would be careful about. First, do not penalise the intercept. Penalising
+it says the target should be near zero, which is a statement about your units, not
+about the model. I measured this with a true intercept of fifty: at lambda a hundred,
+penalising the bias dragged the intercept to thirty-three and the training error to 280,
+against 0.90 when the bias was exempt. Second, standardise the features first, because
+a feature in millimetres has a weight a thousand times larger than in metres and L2
+punishes it a million times harder — lambda would mean something different for every
+column.
+
+And in an optimiser this is exactly weight decay: the update becomes w times
+one-minus-two-lr-lambda, minus the data step. The weight shrinks by a constant factor
+every step unless the data pushes back. For Adam, use AdamW rather than an L2 term in
+the loss, because Adam divides the gradient by its own running magnitude and would
+divide the penalty too.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def l2_penalty(w, lam):
+      penalty = lam * np.sum(w ** 2)     # 1, 2
+      grad = 2 * lam * w                 # 3
+      return penalty, grad
+
+  # used as:
+  #   loss = mse(X, y, w) + penalty
+  #   g    = mse_grad(X, y, w) + grad
+
+LINE 1. `np.sum(w ** 2)` — the squared L2 norm, a SCALAR. Not `np.linalg.norm(w)`,
+which is the square ROOT of this and has a different derivative; and not
+`np.sum(np.abs(w))`, which is L1.
+
+LINE 2. `lam *` — the strength. It multiplies the whole penalty, so the useful range
+spans orders of magnitude and should be tuned on a log grid. MEASURED on 60x40:
+test MSE 3.5556 at λ=0, 2.6084 at λ=1, 25.5042 at λ=100. The curve is U-shaped and the
+minimum is not at either end.
+
+LINE 3. `2 * lam * w` — the derivative of `lam * w²` is `2·lam·w`, elementwise. Same
+shape as w, so it adds directly to the data gradient.
+  THE FACTOR OF 2 IS A CONVENTION, AND IT IS NOT COSMETIC. MEASURED, from
+w = [1, -2, 3] with λ = 0.5 and lr = 0.1:
+
+    penalty λ·Σw²,    gradient 2λw  ->  w becomes [0.90, -1.80, 2.70]   shrink 0.90
+    penalty (λ/2)Σw², gradient λw   ->  w becomes [0.95, -1.90, 2.85]   shrink 0.95
+
+  The same lambda produces twice the decay under one convention. Pick one and say
+which.
+
+WHAT THE FUNCTION DOES NOT DO, and must in real use — EXEMPT THE BIAS:
+
+      mask = np.ones_like(w); mask[-1] = 0.0      # last entry is the intercept
+      penalty = lam * np.sum((w * mask) ** 2)
+      grad    = 2 * lam * w * mask
+
+MEASURED with a true intercept of 50 and λ = 100: penalising it gave intercept 33.24
+and training MSE 280.12; exempting it gave 49.99 and 0.90.
+
+THE CLOSED FORM, for comparison:
+
+      w = np.linalg.solve(X.T @ X + lam * np.eye(d), X.T @ y)
+
+`solve`, not `inv` — same answer, faster and better conditioned. And note the masked
+version for the bias is `lam * P` where P is the identity with the intercept's diagonal
+entry set to 0.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the bias-variance trade, measured. 60 samples, 40 features, noise σ = 1.0:
+
+    lambda      ||w||    train MSE    test MSE
+      0.00      7.012      0.4533      3.5556
+      0.01      7.006      0.4533      3.5357
+      0.10      6.955      0.4540      3.3703
+      1.00      6.553      0.5006      2.6084
+     10.00      5.004      1.8055      6.5595
+    100.00      2.209     13.4004     25.5042
+   1000.00      0.414     32.0500     41.7430
+
+READ THE TWO ERROR COLUMNS TOGETHER. Train MSE rises MONOTONICALLY with lambda — the
+penalty can only make the training fit worse, by construction. Test MSE falls to a
+minimum at λ = 1 and then rises. THE GAP BETWEEN THEM IS THE OVERFITTING: 0.4533 vs
+3.5556 at λ = 0 is a factor of 7.8; at λ = 1 it is 0.5006 vs 2.6084, a factor of 5.2.
+
+And ||w|| falls smoothly from 7.01 to 0.41 — shrinkage, never quite reaching zero.
+
+TRACE B - the numerical rescue. 30 samples, 50 features:
+
+  XᵀX is 50x50, rank 30                    -> SINGULAR
+  condition number                            1.293e+18
+
+  + 1e-08·I  ->  1.392e+10     (still awful, but finite)
+  + 1e-03·I  ->  1.392e+05     (usable)
+  + 1.0·I    ->  1.402e+02     (well-conditioned)
+
+A condition number of 1e18 in float64 means essentially no correct digits. Lambda does
+not just regularise the statistics; it makes the arithmetic possible.
+
+TRACE C - the intercept, true value 50.0:
+
+  lambda    bias PENALISED                 bias EXEMPT
+    0.0     intercept 50.0571, MSE   0.2272    intercept 50.0571, MSE 0.2272
+    1.0     intercept 49.8042, MSE   0.2906    intercept 50.0561, MSE 0.2273
+  100.0     intercept 33.2377, MSE 280.1154    intercept 49.9872, MSE 0.8999
+
+At λ = 100 the exempt model degrades gracefully — MSE 0.90, intercept still 49.99. The
+penalised model is destroyed: the intercept has been pulled a third of the way to zero
+and every prediction inherits that offset.
+
+TRACE D - the factor-of-2 convention, w = [1, -2, 3], λ = 0.5:
+
+  penalty = λ·Σw² = 7.0000     gradient 2λw = [ 1.0, -2.0,  3.0]
+  penalty = (λ/2)Σw²           gradient  λw = [ 0.5, -1.0,  1.5]
+
+  one step at lr = 0.1:
+    with 2λw  ->  [0.90, -1.80, 2.70]    weights multiplied by 0.90
+    with  λw  ->  [0.95, -1.90, 2.85]    weights multiplied by 0.95
+
+Both are "L2 with lambda = 0.5" in somebody's paper. The decay differs by exactly 2x.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME. The penalty and its gradient are O(d) — one square-and-sum and one scalar
+multiply, negligible against the O(n·d) data gradient. The closed form is
+O(n·d² + d³), the same as ordinary least squares; the `+ λI` costs nothing. SPACE O(d).
+
+L2 IS THE CHEAPEST REGULARISER THERE IS. Its cost is not compute, it is the lambda you
+now have to tune.
+
+THE #1 MISTAKE: penalising the intercept. MEASURED, at λ = 100 with a true intercept of
+50, this gave a training MSE of 280.12 against 0.90 — a factor of 300 — because the
+penalty dragged the intercept to 33.24.
+
+THE #2 MISTAKE: not standardising the features first. A feature in millimetres carries
+a weight 1000x larger than the same feature in metres, and L2 penalises it 1,000,000x
+harder. Lambda then means a different thing per column.
+
+THE #3 MISTAKE: mixing the two conventions — `λ·Σw²` with gradient `λw`, or `(λ/2)Σw²`
+with gradient `2λw`. MEASURED, a silent factor-of-2 in the decay.
+
+THE #4 MISTAKE: expecting L2 to zero out features. It shrinks; it does not select. The
+gradient `2λw` vanishes as w does, so weights approach zero asymptotically. That is
+L1's job.
+
+THE #5 MISTAKE: tuning lambda on a linear grid. MEASURED, the useful values spanned
+0.01 to 100 with a minimum at 1 — a log grid finds it, a linear one does not.
+
+THE #6 MISTAKE: judging the regulariser by training error. MEASURED, it rises
+monotonically with lambda BY CONSTRUCTION. The only number that matters is validation
+error.
+
+THE #7 MISTAKE: adding L2 to the loss under Adam. The adaptive scaling divides the
+penalty along with everything else, so large-gradient weights get less decay. Use AdamW.
+
+THE #8 MISTAKE: `np.linalg.norm(w)` in the penalty, which is the square root and has a
+completely different derivative.
+
+THE TAKEAWAY: L2 is `loss + λ·Σw²` and `grad + 2λw`, and it does two things at once —
+it breaks the tie among the many weight vectors that fit the training data equally
+well, in favour of small ones, and it adds λ to the diagonal of XᵀX, which is what
+makes a wide problem solvable at all (measured, condition number 1.3e18 to 140). The
+trade is visible and expected: measured, λ = 1 made the TRAINING error worse, 0.4533 to
+0.5006, and the TEST error 27% better — so if regularising improved your training error
+you have not regularised. Two things decide whether it helps in practice: standardise
+the features first, or lambda means something different for every column; and exempt
+the intercept, because penalising it is a statement about the units of y rather than
+about the model — measured at 300x the training error when it was not exempt.""",
+]
+
+_EX_P1AO["Label smoothing (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop telling the model that it should be 100% certain.
+
+A one-hot target says: the probability of the correct class is 1.0 and every other
+class is 0.0. Cross-entropy then rewards the model for pushing the correct logit as far
+above the others as it possibly can — and since softmax never actually reaches 1.0,
+THERE IS NO LOGIT GAP LARGE ENOUGH. The optimum is at infinity, so training keeps
+growing the weights forever.
+
+Label smoothing replaces the hard target with a soft one:
+
+  y_smooth = (1 - eps) * one_hot + eps / K
+
+With eps = 0.1 and K = 5 classes, the target [1, 0, 0, 0, 0] becomes
+[0.92, 0.02, 0.02, 0.02, 0.02]. Still sums to 1, still identifies the right class, but
+now the optimum is FINITE.
+
+MEASURED, the effect on a model that had memorised its training set (120 samples, 30
+features, trained to 100% train accuracy):
+
+  eps    test acc   mean confidence   calibration error (ECE)   test NLL
+  0.00    0.7294        0.9398              0.2104               1.5563
+  0.10    0.7245        0.7213              0.0115               0.6669
+
+The model was 94% confident and 73% right. After smoothing it is 72% confident and 72%
+right — the same accuracy, an 18x better calibration error, and less than half the NLL.""",
+
+    """2. THE INTUITION - the target's entropy becomes a floor the loss can never go below.
+
+WITH A HARD TARGET, cross-entropy is minimised when the predicted distribution equals
+the target — which means probability exactly 1.0 on one class. Softmax produces that
+only in the limit of an infinite logit gap. So the loss can be driven arbitrarily close
+to zero, and the gradient never quite vanishes, and the weights keep growing.
+
+WITH A SMOOTHED TARGET, the optimum is the smoothed distribution itself, and it is
+reachable at a finite gap. MEASURED, K = 5:
+
+  eps     optimal p on the true class    optimal logit gap    loss at that optimum
+  0.00           1.0000                     infinity                0.0000
+  0.05           0.9600                       4.5643                0.2234
+  0.10           0.9200                       3.8286                0.3897
+  0.20           0.8400                       3.0445                0.6615
+
+TWO THINGS TO READ HERE. The logit gap the model is aiming for drops from infinity to
+about 3.8 at eps = 0.1 — that is the mechanism, a bounded target instead of an
+unbounded one. And THE LOSS HAS A FLOOR equal to the entropy of the target
+distribution: 0.3897 at eps = 0.1. You can never train the loss to zero, and a training
+curve that plateaus at 0.39 is converged, not stuck.
+
+WHAT OVERSHOOTING NOW COSTS. MEASURED, the loss against a smoothed target as the logit
+gap grows:
+
+  gap      loss vs hard target     loss vs smoothed target
+    3           0.1816                    0.4216
+    5           0.0266                    0.4266
+   10           0.0002                    0.8002
+   20           0.0000                    1.6000
+
+Against the hard target, more confidence is always better. Against the smoothed one,
+the loss turns around and RISES — being too certain is now a penalised mistake.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ONE-HOT - a vector with a single 1 at the correct class and 0 everywhere else. Shape
+(N, K) for a batch.
+
+K (num_classes) - how many classes. It appears in the formula, so the same eps means
+different things at different K.
+
+EPS (epsilon, the smoothing factor) - how much probability mass to move off the correct
+class. 0.1 is the standard value; the Inception paper that introduced it used 0.1 and
+so does most of what came after.
+
+CROSS-ENTROPY - `-Σ target·log(pred)`. With a one-hot target it collapses to
+`-log(p_correct)`; with a soft target every class contributes.
+
+LOGIT - the pre-softmax score. What the model actually produces.
+
+LOGIT GAP - the difference between the correct class's logit and the others. What
+training is really adjusting.
+
+CONFIDENCE - the largest predicted probability. What the model claims about itself.
+
+CALIBRATION - whether that claim is true. A calibrated model that says 80% is right 80%
+of the time.
+
+ECE (expected calibration error) - bin the predictions by confidence, and average
+|accuracy - confidence| over the bins, weighted by bin size. 0 is perfect.
+
+NLL (negative log likelihood) - the test cross-entropy. Unlike accuracy, it is
+sensitive to HOW confident a wrong answer was.
+
+OVERCONFIDENT - mean confidence above accuracy. UNDERCONFIDENT is the reverse, and
+label smoothing can cause it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - label smoothing is not free, and it makes a
+well-calibrated model WORSE.
+
+Everyone learns "label smoothing improves calibration". THAT IS TRUE ONLY WHEN THE
+MODEL IS OVERCONFIDENT, and it is a real intervention with a real cost in the other
+direction. I measured both regimes on the same architecture.
+
+REGIME 1 - overconfident: 120 training samples, 30 features, 4 classes, trained to 100%
+training accuracy.
+
+  eps    test acc   mean conf     ECE      test NLL
+  0.00     0.7294     0.9398    0.2104      1.5563
+  0.05     0.7150     0.7879    0.0732      0.7177
+  0.10     0.7245     0.7213    0.0115      0.6669
+  0.20     0.7224     0.6311    0.0914      0.7096
+  0.30     0.7159     0.5635    0.1524      0.7790
+
+eps = 0.1 cuts ECE from 0.2104 to 0.0115 — an 18x improvement — and NLL by more than
+half, for essentially no accuracy change. THAT IS THE ADVERTISED RESULT and it is real.
+
+REGIME 2 - the same model, same test set, 6,000 training samples instead of 120:
+
+  eps    test acc   mean conf     ECE      test NLL
+  0.00     0.9496     0.9406    0.0104      0.1205
+  0.05     0.9420     0.8197    0.1224      0.2476
+  0.10     0.9350     0.7516    0.1834      0.3380
+  0.20     0.9259     0.6547    0.2711      0.4777
+
+THE SAME eps = 0.1 MAKES ECE 18x WORSE — 0.0104 to 0.1834 — nearly triples the NLL, and
+costs a point and a half of accuracy. The unsmoothed model was already calibrated at
+94.1% confidence and 94.96% accuracy; smoothing pushed it to 75% confident and made it
+UNDERCONFIDENT by the same margin it used to be overconfident by.
+
+SO: LABEL SMOOTHING IS A FIX FOR OVERCONFIDENCE, NOT A UNIVERSAL IMPROVEMENT. Measure
+your model's mean confidence against its accuracy first. If they already agree, this
+will hurt.
+
+AND NOTICE WHAT IT IS DOING MECHANICALLY. MEASURED on the overconfident model:
+
+  eps = 0.00   ||W||_F = 21.1075   mean train logit gap 29.07
+  eps = 0.10   ||W||_F =  4.1511   mean train logit gap  5.70
+  eps = 0.20   ||W||_F =  2.8141   mean train logit gap  3.86
+
+It is a regulariser. Capping the target logit gap caps the weight norm, five-fold.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+TEMPERATURE SCALING is the better tool if calibration is the ONLY thing you want. Fit a
+single scalar T on a validation set and divide the logits by it at inference. It cannot
+change any prediction — dividing all logits by a positive constant preserves the
+argmax — so accuracy is untouched by construction, and it is fitted directly to the
+calibration objective. Label smoothing changes training and therefore changes what the
+model learns; temperature scaling is a post-hoc knob.
+
+L2 / WEIGHT DECAY targets the same underlying problem (weights growing without bound)
+more directly. MEASURED, label smoothing at eps = 0.1 cut the weight norm from 21.1 to
+4.2, which is what weight decay does explicitly.
+
+EARLY STOPPING. Overconfidence grows with training time; stopping sooner is free.
+
+MIXUP - train on convex combinations of pairs of inputs AND their labels. A stronger
+version of the same idea: the targets are soft, but soft in a way that reflects an
+actual interpolation rather than a uniform smear.
+
+KNOWLEDGE DISTILLATION - use a teacher model's output distribution as the target. Also
+soft targets, but INFORMATIVE ones: the teacher says "this is a 7, and it looks a bit
+like a 1", where label smoothing says "this is a 7, and it looks equally like all nine
+other digits", which is not true.
+
+AND ONE KNOWN INTERACTION: label smoothing HURTS distillation. It compresses the
+representation of each class toward its centroid and erases the fine structure in the
+logits — which is exactly the information a student model is trying to learn. If you
+plan to distill from a model, do not train it with label smoothing.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. `K = one_hot.shape[1]` — the number of classes, from the LAST axis. It is in
+the formula, so getting the axis wrong changes the amount of smoothing rather than
+raising an error.
+
+STEP 2. `return one_hot * (1 - eps) + eps / K`. One line. The multiply shrinks the 1
+to (1 - eps); the add distributes eps/K everywhere INCLUDING the correct class.
+
+STEP 3. CHECK IT STILL SUMS TO 1. `(1-eps)·1 + K·(eps/K) = 1 - eps + eps = 1`. Say it
+out loud; it is the sanity check that catches a mis-specified formula.
+
+STEP 4. APPLY IT ONLY AT TRAINING TIME. Evaluation metrics computed against a smoothed
+target are not comparable with anyone else's numbers.
+
+STEP 5. USE THE FULL CROSS-ENTROPY `-Σ target·log(pred)`, over all K classes. The
+shortcut `-log(p_correct)` is only valid for a one-hot target and silently ignores the
+smoothing.
+
+STEP 6. DO NOT MATERIALISE THE ONE-HOT MATRIX at scale. `(1-eps)·(-log p[correct]) +
+(eps/K)·(-Σ log p)` is the same loss from integer labels, without an (N, K) allocation.
+
+STEP 7. eps = 0.1 IS THE DEFAULT and there is little reason to move far from it.
+MEASURED, 0.05 to 0.2 all improved the overconfident model; 0.3 was worse than 0.1.
+
+STEP 8. MEASURE MEAN CONFIDENCE AGAINST ACCURACY BEFORE YOU REACH FOR THIS. If they
+already match, MEASURED, smoothing makes calibration 18x worse.
+
+STEP 9. EXPECT THE TRAINING LOSS TO PLATEAU ABOVE ZERO — at the entropy of the target,
+0.3897 for eps = 0.1 and K = 5. That plateau is convergence.
+
+STEP 10. DO NOT SMOOTH IF YOU WILL DISTILL FROM THIS MODEL.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'A one-hot target asks the model to put probability exactly 1.0 on the correct class,
+and softmax can only approach that as the logit gap goes to infinity — so the optimum
+is unreachable and training just keeps growing the weights. Label smoothing replaces
+the target with one-minus-eps on the correct class and eps over K spread across all of
+them, so with eps of 0.1 and five classes a target becomes 0.92 and four times 0.02.
+It still sums to one and still identifies the right class, but now the optimum is at a
+finite logit gap — I measured it at about 3.8 instead of infinity.
+
+Two consequences fall out. The loss now has a floor equal to the entropy of the target,
+0.39 for those numbers, so a training curve plateauing there is converged rather than
+stuck. And overshooting is now penalised: against a hard target the loss keeps falling
+as the gap grows, but against the smoothed one it bottoms out and then rises — at a gap
+of 20 the smoothed loss is 1.6.
+
+What I would be careful about is that this is a fix for overconfidence specifically,
+not a universal improvement, and I measured both directions. On a model that had
+memorised 120 training samples — 94% mean confidence, 73% accurate — eps of 0.1 cut the
+calibration error from 0.21 to 0.012, eighteen-fold, and halved the NLL, with no
+accuracy change. Then I trained the same architecture on 6,000 samples so it was
+already calibrated at 94% confidence and 95% accuracy, and the same eps of 0.1 made the
+calibration error eighteen times WORSE, from 0.010 to 0.183, and cost a point and a
+half of accuracy. It made a calibrated model underconfident.
+
+So I would measure mean confidence against accuracy first. And mechanically it is
+acting as a regulariser — I measured the weight norm dropping from 21 to 4 — so if
+weight decay is already doing that job, this is partly redundant.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def label_smoothing(one_hot, eps=0.1):
+      num_classes = one_hot.shape[1]                     # 1
+      return one_hot * (1 - eps) + eps / num_classes     # 2, 3
+
+LINE 1. `shape[1]` — the CLASS axis for a (N, K) batch. K appears in the formula, so
+getting this wrong does not raise; it changes how much smoothing you applied. For a
+3-D input (sequence models: batch, time, classes) this is wrong and you want
+`shape[-1]`.
+
+LINE 2, THE SHRINK. `one_hot * (1 - eps)` turns the 1 into 0.9 and leaves the zeros as
+zeros.
+
+LINE 3, THE SPREAD. `+ eps / num_classes` adds the same small constant to EVERY entry
+— including the correct class, which is why the correct class ends at
+`(1 - eps) + eps/K` and not at `1 - eps`. MEASURED, K = 5, eps = 0.1: the target is
+[0.92, 0.02, 0.02, 0.02, 0.02], and 0.92 = 0.9 + 0.02.
+  The alternative convention spreads eps over the K-1 OTHER classes only, giving
+[0.90, 0.025, 0.025, 0.025, 0.025]. Both are used; they differ by a factor of K/(K-1),
+which is 1.25 at K = 5 and negligible at K = 1000.
+
+THE SANITY CHECK, worth stating: `(1-eps)·1 + K·(eps/K) = 1`. MEASURED at every eps
+from 0 to 1, the row sums to 1.0000.
+
+K MATTERS MORE THAN PEOPLE EXPECT. MEASURED at a fixed eps = 0.1:
+
+  K       target      each other class     total off-target mass
+     2     0.9500        0.050000                 0.0500
+     5     0.9200        0.020000                 0.0800
+    10     0.9100        0.010000                 0.0900
+  1000     0.9001        0.000100                 0.0999
+
+The correct class converges to 1 - eps as K grows, and the mass moved off it converges
+to eps. At small K a noticeable fraction of the moved mass lands back on the correct
+class, so eps = 0.1 at K = 2 is weaker than eps = 0.1 at K = 1000.
+
+USING IT — the loss must be the FULL cross-entropy:
+
+      loss = -np.sum(target * np.log(probs), axis=1).mean()
+
+NOT `-np.log(probs[range(N), labels])`. That shortcut is equivalent only for a one-hot
+target and would ignore the smoothing entirely, so you would apply the smoothing and
+train exactly as before.
+
+AT SCALE, skip the (N, K) allocation:
+
+      loss = (1-eps) * nll_correct + (eps/K) * (-np.log(probs).sum(1))""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - what the target becomes, K = 5:
+
+  eps = 0.0  ->  [1.00, 0.00, 0.00, 0.00, 0.00]   sums to 1.0000
+  eps = 0.1  ->  [0.92, 0.02, 0.02, 0.02, 0.02]   sums to 1.0000
+  eps = 0.2  ->  [0.84, 0.04, 0.04, 0.04, 0.04]   sums to 1.0000
+  eps = 0.5  ->  [0.60, 0.10, 0.10, 0.10, 0.10]   sums to 1.0000
+  eps = 1.0  ->  [0.20, 0.20, 0.20, 0.20, 0.20]   sums to 1.0000
+
+At eps = 1.0 the target is uniform and carries NO information about the label at all —
+which is the boundary, and the reason eps must stay well below 1.
+
+TRACE B - the optimum moves from infinity to a finite gap, K = 5:
+
+  eps    optimal p(correct)   optimal logit gap    loss at the optimum
+  0.00       1.0000              infinity               0.0000
+  0.05       0.9600                4.5643               0.2234
+  0.10       0.9200                3.8286               0.3897
+  0.20       0.8400                3.0445               0.6615
+
+The last column is the ENTROPY of the target and is a hard floor on the loss.
+
+TRACE C - overshooting is now punished. Loss as the logit gap grows, K = 5:
+
+  gap    vs hard target    vs smoothed (eps=0.1)
+    1        0.9048              0.9848
+    3        0.1816              0.4216
+    5        0.0266              0.4266
+   10        0.0002              0.8002
+   20        0.0000              1.6000
+
+The smoothed column has a MINIMUM near gap 3.8 and rises after it. The hard column
+never turns around, which is why unsmoothed training has nothing telling it to stop.
+
+TRACE D - the two regimes, measured on the same architecture and test set.
+
+  OVERCONFIDENT (120 train samples, memorised):
+    eps    test acc   mean conf     ECE     test NLL
+    0.00     0.7294     0.9398    0.2104     1.5563
+    0.10     0.7245     0.7213    0.0115     0.6669      ECE 18x BETTER
+
+  ALREADY CALIBRATED (6,000 train samples):
+    eps    test acc   mean conf     ECE     test NLL
+    0.00     0.9496     0.9406    0.0104     0.1205
+    0.10     0.9350     0.7516    0.1834     0.3380      ECE 18x WORSE
+
+Same intervention, same magnitude, opposite sign. The first model claimed 94% and
+delivered 73%; the second claimed 94% and delivered 95%.
+
+TRACE E - it is a regulariser, measured on the overconfident model:
+
+  eps = 0.00   ||W||_F = 21.1075   mean train logit gap 29.0731
+  eps = 0.10   ||W||_F =  4.1511   mean train logit gap  5.6960
+  eps = 0.20   ||W||_F =  2.8141   mean train logit gap  3.8644
+
+Bounding the target gap bounds the weights, by a factor of five.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(N·K) — one multiply and one add per element, negligible against the forward
+pass. SPACE O(N·K) if you materialise the smoothed targets, which for a 1,000-class
+problem with a 1,024 batch is a million floats you do not need: the loss decomposes as
+`(1-eps)·NLL_correct + (eps/K)·Σ(-log p)` and can be computed from integer labels.
+
+THE #1 MISTAKE: applying it to a model that is already calibrated. MEASURED, the same
+eps = 0.1 improved ECE 18x on an overconfident model and made it 18x worse on a
+calibrated one. Check mean confidence against accuracy first.
+
+THE #2 MISTAKE: keeping the one-hot shortcut loss `-log(p[correct])`. It is equivalent
+to full cross-entropy ONLY for a hard target, so the smoothing is computed and then
+thrown away. Nothing errors and the training curve looks normal.
+
+THE #3 MISTAKE: expecting the training loss to reach zero. MEASURED, the floor is the
+target's entropy — 0.3897 at eps = 0.1, K = 5. A plateau there is convergence.
+
+THE #4 MISTAKE: smoothing at evaluation time, so your reported loss is not comparable
+with anyone else's. Accuracy is unaffected (the argmax of the smoothed target is still
+the true class) but NLL is not.
+
+THE #5 MISTAKE: assuming eps means the same thing at every K. MEASURED, eps = 0.1 puts
+0.05 on the wrong class at K = 2 and 0.0001 at K = 1000.
+
+THE #6 MISTAKE: eps too large. At eps = 1.0 the target is uniform and carries no label
+information at all.
+
+THE #7 MISTAKE: confusing the two conventions — spreading eps over all K classes versus
+over the K-1 others. They differ by K/(K-1), which is 25% at K = 5.
+
+THE #8 MISTAKE: training a teacher with label smoothing and then distilling from it. It
+erases the inter-class structure in the logits that the student needs.
+
+THE TAKEAWAY: label smoothing turns `[1, 0, 0, ...]` into `(1-eps)·onehot + eps/K`,
+which moves the optimum from an INFINITE logit gap to a finite one — measured at 3.83
+for eps = 0.1 — and gives the loss a floor equal to the target's entropy. That bound is
+what makes it a regulariser: measured, the weight norm fell from 21.1 to 4.2. But it is
+a fix for OVERCONFIDENCE and not a free improvement, and the measurement runs both ways:
+on a model claiming 94% confidence at 73% accuracy, eps = 0.1 cut calibration error 18x
+and halved the NLL for no accuracy cost; on the same architecture already calibrated at
+94% confidence and 95% accuracy, the identical eps made calibration 18x WORSE and cost a
+point and a half of accuracy. Measure mean confidence against accuracy before you reach
+for it — and if you only want calibration, temperature scaling gets it without touching
+training or accuracy at all.""",
+]
+
 
 
 
