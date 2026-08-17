@@ -1088,3 +1088,50 @@ def test_card_body_is_collapsible_and_the_answer_can_be_re_hidden(auth_client):
     assert ".qi.shown .reveal { display: none; }" not in html, "reveal is still hidden once used"
     review = auth_client.get("/study/review").get_data(as_text=True)
     assert "function hideAnswer()" in review, "study review answer cannot be re-hidden"
+
+
+def test_the_mobile_day_page_renders_and_carries_the_reflection(auth_client):
+    """The day view is a LIST, not the calendar's 24-hour grid.
+
+    Reported twice, from the same root cause: on a phone the grid's chips
+    are unreadable slivers, and anything scheduled before its initial
+    7am scroll position is off-screen and looks like it does not exist.
+
+    This page has to hold three things together — the timed items, the
+    UNTIMED ones (which the grid cannot show at all), and the reflection
+    in the same scroll rather than on another page."""
+    r = auth_client.get("/day")
+    assert r.status_code == 200, r.get_data()[:300]
+    html = r.get_data(as_text=True)
+    assert "On the clock" in html
+    assert "No time set" in html, "untimed items need their own group, not a gap"
+    assert 'id="reflection"' in html and 'id="gratitude"' in html
+    assert "/api/v2/daily-reflection" in html
+    # A phone leaves a page by being backgrounded, not by blurring a field.
+    assert "pagehide" in html and "sendBeacon" in html, (
+        "typing is lost when the tab is backgrounded mid-edit")
+    # Date navigation, so it is usable as a day view and not just as today.
+    assert "Previous day" in html and "Next day" in html
+
+
+def test_the_day_page_survives_a_bad_date(auth_client):
+    """A malformed date in a shared link is a bad link, not something to
+    show the user a 400 over."""
+    r = auth_client.get("/day?date=not-a-date", follow_redirects=False)
+    assert r.status_code in (301, 302), r.status_code
+    r2 = auth_client.get("/day?date=2026-08-17")
+    assert r2.status_code == 200
+    assert "17 August 2026" in r2.get_data(as_text=True)
+
+
+def test_the_calendar_scrolls_to_the_earliest_event_not_a_fixed_hour(auth_client):
+    """The grid used to scroll to a hard-coded 7am on load, which put
+    anything earlier — study topics booked at 00:00, deliberately, so they
+    sit at the top of the day — seven hours above the fold. The page
+    looked empty while the entries were there the whole time."""
+    import re
+    js = open("static/v2/planner_v2.js", encoding="utf-8").read()
+    fn = re.search(r"function scrollTo7AM\(\) \{(.*?)\n\}", js, re.S).group(1)
+    assert "7 * HOUR_HEIGHT - 20" not in fn, "still hard-scrolling past early events"
+    assert "earliest" in fn and "eventsMap" in fn, (
+        "the scroll position must be derived from what the day actually holds")

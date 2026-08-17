@@ -1,0 +1,314 @@
+{# The mobile day planner.
+
+   A LIST, not a grid. The calendar's 24-hour grid is right on a laptop and
+   wrong on a phone: chips become slivers, and anything before the initial
+   scroll position is off-screen and looks like it does not exist. Here every
+   item is full width, the page scrolls the way a phone scrolls, and the
+   reflection is at the bottom of the same scroll rather than on another page.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>{{ plan_date.strftime('%a %d %b') }} — Day</title>
+{% include "_pwa_head.html" %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<style>
+  body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);
+       margin:0;overflow-x:hidden;-webkit-text-size-adjust:100%}
+  .wrap{max-width:640px;margin:0 auto;padding:0 0 96px}
+
+  /* ── the date bar, pinned so you can always change day ─────────────
+     sticky rather than fixed: fixed positioning fights the iOS keyboard
+     when the reflection field at the bottom is focused. */
+  .datebar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:8px;
+       padding:10px 12px;background:var(--color-surface);
+       border-bottom:1px solid var(--color-border)}
+  .datebar .d{flex:1;min-width:0}
+  .datebar .dow{font-size:12px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;
+       color:var(--color-primary)}
+  .datebar .full{font-size:18px;font-weight:900;letter-spacing:-.02em;line-height:1.15}
+  .navb{flex:none;width:40px;height:40px;border-radius:12px;border:1px solid var(--color-border);
+       background:var(--color-bg);color:var(--color-text);font:inherit;font-size:18px;
+       cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .today-pill{font-size:11px;font-weight:800;color:#047857;background:#ecfdf5;
+       border:1px solid #a7f3d0;border-radius:999px;padding:2px 8px;margin-left:6px}
+  html.dark .today-pill{color:#6ee7b7;background:#052e26;border-color:#065f46}
+
+  .tally{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px 0}
+  .tally span{font-size:11.5px;font-weight:700;color:var(--color-text-secondary);
+       background:var(--color-surface);border:1px solid var(--color-border);
+       border-radius:999px;padding:3px 9px}
+
+  h2{font-size:12px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;
+     color:var(--color-text-secondary);margin:22px 12px 8px}
+  h2 .n{color:var(--color-text)}
+
+  /* ── an item ──────────────────────────────────────────────────────
+     A row, not a positioned block. The time is a fixed-width gutter so
+     the titles line up down the page and the eye can scan the column. */
+  .item{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;
+        border-bottom:1px solid var(--color-border);background:var(--color-surface)}
+  .item:first-of-type{border-top:1px solid var(--color-border)}
+  .item .t{flex:none;width:52px;font-size:13px;font-weight:800;
+       font-variant-numeric:tabular-nums;color:var(--color-primary);padding-top:1px}
+  .item .t.none{color:var(--color-text-secondary);font-weight:600;font-size:11.5px}
+  .item .b{flex:1;min-width:0}
+  .item .ttl{font-size:15px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+  .item .meta{margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .badge{font-size:10.5px;font-weight:800;letter-spacing:.02em;border-radius:999px;
+       padding:2px 7px;white-space:nowrap}
+  .b-event{color:#4338ca;background:#eef2ff}
+  .b-task{color:#047857;background:#ecfdf5}
+  .b-bucket{color:#b45309;background:#fef3c7}
+  .b-project{color:#0369a1;background:#e0f2fe}
+  html.dark .b-event{color:#c7d2fe;background:#1e1b4b}
+  html.dark .b-task{color:#6ee7b7;background:#052e26}
+  html.dark .b-bucket{color:#fcd34d;background:#78350f}
+  html.dark .b-project{color:#7dd3fc;background:#082f49}
+  .prio{font-size:10.5px;font-weight:800;border-radius:999px;padding:2px 7px}
+  .p-high{color:#fff;background:#dc2626}
+  .p-medium{color:#b45309;background:#fef3c7}
+  .p-low{color:var(--color-text-secondary);background:var(--color-bg);
+       border:1px solid var(--color-border)}
+
+  .empty{padding:20px 12px;color:var(--color-text-secondary);font-size:14px;
+       background:var(--color-surface);border-top:1px solid var(--color-border);
+       border-bottom:1px solid var(--color-border)}
+
+  /* ── habits ── */
+  .habit{display:flex;align-items:center;gap:10px;padding:10px 12px;
+       border-bottom:1px solid var(--color-border);background:var(--color-surface)}
+  .habit .name{flex:1;font-size:14.5px;font-weight:600}
+  .habit .val{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;
+       color:var(--color-text-secondary)}
+  .bar{height:6px;border-radius:999px;background:var(--color-border);overflow:hidden;
+       width:64px;flex:none}
+  .bar i{display:block;height:100%;background:#34d399}
+
+  /* ── reflection, in the same scroll ─────────────────────────────── */
+  .review{margin:22px 12px 0;padding:14px;border-radius:14px;
+       background:var(--color-surface);border:1px solid var(--color-border)}
+  .review h3{margin:0 0 4px;font-size:15px;font-weight:800}
+  .review p.hint{margin:0 0 10px;font-size:12.5px;color:var(--color-text-secondary);
+       line-height:1.5}
+  .review textarea{width:100%;box-sizing:border-box;font:inherit;font-size:15px;
+       line-height:1.5;padding:11px;border:1px solid var(--color-border);border-radius:10px;
+       background:var(--color-bg);color:var(--color-text);resize:vertical;min-height:110px}
+  .review textarea:focus{outline:2px solid var(--color-primary);outline-offset:1px}
+  .review + .review{margin-top:12px}
+  .status{font-size:11.5px;font-weight:700;color:var(--color-text-secondary);
+       margin-top:6px;min-height:16px}
+  .status.saved{color:#047857}
+  .status.error{color:#b91c1c}
+  html.dark .status.saved{color:#6ee7b7}
+  html.dark .status.error{color:#fca5a5}
+
+  .footlink{display:block;text-align:center;margin:22px 12px 0;padding:12px;
+       border-radius:12px;border:1px solid var(--color-border);background:var(--color-surface);
+       color:var(--color-primary);font-weight:700;font-size:14px;text-decoration:none}
+
+  @media (min-width:700px){
+    .datebar{border-radius:0 0 14px 14px}
+    .item:first-of-type{border-top:none}
+  }
+</style>
+</head>
+<body>
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+<div class="wrap">
+
+  <div class="datebar">
+    <a class="navb" href="{{ url_for('day.day_page', date=prev_date.isoformat()) }}"
+       aria-label="Previous day">‹</a>
+    <div class="d">
+      <div class="dow">{{ plan_date.strftime('%A') }}{% if is_today %}<span class="today-pill">today</span>{% endif %}</div>
+      <div class="full">{{ plan_date.strftime('%d %B %Y') }}</div>
+    </div>
+    <a class="navb" href="{{ url_for('day.day_page', date=next_date.isoformat()) }}"
+       aria-label="Next day">›</a>
+  </div>
+
+  <div class="tally">
+    <span>{{ counts.get('meetings', 0) }} scheduled</span>
+    <span>{{ counts.get('tasks', 0) }} tasks</span>
+    {% if counts.get('overdue') %}<span>{{ counts.overdue }} overdue</span>{% endif %}
+    {% if counts.get('habits') %}<span>{{ counts.get('habits_done', 0) }}/{{ counts.habits }} habits</span>{% endif %}
+    {% if counts.get('done_today') %}<span>{{ counts.done_today }} done</span>{% endif %}
+  </div>
+
+  {# ── the day, in order ───────────────────────────────────────────── #}
+  <h2>On the clock <span class="n">{{ timed|length }}</span></h2>
+  {% if timed %}
+    {% for i in timed %}
+    <div class="item">
+      <div class="t">{{ i.time }}</div>
+      <div class="b">
+        <div class="ttl">{{ i.title }}</div>
+        <div class="meta">
+          <span class="badge b-{{ i.source or i.type }}">{{ i.source or i.type }}</span>
+          {% if i.priority %}<span class="prio p-{{ i.priority }}">{{ i.priority }}</span>{% endif %}
+          {% if i.project_name %}<span class="badge b-project">{{ i.project_name }}</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">Nothing scheduled with a time.</div>
+  {% endif %}
+
+  {# Untimed items are shown as their own group rather than hidden or
+     given a fake time — "no time set" is information, and on the grid
+     these were invisible. #}
+  <h2>No time set <span class="n">{{ untimed|length }}</span></h2>
+  {% if untimed %}
+    {% for i in untimed %}
+    <div class="item">
+      <div class="t none">any<br>time</div>
+      <div class="b">
+        <div class="ttl">{{ i.title }}</div>
+        <div class="meta">
+          <span class="badge b-{{ i.source or i.type }}">{{ i.source or i.type }}</span>
+          {% if i.priority %}<span class="prio p-{{ i.priority }}">{{ i.priority }}</span>{% endif %}
+          {% if i.project_name %}<span class="badge b-project">{{ i.project_name }}</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">Nothing without a time.</div>
+  {% endif %}
+
+  {% if overdue %}
+  <h2>Overdue <span class="n">{{ overdue|length }}</span></h2>
+    {% for i in overdue[:12] %}
+    <div class="item">
+      <div class="t none">{{ i.time or '—' }}</div>
+      <div class="b">
+        <div class="ttl">{{ i.title }}</div>
+        <div class="meta">
+          <span class="badge b-{{ i.source or i.type }}">{{ i.source or i.type }}</span>
+          {% if i.plan_date %}<span class="prio p-low">{{ i.plan_date }}</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if habits %}
+  <h2>Habits <span class="n">{{ counts.get('habits_done', 0) }}/{{ habits|length }}</span></h2>
+    {% for h in habits %}
+    <div class="habit">
+      <div class="name">{{ h.name }}</div>
+      <div class="bar"><i style="width: {{ [h.progress_pct or 0, 100]|min }}%"></i></div>
+      <div class="val">{{ '%g'|format(h.value or 0) }}{% if h.goal %} / {{ '%g'|format(h.goal) }}{% endif %} {{ h.unit or '' }}</div>
+    </div>
+    {% endfor %}
+  {% endif %}
+
+  {# ── the review, in the same scroll ──────────────────────────────── #}
+  <div class="review">
+    <h3>How did today go?</h3>
+    <p class="hint">What worked, what did not, what you would change. Saves as you type.</p>
+    <textarea id="reflection" data-date="{{ plan_date.isoformat() }}"
+              placeholder="Today I…"
+              oninput="schedule('reflection')" onblur="save('reflection')"
+              >{{ meta.reflection }}</textarea>
+    <div class="status" id="reflection-status"></div>
+  </div>
+
+  <div class="review">
+    <h3>Grateful for</h3>
+    <p class="hint">Three small things, or one big one.</p>
+    <textarea id="gratitude" data-date="{{ plan_date.isoformat() }}"
+              placeholder="I am grateful for…"
+              oninput="schedule('gratitude')" onblur="save('gratitude')"
+              >{{ meta.gratitude }}</textarea>
+    <div class="status" id="gratitude-status"></div>
+  </div>
+
+  <a class="footlink" href="/calendar?date={{ plan_date.isoformat() }}">Open this day in the calendar grid →</a>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* Debounced autosave, one implementation for both fields.
+   *
+   * Save on a pause AND on blur. Blur alone loses the entry when the tab
+   * is closed with the textarea still focused, which on a phone is the
+   * normal way to leave a page. */
+  var ENDPOINT = { reflection: "/api/v2/daily-reflection",
+                   gratitude:  "/api/v2/daily-gratitude" };
+  var timers = {}, lastSaved = {};
+
+  function el(k) { return document.getElementById(k); }
+  function status(k, text, cls) {
+    var s = el(k + "-status");
+    if (!s) return;
+    s.textContent = text; s.className = "status" + (cls ? " " + cls : "");
+  }
+
+  window.schedule = function (k) {
+    if (timers[k]) clearTimeout(timers[k]);
+    status(k, "Editing…");
+    timers[k] = setTimeout(function () { window.save(k); }, 800);
+  };
+
+  window.save = function (k) {
+    var t = el(k);
+    if (!t) return;
+    var txt = t.value.trim();
+    if (txt === lastSaved[k]) return;          // nothing changed
+    if (timers[k]) { clearTimeout(timers[k]); timers[k] = null; }
+    status(k, "Saving…");
+    var body = { plan_date: t.dataset.date };
+    body[k] = txt;
+    fetch(ENDPOINT[k], {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json",
+                 "X-CSRFToken": (document.querySelector('meta[name=csrf-token]') || {}).content || "" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      lastSaved[k] = txt;
+      status(k, "Saved", "saved");
+    }).catch(function () {
+      status(k, "Save failed — it will retry on your next edit", "error");
+    });
+  };
+
+  // Store the TRIMMED server value, so the first blur on an untouched
+  // field is not read as a change and does not fire a pointless save.
+  ["reflection", "gratitude"].forEach(function (k) {
+    var t = el(k);
+    if (t) lastSaved[k] = t.value.trim();
+  });
+
+  // A phone leaves a page by being backgrounded, not by blurring a field.
+  // pagehide fires in that case where blur does not, which closes the
+  // remaining window where up to 800ms of typing could be lost.
+  window.addEventListener("pagehide", function () {
+    ["reflection", "gratitude"].forEach(function (k) {
+      var t = el(k);
+      if (t && t.value.trim() !== lastSaved[k]) {
+        var body = { plan_date: t.dataset.date };
+        body[k] = t.value.trim();
+        // sendBeacon survives the page going away; fetch may not.
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(ENDPOINT[k],
+            new Blob([JSON.stringify(body)], { type: "application/json" }));
+        }
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

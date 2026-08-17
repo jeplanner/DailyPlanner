@@ -848,6 +848,16 @@ html.dark .section-title{color:#f1f5f9;}
         TPM Case Rounds
       </a>
 
+      <!-- The mobile day view. A LIST of the day, not the 24-hour grid:
+           on a phone the grid's chips become slivers and anything before
+           its initial scroll position is off-screen. Reflection is at the
+           bottom of the same scroll, because reviewing the day is part of
+           the day. -->
+      <a href="/day" data-match="^/day" title="Day — one scrollable page for one day: everything scheduled, everything without a time, habits, and the reflection at the bottom">
+        <i data-feather="sun"></i>
+        Day
+      </a>
+
       <a href="/ai-sde" data-match="^/(ai-sde|interview-prep/guides)" title="AI SDE Prep (Amazon/Google) — interactive bank: DSA, ML concepts, coding, ML system design &amp; behavioral, each explained in depth; plus the full 16-week plan">
         <i data-feather="cpu"></i>
         AI SDE Prep
