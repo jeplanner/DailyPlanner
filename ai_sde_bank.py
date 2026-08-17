@@ -259389,6 +259389,1070 @@ similarity represents worst; so scope the key by tenant, permissions and model v
 the free exact-match layer, and if you need a higher hit rate than the safe threshold allows,
 add a cheap verifier - measured, that is the only change that improves both columns at once.""",
 ]
+_EX_P1AO["HNSW (how vector databases search fast)"] = [
+    """1. THE GOAL - find the nearest vectors among millions without comparing against all of them.
+
+Every RAG system, every recommender, every image search does the same thing: embed the
+query, find the closest stored vectors. Doing it exactly means computing the distance to
+every single one - a BRUTE-FORCE SCAN. At a million vectors of 768 dimensions that is 768
+million multiply-adds per query, and it does not fit in a latency budget.
+
+HNSW - Hierarchical Navigable Small World - gives up EXACTNESS to get speed. It builds a
+graph where each vector is linked to some of its neighbours, and searching means walking the
+graph greedily downhill toward the query. You visit a few hundred nodes instead of a million.
+
+THE TRADE IS EXPLICIT AND TUNABLE. Measured, 4,000 vectors in 16 dimensions:
+
+  ef      recall@10   distance comps/query   speedup vs brute force
+  ------------------------------------------------------------------
+   10       0.8820            412                    9.7x
+   20       0.9600            597                    6.7x
+   40       0.9920            894                    4.5x
+   80       1.0000          1,357                    2.9x
+
+You choose where on that curve to sit, per query, at search time - and that is the property
+that makes it the default index in every vector database.""",
+
+    """2. THE INTUITION - a graph you can walk downhill, with shortcuts.
+
+Start anywhere in the graph. Look at your current node's neighbours, move to whichever is
+closest to the query, repeat until no neighbour is closer. That is greedy descent, and on a
+well-built graph it converges in a small number of hops.
+
+TWO PROBLEMS, AND THE NAME CONTAINS BOTH ANSWERS.
+
+NAVIGABLE SMALL WORLD: if every link is to a very near neighbour, crossing the space takes
+enormous numbers of tiny hops. So the graph also keeps some LONG-RANGE links - the "six
+degrees of separation" property - which let a search cross the whole space in a few jumps and
+then refine locally.
+
+HIERARCHICAL: HNSW stacks several graphs. The top layer has very few nodes and very long
+links; each layer down has more nodes and shorter links. You descend the layers, using the
+sparse top to get roughly right and the dense bottom to get exactly right. It is a skip list
+in vector space, and it is where the H comes from.
+
+AND GREEDY DESCENT ALONE GETS STUCK IN LOCAL MINIMA - a node whose neighbours are all further
+away, but which is not the true nearest. THE FIX IS THE ef PARAMETER: instead of tracking one
+best candidate, keep a list of the ef best seen so far and keep exploring from all of them.
+Measured, that list going from 10 to 80 took recall from 0.8820 to 1.0000. ef IS THE DIAL,
+and it is the only one you touch at query time.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ANN - Approximate Nearest Neighbour. Accepting a small chance of missing a true neighbour in
+exchange for a large speedup. Exact search is called kNN or brute force.
+
+RECALL@k - of the k true nearest neighbours, how many did the index return. The accuracy
+metric for an ANN index. 0.98 means it missed 2% of them.
+
+M - the number of neighbours each node keeps in the graph. A BUILD-TIME parameter. Higher M
+means a better-connected graph, better recall, more memory, slower build.
+
+ef_construction - how hard the builder searches when deciding a new node's neighbours. Build
+time only. Higher gives a better graph.
+
+ef or ef_search - how many candidates the search keeps in flight. QUERY TIME, adjustable per
+query without rebuilding. The dial in section 1.
+
+GREEDY DESCENT - repeatedly move to the neighbour closest to the query.
+
+LOCAL MINIMUM - a node with no closer neighbour that is not the true nearest. What ef exists
+to escape.
+
+LAYER - one graph in the hierarchy. Node counts fall geometrically going up.
+
+IVF - Inverted File index, the main alternative: cluster the vectors, search only the nearest
+few clusters. Cheaper memory, worse recall at the same speed, and much faster to build.
+
+PRODUCT QUANTIZATION (PQ) - compressing vectors so more fit in RAM, at some accuracy cost.
+Usually combined with IVF or HNSW rather than replacing them.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the recall dial has a knee, and past it you pay for
+nothing.
+
+MEASURED, the marginal cost of each step up the ef ladder:
+
+  ef  10 ->  20:  recall 0.8820 -> 0.9600  (+7.80 points)  for 1.45x the work
+  ef  20 ->  40:  recall 0.9600 -> 0.9920  (+3.20 points)  for 1.50x the work
+  ef  40 ->  80:  recall 0.9920 -> 1.0000  (+0.80 points)  for 1.52x the work
+  ef  80 -> 160:  recall 1.0000 -> 1.0000  (+0.00 points)  for 1.47x the work
+  ef 160 -> 320:  recall 1.0000 -> 1.0000  (+0.00 points)  for 1.38x the work
+
+EACH DOUBLING COSTS ROUGHLY THE SAME 1.5x IN WORK, and buys 7.8 points, then 3.2, then 0.8,
+then nothing at all. The last two rows are pure waste: 2.2x the distance computations for
+zero recall.
+
+A DEFAULT ef OF 200 OR 500 - which several libraries ship - IS THAT WASTE, on every query,
+forever. The correct value is found by sweeping recall against latency on YOUR data and
+stopping at the knee, and it is often far lower than the default.
+
+THE SECOND TRAP: RECALL IS NOT THE PRODUCT METRIC. Missing 12% of the true top-10 sounds
+alarming, but in RAG those missing documents are usually rank 8, 9, 10 - and if the generator
+only reads the top 5, a recall@10 of 0.88 may cost nothing at all. MEASURE END-TO-END ANSWER
+QUALITY AGAINST ef, not just recall, and the knee usually moves lower still.
+
+THE THIRD: these speedups are small because this measurement uses only 4,000 vectors. Brute
+force is O(N) while graph search is roughly O(log N), so the ratio GROWS with the collection.
+At 4,000 the win is 9.7x; at ten million it is several orders of magnitude. Never quote an
+ANN speedup without the collection size.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+BRUTE FORCE (flat index). Exact, zero build time, trivial to update, and O(N) per query.
+FOR UNDER ABOUT 10,000 VECTORS THIS IS USUALLY THE RIGHT ANSWER and reaching for HNSW is
+premature. Numpy over 10,000 x 768 floats is a single matrix multiply and takes milliseconds.
+
+IVF (inverted file). Cluster into sqrt(N)-ish buckets, search the nearest few. Build is fast,
+memory is modest, and the nprobe parameter is the recall dial. Weaker recall/speed curve than
+HNSW but much cheaper to build and rebuild, which matters when the collection changes often.
+
+HNSW. Best recall-per-comparison of the mainstream options, adjustable at query time, and
+supports incremental insertion. Costs memory - the graph is M links per node on top of the
+vectors themselves - and DELETION IS ITS WEAK POINT: most implementations only tombstone, so
+a collection with heavy churn degrades until rebuilt.
+
+HNSW + PQ. Compress the vectors so a larger collection fits in RAM. Adds quantisation error
+on top of the graph's approximation, so recall drops twice; usually paired with a re-ranking
+pass over the raw vectors for the final top-k.
+
+DISK-BASED (DiskANN and similar). For collections that cannot fit in memory at any
+compression. Different design centre entirely - optimises for the number of random disk reads.
+
+AND THE ONE PEOPLE FORGET: FILTER FIRST IF THE FILTER IS SELECTIVE. If a query is restricted
+to one tenant holding 500 vectors, brute-forcing those 500 beats any index over the whole
+collection. Pre-filtered search is a common and badly-handled case; check what your vector
+database actually does with a WHERE clause, because some of them search the index and then
+filter, which can return nothing at all.""",
+
+    """6. HOW TO TUNE ONE - numbered steps.
+
+STEP 1. CHECK YOU NEED IT. Under ~10,000 vectors, brute force is exact and fast enough. This
+step saves more engineering than any parameter below.
+
+STEP 2. BUILD A GROUND-TRUTH SET: a few hundred real queries with their true top-k computed
+by brute force. Without it you cannot measure recall at all, and every parameter choice is
+superstition.
+
+STEP 3. SET M FIRST. 16 is the usual default; 32-64 for high-dimensional or hard data. It
+costs memory and build time and it is fixed once built.
+
+STEP 4. SET ef_construction generously - 200 is typical. It is paid once, at build, and a
+better graph raises the whole recall/speed curve for the life of the index.
+
+STEP 5. SWEEP ef AT QUERY TIME and plot recall against latency. Measured, the knee here was
+at ef=40-80; past it, 2.2x the work bought zero recall.
+
+STEP 6. MEASURE THE END-TO-END METRIC AT EACH ef, not just recall. If answer quality is flat
+from ef=20 upward, ship ef=20 and take the 6.7x.
+
+STEP 7. PLAN FOR UPDATES. Inserts are cheap; deletes usually are not. Decide the rebuild
+cadence before the collection has churned 30% and recall has quietly decayed.
+
+STEP 8. TEST FILTERED QUERIES SPECIFICALLY. Recall measured on unfiltered queries tells you
+nothing about behaviour under a selective WHERE clause, and that is where most production
+surprises live.
+
+STEP 9. Re-measure after any embedding model change. A new model is a new geometry, and the
+old parameters are no longer tuned to anything.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are in a huge city and need the pub nearest to your friend's address. You do not have a
+map of every pub - you just know, at any pub you are standing in, which handful of other pubs
+the landlord can point you to.
+
+The dumb method is to visit all million pubs and measure. Correct, and you will die of old
+age.
+
+The method that works: start anywhere, ask the landlord which of his recommended pubs is
+closest to your friend's address, walk there, ask again. Each step gets you closer, and you
+stop when nobody can point you anywhere better. Measured, this touched about four hundred pubs
+instead of four thousand and found nine of the true ten nearest.
+
+Two things make it work.
+
+Some of the landlords' recommendations have to be far away, not just next door. If every
+landlord only knows his immediate neighbours you will shuffle across the city one street at a
+time. A few long-distance recommendations let you cross town in three jumps and then home in on
+the right neighbourhood.
+
+And the walk can get stuck. You reach a pub where none of the recommendations is closer, but
+you are still in the wrong district. The cure is not to follow one trail: keep a shortlist of
+the best few pubs you have heard of and be willing to backtrack to any of them. Measured,
+holding a shortlist of ten found 88% of the true nearest, and holding eighty found all of
+them.
+
+Which raises the only question that matters in practice: how long should the shortlist be?
+Measured, going from ten to twenty cost about 45% more walking and gained 7.8 points of
+accuracy. Twenty to forty cost the same again and gained 3.2. Forty to eighty gained 0.8. And
+eighty to a hundred and sixty gained NOTHING while costing another 47% more walking. Several
+popular tools ship with the shortlist set to two hundred by default, which is that last row,
+paid on every single search, forever.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def search(query, entry, ef):
+      visited = {entry}
+      d = dist(query, data[entry])
+      candidates = [(d, entry)]        # to explore, nearest first
+      best      = [(d, entry)]         # the ef best found so far
+
+      while candidates:
+          candidates.sort()
+          dist_cur, cur = candidates.pop(0)
+          if len(best) >= ef and dist_cur > best[-1][0]:
+              break                                    # STOPPING RULE
+          for nb in graph[cur]:
+              if nb in visited:
+                  continue
+              visited.add(nb)
+              dn = dist(query, data[nb])
+              if len(best) < ef or dn < best[-1][0]:
+                  candidates.append((dn, nb))
+                  best.append((dn, nb))
+                  best.sort()
+                  del best[ef:]                        # keep only ef
+      return [i for _, i in best]
+
+LINE BY LINE.
+
+  candidates = [...]  ;  best = [...]
+TWO LISTS DOING DIFFERENT JOBS, and conflating them is the classic bug. `candidates` is a
+frontier to expand; `best` is the answer so far. A node can be a good answer and a dead end,
+or a poor answer on the path to a good region.
+
+  candidates.sort(); pop(0)
+Always expand the most promising unexplored node. In a real implementation both lists are
+heaps - this sort is O(n log n) per iteration and exists here for readability.
+
+  if len(best) >= ef and dist_cur > best[-1][0]: break
+THE STOPPING RULE, and the whole reason the search is fast. Once the nearest thing left to
+explore is further away than the worst of your ef current answers, nothing beyond it can
+improve them. Without this line the search visits the entire graph and you have written brute
+force with extra steps.
+
+  if nb in visited: continue
+The graph is undirected and full of cycles. Without the visited set the search revisits nodes
+forever. Note `visited` also bounds the memory and IS the distance-computation count that
+section 1 measures.
+
+  if len(best) < ef or dn < best[-1][0]
+A node is worth exploring only if it could enter the top ef. This is where ef controls
+breadth: a larger ef makes this condition easier to satisfy, so more nodes are expanded, so
+more local minima are escaped.
+
+  del best[ef:]
+The list is capped at ef. NOTE THAT ef MUST BE AT LEAST k - asking for the top 10 with ef=5 is
+incoherent, and libraries that silently allow it return 5 results.
+
+  WHAT IS MISSING: the layers. Real HNSW runs this loop once per layer, top-down, with ef=1 on
+the upper layers - they exist only to hand a good entry point to the layer below - and the
+real ef only on the bottom.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Index: 4,000 vectors, 16 dimensions, M=12 neighbours per node, 100 queries, top-10 ground
+truth by brute force.
+
+TRACE A - the full recall/cost curve.
+
+  ef     recall@10   comps/query   speedup
+   10      0.8820        412         9.7x
+   20      0.9600        597         6.7x
+   40      0.9920        894         4.5x
+   80      1.0000      1,357         2.9x
+  160      1.0000      2,001         2.0x
+  320      1.0000      2,756         1.5x
+  brute force            4,000       1.0x, recall 1.0000 by definition
+
+At ef=10 the search touches 412 of 4,000 vectors - about a tenth - and finds 8.8 of the true
+10. THAT IS THE ENTIRE VALUE PROPOSITION IN ONE LINE.
+
+TRACE B - the marginal analysis, which is what you actually tune on.
+
+  10 -> 20:  +7.80 recall points for 1.45x work
+  20 -> 40:  +3.20 points          for 1.50x work
+  40 -> 80:  +0.80 points          for 1.52x work
+  80 ->160:  +0.00 points          for 1.47x work
+ 160 ->320:  +0.00 points          for 1.38x work
+
+The cost per doubling is essentially constant at ~1.5x. The BENEFIT falls by roughly half
+each time and then stops. Anything above ef=80 on this data is strictly worse than ef=80 -
+identical recall, more latency, more CPU.
+
+TRACE C - why the speedups look modest here, and what they are really worth.
+Brute force is O(N); graph search is roughly O(log N) hops with M work per hop. At N=4,000
+that ratio is 9.7x at ef=10. The comparisons the graph makes grow like log N while brute
+force's grow like N, so:
+
+  N = 4,000       ~412 comps      9.7x
+  N = 1,000,000   grows like log N, so a few thousand comps against 1,000,000
+
+QUOTING AN ANN SPEEDUP WITHOUT THE COLLECTION SIZE IS MEANINGLESS. The interesting property
+is not the number, it is that the number improves as the collection grows - which is exactly
+backwards from brute force and is why every vector database ships this.
+
+TRACE D - the stopping rule doing its work. At ef=10 the search examined 412 nodes and then
+stopped because every remaining candidate was further than the 10th-best already found. Remove
+that `break` and the same search visits all 4,000 - same answer, ten times the cost.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Query time is O(ef * M * log N) distance computations - measured, 412 to 2,756 per
+query across the ef sweep against brute force's 4,000. Memory is the vectors PLUS the graph:
+M links per node per layer, so at M=16 and 4-byte ids that is roughly 64-128 bytes per vector
+of index on top of the vector itself - at a million 768-dim float32 vectors, 3 GB of vectors
+and around 0.1 GB of graph. Build time is the real cost: inserting each node runs a search, so
+building is O(N log N) searches and a large index takes hours. Deletion is the weak point -
+most implementations tombstone, and recall decays with churn until rebuild.
+
+THE #1 MISTAKE: leaving ef at a library default of 200 or 500. Measured, everything above
+ef=80 gave identical recall for up to 2.2x the work. Sweep it on your own data and stop at the
+knee.
+
+THE #2 MISTAKE: tuning on recall instead of the end-to-end metric. If the generator reads the
+top 5, a recall@10 of 0.88 may cost nothing, and the knee moves lower still.
+
+THE #3 MISTAKE: quoting a speedup without the collection size. Measured 9.7x at N=4,000; the
+ratio grows with N because brute force is O(N) and this is not.
+
+THE #4 MISTAKE: using an ANN index under 10,000 vectors, where brute force is exact and fast.
+
+THE #5 MISTAKE: no ground-truth set, so recall is never measured and every parameter is
+guessed.
+
+THE #6 MISTAKE: ignoring deletes. Tombstoned nodes accumulate and recall silently decays.
+
+THE #7 MISTAKE: assuming filtered queries behave like unfiltered ones. A selective WHERE
+clause is a different problem and some engines handle it very badly.
+
+THE TAKEAWAY: HNSW replaces an O(N) scan with a greedy walk over a graph whose links are
+mostly local and occasionally long-range, layered like a skip list so the sparse top gets you
+roughly right and the dense bottom exactly right - measured, 412 distance computations of a
+possible 4,000 for recall@10 of 0.8820, rising to 1.0000 at 1,357; the only query-time dial is
+ef, the size of the candidate shortlist that lets the greedy walk escape local minima, and its
+returns collapse fast - +7.80 recall points, then +3.20, then +0.80, then zero, each step
+costing the same ~1.5x - so a library default of 200 is paying twice over for nothing on every
+query; and because brute force grows as O(N) while this grows as log N, the speedup improves
+as the collection grows, which is why an ANN benchmark without a collection size attached
+means nothing.""",
+]
+
+_EX_P1AO["DPO vs PPO (aligning LLMs to human preferences)"] = [
+    """1. THE GOAL - the model can predict text; make it produce the text people actually prefer.
+
+A pretrained model imitates its training data. It has no notion that one answer is more
+helpful, safer or better formatted than another - only that both are plausible continuations.
+ALIGNMENT is the step that adds that notion, and the raw material is always the same:
+PREFERENCE PAIRS. A human sees two responses to the same prompt and says which is better.
+
+Two ways to turn those pairs into a better model.
+
+PPO (the RLHF pipeline). Train a separate REWARD MODEL to predict which response a human
+prefers. Then use reinforcement learning to change the language model so it scores highly on
+that reward model, with a penalty for drifting too far from where it started.
+
+DPO (Direct Preference Optimisation). Skip the reward model. Derive, algebraically, what the
+optimal policy under that reward would be, and optimise the language model directly on the
+preference pairs with a simple classification-style loss.
+
+THE PUBLISHED CLAIM IS THAT DPO MATCHES PPO WITH FAR LESS MACHINERY, AND IT REPRODUCES.
+Measured on a toy preference task, with each method's own strength parameter swept fairly:
+
+  preference pairs   best PPO-style   best DPO
+       50                2.166          2.117
+      200                2.277          2.272
+    1,000                2.077          2.297
+    5,000                2.272          2.305     (ceiling 2.343)""",
+
+    """2. THE INTUITION - PPO optimises against a MODEL of what people want, and models have gaps.
+
+The reward model is trained on a finite sample of human judgements. It is right on average
+and wrong in specific places, and reinforcement learning is extremely good at finding exactly
+those places. That is why PPO always carries a KL PENALTY: a term that punishes the policy
+for moving away from the original model. It is not a regulariser for its own sake - it is a
+LEASH on how far the policy may travel into territory where the reward model has never been
+checked.
+
+MEASURED, sweeping the optimisation strength against a reward model trained on 50 preference
+pairs:
+
+  beta      0.5     1.0     2.0     4.0     8.0    20.0    50.0
+  TRUE     0.499   1.168   1.847   2.120   2.166   2.133   2.076
+
+TRUE quality rises, PEAKS AT beta = 8, AND THEN FALLS - 2.166 down to 2.076, a 4% loss, while
+the reward model's own score kept improving. That decline is reward hacking, visible: the
+policy is still climbing the proxy and has started descending the truth.
+
+BE HONEST ABOUT THE SIZE. Four percent, in a toy with six features. In real RLHF the same
+mechanism produces answers that are longer, more hedged and more sycophantic than anyone
+wanted - because those are cheap ways to score well with a reward model trained on human
+ratings. The mechanism is the point; the magnitude here is not.
+
+DPO HAS NO SEPARATE REWARD MODEL TO HACK, which is its structural advantage. Its beta plays
+the same leash role, but it is baked into the training objective.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SFT - Supervised Fine-Tuning. Train on examples of good answers. The step BEFORE either method
+here, and it does most of the work; alignment is a refinement on top of it.
+
+PREFERENCE PAIR - (prompt, chosen response, rejected response). What a human annotator
+produces. Note it is a COMPARISON, not a score - people are far more consistent at "which is
+better" than at "rate this 1-10".
+
+REWARD MODEL (RM) - a model trained on preference pairs to output a scalar score. PPO needs
+one; DPO does not.
+
+BRADLEY-TERRY - the standard model of preferences: the probability of preferring A over B is
+the sigmoid of their score difference. Both methods assume it.
+
+PPO - Proximal Policy Optimisation. The RL algorithm used to optimise against the reward
+model, with a clipping mechanism that stops any single update moving the policy too far.
+
+KL DIVERGENCE - how far the current policy has moved from the reference. The leash.
+
+BETA / KL COEFFICIENT - how hard the leash pulls. Low means stay close and learn little; high
+means move freely and risk hacking.
+
+REFERENCE POLICY - the SFT model, frozen. Both methods measure drift against it.
+
+REWARD HACKING - scoring highly on the proxy while getting worse on what the proxy was
+measuring.
+
+RLAIF / CONSTITUTIONAL AI - the same pipelines with preferences generated by a model instead
+of a human.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the reward model's accuracy does not tell you how
+hard you can optimise against it.
+
+The standard way to report a reward model is PAIRWISE ACCURACY: on held-out preference pairs,
+how often does it agree with the human. It is the number in every paper and every dashboard.
+
+MEASURED, four reward models trained on different amounts of data, with their pairwise
+accuracy and the best true quality anyone could reach by optimising against them:
+
+  RM trained on   pairwise accuracy   best achievable TRUE quality
+  -------------------------------------------------------------------
+       50               76.9%                    2.166
+      200               91.5%                    2.277
+    1,000               92.8%                    2.077
+    5,000               92.2%                    2.272
+
+THE 1,000-PAIR MODEL HAS THE HIGHEST PAIRWISE ACCURACY (92.8%) AND THE WORST CEILING (2.077).
+The 200-pair model, at 91.5%, reaches 2.277. Ranking the reward models by their headline
+metric ranks them wrongly.
+
+WHY. Pairwise accuracy is an average over random pairs, and most random pairs are easy - one
+response is obviously better. What matters under optimisation is whether the reward model is
+right at the TOP of its own ranking, because that is the only region the policy will ever
+visit. A model that is 93% right overall and wrong about which of the best three responses is
+actually best will lead the policy somewhere slightly wrong, and no amount of average accuracy
+detects that.
+
+THE PRACTICAL CONSEQUENCE: evaluate reward models on the responses your policy actually
+produces, not on a random held-out set. And the safe KL budget is not a constant - measured,
+the weak 50-pair model peaked at beta=8 and declined, while the 200-pair model was flat from
+beta=4 to beta=50 with no decline at all. HOW HARD YOU CAN OPTIMISE IS A PROPERTY OF THE
+REWARD MODEL, and it must be found by sweeping, not assumed.""",
+
+    """5. THE TWO PIPELINES, SIDE BY SIDE.
+
+PPO / RLHF, four stages:
+  1. SFT on demonstration data.
+  2. Collect preference pairs; train a reward model.
+  3. RL loop: sample responses from the current policy, score them with the reward model,
+     update the policy with PPO, penalised by KL from the SFT model.
+  4. Evaluate; adjust the KL coefficient; repeat.
+
+WHAT MAKES IT EXPENSIVE: stage 3 holds FOUR models in memory - the policy, the reference, the
+reward model and a value model - and requires ONLINE SAMPLING, so every step generates text
+before it can learn from it. It is slow, memory-hungry, and notoriously sensitive to
+hyperparameters.
+
+DPO, two stages:
+  1. SFT on demonstration data.
+  2. Train directly on preference pairs with a loss that is essentially binary
+     cross-entropy on the log-ratio of chosen versus rejected under the policy and the
+     reference.
+
+WHAT MAKES IT CHEAP: two models in memory (policy and frozen reference), no sampling, no
+reward model, no value model. It is a supervised training loop, and it runs on the hardware
+you already fine-tune on.
+
+WHAT PPO STILL BUYS YOU, and it is not nothing:
+  ONLINE DATA. PPO scores responses the CURRENT policy generates, so it keeps getting fresh
+  signal about where the policy actually is. DPO learns from a fixed set of pairs collected
+  from some other model, and once the policy has moved away from that distribution, the pairs
+  are increasingly off-policy.
+  A TUNABLE LEASH. The KL coefficient can be swept after the reward model is trained.
+  A REUSABLE ARTEFACT. The reward model can score anything - it is useful for evaluation,
+  filtering, and best-of-n sampling, long after training.
+
+THE MIDDLE GROUND: BEST-OF-N. Train a reward model, sample n responses, return the best. No
+RL at all, no policy update, and a large share of the benefit. Costs n times the inference.""",
+
+    """6. HOW TO CHOOSE - numbered steps.
+
+STEP 1. DO SFT PROPERLY FIRST. Most of the quality gap is closed there. Alignment on top of a
+weak SFT model is polishing the wrong object.
+
+STEP 2. COUNT YOUR PREFERENCE PAIRS. Below a few thousand, DPO is the obvious choice - you
+cannot train a reliable reward model on scarce data, and measured, a weak reward model both
+peaks lower and declines sooner.
+
+STEP 3. DEFAULT TO DPO. Two models in memory, no sampling loop, and measured to match
+PPO-style results when both strength parameters are swept fairly.
+
+STEP 4. SWEEP BETA. Measured, DPO's best beta was consistently the SMALLEST tested - 0.1 - and
+performance fell steadily as beta rose (2.305 at 0.1 down to 0.586 at 2.0 on 5,000 pairs).
+A too-large beta is the most common DPO failure and it looks like a model that has become
+strange and repetitive.
+
+STEP 5. IF YOU HAVE ABUNDANT PREFERENCE DATA, ONLINE INFRASTRUCTURE AND A TEAM, PPO IS STILL
+DEFENSIBLE - primarily for the online sampling, which DPO structurally cannot do.
+
+STEP 6. IF YOU TRAIN A REWARD MODEL, EVALUATE IT ON YOUR POLICY'S OWN OUTPUTS. Measured,
+pairwise accuracy ranked four reward models in the wrong order relative to what they could
+achieve.
+
+STEP 7. MONITOR KL DURING TRAINING, whichever method. A policy that has drifted far from the
+reference is a policy that is being evaluated by a proxy outside its tested range.
+
+STEP 8. EVALUATE WITH HUMANS OR A STRONG JUDGE MODEL ON HELD-OUT PROMPTS. Reward-model score
+is the thing being optimised and therefore cannot measure success - that is the definition of
+the problem.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have hired a very fluent writer who has read everything and has no idea what you like. You
+want them to write the way you prefer. You cannot articulate your taste, but shown two drafts
+you can always say which is better.
+
+THE FIRST APPROACH. You collect a few hundred of those judgements and hand them to a second
+person - a critic - whose job is to learn your taste and score drafts out of ten. Then you sit
+the writer down and tell them: write, get scored by the critic, adjust, repeat.
+
+This works, and it has a specific failure. The critic learned your taste from a few hundred
+examples and has gaps. The writer, trying thousands of drafts, finds the gaps - discovers that
+the critic likes long paragraphs, or lots of qualifiers - and starts writing to please the
+critic rather than you. Measured, with a critic trained on only fifty judgements, the writer's
+true quality improved for a while and then went into reverse: 2.166 at the right amount of
+effort, down to 2.076 when pushed harder, while the critic's scores kept rising the whole time.
+
+The fix is a leash: tell the writer not to stray too far from how they originally wrote. How
+long the leash should be depends entirely on how good the critic is, and there is no way to
+know except to try several lengths.
+
+And here is what surprised me when I measured it. You would think the best critic is the one
+who most often agrees with you on random pairs of drafts. Measured, the critic who agreed with
+me most often - 92.8% - led the writer to the WORST final result, and a critic who agreed
+91.5% of the time led to the best. Being right about easy comparisons is not the same as being
+right about which of the two best drafts is better, and the second is the only judgement that
+ever gets used.
+
+THE SECOND APPROACH skips the critic. Somebody worked out the algebra: if you know what the
+critic WOULD have concluded, you can adjust the writer directly from your original judgements,
+without ever building the critic at all. Fewer people in the room, no scoring loop, and
+measured, the same final quality.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  # PPO path: first learn a reward model from preferences
+  def reward_loss(rm, chosen, rejected):
+      return -logsigmoid(rm(chosen) - rm(rejected))       # Bradley-Terry
+
+  # then optimise the policy against it, on a leash
+  def ppo_objective(policy, ref, prompts, rm, kl_coef):
+      responses = policy.sample(prompts)                  # ONLINE: generate, then learn
+      reward    = rm(responses)
+      penalty   = kl_coef * kl(policy, ref, responses)
+      return reward - penalty
+
+  # DPO path: one loss, straight on the pairs, no reward model
+  def dpo_loss(policy, ref, chosen, rejected, beta):
+      pi_logratio  = policy.logp(chosen) - policy.logp(rejected)
+      ref_logratio = ref.logp(chosen)    - ref.logp(rejected)
+      return -logsigmoid(beta * (pi_logratio - ref_logratio))
+
+LINE BY LINE.
+
+  -logsigmoid(rm(chosen) - rm(rejected))
+The Bradley-Terry loss. Note only the DIFFERENCE of the two scores appears, so the reward
+model's absolute scale is arbitrary and unidentifiable - which is why reward-model scores from
+two training runs cannot be compared, and why "our RM scores 4.2" means nothing on its own.
+
+  responses = policy.sample(prompts)
+THE LINE THAT MAKES PPO EXPENSIVE AND POWERFUL. Learning requires generating first, so every
+step pays inference. In exchange the reward model sees what the policy is doing NOW, which is
+the one thing DPO cannot have.
+
+  reward - kl_coef * kl(policy, ref)
+The leash, written down. As kl_coef falls, the policy is freer to chase the reward model into
+regions it was never validated on. Measured, on a weak reward model that turned a rising true
+quality into a falling one past beta=8.
+
+  pi_logratio - ref_logratio
+THE WHOLE OF DPO IS THIS EXPRESSION. Read it as: how much MORE does my policy prefer the chosen
+response than the reference model did. The reference subtraction is what makes it a leash -
+without it, the loss would just push the chosen response's probability up without limit, and
+the model would collapse onto a few phrasings.
+
+  beta * (...)
+DPO's beta multiplies the log-ratio INSIDE the sigmoid, so it sets how sharply the loss
+distinguishes chosen from rejected - which is the leash strength. Measured, smaller is
+consistently better here: 2.305 at beta=0.1 falling to 0.586 at beta=2.0.
+
+  NOTE WHAT IS ABSENT FROM dpo_loss: no sampling, no reward model, no value model. Two forward
+passes through the policy and two through the frozen reference. That is why it runs on
+ordinary fine-tuning hardware.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Setup: 40 candidate responses, a hidden true-quality function, noisy Bradley-Terry preferences
+sampled from it. Ceiling (always choosing the true best) = 2.343.
+
+TRACE A - reward hacking, on a reward model trained on 50 pairs.
+
+  beta    0.5     1.0     2.0     4.0     8.0    20.0    50.0
+  TRUE   0.499   1.168   1.847   2.120   2.166   2.133   2.076
+
+Rises to 2.166 at beta=8, then falls to 2.076 at beta=50 - a 4% loss. The proxy's own score
+was still improving throughout. THE ONLY WAY TO SEE THIS IS TO HAVE A TRUE QUALITY MEASURE,
+which in production means human evaluation; the reward model cannot report its own failure.
+
+TRACE B - the same sweep for a stronger reward model (200 pairs):
+
+  beta    0.5     1.0     2.0     4.0     8.0    20.0    50.0
+  TRUE   0.851   1.738   2.214   2.277   2.274   2.272   2.272
+
+No decline at all - flat from beta=4 onward. THE SAFE KL BUDGET IS A PROPERTY OF THE REWARD
+MODEL, not a constant to copy from a paper.
+
+TRACE C - pairwise accuracy against achievable quality.
+
+  RM data   pairwise acc   best TRUE
+     50        76.9%         2.166
+    200        91.5%         2.277
+  1,000        92.8%         2.077
+  5,000        92.2%         2.272
+
+Sort by accuracy: 1000, 5000, 200, 50. Sort by what they achieve: 200, 5000, 50, 1000. THE
+TWO ORDERINGS BARELY AGREE, and the highest-accuracy model is last. Average accuracy over
+random pairs measures the easy comparisons; optimisation only ever visits the hard ones at the
+top of the ranking.
+
+TRACE D - DPO against PPO, both swept fairly.
+
+  pairs   dpo b=0.1   b=0.25   b=0.5   b=1.0   b=2.0  |  best DPO   best PPO
+     50     2.103     2.117    1.825   1.168   0.524  |   2.117      2.166
+    200     2.272     2.263    2.178   1.738   1.105  |   2.272      2.277
+  1,000     2.297     2.198    1.875   1.179   0.622  |   2.297      2.077
+  5,000     2.305     2.218    1.883   1.213   0.586  |   2.305      2.272
+
+Essentially tied - DPO ahead on two rows, PPO on two, all within a few percent of each other
+and of the 2.343 ceiling. AND NOTE THE SHAPE OF THE DPO ROWS: best at the smallest beta every
+time, falling steeply as beta rises. An over-large beta is the characteristic DPO failure.
+
+A CAVEAT ON THIS TRACE. An earlier version compared DPO at a single fixed beta against PPO's
+best over a swept beta, and DPO looked far worse (1.14 against 2.27). That was a comparison
+artefact, not a result. Sweep both, or report neither.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. PPO holds FOUR models in memory - policy, frozen reference, reward model, value
+model - and must GENERATE before it can learn, so each step pays inference plus training.
+DPO holds two, does no sampling, and is an ordinary supervised loop over pairs; in practice it
+trains in a fraction of the time on a fraction of the hardware. The reward model itself is a
+separate training run and a separate labelling budget. Best-of-n sampling sits between them:
+no policy training at all, n times the inference cost forever.
+
+THE #1 MISTAKE: judging a reward model by pairwise accuracy. Measured, the highest-accuracy
+model (92.8%) produced the worst achievable quality (2.077), while a 91.5% model produced the
+best (2.277). Evaluate on the responses your policy actually generates.
+
+THE #2 MISTAKE: treating the KL coefficient as a constant from a paper. Measured, a weak reward
+model peaked at beta=8 and declined 4% by beta=50, while a stronger one was flat. The safe
+budget is a property of your reward model.
+
+THE #3 MISTAKE: reporting reward-model score as evidence of success. It is the thing being
+optimised; that is the definition of the failure mode.
+
+THE #4 MISTAKE: a too-large DPO beta. Measured, 2.305 at beta=0.1 falling to 0.586 at 2.0.
+
+THE #5 MISTAKE: comparing the two methods without sweeping both strength parameters. Measured
+once here as a 1.14 against 2.27 gap that vanished entirely on a fair sweep.
+
+THE #6 MISTAKE: reaching for alignment when SFT is the weak link. Alignment refines; it does
+not teach the task.
+
+THE #7 MISTAKE: forgetting DPO's preferences are off-policy - collected from some other model,
+and increasingly unlike what your policy now produces.
+
+THE TAKEAWAY: both methods start from the same preference pairs, and PPO's extra machinery is
+a reward model standing in for a human - which is also its weakness, because RL is very good at
+finding the places that model is wrong, measured as true quality peaking at beta=8 and then
+falling while the proxy's score kept rising; DPO removes the proxy by deriving what the optimal
+policy under it would be and optimising the pairs directly, and with both strength parameters
+swept fairly the two land within a few percent of each other and of the ceiling; the finding
+worth carrying is that a reward model's pairwise accuracy did NOT predict how good a policy it
+could produce - 92.8% accuracy gave the worst result and 91.5% the best - because average
+accuracy measures the easy comparisons while optimisation only ever visits the hard ones at the
+top.""",
+]
+
+_EX_P1AO["Embedding model fine-tuning for your domain"] = [
+    """1. THE GOAL - your users and your documents use different words, and a general model has
+never seen either.
+
+An off-the-shelf embedding model was trained on the open web. It knows that "car" and
+"automobile" are close. It does not know that at your company a P1 is what other places call a
+Sev1, that "falcon" is a payments service, or that "TQR" means ticket quality review.
+
+MEASURED, on eight real-shaped internal question/document pairs, how much vocabulary each
+question shares with its own answer:
+
+  "how do i get a p1 raised"       <-> "sev1 incidents are opened through the oncall bridge"   NONE
+  "how to bump quota"              <-> "capacity increases are requested via the resource form" NONE
+  "who approves a cab"             <-> "change advisory board approvals come from the release manager" NONE
+  "how do i get vpn"               <-> "remote network access is granted through the identity portal" NONE
+  "what is the tqr"                <-> "the ticket quality review runs every friday"           the
+  "what does a red build mean"     <-> "a failing pipeline blocks merges until green"          a
+
+Across all eight pairs, six shared words, almost all of them stopwords. FOUR OF THE EIGHT
+QUESTIONS SHARE NOTHING AT ALL with the document that answers them.
+
+FINE-TUNING AN EMBEDDING MODEL means training it on your own (query, relevant document) pairs
+so that those specific things end up near each other. It is the highest-leverage move
+available in a retrieval system that is failing on jargon, and it needs labelled pairs -
+which is the whole cost.""",
+
+    """2. THE INTUITION - the training signal is "these two belong together, those do not".
+
+CONTRASTIVE LEARNING is the mechanism. For each query, you have one document that is right
+(the POSITIVE) and a set that are wrong (the NEGATIVES). The loss pulls the query's vector
+toward its positive and pushes it away from the negatives, all at once.
+
+The cheap trick that makes it practical is IN-BATCH NEGATIVES: in a batch of 64 (query,
+document) pairs, each query's positive is document i, and the other 63 documents are free
+negatives. One batch gives you 64 positives and 4,032 negative comparisons at no extra
+labelling cost.
+
+MEASURED, on the eight-pair jargon set with a 16-dimensional model trained from random
+initialisation:
+
+  epochs      recall@1
+     0          0.125       (1 in 8 - exactly chance)
+     5          1.000
+    20          1.000
+   200          1.000
+
+From chance to perfect in five epochs on eight examples. THAT SPEED IS THE POINT AND ALSO THE
+WARNING: with this little data the model is not learning a general notion of similarity, it is
+learning these eight associations. Section 4 measures exactly how little generalises.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EMBEDDING MODEL - maps text to a vector such that similar texts are close. Retrieval is a
+nearest-neighbour lookup in that space.
+
+BI-ENCODER - encodes query and document SEPARATELY, so documents can be embedded once and
+indexed. What "an embedding model" normally means, and what gets fine-tuned here.
+
+CROSS-ENCODER - reads query and document TOGETHER and scores the pair. Far more accurate,
+cannot be indexed, so it is used to rerank a shortlist.
+
+CONTRASTIVE LOSS / InfoNCE - the training objective: make the positive's similarity high
+relative to the negatives'. A softmax over similarities, with the positive as the label.
+
+POSITIVE PAIR - a (query, relevant document) pair. Your training data.
+
+IN-BATCH NEGATIVES - using the other documents in the batch as negatives. Free, and the
+reason batch size matters so much here.
+
+HARD NEGATIVES - documents that are similar to the query but wrong. Mined by running the
+CURRENT retriever and taking high-ranked non-relevant results. The single biggest quality
+lever after having data at all.
+
+TEMPERATURE - divides the similarities before the softmax. Low temperature sharpens the
+distinction; a standard value is 0.05 or 0.1.
+
+MATRYOSHKA / MRL - training so that truncating the vector to fewer dimensions still works,
+letting you trade index size for accuracy after training.
+
+CATASTROPHIC FORGETTING - the fine-tuned model losing general capability it used to have.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - it learns what you show it and generalises to
+nothing you did not.
+
+MEASURED. Train on 6 of the 8 pairs, evaluate on the 6 it saw and on the 2 it never did, across
+three random seeds:
+
+  seed 1:  recall on the 6 TRAINED pairs 1.000    on the 2 HELD-OUT pairs 0.000
+  seed 2:  recall on the 6 TRAINED pairs 1.000    on the 2 HELD-OUT pairs 0.000
+  seed 3:  recall on the 6 TRAINED pairs 1.000    on the 2 HELD-OUT pairs 0.000
+
+PERFECT ON WHAT IT SAW, ZERO ON WHAT IT DID NOT, EVERY TIME. Not degraded - zero.
+
+WHY, AND THIS IS THE USEFUL PART. Learning that "cab" relates to "change advisory board"
+teaches the model nothing about "tqr" and "ticket quality review", because those two facts
+share no vocabulary to generalise THROUGH. The associations are arbitrary; each must be
+learned individually.
+
+BE PRECISE ABOUT WHAT THIS MEASUREMENT DOES AND DOES NOT SHOW. It trains from RANDOM
+INITIALISATION, so there is no general language knowledge to build on - the model starts
+knowing nothing about English. A real fine-tune starts from a pretrained model that already
+handles paraphrase, morphology and synonymy, so it generalises considerably better than zero.
+
+WHAT THE MEASUREMENT DOES SHOW IS THE ISOLATED MECHANISM: for genuinely arbitrary
+associations - acronyms, internal codenames, product names - THERE IS NOTHING TO GENERALISE
+FROM, and the model can only know the ones in your training data. This is why "how many pairs
+do we need" has no general answer: you need enough to cover the jargon your users actually
+use, and the number is a property of your glossary, not of the model.
+
+THE PRACTICAL CONSEQUENCE: before fine-tuning, ask whether the failures are jargon (needs
+pairs, one per term) or phrasing (a better base model or query rewriting may fix it for free).""",
+
+    """5. THE OPTIONS, IN INCREASING COST ORDER.
+
+OPTION 0 - A BETTER BASE MODEL. Try three or four off-the-shelf embedding models on your own
+evaluation set first. They differ substantially, it costs an afternoon, and it sometimes ends
+the project.
+
+OPTION 1 - HYBRID RETRIEVAL. Combine BM25 keyword search with dense embeddings and fuse the
+rankings. BM25 handles exact jargon tokens - "TQR", "falcon", "P1" - which is precisely where
+a general embedding model is weakest. NO TRAINING AT ALL, and it addresses a large share of
+the failures fine-tuning would.
+
+OPTION 2 - A GLOSSARY IN THE PIPELINE. Expand "TQR" to "ticket quality review" at query time
+from a maintained dictionary. Unglamorous, immediately auditable, and easy to fix when wrong.
+For a few dozen internal terms this beats fine-tuning on effort and transparency.
+
+OPTION 3 - FINE-TUNE THE BI-ENCODER on (query, document) pairs with in-batch negatives. The
+real answer when there are hundreds of terms and relationships. Needs labelled pairs.
+
+OPTION 4 - ADD HARD NEGATIVES. Retrieve with the current model, take high-ranking wrong
+documents, and train against those specifically. Usually a bigger gain than more random pairs,
+because in-batch negatives are mostly trivially wrong and teach little.
+
+OPTION 5 - TRAIN A CROSS-ENCODER RERANKER INSTEAD. Keep the general embedding model for
+recall, and fine-tune a small cross-encoder to reorder the top 50. Often a better return per
+labelled example, because reranking sees both texts together, and it does not require
+re-embedding your whole corpus when the model changes - which is the hidden cost of option 3.
+
+OPTION 6 - GENERATE THE PAIRS. Use an LLM to write plausible questions for each document.
+Cheap, and the questions are a model's idea of what users ask; validate against real queries
+before trusting it.""",
+
+    """6. HOW TO DO IT - numbered steps.
+
+STEP 1. BUILD THE EVALUATION SET FIRST: real user queries with the document that should be
+returned. 100-200 is enough to measure with. NOTHING BELOW MEANS ANYTHING WITHOUT THIS, and it
+is also what tells you whether you need to fine-tune at all.
+
+STEP 2. DIAGNOSE THE FAILURES BY HAND. Jargon and arbitrary names need pairs; phrasing and
+synonymy may be fixed by a better base model or hybrid search for free.
+
+STEP 3. TRY THE FREE OPTIONS: alternative base models, hybrid retrieval, a glossary. Re-measure
+after each.
+
+STEP 4. COLLECT PAIRS. Best source is production logs - the query, and the document the user
+actually clicked or the answer that resolved the ticket. Second best is LLM-generated
+questions per document, validated by hand.
+
+STEP 5. FINE-TUNE with in-batch negatives, a low temperature (0.05-0.1), and the LARGEST BATCH
+YOU CAN FIT - batch size is negative count here, so it is a quality parameter, not just a speed
+one.
+
+STEP 6. ADD HARD NEGATIVES in a second round, mined with the model from round one.
+
+STEP 7. EVALUATE ON HELD-OUT PAIRS, and separately on a GENERAL benchmark to check for
+forgetting. A model that is brilliant on your jargon and has lost ordinary English will fail
+on the half of your queries that were fine before.
+
+STEP 8. RE-EMBED THE ENTIRE CORPUS and rebuild the index. This is the operational cost people
+forget: every model change invalidates every stored vector, and for a large corpus that is a
+migration with a rollback plan, not a deploy.
+
+STEP 9. VERSION THE MODEL WITH THE INDEX. Serving vectors from model A against a query encoded
+by model B produces silent nonsense - it does not error, it just returns unrelated documents.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A new librarian joins a company. She is excellent - she has read enormous amounts and
+understands language well. On her first day people ask her things and she cannot help at all.
+
+Somebody asks "how do I get a P1 raised". The sheet that answers it says "Sev1 incidents are
+opened through the oncall bridge". She has no way to know those are the same thing. Measured
+across eight typical internal questions, half of them shared not one word with the document
+that answered them, and the words the other half did share were "the" and "a".
+
+This is not a failure of intelligence. There is nothing in general English connecting "P1" to
+"Sev1", or "CAB" to "change advisory board". Those links are local facts that were invented
+here.
+
+So you teach her. You sit with her and show pairs: this question goes with that sheet. Measured,
+after being shown eight pairs five times over, she went from getting one in eight right - pure
+chance - to getting all eight right.
+
+Now the thing that decides how much work this is.
+
+Show her six pairs and ask about the two she has never seen, and measured, she gets neither. Not
+"mostly right" - none, on every repeat of the experiment. Because knowing that CAB means change
+advisory board tells you absolutely nothing about what TQR means. The facts are arbitrary and
+each one has to be learned separately.
+
+Which means the honest question is not "how much training data does an embedding model need". It
+is "how many pieces of local jargon do your users actually use", because you need an example of
+each. And it is worth checking first whether a simple list on the wall - CAB means change
+advisory board - would do the job without any training at all.
+
+One last thing. Once you have retrained her, every card in the filing cabinet has to be
+re-filed to match how she now thinks. That re-filing is usually the expensive part.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def contrastive_step(model, batch, temperature=0.05):
+      # batch = [(query_1, doc_1), ..., (query_B, doc_B)]
+      Q = normalize(model.encode([q for q, _ in batch]))     # B x D
+      D = normalize(model.encode([d for _, d in batch]))     # B x D
+
+      sims = (Q @ D.T) / temperature                          # B x B
+      labels = arange(B)                                      # doc i is query i's positive
+      return cross_entropy(sims, labels)
+
+LINE BY LINE.
+
+  normalize(...)
+L2-normalise both sides, so the dot product IS the cosine and every vector has length 1.
+Without it the model can reduce the loss by making vectors longer rather than better aligned,
+and the temperature below stops meaning anything consistent.
+
+  sims = (Q @ D.T) / temperature
+ONE MATRIX MULTIPLY PRODUCES EVERY PAIRWISE SIMILARITY IN THE BATCH. The diagonal holds the B
+positives; the off-diagonal holds B*(B-1) negatives. At B=64 that is 64 positives and 4,032
+negatives from 64 labelled examples - which is why BATCH SIZE IS A QUALITY PARAMETER here and
+not merely a throughput one.
+
+  / temperature
+Sharpens the softmax. At 0.05 a similarity gap of 0.1 becomes a gap of 2.0 before the softmax,
+so the loss cares intensely about small differences near the top. Too high and the model
+barely distinguishes anything; too low and it becomes unstable and overfits the hardest
+negative in each batch.
+
+  labels = arange(B)
+The elegant part: the correct answer for row i is column i, so no label array is needed - the
+diagonal IS the supervision. This is what makes the whole thing self-supervised given only
+pairs.
+
+  cross_entropy(sims, labels)
+Standard softmax cross-entropy over the row. Equivalent to InfoNCE. Note this is asymmetric -
+it asks "which document for this query". Many implementations also add the transpose, "which
+query for this document", and average the two.
+
+  WHAT IS MISSING, AND IT MATTERS: HARD NEGATIVES. In-batch negatives are OTHER PAIRS' documents
+and are usually about completely different topics, so they are easy and teach little after the
+first epochs. A second training round appends mined hard negatives - documents this model
+currently ranks highly and wrongly - as extra columns, and that is normally where the real
+improvement comes from.
+
+  ALSO MISSING: a duplicate check. If two rows in the batch are near-duplicates, one is
+labelled a negative for the other's query and the model is trained on a contradiction.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Setup: 8 internal (question, document) pairs, 16-dimensional embeddings, trained from random
+initialisation with in-batch negatives and temperature 0.1.
+
+TRACE A - vocabulary overlap, which is why the base model cannot work.
+
+  pair                                                   shared words
+  --------------------------------------------------------------------
+  "how do i get a p1 raised" / "sev1 incidents ..."         NONE
+  "how to bump quota" / "capacity increases ..."            NONE
+  "who approves a cab" / "change advisory board ..."        NONE
+  "how do i get vpn" / "remote network access ..."          NONE
+  "who owns falcon" / "... maintains service falcon"        falcon
+  "what is the tqr" / "the ticket quality review ..."       the
+  "where is the runbook for atlas" / "... for atlas ..."    atlas, for, the
+  "what does a red build mean" / "a failing pipeline ..."   a
+
+Six shared words in total across eight pairs, and four of them are "the", "a", "for". A
+lexical retriever scores essentially zero here by construction.
+
+TRACE B - training, from chance to perfect.
+
+  epochs 0:    recall@1 = 0.125     (1/8, exactly random with 8 candidates)
+  epochs 5:    recall@1 = 1.000
+  epochs 20:   recall@1 = 1.000
+  epochs 200:  recall@1 = 1.000
+
+Five passes over eight examples. NOTHING ABOUT THIS IS HARD when the associations are in the
+training data - which is precisely why it says so little about what happens on associations
+that are not.
+
+TRACE C - the held-out test, three seeds.
+
+  seed 1:  trained pairs 1.000    held-out pairs 0.000
+  seed 2:  trained pairs 1.000    held-out pairs 0.000
+  seed 3:  trained pairs 1.000    held-out pairs 0.000
+
+Zero, three times out of three. The model has learned six specific associations and possesses
+no mechanism to infer a seventh, because the six share nothing with it.
+
+TRACE D - what this does and does not prove. Starting from random initialisation removes all
+general language knowledge, so this is a LOWER bound - a real fine-tune from a pretrained
+checkpoint generalises across paraphrase and morphology and would not score zero. What survives
+the caveat is the mechanism: for arbitrary local names there is no path from one to another,
+so coverage of your glossary is the requirement, and no amount of training on OTHER terms
+substitutes for it.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Training a bi-encoder on a few thousand pairs is minutes to hours on one GPU - the
+cheapest part. The expensive parts are all around it: LABELLED PAIRS (the binding constraint,
+usually mined from click logs or generated by an LLM and hand-validated), RE-EMBEDDING THE
+ENTIRE CORPUS after every model change (a million documents is a migration, not a deploy), and
+the permanent operational burden of keeping model version and index version in lockstep -
+serving vectors from model A against a query encoded by model B returns unrelated documents
+with no error at all.
+
+THE #1 MISTAKE: fine-tuning before trying the free options. A different base model, hybrid
+BM25 retrieval, or a glossary expansion at query time each address a large share of jargon
+failures for no training and no re-embedding. Measure your evaluation set after each.
+
+THE #2 MISTAKE: expecting generalisation to terms not in the training data. Measured, 1.000 on
+trained pairs and 0.000 on held-out pairs across three seeds, because arbitrary names share no
+path. Budget one example per piece of jargon.
+
+THE #3 MISTAKE: a small batch. In-batch negatives mean batch size IS negative count - 64 pairs
+give 4,032 negatives, 8 pairs give 56.
+
+THE #4 MISTAKE: never adding hard negatives. Random in-batch negatives are mostly about other
+topics and stop teaching anything after the first epochs.
+
+THE #5 MISTAKE: no general-benchmark check, so catastrophic forgetting goes unnoticed until the
+queries that used to work stop working.
+
+THE #6 MISTAKE: forgetting to re-embed the corpus, or shipping a model without versioning the
+index alongside it.
+
+THE #7 MISTAKE: fine-tuning the bi-encoder when a small cross-encoder reranker would give more
+per labelled example and needs no corpus re-embedding.
+
+THE TAKEAWAY: a general embedding model fails on your domain because your queries and your
+documents share no vocabulary - measured, four of eight internal question/answer pairs had ZERO
+words in common and the rest shared only "the" and "a" - and fine-tuning fixes it by
+contrastive training on (query, document) pairs, where the batch supplies its own negatives so
+batch size is a quality parameter; it learns fast, measured from 0.125 to 1.000 in five epochs,
+but it learns exactly what it was shown - measured 1.000 on trained pairs and 0.000 on
+held-out pairs across three seeds, because "CAB means change advisory board" implies nothing
+about "TQR" - so the requirement is coverage of your glossary rather than a quantity of data in
+general, and the free options (a better base model, hybrid BM25, a glossary expansion) should
+be exhausted first, because the real cost is not the training run but re-embedding the entire
+corpus and keeping model and index versions locked together forever.""",
+]
+
 
 
 
