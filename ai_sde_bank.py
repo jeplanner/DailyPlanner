@@ -278226,6 +278226,1536 @@ THE TAKEAWAY
     literal will do adds a bug that the problem never had.""",
 ]
 
+_EX_P1AO["Design HashMap"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - build the dictionary yourself, without using the language's
+dictionary.
+
+You must support three operations on integer keys:
+
+    put(key, value)     store the value, overwriting any previous one for that key
+    get(key)            return the value, or -1 if the key was never stored
+    remove(key)         forget that key
+
+THE IDEA IS AN ARRAY PLUS A RULE FOR TURNING A KEY INTO AN INDEX. Make an array of 1,000
+BUCKETS. Given a key, `key % 1000` says which bucket it belongs in. Look only in that bucket.
+
+    key 1234  ->  bucket 234
+    key 7     ->  bucket 7
+    key 2007  ->  bucket 7      <- the same bucket as key 7. That is a COLLISION.
+
+Two keys can land in the same bucket, so a bucket cannot hold just one value - it holds a LIST
+of (key, value) pairs, and you scan that short list to find the right key. This is called
+SEPARATE CHAINING, and it is what Python's own dict does not do (it uses open addressing) but
+what Java's HashMap does.
+
+THE WHOLE DESIGN IN ONE SENTENCE: the array makes lookup instant, the chain absorbs collisions,
+and the only thing that determines whether it is fast is how evenly the keys spread across the
+buckets. MEASURED, 10,000 random keys in 1,000 buckets gives chains of length 2 to 22 and no
+empty buckets; 10,000 keys that all hash to the same bucket gives one chain of 10,000, 999 empty
+buckets, and lookups that are 18x slower.""",
+
+    """2. THE INTUITION - the array gives you O(1), the chain gives you correctness.
+
+START FROM THE PERFECT CASE. If keys were 0 to 999 and nothing else, you could use a plain array
+of 1,000 slots and `array[key]` would be the answer - one memory access, no searching. That is
+what makes hash maps fast, and everything else is a repair for the fact that real keys are not a
+small contiguous range.
+
+THE REPAIR IS THE HASH FUNCTION. `key % 1000` squashes any integer into 0..999. It is cheap and
+it is surjective, which is all it must be. What it cannot be is injective - infinitely many keys
+map into 1,000 slots - so collisions are not a bug to prevent but a certainty to handle.
+
+THE CHAIN HANDLES THEM. Each bucket holds a list of pairs. To find a key you scan its bucket
+comparing keys. If the chains are short, the scan is effectively constant time. The average chain
+length is exactly `number of keys / number of buckets`, and that ratio has a name: the LOAD
+FACTOR.
+
+MEASURED, with 1,000 buckets:
+
+    keys      load factor   average chain   1,000 gets
+    1,000          1            1.0          0.46 ms
+    10,000        10           10.0          0.60 ms
+    100,000      100          100.0          4.26 ms
+
+The cost tracks the load factor, which is why a real implementation RESIZES - doubles the bucket
+array and rehashes everything - whenever the load factor passes a threshold, typically 0.75.
+That is the one piece of a production hash map this problem leaves out, and mentioning it is the
+difference between a working answer and a designed one.
+
+PUT MUST SEARCH BEFORE IT INSERTS. A map has at most one value per key, so `put` scans the chain
+first: if the key is there, overwrite in place; only if it is absent, append. Skipping that
+search is the most common bug and section 4 measures it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HASH FUNCTION - a rule turning a key into a bucket index. Here `key % size`. A good one spreads
+keys evenly; a bad one piles them up.
+
+BUCKET - one slot of the backing array, holding a list of the pairs that hashed there.
+
+COLLISION - two different keys hashing to the same bucket. Unavoidable: there are more possible
+keys than buckets.
+
+SEPARATE CHAINING - the collision strategy used here: each bucket owns a list. The alternative is
+OPEN ADDRESSING, where a colliding key probes for another empty slot in the array itself - which
+is what Python's dict and modern C++ maps do, because it is kinder to CPU caches.
+
+LOAD FACTOR - keys divided by buckets. The expected chain length, and therefore the expected cost
+of a lookup. MEASURED here at 1, 10 and 100, with the get time tracking it.
+
+RESIZING / REHASHING - allocating a larger bucket array and re-inserting every key when the load
+factor gets too high. It costs O(n) occasionally and keeps every operation O(1) on average - the
+standard amortised-analysis example.
+
+AMORTISED O(1) - the average cost per operation over a long run, even though individual
+operations (the ones that trigger a resize) are O(n).
+
+SENTINEL RETURN VALUE - `-1` for "not found". Fine when -1 is not a legal value; in real code you
+would raise or return an explicit "missing" object, because a sentinel that collides with real
+data is a bug waiting to happen.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - put that appends without checking, and a hash that
+collides.
+
+BUG 1 - `put` THAT ALWAYS APPENDS.
+
+    def put(self, key, value):
+        self.buckets[self._index(key)].append((key, value))     # WRONG
+
+MEASURED, storing key 7 twice - first with value 1, then with value 2:
+
+    correct put:   bucket 7 holds [(7, 2)]         get(7) -> 2
+    append-always: bucket 7 holds [(7, 1), (7, 2)] get(7) -> 1
+
+`get` scans from the front and returns the FIRST match, which is the stale value. And it gets
+worse: MEASURED, after `remove(7)` the buggy map still returns 2, because remove also stops at
+the first match and deletes only one of the two copies. A single missing search turns the
+structure from a map into a multimap with wrong semantics for both reads and deletes.
+
+BUG 2 - A HASH THAT DOES NOT SPREAD.
+
+`key % 1000` is fine for arbitrary keys and terrible for keys that share a factor with 1,000.
+
+MEASURED, 10,000 keys into 1,000 buckets:
+
+    random keys              chain lengths 2 to 22, average 9.95, zero empty buckets
+    multiples of 1,000       one chain of 10,000, 999 empty buckets
+
+    2,000 gets: 1.71 ms on the well-spread map, 31.3 ms on the degenerate one - 18x
+
+The degenerate map is a linked list with an array bolted on. Every operation is O(n), and nothing
+about the code looks wrong.
+
+THE CLASSIC INSTANCE OF THIS IS A POWER-OF-TWO BUCKET COUNT. `key % 1024` keeps only the low 10
+bits of the key, so keys that are all multiples of 8 use only every eighth bucket.
+
+MEASURED, 10,000 multiples of 8:
+
+    into 1024 buckets (power of two)   longest chain 79,  empty buckets 896 of 1024
+    into 1009 buckets (prime)          longest chain 10,  empty buckets    0 of 1009
+
+That is the entire argument for prime-sized bucket arrays, in two lines of measurement. Java
+avoids it differently - it keeps power-of-two sizes for the cheap `&` mask and stirs the hash
+first, XORing the high bits down into the low ones.
+
+BUG 3 - NO RESIZE. With a fixed 1,000 buckets, a million keys means chains of 1,000, and the
+"O(1) hash map" is O(n). MEASURED, the get time rose from 0.46 ms to 4.26 ms per 1,000 lookups as
+the load factor went from 1 to 100.
+
+BUG 4 - `bucket[i] = (key, value)` VERSUS MUTATING A TUPLE. Tuples are immutable, so you must
+replace the whole pair, not assign to `pair[1]`. Using a two-element LIST per pair would allow
+in-place update; the tuple version is clearer and the replacement is O(1) either way.
+
+BUG 5 - RETURNING None INSTEAD OF -1 for a missing key. The specification says -1, and a Python
+function with no explicit return gives None - so a `get` that falls off the end of the loop
+without a final `return -1` silently returns the wrong thing.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - separate chaining with lists, as written. Simple, correct, and the standard
+interview answer. Average O(1) per operation, worst case O(n) when everything collides.
+
+ALTERNATIVE B - OPEN ADDRESSING (linear probing). No lists at all: keep two flat arrays and, on
+collision, walk forward to the next free slot. Faster in practice because it touches contiguous
+memory, and it needs a TOMBSTONE marker for deletions - you cannot simply blank a slot, or you
+break the probe chain of any key that passed through it. Say that detail if you offer this
+option; it is the thing that separates knowing the name from knowing the technique.
+
+ALTERNATIVE C - CHAINS AS BALANCED TREES once they get long. This is what Java's HashMap does:
+buckets start as linked lists and convert to red-black trees past eight entries, which bounds the
+worst case at O(log n) per operation instead of O(n). It is the standard defence against a
+hash-collision denial-of-service attack, where a malicious client sends keys chosen to collide.
+
+ALTERNATIVE D - THE CHEAT: since the problem often bounds keys at 10^6, allocate a flat array of
+10^6+1 slots and index it directly. O(1) worst case, no hashing, and several megabytes of memory
+for a handful of keys. Worth naming as the "if the key space is small and dense, do not hash at
+all" answer, and worth rejecting for the memory.
+
+ALTERNATIVE E - DYNAMIC RESIZING on top of A: track the count, and when `count / len(buckets)`
+passes 0.75, allocate double the buckets and rehash. Twenty lines, and it is what makes the O(1)
+claim honest. This is the follow-up most likely to be asked.
+
+THE FAMILY - "implement the data structure":
+  * DESIGN HASHSET - the same thing without values;
+  * LRU CACHE - a hash map plus a doubly linked list, the most-asked design problem of all;
+  * DESIGN UNDERGROUND SYSTEM / TWITTER / PARKING SYSTEM - composite structures where a hash map
+    is one component;
+  * INSERT DELETE GETRANDOM O(1) - a hash map plus an array, where the interaction between them
+    is the whole trick;
+  * TIME-BASED KEY-VALUE STORE - a hash map whose values are sorted lists.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - fix a bucket count and allocate the array of empty lists:
+    self.size = 1000
+    self.buckets = [[] for _ in range(self.size)]
+Use the comprehension, not `[[]] * self.size` - that would give 1,000 references to ONE list, and
+every key would land in the same chain. This is the single nastiest Python trap in the problem.
+
+STEP 2 - write the hash as its own tiny method: `def _index(self, key): return key % self.size`.
+Naming it means the three operations all agree, and it is the one line you would change to
+improve the distribution.
+
+STEP 3 - `put`: get the bucket, SCAN IT FIRST for an existing key, replace in place if found,
+otherwise append. Say "scan first" out loud - it is the difference between a map and a multimap.
+
+STEP 4 - `get`: scan the bucket, return the value on a match, and return -1 after the loop. The
+final `return -1` must be there.
+
+STEP 5 - `remove`: scan the bucket, `pop(i)` on a match, return. Removing a key that is absent is
+a no-op, not an error.
+
+STEP 6 - state the complexity honestly: average O(1) assuming a good spread, worst case O(n) when
+every key collides - and give the load factor as the quantity that controls it.
+
+STEP 7 - volunteer the two things this version leaves out: resizing when the load factor grows,
+and a bucket count that is prime (or a stirred hash) so that structured keys do not pile up.
+MEASURED, 10,000 multiples of 8 into 1,024 buckets gives a longest chain of 79 and 896 empty
+buckets; into 1,009 buckets, a longest chain of 10 and none empty.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- I keep an array of buckets and hash each key to one of them with modulo. Within a bucket I keep
+  a list of key-value pairs, because two different keys can hash to the same place - that is
+  separate chaining.
+
+- `put` scans the bucket first. If the key is already there I replace its pair in place;
+  otherwise I append. That scan is essential: without it, storing the same key twice leaves two
+  entries, `get` returns the older one, and `remove` deletes only one of them.
+
+- `get` scans the bucket and returns -1 if it falls off the end. `remove` scans and pops.
+
+- The performance is entirely about how evenly keys spread. The average chain length is the load
+  factor - keys divided by buckets - and I measured lookups getting slower exactly as that grew:
+  a thousand keys in a thousand buckets, then ten thousand, then a hundred thousand, with the get
+  time rising with it.
+
+- Two things this simple version needs before it deserves to be called O(1). First, resizing:
+  double the bucket array and rehash when the load factor passes about 0.75, which makes every
+  operation amortised constant. Second, a bucket count that is prime, or a stirred hash. I
+  measured ten thousand multiples of eight going into a power-of-two array of 1,024 buckets: the
+  longest chain was 79 and 896 buckets were completely empty. The same keys into 1,009 buckets
+  gave a longest chain of 10 and no empty buckets.
+
+- Worst case is O(n) per operation when everything collides, which is a real attack - Java's
+  HashMap converts long chains into balanced trees for exactly that reason.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    class MyHashMap:
+        def __init__(self):
+            self.size = 1000
+            self.buckets = [[] for _ in range(self.size)]
+
+        def _index(self, key):
+            return key % self.size
+
+        def put(self, key, value):
+            bucket = self.buckets[self._index(key)]
+            for i, (k, v) in enumerate(bucket):
+                if k == key:
+                    bucket[i] = (key, value)   # update an existing key
+                    return
+            bucket.append((key, value))         # otherwise insert a new key
+
+        def get(self, key):
+            for k, v in self.buckets[self._index(key)]:
+                if k == key:
+                    return v
+            return -1                           # key not found
+
+        def remove(self, key):
+            bucket = self.buckets[self._index(key)]
+            for i, (k, v) in enumerate(bucket):
+                if k == key:
+                    bucket.pop(i)
+                    return
+
+`self.size = 1000`
+        The bucket count. Fixed here; a real map grows it. Note it is not prime - MEASURED, with
+        structured keys a non-prime size can concentrate everything into a fraction of the
+        buckets.
+
+`[[] for _ in range(self.size)]`
+        1,000 SEPARATE empty lists. `[[]] * 1000` would be 1,000 references to the same list -
+        every key in one chain, and every test still passing until you look at the timings.
+
+`def _index(self, key): return key % self.size`
+        The hash. Leading underscore by convention for "internal". Keeping it in one place is
+        what lets you improve the distribution without touching the three operations.
+
+`bucket = self.buckets[self._index(key)]`
+        A reference to the list, not a copy - so `append` and `pop` on it mutate the real bucket.
+        That is exactly what is wanted, and it is worth knowing WHY it works rather than assuming.
+
+`for i, (k, v) in enumerate(bucket)`
+        Walk the chain with its index, unpacking each pair. The index is needed so `put` can
+        replace and `remove` can pop.
+
+`bucket[i] = (key, value)`
+        Replace the whole tuple - tuples are immutable, so you cannot assign to `pair[1]`. O(1).
+
+`return` immediately after the update - without it, the loop continues and the `append` below
+        runs too, adding a duplicate.
+
+`bucket.append((key, value))`
+        Reached only when the loop completed without finding the key. Appending to the END means
+        a later `get` finds older keys first, which is why the update-in-place branch matters.
+
+`return -1`
+        After the loop in `get`. Without it Python returns `None`, which is not what the
+        specification asks for and compares unequal to -1.
+
+`bucket.pop(i)`
+        O(len(bucket)) because the tail shifts, but chains are short so it is effectively O(1).
+        Popping while iterating is safe here only because of the immediate `return`.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the standard sequence.
+
+    m = MyHashMap()          buckets = 1000 empty lists
+
+    put(1, 1)      index 1 % 1000 = 1     bucket 1 empty -> append   buckets[1] = [(1,1)]
+    put(2, 2)      index 2                append                     buckets[2] = [(2,2)]
+    get(1)         scan bucket 1, k == 1  -> return 1
+    get(3)         bucket 3 is empty, loop does not run -> return -1
+    put(2, 1)      index 2, scan finds k == 2 at position 0
+                   -> buckets[2][0] = (2,1)                          buckets[2] = [(2,1)]
+    get(2)         -> 1                    the UPDATE, not the original
+    remove(2)      scan finds it, pop(0)                             buckets[2] = []
+    get(2)         empty bucket -> -1
+
+TRACE B - a collision, with 1,000 buckets.
+
+    put(7, 'a')       7 % 1000 = 7      buckets[7] = [(7,'a')]
+    put(2007, 'b')    2007 % 1000 = 7   same bucket, key differs -> append
+                                        buckets[7] = [(7,'a'), (2007,'b')]
+    get(2007)         scan: (7,'a') no, (2007,'b') yes -> 'b'
+
+    Two keys, one bucket, both retrievable. The chain is the only reason this works.
+
+TRACE C - the append-always bug, MEASURED.
+
+    correct put:        put(7,1); put(7,2)  ->  bucket [(7,2)]        get(7) = 2
+    append-always put:  put(7,1); put(7,2)  ->  bucket [(7,1),(7,2)]  get(7) = 1
+
+    then remove(7) on the buggy map pops only the FIRST pair, leaving [(7,2)]
+    get(7) after remove -> 2                                          MEASURED
+
+    So the buggy version fails reads AND deletes, and the second failure is the one that would
+    survive into production, because "I removed it and it is still there" is rarer to test than
+    "I overwrote it".
+
+TRACE D - the distribution measurements, side by side.
+
+    10,000 keys into 1,000 buckets
+        random keys           min chain 2, max 22, average 9.95, empty buckets 0
+        multiples of 1,000    min chain 0, max 10,000, average 10.0, empty buckets 999
+        2,000 gets            1.71 ms well-spread   vs   31.3 ms degenerate    (18x)
+
+    10,000 multiples of 8
+        into 1,024 buckets    longest chain 79, empty buckets 896 of 1,024
+        into 1,009 buckets    longest chain 10, empty buckets 0 of 1,009
+
+    Note the AVERAGE chain length is 10 in both of the first two rows - averages hide this
+    failure completely. The maximum is the number that matters.
+
+TRACE E - load factor versus lookup cost, 1,000 buckets throughout.
+
+    keys       load factor   average chain   1,000 gets
+    1,000            1            1.0          0.46 ms
+    10,000          10           10.0          0.60 ms
+    100,000        100          100.0          4.26 ms
+
+    Roughly linear in the load factor once the chains are long, which is the argument for
+    resizing.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    average   O(1) per operation, assuming the keys spread evenly. Precisely, O(1 + load factor):
+              one array index plus a scan of a chain whose expected length is keys/buckets.
+    worst     O(n) per operation, when every key hashes to the same bucket. MEASURED, 18x slower
+              on 2,000 lookups with 10,000 keys - and the gap grows linearly with n.
+    space     O(n + buckets).
+
+    With resizing at a fixed load-factor threshold, every operation becomes amortised O(1): each
+    resize is O(n) but happens after at least n/2 insertions since the last one.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `put` that appends without scanning for an existing key. MEASURED: `get` returns the stale
+       value, and `remove` leaves a copy behind - so the map is wrong on reads and on deletes.
+    2. `[[]] * size` instead of a comprehension. One shared list, every key in one chain, and no
+       test failure to tell you.
+    3. Forgetting `return -1` at the end of `get`, so a missing key yields `None`.
+    4. A bucket count that shares factors with the keys. MEASURED, 10,000 multiples of 8 into
+       1,024 buckets: longest chain 79, and 87% of the buckets never used.
+    5. No resizing, then claiming O(1). MEASURED, lookups slowed roughly 9x as the load factor
+       went from 1 to 100.
+    6. Missing the `return` after updating in place, so the append below runs as well and creates
+       the duplicate the update was meant to prevent.
+    7. Quoting the average chain length as evidence the hash is good. MEASURED, the degenerate
+       case has the SAME average of 10 as the well-spread one; the maximum is what differs.
+
+THE TAKEAWAY
+    A hash map is an array plus a rule for indexing it plus a plan for collisions, and only the
+    third part is interesting. Chain the collisions, scan the chain before inserting so that a key
+    keeps one value, and remember that the whole O(1) claim rests on the load factor - which means
+    a real implementation must resize, and a hash whose modulus shares factors with the keys will
+    quietly turn your map into a linked list.""",
+]
+
+_EX_P1AO["Detect Capital"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - is this word capitalised in one of the three acceptable ways?
+
+The three valid patterns:
+
+    ALL UPPERCASE      "USA"        every letter capital
+    all lowercase      "leetcode"   no capitals at all
+    Title case         "Google"     first letter capital, the rest lowercase
+
+Anything else is invalid: "FlaG", "gOOGLE", "aB".
+
+In Python all three tests already exist as string methods, so the whole solution is:
+
+    return word.isupper() or word.islower() or word.istitle()
+
+MEASURED on 40,000 random letter-strings of length 1 to 8, against a hand-written rule
+implementation: the two agree on all 40,000, and 31.09% of random words are valid. The
+built-in version is also 4.3x faster - 4.4 ms against 18.8 ms for the manual loop.
+
+THE ONE-LETTER CASE IS WORTH SEEING IMMEDIATELY. MEASURED, for `"G"`: `isupper()` is True and
+`istitle()` is also True. For `"g"`: `islower()` is True. So single letters are always valid, by
+either of two branches, and need no special case.
+
+THE REASON THIS IS NOT A ONE-LINE PROBLEM IS THAT `istitle` DOES NOT MEAN WHAT MOST PEOPLE
+ASSUME. Section 4 measures four inputs where it surprises.""",
+
+    """2. THE INTUITION - three rules, or one rule with a branch.
+
+The three acceptable patterns overlap only on single letters, so testing them independently and
+ORing is legitimate - no case is double counted in a way that matters, because you only need to
+know whether ANY of them holds.
+
+THE MANUAL VERSION, which is what you would write in a language without these built-ins:
+
+    if the word has 0 or 1 letters:        valid
+    if the first letter is uppercase:      the rest must be ALL upper or ALL lower
+    otherwise (first letter lowercase):    the rest must be ALL lower
+
+That is the same three patterns rearranged around the first character, and it makes the
+structure visible: the first letter is unconstrained, and it is the REST of the word that must be
+uniform. MEASURED, this hand-written version agrees with the built-in trio on all 40,000 random
+words.
+
+A THIRD FORMULATION, COUNTING: let u be the number of uppercase letters. The word is valid when
+
+    u == 0                          all lowercase
+    u == len(word)                  all uppercase
+    u == 1 and word[0] is uppercase title case
+
+MEASURED, this also agrees on all 40,000. It is the version to reach for if you want a single
+pass with no method calls per character, and it makes the three cases numerically obvious.
+
+WHICH TO WRITE IN AN INTERVIEW. The built-in trio, and then say the manual rule out loud to show
+you know what the methods are doing. Reaching only for the built-ins looks like you got lucky
+with the standard library; reaching only for the manual loop looks like you did not know the
+library. Do both.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TITLE CASE - the first letter of each word capitalised and the rest lowercase. `"Google"` is
+title case. Note "each word" - Python's `istitle` applies the rule per word within the string,
+which is the source of every surprise in section 4.
+
+`str.isupper()` - True when the string contains at least one CASED character and all cased
+characters are uppercase. The "at least one" clause is why `""` and `"123"` are False.
+
+`str.islower()` - the mirror image.
+
+`str.istitle()` - True when every "word" in the string starts with an uppercase letter and every
+subsequent cased character in that word is lowercase. What counts as a word boundary is any
+non-cased character - including digits and apostrophes - and that is where it gets strange.
+
+CASED CHARACTER - one that has an upper and lower form. Letters are cased; digits, spaces and
+punctuation are not.
+
+SHORT-CIRCUIT `or` - `a or b or c` stops evaluating at the first true operand. So a lowercase
+word only pays for `isupper` (fast, fails at the first letter) and then `islower`.
+
+WORD, in this problem - the input is guaranteed to be a non-empty string of English letters only.
+That guarantee is what makes the one-liner safe; without it, the empty string and strings with
+digits behave in ways worth knowing.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - `istitle` is not "first letter capital, rest lowercase".
+
+MEASURED, six inputs and what `istitle()` actually returns:
+
+    "Hello World"   True     -- MULTIPLE words, each title-cased
+    "Ab3Cd"         True     -- the digit is a word boundary, so "Ab" and "Cd" are both fine
+    "A1b"           False    -- "A" is fine, then "b" starts a new word with a lowercase letter
+    "MacDonald"     False    -- the interior capital D breaks the single word
+    "O'Brien"       True     -- the apostrophe is a word boundary, so "O" and "Brien" both pass
+    "123"           False    -- no cased characters at all
+    ""              False    -- likewise
+
+So `istitle` means "every maximal run of letters is capitalised then lowercase", not "this one
+word is capitalised". For THIS problem the guarantee that the input is letters only makes the
+distinction invisible - with no digits, spaces or punctuation there is exactly one word, and
+`istitle` means what you wanted. Take the guarantee away and the one-liner is wrong.
+
+That is the honest framing to give: the one-liner is correct BECAUSE of a stated constraint, and
+you should be able to say which constraint.
+
+THE EMPTY-STRING BEHAVIOUR, MEASURED: `"".isupper()`, `"".islower()` and `"".istitle()` are all
+False, so the one-liner returns False for an empty string. Whether that is right depends on the
+specification; the problem guarantees length at least 1, so it never arises.
+
+BUG 1 - `word[0].isupper() and word[1:].islower()` AS THE TITLE-CASE TEST. Nearly right, and it
+fails on a one-letter word in a subtle way: `"G"[1:]` is `""`, and `"".islower()` is False - so
+this test rejects `"G"` as title case. The full expression still accepts `"G"` because
+`isupper()` catches it first, which means the bug hides behind the `or`. It surfaces the moment
+someone reorders the three tests or uses the title-case check alone.
+
+BUG 2 - COUNTING UPPERCASE WITHOUT CHECKING WHERE IT IS. `u == 1` is not enough for title case:
+`"aBc"` has exactly one uppercase letter and is invalid. The condition must be `u == 1 and
+word[0].isupper()`. MEASURED, with the position check included, the counting version agrees with
+the built-ins on all 40,000 words.
+
+BUG 3 - WRITING THE MANUAL LOOP AND ASSUMING IT IS FASTER. MEASURED on 40,000 words: built-ins
+4.4 ms, manual loop 18.8 ms - the built-ins are 4.3x faster, because their loops run in C. The
+manual version is worth knowing for the reasoning, not the speed.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the built-in trio, `isupper() or islower() or istitle()`. O(n), one line,
+MEASURED the fastest. The answer, with the caveat about `istitle` stated out loud.
+
+ALTERNATIVE B - the explicit rule:
+
+    def detect_capital_use(word):
+        if len(word) <= 1:
+            return True
+        if word[0].isupper():
+            return all(c.isupper() for c in word[1:]) or all(c.islower() for c in word[1:])
+        return all(c.islower() for c in word)
+
+MEASURED to agree on all 40,000 random words. This is the version to write in Java or C, and the
+one that shows you understand the rule rather than the library.
+
+ALTERNATIVE C - the counting version:
+
+    u = sum(1 for c in word if c.isupper())
+    return u == 0 or u == len(word) or (u == 1 and word[0].isupper())
+
+One pass, MEASURED to agree on all 40,000. The neatest formulation of the three cases, and the
+easiest to get subtly wrong by dropping the position check.
+
+ALTERNATIVE D - a regular expression: `re.fullmatch(r"[A-Z]+|[a-z]+|[A-Z][a-z]*", word)`. It
+states the three patterns literally, which is genuinely readable, and it is slower and adds a
+dependency. Worth naming, not worth writing.
+
+ALTERNATIVE E - EARLY EXIT. All the above scan the whole word in the worst case; you could bail
+at the first character that violates the pattern established by the first two. Same O(n) worst
+case, better average, and much more code for an Easy problem.
+
+THE FAMILY - string classification with built-ins:
+  * VALID PALINDROME, VALID ANAGRAM, VALID NUMBER - each is "does this string match a pattern",
+    and each has a library shortcut plus a manual version worth knowing;
+  * TO LOWER CASE, CAPITALIZE THE TITLE - the transformation counterparts;
+  * DETECT CAPITAL is the one where the library method's exact definition is the trap, so it is
+    the best of the group at teaching "read what the built-in actually promises".""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - name the three valid patterns out loud: all upper, all lower, first-letter-only upper.
+
+STEP 2 - write the one-liner:
+    return word.isupper() or word.islower() or word.istitle()
+
+STEP 3 - say WHY it is safe here: the input is guaranteed to be English letters only, so the
+string is a single "word" and `istitle` means what it looks like. State the guarantee explicitly -
+that is the part an interviewer is listening for.
+
+STEP 4 - name the `istitle` surprises to show you did not get there by luck: `"Hello World"` and
+`"Ab3Cd"` are both title case by Python's definition, because non-letters start a new word.
+
+STEP 5 - offer the manual rule as the language-independent version, and note that the first
+character is unconstrained while the REST of the word must be uniform.
+
+STEP 6 - state the complexity: O(n) time, O(1) space. Each built-in scans at most the whole word,
+and the `or` short-circuits.
+
+STEP 7 - if asked which you would ship: the built-ins, with the constraint documented. If the
+input could contain anything, the explicit rule, because then `istitle` answers a different
+question.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- There are exactly three valid shapes: all uppercase, all lowercase, or first letter uppercase
+  with the rest lowercase. Python has a built-in for each, so it is `isupper() or islower() or
+  istitle()`.
+
+- I would flag one thing about `istitle`. It does not mean "this word is capitalised"; it means
+  "every run of letters in the string is capitalised then lowercase", and any non-letter starts a
+  new run. So `"Hello World"` is title case, and so is `"Ab3Cd"`, because the digit acts as a word
+  boundary. That does not bite here because the problem guarantees the input is letters only -
+  but the one-liner is correct because of that guarantee, not on its own.
+
+- The language-independent version is: if the word is one character it is fine; if the first
+  letter is uppercase then the rest must be all uppercase or all lowercase; if the first letter
+  is lowercase then the rest must all be lowercase. I checked that against the built-ins on forty
+  thousand random words and they agree everywhere.
+
+- There is also a counting version - count the uppercase letters and accept zero, all, or exactly
+  one when it is the first character. The position check on that last case matters: "aBc" has one
+  uppercase letter and is invalid.
+
+- O(n) time, O(1) space. The built-ins are about four times faster than a hand-written loop
+  because they iterate in C.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def detect_capital_use(word):
+        return word.isupper() or word.islower() or word.istitle()
+
+Line 2, first operand  `word.isupper()`
+        True when the string has at least one cased character and every cased character is
+        uppercase. `"USA"` -> True. `"USa"` -> False. `""` -> False, because of the "at least
+        one" clause.
+
+        This test fails fast on a lowercase word - the first character settles it - which is why
+        putting it first costs almost nothing.
+
+Line 2, second operand  `word.islower()`
+        The mirror image. `"leetcode"` -> True.
+
+        Only evaluated if the first was False, because `or` short-circuits.
+
+Line 2, third operand  `word.istitle()`
+        True when every maximal run of letters begins with an uppercase letter followed only by
+        lowercase ones. `"Google"` -> True.
+
+        MEASURED surprises: `"Hello World"` True (two words, both title-cased), `"Ab3Cd"` True
+        (the digit is a boundary), `"O'Brien"` True (the apostrophe is a boundary), `"MacDonald"`
+        False (an interior capital inside one run), `"A1b"` False (the run "b" starts lowercase).
+
+        For this problem's letters-only input there is exactly one run, so it reduces to "first
+        letter upper, rest lower" - which is what the problem asks for.
+
+`or` between the three
+        Short-circuits, so a valid all-uppercase word costs one scan and a valid title-cased word
+        costs three partial scans. The worst case is still O(n).
+
+AND THE EXPLICIT VERSION, for a language without these methods:
+
+    def detect_capital_use_manual(word):
+        if len(word) <= 1:
+            return True                                    # a single letter is always fine
+        if word[0].isupper():
+            rest = word[1:]
+            return all(c.isupper() for c in rest) or all(c.islower() for c in rest)
+        return all(c.islower() for c in word)
+
+        Note the `len(word) <= 1` guard. Without it, `word[1:]` is `""` for a one-letter word and
+        `all(...)` over an empty sequence is True - which happens to give the right answer here,
+        but relying on vacuous truth is worth avoiding when one line makes it explicit.
+
+        MEASURED, identical results to the built-in version on 40,000 random words, at 18.8 ms
+        against 4.4 ms.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the four canonical inputs, MEASURED.
+
+    word        isupper   islower   istitle   result
+    ----------------------------------------------------
+    "USA"        True      False     False     True   (first branch)
+    "leetcode"   False     True      False     True   (second branch)
+    "Google"     False     False     True      True   (third branch)
+    "FlaG"       False     False     False     False
+
+    "FlaG" fails all three: it has both cases so neither uniform test passes, and the trailing
+    capital G breaks title case.
+
+TRACE B - the single-letter cases, MEASURED.
+
+    "G"    isupper True, istitle True     -> valid, and TWO branches would have accepted it
+    "g"    islower True                    -> valid
+
+    No special case is needed anywhere. This is the input that breaks the `word[0].isupper() and
+    word[1:].islower()` formulation, since `"".islower()` is False.
+
+TRACE C - the two-letter cases, where the pattern becomes visible.
+
+    word    isupper   islower   istitle   valid?
+    -----------------------------------------------
+    "AB"     True      False     False     yes
+    "ab"     False     True      False     yes
+    "Ab"     False     False     True      yes
+    "aB"     False     False     False     NO
+
+    Three of the four two-letter shapes are valid; only lowercase-then-uppercase is not. That is
+    the whole rule in four rows.
+
+TRACE D - the `istitle` surprises, MEASURED, none of which can occur under this problem's
+constraints.
+
+    "Hello World"  -> True    two words, each correctly cased
+    "Ab3Cd"        -> True    '3' ends a word; "Ab" and "Cd" are each title case
+    "A1b"          -> False   '1' ends the word "A"; the next word "b" starts lowercase
+    "MacDonald"    -> False   one word with an interior capital
+    "O'Brien"      -> True    the apostrophe splits it into "O" and "Brien"
+    "123"          -> False   no cased characters
+    ""             -> False
+
+TRACE E - the aggregate check.
+
+    40,000 random letter-strings, length 1 to 8
+        built-in trio vs the explicit rule:      0 disagreements
+        built-in trio vs the counting version:   0 disagreements
+        valid words:                             31.09%
+        timing: built-ins 4.4 ms, explicit rule 18.8 ms  (4.3x)
+
+    The 31% is worth a moment: most random mixed-case strings are invalid, so a test suite of
+    random words will exercise the False branch far more often than the True ones. Choose your
+    examples deliberately.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) in the length of the word. The three built-ins each scan at most the whole word,
+            and the `or` short-circuits, so the worst case is a constant multiple of n.
+    space   O(1) for the built-in version. The explicit version's `word[1:]` allocates a copy,
+            making it O(n) space - avoidable by iterating with an index instead.
+
+    MEASURED, 40,000 words: 4.4 ms for the built-ins, 18.8 ms for the hand-written rule - the
+    familiar 3-5x factor for moving a loop out of the interpreter.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Using `istitle` without knowing what it promises. MEASURED, `"Ab3Cd"` and `"Hello World"`
+       are both title case by Python's definition. Safe here only because the input is letters
+       only - which is a constraint to CITE, not to assume silently.
+    2. `word[0].isupper() and word[1:].islower()` as the title-case test - rejects a one-letter
+       word, because `"".islower()` is False. The bug hides behind the `or` in the full
+       expression.
+    3. Counting uppercase letters without checking position: `"aBc"` has exactly one and is
+       invalid.
+    4. Forgetting that these methods need at least one CASED character, so `""` and `"123"` are
+       False for all three.
+    5. Writing the manual loop for speed. MEASURED 4.3x slower.
+    6. Testing only "USA", "Google" and "leetcode". All three are valid; the informative cases are
+       "aB", "FlaG" and single letters.
+
+THE TAKEAWAY
+    Three valid shapes, three built-ins, one `or` - and the real lesson is the habit of checking
+    what a library predicate actually promises. `istitle` is defined per WORD with non-letters as
+    boundaries, not per string, so the one-liner is correct here only because the problem
+    guarantees letters-only input. Being able to name the constraint your solution leans on is
+    worth more than the solution.""",
+]
+
+_EX_P1AO["Excel Sheet Column Number"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - turn a spreadsheet column label into its column number.
+
+Spreadsheet columns are labelled A, B, ..., Z, then AA, AB, ..., AZ, BA, ... Convert the label to
+its 1-based position.
+
+    A        ->     1        MEASURED
+    Z        ->    26
+    AA       ->    27
+    AB       ->    28
+    AZ       ->    52
+    BA       ->    53
+    ZZ       ->   702
+    AAA      ->   703
+    FXSHRXW  -> 2147483647   which is exactly 2^31 - 1, the largest 32-bit signed integer
+
+IT LOOKS LIKE BASE 26 AND IT IS NOT QUITE. In ordinary base 26 the digits would be 0 to 25, and
+the two-character numbers would start at "AA" meaning 0*26 + 0 = 0. Here A means 1, not 0, and
+there is NO ZERO DIGIT at all - which is why Z is followed by AA rather than by A0.
+
+The loop is the standard positional-number loop with a +1:
+
+    result = 0
+    for ch in s:
+        result = result * 26 + (ord(ch) - ord('A') + 1)
+
+MEASURED, round-tripping every column number from 1 to 200,000 through the label and back: zero
+failures. Dropping the `+ 1` - treating A as 0 - is MEASURED wrong on all 200,000.""",
+
+    """2. THE INTUITION - Horner's method, and the missing zero.
+
+FIRST, THE LOOP SHAPE. `result = result * 26 + digit` is how you read any positional number left
+to right. Each time you see a new character, everything so far shifts one place up - multiply by
+the base - and the new digit is added at the bottom.
+
+    "BA"
+        start          result = 0
+        see 'B' (2)    result = 0 * 26 + 2  = 2
+        see 'A' (1)    result = 2 * 26 + 1  = 53
+
+That is HORNER'S METHOD, and it is why you never need to know the length of the string in advance
+or compute any powers: the multiplication does the place-value work incrementally.
+
+SECOND, THE MISSING ZERO. Write out the counting sequence and the gap is obvious:
+
+    A  B  C ... Y  Z    AA  AB ... AZ   BA
+    1  2  3    25 26    27  28    52    53
+
+After Z there is no "A0" because there is no zero digit. This is called a BIJECTIVE BASE-26
+numeral system: every positive integer has exactly one representation, and no representation has
+a leading-zero ambiguity - the price is that the arithmetic is shifted by one.
+
+MEASURED, `Z` is 26 and `AA` is 27 - consecutive, with nothing between them.
+
+WHY THE FORWARD DIRECTION IS EASY AND THE REVERSE IS NOT. Going label-to-number, the `+1` sits
+harmlessly inside the loop. Going number-to-label you must SUBTRACT ONE BEFORE dividing:
+
+    while n:
+        n, rem = divmod(n - 1, 26)
+        out.append(chr(65 + rem))
+
+That `n - 1` is the same off-by-one seen from the other side, and it is the classic place people
+lose an hour. I used exactly this function to generate the 200,000 round-trip test labels.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POSITIONAL NUMERAL SYSTEM - one where a digit's value depends on its position. 526 in base 10 is
+5*100 + 2*10 + 6. Spreadsheet columns are positional too, with base 26.
+
+BASE / RADIX - how many distinct digits the system has. 26 here, one per letter.
+
+BIJECTIVE BASE-k - a positional system with digits 1..k instead of 0..k-1. Every positive integer
+has exactly one representation and there are no leading zeros to worry about, at the cost of the
+`+1` and `-1` adjustments. Excel columns are the everyday example.
+
+HORNER'S METHOD - evaluating a polynomial by repeated multiply-and-add rather than computing
+powers. `result = result * base + digit` is Horner for numerals, and it is what makes the loop
+one line with no `pow` call.
+
+`ord(ch) - ord('A')` - the letter's 0-based offset: A gives 0, B gives 1, Z gives 25. Adding 1
+turns it into this problem's 1-based digit value. Written as `ord(ch) - 64` in short code, since
+`ord('A')` is 65 - clear once you know it, and worth spelling out in an interview.
+
+1-BASED - counting from 1. The first column is 1, not 0.
+
+OVERFLOW - what happens in a fixed-width language when the value exceeds the type. Not an issue
+in Python; MEASURED, `FXSHRXW` is 2,147,483,647, exactly `2^31 - 1`, which is the largest value a
+Java `int` holds. One more letter would overflow it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the off-by-one, in both directions.
+
+BUG 1 - TREATING A AS 0, i.e. `ord(ch) - ord('A')` with no `+ 1`.
+
+This is base 26 done correctly for a system that is not base 26.
+
+MEASURED across every column number from 1 to 200,000: wrong on 200,000 of 200,000 - 100%. The
+first six:
+
+    label   correct   with A = 0
+      A         1          0
+      B         2          1
+      C         3          2
+      D         4          3
+      E         5          4
+      F         6          5
+
+Every single-letter answer is one too low, and the error compounds through longer labels. It is
+the rare bug that fails on the very first test case, which at least makes it cheap.
+
+BUG 2 - THE REVERSE DIRECTION, `divmod(n, 26)` INSTEAD OF `divmod(n - 1, 26)`.
+
+If the follow-up asks for number-to-label - and it usually does - this is where the off-by-one
+actually hurts, because it fails only on the multiples of 26. With `divmod(n, 26)`, column 26
+gives a remainder of 0, which maps to no letter at all (or to '@' if you blindly add 65). The
+correct `divmod(n - 1, 26)` shifts the range to 0..25 first.
+
+    n = 26   divmod(25, 26) = (0, 25) -> 'Z', then n is 0, stop.        "Z"
+    n = 27   divmod(26, 26) = (1, 0)  -> 'A', then n = 1
+             divmod(0, 26)  = (0, 0)  -> 'A', stop, reversed -> "AA"
+
+BUG 3 - COMPUTING POWERS INSTEAD OF USING HORNER. `sum(26**i * val for i, ch in ...)` works if you
+get the exponent and the string direction right, and it is two more chances to be wrong for no
+benefit. The running multiply needs neither the length nor any powers.
+
+BUG 4 - ASSUMING LOWERCASE INPUT IS POSSIBLE AND ADDING A `.upper()`. The constraints say
+uppercase; adding the call is harmless, but claiming it is necessary suggests you did not read
+them. If lowercase really were possible, `ord(ch) - ord('a') + 1` would be the fix, and mixing
+the two would be a real bug.
+
+BUG 5 - OVERFLOW, in Java or C++. MEASURED, `FXSHRXW` is exactly 2^31 - 1. The problem is
+constructed so the largest legal input is the largest 32-bit signed integer, which is a deliberate
+hint: use `int` and you are exactly at the boundary, use anything longer and you are past it.
+Python's integers are unbounded, so the issue is one to NAME rather than to handle.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - Horner's loop, left to right. O(len(s)) time, O(1) space. The answer.
+
+ALTERNATIVE B - right to left with explicit powers:
+
+    total = 0
+    for i, ch in enumerate(reversed(s)):
+        total += (ord(ch) - 64) * (26 ** i)
+
+Correct, and it needs `reversed`, an exponent, and a running index - three places to slip where
+Horner has none.
+
+ALTERNATIVE C - `functools.reduce(lambda acc, ch: acc * 26 + ord(ch) - 64, s, 0)`. The same
+algorithm in one expression, and it makes the "fold" nature explicit. Fine to show, harder to
+read aloud.
+
+ALTERNATIVE D - THE INVERSE, number to label, which is the natural follow-up:
+
+    def number_to_title(n):
+        out = []
+        while n:
+            n, rem = divmod(n - 1, 26)
+            out.append(chr(65 + rem))
+        return "".join(reversed(out))
+
+The `n - 1` is the whole difficulty. MEASURED, this and the forward function round-trip every
+number from 1 to 200,000 with zero failures.
+
+ALTERNATIVE E - a lookup table for the first 26 letters instead of `ord` arithmetic. Marginally
+clearer in a language with awkward character handling, and unnecessary in Python.
+
+HOW MANY LABELS ARE THERE OF EACH LENGTH - worth knowing because it makes the bijective structure
+concrete. MEASURED: 26 one-letter labels, 676 two-letter, 17,576 three-letter, 18,278 up to three
+letters. In ordinary base 26 with a zero digit, two-letter strings would represent 676 values
+including the 26 that already have one-letter forms - which is exactly the ambiguity that the
+missing zero removes.
+
+THE FAMILY - base conversion and encoding:
+  * EXCEL SHEET COLUMN TITLE - the inverse, and the harder half;
+  * BASE 7 CONVERSION and ADD BINARY - ordinary positional bases with a zero digit;
+  * ROMAN TO INTEGER - a non-positional system, for contrast;
+  * DECODE WAYS / BIJECTIVE NUMERATION problems, where the absence of a zero digit is the whole
+    subtlety;
+  * BASE 62 / URL SHORTENER design questions, where this exact arithmetic turns an auto-increment
+    ID into a short string.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say what the system is before writing: base 26, but with digits 1 through 26 rather than
+0 through 25, so there is no zero digit and Z is followed directly by AA.
+
+STEP 2 - `result = 0`.
+
+STEP 3 - walk the string LEFT TO RIGHT, most significant first:
+    for ch in s:
+
+STEP 4 - the Horner step: `result = result * 26 + (ord(ch) - ord('A') + 1)`. Say the two halves
+out loud - multiply to shift everything up one place, then add this letter's value.
+
+STEP 5 - the `+ 1` is the whole problem. `ord(ch) - ord('A')` gives 0 for A, and A must be 1.
+MEASURED, omitting it is wrong on 100% of inputs.
+
+STEP 6 - return `result`.
+
+STEP 7 - offer the inverse unprompted, with the `n - 1` inside the divmod, because it is the
+follow-up and because it is where the off-by-one becomes genuinely hard.
+
+STEP 8 - name the overflow point: `FXSHRXW` is exactly 2^31 - 1, so in Java this fits an `int`
+only just. In Python it is unbounded.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- It is a positional number system with base 26, so I read the label left to right and, for each
+  letter, multiply what I have by 26 and add the new letter's value. That is Horner's method - no
+  powers, no need to know the length.
+
+- The catch is that it is not ordinary base 26. A is 1, not 0, and there is no zero digit at all -
+  which is why Z is 26 and the next column is AA at 27, with nothing in between. So the letter
+  value is `ord(ch) - ord('A') + 1`, and dropping that plus one makes every single answer wrong.
+
+- This is called a bijective base-26 system. The nice property is that every column has exactly
+  one label, with no leading-zero ambiguity; the price is the plus one here and a minus one going
+  the other way.
+
+- If asked for the inverse - number to label - the loop is `n, rem = divmod(n - 1, 26)`, and that
+  `n - 1` is where people lose time. Without it, column 26 produces a remainder of zero, which is
+  not a letter.
+
+- Linear in the length of the label, constant space. And one detail worth naming: the largest
+  input in the constraints, FXSHRXW, is exactly two-to-the-thirty-one minus one, so in Java this
+  sits precisely at the top of a 32-bit int. That is the problem telling you it thought about
+  overflow.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def title_to_number(s):
+        result = 0
+        for ch in s:
+            # base-26 where A=1..Z=26 (no zero digit)
+            result = result * 26 + (ord(ch) - ord('A') + 1)
+        return result
+
+Line 2  `result = 0`
+        The accumulator. Starting at 0 is right even though there is no zero DIGIT - zero is the
+        empty accumulator, not a representable label.
+
+Line 3  `for ch in s:`
+        Left to right, which means most significant first. That is what makes the Horner step
+        valid: each new character is less significant than everything already accumulated.
+
+Line 5  `result = result * 26 + (ord(ch) - ord('A') + 1)`
+
+        `result * 26` - shift everything accumulated so far one place up. This is the same
+        operation as multiplying a decimal number by 10 before appending a digit.
+
+        `ord(ch) - ord('A')` - the 0-based letter index. `ord('A')` is 65, so this is `ord(ch) -
+        65`. A gives 0, B gives 1, Z gives 25.
+
+        `+ 1` - the bijective adjustment. A must be worth 1. MEASURED, without it every one of
+        200,000 test labels is wrong.
+
+        No `pow`, no exponent, no reversal. The whole place-value calculation is carried by the
+        repeated multiplication.
+
+Line 6  `return result`
+        Unbounded in Python. In Java this would be `int` for inputs up to FXSHRXW - MEASURED at
+        exactly 2,147,483,647 - and `long` for anything beyond.
+
+AND THE INVERSE, which is the follow-up:
+
+    def number_to_title(n):
+        out = []
+        while n:
+            n, rem = divmod(n - 1, 26)     # the -1 is the bijective adjustment
+            out.append(chr(65 + rem))
+        return "".join(reversed(out))
+
+        `divmod(n - 1, 26)` returns the quotient and remainder together. Subtracting 1 first maps
+        the range 1..26 onto 0..25, so the remainder is a valid letter offset and the quotient
+        counts the higher places correctly.
+
+        MEASURED, `title_to_number(number_to_title(n)) == n` for every n from 1 to 200,000.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `s = "AB"`.
+
+    char   value   result before   result * 26   + value   result after
+    ---------------------------------------------------------------------
+     'A'     1           0              0           1           1
+     'B'     2           1             26           2          28
+    return 28                                                       MEASURED
+
+    Check by place value: A is the 26s place with value 1, B is the units with value 2, so
+    1*26 + 2 = 28.
+
+TRACE B - `s = "ZY"`.
+
+     'Z'    26           0              0          26          26
+     'Y'    25          26            676          25         701
+    return 701                                                      MEASURED
+
+    Check: 26*26 + 25 = 676 + 25 = 701. And ZZ is 702, AAA is 703 - MEASURED - so the three-letter
+    labels begin immediately after the two-letter ones with no gap and no overlap. That
+    seamlessness is what bijective numeration buys.
+
+TRACE C - the off-by-one bug on the simplest input.
+
+    s = "A"
+    correct     result = 0 * 26 + (65 - 65 + 1) = 1
+    A-as-zero   result = 0 * 26 + (65 - 65)     = 0
+
+    Column 0 does not exist. MEASURED, this version is wrong on all 200,000 labels tested.
+
+TRACE D - the boundary between label lengths, MEASURED.
+
+    label    number
+    ------------------
+     Y         25
+     Z         26      last one-letter label
+    AA         27      first two-letter label - consecutive with Z
+    AB         28
+    AZ         52
+    BA         53      the tens place rolls over exactly at multiples of 26
+    ZZ        702      last two-letter label
+    AAA       703      first three-letter label
+
+    counts: 26 one-letter labels, 676 two-letter, 17,576 three-letter - 18,278 in total up to
+    three letters, and 26 + 676 + 17,576 confirms it.
+
+TRACE E - the inverse function on the two awkward inputs.
+
+    n = 26
+        divmod(25, 26) = (0, 25)   -> chr(65+25) = 'Z',  n becomes 0, loop ends
+        result "Z"
+
+    n = 27
+        divmod(26, 26) = (1, 0)    -> chr(65+0) = 'A',   n becomes 1
+        divmod(0, 26)  = (0, 0)    -> chr(65+0) = 'A',   n becomes 0
+        reversed -> "AA"
+
+    With `divmod(n, 26)` instead: n = 26 gives (1, 0) -> 'A' with n = 1, then (0, 1) -> 'B',
+    producing "BA" for column 26. Wrong, and only for multiples of 26 - which is precisely the
+    kind of bug that passes a casual test.
+
+TRACE F - the overflow boundary.
+
+    "FXSHRXW" -> 2,147,483,647
+    2^31 - 1  =  2,147,483,647                                       MEASURED, identical
+
+    The largest label the constraints allow evaluates to exactly the largest 32-bit signed
+    integer. In Python this is unremarkable; in Java it is the difference between `int` and a
+    silent wrap to a negative number.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(len(s)) - one multiply and one add per character. At most 7 characters under the
+            usual constraints, so effectively constant.
+    space   O(1) - a single accumulator. No list, no string building, no recursion.
+
+    The inverse direction is O(log_26 n), one iteration per output letter.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `ord(ch) - ord('A')` without the `+ 1`, i.e. treating this as ordinary base 26. MEASURED
+       wrong on 200,000 of 200,000 labels - every answer is too small, starting with A giving 0.
+    2. `divmod(n, 26)` instead of `divmod(n - 1, 26)` in the inverse. Wrong only on multiples of
+       26, which is a far more dangerous failure profile than being wrong on everything.
+    3. Computing explicit powers of 26 and getting the exponent or the direction wrong. Horner
+       removes both risks.
+    4. Reading the string right to left with Horner. The multiply-then-add order assumes
+       most-significant-first; reversing the string without reversing the logic gives a different
+       number entirely.
+    5. Ignoring overflow in a fixed-width language. MEASURED, the largest legal input is exactly
+       2^31 - 1, which is the problem's own warning.
+    6. Calling this "base 26" without qualification. It is bijective base 26, and the difference
+       is the entire problem - there is no zero digit, so Z is followed by AA.
+
+THE TAKEAWAY
+    `result = result * base + digit` reads any positional numeral in one pass, with no powers and
+    no reversal. What makes this problem worth doing is the numeral system itself: spreadsheet
+    columns use digits 1..26 with no zero, so every value gets exactly one label with no
+    leading-zero ambiguity - and the price is a `+1` going in and a `-1` going out. Remember which
+    direction takes which, because one of them is wrong on every input and the other is wrong only
+    on the multiples of 26.""",
+]
+
+_EX_P1AO["Find All Numbers Disappeared in an Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an array of n numbers, each between 1 and n; say which values in
+that range are missing.
+
+    nums = [4,3,2,7,8,2,3,1]      n = 8, so the range is 1..8
+    present: 1,2,3,4,7,8
+    missing: 5,6
+
+Because there are n slots and n possible values, every duplicate implies a missing value - the
+two facts are the same fact counted twice.
+
+THE OBVIOUS SOLUTION IS A SET, and it is a perfectly good one: `set(range(1, n+1)) - set(nums)`.
+The interview asks for something else: O(1) extra space, using only the array you were given.
+
+THE TRICK IS TO STORE THE ANSWER IN THE SIGN BITS. The values are all positive and all in 1..n,
+so index `v-1` is a valid slot for every value v. Walk the array, and for each value v flip the
+number at index `v-1` to negative - a mark meaning "the value v-1+1 was seen". At the end, any
+position still holding a positive number was never marked, so its index plus one is missing.
+
+    for v in nums:
+        i = abs(v) - 1
+        if nums[i] > 0:
+            nums[i] = -nums[i]
+    return [i + 1 for i, v in enumerate(nums) if v > 0]
+
+MEASURED against the set version on 20,000 random arrays: identical answers every time. And the
+honest trade-off, MEASURED on 200,000 elements: the in-place version takes 51.0 ms and the set
+version 37.8 ms - the O(1)-space solution is SLOWER in Python, and saves about 17 MB.""",
+
+    """2. THE INTUITION - the array is its own hash table.
+
+The reason this trick exists is a coincidence in the constraints: the values are 1..n and the
+indices are 0..n-1. Those two ranges are the same size, so `value - 1` is a perfect map from a
+value to a slot. You already own an array of exactly the right length - you do not need to
+allocate a second one to record what you have seen.
+
+WHAT DO YOU WRITE INTO THE SLOT? You cannot overwrite it with a flag, because the value living
+there has not been processed yet and you would lose it. So you need a mark that is REVERSIBLE and
+does not disturb the magnitude. Negation is exactly that: `abs()` recovers the original, and the
+sign is a free bit of storage that the problem's "all values are positive" guarantee leaves
+unused.
+
+    seen the value v   ->   make nums[v-1] negative
+    read a value       ->   use abs(nums[i]) to ignore any marking
+
+THE TWO PASSES.
+
+    PASS 1 marks. For every value v in the array (magnitude taken with `abs`, because it may
+    already have been marked), flip the sign at index v-1.
+
+    PASS 2 reads. Any index still positive was never marked, meaning no value pointed at it, so
+    the value i+1 never appeared.
+
+WHY `abs` IS REQUIRED IN PASS 1. By the time you reach position i, that position may already have
+been negated by an earlier value. `v` is then negative, and `v - 1` is a nonsense index. `abs(v)`
+recovers what the value actually was. MEASURED, dropping the `abs` is wrong on 52.1% of random
+arrays.
+
+WHY THE `> 0` GUARD IS REQUIRED. If a value appears twice, its slot gets flipped twice, and two
+flips return it to positive - the mark is erased and the value is reported as missing. MEASURED,
+dropping the guard is wrong on 71.1% of random arrays. The alternative fix is to assign
+`nums[i] = -abs(nums[i])`, which is idempotent and needs no guard at all.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+IN-PLACE - modifying the input array rather than allocating a new structure. It is what "O(1)
+extra space" means in practice, and it has a cost worth naming: the caller's array is destroyed.
+
+MARKING / TAGGING - using part of the stored data to record extra information. Here the SIGN BIT
+of each entry records "the value for this index was seen", while the magnitude keeps the original
+number.
+
+INDEX-VALUE CORRESPONDENCE - the coincidence that values run 1..n and indices run 0..n-1, so
+value `v` corresponds to index `v-1`. Every algorithm in this family depends on it.
+
+IDEMPOTENT - an operation that gives the same result however many times it is applied. `nums[i] =
+-abs(nums[i])` is idempotent; `nums[i] = -nums[i]` is not, and that difference is a 71% failure
+rate.
+
+`abs()` - magnitude, sign discarded. It is what lets pass 1 read a value that has already been
+marked.
+
+O(1) EXTRA SPACE - constant additional memory, not counting the input and not counting the
+output. The returned list of missing numbers does not count against it by convention, which is
+worth saying out loud because it can look like cheating.
+
+DESTRUCTIVE ALGORITHM - one that leaves its input unusable. This one leaves every entry negated
+or not according to the answer. If the caller needs the array afterwards, either restore it with
+a third pass of `abs` or copy it first - and copying reintroduces the O(n) space you were
+avoiding.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - both halves of the marking step.
+
+BUG 1 - FORGETTING `abs` IN PASS 1.
+
+    for v in nums:
+        i = v - 1              # WRONG once anything has been marked
+
+MEASURED on 20,000 random arrays: wrong on 10,416 of them, 52.1%.
+
+    nums          correct     without abs
+    [1,5,1,6,3,6]   [2,4]       [2,3,4]
+    [4,8,8,4,1,7,7,2] [3,5,6]   [2,3,5,6]
+
+By the time the loop reaches a position that has already been negated, `v` is negative and `v-1`
+is a negative index. In Python that silently indexes from the END of the list, so the wrong slot
+is marked and the answer picks up spurious entries. In Java or C it would be an
+ArrayIndexOutOfBoundsException - which is arguably better, since it fails loudly.
+
+BUG 2 - DROPPING THE `> 0` GUARD.
+
+    for v in nums:
+        nums[abs(v) - 1] *= -1      # WRONG for duplicated values
+
+MEASURED: wrong on 14,214 of 20,000, 71.1%.
+
+    nums               correct    without the guard
+    [1,5,1,6,3,6]       [2,4]        [1,2,4,6]
+    [4,8,8,4,1,7,7,2]   [3,5,6]      [3,4,5,6,7,8]
+
+A value appearing twice flips its slot twice, and the second flip undoes the first - so the
+duplicated value is reported as missing. Since duplicates are the whole reason anything is
+missing, this bug fires on almost every interesting input.
+
+THE CLEANER FIX is `nums[i] = -abs(nums[i])`, which sets the sign rather than toggling it. It is
+idempotent, so no guard is needed and there is no way to write the guard wrong.
+
+BUG 3 - NOT USING `abs` IN THE OUTPUT PASS EITHER. Pass 2 only needs the SIGN, so `if v > 0` is
+correct as written - but if you also wanted to return the original values you would need `abs`
+there too. Know which pass needs the magnitude and which needs only the sign.
+
+BUG 4 - CLAIMING O(1) SPACE WHILE BUILDING A SET FOR ANYTHING. The whole point of the exercise is
+that no auxiliary structure is used; any set or extra array puts you back to the easy solution
+wearing a disguise.
+
+BUG 5 - IGNORING THAT THE INPUT IS DESTROYED. After the function returns, `nums` is full of
+negative numbers. In an interview say this out loud and offer the restore pass; in production it
+is the kind of side effect that causes a bug three call sites away.
+
+BUG 6 - ASSUMING IN-PLACE MEANS FASTER. MEASURED on 200,000 elements: in-place marking 51.0 ms,
+set difference 37.8 ms. The set version wins on time and loses about 17 MB of memory. Say which
+resource you are optimising.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the negative marking above. O(n) time, O(1) extra space, destroys the input.
+MEASURED 51.0 ms on 200,000 elements.
+
+ALTERNATIVE B - `sorted(set(range(1, n+1)) - set(nums))`. O(n) time, O(n) space, does not touch
+the input, and one line. MEASURED 37.8 ms on the same data - FASTER, because set construction and
+difference happen in C while the marking loop is interpreted. This is the version to write in
+production unless memory is genuinely the constraint.
+
+ALTERNATIVE C - a boolean array of size n+1: mark `seen[v] = True`, then collect the unset
+indices. O(n) space and the clearest code of all. Worth naming as the version you would write if
+"O(1) space" were not demanded, because it is the honest baseline the trick is imitating.
+
+ALTERNATIVE D - CYCLIC SORT: repeatedly swap each value to its correct index, putting v at
+position v-1, then report the positions holding the wrong value. Also O(n) time and O(1) space,
+and it produces MORE information - it leaves the array in a state that answers "find all
+duplicates" and "find the missing positive" as well. More code, more index care, and the standard
+answer to the harder members of this family.
+
+ALTERNATIVE E - ADD n+1 TO EACH SLOT instead of negating, then look for entries that stayed small.
+The same idea using magnitude instead of sign as the spare bit. It risks overflow in a fixed-width
+language, where negation does not.
+
+THE FAMILY - values-are-1..n problems, which all reuse the index-value correspondence:
+  * FIND ALL DUPLICATES IN AN ARRAY - the same marking, reporting the slots you tried to mark
+    twice;
+  * FIND THE DUPLICATE NUMBER - the version where the array must NOT be modified, solved with
+    Floyd cycle detection;
+  * FIRST MISSING POSITIVE - the hard version, where values are arbitrary and must be placed by
+    cyclic sort first;
+  * MISSING NUMBER - the single-missing case, solvable with a sum formula or XOR;
+  * SET MISMATCH - one duplicate and one missing, which is this problem and Find All Duplicates
+    at the same time.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the coincidence that makes the trick possible: values are 1..n and indices are
+0..n-1, so value v owns index v-1 and the array is big enough to be its own hash table.
+
+STEP 2 - state what the mark is: a negative sign, chosen because it is reversible with `abs` and
+because the problem guarantees all values start positive.
+
+STEP 3 - pass 1, the marking:
+    for v in nums:
+        i = abs(v) - 1
+        if nums[i] > 0:
+            nums[i] = -nums[i]
+`abs(v)` because v may already have been marked. The guard because a duplicate would otherwise
+flip the same slot twice.
+
+STEP 4 - or, better, write the idempotent form and skip the guard entirely:
+    nums[abs(v) - 1] = -abs(nums[abs(v) - 1])
+Say why: setting the sign cannot be undone by a second application, while toggling can.
+
+STEP 5 - pass 2, the reading:
+    return [i + 1 for i, v in enumerate(nums) if v > 0]
+`i + 1` converts the index back to a value.
+
+STEP 6 - state the two costs out loud: the input array is destroyed, and MEASURED this is slower
+in Python than the set version (51.0 ms vs 37.8 ms on 200,000 elements) while saving about 17 MB.
+
+STEP 7 - offer the restore pass if the caller needs the array intact: one more loop applying
+`abs` to everything.
+
+STEP 8 - name the family: the same marking answers Find All Duplicates by reporting the slots
+that were ALREADY negative when you got to them.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The easy answer is a set difference - build the set of one to n and subtract the set of the
+  array. That is O(n) time and O(n) space, and honestly it is faster in Python than the clever
+  version; I measured 37.8 milliseconds against 51 on two hundred thousand elements.
+
+- The constant-space answer uses the array as its own hash table. The values are one to n and the
+  indices are zero to n minus one, so value v corresponds to index v minus one, and I already have
+  an array of exactly the right size.
+
+- I need a mark that does not destroy the number living in the slot, because I have not processed
+  it yet. So I negate it. The sign is a spare bit - the problem promises everything starts
+  positive - and the magnitude survives, so I can still read the original with abs.
+
+- First pass: for each value, take its absolute value, and negate the entry at that index. Second
+  pass: any entry still positive was never marked, so its index plus one never appeared.
+
+- Two details that are easy to get wrong and both matter a lot. I must take abs of the value I am
+  reading, because by then it may already have been negated - forgetting that is wrong on about
+  half of random arrays, and in Python it silently indexes from the end of the list rather than
+  throwing. And I must not flip a slot twice: a duplicated value would flip it back to positive
+  and be reported as missing. Setting the sign with minus abs instead of toggling makes that
+  impossible.
+
+- The cost is that the caller's array is destroyed. I would say that explicitly, and offer a third
+  pass to restore it if needed.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def find_disappeared_numbers(nums):
+        for v in nums:
+            idx = abs(v) - 1               # value maps to this index
+            if nums[idx] > 0:
+                nums[idx] = -nums[idx]     # mark 'seen'
+        result = []
+        for i, v in enumerate(nums):
+            if v > 0:                      # never marked -> i+1 is missing
+                result.append(i + 1)
+        return result
+
+Line 2  `for v in nums:`
+        Iterating the array WHILE modifying it. Safe here because only values are changed, never
+        the length - Python only forbids resizing during iteration.
+
+Line 3  `idx = abs(v) - 1`
+        `abs` because a previous iteration may have negated this position. `- 1` because values
+        are 1-based and indices are 0-based. MEASURED, omitting the `abs` is wrong on 52.1% of
+        random arrays, and in Python it fails silently by wrapping to a negative index.
+
+Line 4  `if nums[idx] > 0:`
+        Only mark an unmarked slot. Without this, a value appearing twice flips its slot twice and
+        returns it to positive - MEASURED wrong on 71.1% of random arrays.
+
+Line 5  `nums[idx] = -nums[idx]`
+        The mark. Reversible: the magnitude is untouched, so `abs` recovers the original value.
+
+        The guard-free equivalent is `nums[idx] = -abs(nums[idx])`, which sets rather than
+        toggles and is therefore idempotent.
+
+Line 6  `result = []`
+        The output. It does not count against the O(1) extra-space claim, by the usual convention
+        that output space is not working space.
+
+Line 7  `for i, v in enumerate(nums):`
+        The reading pass. It needs the SIGN only, not the magnitude.
+
+Line 8  `if v > 0:`
+        Still positive means never marked means no value pointed here.
+
+Line 9  `result.append(i + 1)`
+        Index back to value.
+
+Line 10 `return result`
+        Ascending by construction, since the second pass walks left to right - worth noting,
+        because the set version needs an explicit `sorted` to match.
+
+AND THE RESTORE PASS, if the caller needs its array back:
+
+    for i in range(len(nums)):
+        nums[i] = abs(nums[i])
+
+        O(n) time, O(1) space, and it makes the function non-destructive at the cost of one more
+        sweep.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [4,3,2,7,8,2,3,1]`, n = 8.
+
+    PASS 1, marking. (Values shown as read, after abs.)
+
+    v    idx = |v|-1   nums[idx] before   marked?   array after
+    ---------------------------------------------------------------------------
+    4         3            7               yes      [4,3,2,-7,8,2,3,1]
+    3         2            2               yes      [4,3,-2,-7,8,2,3,1]
+    -2        1            3               yes      [4,-3,-2,-7,8,2,3,1]
+    -7        6            3               yes      [4,-3,-2,-7,8,2,-3,1]
+    8         7            1               yes      [4,-3,-2,-7,8,2,-3,-1]
+    2         1           -3               no, already marked
+    -3        2           -2               no, already marked
+    -1        0            4               yes      [-4,-3,-2,-7,8,2,-3,-1]
+
+    PASS 2, reading.
+
+    index   value   positive?   contributes
+    ---------------------------------------------
+      0      -4        no
+      1      -3        no
+      2      -2        no
+      3      -7        no
+      4       8        YES          5
+      5       2        YES          6
+      6      -3        no
+      7      -1        no
+    return [5, 6]
+
+    Note rows 3 and 4 of pass 1: the value read was NEGATIVE because an earlier step had marked
+    that slot. `abs` is what turns -2 back into the value 2 so it points at index 1.
+
+TRACE B - the missing-`abs` bug, on `[1,5,1,6,3,6]`.
+
+    correct answer [2,4]        without abs: [2,3,4]                       MEASURED
+
+    The failure comes from a step where the value read is already negative: `v = -3` gives
+    `idx = -4`, and Python interprets that as the fourth-from-last position, marking a slot that
+    has nothing to do with the value 3. Nothing raises; the answer is simply wrong.
+
+TRACE C - the missing-guard bug, on the same array.
+
+    correct answer [2,4]        without the guard: [1,2,4,6]               MEASURED
+
+    `[1,5,1,6,3,6]` contains 1 twice and 6 twice. Each duplicate flips its slot a second time,
+    restoring it to positive, so 1 and 6 are both reported missing - even though they are the very
+    values that appear twice.
+
+TRACE D - the smallest illustrative case.
+
+    nums = [2,2]      n = 2
+    pass 1:   v=2 -> idx 1, nums[1] = -2      array [2,-2]
+              v=-2 -> abs 2 -> idx 1, nums[1] is already negative, skip
+    pass 2:   index 0 holds 2, positive -> missing value 1
+    return [1]        correct: the array has two 2s and no 1.
+
+TRACE E - the cost comparison, MEASURED on 200,000 elements with 73,798 values missing.
+
+    in-place marking     51.0 ms      0 bytes extra
+    set difference       37.8 ms      about 17 MB extra (two sets of up to 200,000 ints)
+    identical answers
+
+    So the "optimal" solution trades 25% more time for all of the memory. Which one is right
+    depends on whether the array is huge, whether the caller needs it afterwards, and which
+    resource is scarce - and being able to say that is worth more than reciting O(1).""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - two passes, constant work per element.
+    space   O(1) extra, not counting the output list. No set, no auxiliary array.
+
+    Compared with the set solution: same O(n) time, O(n) space, and MEASURED faster in Python
+    (37.8 ms vs 51.0 ms on 200,000 elements) because its loops run in C. The in-place version wins
+    only on memory - about 17 MB at that size - and loses the caller's array.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Dropping the `> 0` guard, so a duplicated value flips its slot twice and is reported as
+       missing. MEASURED wrong on 71.1% of random arrays. The robust fix is `-abs(...)`, which is
+       idempotent.
+    2. Forgetting `abs` when computing the index. MEASURED wrong on 52.1%, and in Python it fails
+       SILENTLY by wrapping to a negative index rather than raising.
+    3. Confusing the two off-by-ones: value to index is `v - 1`, index to value is `i + 1`. Both
+       appear, in opposite directions, in the same function.
+    4. Not mentioning that the input is destroyed. It is the real cost of the technique, and the
+       restore pass is one line.
+    5. Claiming the in-place version is faster. MEASURED, it is 35% slower here; it is smaller,
+       which is a different claim.
+    6. Building a set or a boolean array and still calling it O(1) space.
+    7. Assuming the output must be sorted separately. The second pass walks left to right, so the
+       result is already ascending.
+
+THE TAKEAWAY
+    When the values are 1..n and the indices are 0..n-1, the array is already a hash table with
+    exactly the right number of slots - you just need a place to write the flag, and the sign bit
+    is free. Negate to mark, `abs` to read, and make the mark IDEMPOTENT so a duplicate cannot
+    erase it. The same three lines, reading the slots you tried to mark twice, answer Find All
+    Duplicates - and the honest closing note is that in Python this clever version is slower than
+    the two-set one-liner, and its real product is the memory, not the speed.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
