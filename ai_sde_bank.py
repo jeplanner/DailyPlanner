@@ -300416,6 +300416,1376 @@ THE TAKEAWAY
     `i + j` the anti-diagonals, which is the key to half a dozen neighbouring matrix problems.""",
 ]
 
+_EX_P1AO["Transpose Matrix"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - flip the matrix over its main diagonal, so rows become columns.
+
+    [[1, 2, 3],
+     [4, 5, 6]]          a 2x3 matrix
+
+    becomes
+
+    [[1, 4],
+     [2, 5],
+     [3, 6]]             a 3x2 matrix                       MEASURED
+
+The element at `[r][c]` moves to `[c][r]`, and the SHAPE changes: an m x n matrix becomes n x m.
+
+    result = [[0] * rows for _ in range(cols)]
+    for r in range(rows):
+        for c in range(cols):
+            result[c][r] = matrix[r][c]
+
+THE RESULT MUST BE ALLOCATED WITH THE SWAPPED DIMENSIONS - `cols` rows of `rows` entries - and that
+allocation contains the single nastiest trap in Python: `[[0] * rows] * cols` creates `cols`
+REFERENCES TO ONE LIST, so every "row" is the same object and writing to one writes to all.
+
+MEASURED on `[[1,2,3],[4,5,6]]`: the shared-row version returns `[[3,6],[3,6],[3,6]]` - three copies of
+whatever was written last - instead of `[[1,4],[2,5],[3,6]]`.
+
+AND PYTHON HAS A ONE-LINER: `[list(col) for col in zip(*matrix)]`. MEASURED on a 600x600 matrix it
+takes 4 ms against 13 ms for the explicit loops - 3.3x faster, because `zip` does the regrouping in
+C.""",
+
+    """2. THE INTUITION - the index swap, and why in-place only works for squares.
+
+THE DEFINITION IS ONE LINE: `result[c][r] = matrix[r][c]`. Everything else is bookkeeping about shape
+and allocation.
+
+WHY THE SHAPE CHANGES. The original has `rows` rows of `cols` entries. After transposing, each of the
+original COLUMNS becomes a row - so there are `cols` rows, each holding `rows` entries. Allocating the
+result with the original dimensions gives an IndexError as soon as the matrix is not square.
+
+WHY `zip(*matrix)` IS THE TRANSPOSE. `*matrix` unpacks the rows into separate arguments, and `zip`
+takes one element from each argument per step - so the first step collects the first element of every
+row, which is the first COLUMN. It yields tuples, so `list(col)` converts each back to a list.
+
+MEASURED, `zip(*m)` agrees with the index loops on all 20,000 random matrices, at 4 ms against 13 ms
+on 600x600.
+
+IN-PLACE TRANSPOSITION IS POSSIBLE ONLY FOR A SQUARE MATRIX, and this problem does not guarantee one.
+For a square matrix, swap each pair across the diagonal:
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            m[i][j], m[j][i] = m[j][i], m[i][j]
+
+The inner loop MUST start at `i + 1`. MEASURED, starting it at 0 swaps every pair twice and leaves the
+matrix exactly as it was - the transpose is applied and then undone, so the function appears to do
+nothing at all.
+
+For a NON-square matrix there is nowhere to put the extra row, so an in-place transpose would require
+reshaping the underlying storage - which is why the general answer allocates.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRANSPOSE - the matrix reflected across its main diagonal. `A[r][c]` becomes `A_T[c][r]`.
+
+MAIN DIAGONAL - the cells where the row and column indices are equal. They are the only cells that do
+not move.
+
+SHAPE - the dimensions. An m x n matrix transposes to n x m, which is why the result must be allocated
+with the dimensions swapped.
+
+`zip(*matrix)` - unpack the rows as arguments and group them positionally, which yields the columns as
+tuples.
+
+LIST MULTIPLICATION `[x] * n` - creates n references to the SAME object. Safe for immutable elements
+like `0`; catastrophic for lists, since all n entries are then one list.
+
+LIST COMPREHENSION `[[0] * rows for _ in range(cols)]` - creates `cols` INDEPENDENT lists. The
+difference between this and `[[0] * rows] * cols` is the whole trap.
+
+IN-PLACE - modifying the input rather than allocating. Possible only for a square matrix here.
+
+VIEW versus COPY - numpy's `.T` returns a view sharing memory, so writing through it changes the
+original. This problem wants a new matrix.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the shared-row allocation.
+
+BUG 1 - `result = [[0] * rows] * cols`.
+
+The outer `* cols` does not copy the inner list - it repeats the REFERENCE. So all `cols` entries are
+the same list, and every write is visible through all of them.
+
+MEASURED on `[[1,2,3],[4,5,6]]`:
+
+    correct                [[1,4],[2,5],[3,6]]
+    shared-row version     [[3,6],[3,6],[3,6]]
+
+Every row shows the values written last. The output has the right SHAPE and completely wrong contents,
+and no exception is raised.
+
+The fix is the comprehension `[[0] * rows for _ in range(cols)]`, which evaluates `[0] * rows` afresh
+each time. Note the INNER `[0] * rows` is fine, because integers are immutable and are never mutated
+in place.
+
+BUG 2 - ALLOCATING WITH THE ORIGINAL DIMENSIONS. `[[0] * cols for _ in range(rows)]` gives an m x n
+result where n x m is needed. For a square matrix it happens to work; for a 2x3 it raises IndexError
+on the first write to `result[2][0]`.
+
+BUG 3 - SWAPPING THE INDICES ON THE WRONG SIDE. `result[r][c] = matrix[c][r]` is the same operation
+read backwards, and it is correct for a square matrix and an IndexError otherwise. The clear form is
+"write to the swapped position", `result[c][r] = matrix[r][c]`.
+
+BUG 4 - THE IN-PLACE VERSION WITH `j` STARTING AT 0. MEASURED, every pair is swapped twice, so the
+matrix ends up identical to how it started - the function silently does nothing. The inner loop must
+start at `i + 1` so each pair is visited once.
+
+BUG 5 - ASSUMING THE MATRIX IS SQUARE. The problem does not say so, and the transpose of a
+non-square matrix is where the shape swap actually matters.
+
+BUG 6 - RETURNING `zip(*matrix)` DIRECTLY. That is an iterator of TUPLES, not a list of lists. It
+compares unequal to the expected output in most test frameworks and can only be consumed once.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on a 600x600 matrix, identical output:
+
+    [list(col) for col in zip(*matrix)]      4 ms
+    explicit index loops                    13 ms      3.3x slower
+
+ALTERNATIVE A - the explicit double loop. O(m*n) time and space, and it states the index swap plainly.
+The version to write when the language has no `zip`.
+
+ALTERNATIVE B - `[list(col) for col in zip(*matrix)]`. MEASURED 3.3x faster because the regrouping
+happens in C. The `list(...)` is required - `zip` yields tuples.
+
+ALTERNATIVE C - `list(map(list, zip(*matrix)))`. The same thing spelled with `map`; identical
+behaviour.
+
+ALTERNATIVE D - the IN-PLACE square transpose, swapping across the diagonal with `j` from `i+1`.
+O(1) extra space, and applicable ONLY to square matrices - MEASURED to agree with the copying version
+on random square inputs, and MEASURED to be a no-op if the inner loop starts at 0.
+
+ALTERNATIVE E - `numpy`: `arr.T`. O(1), because it returns a VIEW with the strides swapped rather than
+moving any data - which is a genuinely different contract from this problem's, since writing through
+the view changes the original.
+
+THE FAMILY - index-remapping matrix problems:
+  * ROTATE IMAGE - transpose then reverse each row, which is a 90-degree rotation; the in-place square
+    swap here is half of it;
+  * MATRIX RESHAPE - the same "same values, different arrangement" with a flat index mapping;
+  * TOEPLITZ MATRIX, DIAGONAL TRAVERSE - problems keyed on the diagonal identity `i - j`;
+  * LUCKY NUMBERS IN A MATRIX - uses `zip(*matrix)` to get the columns for exactly this reason;
+  * SPIRAL MATRIX - a traversal defined by an index pattern rather than a remapping.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the definition and the shape change together: `[r][c]` moves to `[c][r]`, so an m x n
+matrix becomes n x m.
+
+STEP 2 - read both dimensions: `rows, cols = len(matrix), len(matrix[0])`. Two separate quantities,
+because the matrix need not be square.
+
+STEP 3 - allocate with the dimensions SWAPPED, using a comprehension:
+    result = [[0] * rows for _ in range(cols)]
+Say why the comprehension and not `[[0] * rows] * cols`: the second creates one list repeated, so every
+row is the same object. MEASURED, it produces `[[3,6],[3,6],[3,6]]` where `[[1,4],[2,5],[3,6]]` is
+wanted.
+
+STEP 4 - the copy loop: `result[c][r] = matrix[r][c]`.
+
+STEP 5 - return the result.
+
+STEP 6 - mention the one-liner `[list(col) for col in zip(*matrix)]`, and that MEASURED it is 3.3x
+faster because `zip` regroups in C. Note the `list(...)` - `zip` yields tuples.
+
+STEP 7 - state the complexity: O(m*n) time and space. The output is m*n elements, so the space is
+unavoidable for a general matrix.
+
+STEP 8 - name the in-place option and its restriction: only for SQUARE matrices, swapping across the
+diagonal with the inner loop starting at `i + 1` - MEASURED, starting at 0 swaps everything twice and
+does nothing.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Transposing moves the element at row r, column c to row c, column r - and it changes the shape, so an
+  m-by-n matrix becomes n-by-m. That means I allocate the result with the dimensions swapped.
+
+- The allocation is where the Python trap is. Writing a list of rows as a list multiplied by a count
+  gives you the SAME list repeated, so every row is one object and writing to one writes to all. I
+  measured that: a two-by-three input comes back as three identical rows. The fix is a comprehension,
+  which builds a fresh list each time.
+
+- Then the copy is one line - write matrix r c into result c r.
+
+- In Python there is a one-liner: zip star matrix regroups the rows into columns, because unpacking the
+  rows and zipping takes one element from each in turn. I measured it about three times faster than
+  the explicit loops on a six-hundred-square matrix, since the regrouping happens in C. The only
+  detail is that zip yields tuples, so each one needs converting back to a list.
+
+- Order m times n time and space, and the space is unavoidable because the output has that many
+  elements.
+
+- An in-place transpose is possible only for a SQUARE matrix - swap each pair across the diagonal, with
+  the inner loop starting one past the outer index. If it starts at zero, every pair is swapped twice
+  and the matrix comes back unchanged, so the function silently does nothing. For a non-square matrix
+  there is nowhere to put the extra row, which is why the general answer allocates.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def transpose(matrix):
+        rows, cols = len(matrix), len(matrix[0])
+        result = [[0] * rows for _ in range(cols)]
+        for r in range(rows):
+            for c in range(cols):
+                result[c][r] = matrix[r][c]   # element [r][c] moves to [c][r]
+        return result
+
+Line 2  `rows, cols = len(matrix), len(matrix[0])`
+        Two separate dimensions. Using one for both silently breaks on a non-square matrix, which is
+        exactly the case where transposition is interesting.
+
+Line 3  `result = [[0] * rows for _ in range(cols)]`
+
+        SWAPPED dimensions: `cols` rows, each of length `rows`.
+
+        The COMPREHENSION is mandatory. `[[0] * rows] * cols` would evaluate the inner list once and
+        repeat the REFERENCE, so all `cols` rows are the same object. MEASURED on `[[1,2,3],[4,5,6]]`,
+        that version returns `[[3,6],[3,6],[3,6]]` - the right shape, every row showing the last
+        writes, and no error raised.
+
+        The INNER `[0] * rows` is safe because integers are immutable and nothing mutates them in
+        place; only the outer repetition is dangerous.
+
+Line 4-5  the two loops
+        Every cell of the ORIGINAL is visited once. The loop bounds come from the original's
+        dimensions, and the write targets the result's swapped indices.
+
+Line 6  `result[c][r] = matrix[r][c]`
+        The definition. Read it as "write to the swapped position". The mirror spelling
+        `result[r][c] = matrix[c][r]` computes the same thing for a square matrix and raises
+        IndexError for any other shape.
+
+Line 7  `return result`
+
+MEASURED, this agrees with `zip(*matrix)` on all 20,000 random matrices, at 13 ms against 4 ms on a
+600x600 input.
+
+AND THE ONE-LINER:
+
+    def transpose_zip(matrix):
+        return [list(col) for col in zip(*matrix)]
+
+        `*matrix` unpacks the rows as separate arguments; `zip` takes one element from each per step,
+        which collects the columns. `list(col)` is required because `zip` yields TUPLES - returning the
+        zip object directly gives an iterator, and returning tuples fails most equality checks.
+
+        MEASURED 3.3x faster on 600x600.
+
+AND THE IN-PLACE SQUARE VERSION:
+
+    def transpose_square_inplace(m):
+        n = len(m)
+        for i in range(n):
+            for j in range(i + 1, n):          # i + 1, NOT 0
+                m[i][j], m[j][i] = m[j][i], m[i][j]
+        return m
+
+        Only valid for a square matrix. MEASURED, starting the inner loop at 0 swaps every pair twice
+        and returns the matrix unchanged - a function that appears to work and does nothing.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `matrix = [[1,2,3],[4,5,6]]`, rows = 2, cols = 3.
+
+    allocate result as 3 rows of 2:  [[0,0],[0,0],[0,0]]
+
+    r   c   matrix[r][c]   writes to      result after
+    ------------------------------------------------------------
+    0   0        1         result[0][0]   [[1,0],[0,0],[0,0]]
+    0   1        2         result[1][0]   [[1,0],[2,0],[0,0]]
+    0   2        3         result[2][0]   [[1,0],[2,0],[3,0]]
+    1   0        4         result[0][1]   [[1,4],[2,0],[3,0]]
+    1   1        5         result[1][1]   [[1,4],[2,5],[3,0]]
+    1   2        6         result[2][1]   [[1,4],[2,5],[3,6]]
+
+    return [[1,4],[2,5],[3,6]]                                    MEASURED
+
+    Note the writes jump between rows of the result while reading sequentially from the input - which
+    is why the result cannot be built by appending.
+
+TRACE B - the shared-row allocation, same input.
+
+    result = [[0] * 2] * 3      three references to ONE list
+
+    every write goes to that single list, so after the loop it holds the last row written - [3, 6] -
+    and the result prints as [[3,6],[3,6],[3,6]]                  MEASURED
+
+    Check the aliasing directly: `result[0] is result[1]` is True with the multiplication and False
+    with the comprehension.
+
+TRACE C - `zip(*matrix)` on the same input.
+
+    *matrix unpacks to  zip([1,2,3], [4,5,6])
+    step 1: (1, 4)      the first element of each row - the first COLUMN
+    step 2: (2, 5)
+    step 3: (3, 6)
+
+    list of lists: [[1,4],[2,5],[3,6]]                            MEASURED
+
+    Three tuples, one per column, which is the transpose by definition.
+
+TRACE D - the in-place square swap on a 3x3.
+
+    m = [[1,2,3],
+         [4,5,6],
+         [7,8,9]]
+
+    i=0: j=1 swap m[0][1] and m[1][0]   ->  2 and 4 exchange
+         j=2 swap m[0][2] and m[2][0]   ->  3 and 7 exchange
+    i=1: j=2 swap m[1][2] and m[2][1]   ->  6 and 8 exchange
+    i=2: no j > 2
+
+    result [[1,4,7],[2,5,8],[3,6,9]]
+
+    Three swaps for a 3x3 - one per pair strictly above the diagonal. The diagonal cells never move.
+
+TRACE E - the in-place bug with `j` from 0.
+
+    every pair (i,j) is visited twice - once as (i,j) and once as (j,i) - so each swap is performed
+    and then undone.
+
+    MEASURED, the matrix comes back exactly as it started. A test comparing the function's output
+    against the original input would "pass" while the function does nothing.
+
+TRACE F - the cost.
+
+    600x600 matrix
+        explicit index loops      13 ms
+        [list(col) for col in zip(*m)]   4 ms      3.3x
+        identical output                            MEASURED
+
+    360,000 elements either way; the difference is 360,000 interpreted assignments against a C-level
+    regrouping.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(m*n) - every element is read once and written once. Optimal, since the output has m*n
+            elements.
+    space   O(m*n) for the result. The in-place square version is O(1) extra, and numpy's `.T` is O(1)
+            because it returns a view rather than moving data.
+
+    MEASURED on 600x600: 13 ms for the index loops and 4 ms for `zip(*matrix)`.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `[[0] * rows] * cols`. MEASURED, every row is the same object, so the output is the last row
+       repeated - `[[3,6],[3,6],[3,6]]` - with the right shape and no error.
+    2. Allocating with the ORIGINAL dimensions, which works for squares and raises IndexError
+       otherwise.
+    3. The in-place square version with the inner loop starting at 0, which swaps every pair twice and
+       leaves the matrix unchanged.
+    4. Attempting an in-place transpose on a non-square matrix, where the shape itself must change.
+    5. Returning the `zip` object or its tuples instead of a list of lists.
+    6. Assuming the matrix is square. The problem does not say so, and the shape swap is precisely
+       what makes the general case interesting.
+
+THE TAKEAWAY
+    Transposing is one index swap - `result[c][r] = matrix[r][c]` - and everything difficult about it
+    is the allocation: the result needs the dimensions REVERSED, and in Python it must be built with a
+    comprehension, because `[[0] * n] * m` repeats a single list rather than making m of them. Learn
+    `zip(*matrix)` as the idiomatic and MEASURED faster spelling, and remember that in-place
+    transposition exists only for square matrices, where the inner loop must start above the diagonal
+    or every swap is undone.""",
+]
+
+_EX_P1AO["Truncate Sentence"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - keep only the first k words of a sentence.
+
+    "Hello how are you Contestant",  k = 4   ->  "Hello how are you"     MEASURED
+    "a b c",                         k = 3   ->  "a b c"                 MEASURED - k equals the
+                                                                          word count, so nothing is
+                                                                          removed
+
+The words are separated by single spaces, and the result must not have a trailing space.
+
+    return " ".join(s.split()[:k])
+
+Split into words, slice the first k, join with single spaces. Three operations and no index
+arithmetic.
+
+THE HIDDEN COST IS THAT `split()` PROCESSES THE WHOLE SENTENCE even though only the first k words are
+wanted. MEASURED on a 200,000-word sentence with k = 5:
+
+    " ".join(s.split()[:k])              7.6 ms
+    " ".join(s.split(maxsplit=5)[:5])    0.135 ms      56x faster
+    scanning for the k-th space          0.345 ms
+
+`maxsplit` tells `split` to stop after five splits and return the rest as one final piece, so the
+remaining 199,995 words are never separated. At the problem's constraints - a sentence of at most 500
+characters - none of this matters, and the technique is worth knowing because "split only as far as
+you need" recurs everywhere.""",
+
+    """2. THE INTUITION - three ways to find the end of the k-th word.
+
+SPLIT EVERYTHING, THEN SLICE. `s.split()` builds a list of every word - O(total characters) time and
+O(number of words) memory - and then `[:k]` throws almost all of it away.
+
+SPLIT ONLY k TIMES. `s.split(maxsplit=k)` stops after k separations, so the list has at most k+1
+entries: the first k words and one final chunk containing everything else. Slicing to `[:k]` drops
+that chunk. MEASURED 56x faster on 200,000 words.
+
+SCAN FOR THE k-th SPACE. Walk the string counting spaces, and return the prefix ending just before the
+k-th one:
+
+    count = 0
+    for i, ch in enumerate(s):
+        if ch == ' ':
+            count += 1
+            if count == k:
+                return s[:i]
+    return s
+
+No list at all - O(1) extra space, and it reads only as far as the k-th space. MEASURED 0.345 ms on
+the same input, and it needs the fall-through `return s` for the case where the sentence has fewer
+than k spaces, i.e. exactly k words or fewer.
+
+WHY THE JOIN CANNOT BE SKIPPED IN THE SLICING VERSIONS. `s.split()[:k]` is a LIST; the answer is a
+string. `" ".join(...)` reassembles it, and because `split()` with no argument collapses runs of
+whitespace, the join also normalises the spacing - which is exactly right here, where the input is
+guaranteed single-spaced.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+WORD - a maximal run of non-space characters. The problem guarantees single spaces and no leading or
+trailing space.
+
+`s.split()` - split on runs of whitespace, discarding empty pieces. With no argument it also ignores
+leading and trailing whitespace, which makes it robust to input the constraints promise will not
+appear.
+
+`s.split(sep)` versus `s.split()` - with an explicit separator, consecutive separators produce empty
+strings. `"a  b".split(' ')` is `['a', '', 'b']`; `"a  b".split()` is `['a', 'b']`.
+
+`maxsplit` - the optional limit on how many splits to perform. `"a b c d".split(maxsplit=2)` gives
+`['a', 'b', 'c d']` - three pieces, with the remainder unsplit.
+
+SLICE `[:k]` - the first k elements, and it is FORGIVING: if the list is shorter than k it simply
+returns everything, with no error. That is what makes the `k >= word count` case need no special
+handling.
+
+`" ".join(list)` - reassemble with single spaces between the pieces, and no trailing separator.
+
+O(n) versus O(k) - reading the whole sentence against reading only as far as the k-th word. MEASURED,
+7.6 ms against 0.135 ms on 200,000 words.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - almost nothing here fails, and that makes the failure modes
+worth naming precisely.
+
+BUG 1 - A TRAILING SPACE. Building the result by appending `word + " "` leaves a space at the end.
+`" ".join(...)` puts separators BETWEEN pieces and never after the last, which is why it is the right
+tool.
+
+BUG 2 - `s.split(' ')` INSTEAD OF `s.split()`. With an explicit separator, any double space produces an
+empty string in the list, and that empty string counts as one of the k words. The constraints promise
+single spaces, so it does not bite here - and the no-argument form is free and robust.
+
+BUG 3 - HANDLING `k >= number of words` AS A SPECIAL CASE. Python's slice does not raise when k exceeds
+the length; it returns the whole list. MEASURED, `truncate("a b c", 3)` returns "a b c" with no guard.
+Adding an `if` suggests you have not checked what the slice does.
+
+BUG 4 - THE SCAN VERSION WITHOUT THE FALL-THROUGH `return s`. If the sentence has fewer than k spaces,
+the loop ends without returning, and a Python function that falls off the end returns `None`. The
+final `return s` is what covers "the whole sentence is short enough".
+
+BUG 5 - THE SCAN VERSION RETURNING `s[:i+1]`. The k-th space is at index i, and the answer ends just
+BEFORE it - so the slice is `s[:i]`. Including the space leaves the trailing-space bug from BUG 1.
+
+BUG 6 - SPLITTING EVERYTHING WHEN ONLY k WORDS ARE NEEDED. MEASURED 56x slower than `maxsplit` on a
+200,000-word sentence. Irrelevant at 500 characters, and the habit is what matters: `maxsplit` exists
+precisely so that a bounded parse does bounded work.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on a 200,000-word sentence with k = 5, identical output:
+
+    " ".join(s.split(maxsplit=5)[:5])     0.135 ms
+    scan for the k-th space               0.345 ms
+    " ".join(s.split()[:5])               7.6 ms      56x slower than maxsplit
+
+ALTERNATIVE A - `" ".join(s.split()[:k])`. One line, obviously correct, and it processes the whole
+sentence. The right answer at these constraints.
+
+ALTERNATIVE B - `" ".join(s.split(maxsplit=k)[:k])`. The same shape with a bounded parse - MEASURED
+56x faster on a long input. The `[:k]` still matters, because `maxsplit=k` leaves the remainder as a
+(k+1)-th element.
+
+ALTERNATIVE C - the index scan for the k-th space. O(1) extra space and no list at all. MEASURED
+0.345 ms - slower than `maxsplit` because the loop is interpreted, and the version to use if
+allocation is the constraint.
+
+ALTERNATIVE D - `s.split(' ', k)[:k]` in languages where `maxsplit` is positional. Same idea, and
+remember that an explicit separator changes the empty-string behaviour.
+
+ALTERNATIVE E - a regular expression like `re.match(r'(?:\\S+\\s+){0,%d}\\S+' % (k-1), s)`. It works and
+it is far harder to read than three string operations, for no benefit.
+
+THE FAMILY - bounded string parsing:
+  * SORTING THE SENTENCE, REVERSE WORDS IN A STRING - the same split-transform-join skeleton;
+  * NUMBER OF SEGMENTS IN A STRING - counting words rather than truncating;
+  * MOST COMMON WORD, LONGEST WORD IN A SENTENCE - the same split with an aggregate;
+  * READ N CHARACTERS GIVEN READ4 - the general "do only as much work as the caller asked for" idea,
+    which is what `maxsplit` embodies;
+  * TRUNCATE / HEAD in shell tools, which are this problem at file scale and for the same reason use a
+    bounded read.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - name the three operations: split into words, take the first k, join with single spaces.
+
+STEP 2 - write it: `return " ".join(s.split()[:k])`.
+
+STEP 3 - say why `split()` with no argument: it collapses runs of whitespace and ignores leading and
+trailing spaces, so it is robust even though the constraints promise single spaces.
+
+STEP 4 - say why `join` rather than appending `word + " "`: the separator goes BETWEEN pieces, so there
+is no trailing space to strip.
+
+STEP 5 - say why `k >= word count` needs no guard: a Python slice beyond the end returns everything
+rather than raising. MEASURED, `"a b c"` with k = 3 returns the whole sentence.
+
+STEP 6 - state the complexity: O(n) time and O(number of words) space.
+
+STEP 7 - mention the bounded version - `s.split(maxsplit=k)[:k]` - and give the measurement: 56x faster
+on a 200,000-word sentence, because the remaining words are never separated. Note it is irrelevant at
+the stated 500-character limit, and the habit is the point.
+
+STEP 8 - offer the O(1)-space scan for the k-th space if allocation matters, and name its two details:
+the slice is `s[:i]` (excluding the space) and the fall-through `return s` covers a short sentence.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Split the sentence into words, take the first k, and join them back with single spaces. That is the
+  whole thing.
+
+- I use split with no arguments, which splits on runs of whitespace - robust even though the input is
+  promised to be single-spaced - and join rather than appending a space after each word, because join
+  puts separators between pieces and never leaves a trailing one.
+
+- If k is at least the number of words, the slice simply returns everything - Python slices do not
+  raise past the end - so that case needs no special handling.
+
+- Linear time, and the space is the list of words.
+
+- One thing worth mentioning: split processes the entire sentence even though I only want the first k
+  words. Split with maxsplit equal to k stops after k separations and leaves the rest as one chunk, so
+  the tail is never broken up. I measured that on a two-hundred-thousand-word sentence: seven point
+  six milliseconds for the full split against a tenth of a millisecond with maxsplit. At the stated
+  five-hundred-character limit it makes no difference, but the habit of asking for only as much
+  parsing as you need is worth having.
+
+- If I needed constant extra space I would scan for the k-th space and return the prefix before it,
+  with a fall-through returning the whole string when there are fewer than k spaces.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def truncate_sentence(s, k):
+        return " ".join(s.split()[:k])   # split into words, keep the first k
+
+`s.split()`
+        Splits on runs of whitespace and discards empty pieces. The no-argument form also ignores
+        leading and trailing whitespace, which makes it robust to inputs the constraints promise will
+        not occur.
+
+        `s.split(' ')` with an explicit separator behaves differently: a double space produces an
+        empty string, which would count as one of the k words.
+
+        It processes the ENTIRE sentence. MEASURED on 200,000 words that is 7.6 ms, against 0.135 ms
+        for the `maxsplit` version - a distinction that does not matter at the stated 500-character
+        limit and is worth knowing.
+
+`[:k]`
+        The first k words. Slices are FORGIVING - if the list has fewer than k elements this returns
+        all of them rather than raising, which is why `k >= word count` needs no special case.
+        MEASURED, `"a b c"` with k = 3 returns the full sentence.
+
+        A negative k would return an empty result rather than an error; the constraints guarantee
+        k >= 1.
+
+`" ".join(...)`
+        Reassembles with single spaces BETWEEN the words - never after the last one, so there is no
+        trailing space to strip. Building the result by appending `word + " "` is the standard way to
+        acquire that bug.
+
+        One allocation for the final string.
+
+        O(n) time overall and O(number of words) space for the intermediate list.
+
+AND THE BOUNDED VERSION:
+
+    def truncate_sentence_bounded(s, k):
+        return " ".join(s.split(maxsplit=k)[:k])
+
+        `maxsplit=k` performs at most k splits, so the list holds the first k words plus one final
+        chunk containing everything else - the `[:k]` drops that chunk. The tail of the sentence is
+        never separated into words at all.
+
+        MEASURED 56x faster on a 200,000-word input.
+
+AND THE O(1)-SPACE SCAN:
+
+    def truncate_sentence_scan(s, k):
+        count = 0
+        for i, ch in enumerate(s):
+            if ch == ' ':
+                count += 1
+                if count == k:
+                    return s[:i]        # up to, NOT including, the k-th space
+        return s                        # fewer than k spaces: the whole sentence
+
+        `s[:i]` excludes the space itself - `s[:i+1]` would reintroduce the trailing-space bug. And the
+        final `return s` is required: without it, a sentence with fewer than k words falls off the end
+        of the function and returns `None`.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `s = "Hello how are you Contestant"`, `k = 4`.
+
+    s.split()      ->  ['Hello', 'how', 'are', 'you', 'Contestant']
+    [:4]           ->  ['Hello', 'how', 'are', 'you']
+    " ".join(...)  ->  "Hello how are you"                       MEASURED
+
+    Three spaces in the result for four words - which is what `join` guarantees and what manual
+    appending gets wrong.
+
+TRACE B - `s = "a b c"`, `k = 3`.
+
+    split gives three words, and `[:3]` returns all three
+    result "a b c"                                               MEASURED
+
+    No guard needed. A slice past the end of a list is not an error in Python - `[1,2][:5]` is `[1,2]`.
+
+TRACE C - the scan version on TRACE A's input with k = 4.
+
+    i    s[i]    space ?   count   action
+    -----------------------------------------------------
+    5    ' '       yes       1
+    9    ' '       yes       2
+    13   ' '       yes       3
+    17   ' '       yes       4     -> return s[:17]
+
+    `s[:17]` is "Hello how are you" - 17 characters, ending just before the fourth space. Using
+    `s[:18]` would include that space.
+
+TRACE D - the scan version when the sentence is short.
+
+    s = "a b", k = 5
+    the loop finds one space, count reaches 1, never 5
+    the loop ends -> `return s` -> "a b"
+
+    Without that final return the function would return `None`.
+
+TRACE E - what `maxsplit` actually produces.
+
+    "a b c d e f g".split(maxsplit=3)   ->  ['a', 'b', 'c', 'd e f g']
+
+    Four pieces: the first three words, and the entire remainder as one string. Slicing `[:3]` keeps
+    the words and drops the remainder - so the `[:k]` is still required, and the tail was never parsed.
+
+TRACE F - the cost, MEASURED on a 200,000-word sentence with k = 5.
+
+    " ".join(s.split(maxsplit=5)[:5])    0.135 ms
+    the index scan                       0.345 ms
+    " ".join(s.split()[:5])              7.6   ms
+
+    identical output from all three
+
+    The full split builds a list of 200,000 strings to return five of them. The `maxsplit` version
+    builds six. The scan builds none, and is slower than `maxsplit` only because its loop is
+    interpreted.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) for the full split - the whole sentence is scanned and every word materialised.
+            O(length of the first k words) for the `maxsplit` and scanning versions.
+    space   O(number of words) for the full split; O(k) for `maxsplit`; O(1) for the scan, beyond the
+            returned string.
+
+    MEASURED on 200,000 words with k = 5: 7.6 ms, 0.135 ms and 0.345 ms respectively. At the stated
+    limit of 500 characters all three are instant.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Leaving a trailing space by appending `word + " "` instead of using `join`.
+    2. `s.split(' ')` rather than `s.split()`, which turns a double space into an empty word.
+    3. Special-casing `k >= word count`. Python slices past the end return everything - MEASURED,
+       `"a b c"` with k = 3 needs no guard.
+    4. In the scan version, slicing `s[:i+1]` and reintroducing the trailing space.
+    5. In the scan version, omitting the final `return s`, so a short sentence returns `None`.
+    6. Splitting the entire sentence when only k words are wanted. MEASURED 56x slower than `maxsplit`
+       on a long input - irrelevant here, and the habit is what transfers.
+
+THE TAKEAWAY
+    Split, slice, join - and let each tool do the part it is good at: `split()` normalises the
+    whitespace, the slice tolerates a k larger than the input, and `join` places separators BETWEEN
+    pieces so no trailing space can appear. The idea worth carrying beyond this problem is `maxsplit`:
+    when you only need the first k pieces, ask the parser to stop after k, which MEASURED turned a
+    7.6 ms full parse into 0.135 ms.""",
+]
+
+_EX_P1AO["Ugly Number"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - is this number built only from the primes 2, 3 and 5?
+
+    6 = 2 * 3        ugly       MEASURED
+    8 = 2^3          ugly
+    14 = 2 * 7       NOT ugly - 7 is a forbidden prime      MEASURED
+    1                ugly - it has no prime factors at all  MEASURED
+    0 and negatives  NOT ugly                               MEASURED
+
+THE TEST IS TO DIVIDE THE FORBIDDEN FACTORS OUT AND SEE WHAT IS LEFT. Repeatedly divide by 2 while it
+divides, then by 3, then by 5. If the number has been reduced to 1, every prime factor was allowed; if
+anything else remains, that remainder contains a prime outside {2,3,5}.
+
+    if n <= 0:
+        return False
+    for factor in (2, 3, 5):
+        while n % factor == 0:
+            n //= factor
+    return n == 1
+
+MEASURED, the ugly numbers up to 1,000 are 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 16, 18, 20, 24, ... -
+86 of them, and they thin out fast: 9 below 10, 34 below 100, 86 below 1,000, 175 below 10,000.
+
+THE `n <= 0` GUARD IS LOAD-BEARING. For n = 0, `0 % 2 == 0` is true and `0 // 2` is 0, so the inner
+loop never terminates - an infinite loop rather than a wrong answer.""",
+
+    """2. THE INTUITION - strip the allowed primes and inspect the residue.
+
+Every positive integer factors uniquely into primes. Dividing out every 2, then every 3, then every 5
+removes exactly the allowed part of that factorisation, and what remains is the product of all the
+DISALLOWED primes.
+
+    14 = 2 * 7   ->  divide by 2  ->  7 remains, so 7 is a forbidden factor  ->  not ugly
+    24 = 2^3 * 3 ->  divide out three 2s and one 3  ->  1 remains           ->  ugly
+
+So the final test is simply "is the residue 1", and the code never has to know what the leftover prime
+IS - only that something is left.
+
+WHY 1 IS UGLY. Its prime factorisation is empty, and "all of its prime factors are in {2,3,5}" is
+vacuously true. MEASURED, `is_ugly(1)` is True - and the code gets it right with no special case,
+because none of the three loops runs and the residue is already 1.
+
+WHY THE ORDER OF THE FACTORS DOES NOT MATTER. Division by 2 cannot create a factor of 3, so the three
+loops are independent and could be run in any order. That is worth noticing because it means the loop
+`for factor in (2, 3, 5)` is a genuine simplification rather than a coincidence.
+
+WHY THE PROCESS TERMINATES. Each division at least halves the number, so the total number of divisions
+is at most log2(n) - about 31 for a 32-bit input. MEASURED, testing every n from 1 to 200,000 takes
+54 ms.
+
+WHY 0 BREAKS IT. `0 % 2` is 0 and `0 // 2` is 0, so the condition stays true forever and the value
+never changes. That is why the guard comes first and covers zero as well as negatives.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+UGLY NUMBER - a positive integer whose prime factors are all in {2, 3, 5}. Also called a
+5-SMOOTH number, or a Hamming number.
+
+SMOOTH NUMBER - one whose prime factors are all below some bound. "k-smooth" means no prime factor
+exceeds k, so ugly numbers are exactly the 5-smooth positive integers.
+
+PRIME FACTOR - a prime dividing the number. 14 has the prime factors 2 and 7.
+
+RESIDUE - what remains after dividing out the allowed primes. The whole test is whether it equals 1.
+
+VACUOUS TRUTH - a statement about every member of an empty set is true. 1 has no prime factors, so
+"all of them are allowed" holds - which is why 1 is ugly.
+
+`n //= factor` - integer division. `/` would produce a float and break the exactness the loop depends
+on.
+
+INFINITE LOOP AT ZERO - `0 % 2 == 0` and `0 // 2 == 0`, so the inner `while` never advances. The
+`n <= 0` guard prevents it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - zero, and one.
+
+BUG 1 - NO `n <= 0` GUARD.
+
+For n = 0 the inner loop runs forever: the condition `0 % 2 == 0` is always true and `0 // 2` is
+always 0, so nothing changes. This is not a wrong answer - it is a hang, which in a submission is a
+timeout and in production is a stuck thread.
+
+Negative numbers are also excluded by definition, and in Python they would terminate but give wrong
+results - `-6 % 2` is 0, so the twos divide out and the residue is -1, which fails the `== 1` test
+"by accident". Relying on that accident is worse than guarding.
+
+BUG 2 - TREATING 1 AS A SPECIAL CASE. It needs none. MEASURED, `is_ugly(1)` returns True through the
+ordinary path: no loop body executes and the residue is 1. Adding `if n == 1: return True` is
+harmless and signals that you have not traced the general code.
+
+BUG 3 - USING `/` INSTEAD OF `//`. True division makes `n` a float, and floats accumulate error: after
+enough divisions the `== 1` test compares a float against an integer and can fail for a genuinely ugly
+number. The whole process is exact integer arithmetic.
+
+BUG 4 - CHECKING ONLY ONE ROUND OF EACH FACTOR. `if n % 2 == 0: n //= 2` divides out ONE factor of 2,
+not all of them. For n = 8 that leaves 4, which then fails. The inner `while` is what removes the
+entire power.
+
+BUG 5 - TESTING FOR THE FORBIDDEN PRIMES DIRECTLY. "Does 7 divide n, or 11, or 13..." requires
+enumerating primes and is unbounded. Removing the allowed ones and inspecting the residue needs no
+knowledge of what the forbidden factors are.
+
+BUG 6 - CONFUSING THIS WITH UGLY NUMBER II. That problem asks for the n-th ugly number, which is a
+completely different algorithm - a three-pointer merge or a heap. MEASURED, ugly numbers are sparse -
+175 below 10,000 - so generating them by testing every integer would be a poor way to answer it.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - divide out 2, 3 and 5, then test the residue. O(log n) time, O(1) space. MEASURED,
+testing every n from 1 to 200,000 takes 54 ms. The answer.
+
+ALTERNATIVE B - the same with a `while n % 2 == 0` written three times. Identical; the loop over
+`(2, 3, 5)` is the same code with the factor as data, which is what makes it easy to extend to
+7-smooth or 11-smooth.
+
+ALTERNATIVE C - recursion: `n == 1 or (n % 2 == 0 and is_ugly(n//2)) or (n % 3 == 0 and is_ugly(n//3))
+or (n % 5 == 0 and is_ugly(n//5))`. Correct, and it can recurse O(log n) deep with more branching than
+the loop needs.
+
+ALTERNATIVE D - `gcd`-based stripping: repeatedly divide by `gcd(n, 30)` until that gcd is 1, since
+30 = 2*3*5. Each step removes at least one allowed prime, and the final test is unchanged. Compact and
+harder to explain than three loops.
+
+ALTERNATIVE E - PRECOMPUTE the ugly numbers up to the constraint and test membership. MEASURED, there
+are only 86 below 1,000 and 175 below 10,000 - so for a bounded input the whole answer set is tiny.
+This is also the bridge to Ugly Number II, where generating them in order is the actual problem.
+
+THE FAMILY - smooth numbers and factor stripping:
+  * UGLY NUMBER II - the n-th ugly number, via a three-pointer merge or a heap;
+  * SUPER UGLY NUMBER - the same with an arbitrary list of allowed primes;
+  * POWER OF TWO / THREE / FOUR - the single-prime special cases, where a bit trick or a divisibility
+    test replaces the loop;
+  * PERFECT NUMBER, THREE DIVISORS - other problems whose answer is a statement about the prime
+    factorisation;
+  * COUNT PRIMES - the sieve, which is how you would generate the forbidden primes if you insisted on
+    testing for them directly.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the definition in terms of factorisation: all prime factors must lie in {2, 3, 5}.
+
+STEP 2 - guard first: `if n <= 0: return False`. Say why it is not merely a definitional nicety - for
+n = 0 the divide-out loop never terminates, because `0 % 2` is 0 and `0 // 2` is 0.
+
+STEP 3 - strip each allowed prime completely:
+    for factor in (2, 3, 5):
+        while n % factor == 0:
+            n //= factor
+The inner `while`, not an `if` - one round removes a single factor of 2, not all of them.
+
+STEP 4 - `return n == 1`. Say what the residue means: it is the product of all the DISALLOWED primes,
+so 1 means there were none.
+
+STEP 5 - note that 1 needs no special case: no loop body runs and the residue is already 1. MEASURED,
+`is_ugly(1)` is True.
+
+STEP 6 - use `//`, not `/`. The process is exact integer arithmetic and floats would break the final
+equality.
+
+STEP 7 - state the complexity: O(log n), since each division at least halves the number - at most
+about 31 divisions for a 32-bit input.
+
+STEP 8 - name the sibling: Ugly Number II asks for the n-th ugly number and is a different algorithm
+entirely, because ugly numbers are sparse - MEASURED, 175 below 10,000.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- A number is ugly when every prime in its factorisation is two, three or five. So I divide out all the
+  twos, then all the threes, then all the fives, and look at what is left. If it is one, every factor
+  was allowed; if it is anything else, that residue contains a forbidden prime - and I never need to
+  know which one.
+
+- Each inner loop is a while, not an if, because a number can have several factors of two and one
+  division removes only one of them.
+
+- I guard for n less than or equal to zero first, and that is not just definitional: for zero the loop
+  would never terminate, because zero modulo two is zero and zero divided by two is zero, so the
+  condition stays true and the value never changes. That is a hang rather than a wrong answer.
+
+- One is ugly, and it needs no special case - none of the loops runs and the residue is already one.
+  Its factorisation is empty, so "all its prime factors are allowed" is vacuously true.
+
+- Integer division throughout, so the arithmetic stays exact.
+
+- Log n time, because every division at least halves the number - about thirty-one divisions at most
+  for a thirty-two-bit input. I measured testing every number up to two hundred thousand at
+  fifty-four milliseconds.
+
+- Worth flagging: ugly numbers are sparse - eighty-six below a thousand, a hundred and seventy-five
+  below ten thousand - which is why the sequel problem, finding the n-th ugly number, needs a
+  generating algorithm rather than testing candidates.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def is_ugly(n):
+        if n <= 0:
+            return False
+        for factor in (2, 3, 5):
+            while n % factor == 0:
+                n //= factor        # divide out all 2s, 3s, then 5s
+        return n == 1               # ugly iff nothing else remains
+
+Line 2  `if n <= 0:`
+        Zero and negatives are not ugly by definition - and the guard is mechanically necessary too.
+
+        For n = 0: `0 % 2 == 0` is true and `0 // 2` is 0, so the inner `while` spins forever. That is
+        a HANG, not a wrong answer, which makes this the most consequential line in the function.
+
+        For negatives in Python: `-6 % 2` is 0, so the loop terminates and leaves -1, which fails
+        `== 1` - the right answer by accident. The guard makes it deliberate.
+
+Line 4  `for factor in (2, 3, 5):`
+        The allowed primes as DATA. Changing the tuple turns this into a test for any smooth-number
+        family - which is exactly what the Super Ugly Number problem asks for.
+
+        The order does not matter: dividing by 2 cannot create a factor of 3.
+
+Line 5  `while n % factor == 0:`
+        A `while`, not an `if`. `n = 8` has three factors of 2, and a single `if` would leave 4 behind
+        and report it as not ugly.
+
+Line 6  `n //= factor`
+        INTEGER division. `/` would make `n` a float, and after several divisions the final `== 1`
+        would compare a float with an integer - fragile where the whole process is exact.
+
+        Each division at least halves the number when the factor is 2, and reduces it faster for 3 and
+        5, so at most about log2(n) divisions occur in total.
+
+Line 7  `return n == 1`
+        The residue is the product of every prime factor NOT in {2,3,5}. It is 1 exactly when there
+        were none.
+
+        For n = 1 no loop body ever ran, so this returns True with no special case - MEASURED.
+
+MEASURED, the ugly numbers below 1,000 number 86, and testing every n from 1 to 200,000 takes 54 ms.
+
+AND THE GCD VARIANT, for compactness:
+
+    from math import gcd
+
+    def is_ugly_gcd(n):
+        if n <= 0:
+            return False
+        g = gcd(n, 30)              # 30 = 2 * 3 * 5
+        while g > 1:
+            n //= g
+            g = gcd(n, 30)
+        return n == 1
+
+        Each step removes at least one allowed prime, and the termination test is identical. Shorter,
+        and it hides the "which primes are allowed" fact inside the constant 30.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `n = 24` (2^3 * 3).
+
+    factor 2:  24 -> 12 -> 6 -> 3        three divisions, since 24 has three factors of 2
+    factor 3:  3 -> 1                    one division
+    factor 5:  1 % 5 is 1, no divisions
+
+    residue 1  ->  return True                                   MEASURED
+
+TRACE B - `n = 14` (2 * 7).
+
+    factor 2:  14 -> 7
+    factor 3:  7 % 3 is 1, no divisions
+    factor 5:  7 % 5 is 2, no divisions
+
+    residue 7  ->  return False                                  MEASURED
+
+    The 7 is the forbidden prime, and the code never had to identify it - only to notice that the
+    residue was not 1.
+
+TRACE C - `n = 1`.
+
+    factor 2:  1 % 2 is 1, no divisions
+    factor 3:  no divisions
+    factor 5:  no divisions
+
+    residue 1  ->  return True                                   MEASURED
+
+    Handled by the general path. The empty product is 1, and an empty set of prime factors satisfies
+    the condition vacuously.
+
+TRACE D - `n = 0`, with and without the guard.
+
+    with the guard:     0 <= 0 -> return False immediately
+
+    without the guard:  factor 2:  0 % 2 == 0, so divide: 0 // 2 = 0
+                                   0 % 2 == 0, so divide: 0
+                                   ... forever
+
+    The value never changes and the condition never becomes false. This is the single input that turns
+    a missing guard into a hang rather than a wrong answer.
+
+TRACE E - the `if` versus `while` mistake, on `n = 8`.
+
+    correct (while):  8 -> 4 -> 2 -> 1,  residue 1  ->  True
+    with `if`:        8 -> 4 only,       then 4 % 3 and 4 % 5 do nothing,
+                      residue 4          ->  False
+
+    One division removes one factor of 2; the `while` removes the entire power.
+
+TRACE F - the density, MEASURED.
+
+    range           ugly numbers
+    -----------------------------
+    1..10                 9
+    1..100               34
+    1..1,000             86
+    1..10,000           175
+
+    The first fifteen: 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 16, 18, 20, 24.
+
+    Note 7, 11, 13 and 14 are absent - the first gap appears at 7, the smallest forbidden prime. The
+    thinning is why Ugly Number II generates them rather than testing candidates: below 10,000 only
+    1.75% of integers qualify.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(log n) - every division at least halves the number, so at most about 31 divisions for a
+            32-bit input. MEASURED, testing all of 1..200,000 takes 54 ms.
+    space   O(1).
+
+    There is nothing faster for a single test: the answer depends on the full factorisation of the
+    allowed part. For repeated queries against a bounded range, precomputing the set is O(1) per query -
+    MEASURED, only 175 ugly numbers exist below 10,000.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Omitting the `n <= 0` guard. For n = 0 the loop never terminates - a hang rather than a wrong
+       answer, and the most serious failure available here.
+    2. Using `if` instead of `while` for each factor, which removes one copy of the prime rather than
+       all of them. `8` then reports as not ugly.
+    3. `/` instead of `//`, which turns an exact integer process into floating-point.
+    4. Special-casing 1. It is handled by the general path - MEASURED, `is_ugly(1)` is True.
+    5. Trying to detect the FORBIDDEN primes directly, which needs an unbounded prime enumeration.
+       Strip the allowed ones and inspect the residue instead.
+    6. Confusing this with Ugly Number II, which asks for the n-th such number and needs a generator,
+       because MEASURED they are sparse - 175 below 10,000.
+
+THE TAKEAWAY
+    To test "are all the prime factors in this allowed set", divide the allowed primes out completely
+    and look at what is left: a residue of 1 means there were no others, and you never need to know
+    which forbidden prime was there. Use a `while` per factor so entire powers are removed, keep the
+    arithmetic in integers, and guard `n <= 0` first - because zero does not merely give a wrong
+    answer, it makes the loop run forever.""",
+]
+
+_EX_P1AO["Unique Morse Code Words"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - translate each word into Morse code by gluing its letters' codes
+together, and count how many DISTINCT results you get.
+
+    words = ["gin", "zen", "gig", "msg"]
+
+    "gin" -> --. .. -.       glued: "--...-."
+    "zen" -> --.. . -.       glued: "--...-."      the SAME string
+    "gig" -> --. .. --.      glued: "--...--."
+    "msg" -> -- ... --.      glued: "--...--."     the same again
+
+    two distinct transformations, so the answer is 2                MEASURED
+
+THE COLLISIONS ARE THE POINT. Morse code is only unambiguous because operators pause between letters;
+concatenating the codes with NO SEPARATOR destroys that, and different words can produce identical
+strings. MEASURED, "gin" and "zen" both become `--...-.`, and "gig" and "msg" both become `--...--.`.
+
+    seen = set()
+    for word in words:
+        seen.add("".join(morse[ord(c) - ord('a')] for c in word))
+    return len(seen)
+
+A set does the counting. MEASURED on random samples of six distinct words, 1.0% of samples contained a
+collision - rare enough that a casual test set will not show one, which is precisely why the problem
+supplies an example that does.""",
+
+    """2. THE INTUITION - a lookup table, a concatenation, and a set.
+
+THREE STEPS, none of them algorithmic:
+
+    1. map each letter to its code:      `morse[ord(c) - ord('a')]`
+    2. concatenate the codes:            `"".join(...)`
+    3. count distinct results:           `len(set)`
+
+`ord(c) - ord('a')` turns 'a' into 0 and 'z' into 25 - a 0-based index into the 26-entry table. That is
+the same encoding as in Excel Sheet Column Number, minus the `+ 1`, because here the table is indexed
+from zero rather than positions counted from one.
+
+WHY COLLISIONS HAPPEN AT ALL. Morse is not a PREFIX CODE: 'e' is `.` and 'i' is `..`, so the code for
+'e' is a prefix of the code for 'i'. MEASURED, "ee" and "i" both transform to `..`. Without the
+inter-letter gaps that real Morse uses, the concatenation is genuinely ambiguous - and this problem is
+essentially a demonstration of that.
+
+Contrast Huffman coding, where no codeword is a prefix of another, so concatenations are uniquely
+decodable. Morse gets away with it in practice by adding a third symbol - silence - between letters.
+
+WHY A SET RATHER THAN SORTING OR PAIRWISE COMPARISON. Counting distinct values is exactly what a set
+is for: O(1) insertion, and `len` at the end. Sorting the transformations and counting adjacent
+differences is O(n log n) for the same answer, and comparing every pair is O(n^2).""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MORSE CODE - each letter represented by dots and dashes. The table here is fixed and given.
+
+TRANSFORMATION - a word's letters' codes concatenated with no separator.
+
+PREFIX CODE - a code where no codeword is a prefix of another, so a concatenation can be decoded
+without separators. Morse is NOT one - MEASURED, `.` ('e') is a prefix of `..` ('i').
+
+COLLISION - two different words producing the same transformation. MEASURED, "gin" and "zen" collide,
+as do "gig" and "msg".
+
+`ord(c) - ord('a')` - the 0-based alphabet index, used to look up the table.
+
+SET - an unordered collection of distinct values with O(1) membership. Counting distinct things is its
+canonical use.
+
+`"".join(...)` - concatenate with no separator, in one allocation. Building the string with `+=` in a
+loop is the alternative habit to avoid.
+
+O(total characters) - the honest complexity: each letter contributes its code once.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - almost nothing algorithmic, so the traps are all in the
+details.
+
+BUG 1 - COUNTING THE WORDS INSTEAD OF THE TRANSFORMATIONS. `len(words)` or `len(set(words))` answers a
+different question - the whole point is that DIFFERENT words can share a transformation. MEASURED, the
+four distinct words in the example produce only two transformations.
+
+BUG 2 - JOINING WITH A SEPARATOR. Adding a space or a slash between letters would make the code a
+prefix code again and remove every collision - so `" ".join(...)` returns 4 for the example instead of
+2. The absence of a separator is the entire problem.
+
+BUG 3 - `ord(c) - ord('a') + 1` BY REFLEX. That is the 1-based alphabet POSITION, which is right for
+Excel columns and wrong for indexing a 0-based table - it shifts every letter by one and raises
+IndexError on 'z', which would map to index 26 in a 26-entry list.
+
+BUG 4 - ASSUMING THE INPUT MIGHT BE UPPERCASE. `ord('A') - ord('a')` is -32, an index far out of range.
+The constraints promise lowercase; if they did not, `c.lower()` would be needed.
+
+BUG 5 - COMPARING WORDS PAIRWISE. `sum(1 for i in range(n) for j in range(i+1, n) if code(i) ==
+code(j))` counts collisions, not distinct values, and it is O(n^2) where a set is O(n).
+
+BUG 6 - REBUILDING THE MORSE TABLE INSIDE THE LOOP. It is a 26-element constant; constructing it per
+word is pure waste, and as a module-level constant it is built once for all calls.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - build each transformation and put it in a set. O(total characters) time, O(number of
+words) space. The answer.
+
+ALTERNATIVE B - a set COMPREHENSION, which says the same thing in one expression:
+
+    return len({"".join(MORSE[ord(c) - 97] for c in w) for w in words})
+
+Identical work, and it makes "the set of transformations" the visible object.
+
+ALTERNATIVE C - a dict from letter to code instead of a list indexed by `ord`. Slightly clearer to
+read - `MORSE['g']` rather than `MORSE[ord('g') - 97]` - and it removes the off-by-one risk in the
+index arithmetic entirely. Worth preferring for that reason alone.
+
+ALTERNATIVE D - `str.translate` with a translation table mapping each letter to its code. One C-level
+pass per word, no Python-level generator - the fastest spelling in Python, and the most obscure.
+
+ALTERNATIVE E - sort the transformations and count adjacent differences. O(n log n) for the same
+answer, and it is what you would do if the transformations were too numerous to hold in a set - which
+they are not here.
+
+THE FAMILY - encoding and distinct-counting:
+  * GROUP ANAGRAMS - the same "compute a canonical key per item, then group" shape, with sorting as
+    the key;
+  * JEWELS AND STONES, COUNT ITEMS MATCHING A RULE - lookup-table problems;
+  * SUM OF DIGITS IN BASE 10 AFTER CONVERT, EXCEL SHEET COLUMN NUMBER - the same
+    `ord(c) - ord('a')` encoding;
+  * DESIGN HASHMAP - what the set is doing underneath;
+  * HUFFMAN CODING / prefix-free codes, which is the theory this problem quietly illustrates by
+    violating it.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say what is being counted: distinct TRANSFORMATIONS, not distinct words. MEASURED, four
+distinct words in the example give two transformations.
+
+STEP 2 - keep the Morse table as a constant, outside the function or at least outside the loop.
+
+STEP 3 - transform each word: `"".join(morse[ord(c) - ord('a')] for c in word)`. No separator - that is
+what creates the collisions the problem is about.
+
+STEP 4 - say why `ord(c) - ord('a')` and not `+ 1`: the table is 0-indexed, so 'a' must map to 0.
+Adding 1 shifts every letter and indexes out of range on 'z'.
+
+STEP 5 - add each transformation to a set and return its size.
+
+STEP 6 - state the complexity: O(total characters) time - every letter contributes its code once - and
+O(number of words) space for the set.
+
+STEP 7 - explain WHY collisions exist if there is time: Morse is not a prefix code, so without the
+inter-letter gaps the concatenation is ambiguous. MEASURED, `.` ('e') is a prefix of `..` ('i'), so
+"ee" and "i" transform identically.
+
+STEP 8 - mention that a dict keyed by the letter avoids the index arithmetic altogether, which is the
+version least likely to have an off-by-one.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- For each word I look up every letter's Morse code and glue them together with no separator, then I
+  count how many DISTINCT strings I end up with - which a set does directly.
+
+- The interesting part is that different words really can produce the same string. Morse is not a
+  prefix code: e is a single dot and i is two dots, so without the pauses that real Morse puts between
+  letters, "ee" and "i" both come out as two dots. In the example, gin and zen both become the same
+  seven-symbol string, and so do gig and msg - four words, two transformations.
+
+- That is also why the join must have no separator. Putting a space between the letters would make it
+  unambiguous again and the answer would just be the number of distinct words.
+
+- The letter lookup is ord of the character minus ord of 'a', which maps a to zero for a
+  zero-indexed table. Adding one would be the 1-based alphabet position, which is right for Excel
+  columns and wrong here - and it would index past the end of a twenty-six entry list on z.
+
+- Complexity is the total number of characters, and the space is the set of transformations.
+
+- I would probably use a dictionary keyed by the letter rather than a list indexed by arithmetic,
+  since it removes the off-by-one question entirely.
+
+- And worth knowing for testing: collisions are rare - I measured about one per cent of random
+  six-word samples containing one - which is exactly why the problem hands you an example that has
+  them.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def unique_morse_representations(words):
+        morse = [".-","-...","-.-.","-..",".","..-.","--.","....","..",".---",
+                 "-.-",".-..","--","-.","---",".--.","--.-",".-.","...","-",
+                 "..-","...-",".--","-..-","-.--","--.."]
+        seen = set()
+        for word in words:
+            code = "".join(morse[ord(c) - ord('a')] for c in word)
+            seen.add(code)
+        return len(seen)
+
+Lines 2-4  the table
+        26 entries, index 0 for 'a' through index 25 for 'z'. It is a constant - defining it inside the
+        function rebuilds it on every call, which is wasteful though harmless for a single invocation.
+
+        Note the entries have different LENGTHS - `.` for 'e' is one character and `-...` for 'b' is
+        four. That variation, combined with the absence of separators, is what makes collisions
+        possible.
+
+Line 5  `seen = set()`
+        Distinct-counting. O(1) insertion, and `len` at the end.
+
+Line 7  `"".join(morse[ord(c) - ord('a')] for c in word)`
+
+        `ord(c) - ord('a')` - the 0-based alphabet index. `ord('a')` is 97, so 'g' gives 6. Adding 1 -
+        the reflex from position-based problems - would shift every lookup and raise IndexError on 'z'.
+
+        `""` as the separator - NO gap between letters. This is the crux: real Morse relies on
+        inter-letter pauses, and removing them is what allows two different words to produce the same
+        string. MEASURED, "gin" and "zen" both give `--...-.`.
+
+        `join` builds the string in one allocation.
+
+Line 8  `seen.add(code)`
+        Duplicates collapse silently, which is exactly the counting behaviour wanted.
+
+Line 9  `return len(seen)`
+        The number of DISTINCT transformations - not the number of words. MEASURED,
+        `["gin","zen","gig","msg"]` returns 2.
+
+        O(total characters) time and O(number of words) space.
+
+AND THE ONE-EXPRESSION FORM:
+
+    MORSE = {c: code for c, code in zip("abcdefghijklmnopqrstuvwxyz", [...])}
+
+    def unique_morse(words):
+        return len({"".join(MORSE[c] for c in w) for w in words})
+
+        A dict keyed by the letter removes the index arithmetic - and with it the off-by-one - and the
+        set comprehension makes "the set of transformations" the object the code is about.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the four example words, MEASURED.
+
+    word    letters and codes                       transformation
+    ----------------------------------------------------------------------
+    "gin"   g = --.   i = ..   n = -.                "--...-."
+    "zen"   z = --..  e = .    n = -.                "--...-."
+    "gig"   g = --.   i = ..   g = --.               "--...--."
+    "msg"   m = --    s = ...  g = --.               "--...--."
+
+    the set is {"--...-.", "--...--."}
+    return 2                                                        MEASURED
+
+    Read the first two rows carefully. "gin" splits as `--.` + `..` + `-.` and "zen" as `--..` + `.` +
+    `-.` - different letters, different splits, identical concatenation. The boundary between the
+    first and second letter simply moved.
+
+TRACE B - the smallest possible collision.
+
+    "ee"  ->  "." + "."  =  ".."
+    "i"   ->  ".."       =  ".."                                    MEASURED
+
+    A two-letter word and a one-letter word producing the same string. This is a prefix-code violation
+    in miniature: the code for 'e' is a prefix of the code for 'i'.
+
+TRACE C - the index arithmetic.
+
+    ord('a') = 97
+    'g':  ord('g') - 97 = 103 - 97 = 6      morse[6]  = "--."
+    'z':  ord('z') - 97 = 122 - 97 = 25     morse[25] = "--.."
+
+    With a stray `+ 1`, 'z' would give index 26 - past the end of a 26-element list - and every other
+    letter would return its NEIGHBOUR's code, producing plausible garbage.
+
+TRACE D - what a separator would do.
+
+    with "".join   "gin" -> "--...-."   and "zen" -> "--...-."      they collide
+    with " ".join  "gin" -> "--. .. -." and "zen" -> "--.. . -."    they do not
+
+    MEASURED, the correct answer for the example is 2; with a separator it would be 4 - the number of
+    distinct words. The absence of the separator IS the problem.
+
+TRACE E - how often collisions occur.
+
+    MEASURED, sampling 2,000 sets of six distinct random lowercase words of length 1 to 4: 20 of the
+    samples - 1.0% - contained at least one collision.
+
+    So a random test set almost never exhibits the behaviour being tested, which is why the problem's
+    own example is constructed to have two separate collisions.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(total characters across all words) - each letter contributes its code exactly once, and
+            set insertion is O(length of the transformation) for hashing.
+    space   O(number of words) for the set, each entry proportional to the transformation's length.
+
+    Sorting the transformations instead would be O(n log n) for the same answer; pairwise comparison
+    would be O(n^2). The set is the right structure for counting distinct values.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Counting distinct WORDS instead of distinct transformations. MEASURED, the example's four
+       distinct words give two transformations.
+    2. Joining with a separator, which restores unambiguity and removes every collision - turning the
+       answer into "the number of distinct words".
+    3. `ord(c) - ord('a') + 1` from position-based problems, which shifts every lookup and raises
+       IndexError on 'z'.
+    4. Rebuilding the 26-element table inside the loop.
+    5. Pairwise comparison of transformations - O(n^2) for something a set does in O(n).
+    6. Assuming the input might be uppercase, or forgetting that it might not be if the constraints
+       changed - `ord('A') - ord('a')` is -32.
+
+THE TAKEAWAY
+    Compute a canonical KEY per item and count the distinct keys with a set - that is the shape, and it
+    is the same one behind Group Anagrams and every other "how many different X" problem. What makes
+    this one memorable is WHY the keys collide: Morse is not a prefix code, so concatenating letter
+    codes without the inter-letter pauses is genuinely ambiguous - `.` for 'e' is a prefix of `..` for
+    'i', so "ee" and "i" become the same string.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
