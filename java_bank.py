@@ -1346,10 +1346,14 @@ anywhere a silently wrong number would cost money.""",
 from java_bank_core import build as _build_core
 from java_bank_advanced import build as _build_advanced
 from java_bank_traps import build as _build_traps
+from java_bank_more import build as _build_more
+from java_bank_more2 import build as _build_more2
 
 ENTRIES.extend(_build_core(Q))
 ENTRIES.extend(_build_advanced(Q))
 ENTRIES.extend(_build_traps(Q))
+ENTRIES.extend(_build_more(Q))
+ENTRIES.extend(_build_more2(Q))
 
 # Deep dives are attached LAST and keyed by title. A ten-section dive is
 # ~12,000 characters against an entry's ~3,000; inlining them would make the
