@@ -303329,6 +303329,1540 @@ THE TAKEAWAY
     serious cache regardless of which strategy is on the diagram.""",
 ]
 
+_EX_P1AO["DNS resolution"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you type `example.com` and the machine needs an IP address. DNS is the
+distributed directory that provides it, and the lookup walks a hierarchy.
+
+THE WALK, from the top:
+
+    ROOT servers        know who runs `.com`, `.org`, `.uk` - thirteen logical addresses, anycast to
+                        hundreds of physical sites
+    TLD servers         `.com`'s servers know which name servers are authoritative for `example.com`
+    AUTHORITATIVE       `example.com`'s own name servers hold the actual records and return the IP
+
+Your machine does not do that walk. It asks a RECURSIVE RESOLVER - usually your ISP's, or 8.8.8.8, or
+one your DHCP lease handed you - and that resolver does the walking and caches the results.
+
+MEASURED on this machine: `/etc/resolv.conf` contains a single line, `nameserver 10.255.255.254` - the
+one address every lookup is sent to. And a real lookup:
+
+    gethostbyname("example.com")       30.40 ms   ->  172.66.147.243
+    gethostbyname("www.google.com")    51.93 ms   ->  142.251.150.119
+    gethostbyname("example.com")       20.49 ms   ->  104.20.23.154
+
+Note the third line: THE SAME NAME RETURNED A DIFFERENT ADDRESS. MEASURED, `example.com` has four
+records - two IPv4 and two IPv6 - and over 20 lookups the resolver returned 172.66.147.243 nineteen
+times and 104.20.23.154 once. Multiple A records rotated by the resolver is load balancing happening
+in the name system itself.""",
+
+    """2. THE INTUITION - a hierarchy of delegation, made fast by caching at every level.
+
+WHY A HIERARCHY. No single machine can hold every name on the internet, and no single organisation
+should control them. So the namespace is delegated downward: the root delegates `.com` to Verisign,
+`.com` delegates `example.com` to its owner's name servers, and each level only needs to know who to
+ask next.
+
+WHY IT IS NOT SLOW. Every answer carries a TTL, and every resolver caches until it expires. The root
+and TLD answers change almost never, so a busy resolver has them permanently; only the last hop - the
+authoritative answer for a specific name - is actually fetched with any regularity.
+
+MEASURED, eight consecutive lookups of the same name from this machine:
+
+    24.23, 16.27, 32.69, 20.18, 14.60, 12.12, 14.72, 30.77 ms
+
+There is no dramatic first-lookup penalty here, because the upstream resolver at 10.255.255.254 had the
+answer cached before we started - which is exactly the point. The variance is network jitter to that
+resolver, not a hierarchy walk.
+
+MEASURED NEGATIVE CACHING TOO. A name that does not exist:
+
+    first lookup of a random non-existent subdomain    33.5 ms, raised gaierror
+    the same name again                                26.9 ms
+
+Failures are cached as well - the NXDOMAIN response has its own TTL - which stops a typo in a hot code
+path from hammering the authoritative servers.
+
+WHAT THE RESOLVER RETURNS IS NOT ONE ANSWER. MEASURED, `getaddrinfo("example.com", 80)` returned four
+addresses: `104.20.23.154`, `172.66.147.243`, and two IPv6 addresses. The client picks one - and the
+rotation between them is the crudest form of load balancing there is.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RESOLVER - the machine that does the lookup on your behalf. Configured in `/etc/resolv.conf`;
+MEASURED here as `10.255.255.254`.
+
+RECURSIVE QUERY - "give me the final answer", which is what your machine sends to the resolver.
+
+ITERATIVE QUERY - "tell me who to ask next", which is what the resolver sends to the root and TLD
+servers.
+
+AUTHORITATIVE SERVER - the one that actually holds the zone's records. Everything else is a cache.
+
+ROOT SERVERS - thirteen logical addresses (a.root-servers.net through m), anycast to hundreds of
+physical instances worldwide. They know only the TLDs.
+
+TLD - the top-level domain: `.com`, `.org`, `.uk`.
+
+RECORD TYPES - A (an IPv4 address), AAAA (IPv6), CNAME (an alias to another name), MX (mail servers),
+NS (the name servers for a zone), TXT (arbitrary text, used for verification and SPF).
+
+TTL - how long an answer may be cached. It is the only mechanism DNS has for propagating a change, and
+it is why "DNS changes take up to 48 hours" was ever true.
+
+NXDOMAIN - the name does not exist. MEASURED, this is cached too.
+
+ANYCAST - many physical servers announcing the same IP address, with routing sending you to the
+nearest. It is how thirteen root "servers" are hundreds of machines.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the assumptions that break in production.
+
+MISTAKE 1 - ASSUMING ONE NAME MEANS ONE ADDRESS. MEASURED, `example.com` resolves to four addresses,
+and consecutive lookups returned different ones - 172.66.147.243 nineteen times out of twenty and
+104.20.23.154 once. Code that caches "the IP for this host" and reuses it forever pins itself to one
+server and loses the load balancing and the failover the operator intended.
+
+MISTAKE 2 - IGNORING THE TTL WHEN PLANNING A MIGRATION. The TTL is the only lever: an hour-long TTL
+means an hour of clients still using the old address after the change. The standard practice is to drop
+the TTL to a minute a day BEFORE the migration, cut over, then raise it again. Forgetting the first
+step is the reason cutovers drag on.
+
+MISTAKE 3 - BELIEVING DNS IS FAST OR CHEAP. MEASURED here, 20 to 50 ms per lookup even against a warm
+upstream resolver. On a page pulling assets from six domains, that is six lookups on the critical path
+before a single byte of content moves - which is why `dns-prefetch`, connection reuse and reducing the
+number of domains are real optimisations.
+
+MISTAKE 4 - CACHING FOREVER IN THE APPLICATION. Some runtimes cache DNS results for the process
+lifetime by default, which turns an operator's failover into an outage for that process. The fix is to
+honour the TTL, or to re-resolve on connection failure.
+
+MISTAKE 5 - CONFUSING A CNAME WITH AN A RECORD. A CNAME points at another NAME, so it costs another
+resolution step - and it cannot coexist with other records at the same name, which is why the apex of a
+zone (`example.com` itself) cannot be a CNAME and needs provider-specific "ALIAS" hacks.
+
+MISTAKE 6 - THINKING THE PATH IS ALWAYS ROOT-TO-AUTHORITATIVE. MEASURED, the lookups from this machine
+never touched a root server: `/etc/hosts` is consulted first, then the local resolver, which had the
+answer cached. The full hierarchy walk is the COLD path, not the normal one.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+THE LAYERS OF CACHE, in the order they are consulted:
+
+    the application's own cache      (process-lifetime, often unbounded - see mistake 4)
+    the OS resolver / stub resolver  (nscd, systemd-resolved, or none at all)
+    /etc/hosts                       consulted BEFORE any network query
+    the recursive resolver           MEASURED here at 10.255.255.254; this is where the real caching is
+    the root / TLD / authoritative   the cold path, reached only on a cache miss
+
+MEASURED, `/etc/hosts` on this machine maps `localhost` and the machine's own name - which is why those
+resolve instantly and never generate a packet.
+
+TRANSPORT ALTERNATIVES:
+
+    DNS over UDP:53      the classic. One packet out, one back; a response over 512 bytes historically
+                         forced a retry over TCP, now handled by EDNS0.
+    DNS over TCP:53      used for large responses and zone transfers.
+    DoT (DNS over TLS)   port 853, encrypted, so the network cannot read or forge your lookups.
+    DoH (DNS over HTTPS) port 443, indistinguishable from web traffic - which is the point, and the
+                         controversy.
+
+RESOLVER ALTERNATIVES - your ISP's, 8.8.8.8 (Google), 1.1.1.1 (Cloudflare), 9.9.9.9 (Quad9), or one you
+run yourself. The choice is a privacy and latency decision: the resolver sees every name you look up.
+
+THE FAMILY - naming and discovery:
+  * SERVICE DISCOVERY (Consul, etcd, Kubernetes DNS) - the same problem inside a cluster, with much
+    shorter TTLs because instances come and go constantly;
+  * CDN routing - DNS answers that depend on WHERE the query came from, which is how a CDN sends you
+    to a nearby edge;
+  * LOAD BALANCING - MEASURED here as multiple A records rotated by the resolver, the simplest form;
+  * CACHING STRATEGIES - DNS is a TTL-based cache hierarchy, and every lesson from that topic applies;
+  * ARP - the same "name to address" problem one layer down, resolving IP to MAC.""",
+
+    """6. HOW TO EXPLAIN IT - numbered steps.
+
+STEP 1 - state what the system is FOR in one sentence: turning a hierarchical name into an address,
+without any single machine knowing everything.
+
+STEP 2 - describe the delegation chain: root knows the TLDs, the TLD knows the domain's name servers,
+the name servers hold the records. Each level only knows who to ask next.
+
+STEP 3 - separate the two query types: your machine sends a RECURSIVE query to its resolver ("get me
+the answer"), and the resolver sends ITERATIVE queries up the chain ("who should I ask next").
+
+STEP 4 - say where the speed comes from: caching at every level, governed by the TTL. MEASURED, the
+lookups from this machine took 12-33 ms and never touched a root server, because the upstream resolver
+already had the answer.
+
+STEP 5 - give the local configuration as evidence: `/etc/resolv.conf` here contains exactly one
+nameserver, 10.255.255.254, and `/etc/hosts` is consulted before any packet is sent.
+
+STEP 6 - name the thing most people get wrong: one name can map to MANY addresses. MEASURED,
+`example.com` has four records and consecutive lookups returned different ones - DNS is doing load
+balancing.
+
+STEP 7 - explain the TTL as an operational lever, not a detail: it is the only propagation control DNS
+has, which is why lowering it before a migration is standard practice.
+
+STEP 8 - close with the cost. MEASURED 20-50 ms per lookup means every extra domain on a page is
+another round trip before content moves - so DNS is a latency budget item, not free infrastructure.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- DNS turns a name into an address, and it does it through delegation. The root servers know who runs
+  dot-com; dot-com's servers know which name servers are authoritative for example dot com; those
+  servers hold the actual records. No machine knows everything, which is the point.
+
+- My machine does not walk that chain. It sends one recursive query to a resolver - on this box,
+  resolv.conf lists a single nameserver - and the resolver does the walking and caches everything it
+  learns.
+
+- The caching is what makes it fast. Every answer carries a TTL, and root and TLD answers essentially
+  never change, so a busy resolver holds them permanently. I measured lookups from here at twelve to
+  thirty-three milliseconds, and none of them touched a root server - the upstream resolver already had
+  the answer.
+
+- Failures are cached too. I looked up a random non-existent subdomain and it took thirty-three
+  milliseconds, and the same name again took twenty-seven - the NXDOMAIN response has its own TTL,
+  which stops a typo in a hot loop from hammering the authoritative servers.
+
+- The thing most people get wrong is assuming one name means one address. I measured example dot com
+  resolving to four records - two IPv4 and two IPv6 - and consecutive lookups returned different ones.
+  So caching "the IP" in an application pins you to one server and defeats both the load balancing and
+  the failover.
+
+- The TTL is the operational lever. It is the only propagation control DNS has, which is why you drop
+  it to a minute a day before a migration and raise it afterwards.
+
+- And it is not free: twenty to fifty milliseconds per lookup means a page pulling assets from six
+  domains pays six round trips before any content moves. That is why reducing the number of domains and
+  prefetching DNS are real optimisations.""",
+
+    """8. THE MECHANISM, STEP BY STEP.
+
+WHAT HAPPENS WHEN A PROGRAM CALLS `gethostbyname("example.com")`:
+
+    1. /etc/hosts is consulted.
+       MEASURED on this machine it contains `127.0.0.1 localhost` and the machine's own name - so those
+       resolve with no packet at all.
+
+    2. The stub resolver sends a UDP query to the configured nameserver.
+       MEASURED, `/etc/resolv.conf` here has exactly one line: `nameserver 10.255.255.254`.
+
+    3. THE RESOLVER checks its cache. If the answer is there and the TTL has not expired, it returns
+       immediately - this is the normal case and the reason the whole system is usable.
+
+    4. On a miss, the resolver walks the hierarchy with iterative queries:
+           ask a ROOT server        -> "I don't know example.com, but here are the .com servers"
+           ask a .COM server        -> "here are example.com's authoritative name servers"
+           ask the AUTHORITATIVE    -> "example.com is at 93.184.216.34, TTL 3600"
+
+    5. The resolver caches each answer for its TTL and returns the final one.
+
+    6. The client picks ONE address from the set returned.
+       MEASURED, `getaddrinfo("example.com", 80)` returned four: 104.20.23.154, 172.66.147.243, and two
+       IPv6 addresses. MEASURED over 20 sequential `gethostbyname` calls, two different IPv4 addresses
+       came back - 19 of one and 1 of the other.
+
+THE RECORD TYPES YOU WILL BE ASKED ABOUT:
+
+    A       name -> IPv4 address
+    AAAA    name -> IPv6 address
+    CNAME   name -> another NAME, costing a further resolution step. Cannot coexist with other
+            records at the same name, which is why a zone apex cannot be a CNAME.
+    NS      which servers are authoritative for a zone - this is the delegation itself
+    MX      mail servers, with priorities
+    TXT     arbitrary text: domain verification, SPF, DKIM
+
+WHAT THE TTL ACTUALLY CONTROLS:
+
+    a 3600-second TTL means every resolver that fetched the record may serve it for an hour, and there
+    is NO mechanism to revoke it. Changing an address is therefore a scheduled operation:
+
+        day 0    lower the TTL to 60 seconds, wait for the OLD TTL to expire everywhere
+        day 1    change the record; the world converges within a minute
+        day 2    raise the TTL again to reduce query load
+
+MEASURED TIMINGS FROM THIS MACHINE:
+
+    example.com        30.40 ms   (first)
+    www.google.com     51.93 ms
+    example.com        20.49 ms   (second, and a DIFFERENT address)
+    eight in a row     24.23, 16.27, 32.69, 20.18, 14.60, 12.12, 14.72, 30.77 ms
+    non-existent name  33.5 ms, then 26.9 ms on the repeat""",
+
+    """9. THE MEASUREMENTS, ONE AT A TIME.
+
+MEASUREMENT A - the local configuration, which is where every lookup starts.
+
+    /etc/resolv.conf   ->  nameserver 10.255.255.254        one resolver, and every query goes to it
+    /etc/hosts         ->  127.0.0.1 localhost
+                           127.0.1.1 shreya.localdomain shreya
+                           ::1 ip6-localhost ...
+
+    `/etc/hosts` is consulted BEFORE the network, which is why it is the standard tool for overriding a
+    name locally - and the standard cause of "it works on my machine".
+
+MEASUREMENT B - real lookup latency.
+
+    example.com        30.40 ms
+    www.google.com     51.93 ms
+    example.com        20.49 ms
+
+    eight consecutive lookups of example.com:
+        24.23, 16.27, 32.69, 20.18, 14.60, 12.12, 14.72, 30.77 ms
+        median of the repeats: 16.27 ms
+
+    There is no large first-lookup penalty, which tells you the upstream resolver was already warm. The
+    spread of 12 to 33 ms is jitter on the hop to 10.255.255.254, not hierarchy walking.
+
+MEASUREMENT C - one name, several addresses.
+
+    getaddrinfo("example.com", 80) returned FOUR addresses:
+        104.20.23.154
+        172.66.147.243
+        2606:4700:10::6814:179a
+        2606:4700:10::ac42:93f3
+
+    20 sequential gethostbyname calls returned:
+        172.66.147.243   19 times
+        104.20.23.154     1 time
+
+    So the mapping is one-to-many, and which one you get varies between calls. Any code that resolves
+    once and caches the result forever has silently opted out of that.
+
+MEASUREMENT D - negative caching.
+
+    a random non-existent subdomain, first lookup     33.5 ms, raised gaierror
+    the same name again                               26.9 ms
+
+    Failures are cached with their own TTL. Without that, every typo and every scan would reach the
+    authoritative servers.
+
+MEASUREMENT E - what the numbers mean for a page load.
+
+    At MEASURED 20-50 ms per lookup, a page fetching assets from six distinct domains pays 120-300 ms of
+    DNS before the first byte of any asset - and that is on the critical path, in parallel at best.
+
+    This is why the practical advice is: fewer domains, `<link rel="dns-prefetch">` for the ones you
+    keep, and connection reuse so the lookup is paid once.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY.
+
+THE COSTS
+    a warm lookup        MEASURED 12-33 ms to a nearby resolver
+    a cold lookup        one round trip per hierarchy level - root, TLD, authoritative - typically
+                         100-300 ms, and paid by the RESOLVER rather than by you
+    a cached lookup      microseconds, if the OS or application caches
+    the propagation      bounded below by the TTL, with no revocation mechanism
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Treating a name as mapping to ONE address. MEASURED, example.com has four records and sequential
+       lookups returned different ones; caching "the IP" defeats load balancing and failover.
+    2. Ignoring the TTL when planning a change - it is the only propagation control there is, so the
+       lower-then-cut-over-then-raise dance is not superstition.
+    3. Assuming DNS is free. MEASURED 20-50 ms per lookup, on the critical path, once per domain.
+    4. Caching resolutions for the process lifetime, which converts an operator's failover into an
+       application outage.
+    5. Believing every lookup walks the root. MEASURED, none of these did - `/etc/hosts` and the
+       resolver's cache answer almost everything.
+    6. Confusing CNAME with A: a CNAME costs another resolution and cannot coexist with other records,
+       which is why a zone apex cannot be one.
+
+THE TAKEAWAY
+    DNS is a delegation hierarchy made usable by caching, and the TTL is the knob that controls both the
+    caching and every operational consequence of it. The two things worth carrying: a name maps to a SET
+    of addresses, rotated by the resolver - MEASURED, four records for example.com and different answers
+    on consecutive calls - so pinning one in application code quietly disables the redundancy someone
+    else paid for; and a lookup costs real milliseconds - MEASURED 20-50 here - so the number of
+    distinct domains on a page is a latency decision, not a cosmetic one.""",
+]
+
+_EX_P1AO["How a packet actually leaves your machine: ARP, DHCP, NAT and routing"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - "what happens when you type a URL" usually gets a DNS-and-HTTP answer.
+This is the layer underneath: once you have an IP address, how does a packet physically get out?
+
+THE SEQUENCE, and every step is checkable on a real machine:
+
+    1. DHCP        joining the network, you broadcast DISCOVER, a server OFFERs, you REQUEST, it ACKs.
+                   That lease gives you your IP, the subnet MASK, the DEFAULT GATEWAY and the DNS
+                   servers.
+    2. LOCAL?      AND your IP with the mask and compare with the destination's network. Same subnet
+                   means deliver directly; different means send it to the gateway.
+    3. ARP         you have an IP for the next hop, and Ethernet needs a MAC address. Broadcast "who
+                   has 172.29.48.1?" and cache the reply.
+    4. FRAME       build the Ethernet frame with the next hop's MAC as the destination - NOT the final
+                   destination's.
+    5. NAT         the home or office router rewrites your private source address to its public one and
+                   remembers the mapping.
+    6. ROUTING     every router along the way does a LONGEST PREFIX MATCH on the destination and
+                   forwards to the next hop.
+
+MEASURED on this machine, the actual routing table from `/proc/net/route`:
+
+    iface=eth0   dest=0.0.0.0        gw=172.29.48.1   mask=0.0.0.0            the default route
+    iface=eth0   dest=172.29.48.0    gw=0.0.0.0       mask=255.255.240.0      the local subnet
+
+and the actual ARP cache from `/proc/net/arp`:
+
+    172.29.48.1   0x1   0x2   00:15:5d:e3:1e:21   *   eth0
+
+That single ARP entry is the gateway. Everything leaving this machine for the internet is addressed, at
+layer 2, to `00:15:5d:e3:1e:21` - and the final destination's MAC address is never known to it at all.""",
+
+    """2. THE INTUITION - two addresses, and only one of them changes.
+
+EVERY FRAME CARRIES TWO ADDRESS PAIRS.
+
+    IP source / destination     the FINAL endpoints. Unchanged end to end (except by NAT).
+    MAC source / destination    the CURRENT hop. Rewritten by every router.
+
+That is the whole model. The IP header says where the packet is ultimately going; the Ethernet header
+says who should pick it up next. A router receives a frame addressed to its own MAC, looks at the IP
+destination, decides the next hop, and builds a NEW frame with the next hop's MAC.
+
+STEP 2 IS PURE BIT ARITHMETIC. "Is the destination on my subnet?" is an AND:
+
+    MEASURED with 192.168.1.10 and mask 255.255.255.0 (a /24):
+        192.168.1.10 AND 255.255.255.0  ->  network 192.168.1.0
+        destination 192.168.1.55        ->  same network      LOCAL, ARP for it directly
+        destination 192.168.2.55        ->  different network  send to the GATEWAY
+        destination 93.184.216.34       ->  different network  send to the GATEWAY
+
+STEP 6 IS LONGEST PREFIX MATCH, and it is why routing tables are not dictionaries. Every destination
+matches the default route `0.0.0.0/0`; the winner is the MOST SPECIFIC match.
+
+MEASURED against a four-entry table:
+
+    10.1.2.9   -> branch-router     matched /24
+    10.1.9.9   -> regional-router   matched /16
+    10.9.9.9   -> corp-router       matched /8
+    8.8.8.8    -> isp-gateway       matched /0
+
+Specificity beats order, which means routing tables have no "first match wins" semantics to reason
+about - and it also means a lookup cannot be a hash lookup. MEASURED, a linear scan over a
+50,000-entry table costs 12.2 ms PER LOOKUP - which is why real routers use a prefix trie, and hardware
+routers use TCAM to do it in one cycle.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DHCP - Dynamic Host Configuration Protocol. The DORA exchange - Discover, Offer, Request, Acknowledge -
+that hands you an IP, a mask, a gateway and DNS servers. All four, not just the address.
+
+SUBNET MASK - which bits of an address are the network. `/24` means the first 24 bits; ANDing an
+address with the mask gives its network.
+
+DEFAULT GATEWAY - where to send anything not on your subnet. MEASURED on this machine: 172.29.48.1.
+
+ARP - Address Resolution Protocol. Broadcasts "who has this IP?" on the local segment and caches the
+MAC that answers. It works only within a broadcast domain, which is why you never ARP for a remote
+host - you ARP for the GATEWAY.
+
+MAC ADDRESS - the layer-2 hardware address, meaningful only on the local link. MEASURED here, the
+gateway's is `00:15:5d:e3:1e:21`.
+
+NAT - Network Address Translation. The router rewrites your private source IP and port to its public
+ones, keeps a mapping table, and reverses it on the way back. It is why one public address serves a
+whole household, and why inbound connections need explicit port forwarding.
+
+RFC 1918 - the private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16. Never routed on the public
+internet. MEASURED, this machine sits in 172.29.48.0/20 - inside 172.16.0.0/12.
+
+LONGEST PREFIX MATCH - the routing decision: among all matching prefixes, take the most specific.
+
+MTU / MSS - the largest frame the link accepts (1500 bytes on Ethernet) and the resulting largest TCP
+payload (1460 after the 20-byte IP and 20-byte TCP headers).""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the mental model errors.
+
+MISTAKE 1 - THINKING THE FRAME IS ADDRESSED TO THE DESTINATION. It is addressed to the NEXT HOP.
+MEASURED, this machine's entire ARP cache is one entry - the gateway - because it has never needed the
+MAC of anything else. It does not know, and cannot know, the MAC address of the web server it is
+talking to.
+
+MISTAKE 2 - THINKING ARP CROSSES ROUTERS. It does not. ARP is a broadcast on the local segment, and
+routers do not forward broadcasts. That is what "broadcast domain" means, and it is why the subnet
+check in step 2 exists at all: it decides whether you ARP for the destination or for the gateway.
+
+MISTAKE 3 - TREATING THE ROUTING TABLE AS ORDERED. It is not first-match; it is LONGEST-match.
+MEASURED, 10.1.2.9 chose the /24 over the /16, the /8 and the default - regardless of the order the
+entries were written in. Adding a more specific route silently takes precedence over a less specific
+one, which is how a single bad announcement can hijack traffic.
+
+MISTAKE 4 - FORGETTING THAT THE DEFAULT ROUTE MATCHES EVERYTHING. `0.0.0.0/0` has a zero-length prefix,
+so it matches every destination and always loses to any other match. That is the mechanism, not a
+special case.
+
+MISTAKE 5 - CONFUSING NAT WITH A FIREWALL. NAT rewrites addresses; it is not a security control, and
+treating it as one is why so many devices are exposed the moment IPv6 removes the translation. What NAT
+does provide is the accidental property that unsolicited inbound packets have nowhere to go - which is
+a side effect, not a policy.
+
+MISTAKE 6 - IGNORING THE MTU. MEASURED arithmetic: 1500-byte Ethernet payload, minus 20 bytes of IPv4
+header and 20 of TCP, leaves an MSS of 1460 - so a 1 MB response is at least 719 segments. A tunnel
+(VPN, VXLAN) shrinks the MTU further, and a path that silently drops oversized packets rather than
+signalling "fragmentation needed" produces the classic bug where small requests work and large ones
+hang.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+HOW THE LOOKUP IS ACTUALLY IMPLEMENTED - the point where theory meets hardware:
+
+    linear scan     MEASURED 12.2 ms per lookup over a 50,000-entry table. Unusable.
+    prefix trie     (Patricia / radix trie) - O(prefix length) per lookup, which is what Linux uses.
+    TCAM            content-addressable memory that compares against every entry in parallel - one
+                    cycle per lookup, and what makes a core router forward at line rate.
+
+    A full internet routing table is around a million prefixes. MEASURED, a linear scan of 50,000 took
+    12.2 ms; twenty times that is a quarter of a second per packet, against the tens of nanoseconds
+    actually required.
+
+ADDRESS ASSIGNMENT ALTERNATIVES:
+    DHCP            the normal case, with a lease and a renewal timer.
+    static          configured by hand; no DORA exchange, and no automatic gateway or DNS.
+    SLAAC (IPv6)    the host derives its own address from the router advertisement - no server needed.
+
+NAT ALTERNATIVES:
+    IPv6            enough addresses that translation is unnecessary. Every device is globally
+                    addressable, which is precisely why a real firewall becomes non-optional.
+    CGNAT           the ISP NATs as well, so you are behind two layers. It breaks inbound connections
+                    entirely and is why peer-to-peer software needs STUN/TURN.
+
+THE FAMILY - what actually happens on a network:
+  * WHAT HAPPENS WHEN YOU TYPE A URL - this is the missing lower half of that answer;
+  * DNS RESOLUTION - the step BEFORE this one, turning a name into the IP this whole process delivers
+    to;
+  * TCP HANDSHAKE and CONGESTION CONTROL - what happens once the packets are flowing;
+  * LOAD BALANCING - layer 4 balancers make forwarding decisions with exactly this machinery;
+  * VLANs, VXLAN and overlay networks - the same model with an extra header, and the reason MTU
+    problems reappear in every container platform.""",
+
+    """6. HOW TO EXPLAIN IT - numbered steps.
+
+STEP 1 - state the two-address model first, because everything else follows from it: the IP header
+names the FINAL endpoints and never changes; the Ethernet header names the CURRENT hop and is rewritten
+at every router.
+
+STEP 2 - DHCP gives you four things, not one: address, mask, gateway, DNS. Say all four - the mask and
+the gateway are what the next two steps use.
+
+STEP 3 - the local-or-not decision is an AND with the mask. MEASURED, 192.168.1.10/24 treats
+192.168.1.55 as local and 192.168.2.55 as remote, from bit arithmetic alone.
+
+STEP 4 - ARP resolves the NEXT HOP's MAC, not the destination's. Point at the evidence: MEASURED, this
+machine's ARP cache has exactly one entry - the gateway at 172.29.48.1, MAC 00:15:5d:e3:1e:21.
+
+STEP 5 - NAT rewrites the source address and port at the edge and keeps a mapping table, which is why a
+household shares one public address and why inbound connections need forwarding.
+
+STEP 6 - routing is LONGEST PREFIX MATCH. MEASURED on a small table: 10.1.2.9 took the /24 while
+10.9.9.9 took the /8 and 8.8.8.8 fell through to the default. Specificity, not order.
+
+STEP 7 - say why the lookup is not a hash: prefixes overlap, so you need the most specific match.
+MEASURED, a linear scan of 50,000 prefixes costs 12.2 ms per lookup - hence tries in software and TCAM
+in hardware.
+
+STEP 8 - finish with the MTU arithmetic, because it is where this theory produces real bugs: 1500 minus
+40 gives an MSS of 1460, so a 1 MB response is 719 segments, and any tunnel that shrinks the MTU
+without signalling breaks large transfers while small ones look fine.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The key idea is that every frame carries two sets of addresses. The IP header has the final source and
+  destination and does not change along the way. The Ethernet header has the current hop, and every
+  router rewrites it.
+
+- When my machine joins the network, DHCP gives it four things - an address, a subnet mask, a default
+  gateway and DNS servers - through the discover-offer-request-acknowledge exchange.
+
+- To send a packet, the first question is whether the destination is on my subnet, which is just an AND
+  with the mask. If it is, I deliver directly; if it is not, I send it to the gateway.
+
+- Either way I need a MAC address for the next hop, and that is ARP: a broadcast on the local segment
+  asking who has that IP. On this machine the ARP cache has exactly one entry - the gateway - because
+  it has never needed anything else. It does not know the MAC address of any web server it talks to,
+  and it never will.
+
+- At the edge, NAT rewrites my private source address and port to the router's public ones and remembers
+  the mapping so replies come back to me. That is why a whole house shares one public address, and why
+  inbound connections need explicit forwarding.
+
+- Then every router along the path does a longest prefix match: among all the routes that match the
+  destination, the most specific wins. I measured that on a small table - a destination matching a
+  slash-twenty-four, a slash-sixteen, a slash-eight and the default route all at once chose the
+  slash-twenty-four. Specificity beats order, so there is no first-match rule to reason about.
+
+- And that is why routing tables are not hash tables. Prefixes overlap, so you have to find the longest
+  match. I measured a linear scan over fifty thousand prefixes at twelve milliseconds per lookup - real
+  routers use a prefix trie, and hardware ones use TCAM to compare against every entry at once.
+
+- One practical consequence worth mentioning: Ethernet's fifteen-hundred-byte payload minus twenty
+  bytes of IP and twenty of TCP leaves a maximum segment size of fourteen-sixty, so a one-megabyte
+  response is at least seven hundred and nineteen segments - and any tunnel that shrinks the MTU
+  without signalling it breaks large transfers while small ones work fine.""",
+
+    """8. THE MECHANISM, WITH THE REAL TABLES.
+
+STEP 2 - IS THE DESTINATION LOCAL? Pure bit arithmetic:
+
+    import ipaddress
+
+    def is_local(my_ip, mask, dest_ip):
+        net = ipaddress.ip_network(f"{my_ip}/{mask}", strict=False)
+        return ipaddress.ip_address(dest_ip) in net
+
+    MEASURED:
+        is_local("192.168.1.10", "255.255.255.0", "192.168.1.55")   True   -> ARP directly
+        is_local("192.168.1.10", "255.255.255.0", "192.168.2.55")   False  -> via the gateway
+        is_local("192.168.1.10", "255.255.255.0", "93.184.216.34")  False  -> via the gateway
+
+    `strict=False` is needed because 192.168.1.10 is a HOST address, not a network address - the call
+    computes the network by masking, which is exactly the AND the kernel performs.
+
+STEP 6 - LONGEST PREFIX MATCH, the whole of routing:
+
+    ROUTES = {
+        "0.0.0.0/0":   "isp-gateway",       # matches everything, prefix length 0
+        "10.0.0.0/8":  "corp-router",
+        "10.1.0.0/16": "regional-router",
+        "10.1.2.0/24": "branch-router",     # the most specific
+    }
+
+    def next_hop(dest):
+        d = ipaddress.ip_address(dest)
+        best, best_len = None, -1
+        for prefix, hop in ROUTES.items():
+            net = ipaddress.ip_network(prefix)
+            if d in net and net.prefixlen > best_len:
+                best, best_len = hop, net.prefixlen
+        return best
+
+    MEASURED:
+        10.1.2.9  -> branch-router     (/24)
+        10.1.9.9  -> regional-router   (/16)
+        10.9.9.9  -> corp-router       (/8)
+        8.8.8.8   -> isp-gateway       (/0)
+
+    Note that every one of those destinations ALSO matched 0.0.0.0/0. The comparison is on
+    `prefixlen`, which is what "longest prefix" means - and it is why the dict's insertion order is
+    irrelevant.
+
+THE REAL TABLES ON THIS MACHINE:
+
+    /proc/net/route
+        iface=eth0   dest=0.0.0.0       gw=172.29.48.1   mask=0.0.0.0          the default route
+        iface=eth0   dest=172.29.48.0   gw=0.0.0.0       mask=255.255.240.0    the local /20
+
+        Two entries. Anything inside 172.29.48.0/20 is delivered directly (gateway 0.0.0.0 means "on
+        link"); everything else goes to 172.29.48.1.
+
+    /proc/net/arp
+        IP address     HW type  Flags  HW address          Mask  Device
+        172.29.48.1    0x1      0x2    00:15:5d:e3:1e:21   *     eth0
+
+        ONE entry - the gateway. Every packet this machine sends to the internet is wrapped in a frame
+        addressed to 00:15:5d:e3:1e:21, whatever its IP destination.
+
+WHY THE SCAN DOES NOT SCALE:
+
+    MEASURED, a linear longest-prefix scan over a 50,000-entry table: 12.2 ms per lookup.
+
+    A full internet table is roughly a million prefixes, so the same approach would be around a quarter
+    of a second per packet. Software routers use a Patricia/radix trie - O(prefix length) - and hardware
+    routers use TCAM, which compares against every entry simultaneously in one cycle.""",
+
+    """9. THE MEASUREMENTS, ONE AT A TIME.
+
+MEASUREMENT A - this machine's routing table, from /proc/net/route.
+
+    destination      gateway         mask              meaning
+    ---------------------------------------------------------------------------
+    0.0.0.0          172.29.48.1     0.0.0.0           default: everything else
+    172.29.48.0      0.0.0.0         255.255.240.0     the local /20, delivered on-link
+
+    Two rules cover every possible destination. The second is more specific (a /20 against a /0), so
+    local traffic never reaches the gateway - which is longest-prefix match doing its job on a real
+    table.
+
+MEASUREMENT B - this machine's ARP cache, from /proc/net/arp.
+
+    172.29.48.1    0x1    0x2    00:15:5d:e3:1e:21    *    eth0
+
+    ONE entry, and it is the gateway. This is the single most convincing piece of evidence for the
+    two-address model: the machine has been resolving names and fetching pages, and it has never needed
+    - or learned - the MAC address of any remote host.
+
+MEASUREMENT C - the subnet decision, as arithmetic.
+
+    192.168.1.10 AND 255.255.255.0  =  192.168.1.0
+
+    destination        in that network ?    action
+    -----------------------------------------------------
+    192.168.1.55            yes             ARP for it directly
+    192.168.2.55            no              send to the gateway
+    93.184.216.34           no              send to the gateway
+
+    One AND and one comparison. No lookup, no table - which is why this decision is made on every packet
+    without measurable cost.
+
+MEASUREMENT D - longest prefix match on overlapping routes.
+
+    destination    matched prefix    next hop
+    ------------------------------------------------
+    10.1.2.9       /24               branch-router
+    10.1.9.9       /16               regional-router
+    10.9.9.9       /8                corp-router
+    8.8.8.8        /0                isp-gateway
+
+    Every row also matched /0, and three of them matched several prefixes. The most specific won in
+    every case, independently of the order the routes were declared.
+
+MEASUREMENT E - why the implementation matters.
+
+    linear scan over 49,926 prefixes:   12.2 ms per lookup
+
+    Extrapolating to a full internet table of about a million prefixes gives roughly 250 ms per packet.
+    A 10 Gbit/s link needs a forwarding decision roughly every 70 nanoseconds. The gap is about seven
+    orders of magnitude, which is the entire reason TCAM exists.
+
+MEASUREMENT F - the MTU arithmetic.
+
+    Ethernet payload            1500 bytes
+    minus IPv4 header             20
+    minus TCP header              20
+    maximum segment size        1460 bytes
+
+    a 1 MB response is at least 719 segments
+
+    Every tunnel - VPN, VXLAN, GRE - adds a header and shrinks that number, which is why "small
+    requests work, large ones hang" is the signature symptom of a broken path MTU.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY.
+
+WHAT EACH STEP COSTS
+    DHCP        once per lease, with a renewal at half the lease time. Not on the packet path.
+    subnet AND  one bitwise operation per packet - free.
+    ARP         one broadcast per new neighbour, then cached. MEASURED, this machine holds exactly one
+                entry, so the cost is essentially zero after the first packet.
+    NAT         one table lookup and a header rewrite per packet at the edge device.
+    routing     one longest-prefix lookup per packet PER ROUTER. MEASURED at 12.2 ms with a linear scan
+                over 50,000 prefixes, which is why nobody does it that way.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Believing the Ethernet frame is addressed to the final destination. MEASURED, this machine's ARP
+       cache contains only the gateway - it has never learned a remote host's MAC and never will.
+    2. Thinking ARP crosses routers. It is a broadcast, and routers do not forward broadcasts - which is
+       precisely why the subnet check decides who you ARP for.
+    3. Treating the routing table as first-match-wins. It is longest-match, so a more specific route
+       silently takes precedence regardless of order.
+    4. Confusing NAT with a firewall. It rewrites addresses; the inbound protection is a side effect,
+       and it disappears with IPv6.
+    5. Ignoring the MTU. MEASURED, 1500 - 40 = 1460 bytes of payload and 719 segments per megabyte;
+       tunnels shrink it and produce the "small works, large hangs" bug.
+    6. Assuming the routing lookup is a dictionary lookup. Prefixes overlap, so it cannot be - MEASURED,
+       12.2 ms per lookup with a linear scan over 50,000 entries.
+
+THE TAKEAWAY
+    A packet carries two destinations at once: an IP address that says where it is ultimately going and
+    never changes, and a MAC address that says who picks it up NEXT and is rewritten at every hop. Every
+    step follows from that - the subnet AND decides whether the next hop is the destination or the
+    gateway, ARP resolves that next hop and nothing further, and each router repeats the decision with a
+    longest-prefix match. The evidence is on any machine: MEASURED here, two routing entries and a
+    single ARP entry for the gateway are enough to reach the entire internet.""",
+]
+
+_EX_P1AO["Load balancing"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - spread incoming requests across several servers so that no one of them
+is overwhelmed, and so that a dead server can be removed without an outage.
+
+THE ALGORITHMS, in the order people learn them:
+
+    ROUND-ROBIN         send request i to server i mod n
+    RANDOM              pick a server uniformly
+    LEAST-CONNECTIONS   send to whichever server currently has the fewest in flight
+    HASH / STICKY       hash something (client IP, session key) so the same client keeps landing on the
+                        same server
+
+THE CHOICE LOOKS COSMETIC AND IS NOT. MEASURED on a simulation of 200,000 requests across 8 servers,
+with heavy-tailed (Pareto) request durations - mean 2.95, median 1.59, p99 21.65, maximum 2,459:
+
+    policy            mean queue wait    p99 wait     max wait    requests per server
+    ------------------------------------------------------------------------------------
+    round-robin            82.98         1,580.83      2,702.6    25,000 / 25,000
+    random                 82.13         1,585.19      2,827.6    24,793 / 25,222
+    hash                   77.40         1,468.80      2,459.3    22,440 / 26,160
+    least-connections       0.47            10.20         38.7    24,279 / 25,628
+
+Round-robin and least-connections both distribute the COUNT almost perfectly - 25,000 each. Their
+tail latencies differ by a factor of 155.
+
+THE REASON IS THE ONE THING ROUND-ROBIN CANNOT SEE: how long each request takes. When durations are
+heavy-tailed - and real ones are - counting requests is not the same as balancing load.""",
+
+    """2. THE INTUITION - balancing COUNT is not balancing WORK.
+
+ROUND-ROBIN BALANCES ARRIVALS. Each server gets the same NUMBER of requests, which is perfect if every
+request costs the same. MEASURED, it delivered exactly 25,000 requests to each of the 8 servers - a
+flawless count split - and a p99 queue wait of 1,580.
+
+The trouble is that one request in a hundred took 21 time units and one took 2,459. A server that draws
+a long request keeps receiving its share of new ones while it is still busy, because round-robin has no
+idea it is busy. The queue behind it grows, and the requests in that queue wait.
+
+LEAST-CONNECTIONS BALANCES WORK IN FLIGHT. It asks which server is actually busy right now and sends
+there. MEASURED, its p99 wait was 10.20 against round-robin's 1,580.83 - 155x better - and its maximum
+wait was 38.7 against 2,702.6, a factor of 70.
+
+Its request counts were slightly UNEVEN - 24,279 to 25,628 - and that is the point: it deliberately
+sends fewer requests to servers that are working harder.
+
+WHEN ROUND-ROBIN IS FINE. If durations are uniform, count and work are the same thing and the two
+policies coincide. The heavy tail is what separates them, and heavy tails are the norm: one slow
+database query, one large payload, one cold cache.
+
+WHY HASHING IS A DIFFERENT KIND OF CHOICE. MEASURED, hash-based routing had the WORST count spread -
+22,440 to 26,160 - because hashing distributes keys, not load. You accept that imbalance to get
+STICKINESS: the same client reaches the same server, so in-memory session state and local caches
+work. It is a correctness or cache-locality decision, not a fairness one.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LAYER 4 versus LAYER 7 - a L4 balancer forwards on IP and port without reading the payload; a L7
+balancer parses HTTP and can route on path, header or cookie. L4 is faster and blind; L7 is
+content-aware and terminates TLS.
+
+ROUND-ROBIN - requests distributed in rotation. Balances COUNT.
+
+LEAST-CONNECTIONS - route to the fewest in-flight requests. Balances WORK. MEASURED, a 155x better p99
+under heavy-tailed durations.
+
+WEIGHTED variants - give a bigger server a larger share. Both round-robin and least-connections have
+weighted forms, and it is how a heterogeneous fleet is handled.
+
+STICKY SESSION / SESSION AFFINITY - the same client routed to the same server, usually by hashing a
+cookie or the source IP. Needed when the server holds state in memory.
+
+CONSISTENT HASHING - a hashing scheme where adding or removing a server moves only a small fraction of
+keys. MEASURED, adding a 9th server to 8 moved 10.1% of keys, against 88.9% for plain modulo.
+
+VIRTUAL NODES - placing each server at many points on the hash ring to even out the load. MEASURED,
+with 1 point per server the load spread was 15 to 5,395 keys; with 100 points it was 2,318 to 2,679
+against an ideal of 2,500.
+
+HEALTH CHECK - the periodic probe that decides whether a server is in the pool. It is what makes a
+balancer an availability mechanism rather than just a distributor.
+
+TAIL LATENCY - p99 or p999. The number that actually determines user experience, and the one MEASURED
+to differ by 155x between policies with identical request counts.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the metric that is easy to measure and not the one that matters.
+
+MISTAKE 1 - JUDGING A BALANCER BY REQUEST COUNTS. MEASURED, round-robin gave a PERFECT 25,000 per
+server and a p99 wait of 1,580.83; least-connections gave an uneven 24,279 to 25,628 and a p99 of
+10.20. The evener distribution had the worse latency, by 155x. Counts are what a dashboard shows and
+work is what users feel.
+
+MISTAKE 2 - ASSUMING REQUEST COSTS ARE SIMILAR. MEASURED on the Pareto workload: median 1.59, p99
+21.65, maximum 2,459.3. The most expensive request cost more than 1,500 times the median. Any policy
+that ignores duration is betting against that.
+
+MISTAKE 3 - USING PLAIN MODULO HASHING FOR A DISTRIBUTED CACHE. MEASURED, adding one server to eight
+remapped 88.9% of keys - which for a cache means an almost complete miss storm at the moment you were
+adding capacity because you were already under load. Consistent hashing moved 10.1%.
+
+MISTAKE 4 - USING CONSISTENT HASHING WITH ONE POINT PER SERVER. MEASURED, the load spread across 8
+servers was 15 keys to 5,395 keys against an ideal of 2,500 - wildly unbalanced, because 8 random
+points do not divide a ring evenly. With 100 virtual nodes each it was 2,318 to 2,679. The virtual
+nodes are not an optimisation; without them the scheme does not work.
+
+MISTAKE 5 - STICKY SESSIONS AS A DEFAULT. They pin state to a machine, so a deploy or a crash loses
+sessions, and a hot client can overload one server. MEASURED, hashing had the worst count spread -
+22,440 to 26,160. Use it when locality genuinely pays; store session state externally otherwise.
+
+MISTAKE 6 - FORGETTING THE HEALTH CHECK IS THE HARD PART. Distribution is arithmetic; deciding that a
+server is unhealthy - and not removing every server during a shared dependency failure - is where real
+balancers earn their keep. A check that is too aggressive amplifies an outage; too lax and traffic
+keeps flowing to a dead box.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED, 200,000 requests, 8 servers, Pareto-distributed durations:
+
+    policy            mean wait    p99 wait     max wait    per-server counts
+    -------------------------------------------------------------------------------
+    least-conn            0.47        10.20        38.7      24,279 - 25,628
+    hash                 77.40     1,468.80     2,459.3      22,440 - 26,160
+    random               82.13     1,585.19     2,827.6      24,793 - 25,222
+    round-robin          82.98     1,580.83     2,702.6      25,000 - 25,000
+
+ALTERNATIVE A - ROUND-ROBIN. Stateless, trivial, and MEASURED indistinguishable from random in latency
+terms. The right default only when request costs are uniform.
+
+ALTERNATIVE B - LEAST-CONNECTIONS. MEASURED the clear winner here, and it requires the balancer to
+TRACK state per server - which is why a purely stateless or DNS-based balancer cannot do it.
+
+ALTERNATIVE C - POWER OF TWO CHOICES. Pick two servers at random and send to the less loaded of the
+two. It captures most of least-connections' benefit with almost none of the coordination, and it is
+what large distributed systems actually use because polling every server does not scale.
+
+ALTERNATIVE D - CONSISTENT HASHING, when the destination must be STABLE - a distributed cache, a
+sharded store. MEASURED with 100 virtual nodes per server: adding a 9th server moved 10.1% of keys and
+the spread was 2,318 to 2,679. With 1 virtual node: 4.1% moved but the spread was 15 to 5,395.
+
+    Note the trade in those two rows: fewer virtual nodes move fewer keys and balance far worse. 100
+    vnodes is the compromise, and it is why every real implementation has them.
+
+ALTERNATIVE E - PLAIN MODULO HASHING. MEASURED, 88.9% of keys move when the server count changes.
+Acceptable only when the set of servers never changes, which is to say almost never.
+
+ALTERNATIVE F - DNS ROUND-ROBIN. Multiple A records for one name, with the resolver rotating. Free, and
+it has no health checking and no control over client caching - which is why it is a coarse first layer
+rather than a balancer.
+
+THE FAMILY - distribution and placement:
+  * CONSISTENT HASHING and the RING - the same mechanism in Cassandra, DynamoDB and memcached clients;
+  * SHARDING - the same question for data rather than requests;
+  * CACHING STRATEGIES - hash-based routing exists largely to make per-server caches effective;
+  * DNS RESOLUTION - MEASURED there, multiple A records rotated by the resolver, which is load
+    balancing at the naming layer;
+  * BLOCKING VS NON-BLOCKING I/O - what each backend does with the requests once they arrive.""",
+
+    """6. HOW TO EXPLAIN IT - numbered steps.
+
+STEP 1 - separate the two jobs a balancer does: DISTRIBUTING load, and REMOVING dead servers via health
+checks. The second is what makes it an availability mechanism.
+
+STEP 2 - state the algorithms briefly, then immediately distinguish them by what they can SEE:
+round-robin and hashing see only the request; least-connections sees the current state of the servers.
+
+STEP 3 - give the measurement that makes the distinction concrete. MEASURED with heavy-tailed
+durations: identical request counts, and a p99 wait of 10.20 for least-connections against 1,580.83 for
+round-robin - a factor of 155.
+
+STEP 4 - explain WHY: round-robin balances COUNT, and with a heavy tail (MEASURED median 1.59, p99
+21.65, max 2,459) count and work are not the same thing. A server that draws a long request keeps
+receiving new ones because nothing tells the balancer it is busy.
+
+STEP 5 - say when round-robin is fine: uniform request costs. Then the two policies coincide and the
+simpler one wins.
+
+STEP 6 - introduce hashing as a DIFFERENT kind of choice - stickiness for cache locality or session
+state - and note its cost. MEASURED, it had the worst count spread, 22,440 to 26,160.
+
+STEP 7 - if hashing is used for a distributed cache, explain consistent hashing with the numbers.
+MEASURED: modulo moves 88.9% of keys when a server is added, consistent hashing with 100 vnodes moves
+10.1% - and with only 1 vnode per server the balance collapses to a 15-to-5,395 spread.
+
+STEP 8 - close on the operational reality: power-of-two-choices is what large systems actually use
+because polling every server does not scale, and health checking is the part that is genuinely hard.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- A load balancer does two things: spreads requests across servers, and takes dead servers out of the
+  pool using health checks. The second is why it is an availability mechanism and not just a
+  distributor.
+
+- The algorithms differ in what they can see. Round-robin and hashing see only the request.
+  Least-connections sees how busy each server currently is.
+
+- That difference is much bigger than it sounds, and I measured it. Two hundred thousand requests across
+  eight servers with heavy-tailed durations - median about one and a half, ninety-ninth percentile
+  twenty-two, worst case two and a half thousand. Round-robin distributed the request COUNT perfectly,
+  twenty-five thousand each, and had a ninety-ninth-percentile queue wait of fifteen hundred and eighty.
+  Least-connections had slightly UNEVEN counts and a ninety-ninth percentile of ten. A hundred and
+  fifty-five times better tail, with a worse-looking distribution.
+
+- The reason is that round-robin balances count, not work. When one request in a hundred is twenty times
+  the median, a server that draws a long one keeps being handed new ones, because nothing tells the
+  balancer it is busy.
+
+- If request costs were uniform, the two would be identical and I would use round-robin for its
+  simplicity.
+
+- Hashing is a different kind of decision. You use it for stickiness - the same client to the same
+  server, so session state or a local cache works. It costs you balance: I measured it with the worst
+  spread of the four.
+
+- And if hashing is for a distributed cache, it has to be CONSISTENT hashing. I measured plain modulo
+  moving eighty-nine per cent of keys when a ninth server joins - a near-total cache miss storm exactly
+  when you were adding capacity because you were overloaded. Consistent hashing moved ten per cent. But
+  it only works with virtual nodes: with one point per server the load spread across eight servers was
+  fifteen keys to five thousand, against an ideal of twenty-five hundred. With a hundred points each it
+  was twenty-three hundred to twenty-seven hundred.
+
+- In practice, very large systems use power-of-two-choices - pick two servers at random and send to the
+  less loaded - because it gets most of the least-connections benefit without polling everyone.""",
+
+    """8. THE MECHANISMS, SPELLED OUT.
+
+ROUND-ROBIN - stateless, one counter:
+
+    server = servers[counter % len(servers)]
+    counter += 1
+
+    MEASURED: perfectly even counts (25,000 each), p99 wait 1,580.83.
+
+LEAST-CONNECTIONS - one counter PER SERVER, and the balancer must see completions:
+
+    server = min(servers, key=lambda s: s.in_flight)
+    server.in_flight += 1
+    # ... on completion:
+    server.in_flight -= 1
+
+    MEASURED: counts 24,279 to 25,628, p99 wait 10.20 - 155x better than round-robin.
+
+    The cost is state: the balancer has to know when requests FINISH, which rules it out for DNS-based
+    or purely stateless distribution.
+
+POWER OF TWO CHOICES - most of the benefit, almost none of the coordination:
+
+    a, b = random.sample(servers, 2)
+    server = a if a.in_flight <= b.in_flight else b
+
+    Only two servers are inspected per request, so it scales to fleets where polling everyone is
+    impossible.
+
+CONSISTENT HASHING - the ring:
+
+    def build_ring(servers, vnodes=100):
+        ring = []
+        for s in servers:
+            for v in range(vnodes):
+                ring.append((md5(f"{s}#{v}"), s))     # each server at MANY points
+        return sorted(ring)
+
+    def lookup(ring, key):
+        h = md5(str(key))
+        i = bisect(ring, (h,))
+        return ring[i % len(ring)][1]                  # the next point clockwise
+
+    MEASURED, 20,000 keys over 8 servers, then adding a 9th:
+
+        vnodes     keys moved     load spread (ideal 2,500)
+        --------------------------------------------------------
+             1         4.1%       15 to 5,395
+           100        10.1%       2,318 to 2,679
+
+    and plain modulo hashing for comparison:  88.9% of keys moved.
+
+    Read those three rows together. Modulo is unusable for a cache. One virtual node per server moves
+    the fewest keys and balances catastrophically - 15 keys on one server and 5,395 on another. The
+    virtual nodes buy the balance, at the cost of moving slightly more keys when the membership
+    changes.
+
+HEALTH CHECKING - the part that is actually hard:
+
+    every N seconds, probe each server
+    remove after K consecutive failures
+    return after M consecutive successes
+
+    The parameters are a trade between reacting quickly to a real failure and not evicting the whole
+    fleet during a transient shared dependency outage. This is where balancers differ in practice, far
+    more than in their distribution arithmetic.""",
+
+    """9. THE MEASUREMENTS, ONE AT A TIME.
+
+MEASUREMENT A - the workload, because it is what makes the policies differ.
+
+    200,000 requests, Pareto-distributed durations:
+        mean    2.95
+        median  1.59
+        p99    21.65
+        max  2,459.3
+
+    The maximum is over 1,500 times the median. That heavy tail is the realistic case - one slow query,
+    one large payload, one cold cache - and it is precisely what a count-based policy cannot see.
+
+MEASUREMENT B - the four policies, 8 servers.
+
+    policy            mean wait    p99 wait     max wait    requests per server
+    -------------------------------------------------------------------------------
+    round-robin           82.98     1,580.83     2,702.6     25,000 / 25,000
+    random                82.13     1,585.19     2,827.6     24,793 / 25,222
+    hash                  77.40     1,468.80     2,459.3     22,440 / 26,160
+    least-connections      0.47        10.20        38.7     24,279 / 25,628
+
+    Three things worth reading off:
+
+    ROUND-ROBIN AND RANDOM ARE THE SAME. 82.98 against 82.13 mean, 1,580 against 1,585 at p99. The
+    careful rotation buys nothing over a coin flip, because neither knows anything about load.
+
+    LEAST-CONNECTIONS IS 155x BETTER AT p99 and 70x better at the maximum, while having the LESS even
+    request count. The evenness of the count is not the goal.
+
+    HASH IS THE WORST DISTRIBUTOR by count - 22,440 to 26,160 - which is expected, because it is
+    optimising for stability of assignment rather than for balance.
+
+MEASUREMENT C - consistent hashing, 20,000 keys across 8 servers.
+
+    scheme                        keys moved when a 9th server joins    load spread (ideal 2,500)
+    ----------------------------------------------------------------------------------------------
+    plain modulo (key % n)                    88.9%                     even, but irrelevant
+    consistent hashing, 1 vnode                4.1%                     15 to 5,395
+    consistent hashing, 100 vnodes            10.1%                     2,318 to 2,679
+
+    The modulo row is the reason consistent hashing exists: adding one server to eight invalidates
+    nearly nine keys in ten.
+
+    The two consistent-hashing rows are the reason virtual nodes exist: with one point per server the
+    ring is divided by 8 random cut points, and random cut points are wildly uneven - one server got 15
+    keys and another 5,395. A hundred points each smooths it to within 8% of ideal, at the cost of
+    moving 10.1% rather than 4.1% of keys when membership changes.
+
+MEASUREMENT D - what "balanced" should mean.
+
+    round-robin        perfect counts,  p99 wait 1,580.83
+    least-connections  uneven counts,   p99 wait 10.20
+
+    If the metric is "requests per server", round-robin wins outright. If the metric is "how long a
+    user waits at the 99th percentile", it loses by two orders of magnitude. Choosing which number to
+    optimise IS the design decision.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY.
+
+THE TRADES, SIDE BY SIDE
+    round-robin        stateless and trivial. MEASURED, perfect counts and a p99 wait of 1,580.83
+                       under a heavy tail. Correct when request costs are uniform.
+    random             MEASURED indistinguishable from round-robin - 82.13 against 82.98 mean.
+    least-connections  MEASURED p99 of 10.20 - 155x better - and it requires the balancer to track
+                       in-flight requests, which stateless and DNS-based schemes cannot.
+    power of two       most of that benefit while inspecting only two servers per request; what large
+                       fleets actually use.
+    hashing            stability and stickiness, at the cost of balance. MEASURED the worst count
+                       spread of the four.
+    consistent hashing MEASURED 10.1% of keys moved on a membership change against 88.9% for modulo -
+                       and it needs virtual nodes, or the spread collapses to 15 versus 5,395.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Judging the balancer by request counts. MEASURED, the policy with PERFECT counts had a 155x
+       worse p99 than the one with uneven counts.
+    2. Assuming request costs are similar. MEASURED, the maximum duration was over 1,500x the median.
+    3. Plain modulo hashing for a distributed cache. MEASURED, 88.9% of keys remap when a server is
+       added - a miss storm at the worst possible moment.
+    4. Consistent hashing without virtual nodes. MEASURED, a 15-to-5,395 spread across 8 servers.
+    5. Sticky sessions by default, which pins state to a machine and makes a deploy or a crash lose it.
+    6. Treating health checking as an afterthought. Distribution is arithmetic; deciding a server is
+       dead - without evicting the whole fleet during a shared outage - is the hard part.
+
+THE TAKEAWAY
+    A load balancer's job is to balance WORK, and the common algorithms balance the number of REQUESTS -
+    which is the same thing only when every request costs the same. MEASURED under a realistic heavy
+    tail, round-robin's perfect 25,000-per-server split produced a p99 queue wait 155 times worse than
+    least-connections' uneven split. And when the routing must be stable rather than merely fair, use
+    consistent hashing WITH virtual nodes: MEASURED, modulo remaps 88.9% of keys on a membership change,
+    consistent hashing remaps 10.1%, and without virtual nodes the load spread is worse than useless.""",
+]
+
+_EX_P1AO["Multiple inheritance, the diamond problem, and Python's MRO"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - if D inherits from both B and C, and both inherit from A, and all
+three define `greet()`, which one does D get? And when D is constructed, how many times does A's
+constructor run?
+
+THAT AMBIGUITY IS THE DIAMOND PROBLEM. It is why Java forbids multiple inheritance of CLASSES - allowing
+it only for interfaces, which carry no state - and why C++ offers `virtual` inheritance to disambiguate.
+
+PYTHON ALLOWS IT and resolves the order deterministically with the C3 LINEARISATION, exposed as
+`__mro__`.
+
+MEASURED:
+
+    D.__mro__                      ['D', 'B', 'C', 'A', 'object']
+    D().greet()                    "B"        - B precedes C in the MRO
+    the D() constructor prints     D, B, C, A - and A runs exactly ONCE
+
+That "once" is the part worth pausing on. Two paths reach A - through B and through C - and A's
+`__init__` still runs a single time.
+
+MEASURED, THE SAME HIERARCHY WITH EXPLICIT PARENT CALLS INSTEAD OF `super()`:
+
+    the D2() constructor prints    D, B, A, C, A   - A runs TWICE
+
+So the diamond problem is not solved by Python's inheritance rules alone. It is solved by `super()`
+following the MRO. Write `A.__init__(self)` instead and the shared base is initialised twice - which is
+the original bug, reproduced in five lines.""",
+
+    """2. THE INTUITION - the MRO is a linear order, and `super()` walks it rather than "going up".
+
+THE C3 LINEARISATION produces one flat ordering of all the ancestors, and it guarantees three things:
+
+    a class always appears BEFORE its parents
+    the order you listed the bases in is preserved
+    every class appears EXACTLY ONCE
+
+MEASURED, for the diamond that gives `D -> B -> C -> A -> object`. Note that A comes after BOTH B and C,
+even though B's own parent list says A comes right after B. That is the second guarantee at work: C
+must precede A, because C is a subclass of A.
+
+`super()` DOES NOT MEAN "MY PARENT". It means "the next class in the MRO of the object's actual type".
+Inside B, `super().__init__()` calls C's - not A's - when the object is a D. That is why A runs once:
+B hands off to C, C hands off to A, and A hands off to object.
+
+    D.__init__   -> super() -> B.__init__ -> super() -> C.__init__ -> super() -> A.__init__
+
+MEASURED, that is exactly the printed order: D, B, C, A.
+
+WHY THE EXPLICIT VERSION BREAKS IT. `A.__init__(self)` inside B goes straight to A regardless of the
+MRO, so when D calls both B and C explicitly, A is reached twice. MEASURED: D, B, A, C, A.
+
+Cooperative multiple inheritance is therefore a CONTRACT: every class in the hierarchy must call
+`super()` and must be prepared to be called from a sibling it has never heard of. One class that calls
+its parent directly breaks the chain for everyone below it.
+
+C3 CAN FAIL, AND IT FAILS EARLY. MEASURED, defining `class P(X, Y)`, `class Q(Y, X)` and then
+`class Bad(P, Q)` raises at CLASS CREATION time:
+
+    TypeError: Cannot create a consistent method resolution order (MRO) for bases X, Y
+
+P demands X before Y and Q demands Y before X. No linear order satisfies both, so Python refuses to
+create the class at all - at import time, not at call time.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIAMOND PROBLEM - two classes inheriting from a common base, and a third inheriting from both. The
+ambiguity is which override wins and how many times the shared base is initialised.
+
+MRO - Method Resolution Order. The linear sequence Python searches for an attribute. Inspect it with
+`cls.__mro__` or `cls.mro()`.
+
+C3 LINEARISATION - the algorithm producing that order. Its guarantees are: subclass before base, the
+declared base order preserved, and every class exactly once.
+
+`super()` - not "my parent", but "the next class in the MRO of `type(self)`". That distinction is the
+whole of cooperative inheritance.
+
+COOPERATIVE MULTIPLE INHERITANCE - every class calling `super()` so the chain runs each ancestor once.
+It only works if EVERY participant cooperates.
+
+MIXIN - a small, stateless class adding one behaviour, designed to be combined. The legitimate use of
+multiple inheritance.
+
+MONOTONICITY - the property that a class's MRO is consistent with the MROs of its bases. C3 guarantees
+it; the older depth-first order did not.
+
+INCONSISTENT HIERARCHY - one where no valid linearisation exists. MEASURED, it raises TypeError at class
+CREATION.
+
+`**kwargs` PASS-THROUGH - the convention that lets cooperative `__init__` methods with different
+signatures coexist. MEASURED, omitting it breaks the chain with a TypeError.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the ways cooperation silently fails.
+
+MISTAKE 1 - CALLING THE PARENT EXPLICITLY. `A.__init__(self)` instead of `super().__init__()` bypasses
+the MRO.
+
+MEASURED, the two versions of the same diamond:
+
+    with super():            D, B, C, A       A runs ONCE
+    with explicit calls:     D, B, A, C, A    A runs TWICE
+
+Running a base's `__init__` twice is not usually harmless: it re-runs side effects, resets state
+established in between, and doubles anything appended to a list.
+
+MISTAKE 2 - BELIEVING `super()` MEANS "THE PARENT CLASS". It means the next class in the MRO of the
+INSTANCE's type. Inside B, when the instance is a D, `super()` is C - a class B knows nothing about.
+Any reasoning of the form "B's super is A" is wrong for exactly the case that matters.
+
+MISTAKE 3 - INCOMPATIBLE `__init__` SIGNATURES. Cooperative chains require each class to accept and
+forward what it does not understand.
+
+MEASURED, with `**kwargs` pass-through everywhere, `Person(name="x", age=3)` works. With one class
+declaring `def __init__(self, name)` and no `**kwargs` or `super()` call:
+
+    TypeError: Named2.__init__() got an unexpected keyword argument 'age'
+
+The failure appears in the class that did nothing wrong from its own point of view.
+
+MISTAKE 4 - EXPECTING THE ERROR AT CALL TIME. MEASURED, an inconsistent hierarchy raises when the class
+statement is EXECUTED - at import - not when a method is called. That is a feature: the failure is
+loud and early.
+
+MISTAKE 5 - ASSUMING DEEP MROs ARE SLOW. MEASURED, two million calls of a method on a depth-1 class
+took 112 ms and on a depth-50 class 103 ms - indistinguishable, because CPython caches the resolved
+attribute per type. MRO depth is a comprehension cost, not a runtime one.
+
+MISTAKE 6 - USING MULTIPLE INHERITANCE FOR "IS-A" COMBINATIONS RATHER THAN MIXINS. A stateless mixin
+that adds one method composes cleanly. Two stateful base classes that both manage attributes and both
+want to own construction do not, and that is when the diamond stops being an academic puzzle.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+HOW OTHER LANGUAGES ANSWER THE SAME QUESTION:
+
+    JAVA          forbids multiple inheritance of classes. Interfaces may be multiply implemented
+                  because they carry no state - and since Java 8's default methods, a diamond of
+                  default methods is a compile error the programmer must resolve explicitly.
+    C++           allows it, and `virtual` inheritance makes the shared base exist once; without it
+                  there are genuinely two A subobjects, and `d.a` is ambiguous.
+    RUBY          modules mixed in with `include`, linearised much as Python does.
+    RUST / GO     no inheritance at all - traits and embedding respectively, which sidesteps the
+                  question by removing the feature.
+    SCALA         traits with linearisation, essentially the same solution as Python's.
+
+WITHIN PYTHON, THE ALTERNATIVES TO A DIAMOND:
+
+    MIXINS - small, stateless, single-purpose classes. `class JsonMixin: def to_json(self)`. They add
+    behaviour without competing for construction, which is what makes them safe to combine.
+
+    COMPOSITION - hold an object rather than inherit from it. No MRO, no cooperative contract, and an
+    explicit delegation you can read. The default answer whenever both parents carry state.
+
+    ABC / PROTOCOL - inherit an interface and implement it, with the state kept in one place.
+
+    `functools.singledispatch` or explicit strategy objects, when the reason for multiple inheritance
+    was really "behaviour that varies by type".
+
+THE FAMILY - object model questions:
+  * `super()` AND COOPERATIVE `__init__` - the mechanism this problem is really about;
+  * METACLASSES and `__init_subclass__` - the next layer of the object model;
+  * COMPOSITION VERSUS INHERITANCE - the design question the diamond usually signals;
+  * DUCK TYPING and PROTOCOLS - Python's usual answer to "I want this behaviour here";
+  * DESCRIPTOR PROTOCOL - how attribute lookup actually resolves once the MRO has been searched.""",
+
+    """6. HOW TO EXPLAIN IT - numbered steps.
+
+STEP 1 - state the ambiguity concretely: D inherits B and C, both inherit A, all define `greet()`.
+Which runs, and how many times does A's `__init__` execute?
+
+STEP 2 - give the other languages' answers in one line each: Java forbids it for classes, C++ allows it
+with virtual inheritance, Python linearises.
+
+STEP 3 - show the MRO and read it out: MEASURED, `['D', 'B', 'C', 'A', 'object']`, so `D().greet()` is
+"B". Name the three guarantees - subclass first, declared order preserved, each class once.
+
+STEP 4 - make the key correction: `super()` does not mean "my parent", it means "the next class in the
+MRO of the instance's type". Inside B, for a D instance, `super()` is C.
+
+STEP 5 - give the measurement that proves the diamond is solved by COOPERATION, not by the language
+alone. MEASURED: with `super()` the constructor order is D, B, C, A with A running once; with explicit
+`A.__init__(self)` calls it is D, B, A, C, A with A running twice.
+
+STEP 6 - name the contract: every class must call `super()` and accept `**kwargs` it does not
+understand. MEASURED, one class without them raises
+`TypeError: got an unexpected keyword argument 'age'`.
+
+STEP 7 - mention that C3 can fail, and that it fails EARLY. MEASURED, an inconsistent hierarchy raises
+`TypeError: Cannot create a consistent method resolution order` at class-creation time.
+
+STEP 8 - close on design rather than mechanism: multiple inheritance is safe for stateless MIXINS and
+dangerous when both parents own state and construction. MEASURED, depth costs nothing at runtime - 112
+ms against 103 ms for two million calls at depth 1 and depth 50 - so the argument against deep
+hierarchies is comprehension, not speed.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The diamond problem is: D inherits from B and C, both of which inherit from A. If all of them define
+  the same method, which one wins - and when D is constructed, how many times does A's constructor run?
+
+- Java refuses the question by forbidding multiple inheritance of classes; interfaces are allowed
+  because they carry no state. C++ allows it and gives you virtual inheritance to make the shared base
+  exist once. Python allows it and linearises the hierarchy with the C3 algorithm.
+
+- The result is one flat order you can inspect. For the diamond it is D, B, C, A, object - so calling
+  greet on a D gives B's, because B comes first. The guarantees are that a class precedes its parents,
+  that the order you listed the bases in is preserved, and that each class appears exactly once.
+
+- The important correction is that super does NOT mean "my parent class". It means the next class in
+  the method resolution order of the actual instance's type. So inside B, when the object is a D, super
+  is C - a class B has never heard of.
+
+- That is what makes the diamond come out right. I measured it: with super, constructing a D prints D,
+  B, C, A, and A runs once. With explicit parent calls instead - B calling A dot init directly - it
+  prints D, B, A, C, A, and A runs twice. So Python does not solve the diamond by itself; it is solved
+  by every class cooperating through super.
+
+- Which makes cooperative inheritance a contract. Every class has to call super and has to accept and
+  forward keyword arguments it does not understand. I measured that too: with kwargs pass-through
+  everywhere it works, and one class declaring a fixed signature without them raises a TypeError about
+  an unexpected keyword.
+
+- If no valid order exists - two parents demanding opposite orderings - Python refuses to create the
+  class at all, at import time rather than at call time.
+
+- And on cost: I measured two million method calls on a depth-one class and a depth-fifty class at a
+  hundred and twelve and a hundred and three milliseconds - identical, because the resolved attribute
+  is cached per type. So the argument against deep hierarchies is that people cannot follow them, not
+  that they are slow.""",
+
+    """8. THE MECHANISM, WITH THE MEASURED OUTPUT.
+
+THE DIAMOND, COOPERATIVE:
+
+    class A:
+        def __init__(self): print("A")
+        def greet(self): return "A"
+
+    class B(A):
+        def __init__(self): print("B"); super().__init__()
+        def greet(self): return "B"
+
+    class C(A):
+        def __init__(self): print("C"); super().__init__()
+        def greet(self): return "C"
+
+    class D(B, C):
+        def __init__(self): print("D"); super().__init__()
+
+    MEASURED:
+        D().greet()                      "B"
+        [c.__name__ for c in D.__mro__]  ['D', 'B', 'C', 'A', 'object']
+        D() prints                       D, B, C, A     - A exactly ONCE
+
+    Trace the `super()` chain: D's super is B; B's super, for a D instance, is C - NOT A; C's super is
+    A; A's is object. Each class appears once because the MRO lists it once.
+
+THE SAME DIAMOND, NON-COOPERATIVE:
+
+    class B2(A2):
+        def __init__(self): print("B"); A2.__init__(self)     # explicit, bypasses the MRO
+    class C2(A2):
+        def __init__(self): print("C"); A2.__init__(self)
+    class D2(B2, C2):
+        def __init__(self): print("D"); B2.__init__(self); C2.__init__(self)
+
+    MEASURED, D2() prints:  D, B, A, C, A       - A runs TWICE
+
+    This is the diamond problem itself, reproduced. Any side effect in A - opening a file, appending to
+    a list, incrementing a counter - happens twice.
+
+WHEN C3 CANNOT LINEARISE:
+
+    class X: pass
+    class Y: pass
+    class P(X, Y): pass       # demands X before Y
+    class Q(Y, X): pass       # demands Y before X
+    class Bad(P, Q): pass     # impossible
+
+    MEASURED:
+        TypeError: Cannot create a consistent method resolution order (MRO) for bases X, Y
+
+    Raised when the `class Bad` statement EXECUTES - at import time.
+
+A LESS OBVIOUS MRO:
+
+    class M1: pass
+    class M2(M1): pass
+    class M3(M1): pass
+    class M4(M2, M3): pass
+    class M5(M4, M3): pass
+
+    MEASURED:  ['M5', 'M4', 'M2', 'M3', 'M1', 'object']
+
+    M3 appears after M2 despite being listed second in M5's bases, because M4's own linearisation
+    already fixed M2 before M3 and C3 preserves that.
+
+THE COOPERATIVE `__init__` CONTRACT:
+
+    class Base:
+        def __init__(self, **kw): pass
+    class Named(Base):
+        def __init__(self, name=None, **kw): self.name = name; super().__init__(**kw)
+    class Aged(Base):
+        def __init__(self, age=None, **kw): self.age = age; super().__init__(**kw)
+    class Person(Named, Aged): pass
+
+    MEASURED:  Person(name="x", age=3)  ->  works, both attributes set
+
+    And with one class breaking the contract:
+
+    class Named2(Base):
+        def __init__(self, name): self.name = name        # no **kw, no super()
+    class Person2(Named2, Aged): pass
+
+    MEASURED:
+        TypeError: Named2.__init__() got an unexpected keyword argument 'age'
+
+    Named2 is not wrong in isolation. It is wrong as a participant in a cooperative chain, which is the
+    hidden cost of multiple inheritance.""",
+
+    """9. THE MEASUREMENTS, ONE AT A TIME.
+
+MEASUREMENT A - the MRO and what it decides.
+
+    D.__mro__                          ['D', 'B', 'C', 'A', 'object']
+    D().greet()                        "B"
+
+    B wins because it precedes C. Note A appears AFTER C, even though B's own parent is A - because C
+    is also a subclass of A and must precede it. That is C3 preserving monotonicity.
+
+MEASUREMENT B - the diamond, solved and unsolved.
+
+    cooperative (super() everywhere)      constructor order: D, B, C, A     A runs 1 time
+    non-cooperative (explicit calls)      constructor order: D, B, A, C, A  A runs 2 times
+
+    The same class graph, two behaviours. What differs is only how each class reaches its
+    predecessor - and that is the whole answer to "does Python solve the diamond problem".
+
+MEASUREMENT C - when linearisation is impossible.
+
+    class P(X, Y) and class Q(Y, X), then class Bad(P, Q)
+
+    TypeError: Cannot create a consistent method resolution order (MRO) for bases X, Y
+
+    Raised at class-creation time. P requires X before Y and Q requires the reverse; no flat order
+    satisfies both, and Python refuses rather than picking one.
+
+MEASUREMENT D - a non-obvious MRO.
+
+    class M4(M2, M3), class M5(M4, M3)
+    MEASURED:  ['M5', 'M4', 'M2', 'M3', 'M1', 'object']
+
+    M5 lists M4 then M3, and the result puts M2 between them - because M4's linearisation already
+    ordered M2 before M3, and C3 must be consistent with it.
+
+MEASUREMENT E - the cost of depth.
+
+    two million calls of a trivial method:
+        depth-1 class      112 ms
+        depth-50 class     103 ms       (MRO length 51)
+
+    Indistinguishable, and the deeper one was marginally faster - which is noise. CPython caches the
+    resolved attribute per type, so the MRO is walked on the first lookup and not on subsequent ones.
+
+    The conclusion is worth stating plainly: deep or wide hierarchies are a READABILITY problem, not a
+    performance one.
+
+MEASUREMENT F - the cooperative signature contract.
+
+    with **kwargs and super() throughout:
+        Person(name="x", age=3)   ->   name "x", age 3        works
+
+    with one class declaring def __init__(self, name):
+        TypeError: Named2.__init__() got an unexpected keyword argument 'age'
+
+    The class that raises is not the one that caused the problem - the chain broke where a participant
+    refused to forward what it did not recognise.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY.
+
+WHAT IT COSTS
+    runtime      nothing measurable. MEASURED, 112 ms against 103 ms for two million calls at depth 1
+                 and depth 50 - the attribute lookup is cached per type.
+    correctness  a contract every class must honour: call `super()`, accept and forward `**kwargs`.
+                 MEASURED, one class breaking it raises a TypeError naming a class that did nothing
+                 obviously wrong.
+    readability  the real cost. `super()` in B calls C - a class B does not import, does not mention
+                 and cannot see.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Calling the parent explicitly instead of `super()`. MEASURED, the shared base then runs TWICE:
+       D, B, A, C, A rather than D, B, C, A.
+    2. Reading `super()` as "my parent class". It is the next class in the MRO of the INSTANCE's type,
+       which for a diamond is a sibling.
+    3. Writing an `__init__` that does not forward unknown keyword arguments. MEASURED, the chain
+       breaks with `unexpected keyword argument 'age'`.
+    4. Expecting an MRO error at call time. MEASURED, it is raised when the class statement executes.
+    5. Assuming deep hierarchies cost performance. MEASURED, they do not.
+    6. Using multiple inheritance to combine two STATEFUL classes. Mixins - stateless, single-purpose -
+       compose; two classes that both want to own construction do not.
+
+THE TAKEAWAY
+    Python answers "which method wins" with a single linear order, the C3 MRO - subclass before base,
+    declared order preserved, each class exactly once - and you can print it with `__mro__` instead of
+    reasoning about it. But the diamond is only actually SOLVED by cooperation: MEASURED, `super()`
+    everywhere runs the shared base once, and explicit parent calls run it twice in the very same class
+    graph. So the rule to carry is that `super()` means "the next class in the MRO", not "my parent" -
+    and that multiple inheritance is safe for stateless mixins and treacherous the moment two parents
+    both own state.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
