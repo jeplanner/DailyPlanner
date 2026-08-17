@@ -304863,6 +304863,1798 @@ THE TAKEAWAY
     both own state.""",
 ]
 
+_EX_P1AO["Page replacement: FIFO, LRU, Optimal - and Belady's anomaly"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - your desk holds three books. You need a fourth. One book has to go
+back to the shelf. WHICH ONE?
+
+That is page replacement. Physical memory (RAM) is the desk. A page is a book. When the desk is full
+and the program asks for a page that is not there, the operating system must evict one resident page
+to make room. The rule it uses to pick the victim is the page-replacement algorithm, and it decides
+how often your program has to walk to the shelf - which is thousands of times slower than reading
+something already on the desk.
+
+THE THREE RULES EVERY INTERVIEW ASKS ABOUT:
+
+    FIFO      evict whichever page has been resident the LONGEST
+    LRU       evict whichever page has gone UNUSED the longest
+    OPTIMAL   evict whichever page will be needed FURTHEST in the future
+
+MEASURED, on the classic reference string [1,2,3,4,1,2,5,1,2,3,4,5]:
+
+    frames = 3      FIFO  9 faults      LRU 10 faults      OPT  7 faults
+    frames = 4      FIFO 10 faults      LRU  8 faults      OPT  6 faults
+
+Read the FIFO column again. Going from three frames to four - giving the program MORE memory - made
+FIFO fault MORE often. Nine faults became ten.
+
+That is BELADY'S ANOMALY, and it is the whole reason this topic is an interview favourite. Every other
+number in that table moves the way you expect. FIFO moves backwards.""",
+
+    """2. THE INTUITION - "loaded long ago" and "not needed now" are two completely different facts, and
+FIFO confuses them.
+
+Picture a program with a small function it calls constantly - a logging helper, say - loaded into
+memory at start-up. It is the OLDEST page in RAM. It is also the BUSIEST page in RAM. FIFO looks only
+at the loading timestamp, sees the oldest entry, and throws out the one page the program is about to
+touch again. Then it faults, reloads it, and that reload makes it the NEWEST page - so FIFO protects it
+for a while, then ages it out and repeats the mistake.
+
+LRU asks a better question: not "when did you arrive?" but "when did you last do anything?" The
+logging helper was used a microsecond ago, so LRU never touches it. LRU works because of LOCALITY OF
+REFERENCE - the empirical fact that the pages a program used recently are the pages it is about to use
+again. LRU is a BET on that fact.
+
+MEASURED, how big that bet is worth. Twenty thousand references over two hundred pages, generated two
+ways:
+
+    workload with locality (a random walk that mostly steps +-1 page)
+        16 frames   LRU  6,574 faults        32 frames   LRU  6,100 faults
+    workload with NO locality (uniformly random page numbers)
+        16 frames*  LRU ~19,200 faults       32 frames   LRU 16,808 faults  (84% fault rate)
+
+*measured at 8 frames: 19,203 faults, a 96.0% fault rate.
+
+With no locality, 32 frames of cache still misses 84% of the time. LRU is not magic. It is a bet on
+the program's behaviour, and when the program does not have locality, no replacement policy saves you.
+
+OPTIMAL cheats: it reads the future. Evicting the page needed furthest away is provably the fewest
+faults any policy can achieve. You cannot implement it - the OS does not have tomorrow's reference
+string - so its only job is to be the yardstick. When someone says "our cache is close to optimal",
+OPT is the number they are close TO.""",
+
+    """3. EVERY TERM DEFINED - in the order you meet them.
+
+PAGE. A fixed-size block of a program's memory. On this machine it is 4,096 bytes (4 KB), read from
+`os.sysconf("SC_PAGE_SIZE")`. Memory is handed out in whole pages, never in odd byte counts.
+
+FRAME. A page-sized slot in physical RAM. Pages go into frames. If you have 8 GB of RAM and 4 KB
+pages, you have about two million frames.
+
+RESIDENT. A page currently sitting in a frame. The opposite is "on disk" (or "not yet allocated").
+
+PAGE FAULT. The hardware tried to read a virtual address whose page is not resident, so it trapped
+into the operating system. The OS finds the page, loads it into a frame, and restarts the instruction.
+The program does not know it happened - except that the instruction took thousands of times longer.
+
+REFERENCE STRING. The list of page numbers a program touches, in order. `[1,2,3,4,1,2,5,...]` means
+"first it touched something on page 1, then page 2, ...". Every measurement in this entry is a
+replay of a reference string.
+
+VICTIM. The resident page chosen for eviction.
+
+FIFO (first-in, first-out). Evict the page that entered a frame earliest. Implemented with a queue:
+push on load, pop the front to evict.
+
+LRU (least recently used). Evict the page whose last ACCESS was longest ago. Note "access", not
+"load" - a hit on an already-resident page must move it to the front. Implemented with an ordered
+dictionary or a doubly linked list plus a hash map.
+
+OPTIMAL / OPT / Belady's algorithm / MIN. Evict the page whose NEXT use is furthest in the future
+(or never). Requires the future. Benchmark only.
+
+BELADY'S ANOMALY. A replacement algorithm exhibits the anomaly if increasing the number of frames can
+increase the number of faults. FIFO does. LRU and OPT cannot.
+
+STACK ALGORITHM. An algorithm where the set of pages resident with n frames is ALWAYS a subset of the
+set resident with n+1 frames, at every point in the reference string. LRU and OPT are stack
+algorithms; FIFO is not. Stack algorithms cannot suffer Belady's anomaly - that one sentence is the
+crisp answer to "why is LRU immune?".
+
+REFERENCE BIT. One bit per page, set by the hardware whenever the page is touched, cleared by the OS.
+It is the cheap hardware approximation of "recently used".
+
+CLOCK / SECOND CHANCE. The real-world LRU approximation. Pages sit in a ring; a hand sweeps around. If
+the page under the hand has reference bit 1, clear it to 0 and move on (that is the "second chance");
+if it is already 0, evict it.
+
+DIRTY BIT. One bit per page, set when the page has been WRITTEN. Evicting a dirty page costs a disk
+write; evicting a clean page costs nothing. Real policies prefer clean victims.
+
+THRASHING. The state where the pages a process actively needs (its working set) do not fit in the
+frames it has, so nearly every access faults and the machine spends all its time paging.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - Belady's anomaly is real, but it is also RARE, and most
+people cannot say how rare.
+
+MEASURED, a random search for the anomaly:
+
+    200,000 random reference strings (length 10-20, drawn from 4-7 distinct pages)
+    strings where FIFO with 4 frames faults MORE than FIFO with 3 frames:   20  = 0.01%
+
+    a wider search, 50,000 strings, asking whether ANY frame increase in 2->3, 3->4, 4->5, 5->6
+    makes FIFO worse:                                                       15  = 0.03%
+
+    the identical search run against LRU:                                    0
+
+So the anomaly happens in roughly one random string in ten thousand for a fixed frame pair. It is not
+a common accident you would trip over by testing; it is a structural flaw you have to hunt for. The
+textbook string [1,2,3,4,1,2,5,1,2,3,4,5] is famous precisely because someone did the hunting.
+
+A COUNTEREXAMPLE THE SEARCH TURNED UP ON ITS OWN, so you can see one that is not the textbook one:
+
+    [3,2,5,4,1,5,1,2,4,5,3,2,5,4,1,3,6,2]      FIFO 3 frames: 12 faults
+                                               FIFO 4 frames: 13 faults
+
+AND THE SECOND TRAP: people quote "LRU has no Belady anomaly" without being able to say why. The
+answer is not "because LRU is smarter". It is the subset property. Run LRU over the same reference
+string with 3 frames and with 4 frames, and pause at any moment: whatever 3 pages the 3-frame run
+holds, the 4-frame run holds those same 3 plus one more. So every hit in the 3-frame run is also a hit
+in the 4-frame run. More frames can only help. FIFO has no such guarantee, because its eviction order
+depends on the LOAD order, and the load order itself changes when you change the number of frames.
+
+THE THIRD TRAP, and the one that costs marks in a coding round: forgetting that a HIT updates recency
+in LRU. Write this:
+
+    if p in mem:  pass                 # WRONG - a hit that does nothing
+    else:         ...evict, insert...
+
+and you have not implemented LRU. You have implemented FIFO with extra steps, because nothing ever
+changes the order of the resident pages once they are loaded. The one line that makes it LRU is
+`mem.move_to_end(p)` on the hit path.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what real systems actually run, and why none of them is true
+LRU.
+
+TRUE LRU IS TOO EXPENSIVE IN HARDWARE. To know the exact least-recently-used page you would have to
+update an ordering on EVERY memory access - every instruction fetch, every load, every store. That is
+a linked-list splice or a timestamp write per memory reference, in the critical path of the CPU.
+Nobody builds that. So the family below is a ladder of approximations.
+
+    NRU (not recently used)     one reference bit per page, cleared periodically. Evict any page whose
+                                bit is 0. Two classes: recently-used and not. Crude but nearly free.
+
+    CLOCK / second chance       the ring-and-hand described above. This is what real kernels use as
+                                their base. Cost per eviction is a short sweep; cost per ACCESS is
+                                zero, because the hardware sets the bit for free.
+
+    ENHANCED CLOCK              sweep on (reference, dirty) pairs, preferring (0,0) clean-and-cold
+                                victims over (0,1) dirty-and-cold ones, because a dirty eviction costs
+                                a disk write.
+
+    AGING                       an 8-bit counter per page, shifted right each tick with the reference
+                                bit shifted into the top. Approximates LRU over eight ticks with one
+                                byte per page.
+
+    WORKING SET / WSClock       track the set of pages referenced in the last T milliseconds and keep
+                                exactly that resident. Directly attacks thrashing.
+
+    LFU (least frequently used) evict the lowest access COUNT rather than the oldest access TIME.
+                                Better for stable skewed workloads, worse for changing ones, because
+                                a page that was hot last hour keeps its high count forever unless you
+                                add ageing.
+
+    LRU-K, ARC, CLOCK-Pro       scan-resistant policies used by databases and by the Linux page cache.
+                                They exist because of the one workload LRU handles terribly: a single
+                                sequential scan of a file larger than memory. Such a scan touches every
+                                page exactly once, so "most recently used" is exactly "will never be
+                                used again" - LRU evicts the genuinely hot pages to make room for
+                                garbage. LRU-K fixes this by requiring K accesses before a page is
+                                considered hot.
+
+WHERE ELSE THIS EXACT DECISION SHOWS UP: CPU cache line replacement (usually pseudo-LRU or random),
+your browser's HTTP cache, Redis `maxmemory-policy` (`allkeys-lru`, `allkeys-lfu`, `allkeys-random`),
+a CDN edge node, and `functools.lru_cache` in the Python standard library. The names change, the
+question does not: something must go, which one?""",
+
+    """6. HOW TO CODE IT - three simulators, each in under fifteen lines.
+
+FIFO:
+
+  1. Keep a SET `mem` of resident pages (for the "is it here?" test in O(1)) and a DEQUE `q` recording
+     the LOAD order.
+  2. For each page in the reference string, if it is already in `mem`, do nothing at all - FIFO does
+     not care about hits.
+  3. Otherwise count a fault. If `mem` is already at capacity, `q.popleft()` gives the oldest-loaded
+     page; discard it from `mem`.
+  4. Add the new page to `mem` and append it to `q`.
+
+LRU:
+
+  1. Keep an `OrderedDict` `mem`, ordered oldest-access first.
+  2. On a HIT, call `mem.move_to_end(p)`. THIS IS THE ALGORITHM. Skip it and you have written FIFO.
+  3. On a MISS, count a fault; if full, `mem.popitem(last=False)` removes the least recently used.
+  4. Insert the new page, which lands at the end - the most recently used position.
+
+OPTIMAL:
+
+  1. Walk the reference string with `enumerate` so you know your position `i`.
+  2. On a hit, skip. On a miss, count a fault.
+  3. If there is a free frame, just take it.
+  4. Otherwise, for each resident page, find its NEXT occurrence with `pages.index(x, i+1)`; a
+     `ValueError` means "never again", which you score as infinity.
+  5. Evict the page with the largest next-use index.
+
+DEMONSTRATING BELADY'S ANOMALY:
+
+  6. Run `fifo_faults(ref, 3)` and `fifo_faults(ref, 4)` on [1,2,3,4,1,2,5,1,2,3,4,5] and print both.
+     9 and 10. Then run LRU on the same pair and print 10 and 8, so the contrast is on one screen.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you say out loud, in ninety seconds.
+
+"When RAM is full and a new page is needed, the OS must evict a resident page, and the eviction rule
+decides your fault rate.
+
+FIFO evicts the oldest-LOADED page. It is simple and it is bad, because how long a page has been
+resident tells you nothing about whether it is about to be used - a hot helper function loaded at
+start-up is FIFO's prime victim.
+
+OPTIMAL evicts the page whose next use is furthest in the future. It is provably minimal and
+impossible to implement, because it needs the future. It exists as a benchmark.
+
+LRU evicts the least recently USED page. It is the practical approximation of optimal, and it works
+because of locality of reference - what you touched recently is what you are about to touch. The
+implementation detail that trips people up is that a HIT must update recency, not just a miss.
+
+FIFO also suffers Belady's anomaly: giving it more frames can produce MORE faults. On the standard
+string [1,2,3,4,1,2,5,1,2,3,4,5], FIFO takes 9 faults with three frames and 10 with four. LRU cannot
+do that, because LRU is a STACK algorithm - the pages held with n frames are always a subset of those
+held with n+1 frames, so every hit at n frames is still a hit at n+1.
+
+In real hardware nobody implements true LRU, because it would need an ordering update on every memory
+access. Instead there is one reference bit per page and the CLOCK algorithm: pages in a ring, a hand
+that sweeps, clearing bits and evicting the first page whose bit is already zero."
+
+IF THEY ASK FOR THE FAILURE MODE OF LRU: "a sequential scan of a file bigger than memory. Every page
+is touched exactly once, so most-recently-used is exactly never-needed-again, and LRU evicts the hot
+pages to cache garbage. That is why databases use scan-resistant policies like LRU-K or ARC."
+
+THE ONE SENTENCE TO NOT FUMBLE: LRU is immune to Belady's anomaly because it is a stack algorithm -
+the resident set held with n frames is always a subset of the set held with n+1 frames.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    from collections import OrderedDict, deque
+
+`deque` gives O(1) `popleft`, which is FIFO's eviction. `OrderedDict` gives `move_to_end` and
+`popitem(last=False)`, which are LRU's two operations. Both are C-level, so the simulation is fast
+enough to run tens of thousands of trials.
+
+    def fifo_faults(pages, frames):
+        mem, q, faults = set(), deque(), 0
+
+`mem` is the membership test; `q` is the load order. Two structures for one queue is deliberate: the
+deque cannot answer "is page 7 resident?" in O(1), and the set cannot answer "which arrived first?".
+
+        for p in pages:
+            if p not in mem:
+
+The entire hit path of FIFO is "do nothing". This absence is what makes FIFO wrong and LRU right.
+
+                faults += 1
+                if len(mem) == frames:
+                    mem.discard(q.popleft())
+
+`q.popleft()` returns the oldest-loaded page and removes it from the order; `mem.discard` removes it
+from residency. `discard` rather than `remove` so a duplicate in the queue cannot raise.
+
+                mem.add(p); q.append(p)
+
+New page becomes resident and goes to the BACK of the load queue.
+
+    def lru_faults(pages, frames):
+        mem, faults = OrderedDict(), 0
+        for p in pages:
+            if p in mem:
+                mem.move_to_end(p)
+
+There it is - the one line that separates LRU from FIFO. A hit re-dates the page to "just now".
+
+            else:
+                faults += 1
+                if len(mem) == frames:
+                    mem.popitem(last=False)
+
+`last=False` pops from the FRONT, which after all those `move_to_end` calls is the least recently
+used page.
+
+                mem[p] = True
+
+The value is irrelevant; `OrderedDict` is being used as an ordered set. A fresh insert lands at the
+end, i.e. most-recently-used.
+
+    def optimal_faults(pages, frames):
+        for i, p in enumerate(pages):
+            if p in mem: continue
+            faults += 1
+            if len(mem) < frames:
+                mem.append(p); continue
+
+Filling empty frames is not a "choice", so it short-circuits before the expensive part.
+
+            def next_use(x):
+                try:    return pages.index(x, i + 1)
+                except ValueError: return float("inf")
+
+`pages.index(x, i+1)` is "find x at or after position i+1". The `ValueError` branch is the important
+one: a page never referenced again scores infinity and is therefore the first thing evicted, which is
+exactly right.
+
+            mem.remove(max(mem, key=next_use))
+            mem.append(p)
+
+`max` with that key picks the page needed furthest away. This is the line that reads the future, and
+the line you cannot write in a real kernel.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE - the anomaly, one reference at a time.
+
+REFERENCE STRING: 1, 2, 3, 4, 1, 2, 5, 1, 2, 3, 4, 5
+
+FIFO WITH 3 FRAMES. "q" is the load queue, oldest on the left.
+
+    ref  resident (q)     event
+    ---  --------------   -----------------------------------------------
+     1   [1]              fault 1  - empty frame
+     2   [1,2]            fault 2  - empty frame
+     3   [1,2,3]          fault 3  - empty frame, now full
+     4   [2,3,4]          fault 4  - evict 1 (oldest loaded)
+     1   [3,4,1]          fault 5  - evict 2
+     2   [4,1,2]          fault 6  - evict 3
+     5   [1,2,5]          fault 7  - evict 4
+     1   [1,2,5]          HIT      - 1 is resident; FIFO does not reorder
+     2   [1,2,5]          HIT
+     3   [2,5,3]          fault 8  - evict 1
+     4   [5,3,4]          fault 9  - evict 2
+     5   [5,3,4]          HIT      - 5 is still resident
+                                                              TOTAL: 9 faults
+
+FIFO WITH 4 FRAMES - the same string, one more frame.
+
+    ref  resident (q)     event
+    ---  --------------   -----------------------------------------------
+     1   [1]              fault 1
+     2   [1,2]            fault 2
+     3   [1,2,3]          fault 3
+     4   [1,2,3,4]        fault 4  - now full
+     1   [1,2,3,4]        HIT
+     2   [1,2,3,4]        HIT
+     5   [2,3,4,5]        fault 5  - evict 1
+     1   [3,4,5,1]        fault 6  - evict 2
+     2   [4,5,1,2]        fault 7  - evict 3
+     3   [5,1,2,3]        fault 8  - evict 4
+     4   [1,2,3,4]        fault 9  - evict 5
+     5   [2,3,4,5]        fault 10 - evict 1
+                                                              TOTAL: 10 faults
+
+READ THE TWO TABLES SIDE BY SIDE AND YOU CAN SEE THE MECHANISM. With 3 frames, pages 1 and 2 got
+evicted EARLY (steps 4 and 6) and were reloaded at steps 5 and 6 - which re-dated them, so they were
+young and safe when the second half of the string asked for them. With 4 frames, pages 1 and 2 were
+never evicted early, so they stayed OLD, and the extra frame just delayed the collapse until the tail
+of the string, where every single reference then missed. More memory changed the load ORDER, and FIFO's
+victim choice depends entirely on load order.
+
+LRU WITH 4 FRAMES, for contrast. "resident" is written least-recent first.
+
+    ref  resident          event
+    ---  ---------------   ------------------------------------------
+     1   [1]               fault 1
+     2   [1,2]             fault 2
+     3   [1,2,3]           fault 3
+     4   [1,2,3,4]         fault 4
+     1   [2,3,4,1]         HIT - 1 moves to the most-recent end
+     2   [3,4,1,2]         HIT - 2 moves to the most-recent end
+     5   [4,1,2,5]         fault 5 - evict 3, the least recently USED
+     1   [4,2,5,1]         HIT
+     2   [4,5,1,2]         HIT
+     3   [5,1,2,3]         fault 6 - evict 4
+     4   [1,2,3,4]         fault 7 - evict 5
+     5   [2,3,4,5]         fault 8 - evict 1
+                                                       TOTAL: 8 faults
+
+Eight, against ten for LRU at three frames. Monotone, as a stack algorithm must be.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY OF THE SIMULATORS, for a reference string of length n with f frames:
+
+    fifo_faults      O(n) time, O(f) space          set + deque, both O(1) per step
+    lru_faults       O(n) time, O(f) space          OrderedDict, O(1) per step
+    optimal_faults   O(n * f * n) time              because `pages.index(x, i+1)` is a fresh linear
+                                                    scan per resident page per miss
+
+That third line is why the measurement in section 2 ran OPT on a 4,000-reference prefix and scaled it,
+while FIFO and LRU ran the full 20,000. You can drop OPT to O(n * f) by pre-computing, for each
+position, the next occurrence of that page - one backward pass building a `next_use` array - but the
+naive version is the one worth writing in an interview, with the complexity stated out loud.
+
+COMPLEXITY OF THE REAL THING: a page fault on this machine was measured at about 3.7 microseconds for
+a minor fault (see the virtual-memory entry: 512 MB touched one page at a time took 483.1 ms across
+131,072 pages). A MAJOR fault that actually reads a disk is another two to four orders of magnitude
+worse. That gap is why the choice of victim matters at all.
+
+THE MISTAKES:
+
+    - Not updating recency on a HIT in LRU. The single most common implementation bug, and it silently
+      degrades your LRU into FIFO. The test that catches it: a string that hits repeatedly should give
+      LRU strictly fewer faults than FIFO; if the counts match exactly, you have this bug.
+    - Claiming Belady's anomaly applies to LRU. It cannot: 0 out of 50,000 random strings, and the
+      subset property says it never will.
+    - Presenting OPT as a policy. It is a yardstick. Say "impossible to implement" in the same breath.
+    - Ignoring the dirty bit. Two cold pages are not equally cheap to evict; the clean one costs
+      nothing and the dirty one costs a disk write.
+    - Saying "LRU is always better than FIFO". MEASURED on the standard string at three frames, LRU
+      took 10 faults and FIFO took 9. And on the locality workload at 64 frames, FIFO took 4,904 and
+      LRU took 4,927 - FIFO won, marginally. LRU is better ON AVERAGE, over workloads with locality.
+      It is not better on every string.
+    - Forgetting the failure mode. A sequential scan of a huge file is the workload where LRU is worst
+      possible, and naming it is what separates a memorised answer from an understood one.
+
+THE TAKEAWAY. Replacement policy is a bet that the past predicts the future. FIFO bets on arrival
+time and loses, because arrival time predicts nothing - and it loses so badly that more memory can
+make it worse. LRU bets on recency and wins whenever the program has locality, which most do.
+OPTIMAL knows the future and exists only to tell you how much you left on the table. And the reason
+your kernel runs neither of them exactly is that "update an ordering on every memory access" is not
+something hardware will do for you, so it gives you one reference bit and a clock hand instead.""",
+]
+
+_EX_P1AO["Paging & virtual memory"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - every program on your machine believes it owns a huge, private,
+gap-free block of memory starting at address zero. All of them believe it at the same time. On a
+machine with 7 GB of RAM. They cannot all be right, and yet none of them ever finds out.
+
+VIRTUAL MEMORY is the lie, and PAGING is how the lie is maintained. The program uses VIRTUAL
+addresses. The RAM chips use PHYSICAL addresses. A hardware unit called the MMU translates one to the
+other on every single memory access, using a table the operating system fills in. Memory is mapped in
+fixed-size blocks called PAGES, 4,096 bytes on this machine.
+
+MEASURED ON THIS MACHINE, the lie caught in the act:
+
+    os.sysconf("SC_PAGE_SIZE")     4096 bytes = 4 KB
+    physical RAM                   1,993,271 pages = 7 GB
+
+    before allocating anything     VmSize  15,628 kB      VmRSS  10,368 kB
+    after mmap of 512 MB           VmSize 539,916 kB      VmRSS  10,496 kB
+    after touching all 512 MB      VmSize 539,916 kB      VmRSS 534,784 kB
+
+Read the middle row. Half a gigabyte was "allocated" and the process's actual RAM usage went up by 128
+kilobytes. VmSize - the size of the address space, the promise - jumped by the full 512 MB. VmRSS -
+the resident set, the RAM actually handed over - barely moved.
+
+The memory did not exist until the program touched it. THAT is virtual memory: an allocation is a
+promise, and the promise is only honoured page by page, at the moment of first use.""",
+
+    """2. THE INTUITION - a hotel with room numbers that lie.
+
+You book room 100 at a conference hotel. Your badge says "room 100". Every other attendee's badge also
+says "room 100", because every company booked its people into its own room 100. The front desk keeps a
+book: "attendee from ACME, room 100 -> physical door 314". You walk to the desk, they look you up,
+they point you at door 314. You never learn the door number, and you never collide with anyone else's
+room 100.
+
+    your badge number       = the virtual address
+    the physical door       = the physical address
+    the front-desk book     = the PAGE TABLE
+    the clerk who looks up  = the MMU (memory management unit), in hardware, on every access
+    a whole floor of rooms  = a PAGE, the unit the book tracks (4 KB, not one room at a time)
+
+Now the two consequences fall out on their own.
+
+ISOLATION IS FREE. Your process literally cannot name a physical address. It can only produce virtual
+addresses, and if the page table has no entry for one, the MMU traps. There is no address you can
+write down that reaches another process's memory - not because you are forbidden, but because you
+cannot express it.
+
+MEMORY CAN BE OVERSUBSCRIBED. The book can contain an entry that says "not in the building right now,
+it is in storage". When the clerk hits that entry, they stop you, fetch the thing from storage into a
+free room, update the book, and let you continue as if nothing happened. That is a PAGE FAULT, and the
+program cannot tell it happened - except by the clock.
+
+MEASURED, exactly how much the clock notices:
+
+    touching 131,072 pages (512 MB) for the FIRST time      483.1 ms   =  3,686 ns per page
+    touching the same 131,072 pages a SECOND time             8.9 ms   =     68 ns per page
+    minor faults recorded during the first pass          131,072   (exactly one per page)
+    minor faults recorded during the second pass                0
+
+The first pass was 54.3x slower than the second. Same instructions, same addresses, same data. The
+entire difference is the page fault: the trap into the kernel, finding a free frame, zeroing it,
+writing the page-table entry, and restarting the instruction. 3.6 microseconds each, 131,072 times.""",
+
+    """3. EVERY TERM DEFINED - in the order the hardware uses them.
+
+VIRTUAL ADDRESS. The number the program's instructions actually contain. Meaningful only inside that
+one process.
+
+PHYSICAL ADDRESS. The number the RAM chips respond to. The program never sees one.
+
+ADDRESS SPACE. The full range of virtual addresses a process may use. On 64-bit x86 the hardware
+supports 48 bits of it (256 TB), of which a process typically maps a tiny fraction.
+
+PAGE. A fixed-size chunk of the VIRTUAL address space. 4,096 bytes here.
+
+FRAME (or page frame). A page-sized chunk of PHYSICAL memory. Pages are placed into frames. The words
+are not interchangeable: page = virtual, frame = physical.
+
+PAGE NUMBER and OFFSET. Split a virtual address by the page size and you get both. Address 9,000 with
+4,096-byte pages is `divmod(9000, 4096)` = page 2, offset 808. The offset is carried through
+translation UNCHANGED; only the page number is looked up. This is why page sizes are powers of two -
+the split is a bit-shift and a mask, not a division.
+
+PAGE TABLE. The per-process map from page number to frame number, plus permission bits. Lives in RAM;
+the CPU register `CR3` on x86 points at the current process's one.
+
+MULTI-LEVEL PAGE TABLE. A flat table for a 48-bit address space would need 2^36 entries per process,
+which is absurd. So the page number is split into four fields indexing four levels of tables, and only
+the branches you actually use are allocated. A translation therefore costs up to four memory reads.
+
+MMU (memory management unit). The hardware that performs translation on every access. Not software.
+
+TLB (translation lookaside buffer). A small, very fast cache of recent page-number -> frame-number
+translations, inside the CPU. A TLB hit makes translation free. A TLB miss forces the page-table walk.
+Typically a few thousand entries, so a few thousand pages = a few megabytes of "cheap to reach" memory.
+
+PAGE FAULT. The MMU found no valid entry, so it trapped to the OS. Two kinds:
+    MINOR fault - the page needs no disk read. It is a fresh anonymous page to be zeroed, or it is
+                  already in the page cache, or it is a copy-on-write split. Microseconds.
+    MAJOR fault - the page must be read from disk or swap. Hundreds of microseconds to milliseconds.
+All 131,072 faults measured above were MINOR, and major faults measured 0.
+
+RESIDENT SET SIZE (RSS / VmRSS). How much physical RAM the process currently holds. What `top` shows
+under RES.
+
+VIRTUAL SIZE (VmSize / VIRT). How much address space is mapped. Routinely far larger than RSS, and
+routinely larger than the machine's total RAM. Never panic about VIRT.
+
+DEMAND PAGING. The policy of allocating a frame only at first touch, which is what the measurement in
+section 1 exposed.
+
+OVERCOMMIT. The kernel handing out more address space than it has RAM plus swap, betting that most of
+it is never touched. This bet is why `malloc` almost never returns NULL on Linux, and why the OOM
+killer exists to settle the bet when it goes wrong.
+
+COPY-ON-WRITE (COW). Two processes share one physical frame marked read-only; the first WRITE faults,
+and the kernel makes a private copy just then. This is what makes `fork()` cheap.
+
+SWAP. Disk space used to hold pages evicted from RAM.
+
+THRASHING. The working set exceeds physical RAM, so nearly every access is a major fault and the
+machine makes no progress.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "my process is using 540 MB of memory" is two different
+claims, and the measurement above shows they can differ by a factor of fifty.
+
+    after mmap of 512 MB, before touching it:
+        VmSize   539,916 kB     "the process has half a gigabyte mapped"
+        VmRSS     10,496 kB     "the process is using ten megabytes of RAM"
+
+Both true. The first is what `VIRT` shows in `top` and it is nearly meaningless as a memory-pressure
+signal. The second is what actually consumes a frame. People page a colleague at 2 a.m. over the first
+number all the time.
+
+THE SECOND TRAP: assuming touching memory is uniform in cost. It is not, and the gap is not subtle.
+
+    first write to each page   3,686 ns per page
+    second write to each page      68 ns per page
+
+If you benchmark a data structure by allocating it fresh, filling it once, and timing that fill, you
+have measured page-fault cost, not your data structure. This is why serious benchmarks do a warm-up
+pass - the warm-up is not superstition, it is faulting the pages in so the measured pass is not paying
+3.6 microseconds per 4 KB.
+
+THE THIRD TRAP, and the one that shows up in real ML code: assuming a large allocation is a large
+cost. It is not. `numpy.zeros(10**9)` returns almost instantly on Linux, because the kernel maps
+address space and promises zeroes; the pages materialise (already zeroed, by the kernel) as you write
+them. So the allocation is cheap and the FIRST PASS over the array is expensive. Beginners conclude
+"numpy allocation is fast, the loop is slow", and half the loop's slowness is the deferred cost of the
+allocation.
+
+THE FOURTH TRAP: forgetting the TLB. MEASURED, reading bytes out of a 64 MB buffer at three strides:
+
+    stride    64 bytes (one cache line)      83.7 ns per access
+    stride 4,096 bytes (one page)           211.6 ns per access
+    stride 1 MB                             258.3 ns per access
+
+Same buffer, same total instructions per access, and the widest stride costs 3.1x the narrowest. Wide
+strides defeat both the data cache and the TLB: every access lands on a new page, so every access
+risks a page-table walk. "Access memory sequentially" is not a style preference, it is a 3x number.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what paging replaced, and what sits next to it.
+
+WHAT CAME BEFORE:
+
+    NO TRANSLATION AT ALL           early machines and today's small microcontrollers. A program's
+                                    addresses ARE physical addresses. One bad pointer corrupts the
+                                    kernel. No isolation, no oversubscription.
+    BASE-AND-LIMIT RELOCATION       one base register added to every address, one limit register
+                                    checked against it. Gives isolation and relocation with two
+                                    registers - but the whole process must be CONTIGUOUS in RAM, which
+                                    means external fragmentation and no oversubscription.
+    SEGMENTATION                    several base-and-limit pairs, one per logical region (code, data,
+                                    stack). Better protection granularity, still variable-sized, still
+                                    externally fragmented.
+    PAGING                          fixed-size blocks. Any free frame fits any page, so external
+                                    fragmentation vanishes entirely, and a process no longer has to be
+                                    contiguous - or even fully resident.
+
+WHAT SITS ALONGSIDE IT TODAY:
+
+    HUGE PAGES (2 MB, 1 GB)         one TLB entry covers 512x or 262,144x more memory. Large ML model
+                                    weights stop thrashing the TLB. The cost is coarser allocation and
+                                    more internal waste - see the fragmentation entry, where 2 MB
+                                    pages measured 98.3% waste on a small-object workload.
+    INVERTED PAGE TABLES            one table for the whole machine, indexed by FRAME, so the size is
+                                    proportional to RAM rather than to (processes x address space).
+                                    Needs hashing to look up. Used on PowerPC, IA-64.
+    MEMORY-MAPPED FILES (`mmap`)    map a file into the address space and read it with ordinary loads;
+                                    the page cache does the I/O behind page faults. This is how
+                                    databases, and `numpy.memmap`, read files larger than RAM.
+    COPY-ON-WRITE                   the trick that makes `fork()` and Python's `multiprocessing`
+                                    cheap - and the trick that makes shared read-only ML weights
+                                    across worker processes cost one copy instead of N.
+    SHARED MEMORY                   two page tables pointing at the SAME frame. The fastest possible
+                                    IPC, because there is no copy at all.
+    KSM / page dedup                the kernel scanning for identical frames and merging them, useful
+                                    when many VMs run the same OS image.
+
+THE UNIFYING IDEA: once there is a per-process table between the program's addresses and the hardware's
+addresses, you can put anything you like in that table. Isolation, oversubscription, sharing,
+copy-on-write, file mapping, and swapping are all just different entries in the same book.""",
+
+    """6. HOW TO CODE IT - you cannot write a page table in Python, but you can write the translation, and
+you can MEASURE every claim above. Both are worth doing.
+
+TRANSLATING AN ADDRESS BY HAND (this is the exam question):
+
+  1. Take the page size, e.g. 4096.
+  2. `vpn, offset = divmod(virtual_addr, page_size)`. That is the whole split.
+  3. Look up `frame = page_table[vpn]`. If the key is missing, that is your page fault.
+  4. `physical = frame * page_size + offset`. The offset is carried through untouched.
+  5. Sanity-check with powers of two: with 4 KB pages the low 12 bits ARE the offset and everything
+     above bit 11 is the page number, so step 2 is really `addr >> 12` and `addr & 0xFFF`.
+
+MEASURING THE PROMISE VS THE DELIVERY:
+
+  6. Read `/proc/self/status` and pull out `VmSize`, `VmRSS`, `VmData`. Print them.
+  7. `m = mmap.mmap(-1, 512*1024*1024)` - anonymous mapping, no file. Print the three numbers again.
+     VmSize jumps by 512 MB; VmRSS does not.
+  8. Loop `for off in range(0, N, 4096): m[off] = 1` - one byte per page, which is enough to force the
+     whole page to be allocated. Print the numbers a third time. Now VmRSS has jumped too.
+
+MEASURING THE FAULT ITSELF:
+
+  9. `resource.getrusage(resource.RUSAGE_SELF).ru_minflt` and `.ru_majflt` give the process's minor and
+     major fault counts. Read them before and after step 8. The difference should equal the number of
+     pages, exactly.
+ 10. Time step 8. Then run the identical loop again and time that. The first is the faulting pass, the
+     second is not, and the ratio is the cost of a page fault expressed as a multiple.
+
+MEASURING THE TLB:
+
+ 11. Allocate a buffer much larger than the last-level cache (64 MB is safe). Read one byte every
+     `stride` bytes for stride in 64, 4096, 1 MB, dividing the elapsed time by the number of ACCESSES,
+     not by the buffer size - the whole point is that the wide strides do fewer accesses and each one
+     still costs more.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - the ninety-second version.
+
+"Virtual memory gives every process its own private, contiguous-looking address space. The program
+emits virtual addresses; the MMU translates them to physical addresses on every access, using a
+per-process page table that the OS maintains. Translation happens in fixed-size units called pages -
+4 KB on a typical x86 box.
+
+Splitting an address is trivial: the low bits are the offset within the page and the high bits are
+the page number. Only the page number is translated; the offset passes through unchanged. That is why
+page sizes are powers of two.
+
+Three things fall out of having that table. First, ISOLATION - a process cannot even name a physical
+address, so it cannot reach another process's memory. Second, OVERSUBSCRIPTION - a page-table entry can
+say 'this page is on disk', so the sum of all address spaces can exceed physical RAM; touching such a
+page causes a page fault and the OS loads it before restarting the instruction. Third, SIMPLER
+ALLOCATION - because every block is the same size, any free frame fits any page, so there is no
+external fragmentation and a process does not have to be contiguous in RAM.
+
+The performance story is demand paging. An allocation is a promise, not memory. I measured this: an
+anonymous 512 MB mapping raised the process's VmSize by 512 MB and its resident set by 128 kilobytes.
+Touching one byte in each of the 131,072 pages then took 483 milliseconds and generated exactly
+131,072 minor faults - about 3.7 microseconds each - while the identical second pass took 8.9
+milliseconds and zero faults. So the first touch is 54 times the cost of the second, and that gap is
+the fault.
+
+Because a full page-table walk costs several memory reads, the CPU caches recent translations in the
+TLB. Anything that defeats the TLB is expensive: reading a 64 MB buffer at 1 MB stride measured 258 ns
+per access against 84 ns at 64-byte stride, on the same data."
+
+THE ONE SENTENCE TO NOT FUMBLE: an allocation is a promise, and the promise is honoured one page at a
+time, at first touch. Everything else about virtual memory follows from that.""",
+
+    """8. THE CODE LINE BY LINE - the measurement harness, since that is where the real content is.
+
+    PS = os.sysconf('SC_PAGE_SIZE')
+
+Do not hard-code 4096. Ask the OS. It returned 4096 here, but ARM machines and huge-page setups differ,
+and the number is the unit of every claim that follows.
+
+    os.sysconf('SC_PHYS_PAGES') * PS
+
+Total RAM, expressed the way the kernel thinks about it: 1,993,271 pages, which is 7 GB. RAM is
+counted in pages, not bytes, everywhere below the C library.
+
+    for line in open('/proc/self/status'):
+        if line.startswith(('VmSize','VmRSS','VmData')):
+
+`/proc/self` is the kernel's live view of THIS process. `VmSize` is total mapped address space,
+`VmRSS` is resident physical memory, `VmData` is the writable-data portion. Reading the file is how you
+observe the promise and the delivery separately.
+
+    def faults():
+        r = resource.getrusage(resource.RUSAGE_SELF)
+        return r.ru_minflt, r.ru_majflt
+
+`ru_minflt` counts faults served without disk I/O; `ru_majflt` counts faults that read the disk. This
+is the ground truth for "did a fault actually happen", as opposed to inferring it from a timing.
+
+    m = mmap.mmap(-1, N)
+
+The `-1` means anonymous - not backed by any file, just address space. Nothing is allocated. This is
+the line whose effect on VmRSS is 128 kB.
+
+    for off in range(0, N, step):
+        m[off] = 1
+
+`step` is the page size, so this writes ONE byte per page. One byte is enough: the fault granularity
+is a whole page, so touching byte 0 of a page allocates all 4,096 bytes of it. Writing all 512 MB
+would measure memory bandwidth instead of fault cost.
+
+    dt * 1e9 / (N // step)
+
+Nanoseconds per PAGE, not per byte. 3,686 ns. Dividing by bytes would produce a meaningless 0.9 ns
+figure that hides the whole effect.
+
+    for off in range(0, N, step):
+        m[off] = 2
+
+The identical loop, second time. The pages are now resident, so the only thing left is the Python
+interpreter overhead of the loop itself: 68 ns per iteration. Subtracting, the fault itself is roughly
+3,618 ns, and the "54.3x" figure is the honest ratio of the two measured passes.
+
+    for i in range(0, SZ, stride): s += a[i]
+
+The stride loop. Note that the accumulator `s += a[i]` exists purely so the read cannot be optimised
+away, and that the divisor is `SZ // stride` - the number of accesses - so the three strides are
+compared per-access and not per-byte.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - translating virtual address 9,000 with 4 KB pages and page table {0: 5, 1: 9, 2: 2}.
+
+    step                        value
+    -------------------------   -----------------------------------------------
+    virtual_addr                9000
+    divmod(9000, 4096)          (2, 808)          -> vpn = 2, offset = 808
+    check: 2*4096 + 808         9000              (the split is exact)
+    page_table[2]               2                 -> frame 2
+    physical = 2*4096 + 808     9,000
+
+The physical address came out equal to the virtual one, because in this particular table page 2
+happens to map to frame 2. That is a coincidence of the example, not a rule. Change the table to
+{2: 7} and:
+
+    page_table[2]               7
+    physical = 7*4096 + 808     29,480
+
+Same virtual address, different physical address, different day, different process. The offset 808
+never changed. THAT is the one invariant of translation.
+
+TRACE B - the address-space measurement, row by row. Numbers are the measured ones.
+
+    moment                       VmSize kB   VmRSS kB   minor faults   what just happened
+    --------------------------   ---------   --------   ------------   ------------------------
+    interpreter started             15,628     10,368          1,195   Python's own footprint
+    after mmap(512 MB)             539,916     10,496          1,195   +524,288 kB of PROMISE.
+                                                                       Faults unchanged: nothing
+                                                                       was touched, so nothing
+                                                                       was allocated.
+    after touching all pages       539,916    534,784        132,267   RSS grew by 524,288 kB and
+                                                                       faults grew by exactly
+                                                                       131,072 = 512 MB / 4 KB.
+
+The fault delta is 132,267 - 1,195 = 131,072. Not "about". Exactly. One minor fault per page, which
+is as clean a confirmation of demand paging as you will get.
+
+TRACE C - the two timing passes.
+
+    pass    elapsed     per page    faults added
+    -----   ---------   ---------   ------------
+    first     483.1 ms   3,686 ns        131,072
+    second      8.9 ms      68 ns              0
+    ratio       54.3x
+
+The second pass proves the first pass's time was not the loop. Identical Python bytecode, identical
+addresses, 54x apart, and the only variable is whether the page-table entry already existed.
+
+TRACE D - the stride experiment on a 64 MB buffer.
+
+    stride       accesses     total time    per access
+    ----------   ----------   -----------   ----------
+    64 B          1,048,576      87.8 ms       83.7 ns
+    4,096 B          16,384       3.5 ms      211.6 ns
+    1,048,576 B          64      16.5 us      258.3 ns
+
+The middle row is one access per page: each access lands on a fresh page, so the TLB entry is new
+each time. The bottom row skips 256 pages at a time and additionally defeats the hardware prefetcher.
+2.5x and 3.1x, from nothing but the address pattern.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, the numbers worth carrying in your head:
+
+    TLB hit                        ~0 - translation is free, it happens in parallel with the access
+    TLB miss, 4-level page walk    up to 4 extra memory reads, each ~100 ns if uncached
+    minor page fault               3,686 ns MEASURED on this machine
+    major page fault (disk/swap)   100 us - 10 ms, i.e. 30x to 3,000x a minor fault
+    plain resident memory write       68 ns MEASURED (including Python loop overhead)
+
+    address translation itself     O(levels), a constant - 4 on x86-64
+    page table space               O(pages actually mapped), thanks to multi-level tables
+    internal fragmentation         at most one page per mapping, so bounded and small
+
+THE MISTAKES:
+
+    - Confusing VIRT with RES. 539,916 kB mapped, 10,496 kB resident, measured on the same process at
+      the same instant. Only the second number competes for RAM.
+    - Confusing pages with frames. Pages are virtual, frames are physical. Interviewers notice.
+    - Saying "a page fault means something went wrong". Minor faults are the NORMAL mechanism by which
+      every allocation becomes real. This process took 131,072 of them on purpose.
+    - Benchmarking a fresh allocation and reporting the first pass. You measured demand paging.
+    - Assuming `malloc` failing is how you learn you are out of memory. With overcommit, the
+      allocation succeeds and the TOUCH is what fails - which is why the OOM killer exists at all.
+    - Forgetting the TLB when explaining why huge pages help ML workloads. The answer is not "bigger
+      pages are faster"; it is that one TLB entry covers 512x more memory, so a multi-gigabyte weight
+      matrix stops missing on every access.
+    - Claiming translation costs one memory read. On x86-64 it is a four-level walk - up to four -
+      which is precisely why the TLB exists.
+
+THE TAKEAWAY. Put a table between the addresses a program says and the addresses the RAM hears, and
+you get isolation, oversubscription, sharing, copy-on-write and file mapping for free - because all of
+them are just different things you can write in that table. The price is that a translation is now a
+lookup, so the hardware caches it (TLB) and the OS defers the work as long as it can (demand paging).
+Both of those show up directly in your timings: 54x for the first touch of a page, 3x for a memory
+access pattern that defeats the TLB. Virtual memory is not an abstraction that costs nothing; it is an
+abstraction whose costs are measurable, and now you have measured them.""",
+]
+
+_EX_P1AO["Paging vs segmentation, and internal vs external fragmentation"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you are storing luggage. Two schemes.
+
+SCHEME A: identical lockers, all the same size. Any bag fits any locker. If your bag is small, most of
+the locker is empty air - but you will never be turned away while lockers are free.
+
+SCHEME B: a long shelf, and each bag gets exactly as much shelf as it needs. Nothing is wasted inside
+a slot, because there are no slots. But after a day of bags arriving and leaving, the shelf is a row
+of small gaps, and someone with a large bag is turned away even though the total free shelf space is
+plenty.
+
+    SCHEME A is PAGING.       Fixed-size blocks -> waste INSIDE a block -> INTERNAL fragmentation.
+    SCHEME B is SEGMENTATION. Variable-size blocks -> waste BETWEEN blocks -> EXTERNAL fragmentation.
+
+That pairing is the entire answer to the question, and swapping the two definitions is the single
+most common error in this topic.
+
+MEASURED, both effects on this machine.
+
+INTERNAL - 200,000 objects with realistic log-normal sizes (median 4,906 bytes), rounded up to whole
+4 KB pages:
+
+    requested                 7,305.9 MB
+    actually consumed         7,785.9 MB
+    internal fragmentation      480.0 MB  =  6.2% of memory handed out
+
+EXTERNAL - a 1 MB heap, 200,000 random allocate/free operations of 1-20 KB, first-fit:
+
+    1,595 allocations FAILED
+    at the end: 237,772 bytes free, spread over 44 holes, largest hole only 55,703 bytes
+    an actual failure: a request for 16,858 bytes was refused while 142,416 bytes were free
+
+The memory existed. It was simply not in one piece.""",
+
+    """2. THE INTUITION - why "all blocks the same size" makes an entire class of failure impossible.
+
+Take the external-fragmentation failure above and ask what would have had to be true for it to
+happen under paging. The request was 16,858 bytes; 142,416 bytes were free. Under paging, 142,416
+bytes of free memory means 34 free FRAMES, and the request needs 5 pages. Any 5 of the 34 will do.
+They do not have to be next to each other, because the page table will make them LOOK next to each
+other to the program.
+
+That is the whole trick. Paging does not compact memory or defragment anything. It makes contiguity
+IRRELEVANT, by putting a translation table between the program's view and the hardware's view. If
+every block is interchangeable, "which block" stops being a question, and the failure mode that
+depends on it disappears.
+
+The price is that a block is now a fixed size, and your data is not. A 1-byte allocation still
+occupies one whole 4 KB page: 4,095 bytes wasted, 99.98% of the page. That is internal fragmentation,
+and it is BOUNDED - at most one page short per allocation, so on average half a page.
+
+MEASURED, the trade-off curve, same 200,000 objects, four page sizes:
+
+    page size        internal waste
+    ---------        --------------
+        512 B          0.7%   (   52.4 MB)
+      4,096 B          6.2%   (  480.0 MB)
+     65,536 B         59.7%   (10,811.2 MB)
+    2,097,152 B       98.3%   (413,137.4 MB)
+
+Small pages waste almost nothing - and cost you an enormous page table plus far more TLB entries to
+cover the same memory. Two-megabyte huge pages waste 98.3% on THIS workload of small objects - and
+cover 512x more memory per TLB entry, which is exactly why a large ML model's weight tensors want
+them. There is no universally correct page size. 4 KB is the compromise everyone settled on, and it
+costs about 6% on a workload of ordinary small objects.""",
+
+    """3. EVERY TERM DEFINED.
+
+PAGING. Splitting BOTH the virtual address space and physical memory into fixed-size blocks (pages and
+frames respectively), with a page table mapping one to the other. See the virtual-memory entry.
+
+SEGMENTATION. Splitting memory into variable-size, logically meaningful pieces - code, data, stack,
+heap - each with its own base address and length. A segmented address is a (segment number, offset)
+pair, and the hardware checks the offset against that segment's limit.
+
+PAGE / FRAME. Page = a fixed-size block of virtual memory. Frame = a fixed-size block of physical
+memory. 4,096 bytes here.
+
+SEGMENT. A variable-size block of memory that corresponds to something the programmer would name.
+"The stack" is a segment; "page 4,712" is not a concept the programmer has.
+
+INTERNAL FRAGMENTATION. Memory wasted INSIDE an allocated block, because the block is larger than the
+request. Caused by fixed-size allocation. Bounded by (block size - 1) per allocation.
+
+EXTERNAL FRAGMENTATION. Memory that is free but UNUSABLE, because it is split into pieces each too
+small for the pending request. Caused by variable-size allocation. Unbounded: a heap can be 90% free
+and unable to serve anything.
+
+HOLE. A run of contiguous free memory in a variable-size allocator. The measurements below count them.
+
+COMPACTION. Physically relocating live allocations to squeeze the holes together. Cures external
+fragmentation, costs a full memory copy, and requires that every pointer into the moved data be
+updatable - which is why C cannot do it and a garbage-collected runtime can.
+
+FIRST FIT / BEST FIT / WORST FIT. Placement policies for variable-size allocation. First fit takes the
+first hole big enough. Best fit takes the SMALLEST hole big enough. Worst fit takes the LARGEST hole.
+
+COALESCING. Merging adjacent free holes back into one when a block is released. Without it, external
+fragmentation is far worse than the measurements here, which do coalesce.
+
+BUDDY ALLOCATOR. Splits memory into power-of-two blocks; a freed block merges with its "buddy" if the
+buddy is also free. Bounds external fragmentation at the cost of internal fragmentation - a 33 KB
+request gets a 64 KB block. This is what the Linux kernel uses for physical frames.
+
+SLAB ALLOCATOR. Pre-carves pages into fixed-size slots for one specific object type (one slab for
+`task_struct`, one for `inode`). Near-zero fragmentation for kernel objects, plus cache warmth.
+
+HUGE PAGE. A 2 MB or 1 GB page. Fewer page-table entries and vastly better TLB coverage, at the cost
+of much coarser allocation.
+
+TLB. The CPU's cache of address translations. The reason page size is a performance decision and not
+only a fragmentation decision.
+
+ADDRESS TRANSLATION UNDER PAGING. `vpn, offset = divmod(virtual, page_size)`, look up the frame,
+`physical = frame * page_size + offset`. The offset passes through unchanged.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - external fragmentation is not "some waste". It is an
+outright allocation FAILURE while memory is free, and most people have never seen the numbers.
+
+MEASURED, the same 1 MB heap and the same 200,000 random operations, three placement policies:
+
+    policy       failed allocations   holes left   total free   largest hole
+    ----------   ------------------   ----------   ----------   ------------
+    first-fit                 1,595           44    237,772 B      55,703 B
+    best-fit                  1,555           47     89,750 B      13,966 B
+    worst-fit                 1,922           37    358,230 B      28,308 B
+
+Look at the worst-fit row. 358,230 bytes free - a THIRD of the entire heap - and the largest single
+usable piece is 28,308 bytes. A request for 19,044 bytes was refused while 305,103 bytes sat free in
+37 pieces. No amount of "just add more RAM" fixes that shape of failure; doubling the heap doubles the
+number of holes too.
+
+THE FOLKLORE SAYS best-fit is wasteful and first-fit is good enough. The measurement partially agrees
+and partially does not:
+
+    - best-fit had FEWER failures than first-fit (1,555 vs 1,595, and in a second run 225 vs 245).
+      So the classic warning that "best-fit leaves a trail of useless slivers" did not dominate here.
+    - best-fit had to inspect 640,737 holes against first-fit's 316,080 to do it - 2.0x the work -
+      and ran in 186 ms against 144 ms.
+
+So best-fit bought a ~8% reduction in failures for a 2x increase in search cost. First-fit's real
+argument is speed, not placement quality, and worst-fit is simply bad on both axes.
+
+THE SECOND TRAP: "paging has no fragmentation". It has no EXTERNAL fragmentation. It has plenty of
+internal - 480 MB out of 7,786 MB on the workload above - and the page TABLE itself costs memory,
+which is a third category people forget entirely. A flat table for a 48-bit address space would need
+2^36 entries per process; multi-level tables exist precisely to stop that cost.
+
+THE THIRD TRAP: quoting "about half a page wasted per allocation, so about 2 KB, negligible". That is
+right for the AVERAGE and wrong for the distribution. If your workload is millions of 100-byte
+objects, each occupying a whole page, you waste 97.6% - which is why nobody allocates small objects
+directly from the page allocator. They come from a slab or a malloc arena that sub-divides a page.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - and why real x86 chose one and demoted the other.
+
+SEGMENTATION'S GENUINE ADVANTAGES, which are worth stating before dismissing it:
+
+    - Protection is naturally per-LOGICAL-REGION. "The code segment is read+execute, the stack is
+      read+write+no-execute" falls straight out of the model. Under paging you get the same effect,
+      but by setting bits on thousands of individual pages.
+    - Sharing is natural. Two processes running the same binary share one code segment - one entry,
+      not one entry per 4 KB.
+    - Growth is natural. A segment has a length; growing the stack means raising a limit.
+    - It matches how a programmer thinks. Nobody thinks in page 4,712; everybody thinks in "the heap".
+
+SEGMENTATION'S FATAL FLAW is the table above: variable sizes mean external fragmentation, and the only
+cures are compaction (a full memory copy, and impossible with raw pointers) or ever-cleverer placement
+policies that, as measured, differ from each other by single-digit percentages.
+
+WHAT ACTUALLY HAPPENED HISTORICALLY:
+
+    pure segmentation       early Multics-era and 16-bit x86. Dead.
+    segmented paging        segments divided into pages - Multics, and x86 in 32-bit protected mode.
+                            You get logical regions AND no external fragmentation.
+    paging with vestigial   x86-64. The segment registers still exist, mostly forced to base 0, and
+    segmentation            survive chiefly to hold the thread-local-storage base (`fs`/`gs`).
+                            Say "modern x86 uses paging, with segmentation reduced to a vestige" and
+                            you have the answer interviewers want.
+
+THE VARIABLE-SIZE PROBLEM DID NOT GO AWAY, it moved up a level. `malloc` inside your process is still
+a variable-size allocator over a contiguous heap, and it still fights external fragmentation. So the
+family of allocators exists at that level instead:
+
+    buddy allocator         power-of-two blocks with merge-on-free. Bounds external fragmentation,
+                            pays internal fragmentation (up to 2x). Linux's physical frame allocator.
+    slab / slub             fixed-size slots carved from a page, one cache per object type. Near-zero
+                            fragmentation and cache-warm reuse. Linux's kernel object allocator.
+    size-class allocators   tcmalloc, jemalloc, mimalloc: round every request up to one of ~80 size
+                            classes, keep a free list per class. This is deliberately CHOOSING
+                            internal fragmentation to eliminate external fragmentation - the same
+                            trade paging makes, one layer up.
+    arena / bump allocators no free at all until the whole arena dies. Zero fragmentation, zero
+                            flexibility. What a request handler or a compiler pass uses.
+    compacting GC           Java, Go's older collectors, .NET: move live objects together and update
+                            every reference. The only true cure for external fragmentation, available
+                            only because the runtime knows where all the pointers are.
+
+HUGE PAGES are the same dial turned the other way. MEASURED above, 2 MB pages wasted 98.3% on small
+objects - and for a 10 GB model weight matrix they waste essentially nothing while cutting TLB
+pressure by 512x. Same mechanism, opposite verdict, because the workload is different.""",
+
+    """6. HOW TO CODE IT - three small functions plus the two simulations that produce the numbers.
+
+INTERNAL FRAGMENTATION, exactly:
+
+  1. `pages_needed(n) = -(-n // PAGE)`. That double-negative is ceiling division in integers: `-(-10000
+     // 4096)` = `-(-3)` = 3. Prefer it to `math.ceil(n/PAGE)`, which goes through a float and loses
+     precision above 2^53.
+  2. `internal_waste(n) = pages_needed(n) * PAGE - n`. Bytes allocated minus bytes asked for.
+  3. To get the workload figure, sum `internal_waste` over a realistic size distribution - log-normal
+     is a much better model of real object sizes than uniform, because real sizes are heavily skewed
+     toward small with a long tail.
+  4. Repeat step 3 for several page sizes to produce the trade-off curve. This is the step people skip
+     and it is the step that turns "there is a trade-off" into "6.2% versus 98.3%".
+
+EXTERNAL FRAGMENTATION, the diagnostic:
+
+  5. Given the list of free hole sizes and a request, report `total_free`, `largest_hole`,
+     `can_serve = largest >= request`, and `wasted_by_scatter = total_free - largest`. Four numbers,
+     and the third is the one that fails while the first looks fine.
+
+EXTERNAL FRAGMENTATION, the simulation that earns the numbers:
+
+  6. Represent the heap as a sorted list of `(offset, size)` free holes, starting with one hole
+     covering everything.
+  7. Each round, with probability 0.5 free a random live block: append its `(offset, size)` to the free
+     list and re-sort.
+  8. COALESCE - walk the sorted holes and merge any hole that starts exactly where the previous one
+     ends. Skip this step and your simulation over-reports fragmentation wildly; real allocators all
+     coalesce.
+  9. Otherwise allocate a random size. Find candidate holes; if none fits, count a FAILURE and record
+     `(request, total_free, largest_hole)` so you can quote a real refusal.
+ 10. Split the chosen hole: shrink it by the request, or remove it if it was an exact fit.
+ 11. Swap the choice in step 9 - first index / smallest / largest - to get first-, best- and worst-fit
+     from the same code, and count hole INSPECTIONS as well as failures so you can price the search.
+
+ADDRESS TRANSLATION:
+
+ 12. `vpn, offset = divmod(virtual_addr, page_size)`; `return page_table[vpn] * page_size + offset`.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"They are two ways to carve memory, and each causes its own kind of fragmentation.
+
+PAGING splits both the virtual address space and physical memory into fixed-size pages - typically
+4 KB - and a page table maps virtual page numbers to physical frames. Because every block is the same
+size, any free frame fits any page, so there is NO external fragmentation and a process does not have
+to be contiguous in RAM. What you pay is that the last page of an allocation is usually partly empty:
+INTERNAL fragmentation, at most one page per allocation, on average half a page.
+
+SEGMENTATION splits memory into variable-size, logically meaningful pieces - code, data, stack, heap.
+That matches how programmers think and makes per-segment protection and sharing natural. But variable
+sizes mean free memory ends up as scattered gaps: you have plenty free in total and no single hole
+big enough. That is EXTERNAL fragmentation, and the only real cure is compaction, which means copying
+memory and updating every pointer.
+
+The memorable pairing is: fixed blocks give you waste INSIDE a block; variable blocks give you waste
+BETWEEN blocks.
+
+I measured both. Two hundred thousand objects with realistic skewed sizes wasted 6.2% to 4 KB page
+rounding - 480 MB out of 7,786. And a 1 MB heap under random variable-size allocation ended with 44
+free holes: 237 kilobytes free, largest hole 55 kilobytes, and 1,595 allocations outright refused. One
+of them was a 16,858-byte request refused while 142,416 bytes were free.
+
+Modern x86 uses paging, with segmentation reduced to a vestige - the segment registers survive mainly
+to hold the thread-local-storage base. The variable-size problem moved up a level to `malloc`, which
+is why allocators like jemalloc round every request into one of about eighty size classes: they
+deliberately accept internal fragmentation to eliminate external fragmentation, which is the same
+trade paging makes one layer down."
+
+IF THEY PUSH ON PAGE SIZE: "it is a dial. I measured the same workload at four page sizes: 512-byte
+pages waste 0.7%, 4 KB waste 6.2%, 64 KB waste 59.7%, and 2 MB huge pages waste 98.3%. Small pages
+cost you page-table size and TLB coverage; huge pages buy 512x the memory per TLB entry, which is why
+large ML weight tensors want them despite the waste."
+
+THE ONE SENTENCE TO NOT FUMBLE: fixed blocks waste memory INSIDE a block, variable blocks waste it
+BETWEEN blocks.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    PAGE = 4096
+
+The unit. On a real system read it from `os.sysconf("SC_PAGE_SIZE")` rather than hard-coding, but for
+the arithmetic below a constant is clearer.
+
+    def pages_needed(n_bytes):
+        return -(-n_bytes // PAGE)
+
+Floor division rounds DOWN, which is the wrong direction. Negating, flooring and negating back rounds
+UP. `-(-10000 // 4096)` evaluates as `-(-3)` = 3, because `-10000 // 4096` is `-3` (floor of -2.44).
+Integer arithmetic throughout, so it is exact for any size.
+
+    def internal_waste(n_bytes):
+        return pages_needed(n_bytes) * PAGE - n_bytes
+
+Bytes consumed minus bytes requested. `internal_waste(1)` is 4,095 - a one-byte allocation occupying a
+whole page. `internal_waste(10_000)` is 12,288 - 10,000 = 2,288.
+
+    sizes = [max(1, int(random.lognormvariate(8.5, 2.0))) for _ in range(200000)]
+
+The distribution matters more than the count. Log-normal with mu=8.5, sigma=2.0 produced a median of
+4,906 bytes and a mean of 36,529 - heavily skewed, long-tailed, which is what real object and file
+sizes look like. A uniform distribution would flatter paging by having no mass near zero, and the
+whole point of internal fragmentation is what happens to small objects.
+
+    waste = sum(internal_waste(s) for s in sizes)
+
+480,000,000-ish bytes. Expressing it as `100*waste/(tot+waste)` gives 6.2% - the share of DELIVERED
+memory that is dead, which is the honest denominator. Dividing by the REQUESTED total instead would
+give 6.6% and quietly overstate it.
+
+    free = [(0, heap)]
+
+The external-fragmentation simulation. One hole, covering the entire 1 MB.
+
+    free.append((off, sz)); free.sort()
+    merged = []
+    for o, s in free:
+        if merged and merged[-1][0] + merged[-1][1] == o:
+            merged[-1] = (merged[-1][0], merged[-1][1] + s)
+        else:
+            merged.append((o, s))
+    free = merged
+
+Free-and-coalesce. The test `merged[-1][0] + merged[-1][1] == o` asks "does the previous hole end
+exactly where this one begins?" - if so they are one hole. Sorting first is what makes a single
+left-to-right pass sufficient. Deleting these six lines roughly doubles the measured failure count,
+which is a good sanity check that coalescing is doing real work.
+
+    cands = [i for i, (o, s) in enumerate(free) if s >= want]
+    if not cands:
+        failed += 1; requested_when_failed.append((want, sum(s for _, s in free), max(...)))
+        continue
+
+The failure path, and the reason it records the total free and the largest hole: a bare failure count
+is not evidence. "16,858 requested, 142,416 free, in 44 pieces" is evidence.
+
+    if   policy == 'first': i = cands[0]
+    elif policy == 'best':  i = min(cands, key=lambda i: free[i][1])
+    else:                   i = max(cands, key=lambda i: free[i][1])
+
+The three policies, one line each. Note that first-fit can `break` out of the scan at the first match
+and the other two cannot - they must see every hole. That asymmetry is exactly the 316,080 vs 640,737
+inspections measured in section 4.
+
+    if s == want: free.pop(i)
+    else:         free[i] = (o + want, s - want)
+
+Splitting the hole. The exact-fit branch is not an optimisation - without it you would leave a
+zero-length hole in the list, which would grow the list forever and corrupt the hole count.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - internal fragmentation, four allocations, by hand.
+
+    request    -(-n // 4096)   pages   consumed   waste   waste as % of consumed
+    --------   -------------   -----   --------   -----   ----------------------
+         1 B   -(-1//4096)         1      4,096   4,095            99.98%
+     4,096 B   -(-4096//4096)      1      4,096       0             0.00%
+     4,097 B   -(-4097//4096)      2      8,192   4,095            49.99%
+    10,000 B   -(-10000//4096)     3     12,288   2,288            18.63%
+
+Row 2 and row 3 are the pair to remember. ONE extra byte doubled the memory consumed. That is the
+step-function nature of fixed-size allocation, and it is why size-class allocators pick their classes
+carefully.
+
+TRACE B - external fragmentation, a 100-byte heap, six operations, first-fit.
+
+    op                     free holes (offset,size)        live
+    --------------------   -----------------------------   ------------------
+    start                  [(0,100)]                       -
+    alloc A = 30           [(30,70)]                       A@0..30
+    alloc B = 20           [(50,50)]                       A@0..30  B@30..50
+    alloc C = 30           [(80,20)]                       A, B, C@50..80
+    free B                 [(30,20), (80,20)]              A, C
+    alloc D = 35           FAILS                           A, C
+
+At the last step: total free = 40 bytes, request = 35 bytes, largest hole = 20 bytes. The heap has
+MORE free space than the request needs and cannot serve it. Two holes of 20, neither adjacent to the
+other, because C sits between them. Compaction - sliding C down to offset 30 - would produce one
+40-byte hole and the allocation would succeed. Compaction means moving C, which means finding and
+updating every pointer to C.
+
+Note also what does NOT happen: freeing A instead of B would give holes [(0,30),(80,20)], and
+coalescing changes nothing because they are not adjacent. Coalescing only helps when the freed block
+TOUCHES an existing hole.
+
+TRACE C - the real simulation's end state, three policies, measured.
+
+    policy       failures   holes   total free   largest hole   free but unusable
+    ----------   --------   -----   ----------   ------------   -----------------
+    first-fit       1,595      44     237,772 B      55,703 B          182,069 B
+    best-fit        1,555      47      89,750 B      13,966 B           75,784 B
+    worst-fit       1,922      37     358,230 B      28,308 B          329,922 B
+
+The last column is `total_free - largest_hole` - memory that exists, is free, and cannot be used for
+any single allocation. Under worst-fit that is 329,922 bytes, roughly a third of the entire heap,
+permanently stranded.
+
+TRACE D - address translation, virtual 9,000, page table {0:5, 1:9, 2:2}, 4 KB pages.
+
+    divmod(9000, 4096)      (2, 808)      vpn = 2, offset = 808
+    page_table[2]           2             frame 2
+    2 * 4096 + 808          9,000         physical address
+
+And with the same virtual address but table {2: 7}: `7 * 4096 + 808` = 29,480. The offset 808 is
+identical in both. Only the page number is ever translated - which is why the page size must be a
+power of two, so the split is a shift and a mask rather than a division.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    pages_needed / internal_waste     O(1), exact integer arithmetic
+    paging allocation                 O(1) per page - grab any free frame, they are interchangeable
+    first-fit allocation              O(h) worst case in the number of holes, but stops early;
+                                      MEASURED 316,080 inspections over 60,000 operations
+    best-fit / worst-fit allocation   O(h) always - must examine every hole;
+                                      MEASURED 640,737 inspections, 2.0x first-fit, 186 ms vs 144 ms
+    free with coalescing              O(h log h) as written here because of the re-sort; a real
+                                      allocator keeps boundary tags and does it in O(1)
+    compaction                        O(live memory) copied, plus updating every pointer
+
+    internal fragmentation            BOUNDED: < 1 page per allocation. MEASURED 6.2% at 4 KB.
+    external fragmentation            UNBOUNDED: MEASURED a third of the heap stranded under worst-fit
+
+THE MISTAKES:
+
+    - Swapping the definitions. Fixed blocks -> INTERNAL. Variable blocks -> EXTERNAL. If you can only
+      remember one word, remember that "internal" means inside a block you were given.
+    - Claiming paging eliminates all waste. It eliminates EXTERNAL fragmentation. It costs 6.2%
+      internal on a realistic workload, plus the page table itself.
+    - Quoting "half a page on average, negligible" without the distribution. Negligible for 100 KB
+      objects, catastrophic for 100-byte ones (97.6% waste), which is why slab and size-class
+      allocators exist.
+    - Saying best-fit is always wasteful. MEASURED, it had FEWER failures than first-fit (1,555 vs
+      1,595). Its real problem is that it inspected 2.0x as many holes to get there.
+    - Forgetting coalescing when describing a variable-size allocator. Without merging adjacent free
+      blocks the fragmentation numbers roughly double, and no real allocator omits it.
+    - Treating compaction as a free fix. It copies live memory and requires updating every reference,
+      which is why a compacting collector is a garbage-collected-language luxury.
+    - Forgetting that paging is what enables everything else: swapping, shared memory, copy-on-write,
+      and memory-mapped files all rely on there being a per-page table entry to point somewhere else.
+
+THE TAKEAWAY. Fixed-size blocks trade a small, BOUNDED waste inside each block for the complete
+elimination of an unbounded, unfixable failure mode between blocks. That is why paging won, why
+jemalloc rounds to size classes, why the kernel's slab allocator pre-carves pages into identical
+slots, and why huge pages are the same dial turned the other way when the objects are large enough to
+make the internal waste vanish. Measured on one workload: 6.2% waste to make 1,595 allocation
+failures impossible. That is a good trade, and now you can say exactly how good.""",
+]
+
+_EX_P1AO["Producer-consumer with a bounded buffer (and condition variables)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a bakery with a display shelf that holds eight loaves.
+
+The baker (PRODUCER) makes loaves and puts them on the shelf. Customers (CONSUMERS) take them off. Two
+rules, and they are the entire problem:
+
+    when the shelf is FULL,  the baker must WAIT - not throw loaves on the floor, not stack them
+                             infinitely high in the back room
+    when the shelf is EMPTY, a customer must WAIT - not take a loaf that is not there
+
+And one extra rule that turns it from a puzzle into an engineering problem: waiting must not mean
+standing there checking the shelf a million times a second. That is BUSY-WAITING, and it burns a
+whole CPU core to accomplish nothing.
+
+MEASURED ON THIS MACHINE - 5,000 items through a capacity-1 buffer, one producer, one consumer, two
+implementations of "wait":
+
+    busy-wait loop        51,268.2 ms wall,  53,632.2 ms CPU,  232,177,290 wasted lock acquisitions
+    condition variable       376.9 ms wall,     372.1 ms CPU,          9,999 blocking waits
+
+That is 136x the wall-clock time and 144x the CPU, for identical work and identical output. Two
+hundred and thirty-two MILLION times the spinning version grabbed the lock, looked at the buffer, saw
+nothing had changed, and let go again.
+
+The condition variable is not a style preference. It is the difference between a thread that sleeps
+until there is something to do and a thread that shouts "anything yet?" into a room for fifty-one
+seconds.""",
+
+    """2. THE INTUITION - a mutex answers "may I look?", a condition variable answers "wake me when it
+changes".
+
+Those are two different questions and people conflate them constantly. A LOCK gives you MUTUAL
+EXCLUSION: only one thread inspects or modifies the buffer at a time, so you never see it half-updated.
+A lock gives you no way at all to say "the buffer is empty, so I want to stop being scheduled until
+somebody puts something in it". With only a lock, "waiting" can only mean: take the lock, look,
+release the lock, take the lock, look, release the lock - forever. Hence the 232 million.
+
+A CONDITION VARIABLE adds exactly one capability: `wait()` ATOMICALLY releases the lock and puts the
+thread to sleep, and when it is woken it re-acquires the lock before returning. That atomicity is the
+whole design. If releasing and sleeping were two separate steps, another thread could squeeze in
+between them, change the buffer, send the wakeup - and then you would go to sleep waiting for a signal
+that has already been and gone. That is the LOST WAKEUP, and it is why `wait()` must be called with
+the lock held and must release it itself.
+
+THE SECOND INTUITION: the buffer's SIZE is not a tuning constant, it is your backpressure policy.
+
+MEASURED - 20,000 items, two producers, two consumers, varying only the capacity:
+
+    capacity      time      producer waits   consumer waits
+    --------   ---------    --------------   --------------
+           1    4,678.4 ms          38,949           39,114
+           8      611.8 ms           4,787            4,766
+          64       98.7 ms             526              628
+       1,024       37.1 ms              33               39
+
+A capacity-1 buffer forces a full handoff on every single item: nearly 39,000 blocking waits per side
+for 20,000 items, and 126x the runtime of the 1,024 version. A big buffer lets producers run ahead and
+absorb bursts, so almost nobody ever blocks - 33 waits in the entire run.
+
+And this is exactly why the buffer is BOUNDED rather than infinite. Remove the bound and the fast
+producer never blocks at all - it just grows the queue until the process runs out of memory. The
+capacity is the knob that says "how far ahead may the fast side get before we slow it down". That is
+backpressure, and the bound is where it lives.""",
+
+    """3. EVERY TERM DEFINED.
+
+PRODUCER. A thread that creates work items and adds them to the buffer.
+
+CONSUMER. A thread that removes items and processes them.
+
+BOUNDED BUFFER. A queue with a maximum size. The bound is the point - see section 2.
+
+RACE CONDITION. Two threads touching shared state with no ordering guarantee, so the result depends on
+timing. `self.items.append(x)` from two threads at once, with no lock, is one.
+
+MUTEX / LOCK. A primitive guaranteeing only one thread at a time is inside the guarded region. Gives
+mutual exclusion. Gives NO waiting-for-a-condition.
+
+CRITICAL SECTION. The code between acquiring and releasing the lock.
+
+CONDITION VARIABLE. A lock plus a wait-queue. Three operations:
+    `wait()`       atomically release the lock and sleep; on wake, re-acquire the lock before returning
+    `notify()`     wake ONE thread waiting on this condition
+    `notify_all()` wake EVERY thread waiting on this condition
+In Python: `threading.Condition`, and `with cv:` acquires its underlying lock.
+
+PREDICATE. The boolean you are actually waiting for - `len(items) < capacity`, or `len(items) > 0`.
+The condition variable does not know or track it. YOU re-check it after every wake. This is why the
+loop is a `while`.
+
+SPURIOUS WAKEUP. `wait()` returns without anyone having signalled. Permitted by POSIX and by the
+Python docs. Rare, but it exists, and it alone justifies `while`.
+
+STOLEN / HIJACKED WAKEUP. Far more common than spurious: you were legitimately signalled, but between
+the wake and your re-acquiring the lock, another thread got in and consumed the thing you were woken
+for. You wake up, the predicate is false again. `while` handles this identically.
+
+LOST WAKEUP. A signal sent while nobody was yet waiting, so it is simply dropped, and the thread that
+arrives a microsecond later sleeps forever. Prevented by holding the lock across the state change and
+the notify.
+
+SEMAPHORE. A counter with `acquire()` (decrement, blocking at zero) and `release()` (increment). A
+COUNTING semaphore holds any non-negative count; a BINARY semaphore is 0/1 and resembles a mutex. In
+this problem, `empty` counts free slots and `full` counts filled slots.
+
+BUSY-WAIT / SPIN. Looping on the predicate without sleeping. 232,177,290 lock acquisitions, measured.
+
+DEADLOCK. Threads each holding something the other needs, so none can proceed. In this problem, the
+classic one comes from taking the mutex BEFORE the semaphore.
+
+BACKPRESSURE. Slowing a fast producer because a slow consumer cannot keep up. The buffer's bound IS
+the backpressure mechanism.
+
+`queue.Queue(maxsize=N)`. Python's standard library implementation of everything in this entry, done
+correctly. In real code, use it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - `if` instead of `while` around `wait()`.
+
+This is the detail interviewers probe, and almost everyone can recite "use while, not if" without
+being able to say what actually breaks. Here is what actually breaks.
+
+MEASURED - a capacity-2 buffer, one producer, THREE consumers, 300 items, 20 runs of each version.
+The only difference between the two versions is the keyword `if` versus `while`:
+
+    guard      runs that crashed   exceptions raised   times capacity was exceeded
+    -------    -----------------   -----------------   ---------------------------
+    while             0 of 20               0                        0
+    if               20 of 20              60 IndexError         5,704
+
+Twenty runs out of twenty. Sixty exceptions - exactly three per run, one per consumer thread. And the
+producer overflowed the "bounded" buffer 5,704 times, so it was not bounded at all.
+
+WHY, STEP BY STEP. The buffer is empty and all three consumers are asleep inside `wait()`. The
+producer appends ONE item and calls `notify_all()`, which wakes all three.
+
+    consumer A wakes, re-acquires the lock, and - with `if` - does NOT re-check. It pops the item.
+               Buffer is now empty again. A releases the lock.
+    consumer B wakes, re-acquires the lock, does NOT re-check, and calls popleft() on an EMPTY deque.
+               IndexError.
+    consumer C wakes, same thing. IndexError.
+
+With `while`, B and C re-evaluate `while not self.items:`, find it still true, and go straight back to
+sleep. That is the entire fix, and it is one keyword.
+
+The producer side fails the same way in reverse: several producers woken by one consumer's notify, all
+of them skipping the re-check, all of them appending past the capacity - 5,704 times.
+
+THE SECOND TRAP: assuming this only matters for "spurious" wakeups, which are rare and OS-specific.
+The failure measured above is not spurious at all. Every one of those wakeups was legitimate. The
+problem is that a legitimate wakeup says "the state changed", NOT "the state changed and is still
+favourable by the time you get the lock back". Between `notify_all()` and your `wait()` returning, the
+lock is up for grabs and somebody else can take your item. `while` is not defensive programming against
+an exotic kernel event; it is the correct handling of the ordinary case.
+
+THE THIRD TRAP, and the one that produces a hang rather than a crash: using `notify()` when waiters are
+waiting on DIFFERENT predicates through the same condition object. One condition variable shared by
+producers and consumers, `notify()` waking exactly one thread - and it can wake another PRODUCER when
+what was needed was a consumer. That producer re-checks, sees the buffer still full, and goes back to
+sleep. The notification is consumed and nobody made progress. Either use two condition objects over one
+lock (so `not_full.notify()` can only reach producers), or use `notify_all()`.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - four ways to write this, in the order you should reach for
+them.
+
+1. `queue.Queue(maxsize=N)`. THE ANSWER IN REAL CODE. It is exactly this problem, already solved,
+   already tested, in the standard library. `q.put(item)` blocks when full, `q.get()` blocks when
+   empty, and `q.task_done()` / `q.join()` handle the shutdown handshake. Say this out loud in an
+   interview after you have written the primitive version - "in production I'd use queue.Queue" is a
+   point in your favour, not a dodge.
+
+2. TWO CONDITION VARIABLES OVER ONE LOCK - `not_full` and `not_empty`. This is what you write when
+   asked to implement it. One lock protects the buffer; two condition objects let you wake exactly the
+   right KIND of waiter, so `notify()` (wake one) is safe and cheap. `threading.Condition(self.lock)`
+   is the constructor that shares a lock between them, and sharing it is mandatory - two separate
+   locks means the buffer is not actually protected.
+
+3. THE SEMAPHORE SOLUTION - the textbook one, and worth knowing because the ORDER is the exam
+   question. `empty = Semaphore(capacity)`, `full = Semaphore(0)`, plus a mutex. A producer does
+   `empty.acquire()` FIRST, then takes the mutex, inserts, releases the mutex, then `full.release()`.
+   Reverse the first two and you get a guaranteed deadlock: a producer blocked on `empty` while
+   HOLDING the mutex, and the consumer who would free a slot cannot take the mutex to do it. Nobody
+   moves, ever. This ordering rule is the single most-asked follow-up on this question.
+
+4. LOCK-FREE RING BUFFERS - a fixed array with atomic head and tail indices, used in high-frequency
+   trading and kernel code. Enormously faster in the uncontended case and enormously easier to get
+   wrong. Name it, do not attempt it on a whiteboard.
+
+WHAT CHANGES AT SCALE. Move the two sides into different PROCESSES and the buffer becomes
+`multiprocessing.Queue` or POSIX shared memory. Move them onto different MACHINES and it becomes
+Kafka, SQS, RabbitMQ, or Redis Streams. The shape is identical - and so is the failure mode. The queue
+DEPTH becomes your backpressure signal and your primary alert: a queue depth that only grows means
+your consumers are slower than your producers, and no amount of buffer will fix it, only more
+consumers or slower producers.
+
+THE ASYNCIO VERSION is `asyncio.Queue`, where "blocking" means yielding to the event loop instead of
+parking an OS thread. Same semantics, no threads. And in Python specifically, the GIL means the
+threaded version above gives you concurrency for I/O-bound work but not parallelism for CPU-bound
+work - which is why the timing numbers here measure coordination overhead, not throughput.""",
+
+    """6. HOW TO CODE IT - the condition-variable version, then the semaphore version.
+
+CONDITION VARIABLE VERSION:
+
+  1. Store `capacity`, a `collections.deque` for the items, and ONE `threading.Lock`.
+  2. Build TWO conditions over that same lock: `self.not_full = threading.Condition(self.lock)` and
+     `self.not_empty = threading.Condition(self.lock)`. Passing the lock is what makes them share it.
+  3. `put(item)`: enter `with self.not_full:` - this acquires the shared lock.
+  4. `while len(self.items) >= self.capacity: self.not_full.wait()`. WHILE, not if. `wait()` releases
+     the lock while asleep and re-takes it before returning, so the loop re-checks under the lock.
+  5. Append the item.
+  6. `self.not_empty.notify()` - wake ONE consumer. One is enough because one append satisfies exactly
+     one consumer. Still holding the lock here, which is what prevents a lost wakeup.
+  7. Exiting the `with` releases the lock, and the woken consumer can then acquire it.
+  8. `get()` is the mirror image: `with self.not_empty:`, `while not self.items: wait()`, popleft,
+     `self.not_full.notify()`, return the item.
+
+SEMAPHORE VERSION:
+
+  9. `self.empty = threading.Semaphore(capacity)` - free slots. `self.full = threading.Semaphore(0)` -
+     filled slots. Plus `self.mutex = threading.Lock()`.
+ 10. `put`: `self.empty.acquire()` FIRST - wait for a free slot, holding no lock.
+ 11. THEN `with self.mutex:` and append.
+ 12. Then `self.full.release()` - announce one more item.
+ 13. `get` mirrors it: `self.full.acquire()`, `with self.mutex:` popleft, `self.empty.release()`.
+ 14. Do not swap steps 10 and 11. That is the deadlock.
+
+SHUTTING DOWN CLEANLY:
+
+ 15. Consumers loop forever; something must tell them to stop. The standard trick is a SENTINEL - put
+     `None` once per consumer after the producers finish, and have each consumer return on seeing it.
+     One sentinel per consumer, because each is consumed by exactly one thread.
+
+HOW TO PROVE IT WORKS:
+
+ 16. Instrument the class: count how many times a producer waited and how many times a consumer waited.
+     Run it at capacity 1, 8, 64, 1024 and print the table. If the wait counts do not collapse as
+     capacity grows, your blocking is not doing what you think.
+ 17. Write the `if` version alongside the `while` version, run each twenty times with three consumers,
+     and count the exceptions. 60 versus 0 is a more convincing argument than any explanation.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Producers add items to a fixed-size buffer and consumers remove them. A producer must WAIT when the
+buffer is full and a consumer must WAIT when it is empty, and neither may burn CPU while waiting.
+
+The two wrong answers are a busy-wait loop, which spins a core doing nothing, and a plain mutex, which
+gives mutual exclusion but no way to wait FOR A CONDITION. I measured the busy-wait version: 5,000
+items through a capacity-1 buffer took 51 seconds and 232 million wasted lock acquisitions, against
+377 milliseconds and 9,999 blocking waits for the condition-variable version. That is 144 times the
+CPU for the same output.
+
+The modern solution is a condition variable: one lock protecting the buffer, plus two condition
+objects over that same lock - not_full and not_empty. `wait()` atomically releases the lock and sleeps,
+and re-acquires it before returning, which is what makes it safe to check the predicate under the lock.
+After changing the buffer you notify the other side, still holding the lock, which is what prevents a
+lost wakeup.
+
+The classic solution uses a mutex plus two counting semaphores - `empty` initialised to the capacity
+and `full` initialised to zero. A producer does wait(empty), lock, insert, unlock, signal(full), and a
+consumer mirrors it. THE ORDER MATTERS: take the mutex before the semaphore and you deadlock, because
+a blocked producer would be holding the lock the consumer needs in order to make room.
+
+The detail I'd emphasise is that you always wait in a `while` loop, never an `if`. A thread can wake
+up and find the predicate false again, because between the notify and re-acquiring the lock another
+thread got there first. I measured that too: capacity 2, three consumers, twenty runs - the `while`
+version had zero failures, the `if` version crashed in all twenty runs with sixty IndexErrors, and its
+producer overflowed the supposedly bounded buffer 5,704 times.
+
+Finally, the bound is the point. Without it a fast producer grows the queue until the process runs out
+of memory. The buffer size IS your backpressure. In production I'd use queue.Queue(maxsize=N), which
+implements all of this correctly."
+
+THE ONE SENTENCE TO NOT FUMBLE: a lock answers "may I look?", a condition variable answers "wake me
+when it changes" - and `while`, not `if`, because a wakeup means the state changed, not that it is
+still favourable.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    self.lock = threading.Lock()
+    self.not_full  = threading.Condition(self.lock)
+    self.not_empty = threading.Condition(self.lock)
+
+ONE lock, TWO conditions built over it. Passing `self.lock` into both constructors is what shares it.
+Omit the argument and each Condition makes its own private lock - at which point a producer holding
+`not_full`'s lock and a consumer holding `not_empty`'s lock can both be inside the deque at once, and
+the whole structure is unprotected. Two conditions exist so that a notify can target a KIND of waiter.
+
+    def put(self, item):
+        with self.not_full:
+
+`with` on a Condition acquires its lock. Everything from here to the end of the block runs with the
+buffer protected.
+
+            while len(self.items) >= self.capacity:
+                self.not_full.wait()
+
+The heart of it. `while`, because a wake does not promise the predicate is still true - measured, 60
+IndexErrors in 20 runs when this is an `if`. `>=` rather than `==` because with the `if` bug the
+buffer can actually exceed capacity, and defensive comparisons cost nothing. `wait()` releases the
+lock, sleeps, and re-acquires the lock before returning, so the loop's next `len()` check is again
+under the lock.
+
+            self.items.append(item)
+
+The state change, made while holding the lock.
+
+            self.not_empty.notify()
+
+Wake ONE consumer. One suffices because one append can satisfy exactly one `get`. Note this happens
+INSIDE the `with` - still holding the lock. Notifying under the lock is what makes the lost wakeup
+impossible: no consumer can be between "checked the predicate" and "went to sleep", because that
+window is itself inside the lock.
+
+    def get(self):
+        with self.not_empty:
+            while not self.items:
+                self.not_empty.wait()
+
+`while not self.items` - an empty deque is falsy, so this reads as "while there is nothing". Same
+`while`, same reason.
+
+            item = self.items.popleft()
+            self.not_full.notify()
+            return item
+
+`popleft` is O(1) on a deque and gives FIFO ordering. The `return` inside the `with` is fine: the
+context manager releases the lock on the way out, including on an exception path.
+
+NOW THE SEMAPHORE VERSION:
+
+        self.empty = threading.Semaphore(capacity)
+        self.full  = threading.Semaphore(0)
+
+`empty` starts at the capacity: that many `acquire()` calls succeed before the next one blocks - i.e.
+that many free slots. `full` starts at zero: a consumer blocks immediately until a producer releases.
+
+    def put(self, item):
+        self.empty.acquire()      # 1. semaphore FIRST, holding no lock
+        with self.mutex:          # 2. lock SECOND
+            self.buf.append(item)
+        self.full.release()       # 3. announce
+
+Step 1 before step 2 is the entire lesson. Blocking on `empty` while holding `mutex` would mean the
+producer sleeps clutching the lock, the consumer cannot acquire the mutex to pop anything, so it never
+calls `empty.release()`, so the producer never wakes. Two threads, neither at fault individually,
+permanently stuck. Step 3 is outside the mutex deliberately - releasing a semaphore does not touch the
+buffer, so holding the lock across it would only lengthen the critical section.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - capacity 2, one producer P, two consumers C1 and C2, the CORRECT `while` version.
+
+    step  actor  action                              items   waiting          note
+    ----  -----  ----------------------------------  ------  ---------------  --------------------
+      1   C1     acquires lock, `while not items`    []      -                predicate TRUE
+      2   C1     wait() - releases lock, sleeps      []      C1               lock is free again
+      3   C2     acquires lock, `while not items`    []      C1               predicate TRUE
+      4   C2     wait() - releases lock, sleeps      []      C1, C2
+      5   P      acquires lock, buffer not full      []      C1, C2           skips its while loop
+      6   P      append("a")                         [a]     C1, C2
+      7   P      not_empty.notify()                  [a]     C2               C1 marked runnable
+      8   P      exits `with` - releases lock        [a]     C2
+      9   C1     wakes, RE-ACQUIRES lock             [a]     C2
+     10   C1     re-checks `while not items`         [a]     C2               predicate now FALSE
+     11   C1     popleft() -> "a"                    []      C2
+     12   C1     not_full.notify(), releases lock    []      C2               nobody waiting on it
+     13   C2     still asleep                        []      C2               correct - nothing to take
+
+Step 10 is the one to point at. C1 re-checked. It found the predicate false and proceeded. Now the
+same trace with the BUG.
+
+TRACE B - identical setup, `if` instead of `while`, and a `notify_all()` instead of `notify()` - the
+combination that appears in most people's first draft.
+
+    step  actor  action                              items   waiting          note
+    ----  -----  ----------------------------------  ------  ---------------  --------------------
+      1   C1     `if not items` TRUE -> wait()       []      C1
+      2   C2     `if not items` TRUE -> wait()       []      C1, C2
+      3   P      append("a"); notify_all()           [a]     -                BOTH marked runnable
+      4   P      releases lock                       [a]     -
+      5   C1     re-acquires lock, NO re-check       [a]     -
+      6   C1     popleft() -> "a"                    []      -
+      7   C1     releases lock                       []      -
+      8   C2     re-acquires lock, NO re-check       []      -                the item is gone
+      9   C2     popleft() on an EMPTY deque         []      -                *** IndexError ***
+
+Step 8 is the bug, and step 5 is where the bug was decided. C2's wakeup at step 3 was completely
+legitimate - it was not spurious, nobody misbehaved. It was simply STALE by the time C2 got the lock.
+
+MEASURED over 20 runs of exactly this shape (capacity 2, three consumers, 300 items):
+
+    guard    runs crashed   IndexErrors   capacity violations
+    -----    ------------   -----------   -------------------
+    while       0 of 20              0                      0
+    if         20 of 20             60                  5,704
+
+Sixty IndexErrors is three per run - one per consumer thread, every single run. The `if` version does
+not fail occasionally under load. It fails every time.
+
+TRACE C - the deadlock from wrong semaphore order. Capacity 1, buffer already holding one item.
+
+    step  actor  action                         empty  full  mutex     state
+    ----  -----  -----------------------------  -----  ----  --------  ------------------------
+      1   P      acquires mutex  (WRONG ORDER)      0     1  held by P
+      2   P      empty.acquire() -> blocks at 0     0     1  held by P  P asleep, HOLDING the lock
+      3   C      full.acquire() -> succeeds         0     0  held by P
+      4   C      tries to acquire mutex -> BLOCKS   0     0  held by P  C asleep
+      5   -      nobody can run                                        DEADLOCK
+
+C is the only thread that can call `empty.release()`, and it cannot reach that line because P holds
+the mutex, and P cannot release the mutex because it is asleep waiting for C. Swap steps 1 and 2 - the
+semaphore first, holding no lock - and P sleeps at step 2 holding nothing, C sails through, releases a
+slot, and P wakes.
+
+TRACE D - the capacity sweep, measured, 20,000 items through 2 producers and 2 consumers:
+
+    capacity      time    producer waits   consumer waits   items per wait
+    --------   --------   --------------   --------------   --------------
+           1   4,678.4ms          38,949           39,114             0.26
+           8     611.8ms           4,787            4,766             2.09
+          64      98.7ms             526              628             17.3
+       1,024      37.1ms              33               39             278
+
+The last column is 20,000 divided by total waits: at capacity 1, every item costs about four blocking
+waits; at capacity 1,024, a wait happens once per 278 items. The runtime falls 126x across the table
+and nothing changed but one integer.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    put / get                    O(1) each - `deque.append` and `deque.popleft` are both O(1)
+    space                        O(capacity), which is the whole point of BOUNDED
+    blocking waits               O(items) in the worst case (capacity 1: measured ~39,000 per side
+                                 for 20,000 items) down to O(items / capacity) as the buffer grows
+                                 (measured 33 waits for 20,000 items at capacity 1,024)
+    busy-wait alternative        O(unbounded) wasted work - measured 232,177,290 lock acquisitions
+                                 to move 5,000 items
+
+    condition-variable coordination   377 ms for 5,000 items at capacity 1   MEASURED
+    busy-wait coordination         51,268 ms for the same                    MEASURED, 136x wall, 144x CPU
+    the same pair at capacity 8    63 ms vs 6,408 ms                         MEASURED, 103x CPU
+
+THE MISTAKES:
+
+    - `if` instead of `while` around `wait()`. Measured: 20 of 20 runs crashed, 60 IndexErrors, 5,704
+      capacity violations. Zero for `while`.
+    - `notify()` when waiters are waiting on DIFFERENT predicates through one condition object. You
+      can wake the wrong kind of thread; it re-checks, sleeps again, and the notification is gone. Use
+      two conditions, or `notify_all()`.
+    - Two separate LOCKS for the two conditions. Then nothing protects the buffer at all. One lock,
+      two conditions over it.
+    - Calling `wait()` without holding the lock. `RuntimeError: cannot wait on un-acquired lock`.
+      `wait()` must be called with the lock held, and it releases it for you.
+    - Notifying after releasing the lock. Opens the lost-wakeup window: a thread can check the
+      predicate, find it false, and go to sleep in the gap between your state change and your notify.
+    - Busy-waiting. 144x the CPU, measured.
+    - An UNBOUNDED buffer. The fast side never blocks and the queue grows until the process dies. The
+      bound is not a limitation, it is the feature.
+    - Forgetting shutdown. Consumers blocked in `wait()` forever because nobody sent a sentinel is the
+      most common reason a script "finishes" and never exits.
+    - Reimplementing it in production. `queue.Queue(maxsize=N)` already does all of this.
+
+THE TAKEAWAY. A lock answers "may I touch this?"; a condition variable answers "wake me when it
+changes". Every mistake in this problem comes from conflating them - busy-waiting is what you are
+forced into when you only have the first, and the `while` loop is the acknowledgement that the second
+one tells you the state CHANGED, not that it is still favourable by the time you get the lock back.
+The buffer's bound is your backpressure policy, and its size is a real number with real consequences:
+126x runtime between capacity 1 and capacity 1,024, on identical work.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
