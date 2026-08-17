@@ -155,6 +155,12 @@
              border-left: 3px solid #a78bfa; border-radius: 6px; font-size: 13px; line-height: 1.5; }
   .q-probe .n { flex: none; font-weight: 800; color: #7c3aed; }
   html.dark .q-probe { background: #1e1233; border-left-color: #8b5cf6; }
+  /* A few lines of what the question is testing and how the story opens,
+     so the bank can be skimmed without opening every card. Built from the
+     coaching tip plus the Situation — the two things you want before
+     deciding whether this is the story you need. */
+  .q-sum { flex: 1 0 100%; font-size: 12.5px; line-height: 1.5; margin: 2px 0 0;
+           color: var(--color-text-secondary); overflow-wrap: anywhere; }
   .q-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
   .q-edited { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 999px; padding: 2px 7px; flex: none; }
   .q-edit label { display: block; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 8px 0 3px; }
@@ -611,6 +617,25 @@
   const savePracticed = () => { try { localStorage.setItem(PRAC_KEY, JSON.stringify([...practiced])); } catch(_){} };
   const bankProg = () => { if(QBANK) $("qbank-prog").textContent = `${practiced.size} / ${QBANK.total} practiced`; };
 
+  /* Whole sentences under a cap — the same rule ai_sde_summary.py uses
+     server-side, so no card on any bank is ever cut mid-clause. Built from
+     the coaching tip and the Situation: what it is testing, then how the
+     story opens. */
+  const SUM_CAP = 340;
+  function bankSummary(q){
+    const raw = [(q.tip || "").trim(), (q.s || "").trim()]
+                  .filter(Boolean).join(" ");
+    if (!raw) return "";
+    const flat = raw.replace(/\s+/g, " ").trim();
+    let out = "";
+    for (const part of flat.split(/(?<=[.!?])\s+/)) {
+      const cand = out ? out + " " + part : part;
+      if (cand.length > SUM_CAP) break;
+      out = cand;
+    }
+    return out || (flat.slice(0, SUM_CAP).replace(/\s\S*$/, "") + " …");
+  }
+
   function renderBank(){
     if(!QBANK) return;
     const cat = $("qbank-cat").value;
@@ -661,6 +686,7 @@
           <input type="checkbox" class="q-prac" ${practiced.has(q.id)?'checked':''} title="Mark practiced">
           <span class="q-text">${esc(q.q)}</span>
           ${PrepScheduler.button("behavioral", q.q, q.id)}
+          ${bankSummary(q) ? `<p class="q-sum">${esc(bankSummary(q))}</p>` : ""}
           ${q.edited ? '<span class="q-edited">edited</span>' : ''}
           <span class="q-badge">${esc(qCatLabel[q.cat]||q.cat)}</span>
         </div>

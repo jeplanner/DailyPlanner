@@ -1135,3 +1135,22 @@ def test_the_calendar_scrolls_to_the_earliest_event_not_a_fixed_hour(auth_client
     assert "7 * HOUR_HEIGHT - 20" not in fn, "still hard-scrolling past early events"
     assert "earliest" in fn and "eventsMap" in fn, (
         "the scroll position must be derived from what the day actually holds")
+
+
+def test_every_question_bank_shows_a_card_summary(auth_client):
+    """Reported as "keep card summary for all question banks to be few
+    lines, instead of single sentence".
+
+    Four banks, one rule: a few lines of what the entry actually says, on
+    the collapsed card, so the list can be skimmed without opening
+    anything. The AI/SDE page derives it server-side from the answer; the
+    language banks derive it from their plain-English answer; the
+    behavioural bank builds it from the coaching tip plus the Situation.
+    All four pack WHOLE SENTENCES under a cap, so none is cut mid-clause."""
+    for path in ("/ai-sde", "/java", "/sql", "/interview-prep"):
+        html = auth_client.get(path).get_data(as_text=True)
+        assert 'class="q-sum"' in html, f"{path} has no card summary"
+        # And no line-clamp anywhere: the length is bounded at the source,
+        # so clamping would reintroduce the cut-off the report was about.
+        assert "-webkit-line-clamp" not in html, (
+            f"{path} clamps the summary — it will be cut off again")
