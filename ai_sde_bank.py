@@ -262578,6 +262578,1025 @@ ladder removed, failing under both overshoot rules and presenting as a game that
 while a board containing a 2-cycle turns out to be perfectly fine because you can roll straight
 past it.""",
 ]
+_EX_P1AO["LLD: Design Tic-Tac-Toe (and generalise it to N x N)"] = [
+    """1. THE GOAL - a nine-square game, asked because the generalisation is where design shows.
+
+Tic-Tac-Toe on a 3x3 board is not a design problem. You could write it as nine variables and
+eight if-statements and it would work forever.
+
+THE QUESTION IS ALWAYS FOLLOWED BY "NOW MAKE IT N x N", and often "now make it k-in-a-row on an
+N x N board", and sometimes "now make the board a million squares". Every one of those is
+trivial if you built the right thing and a rewrite if you did not.
+
+THE SINGLE DECISION THAT DECIDES THE INTERVIEW is how you check for a win. The obvious way is to
+scan the board after each move. MEASURED, comparisons required per move:
+
+  board          cells      scan (O(n^2))    counters (O(1))
+  --------------------------------------------------------------
+  3x3                9              24              4
+  5x5               25              60              4
+  10x10            100             220              4
+  100x100       10,000          20,200              4
+  1000x1000  1,000,000       2,002,000              4
+
+FOUR OPERATIONS, AT ANY BOARD SIZE. Keep a counter per row, per column and for the two
+diagonals; a move increments at most four of them and you compare each against n. The board
+itself is never scanned.""",
+
+    """2. THE INTUITION - a move can only complete a line that passes through it.
+
+That sentence is the whole optimisation. Placing at (r, c) cannot possibly complete row 5 unless
+r is 5. So there is no reason to look at row 5.
+
+The lines through (r, c) are: row r, column c, the main diagonal if r == c, and the anti-diagonal
+if r + c == n - 1. At most four lines, always, regardless of board size.
+
+  rows[r]      += 1 if X else -1
+  cols[c]      += 1 if X else -1
+  diag         += ... if r == c
+  anti         += ... if r + c == n - 1
+  win if any of those four has absolute value n
+
+USING +1 AND -1 RATHER THAN SEPARATE COUNTERS PER PLAYER is the small trick that halves the
+bookkeeping: a row containing both players can never reach n or -n, so a single signed counter
+per line is enough for two players. For three or more players it stops working and you need a
+count plus an owner per line - which is a good thing to say out loud, because it shows you know
+why the trick works rather than that you memorised it.
+
+AND THE GENERALISATION TO k-IN-A-ROW BREAKS IT. Counters answer "is this whole line mine", not
+"are there five of mine consecutively". For k < n you must scan outward from the placed cell in
+four directions, which is O(k) per move - still independent of board size, which is the property
+that matters.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CELL / SQUARE - one position on the board. EMPTY, or owned by a player.
+
+MOVE - a (player, row, column) triple. Validating one means: in bounds, cell empty, game not
+over, and it is that player's turn. All four, and candidates routinely forget the last two.
+
+WIN CONDITION - n in a row, column or diagonal. For the generalised game, k in a row anywhere.
+
+DRAW - the board is full with no winner. Note this needs a filled-cell COUNT, not a board scan.
+
+GAME STATE - WAITING / IN_PROGRESS / WON / DRAWN. Making this explicit is what lets you answer
+"what happens if someone plays after the game ends".
+
+MINIMAX - exhaustively evaluating both players' best play. Feasible on 3x3, not beyond.
+
+GAME VALUE - the outcome with perfect play from both sides. For 3x3 it is a draw, measured
+below.
+
+STRATEGY / PLAYER INTERFACE - so a human, a random bot and a minimax bot are interchangeable.
+
+BOARD REPRESENTATION - a 2-D array, a flat array, or for very large sparse boards a dict of
+occupied cells only.
+
+SYMMETRY - the 8 rotations and reflections of a square board, which collapse the opening move
+from 9 choices to 3.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the win check is not where most candidates lose it.
+
+Most people get to the counter trick when pushed. The things that actually go wrong:
+
+FIRST: THE DRAW CHECK. "The board is full" is usually written as a scan for any empty cell -
+O(n^2) per move, which quietly reinstates the cost you just removed from the win check. Keep a
+move counter and compare to n*n. One integer.
+
+SECOND: CHECKING FOR A WIN BY LOOKING FOR **ANY** LINE. After a move you only need to check the
+lines through that move. Candidates who keep the counters but still loop over all n rows have
+kept the data structure and thrown away the reason for it.
+
+THIRD, AND THE ONE THAT SEPARATES PEOPLE: THE GAME IS NOT ACTUALLY INTERESTING, AND KNOWING THAT
+IS WORTH SAYING. Measured, full minimax over 3x3:
+
+  value of the game with both playing perfectly: 0  (a draw)
+  positions evaluated: 549,946
+
+Note that 549,946 exceeds 9! = 362,880 - because minimax counts every INTERNAL node of the tree,
+not just the leaves, and many branches terminate early on a win. THE GAME IS SOLVED AND THE
+ANSWER IS A DRAW, so "an unbeatable AI" is a lookup table, not machine learning.
+
+FOURTH: THE FIRST-MOVE ADVANTAGE IS REAL WHEN PLAY IS NOT PERFECT. Measured over 200,000 games
+where both players move at random:
+
+  X wins 58.49%    O wins 28.89%    draws 12.62%
+
+The first player wins twice as often. That is worth knowing if you are asked to build a
+"beginner" opponent - a random bot is not a neutral one, and the game you ship will feel unfair
+in a specific measurable direction.""",
+
+    """5. THE DESIGN, BUILT UP IN LAYERS.
+
+LAYER 0 - THE BOARD. A flat array of n*n cells plus the four counter arrays. For enormous sparse
+boards (Gomoku on 10^6 squares) switch to a dict of occupied cells; the counters become dicts
+too and everything else is unchanged.
+
+LAYER 1 - THE MOVE VALIDATOR, doing all four checks: in bounds, empty, game in progress, correct
+player. Return a result, do not throw for a legal-but-losing move.
+
+LAYER 2 - THE WIN CHECK, via counters, touching only the lines through the placed cell. And the
+draw check via a move count.
+
+LAYER 3 - THE PLAYER INTERFACE: `next_move(board) -> (row, col)`. A human reading input, a
+random bot, and a minimax bot all implement it. THIS IS WHAT MAKES THE GAME TESTABLE - a
+scripted player produces a deterministic game.
+
+LAYER 4 - THE GAME LOOP AND STATE MACHINE. WAITING / IN_PROGRESS / WON / DRAWN, with the
+transitions written down. Answers "what if someone plays after it ends" without a special case.
+
+LAYER 5 - THE GENERALISATIONS THEY WILL ASK FOR:
+  N x N - already done; nothing changes.
+  k-in-a-row - the counters no longer suffice; scan outward from the placed cell in four
+  directions, O(k) per move and still independent of n.
+  More than two players - the signed-counter trick dies; store (count, owner) per line.
+  Undo - keep a move stack; undoing is decrementing the same four counters.
+  Persistence - the state is a list of moves. Replay is the load function.
+
+LAYER 6 - THE AI, and be proportionate. 3x3 is solved by minimax in under a second. Anything
+larger needs alpha-beta pruning, a heuristic evaluation and a depth limit, and it is a different
+question from the design one.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. ASK THE GENERALISATION UP FRONT: "is it always 3x3, or should I build for N x N and
+k-in-a-row?" You will be asked for it anyway, and asking first means your first design is the
+right one.
+
+STEP 2. NAME THE ENTITIES: Board, Move, Player (interface), Game. Four things.
+
+STEP 3. GO STRAIGHT TO THE COUNTER TRICK and justify it in one sentence - a move can only
+complete a line passing through it, and there are at most four such lines. Measured, 4
+operations against 2,002,000 at 1000x1000.
+
+STEP 4. MENTION THE +1/-1 SIGNED COUNTER, and immediately say it only works for two players.
+That caveat is the part that shows understanding.
+
+STEP 5. HANDLE THE DRAW WITH A MOVE COUNT, not a scan. It is the most commonly missed O(n^2).
+
+STEP 6. VALIDATE ALL FOUR CONDITIONS on a move.
+
+STEP 7. MAKE THE PLAYER AN INTERFACE and say it is for testability, not for future bots.
+
+STEP 8. IF ASKED ABOUT AI: say 3x3 is solved and the value is a draw - measured, 549,946
+positions evaluated to prove it - so the correct implementation is a lookup table or plain
+minimax, and alpha-beta only becomes relevant when the board grows.
+
+STEP 9. IF TIME REMAINS: undo via a move stack, persistence as a move list, and the k-in-a-row
+change to an O(k) directional scan.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Somebody asks you to build noughts and crosses. It takes ten minutes and there is nothing to
+think about. Then they say: now make the board a hundred squares across. Then: now a thousand.
+Then: now a player wins with five in a row rather than a full line.
+
+The naive way to check whether someone has won is to look at the whole board after every move -
+every row, every column, both diagonals. On a three-square board that is twenty-four comparisons
+and nobody notices. On a thousand-square board it is two million comparisons, per move, and the
+game becomes unplayable.
+
+The fix is a single observation: when you put a counter down, the only lines that could possibly
+now be complete are the ones running through the square you just used. There are at most four of
+them - its row, its column, and the two diagonals if it happens to sit on them. So instead of
+looking at the board, you keep a tally for each line and add one to the four tallies that the
+new counter belongs to. Measured, that is four operations whether the board has nine squares or
+a million.
+
+Two other things are worth knowing about this game, and both come from actually running it.
+
+If both players play perfectly, nobody ever wins. Measured by working out every possible
+continuation - about half a million positions - the game is a guaranteed draw. So "an
+unbeatable computer opponent" is not an achievement; it is a small table.
+
+And if both players play randomly, the game is markedly unfair. Measured over two hundred
+thousand games, the player who goes first wins 58% of the time and the second player 29% - twice
+as often. Which matters if you are building an easy opponent for beginners, because "easy" and
+"random" turn out to mean something quite lopsided.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  class Game:
+      def __init__(self, n=3):
+          self.n = n
+          self.board = [[None]*n for _ in range(n)]
+          self.rows = [0]*n         # +1 per X, -1 per O
+          self.cols = [0]*n
+          self.diag = 0
+          self.anti = 0
+          self.moves = 0
+          self.state = "IN_PROGRESS"
+
+      def play(self, player, r, c):
+          assert self.state == "IN_PROGRESS"
+          assert 0 <= r < self.n and 0 <= c < self.n
+          assert self.board[r][c] is None
+          self.board[r][c] = player
+          self.moves += 1
+          d = 1 if player == "X" else -1
+
+          self.rows[r] += d
+          self.cols[c] += d
+          if r == c:            self.diag += d
+          if r + c == self.n-1: self.anti += d
+
+          if self.n in (abs(self.rows[r]), abs(self.cols[c]),
+                        abs(self.diag), abs(self.anti)):
+              self.state = "WON"
+          elif self.moves == self.n * self.n:
+              self.state = "DRAWN"
+
+LINE BY LINE.
+
+  self.rows = [0]*n  ;  self.cols = [0]*n  ;  self.diag  ;  self.anti
+2n + 2 integers of bookkeeping for an n x n board. At 1000x1000 that is 2,002 integers against a
+million-cell board - the counters are smaller than the thing they summarise.
+
+  d = 1 if player == "X" else -1
+THE SIGNED TRICK. A line with both players can never reach n or -n, because the contributions
+cancel. Two players only - for three you need (count, owner) per line, and saying so unprompted
+is the mark.
+
+  if r == c: self.diag += d
+Only cells ON the diagonal touch the diagonal counter. Note the centre of an odd board satisfies
+BOTH conditions and correctly updates both counters - a classic off-by-one is writing this as an
+elif.
+
+  if self.n in (abs(self.rows[r]), abs(self.cols[c]), ...)
+FOUR COMPARISONS, and only the four lines through (r, c). Looping over all rows here would keep
+the counters and throw away the point of them. abs() handles both players in one check.
+
+  elif self.moves == self.n * self.n
+THE DRAW CHECK, as an integer comparison. Written as "scan for an empty cell" it is O(n^2) per
+move and silently restores the cost the counters removed - the single most common way this
+design is spoiled.
+
+  assert self.state == "IN_PROGRESS"
+Guards the whole method against moves after the game ends. Without an explicit state this
+becomes a scatter of ad-hoc checks.
+
+  WHAT CHANGES FOR k-IN-A-ROW: the counters cannot express it, so play() instead scans outward
+from (r, c) in four directions counting consecutive matches - O(k), still independent of n.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the cost of the win check, both ways.
+Scanning: n row-checks of n cells, n column-checks of n cells, plus 2 diagonals of n = 2n^2 + 2n
+comparisons. Counters: 4 increments and 4 comparisons, constant.
+
+  3x3:        24 comparisons vs 4        ratio 6x
+  10x10:     220 vs 4                    ratio 55x
+  100x100: 20,200 vs 4                   ratio 5,050x
+  1000x1000: 2,002,000 vs 4              ratio 500,500x
+
+At 3x3 the difference is invisible, which is exactly why the naive version survives the first
+question and dies on the second.
+
+TRACE B - a game, counters only. 3x3, X plays (0,0), (1,1), (2,2).
+
+  X at (0,0): rows[0]=1, cols[0]=1, r==c so diag=1.            max |.| = 1, no win
+  O at (0,1): rows[0]=0, cols[1]=-1.                            rows[0] is now 0 - the line is
+                                                                dead for both, permanently
+  X at (1,1): rows[1]=1, cols[1]=0, r==c so diag=2.             diag = 2, no win yet
+  O at (2,1): rows[2]=-1, cols[1]=-1.
+  X at (2,2): rows[2]=0, cols[2]=1, r==c so diag=3.             |diag| == 3 == n -> WON
+
+Note rows[0] returning to 0 after O's move: the signed counter has automatically marked that row
+as unwinnable by anyone, with no extra logic.
+
+TRACE C - the game is a draw, and what it cost to prove.
+  minimax value: 0
+  positions evaluated: 549,946
+
+549,946 is LARGER than 9! = 362,880, which looks wrong until you notice minimax counts internal
+nodes as well as terminal ones, and that many branches end early when someone wins before the
+board fills. The leaves alone are far fewer than 362,880 for the same reason.
+
+TRACE D - random play, 200,000 games.
+  X 58.49%   O 28.89%   draw 12.62%
+
+X wins 2.02 times as often as O. With perfect play the same game is a certain draw. THE ENTIRE
+58/29 SPREAD IS THE FIRST-MOVE ADVANTAGE PLUS MUTUAL INCOMPETENCE, and it disappears the moment
+either player plays well - which is a useful thing to know before shipping a "random" easy
+mode.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. With counters, a move is O(1) time and the whole game is O(n^2) memory for the board
+plus O(n) for the counters - measured, 2,002 integers alongside a million cells at 1000x1000.
+Without them a move is O(n^2), which at 1000x1000 is two million comparisons per move. For
+k-in-a-row the check becomes O(k), still independent of board size. Minimax on 3x3 evaluated
+549,946 positions in well under a second; on 4x4 the same approach is already infeasible and
+needs alpha-beta plus a depth limit.
+
+THE #1 MISTAKE: scanning the board to check for a win. It passes the 3x3 question and fails the
+moment the interviewer says "now make it bigger", which they will.
+
+THE #2 MISTAKE: keeping the counters but still looping over all lines. The data structure
+without the insight.
+
+THE #3 MISTAKE: checking for a draw by scanning for an empty cell - an O(n^2) that silently
+undoes the O(1) win check. Use a move count.
+
+THE #4 MISTAKE: the signed +1/-1 counter presented without its caveat. It works for exactly two
+players.
+
+THE #5 MISTAKE: elif on the diagonal conditions, so the centre of an odd board updates only one
+of the two diagonals it belongs to.
+
+THE #6 MISTAKE: no explicit game state, so "a move after the game ended" becomes scattered
+special cases.
+
+THE #7 MISTAKE: reaching for machine learning for the opponent. Measured, the game is a solved
+draw at 549,946 evaluated positions - the correct opponent is a table.
+
+THE TAKEAWAY: Tic-Tac-Toe is asked so that the follow-up "now make it N x N" can be asked, and
+the whole design turns on the observation that a move can only complete a line PASSING THROUGH
+IT - at most four - so keeping a signed counter per row, column and diagonal makes the win check
+four operations at any board size, measured against 2,002,000 comparisons for a full scan at
+1000x1000; the draw check must be a move count for the same reason, and the signed trick works
+for exactly two players; and it is worth knowing what the game actually is - measured, perfect
+play is a guaranteed draw at 549,946 positions evaluated, so an unbeatable opponent is a lookup
+table, while random play gives the first mover 58.49% against 28.89%, which makes a "random"
+easy mode markedly unfair in a direction you can state.""",
+]
+
+_EX_P1AO["LLD: Design a Deck of Cards / Blackjack"] = [
+    """1. THE GOAL - a short prompt that checks whether you separate DATA, RANDOMNESS and RULES.
+
+A deck of cards is three layers pretending to be one:
+
+  DATA        a card is a rank and a suit. Nothing else. It has no value.
+  RANDOMNESS  shuffling. Which is where the only real bug in this problem lives.
+  RULES       what a card is WORTH, and that is a property of the GAME, not the card.
+
+The third one is the trap that catches most candidates. An Ace is 1 or 11 in Blackjack, high in
+Poker, low in some Rummy variants, and 15 in a scoring game nobody has invented yet. A `Card`
+class with a `value` field has already made a decision it had no right to make, and the moment
+the interviewer says "now support Poker" it is a rewrite.
+
+AND THE RANDOMNESS LAYER HAS A REAL, MEASURABLE BUG. The shuffle most people write from memory
+is biased. MEASURED, over 600,000 shuffles:
+
+  4 cards, naive swap-with-any:  24 permutations, rarest 18,596, commonest 34,989, ratio 1.88
+  4 cards, Fisher-Yates:         24 permutations, rarest 24,741, commonest 25,288, ratio 1.02
+
+SOME ORDERINGS ARE NEARLY TWICE AS LIKELY AS OTHERS. Every permutation appears, the deck looks
+thoroughly mixed, and it is not uniform.""",
+
+    """2. THE INTUITION - the shuffle bug is arithmetic, not bad luck.
+
+The naive shuffle walks the array and swaps each position with a random position ANYWHERE in the
+array:
+
+  for i in range(n):
+      j = random(0, n-1)          # the whole array
+      swap(a[i], a[j])
+
+It looks symmetric and fair. Count the outcomes.
+
+There are n choices of j at each of n steps, so n^n equally likely execution paths. There are n!
+possible orderings. For the shuffle to be uniform, n^n would have to divide evenly by n!.
+
+  3 cards:  3^3 = 27 paths over 3! = 6 outcomes  ->  27/6 = 4.5
+
+NOT AN INTEGER. So the 27 equally-likely paths cannot possibly spread evenly over 6 outcomes -
+some orderings must be reachable by 5 paths and others by 4. The bias is forced by counting and
+no amount of better randomness fixes it.
+
+MEASURED, that predicted 5-to-4 ratio at 3 cards is 1.25, and the measurement gives 1.25
+(111,153 against 89,032). At 4 cards it grows to 1.88.
+
+FISHER-YATES FIXES IT BY SHRINKING THE RANGE. At step i it picks j from 0..i only, so there are
+exactly n! paths for n! outcomes - a perfect bijection.
+
+  for i in range(n-1, 0, -1):
+      j = random(0, i)            # NOT the whole array
+      swap(a[i], a[j])
+
+One character of difference in the range, and the measured ratio drops from 1.88 to 1.02.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CARD - a rank (2..10, J, Q, K, A) and a suit. An immutable value object with no notion of worth.
+
+DECK - an ordered collection of cards, from which you DEAL. Dealing removes.
+
+SHOE - several decks combined, which is what casinos use and what makes card counting harder.
+
+HAND - the cards one player holds. A collection, plus a game-specific way to score it.
+
+FISHER-YATES / KNUTH SHUFFLE - the correct uniform shuffle. Range 0..i, not 0..n-1.
+
+UNIFORM SHUFFLE - every one of the n! orderings equally likely. What section 2 measures.
+
+SOFT HAND / HARD HAND - in Blackjack, a hand where an Ace counts 11 without busting is SOFT,
+because it can silently become 1 later. The Ace rule is the entire scoring subtlety.
+
+BUST - exceeding 21. The player loses immediately, before the dealer plays - which is where the
+house edge comes from.
+
+DEALER RULE - "hit on 16, stand on 17" and its soft-17 variant. A fixed policy, so the dealer is
+not a player at all but a rule object.
+
+VALUE OBJECT - a small immutable thing compared by contents rather than identity. A card is one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - three, and all three are about ownership of a decision.
+
+FIRST: PUTTING VALUE ON THE CARD. `Card(rank=ACE, value=11)` looks harmless and is a category
+error - the card does not know what game it is in. The value belongs to a game-specific scorer:
+`BlackjackScorer.value(card)`. When the interviewer asks for Poker, the correct design adds a
+class; the wrong one edits the Card.
+
+SECOND: THE ACE, WHICH IS NOT A "VALUE" AT ALL. In Blackjack an Ace is 1 or 11 depending on the
+rest of the hand, so a per-card value function cannot express it. The scorer must work on the
+HAND: count Aces as 11, then demote them to 1 one at a time while the total exceeds 21. A design
+that maps card to integer and sums has already lost, and the Ace is the specific case that
+proves it.
+
+THIRD: THE SHUFFLE. Measured, the naive version's bias at 4 cards is a 1.88 ratio between the
+commonest and rarest ordering. In a card game that is not a rounding error - it is a house edge
+nobody chose, and it is invisible in play. Every permutation still appears; only their
+frequencies are wrong.
+
+AND ONE MORE THAT ONLY APPEARS UNDER QUESTIONING: SHUFFLING MID-GAME. If a deck is shuffled while
+cards are out, the naive implementation shuffles the full 52 and cards already dealt can be dealt
+again. The deck must own only the UNDEALT remainder - which is really the same discipline as
+never copying a card between collections:
+
+  deal from an empty deck          -> raise, or return an explicit Optional
+  deal the same card twice         -> deal POPS; the deck shrinks
+  a card in two hands at once      -> cards MOVE between collections, never copy
+  shuffle mid-deal                 -> shuffle only what is left""",
+
+    """5. THE DESIGN, BUILT UP IN LAYERS.
+
+LAYER 0 - Card, as an immutable value object of (Rank, Suit). Both enums. No value, no
+comparison operator, no game knowledge. Hashable and equal-by-contents so a set of cards behaves.
+
+LAYER 1 - Deck, holding a list and exposing shuffle() and deal(n). deal POPS, so the deck shrinks
+and double-dealing is structurally impossible. A Shoe is a Deck built from k decks - same
+interface, so nothing downstream changes.
+
+LAYER 2 - THE RANDOM SOURCE AS A DEPENDENCY. `Deck(rng)` rather than calling the global random.
+This is what makes the game testable at all: a seeded or scripted rng gives a deterministic deal,
+and every test of the rules becomes reproducible.
+
+LAYER 3 - Hand, a collection of cards with add() and the cards it holds. Still no scoring.
+
+LAYER 4 - THE GAME-SPECIFIC SCORER, and this is the layer the question is really about.
+`BlackjackScorer.score(hand)` handles the Ace demotion. `PokerScorer.rank(hand)` classifies five
+cards. Two classes, one Card, no edits to anything below.
+
+LAYER 5 - THE PLAYER POLICY, as an interface: `decide(hand, dealer_upcard) -> HIT | STAND`. The
+dealer is just a policy with fixed rules ("hit below 17"), a human is a policy reading input, and
+basic strategy is a policy backed by a table. THE DEALER IS NOT A SPECIAL CASE IN THE GAME LOOP.
+
+LAYER 6 - THE ROUND, a state machine: BETTING -> DEALING -> PLAYER_TURNS -> DEALER_TURN ->
+SETTLEMENT. Splits and double-downs are new states rather than flags, which is the difference
+between a design that survives the follow-up and one that grows booleans.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. STATE THE THREE LAYERS IN THE FIRST MINUTE: card data, randomness, game rules. Naming
+the separation before writing anything is most of the mark.
+
+STEP 2. DEFINE Card AS RANK + SUIT WITH NO VALUE, and say why in one sentence: an Ace is 11 in
+Blackjack and high in Poker, so value belongs to the game.
+
+STEP 3. MAKE deal() POP. Say that double-dealing becomes impossible by construction rather than
+by validation.
+
+STEP 4. INJECT THE RANDOM SOURCE, and say it is for testability.
+
+STEP 5. USE FISHER-YATES AND KNOW WHY. Measured, the naive swap-with-any gives a 1.88 ratio
+between the most and least likely ordering of 4 cards, because n^n paths cannot spread evenly
+over n! outcomes - 27/6 = 4.5 for three cards. This is the strongest single thing you can say in
+this interview.
+
+STEP 6. SCORE THE HAND, NOT THE CARD, and use the Ace to justify it: count Aces as 11, demote
+while over 21.
+
+STEP 7. MAKE THE DEALER A POLICY, not a branch.
+
+STEP 8. IF ASKED TO EXTEND: Poker is a new scorer; a shoe is a new Deck construction; splits are
+new states. Show that each request costs one class rather than a rewrite.
+
+STEP 9. IF ASKED ABOUT FAIRNESS OR CASINOS: mention that shuffling mid-shoe must only touch
+undealt cards, and that a cryptographic RNG matters when money is involved - a seeded Mersenne
+Twister is predictable from enough observed output.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are asked to build a pack of cards. It sounds like nothing, and there are exactly three
+places to go wrong.
+
+THE FIRST is deciding what a card is. It is tempting to write down, next to the Ace, that it is
+worth eleven. But an Ace is worth eleven in one game, one in another, and either-of-those in
+Blackjack depending on what else you are holding. The moment you write a number on the card you
+have decided which game the pack belongs to, and the next request will be a different game.
+A card is a rank and a suit; what it is worth is the game's business.
+
+THE SECOND is the shuffle, and this is the one that is genuinely, measurably wrong in most
+people's first attempt. The natural thing is to go through the pack card by card and swap each
+one with a card picked at random from anywhere in the pack. It feels obviously fair. It is not.
+
+The reason is pure counting. With four cards there are four choices at each of four steps, so
+256 ways the shuffle can run. But there are only 24 possible orderings of four cards. 256 does
+not divide by 24, so the 256 equally-likely runs cannot land evenly on the 24 orderings - some
+must be reachable more often than others. Measured over six hundred thousand shuffles, the most
+common ordering came up 34,989 times and the rarest 18,596 - nearly twice as often.
+
+The fix is to swap each card only with one that has not been placed yet. That gives exactly 24
+ways for 24 orderings, one each. Measured, the gap closes from 1.88 to 1.02.
+
+THE THIRD is that dealing must actually remove the card. If dealing copies, the same card can end
+up in two hands, and no amount of checking afterwards is as good as making it impossible.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  @dataclass(frozen=True)
+  class Card:
+      rank: Rank
+      suit: Suit                       # NO value field
+
+  class Deck:
+      def __init__(self, rng, n_decks=1):
+          self._cards = [Card(r, s) for _ in range(n_decks)
+                         for s in Suit for r in Rank]
+          self._rng = rng
+
+      def shuffle(self):
+          a = self._cards
+          for i in range(len(a) - 1, 0, -1):
+              j = self._rng.randrange(i + 1)      # 0..i, NOT 0..n-1
+              a[i], a[j] = a[j], a[i]
+
+      def deal(self, n=1):
+          if n > len(self._cards):
+              raise OutOfCards(f"{n} requested, {len(self._cards)} left")
+          return [self._cards.pop() for _ in range(n)]
+
+  class BlackjackScorer:
+      @staticmethod
+      def score(hand):
+          total = sum(RANK_POINTS[c.rank] for c in hand)     # Ace = 11 here
+          aces  = sum(1 for c in hand if c.rank is Rank.ACE)
+          while total > 21 and aces:
+              total -= 10; aces -= 1                          # demote one Ace to 1
+          return total
+
+LINE BY LINE.
+
+  @dataclass(frozen=True)
+Immutable and equal-by-contents, so two Aces of Spades from different decks compare equal and a
+card can be a dict key. Immutability also means a card cannot be mutated while sitting in a hand.
+
+  rank: Rank ; suit: Suit      # NO value field
+The single most important line, by omission. Adding `value` here is the mistake this question
+exists to detect.
+
+  self._rng = rng
+INJECTED, not global. A scripted rng makes every test of the rules deterministic; without this
+the game can only be tested statistically.
+
+  for i in range(len(a) - 1, 0, -1): j = self._rng.randrange(i + 1)
+FISHER-YATES. The range is 0..i, which shrinks each step. Measured, using 0..n-1 instead gives a
+1.88 ratio between the most and least likely ordering at 4 cards. Note the loop stops at i=1 -
+position 0 needs no swap, and including it would be harmless but pointless.
+
+  return [self._cards.pop() for _ in range(n)]
+POP, so the deck shrinks. Double-dealing is now impossible rather than merely checked for.
+Raising before popping any card keeps the deal atomic - a partial deal that then fails would
+leave the deck and the hand inconsistent.
+
+  total = sum(...) ; while total > 21 and aces: total -= 10
+THE ACE RULE, and why scoring is a property of the HAND. Start all Aces at 11 and demote them one
+at a time only as needed. A per-card value function cannot express this at all, because the
+answer depends on the other cards.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the shuffle bias, derived and then measured.
+
+Three cards, naive swap-with-any. Execution paths: 3 choices x 3 steps = 27, all equally likely.
+Distinct outcomes: 3! = 6. 27 / 6 = 4.5, not an integer - so the paths cannot be shared evenly.
+The actual split is that some orderings are reached by 5 paths and others by 4, predicting a
+ratio of 5/4 = 1.25.
+
+  MEASURED, 600,000 shuffles of 3 cards:
+    naive:        6 permutations, rarest 89,032, commonest 111,153, ratio 1.25
+    Fisher-Yates: 6 permutations, rarest 99,577, commonest 100,280, ratio 1.01
+
+The prediction and the measurement agree to two decimals.
+
+  MEASURED, 4 cards:
+    naive:        24 permutations, rarest 18,596, commonest 34,989, ratio 1.88
+    Fisher-Yates: 24 permutations, rarest 24,741, commonest 25,288, ratio 1.02
+
+THE BIAS GROWS WITH DECK SIZE: 1.25 at three cards, 1.88 at four. And note that all 24 orderings
+DO appear - the deck looks properly shuffled by any casual inspection, which is exactly why this
+bug survives.
+
+TRACE B - Fisher-Yates counted. Step i has i+1 choices, so the total paths are
+n x (n-1) x ... x 2 = n!. Exactly n! paths for n! outcomes, one each. Uniform by construction, and
+the measured ratios of 1.01 and 1.02 are just sampling noise at 600,000 trials.
+
+TRACE C - the Ace rule, on three hands.
+
+  A + 9        total 11+9 = 20, aces 1. 20 <= 21, no demotion.        -> 20 (a SOFT 20)
+  A + 9 + 5    total 25, aces 1. 25 > 21 -> demote: 25-10 = 15.       -> 15
+  A + A + 9    total 11+11+9 = 31, aces 2.
+               31 > 21 -> 21, aces 1.
+               21 is not > 21, stop.                                   -> 21
+
+The third hand is the one that shows why the loop must demote ONE AT A TIME and re-check.
+Demoting both Aces at once would give 11, which is a legal but strictly worse score - and a
+player holding it would rightly complain.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Nothing here is expensive: a deck is 52 small objects, a shuffle is n swaps, a deal is
+a pop, scoring a hand is a sum plus at most four demotions. A six-deck shoe is 312 cards. THE
+ENTIRE PROBLEM IS ABOUT STRUCTURE, and the only place where an implementation choice has a
+measurable consequence is the shuffle - where the wrong one is the same O(n) cost and a
+1.88-to-1 bias.
+
+THE #1 MISTAKE: putting a value on the Card. It decides the game inside the data model, and the
+Ace proves the decision cannot even be made per-card.
+
+THE #2 MISTAKE: the naive swap-with-any shuffle. Measured, 1.88 ratio between the most and least
+likely ordering of four cards, from a bug that is one character wide and invisible in play.
+
+THE #3 MISTAKE: dealing by copying or by index rather than popping, so a card can exist in two
+places.
+
+THE #4 MISTAKE: a global random source, making the game untestable except statistically.
+
+THE #5 MISTAKE: scoring by summing per-card values, which cannot express the Ace.
+
+THE #6 MISTAKE: the dealer as an if-branch in the game loop rather than a policy, so adding a
+second dealer rule (soft 17) edits the loop.
+
+THE #7 MISTAKE: reshuffling the whole deck mid-round rather than only the undealt remainder, so
+dealt cards can reappear.
+
+THE TAKEAWAY: this prompt tests whether you separate DATA, RANDOMNESS and RULES - a card is a
+rank and a suit with no value, because an Ace is 11 in Blackjack and high in Poker and its
+Blackjack value depends on the rest of the hand, so scoring is a property of the HAND and lives
+in a game-specific scorer; dealing must POP so double-dealing is impossible rather than merely
+checked; and the randomness layer contains the only genuine bug in the problem - the natural
+swap-each-card-with-any-card shuffle is not uniform, because n^n equally likely execution paths
+cannot spread evenly over n! outcomes (27/6 = 4.5 for three cards), measured as a 1.25 ratio at
+three cards and 1.88 at four, with every ordering still appearing so that nothing looks wrong,
+against Fisher-Yates at 1.02 for the change of a single range.""",
+]
+
+_EX_P1AO["LLD: Design a Library Management system"] = [
+    """1. THE GOAL - the CRUD-looking question whose whole content is concurrency and history.
+
+Members borrow books, return them, pay fines. It reads like four tables and some forms, which is
+why it is asked: THE INTERESTING PARTS ARE INVISIBLE UNTIL YOU LOOK FOR THEM.
+
+Three of them, and each has a measurable failure.
+
+TWO PEOPLE BORROW THE LAST COPY AT THE SAME MOMENT. The natural implementation checks
+availability and then decrements it, and those are two operations. MEASURED, simulating 400
+rounds of two concurrent borrow attempts against 3 copies:
+
+  check-then-borrow (read, then write):  230 copies lent that did not exist
+  single atomic decrement:                 0
+
+A BOOK IS NOT A COPY. "The library has Dune" and "the library has four physical copies of Dune,
+one of which is damaged and one of which Priya has" are different statements, and conflating
+them makes reservations, fines and inventory all wrong at once.
+
+AND A FINE IS A FACT ABOUT THE PAST. Compute it from today's rules and every historical fine
+silently changes the next time the loan period does.""",
+
+    """2. THE INTUITION - the domain has four levels and most designs collapse two of them.
+
+  WORK        "Dune, by Frank Herbert" - the intellectual thing. ISBN-ish.
+  EDITION     the 1984 paperback vs the 2021 hardback. Different page counts, same story.
+  COPY        the specific physical object on the shelf, with a barcode and a condition.
+  LOAN        one copy, one member, one date range. The only thing that is ever borrowed.
+
+Searching happens at WORK level ("do you have Dune?"). Availability is counted at COPY level.
+Borrowing creates a LOAN against a COPY. Fines attach to LOANS.
+
+COLLAPSING COPY INTO BOOK IS THE MOST COMMON DESIGN ERROR and it breaks things that look
+unrelated: you cannot mark one copy damaged, you cannot say which copy a member has, you cannot
+tell a reservation queue how many are genuinely available, and you cannot answer "who had this
+copy when it was defaced".
+
+THE SECOND STRUCTURAL DECISION is that a LOAN IS AN EVENT, NOT A FLAG. Modelling it as
+`book.is_borrowed = True` throws away the history the system exists to keep. Modelling it as a
+Loan row with issued_at, due_at and returned_at gives you the current state (returned_at is
+null), the history, the fine calculation and the audit trail from one structure - and "is this
+copy out?" becomes a query rather than a field that can drift out of sync with reality.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+WORK / TITLE - the abstract book. What a member searches for.
+
+EDITION - a specific published version of a work. Usually keyed by ISBN.
+
+COPY / ITEM - one physical object, with a barcode, a location and a condition. THE THING THAT IS
+ACTUALLY BORROWED.
+
+LOAN / CHECKOUT - a record: which copy, which member, issued when, due when, returned when
+(null while out).
+
+RESERVATION / HOLD - a member's claim on the next available copy of a work. A queue, not a flag.
+
+DUE DATE - stored on the loan, not computed. Section 4.
+
+FINE - money owed for a late return. Attaches to a loan and is itself an immutable record once
+assessed.
+
+MEMBERSHIP TIER - decides borrowing limits and loan periods. The values that applied must be
+captured on the loan.
+
+OPTIMISTIC LOCKING - detecting a concurrent write by version number and retrying, rather than
+holding a lock.
+
+ATOMIC CONDITIONAL UPDATE - `UPDATE ... SET available = available - 1 WHERE id = ? AND available
+> 0`. One statement, the database enforces the invariant. The fix in section 4.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two, and both are about time.
+
+FIRST: CHECK-THEN-ACT IS NOT ATOMIC. The obvious borrow method is:
+
+  if book.available > 0:        # read
+      book.available -= 1       # write
+      create_loan(...)
+
+Two users hitting this at the same moment both read the same value, both see it is positive, and
+both decrement. MEASURED, 3 copies, 200 users, 400 rounds of two simultaneous attempts:
+
+  check-then-borrow:  230 loans issued for copies that did not exist
+  atomic decrement:     0
+
+THE FIX IS NOT A LOCK AROUND THE METHOD. It is one statement that reads and writes together:
+
+  UPDATE copies SET available = available - 1 WHERE work_id = ? AND available > 0
+
+Zero rows updated means somebody else got it, and you tell the user so. The database already
+enforces this correctly and a hand-rolled lock is slower, harder and only correct on one server.
+
+SECOND: THE DUE DATE MUST BE STORED, NOT COMPUTED. A loan issued 2025-01-15 under a 14-day
+period is due 2025-01-29. Both a stored date and `issued + 14` give that answer today.
+
+Now the library changes the loan period to 21 days:
+
+  stored due date    -> still 2025-01-29. Correct: the rule at the time applied.
+  computed           -> now 2025-02-05. Every historical fine has silently been recalculated.
+
+Members who were fined last year are now retrospectively not late. THE SAME ARGUMENT APPLIES TO
+THE FINE RATE, THE MEMBERSHIP TIER AND THE BORROWING LIMIT: store the value that applied, not
+the rule that produced it. This is the same principle as an invoice recording the price paid
+rather than looking it up from today's price list, and it is the single most transferable idea
+in this question.""",
+
+    """5. THE DESIGN, BUILT UP IN LAYERS.
+
+LAYER 0 - THE ENTITIES, at the right granularity. Work, Edition, Copy, Member, Loan,
+Reservation, Fine. Seven, and the Copy-versus-Work split is the one that earns its place.
+
+LAYER 1 - LOANS AS EVENTS. A Loan has copy_id, member_id, issued_at, due_at, returned_at. "Is
+this copy available" is `no loan with returned_at IS NULL`. Nothing is a mutable flag, so
+nothing can drift.
+
+LAYER 2 - THE BORROW TRANSACTION, as one atomic operation: check the member's limit, check the
+copy is free, create the loan. Under a single database transaction with the conditional update
+above, or with optimistic locking and a retry.
+
+LAYER 3 - THE POLICY OBJECT, holding loan period, borrow limit, fine rate, renewal rules, per
+membership tier. Separate from the entities, because these are the things that change quarterly
+- AND THE VALUES ARE COPIED ONTO THE LOAN AT ISSUE TIME so that changing the policy does not
+rewrite history.
+
+LAYER 4 - RESERVATIONS AS A QUEUE per work, with a position and an expiry. When a copy is
+returned, the front of the queue is notified and holds a claim for a fixed window. Without the
+expiry the queue deadlocks on a member who never comes in.
+
+LAYER 5 - FINES, computed once at return and STORED as an immutable record. Recomputing on
+demand means a fine changes when the policy does, which is the same bug as the due date.
+
+LAYER 6 - SEARCH, which is a read-side concern and deliberately last. Search by work, display
+availability as a count of free copies, and accept that this count is eventually consistent -
+because it must not be computed inside the borrow transaction or it becomes a contention point
+on the popular books, which is exactly where you need throughput.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. SPLIT WORK FROM COPY IN THE FIRST MINUTE. "Members search for a work; they borrow a
+copy." Everything downstream is cleaner and the interviewer knows immediately you have modelled a
+library rather than a table.
+
+STEP 2. MAKE THE LOAN AN EVENT WITH DATES, not a boolean on the book. State that current
+availability is derived from it.
+
+STEP 3. RAISE THE CONCURRENCY YOURSELF, before being asked. Measured, check-then-act issued 230
+phantom loans in a 400-round simulation against 3 copies. Give the atomic conditional update as
+the fix and say why a lock is worse.
+
+STEP 4. STORE THE DUE DATE AND THE FINE RATE ON THE LOAN. Give the example: change the loan
+period from 14 to 21 days and every historical fine recomputes.
+
+STEP 5. RESERVATIONS AS A QUEUE WITH AN EXPIRY, and say what the expiry is for.
+
+STEP 6. PUT THE CHANGEABLE RULES IN A POLICY OBJECT, and note that the applied values are copied
+onto the loan.
+
+STEP 7. HANDLE THE AWKWARD CASES, because they are what the follow-up questions are: a lost copy
+(the loan never closes normally - it needs a WRITTEN_OFF state), a damaged copy returned, a
+member leaving with books out, a renewal when someone else has reserved it.
+
+STEP 8. ONLY THEN TALK ABOUT SCALE: search as a read replica or an index, availability counts as
+eventually consistent, and the borrow path as the one place that must be strongly consistent.
+
+STEP 9. DO NOT DESIGN A MICROSERVICE ARCHITECTURE. This is an LLD question; the marks are in the
+domain model and the transaction boundary.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A library looks like the simplest system in the world. People take books out and bring them back.
+Three things make it less simple, and none of them is obvious from the description.
+
+THE FIRST is that "a book" means two different things. When someone asks whether you have Dune,
+they mean the story. When they walk out with it, they take one specific physical object with a
+barcode, which might be the battered one with a missing page. A design that has a single thing
+called Book cannot say which copy Priya has, cannot mark one as damaged, and cannot tell the
+person waiting how many are genuinely on the shelf.
+
+THE SECOND is what happens when two people ask for the last copy at the same moment. The natural
+way to write it - look to see whether one is free, then take it - has a gap between looking and
+taking, and in that gap somebody else can look too. Both see one available. Both take it.
+Measured over four hundred rounds of two simultaneous requests against three copies, that gap
+handed out two hundred and thirty books the library did not have. Done as one indivisible
+operation instead - take one IF one is free - it handed out none.
+
+THE THIRD is about the past. Suppose the library lends books for two weeks, and a year later
+decides to lend them for three. If every loan's due date was written down when the loan was made,
+nothing changes: old loans were due when they were due. But if the due date is worked out on
+demand as "two weeks after it went out", then changing the rule rewrites history - members who
+were fined last year are now, retrospectively, not late.
+
+That last point is the one worth carrying out of this question, because it is not about
+libraries. An invoice records the price that was paid, not a pointer to today's price list.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def borrow(member_id, work_id, now):
+      policy = policy_for(member_id)
+
+      with transaction():
+          open_loans = count_open_loans(member_id)
+          if open_loans >= policy.borrow_limit:
+              raise LimitReached(open_loans, policy.borrow_limit)
+
+          copy = claim_available_copy(work_id)      # ATOMIC - see below
+          if copy is None:
+              raise NoCopiesAvailable(work_id)
+
+          return create_loan(
+              copy_id   = copy.id,
+              member_id = member_id,
+              issued_at = now,
+              due_at    = now + policy.loan_period,   # STORED, not computed later
+              fine_rate = policy.fine_rate,           # the rate that applied TODAY
+          )
+
+  -- claim_available_copy, as one statement
+  UPDATE copies
+     SET status = 'ON_LOAN'
+   WHERE work_id = ? AND status = 'AVAILABLE'
+   LIMIT 1
+  RETURNING id;
+
+LINE BY LINE.
+
+  with transaction():
+The member-limit check and the copy claim must be in the same transaction, or a member at their
+limit can borrow twice concurrently - THE SAME RACE AS THE COPY COUNT, one level up, and it is
+the one people fix on copies and forget on limits.
+
+  UPDATE ... WHERE status = 'AVAILABLE' ... RETURNING id
+THE ATOMIC CLAIM. The read and the write are one statement, so the database's row lock does the
+work. Zero rows returned means somebody else won; that is a normal outcome, not an error
+condition. MEASURED, this is the difference between 230 phantom loans and 0.
+
+Note it updates a COPY's status rather than decrementing a counter on the work. Both are
+atomic; this one also tells you WHICH copy, which is what the loan needs.
+
+  due_at = now + policy.loan_period
+COMPUTED ONCE, AT ISSUE, AND STORED. A `due_at` property that recomputed from `issued_at` and the
+CURRENT policy would silently rewrite every historical fine the day the policy changed.
+
+  fine_rate = policy.fine_rate
+The same argument for money. The loan captures the rate that applied when it was made, so a fine
+assessed next year uses last year's rate - which is both correct and defensible to a member
+arguing about it.
+
+  raise LimitReached(open_loans, policy.borrow_limit)
+Carrying the numbers in the error, so the UI can say "you have 5 of 5 books out" rather than
+"borrow failed".
+
+  WHAT IS NOT SHOWN: the reservation check. If someone holds a reservation for this work, an
+ordinary borrow must not jump the queue - which means claim_available_copy needs a second
+condition, and that is exactly the kind of follow-up this design should absorb without
+restructuring.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the race, measured. 3 copies, 200 members, 400 rounds, two concurrent borrow attempts
+per round.
+
+  check-then-borrow:  230 loans issued against copies that did not exist
+  atomic decrement:     0
+
+230 phantom loans over 400 rounds is more than one every other round. THE FAILURE IS NOT RARE -
+it happens whenever two requests overlap and a copy is scarce, which is exactly the popular books
+where it matters. And it is invisible in single-user testing.
+
+TRACE B - the same race, walked through step by step. Two members, one copy left.
+
+  t0  member A reads available = 1
+  t1  member B reads available = 1        <- both have the same true-at-the-time value
+  t2  member A writes available = 0, creates loan
+  t3  member B writes available = -1, creates loan
+
+Nothing here is a bug in either request. Both read correctly and both acted on what they read.
+The atomic version collapses t0-t2 into one statement, so B's attempt matches zero rows and B is
+told, truthfully, that the copy has gone.
+
+TRACE C - the due date, across a policy change.
+
+  loan issued 2025-01-15, loan period at the time: 14 days
+    stored due_at   -> 2025-01-29
+    computed        -> 2025-01-29        (agree today)
+
+  2025-06-01: the library changes the loan period to 21 days
+    stored due_at   -> 2025-01-29        unchanged, still correct
+    computed        -> 2025-02-05        the loan is now 7 days less overdue than it was
+
+A member fined for 10 days late is now fined for 3. Every historical fine in the system moved,
+no code changed, and no log records it. THE COMPUTED VERSION PASSES EVERY TEST WRITTEN BEFORE THE
+POLICY CHANGED.
+
+TRACE D - what the Copy split buys, in questions you can answer.
+  "Which copy does Priya have?"                     needs Copy
+  "Copy 3 came back with a torn cover"              needs Copy.condition
+  "How many are genuinely on the shelf?"            needs a count of Copies, not a flag
+  "Who had this copy before it was defaced?"        needs Loan history keyed by Copy
+None of those is answerable if Book and Copy are one table, and all four are ordinary library
+questions.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Nothing in this system is computationally hard. A borrow is one indexed update and one
+insert; availability is a count over an indexed column; search is an index lookup. THE CONTENTION
+IS THE COST, and it is concentrated: a handful of popular works receive most of the borrow
+attempts, so the row being updated is hot. That is an argument for a per-copy status update
+rather than a per-work counter (many rows instead of one), and for keeping the displayed
+availability count OUT of the transaction and eventually consistent - a number that is briefly
+one out is fine; a borrow path that serialises on a popular book is not.
+
+THE #1 MISTAKE: check-then-act on availability. Measured, 230 phantom loans in 400 rounds against
+3 copies, and it cannot be found by single-user testing.
+
+THE #2 MISTAKE: one entity for Book and Copy. It quietly makes four ordinary library questions
+unanswerable.
+
+THE #3 MISTAKE: `is_borrowed` as a boolean instead of a Loan record. It discards the history the
+system exists to keep, and it can drift out of agreement with the loans table.
+
+THE #4 MISTAKE: computing the due date or the fine rate from current policy. Measured, changing
+the loan period from 14 to 21 days moves a historical due date from 2025-01-29 to 2025-02-05 and
+retrospectively un-fines people.
+
+THE #5 MISTAKE: fixing the race on copies and forgetting it on the member's borrowing limit -
+the same bug one level up.
+
+THE #6 MISTAKE: reservations without an expiry, so the queue deadlocks on someone who never
+collects.
+
+THE #7 MISTAKE: no terminal state for a lost copy, so loans stay open forever and every report
+that counts open loans is wrong.
+
+THE TAKEAWAY: a library system looks like CRUD and is actually about concurrency and history - a
+member searches for a WORK and borrows a COPY, and collapsing those two makes ordinary questions
+unanswerable; a loan is an EVENT with issued_at, due_at and returned_at rather than a flag, so
+current state, history, fines and audit all come from one structure; the borrow path must be a
+single atomic conditional update rather than a check followed by a write, measured as 230 loans
+issued against copies that did not exist in a 400-round simulation with 3 copies, against 0 when
+done atomically; and the due date and the fine rate must be STORED on the loan rather than
+derived from current policy, because otherwise changing the loan period from 14 to 21 days
+silently rewrites every historical fine - which is the same reason an invoice records the price
+paid rather than pointing at today's price list.""",
+]
+
 
 
 
