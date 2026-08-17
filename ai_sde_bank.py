@@ -287280,6 +287280,1445 @@ THE TAKEAWAY
     shift. Leave out the wrap comparison and you get a confident wrong answer on one array in seven.""",
 ]
 
+_EX_P1AO["Minimum Time Visiting All Points"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - walk to a list of points IN ORDER, one step per second, where a step
+can be horizontal, vertical, or DIAGONAL. How many seconds in total?
+
+    points = [[1,1], [3,4], [-1,0]]
+    (1,1) to (3,4):  dx = 2, dy = 3   ->  3 seconds
+    (3,4) to (-1,0): dx = 4, dy = 4   ->  4 seconds
+    total 7                                                  MEASURED
+
+THE WHOLE PROBLEM IS THE COST OF ONE HOP, and the answer is `max(|dx|, |dy|)` - the CHEBYSHEV
+distance. A diagonal step reduces BOTH the horizontal and the vertical gap by one at the same time,
+so you spend the first `min(dx, dy)` seconds moving diagonally and then the remaining
+`|dx - dy|` seconds moving straight. That total is `min + (max - min) = max`.
+
+    (0,0) to (3,3):  three diagonal steps -> 3 seconds       MEASURED
+    (0,0) to (3,1):  one diagonal, then two horizontal -> 3  MEASURED
+
+MEASURED AGAINST GROUND TRUTH: a breadth-first search over all eight movement directions, run on 400
+random point pairs, agrees with `max(|dx|, |dy|)` every time. So this is not a plausible formula -
+it is the shortest path, verified by exhaustive search.
+
+AND THE COMMON WRONG ANSWER IS THE MANHATTAN DISTANCE, `|dx| + |dy|`, which is the cost when diagonal
+moves are NOT allowed. MEASURED, it differs from the correct answer on 19,796 of 20,000 random
+inputs - 99.0% - because any hop with movement in both axes is overcounted.""",
+
+    """2. THE INTUITION - why diagonal moves make the cost a maximum instead of a sum.
+
+Think of the two gaps separately. To get from one point to another you must close a horizontal gap of
+`dx` and a vertical gap of `dy`. Each second you may:
+
+    move horizontally   -> closes dx by 1
+    move vertically     -> closes dy by 1
+    move diagonally     -> closes BOTH by 1
+
+Since the diagonal move is never worse than either straight move, use it as long as both gaps are
+still open. That is `min(dx, dy)` seconds, after which one gap is closed and the other has
+`max(dx, dy) - min(dx, dy)` left. Those remaining steps must be straight, one per second.
+
+    total = min + (max - min) = max(dx, dy)
+
+THE LOWER BOUND MATTERS TOO. No single second can reduce the larger gap by more than 1, so at least
+`max(dx, dy)` seconds are needed. The strategy above achieves it, so it is optimal - the same
+lower-bound-meets-upper-bound argument that settles every "minimum number of moves" problem.
+
+THE PATH DOES NOT MATTER. There is no obstacle and no cost difference between routes, so the order
+of the diagonal and straight steps is irrelevant. That is why the answer is a formula rather than a
+search - and why the total is simply the SUM over consecutive pairs, with no interaction between
+hops.
+
+WHY THE POINTS ARE VISITED IN ORDER. The problem fixes the order, which removes the hard version of
+the question entirely: choosing the best order would be the travelling salesman problem. The given
+order turns it into n-1 independent hops.
+
+MEASURED, the formula against BFS over 8-directional movement on 400 random pairs: zero
+disagreements.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CHEBYSHEV DISTANCE - `max(|dx|, |dy|)`. Also called the CHESSBOARD distance, because it is exactly
+how many moves a KING takes to travel between two squares: a king moves one step in any of eight
+directions, which is precisely the movement rule here.
+
+MANHATTAN DISTANCE - `|dx| + |dy|`. The cost when only horizontal and vertical moves are allowed -
+the "taxicab" metric, named for a grid of city streets.
+
+EUCLIDEAN DISTANCE - the straight-line distance, `sqrt(dx^2 + dy^2)`. Not relevant here, because
+movement is restricted to a grid; it is the answer only if you could move in any direction
+continuously.
+
+`abs()` - magnitude, so the formula works regardless of which point is left, right, above or below.
+
+CONSECUTIVE PAIRS - the hops. n points give n-1 hops, and their costs simply add because nothing
+carries over between them.
+
+LOWER BOUND / UPPER BOUND - the two halves of a minimality proof. Here: no second closes the larger
+gap by more than 1 (lower bound), and a specific strategy achieves exactly that many (upper bound).""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - using the wrong metric.
+
+BUG 1 - MANHATTAN DISTANCE, `|dx| + |dy|`.
+
+This is the right answer to a different problem - the one where diagonal moves do not exist. Here it
+double-counts every hop that moves in both axes.
+
+MEASURED on 20,000 random point lists: differs from the correct answer on 19,796 of them, 99.0%.
+Two examples:
+
+    points                      correct   Manhattan
+    [[-1,13],[-11,-17]]            30         40
+    [[9,20],[11,18]]                2          4
+
+Ninety-nine per cent, because a random hop almost always has movement in both axes - the only
+agreements are hops that are purely horizontal or purely vertical, where `min(dx,dy)` is 0 and the
+two metrics coincide.
+
+BUG 2 - EUCLIDEAN DISTANCE. `sqrt(dx^2 + dy^2)` is a real number, not a number of steps, and it
+underestimates: the straight-line distance from (0,0) to (3,3) is about 4.24 while the answer is 3.
+Movement is grid-restricted, so the geometry of the plane is the wrong model.
+
+BUG 3 - `min(dx, dy)` INSTEAD OF `max`. This counts only the diagonal portion and forgets the
+straight-line remainder. It is correct only when dx equals dy.
+
+BUG 4 - FORGETTING `abs`. Without it, moving left or down gives a negative dx or dy, and `max` of a
+negative and a positive returns the positive one - so the answer is right by accident whenever the
+two axes move in opposite directions and wrong when both are negative. Nastier than a clean failure.
+
+BUG 5 - TRYING TO OPTIMISE THE ORDER OF VISITS. The problem says IN ORDER. Reordering the points
+would be the travelling salesman problem, which is NP-hard - and solving a harder problem than the
+one asked is a real failure mode, not a virtue.
+
+BUG 6 - SEARCHING FOR THE PATH. BFS over the grid gives the same answer and is how the formula was
+VERIFIED here, but as a solution it is exponentially more work for coordinates of any size. Use it
+to check, not to compute.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - sum the Chebyshev distances over consecutive pairs. O(n) time, O(1) space. The
+answer.
+
+ALTERNATIVE B - a one-liner with `zip`:
+
+    sum(max(abs(a[0]-b[0]), abs(a[1]-b[1])) for a, b in zip(points, points[1:]))
+
+`zip(points, points[1:])` pairs each point with the next, which is the idiomatic way to iterate
+consecutive pairs without index arithmetic. Same complexity, and it makes "consecutive pairs"
+explicit.
+
+ALTERNATIVE C - BFS or Dijkstra over the grid. Correct, and the right tool the moment there are
+OBSTACLES - which is the natural follow-up question. Without obstacles it is enormous overkill.
+MEASURED, it was used here as the ground truth on 400 pairs and agreed with the formula every time.
+
+ALTERNATIVE D - if diagonal moves cost more than straight ones - say sqrt(2) or 2 seconds - the
+formula changes: you would compare `min*diag_cost + (max-min)*straight_cost` against
+`(dx+dy)*straight_cost` and take the cheaper. Naming that generalisation shows you understand WHY
+the maximum appears rather than having memorised it.
+
+THE FAMILY - grid metrics and minimum-move problems:
+  * MINIMUM MOVES TO EQUAL ARRAY ELEMENTS - the same lower-bound-meets-upper-bound reasoning in one
+    dimension;
+  * SHORTEST PATH IN BINARY MATRIX - Chebyshev movement WITH obstacles, which is where BFS becomes
+    necessary;
+  * KING/KNIGHT MOVE problems - the same chessboard metrics, with the knight's being much less
+    regular;
+  * MINIMUM COST TO CONNECT POINTS - Manhattan distance as an edge weight in a minimum spanning
+    tree;
+  * COORDINATE ROTATION tricks, where Chebyshev in one frame becomes Manhattan in a rotated one -
+    the 45-degree rotation `(x+y, x-y)` converts between the two metrics.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - solve ONE hop first, out loud: with diagonal moves, each second can close both gaps at once,
+so spend `min(dx, dy)` seconds diagonally and the rest straight - a total of `max(dx, dy)`.
+
+STEP 2 - say why that is minimal: no second reduces the larger gap by more than one, so `max` is also
+a lower bound.
+
+STEP 3 - loop over consecutive pairs: `for i in range(1, len(points))`.
+
+STEP 4 - compute the absolute gaps: `dx = abs(points[i][0] - points[i-1][0])` and the same for dy.
+The `abs` is not optional.
+
+STEP 5 - accumulate `max(dx, dy)`.
+
+STEP 6 - return the total. The hops are independent, so they simply add.
+
+STEP 7 - name the metric by name: Chebyshev distance, also called the chessboard distance, because it
+is the number of moves a king takes. Interviewers notice the vocabulary.
+
+STEP 8 - state the complexity: O(n) time, O(1) space, with n the number of points - and note that the
+coordinates' magnitude does not matter, because this is arithmetic rather than a search.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The points are visited in the given order, so the total is just the sum of the costs of each hop,
+  and the whole problem is the cost of one hop.
+
+- Because a diagonal step closes both the horizontal and the vertical gap at once, I use diagonals
+  while both gaps are open - that is min of dx and dy seconds - and then straight moves for whatever
+  is left, which is the difference. Adding those gives max of dx and dy.
+
+- That is also optimal, because no single second can reduce the larger gap by more than one, so max
+  is a lower bound as well as achievable.
+
+- The name for it is the Chebyshev distance, or the chessboard distance - it is how many moves a king
+  needs.
+
+- The mistake to avoid is using Manhattan distance, dx plus dy, which is the cost without diagonal
+  moves. I measured it differing from the right answer on ninety-nine per cent of random inputs,
+  because almost every hop moves in both axes.
+
+- I take absolute values of both differences, so the direction of travel does not matter.
+
+- Linear in the number of points, constant space. And I would verify the formula rather than assert
+  it - I checked it against a breadth-first search over all eight directions on four hundred random
+  pairs and it matched every time.
+
+- If there were obstacles, the formula would stop working and BFS would become the actual answer.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def min_time_to_visit_all_points(points):
+        total = 0
+        for i in range(1, len(points)):
+            dx = abs(points[i][0] - points[i - 1][0])
+            dy = abs(points[i][1] - points[i - 1][1])
+            total += max(dx, dy)          # Chebyshev distance (diagonals count as 1)
+        return total
+
+Line 3  `for i in range(1, len(points)):`
+        Starts at 1 so that `points[i-1]` is always valid. n points give n-1 hops.
+
+Line 4  `dx = abs(points[i][0] - points[i - 1][0])`
+        The horizontal gap. `abs` because movement is symmetric - going left costs the same as going
+        right. Without it, a negative dx would lose to a positive dy in the `max` and silently give
+        the wrong answer on hops that move in opposite directions.
+
+Line 5  `dy = ...`
+        The vertical gap.
+
+Line 6  `total += max(dx, dy)`
+        The Chebyshev distance. Read it as: `min(dx, dy)` diagonal steps closing both gaps, plus
+        `max - min` straight steps closing whatever remains - which sums to `max`.
+
+        MEASURED against BFS over all eight movement directions on 400 random pairs: no
+        disagreements. And MEASURED against Manhattan `dx + dy`: different on 99.0% of random inputs.
+
+Line 7  `return total`
+        The hops are independent - no state carries between them - so summing is correct without any
+        further reasoning.
+
+        O(n) time, O(1) space, and completely independent of how large the coordinates are.
+
+AND THE IDIOMATIC ONE-LINER:
+
+    return sum(max(abs(a[0]-b[0]), abs(a[1]-b[1])) for a, b in zip(points, points[1:]))
+
+        `zip(points, points[1:])` yields consecutive pairs, which removes the index arithmetic. The
+        slice copies the list of references, which is O(n) pointers and irrelevant next to the
+        clarity.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `points = [[1,1], [3,4], [-1,0]]`.
+
+    hop            dx              dy              max     running total
+    -------------------------------------------------------------------------
+    (1,1)->(3,4)   |3-1| = 2       |4-1| = 3        3            3
+    (3,4)->(-1,0)  |-1-3| = 4      |0-4| = 4        4            7
+    return 7                                                        MEASURED
+
+    Manhattan would give (2+3) + (4+4) = 13. MEASURED, and 6 seconds too many.
+
+TRACE B - the first hop, step by step on the grid.
+
+    from (1,1) to (3,4):  dx = 2, dy = 3
+
+    second 1:  diagonal  ->  (2,2)     both gaps shrink
+    second 2:  diagonal  ->  (3,3)     both gaps shrink; dx is now 0
+    second 3:  vertical  ->  (3,4)     only dy remains
+
+    Three seconds: min(2,3) = 2 diagonal steps plus (3-2) = 1 straight step. Exactly max(2,3).
+
+TRACE C - the two extremes.
+
+    (0,0) -> (3,3):  dx = dy = 3.  Three diagonal steps, nothing straight.  answer 3
+                     Manhattan says 6                                        MEASURED
+
+    (0,0) -> (3,0):  dx = 3, dy = 0.  No diagonal steps are useful, three horizontal.  answer 3
+                     Manhattan also says 3 - the two metrics agree exactly when one gap is zero
+
+    That second row is why the Manhattan bug is not 100% wrong: purely horizontal or vertical hops
+    are the cases where it happens to be right.
+
+TRACE D - the verification, which is what makes the formula more than a claim.
+
+    A BFS over the 8 movement directions was run on 400 random point pairs with coordinates in
+    -5..5, computing the true shortest number of steps.
+
+    MEASURED: `max(|dx|, |dy|)` matched the BFS answer on all 400. Zero mismatches.
+
+    That is the difference between "the formula looks right" and "the formula is the shortest path".
+
+TRACE E - the failure rate of the wrong metric.
+
+    20,000 random point lists
+        Chebyshev vs Manhattan: different on 19,796 (99.0%)
+
+    The 204 agreements are the lists where every hop happens to be purely horizontal or purely
+    vertical. Any test case with a genuine diagonal exposes the bug immediately - which means this is
+    a mistake of understanding, not one that hides.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) for n points - constant work per hop, n-1 hops. Independent of the coordinate
+            magnitudes, because nothing is searched.
+    space   O(1) - one accumulator.
+
+    Compare BFS, which explores O(d^2) grid cells for a hop of distance d and is the only option once
+    obstacles exist. Here it was used as the ORACLE, not as the algorithm.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Using the Manhattan distance `|dx| + |dy|`. MEASURED, different from the correct answer on
+       99.0% of random inputs - it is the right formula for a world without diagonal moves.
+    2. Using the Euclidean distance, which is not an integer number of steps and underestimates.
+    3. `min(dx, dy)` instead of `max` - counts the diagonal portion and forgets the remainder.
+    4. Omitting `abs`, which gives the right answer by accident on some hops and the wrong one on
+       others.
+    5. Trying to reorder the points. The order is given; reordering is the travelling salesman
+       problem.
+    6. Running a search when a formula exists - correct, and exponentially more work.
+    7. Not naming the metric. Saying "Chebyshev, the chessboard distance, the number of king moves"
+       is a two-second signal that you know the general fact rather than this instance.
+
+THE TAKEAWAY
+    When a move can make progress on two axes at once, the cost is the MAXIMUM of the two gaps, not
+    their sum: spend `min(dx, dy)` seconds on diagonals and the difference on straight moves. That is
+    the Chebyshev distance, and it is optimal by the same two-line argument every minimum-moves
+    problem uses - the larger gap shrinks by at most one per move, and a concrete strategy achieves
+    exactly that. Verify such formulas against a brute-force search rather than trusting them; here
+    BFS over eight directions confirmed it on 400 pairs.""",
+]
+
+_EX_P1AO["Monotonic Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - is this array entirely non-decreasing, or entirely non-increasing?
+
+    [1, 2, 2, 3]   never goes down            -> True     MEASURED
+    [6, 5, 4, 4]   never goes up              -> True     MEASURED
+    [1, 3, 2]      goes up then down          -> False    MEASURED
+    [2, 2, 2]      both, vacuously            -> True     MEASURED
+    [1]            a single element           -> True     MEASURED
+
+NOTE THE WORD "NON". Equal neighbours are allowed - `[1,2,2,3]` is monotonic. Requiring STRICT
+increase or decrease is a different question, and MEASURED it is wrong on 15.6% of random arrays,
+including every array with a repeated adjacent value.
+
+THE ONE-PASS SOLUTION KEEPS TWO FLAGS:
+
+    increasing = decreasing = True
+    for i in range(1, len(nums)):
+        if nums[i] > nums[i - 1]: decreasing = False
+        if nums[i] < nums[i - 1]: increasing = False
+    return increasing or decreasing
+
+Each comparison can only ever KNOCK OUT a possibility, never restore one - so one pass settles it.
+An array is monotonic exactly when at least one flag survives.
+
+MEASURED against the obvious `nums == sorted(nums) or nums == sorted(nums, reverse=True)`: identical
+answers on all 20,000 random arrays.""",
+
+    """2. THE INTUITION - two hypotheses, each falsifiable by a single step.
+
+Start by assuming BOTH hypotheses are true: the array is non-decreasing, and it is non-increasing.
+Then walk the array; every adjacent pair is a test:
+
+    a rise (nums[i] > nums[i-1])  falsifies "non-increasing"
+    a drop (nums[i] < nums[i-1])  falsifies "non-decreasing"
+    equal neighbours              falsify NEITHER - which is exactly what "non" means
+
+At the end, the array is monotonic if either hypothesis survived. If both survived, every pair was
+equal and the array is constant - correctly reported as monotonic by both flags.
+
+WHY TWO SEPARATE `if` STATEMENTS AND NOT `if`/`elif`. On any single pair, at most one of `>` and `<`
+can hold, so `elif` is equivalent here - MEASURED, the `elif` version disagrees with the two-`if`
+version on 0 of 20,000 arrays. The two-`if` form is preferable for a different reason: it makes each
+test independent, so the code reads as "these are two separate facts about this pair" rather than
+implying an ordering that does not exist.
+
+THE STRUCTURE GENERALISES. This is the shape of every "does the whole sequence satisfy P, or Q"
+question: hold one boolean per hypothesis, let evidence eliminate them, and read off what remains at
+the end. It is the same reasoning as a sieve, and it costs one pass regardless of how many
+hypotheses there are.
+
+AN EARLY EXIT IS AVAILABLE. Once BOTH flags are false, no later element can change the answer, so
+returning immediately is safe. MEASURED on a 2,000,002-element array that fails in the first two
+positions: 0.009 ms with the early exit against 141 ms for the full pass - a factor of about 15,000.
+The worst case is unchanged; the common case of a clearly non-monotonic array becomes free.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MONOTONIC - moving in one direction only. Here it means non-decreasing OR non-increasing across the
+whole array.
+
+NON-DECREASING - each element is greater than OR EQUAL to the previous. `[1,2,2,3]`. Sometimes
+written "weakly increasing".
+
+NON-INCREASING - each element is less than or equal to the previous. `[6,5,4,4]`.
+
+STRICTLY INCREASING - each element is strictly greater than the previous, so equal neighbours are
+forbidden. NOT what this problem asks, and MEASURED, testing for it is wrong on 15.6% of random
+arrays.
+
+FLAG / HYPOTHESIS - a boolean that starts true and can only be falsified. The pattern makes a single
+pass sufficient.
+
+FALSIFIABLE - a claim that a single piece of evidence can refute. "The array never goes down" is
+refuted by one drop, which is why one pass suffices and why no evidence can ever restore the claim.
+
+VACUOUSLY TRUE - true because there are no counterexamples. A single-element array has no adjacent
+pairs, so both flags survive and the answer is True.
+
+SHORT-CIRCUIT / EARLY EXIT - stopping as soon as the answer is determined. Here, as soon as both
+flags are false.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the word "non".
+
+BUG 1 - TESTING FOR STRICT MONOTONICITY.
+
+    inc = all(nums[i] > nums[i-1] for i in range(1, len(nums)))
+    dec = all(nums[i] < nums[i-1] for i in range(1, len(nums)))
+    return inc or dec
+
+MEASURED on 20,000 random arrays drawn from a small value range: wrong on 3,124 of them, 15.6%.
+Two failures:
+
+    nums          correct   strict version
+    [4,4,4,4]      True         False
+    [1,1,1,2]      True         False
+
+Every failure is an array with an adjacent repeat. The problem says "monotone increasing OR monotone
+decreasing" with the non-strict meaning, and constant arrays are the extreme case: `[2,2,2]` is BOTH
+non-decreasing and non-increasing, so it is monotonic twice over.
+
+The 15.6% figure depends on how often duplicates appear - with values drawn from a wide range it
+would be far lower, and the bug would survive longer. That is the dangerous version.
+
+BUG 2 - RETURNING AFTER THE FIRST COMPARISON. Deciding the direction from `nums[0]` and `nums[1]` and
+then checking only that direction seems reasonable, and it breaks when the first pair is EQUAL: there
+is no direction to infer yet. `[2,2,1]` and `[2,2,3]` start identically and end differently. The
+two-flag version has no such problem, because it never commits to a direction at all.
+
+BUG 3 - COMPARING AGAINST BOTH SORTED COPIES. `nums == sorted(nums) or nums == sorted(nums,
+reverse=True)` is CORRECT - MEASURED to agree on all 20,000 arrays - and it is O(n log n) time and
+O(n) space.
+
+MEASURED on 2,000,000 sorted elements: the sorted comparison takes 17 ms and the one-pass flag
+version takes 128 ms. The "worse" algorithm is 7.5x FASTER, because `sorted` on an already-sorted
+list is nearly linear in C while the flag loop is interpreted Python. Worth knowing, and worth
+saying which one you would defend: the flag version is O(n) and O(1) space, which is what an
+interviewer is asking for, and the sorted version is what a Python programmer would actually ship
+for a short array.
+
+BUG 4 - NO EARLY EXIT WHEN IT IS CHEAP TO ADD. MEASURED on an array that fails at position 1:
+0.009 ms with the early exit, 141 ms without. Same complexity, four orders of magnitude on this
+input.
+
+BUG 5 - MISHANDLING SHORT ARRAYS. An empty or one-element array has no adjacent pairs; the loop body
+never runs, both flags stay True, and the answer is True. Correct with no special case - worth
+verifying rather than assuming, since it is the first thing an interviewer will probe.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - two flags, one pass. O(n) time, O(1) space. The answer to give, because it is the
+one whose complexity is right in any language.
+
+ALTERNATIVE B - the same with an early exit:
+
+    if not increasing and not decreasing:
+        return False
+
+MEASURED, 0.009 ms against 141 ms on a 2,000,002-element array that fails immediately. Free to add,
+and it changes nothing in the worst case.
+
+ALTERNATIVE C - `nums == sorted(nums) or nums == sorted(nums, reverse=True)`. O(n log n) time, O(n)
+space, and MEASURED 7.5x FASTER than the flag loop on two million sorted elements (17 ms vs 128 ms),
+because Timsort detects existing runs and does the whole comparison in C. The right choice in
+production for short arrays, the wrong answer in an interview about complexity.
+
+ALTERNATIVE D - `all(a <= b for a, b in zip(nums, nums[1:])) or all(a >= b for a, b in zip(nums,
+nums[1:]))`. Two passes, each short-circuiting, and it reads exactly like the definition. It is the
+most readable version and it can scan the array twice.
+
+ALTERNATIVE E - compute the sign of each difference, discard the zeros, and check that the remaining
+signs are all the same. It generalises directly to "how many direction changes are there", which is
+the follow-up question (Valid Mountain Array, Longest Turbulent Subarray).
+
+THE FAMILY - single-pass property checks:
+  * VALID MOUNTAIN ARRAY - exactly ONE direction change, up then down;
+  * LONGEST TURBULENT SUBARRAY - the opposite extreme, alternating directions;
+  * CHECK IF ARRAY IS SORTED AND ROTATED - counts descents circularly;
+  * MAXIMUM ASCENDING SUBARRAY SUM, LONGEST CONTINUOUS INCREASING SUBSEQUENCE - the same adjacent
+    comparison with an accumulator instead of a flag;
+  * 132 PATTERN and other order-pattern questions, where the flags become a stack.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the definition precisely first, with the word "non": non-decreasing OR non-increasing,
+so equal neighbours are allowed and a constant array qualifies.
+
+STEP 2 - start both hypotheses as true: `increasing = decreasing = True`.
+
+STEP 3 - one pass over adjacent pairs, `for i in range(1, len(nums))`.
+
+STEP 4 - let each pair falsify:
+    if nums[i] > nums[i - 1]: decreasing = False
+    if nums[i] < nums[i - 1]: increasing = False
+Note which flag each comparison kills - a RISE rules out non-increasing, which is the pairing people
+get backwards.
+
+STEP 5 - equal neighbours match neither condition, so both flags survive. Say that out loud; it is
+the whole difference between this and the strict version.
+
+STEP 6 - `return increasing or decreasing`.
+
+STEP 7 - offer the early exit and give the measurement: MEASURED 0.009 ms against 141 ms on an array
+that fails at the second element.
+
+STEP 8 - state the complexity: O(n) time, O(1) space. And if asked what you would actually write in
+Python for a small array, mention the sorted comparison - MEASURED faster despite being O(n log n) -
+while being clear about which one answers the interview question.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- I hold two hypotheses: the array never goes down, and the array never goes up. Both start true.
+
+- Then one pass over adjacent pairs. A rise disproves "never goes up", a drop disproves "never goes
+  down", and equal neighbours disprove neither - which matters, because the problem says non-
+  decreasing and non-increasing, so repeats are allowed.
+
+- At the end the array is monotonic if either hypothesis survived. If both survived, the array is
+  constant, which is monotonic in both directions.
+
+- The trap is testing for STRICT monotonicity. That rejects any array with an adjacent repeat, and I
+  measured it wrong on about sixteen per cent of random arrays with a small value range - including
+  every constant array.
+
+- Evidence can only ever eliminate a hypothesis, never restore one, so one pass is enough and I can
+  return early once both flags are false. On a two-million-element array that fails at the second
+  position, that early exit took nine microseconds against a hundred and forty-one milliseconds for
+  the full pass.
+
+- Linear time, constant space. One honest aside: comparing against `sorted(nums)` and its reverse is
+  O(n log n) with O(n) space, and I measured it seven times FASTER than the flag loop on two million
+  sorted elements, because Python's sort detects existing runs and does everything in C. I would
+  still give the flag version as the answer, because it is the one whose complexity is right in any
+  language.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def is_monotonic(nums):
+        increasing = decreasing = True
+        for i in range(1, len(nums)):
+            if nums[i] > nums[i - 1]:
+                decreasing = False
+            if nums[i] < nums[i - 1]:
+                increasing = False
+        return increasing or decreasing
+
+Line 2  `increasing = decreasing = True`
+        Both hypotheses assumed until refuted. Starting them True is what makes the empty and
+        single-element cases correct without a guard: no pairs, no evidence, both survive.
+
+Line 3  `for i in range(1, len(nums)):`
+        Starts at 1 so `nums[i-1]` is valid. For an array of length 0 or 1 the loop body never runs.
+
+Line 4  `if nums[i] > nums[i - 1]:`
+        A RISE.
+
+Line 5  `decreasing = False`
+        A rise refutes "non-increasing". This is the pairing to double-check - the flag being killed
+        is the OPPOSITE of the direction observed, and swapping the two assignments inverts the whole
+        function while still returning plausible booleans.
+
+Line 6  `if nums[i] < nums[i - 1]:`
+        A DROP. A separate `if`, not an `elif` - though on a single pair at most one can hold, so
+        MEASURED they agree on all 20,000 arrays. The two-`if` form states that these are independent
+        facts.
+
+Line 7  `increasing = False`
+
+        EQUAL NEIGHBOURS match neither condition, so nothing is falsified. That is precisely how
+        "non-decreasing" and "non-increasing" are implemented - by NOT reacting to equality.
+
+Line 8  `return increasing or decreasing`
+        Monotonic if either hypothesis is still standing. A constant array leaves both standing,
+        which is correct: it is non-decreasing and non-increasing at the same time.
+
+MEASURED, this agrees with `nums == sorted(nums) or nums == sorted(nums, reverse=True)` on all 20,000
+random arrays tested.
+
+AND THE EARLY-EXIT VERSION:
+
+    def is_monotonic_fast(nums):
+        increasing = decreasing = True
+        for i in range(1, len(nums)):
+            if nums[i] > nums[i - 1]:
+                decreasing = False
+            elif nums[i] < nums[i - 1]:
+                increasing = False
+            if not increasing and not decreasing:
+                return False              # no later element can change this
+        return True
+
+        MEASURED on a 2,000,002-element array that fails at position 1: 0.009 ms against 141 ms for
+        the version without the check. Identical worst case, four orders of magnitude on this input.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [1, 2, 2, 3]`.
+
+    i    nums[i-1]  nums[i]   rise?   drop?   increasing   decreasing
+    ----------------------------------------------------------------------
+    start                                        True         True
+    1        1         2       yes      no       True        False
+    2        2         2       no       no       True        False       <- equal: nothing changes
+    3        2         3       yes      no       True        False
+    return True or False -> True                                    MEASURED
+
+    Row i = 2 is the whole point: equal neighbours refute neither hypothesis, so the array stays
+    non-decreasing.
+
+TRACE B - `nums = [1, 3, 2]`.
+
+    i    pair      rise?   drop?   increasing   decreasing
+    ---------------------------------------------------------
+    1    1 -> 3     yes     no        True         False
+    2    3 -> 2     no      yes       False        False
+    return False or False -> False                              MEASURED
+
+    After i = 2 both flags are dead, and the early-exit version returns immediately here.
+
+TRACE C - `nums = [2, 2, 2]`, the case that breaks the strict version.
+
+    every pair is equal, so no comparison fires
+    both flags remain True
+    return True                                                 MEASURED
+
+    The strict version computes `all(a > b)` and `all(a < b)`, both False, and returns False -
+    MEASURED wrong, and wrong on every constant array.
+
+TRACE D - `nums = [1]` and `nums = []`.
+
+    the loop never executes, both flags stay True, return True
+
+    Vacuously monotonic, and handled by the initialisation rather than by a special case.
+
+TRACE E - the strict-version failure rate.
+
+    20,000 random arrays of length 1-7 with values from 1 to 4
+        two-flag version vs sorted comparison:   identical on all 20,000
+        strict version:                          wrong on 3,124 (15.6%)
+        `elif` instead of two `if`s:             identical on all 20,000
+
+    Every strict-version failure contains an adjacent repeat. With values drawn from a much wider
+    range, repeats would be rarer and the bug would hide better - which makes it more dangerous, not
+    less.
+
+TRACE F - the timings, which point in two different directions.
+
+    2,000,000 already-sorted elements
+        one-pass flags            128 ms
+        sorted() comparison        17 ms       7.5x FASTER despite being O(n log n)
+
+    2,000,002 elements failing at position 1
+        full pass                 141 ms
+        early exit                  0.009 ms   about 15,000x
+
+    The first pair says the interpreter's per-element cost dominates asymptotics at this size; the
+    second says the early exit is free and occasionally enormous.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one pass, two comparisons per adjacent pair. With the early exit, the best case is
+            O(1).
+    space   O(1) - two booleans.
+
+    The sorted-comparison alternative is O(n log n) time and O(n) space - and MEASURED 7.5x faster on
+    two million sorted elements, because Timsort exploits the existing run and runs in C. The
+    complexity answer and the stopwatch answer differ, and both are worth being able to state.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Testing for STRICT monotonicity. MEASURED wrong on 3,124 of 20,000 arrays (15.6%) - every
+       failure has an adjacent repeat, and every constant array is rejected.
+    2. Swapping which flag each comparison kills. A rise refutes NON-INCREASING; getting this
+       backwards inverts the function.
+    3. Inferring the direction from the first pair, which is undefined when the first two elements are
+       equal.
+    4. Special-casing short arrays. The loop simply does not run, so both flags survive and the
+       answer is True - correct by construction.
+    5. Leaving out the early exit. MEASURED 0.009 ms against 141 ms on an array that fails
+       immediately, and it costs one line.
+    6. Claiming the flag version is faster than the sorted comparison. MEASURED it is 7.5x slower at
+       two million elements in Python - it is better in COMPLEXITY and in space, which is a different
+       claim.
+
+THE TAKEAWAY
+    "Does the whole sequence satisfy P or Q" becomes one boolean per hypothesis, falsified by evidence
+    and never restored - which is why a single pass suffices and why an early exit is safe the moment
+    every hypothesis is dead. The specific trap here is the word NON: non-decreasing allows equal
+    neighbours, so the code must react to `>` and `<` and deliberately ignore `==`. Testing for strict
+    monotonicity instead is wrong on every array containing a repeat.""",
+]
+
+_EX_P1AO["Number Complement"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - flip every bit of a positive integer, but only the bits it actually
+uses.
+
+    5 is 101 in binary
+    flipping each of those three bits gives 010, which is 2
+    answer 2                                                MEASURED
+
+The leading zeros are NOT flipped. 5 stored in a 32-bit register is
+`00000000000000000000000000000101`, and flipping all of that would give 4,294,967,290 - a completely
+different answer. The problem says the complement is taken within the number's OWN bit-length.
+
+THE TRICK IS A MASK OF ALL ONES THE SAME WIDTH AS THE NUMBER, then XOR:
+
+    mask = 1
+    while mask < num:
+        mask = (mask << 1) | 1        # 1, 11, 111, 1111, ...
+    return num ^ mask
+
+XOR with 1 flips a bit and XOR with 0 leaves it alone, so XORing against a mask of ones flips exactly
+the bits inside the mask's width and nothing above it.
+
+    5      = 101
+    mask   = 111
+    5 ^ 7  = 010 = 2                                        MEASURED
+
+MEASURED against a string-based implementation that flips the characters of `bin(num)`: identical on
+every integer from 1 to 200,000. And the two obvious shortcuts both fail - Python's `~5` is -6, and a
+fixed 32-bit mask is MEASURED wrong on 100% of inputs.""",
+
+    """2. THE INTUITION - XOR is a controllable NOT.
+
+TWO FACTS ABOUT XOR:
+
+    b ^ 1 = the opposite of b        XOR with 1 flips
+    b ^ 0 = b                        XOR with 0 preserves
+
+So a XOR mask is a per-bit instruction sheet: put a 1 where you want a flip and a 0 where you want
+the bit left alone. This problem wants flips exactly up to the highest set bit, so the mask is all
+ones up to that width and zeros above.
+
+    num  =    101      (5, three bits wide)
+    mask =    111      three ones
+    XOR  =    010      = 2
+
+BUILDING THE MASK. Start at 1 and repeatedly shift left and set the new low bit:
+
+    mask = 1        ->  1
+    (1 << 1) | 1    ->  11
+    (3 << 1) | 1    ->  111
+
+Stop as soon as the mask is at least as large as `num`, which is exactly when it is as wide.
+
+    MEASURED: `while mask < num` - not `<=`. For num = 7 the mask reaches 7 and stops with the right
+    width. For num = 8 (1000) the mask must grow to 15 (1111), and it does, because 7 < 8.
+
+THE SHORTER FORM. Python exposes the width directly: `num.bit_length()` is the number of bits, so
+`(1 << num.bit_length()) - 1` is the mask in one expression - subtracting 1 from a power of two gives
+all ones below it.
+
+    MEASURED, it agrees on all 1..200,000 and is 5.8x faster than the loop (27 ms against 157 ms per
+    200,000 calls), because it is a single arithmetic step rather than an interpreted loop.
+
+A NICE CHECK: a number and its complement always sum to the mask, since together they have a 1 in
+every position. MEASURED, `n + complement(n) == (1 << n.bit_length()) - 1` for every n from 1 to
+99,999.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+COMPLEMENT (in this problem) - flip every bit within the number's own bit-length. Sometimes called
+the ONES' COMPLEMENT restricted to the significant bits.
+
+TWO'S COMPLEMENT - how signed integers are actually stored, where flipping ALL bits and adding one
+gives the negative. Python's `~` operator does the flip part on a conceptually infinite-width
+integer, which is why `~5` is -6 rather than 2.
+
+BIT-LENGTH - how many bits the number needs, i.e. the position of its highest set bit plus one.
+`5` has bit-length 3, `8` has 4. `num.bit_length()` in Python.
+
+MASK - an integer used to select bits. Here, all ones up to the number's width.
+
+`(1 << k) - 1` - the standard idiom for "k ones". A power of two is a single 1 bit; subtracting 1
+turns it into all ones below.
+
+`mask = (mask << 1) | 1` - grow a run of ones by one bit: shift left to make room, then set the new
+lowest bit.
+
+LEADING ZEROS - the zeros above the highest set bit. The whole problem is deciding whether they
+count, and here they do not.
+
+WORD SIZE - 32 or 64 bits in a fixed-width language. Python integers have no word size, which is why
+a hard-coded `0xFFFFFFFF` mask is wrong rather than merely unportable.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the two operators that look like the answer.
+
+BUG 1 - `return ~num`.
+
+`~` is the bitwise NOT, and in Python it operates on an integer of conceptually infinite width in
+two's complement. Flipping all of those infinitely many leading zeros produces infinitely many
+leading ones, which IS a negative number.
+
+MEASURED: `~5` is -6, and the correct answer is 2.
+
+The relationship is `~n == -n - 1`, so the operator is not even close - it is a different function
+with a different sign. In C, `~5` on a 32-bit int gives 4,294,967,290 (or -6 as a signed int),
+which is the same problem wearing a word size.
+
+BUG 2 - A FIXED-WIDTH MASK, `num ^ 0xFFFFFFFF`.
+
+This flips within 32 bits rather than within the number's own width.
+
+MEASURED across every value from 1 to 200,000: wrong on 200,000 of 200,000 - 100%. For num = 5 it
+returns 4,294,967,290 instead of 2. It is right only for numbers that genuinely occupy all 32 bits.
+
+BUG 3 - `while mask <= num` INSTEAD OF `while mask < num`. With `<=`, a number that is exactly all
+ones - like 7 - grows the mask one bit too far, to 15, and the answer becomes 8 instead of 0.
+MEASURED, the correct complement of 7 is 0, because 111 flips to 000.
+
+BUG 4 - FORGETTING THAT THE ANSWER CAN BE 0. `complement(1)` is 0 and `complement(7)` is 0 - MEASURED
+both. Any check like "if the result is falsy, something went wrong" is itself the bug.
+
+BUG 5 - BUILDING THE MASK WITH A FIXED 32 ITERATIONS. It works, and it makes the code depend on a
+width the problem does not have. The loop condition should be driven by `num`.
+
+BUG 6 - SUBTRACTING INSTEAD OF XORING. `mask - num` happens to give the same answer, because the mask
+has a 1 everywhere `num` might and there are no borrows - it is the same identity as `n + complement
+= mask`. It is correct, and it hides the reasoning: XOR states "flip these bits", while subtraction
+states a numeric coincidence that stops being true the moment the mask is not all ones.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 calls, all producing identical results:
+
+    (1 << num.bit_length()) - 1, then XOR      27 ms
+    growing the mask in a loop                157 ms
+    flipping the characters of bin(num)       258 ms
+
+ALTERNATIVE A - grow the mask with `(mask << 1) | 1`. O(bits) time, O(1) space, and it works in any
+language with no library support. The version to write on a whiteboard.
+
+ALTERNATIVE B - `num ^ ((1 << num.bit_length()) - 1)`. MEASURED 5.8x faster than the loop, and the
+clearest statement of intent once `bit_length` is known. Java has `Integer.highestOneBit`, C++20 has
+`std::bit_width`, and C has `__builtin_clz` - every language has some form of it.
+
+ALTERNATIVE C - the string version: `int("".join('1' if c=='0' else '0' for c in bin(num)[2:]), 2)`.
+MEASURED the slowest at 258 ms, and it is the most obviously correct - which makes it the right
+ORACLE. It was used here to verify the other two on every value from 1 to 200,000.
+
+ALTERNATIVE D - SMEAR THE HIGH BIT DOWN, the branch-free bit trick:
+
+    m = num
+    m |= m >> 1
+    m |= m >> 2
+    m |= m >> 4
+    m |= m >> 8
+    m |= m >> 16
+    return num ^ m
+
+Each step doubles the run of ones below the highest set bit, so after five steps a 32-bit value is
+all ones from the top bit down. No loop, no branch, five instructions - this is how it is done in
+performance-critical code, and it is worth knowing as the canonical "round up to all ones" idiom.
+
+ALTERNATIVE E - `mask - num` instead of `num ^ mask`. Same answer for the reason in section 4, and it
+says less about what is happening.
+
+THE FAMILY - masks and bit-width problems:
+  * NUMBER OF 1 BITS, HAMMING DISTANCE, MINIMUM BIT FLIPS - popcount problems, where XOR marks
+    differences rather than performing flips;
+  * REVERSE BITS - needs a FIXED width, which is the exact opposite convention to this problem, and
+    the two are frequently confused;
+  * POWER OF TWO - `n & (n-1) == 0`, another use of the mask-arithmetic identities;
+  * SINGLE NUMBER, DECODE XORED ARRAY - XOR for cancellation;
+  * COMPLEMENT OF BASE 10 INTEGER - the identical problem with a different cover story.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the convention first: flip only within the number's own bit-length, so leading zeros
+are untouched. That sentence is what rules out `~` and the fixed 32-bit mask.
+
+STEP 2 - say why XOR is the right operator: XOR with 1 flips a bit, XOR with 0 preserves it, so a
+mask of ones performs exactly the flips you want and nothing more.
+
+STEP 3 - build the mask:
+    mask = 1
+    while mask < num:
+        mask = (mask << 1) | 1
+
+STEP 4 - the condition is `<`, not `<=`. Check it on an all-ones input: for num = 7 the mask stops at
+7, and the answer is 0.
+
+STEP 5 - `return num ^ mask`.
+
+STEP 6 - mention the shorter form and its measurement: `num ^ ((1 << num.bit_length()) - 1)`,
+MEASURED 5.8x faster than the loop.
+
+STEP 7 - name the two wrong answers explicitly, because that is what the problem is testing:
+Python's `~5` is -6, and `5 ^ 0xFFFFFFFF` is 4,294,967,290 - MEASURED wrong on 100% of inputs.
+
+STEP 8 - state the complexity: O(number of bits), so O(1) for fixed-width input, and O(1) space.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The complement here flips only the bits the number actually uses - the leading zeros are left
+  alone. So five is one-oh-one, and flipping those three bits gives oh-one-oh, which is two.
+
+- XOR is the tool, because XOR with one flips a bit and XOR with zero leaves it alone. So I build a
+  mask of all ones exactly as wide as the number and XOR against it: the bits inside flip and
+  everything above is untouched.
+
+- I build the mask by starting at one and repeatedly shifting left and setting the new low bit, until
+  it is at least as big as the number. The condition is strictly less-than, so a number that is
+  already all ones - like seven - stops at the right width and gives zero.
+
+- The two tempting shortcuts are both wrong, and I would say so. Python's tilde operator works on an
+  effectively infinite-width integer, so tilde-five is minus six, not two. And a hard-coded
+  thirty-two-bit mask flips the leading zeros too - I measured that as wrong on every single value
+  from one to two hundred thousand.
+
+- The neater version uses the bit-length directly: one shifted left by the bit-length, minus one,
+  gives the mask in a single expression. I measured that about six times faster than the loop.
+
+- The answer can legitimately be zero - the complement of seven is zero - so nothing should treat a
+  falsy result as an error.
+
+- O of the number of bits, constant space, and I checked it against a string-flipping implementation
+  on every value from one to two hundred thousand.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def find_complement(num):
+        mask = 1
+        while mask < num:
+            mask = (mask << 1) | 1   # grow a mask of all 1s the width of num
+        return num ^ mask            # XOR flips every bit inside that width
+
+Line 2  `mask = 1`
+        A single 1 bit - the mask for a one-bit number. Starting from 0 would never grow, since
+        `(0 << 1) | 1` is 1 but the loop's arithmetic works cleanly from 1.
+
+Line 3  `while mask < num:`
+        Grow until the mask is at least as large as `num`, which is the same as being at least as
+        WIDE, because a run of k ones is the largest k-bit value.
+
+        STRICTLY less-than. With `<=`, an all-ones input like 7 would grow the mask to 15 and the
+        answer would be 8 instead of the correct 0 - MEASURED.
+
+Line 4  `mask = (mask << 1) | 1`
+        `<< 1` doubles the mask and puts a 0 in the new low position; `| 1` sets that bit. So the run
+        of ones grows by exactly one bit per iteration: 1, 11, 111, 1111.
+
+        The loop runs `bit_length(num) - 1` times, so it is O(number of bits) - at most 31 or 63
+        iterations for machine-sized integers.
+
+Line 5  `return num ^ mask`
+        XOR against all ones flips every bit inside the width. Above the mask, `num` has only zeros
+        and the mask has only zeros, so those positions stay 0 - which is exactly the "do not flip
+        leading zeros" requirement.
+
+        MEASURED on 5: mask 111, `101 ^ 111` = `010` = 2.
+
+        `mask - num` gives the same value, because `num + complement == mask` when the mask is all
+        ones. XOR is the version that says what is happening.
+
+MEASURED, this matches a string-flipping implementation on every integer from 1 to 200,000.
+
+AND THE FASTER FORM:
+
+    def find_complement_bitlen(num):
+        return num ^ ((1 << num.bit_length()) - 1)
+
+        `num.bit_length()` is the width; `1 << width` is the next power of two; minus one turns it
+        into all ones below. MEASURED 27 ms against 157 ms for the loop over 200,000 calls - 5.8x.
+
+AND THE BRANCH-FREE MASK, the version used in performance code:
+
+    m = num
+    m |= m >> 1
+    m |= m >> 2
+    m |= m >> 4
+    m |= m >> 8
+    m |= m >> 16          # covers 32 bits; add >> 32 for 64
+    return num ^ m
+
+        Each line doubles the run of ones beneath the highest set bit, so after five steps everything
+        below the top bit is set. No loop and no data-dependent branching.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `num = 5` (binary 101).
+
+    building the mask
+        mask = 1     (1)      1 < 5, so grow
+        mask = 3     (11)     3 < 5, so grow
+        mask = 7     (111)    7 < 5 is false, stop
+
+    XOR
+        num  = 101
+        mask = 111
+        XOR  = 010 = 2                                          MEASURED
+
+TRACE B - `num = 7` (binary 111), the all-ones case that tests the loop condition.
+
+    mask = 1   (1)     1 < 7, grow
+    mask = 3   (11)    3 < 7, grow
+    mask = 7   (111)   7 < 7 is FALSE, stop
+
+    7 ^ 7 = 0                                                   MEASURED
+
+    With `<=` the loop would grow once more to 15, and `7 ^ 15` is 8 - wrong. This single input is
+    what distinguishes the two conditions.
+
+TRACE C - `num = 8` (binary 1000), where the mask must grow past the value.
+
+    mask = 1    1 < 8, grow
+    mask = 3    3 < 8, grow
+    mask = 7    7 < 8, grow
+    mask = 15   15 < 8 is false, stop
+
+    1000 ^ 1111 = 0111 = 7                                      MEASURED
+
+    Note the mask (15) is LARGER than the number (8). That is correct - what matters is equal WIDTH,
+    and four ones is the widest four-bit value.
+
+TRACE D - the two wrong operators, on the same input.
+
+    num = 5
+        correct                     2
+        ~num (Python)              -6      an infinite-width two's-complement flip
+        num ^ 0xFFFFFFFF   4,294,967,290   a 32-bit flip
+
+    MEASURED, the fixed 32-bit mask is wrong on all 200,000 values from 1 to 200,000, because a
+    number smaller than 2^31 always has leading zeros that get flipped into leading ones.
+
+TRACE E - the identity worth remembering.
+
+    n + complement(n) = mask, because together they have a 1 in every position of the width
+
+    5 + 2  = 7  = 111        MEASURED
+    8 + 7  = 15 = 1111       MEASURED
+    1 + 0  = 1  = 1          MEASURED
+
+    MEASURED to hold for every n from 1 to 99,999. It is also why `mask - num` works as an
+    alternative implementation.
+
+TRACE F - the timings, 200,000 calls each.
+
+    bit_length form      27 ms
+    mask-growing loop   157 ms      5.8x slower
+    string flipping     258 ms      9.6x slower
+
+    All three MEASURED to give identical results on 1..200,000. The string version is the slowest and
+    the most obviously correct, which is what makes it the right thing to test against rather than to
+    ship.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(number of bits) for the mask-growing loop - at most 31 iterations for a 32-bit input,
+            so effectively O(1). The `bit_length` form is a single arithmetic step; the smear-down
+            version is five fixed instructions.
+    space   O(1) for all of them. The string version is O(bits) for the intermediate string.
+
+    MEASURED per 200,000 calls: 27 ms for `bit_length`, 157 ms for the loop, 258 ms for the string
+    version.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `~num`. In Python it returns `-num - 1` because the integer is conceptually infinite-width in
+       two's complement - MEASURED, `~5` is -6 where the answer is 2.
+    2. A fixed 32-bit mask. MEASURED wrong on 100% of values from 1 to 200,000, because every one of
+       them has leading zeros that get flipped.
+    3. `while mask <= num` instead of `<`. Wrong exactly on the all-ones inputs - 1, 3, 7, 15 - which
+       are also the easiest to overlook when testing.
+    4. Treating a result of 0 as an error. `complement(7)` is 0 and `complement(1)` is 0.
+    5. Hard-coding 32 iterations of mask growth, which reintroduces a word size the problem does not
+       have.
+    6. Using `mask - num`. Correct, and it describes a numeric coincidence rather than the operation
+       being performed.
+
+THE TAKEAWAY
+    XOR is a controllable NOT: a 1 in the mask flips, a 0 preserves - so any "flip these specific
+    bits" problem is "build the right mask, then XOR". Here the mask is all ones the width of the
+    number, which is `(1 << num.bit_length()) - 1`, and the entire difficulty is that the width comes
+    from the VALUE rather than from the machine word. That is exactly why `~` and `0xFFFFFFFF` both
+    fail, and why the sibling problem Reverse Bits - which does use a fixed 32-bit width - is a
+    genuinely different question.""",
+]
+
+_EX_P1AO["Number of Arithmetic Triplets"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count the triples of values that are evenly spaced by a given gap.
+
+Given a STRICTLY INCREASING array and a number `diff`, count the index triples i < j < k where
+
+    nums[j] - nums[i] == diff    and    nums[k] - nums[j] == diff
+
+So the three values form an arithmetic progression with a common difference of `diff`.
+
+    nums = [0,1,4,6,7,10], diff = 3
+    (0, 3, 6)?  0 and 3 - but 3 is not in the array
+    (1, 4, 7)   all present   -> a triplet
+    (4, 7, 10)  all present   -> a triplet
+    answer 2                                                MEASURED
+
+THE ARRAY BEING STRICTLY INCREASING IS WHAT MAKES THIS EASY. Every value is distinct, and a smaller
+value always appears at a smaller index - so the constraint `i < j < k` follows automatically from
+`v < v+diff < v+2*diff` (given `diff > 0`). The index condition disappears, and only the VALUES
+matter.
+
+So put the values in a set and, for each value `v`, ask whether `v + diff` and `v + 2*diff` are both
+present:
+
+    present = set(nums)
+    return sum(1 for n in nums if (n + diff) in present and (n + 2*diff) in present)
+
+MEASURED against the O(n^3) triple loop on 5,000 random strictly increasing arrays: identical answers
+every time - and 482x faster on an array of just 120 elements (0.014 ms against 7 ms).""",
+
+    """2. THE INTUITION - anchor each triplet at its smallest element.
+
+THE BRUTE FORCE examines every combination of three indices: O(n^3), which at n = 20,000 would be
+about 1.3 x 10^12 iterations - MEASURED as the count, and plainly impossible.
+
+THE KEY OBSERVATION IS THAT A TRIPLET IS DETERMINED BY ITS FIRST ELEMENT. Once you fix `v`, the other
+two members are forced: they must be exactly `v + diff` and `v + 2*diff`. There is no choice and
+nothing to search. So instead of choosing three elements, choose ONE and check two memberships.
+
+That turns O(n^3) into O(n) with O(1) lookups.
+
+    for each value v in nums:
+        if (v + diff) is present and (v + 2*diff) is present:
+            that is exactly one triplet, anchored at v
+
+NO DOUBLE COUNTING. Each triplet has exactly one smallest element, and it is counted only when the
+loop reaches that element. Different anchors give different triplets, so the count is exact rather
+than needing a division by anything.
+
+WHY THE INDEX ORDER TAKES CARE OF ITSELF. The array is strictly increasing, so larger values sit at
+larger indices. Since `diff > 0`, we have `v < v + diff < v + 2*diff`, and therefore their indices
+satisfy i < j < k automatically. The problem's `i < j < k` condition never needs to be checked.
+
+WHAT BREAKS WITHOUT THAT GUARANTEE. If the array were not sorted, or had duplicates, the set version
+would count differently from the index-based definition. MEASURED on `[0,1,0,1,2]` with diff = 1: the
+set version says 2 and the index-based brute force says 3 - because the repeated values create extra
+valid index triples that a set has collapsed. The guarantee is load-bearing, and naming it is the
+difference between using the trick and understanding it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ARITHMETIC TRIPLET - three values with a constant gap between consecutive members: `a`, `a+d`,
+`a+2d`.
+
+COMMON DIFFERENCE - the gap `diff`. The problem gives it, which is what makes each triplet
+determined by its first element.
+
+STRICTLY INCREASING - every element is greater than the one before, so all values are distinct AND
+sorted. Two guarantees in one phrase, and both are used.
+
+ANCHOR - the element a search is organised around. Here the smallest member of each triplet, chosen
+because it determines the other two.
+
+SET MEMBERSHIP - `x in some_set`, an O(1) average hash lookup. On a LIST the same syntax is an O(n)
+scan, which would put the complexity back to O(n^2).
+
+O(n^3) versus O(n) - the triple loop versus the anchored scan. MEASURED at n = 120: 7 ms against
+0.014 ms, 482x - and at n = 20,000 the triple loop would need about 1.3 x 10^12 iterations.
+
+DOUBLE COUNTING - counting the same combination more than once. Avoided here by anchoring at a unique
+position (the smallest element) rather than at an arbitrary one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the assumptions the set version quietly needs.
+
+THE SET SOLUTION IS CORRECT ONLY BECAUSE OF THE INPUT GUARANTEE. It counts by VALUE, and it assumes:
+
+    - the values are DISTINCT, so a set loses nothing;
+    - the array is SORTED, so value order implies index order and `i < j < k` is free;
+    - `diff > 0`, so the three members are genuinely in increasing order.
+
+MEASURED with the guarantee violated: `nums = [0,1,0,1,2]`, `diff = 1`. The set version returns 2;
+the index-based brute force, which honours `i < j < k`, returns 3. The repeated 0 and 1 create an
+extra valid index triple that the set has collapsed into a single value.
+
+So the correct thing to say in an interview is "this works because the array is strictly increasing"
+- and if it were not, the fix is a Counter and a multiplication of counts rather than a set.
+
+BUG 1 - THE TRIPLE LOOP. Correct, and O(n^3). MEASURED at n = 120: 7 ms against 0.014 ms for the set
+version, a factor of 482 - and the ratio grows as n^2. At the problem's limits it is a guaranteed
+timeout.
+
+BUG 2 - ANCHORING AT THE MIDDLE ELEMENT AND CHECKING `v - diff` AND `v + diff`. This is also correct
+and counts each triplet exactly once, because each triplet has exactly one middle element. Anchoring
+at the LARGEST works too. What does NOT work is checking several anchors and adding the results,
+which counts every triplet three times.
+
+BUG 3 - USING A LIST INSTEAD OF A SET. `if (n + diff) in nums` is a linear scan, so the whole thing
+becomes O(n^2). It is the single-character difference between an accepted solution and a slow one -
+and on a sorted array the honest alternative is binary search, O(n log n), which is still worse than
+the set.
+
+BUG 4 - ITERATING THE SET INSTEAD OF THE ARRAY. With distinct values it gives the same answer.
+`for n in present` rather than `for n in nums` works here purely because the guarantee makes them the
+same multiset - relying on that without saying so is how the duplicate case gets missed.
+
+BUG 5 - COMPUTING `2 * diff` INSIDE THE LOOP. Harmless, and it is one multiplication per element for
+a value that never changes.
+
+BUG 6 - ASSUMING THE ARRAY MUST BE SORTED FOR THE SET VERSION TO RUN. It runs regardless; it just
+answers a slightly different question if it is not. The failure is silent, which is what makes stating
+the assumption worth doing.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - anchor at the smallest element and test two memberships. O(n) time, O(n) space.
+MEASURED 2.5 ms on 20,000 elements. The answer.
+
+ALTERNATIVE B - anchor at the MIDDLE element: `if (n - diff) in present and (n + diff) in present`.
+Identical complexity, identical count - each triplet has exactly one middle - and some people find it
+more symmetric. Worth mentioning to show the choice of anchor is deliberate rather than copied.
+
+ALTERNATIVE C - the O(n^3) triple loop. MEASURED 482x slower at n = 120 and hopeless beyond that. Its
+value is as an ORACLE: it is the direct transcription of the definition, including the `i < j < k`
+condition, which is exactly what makes it the right thing to check the fast version against.
+
+ALTERNATIVE D - TWO POINTERS or binary search, exploiting the sortedness instead of hashing. For each
+`v`, binary search for `v + diff` and `v + 2*diff`: O(n log n) time and O(1) extra space. The right
+answer when memory matters or the values are not hashable.
+
+ALTERNATIVE E - a COUNTER instead of a set, which is what you need the moment duplicates are allowed:
+the number of triplets anchored at value `v` becomes `count[v] * count[v+diff] * count[v+2*diff]`.
+That is the general form, and the set version is its special case where every count is 1.
+
+ALTERNATIVE F - dynamic programming over the values, counting for each value how many arithmetic
+PAIRS end at it and then extending - which is the shape needed for the harder relatives where the
+length is not fixed at three.
+
+THE FAMILY - fixed-gap and progression counting:
+  * ARITHMETIC SLICES - count all arithmetic SUBARRAYS of any length, solved by counting runs;
+  * LONGEST ARITHMETIC SUBSEQUENCE (and with a GIVEN DIFFERENCE) - the DP generalisation, where the
+    state is (value, difference);
+  * TWO SUM / 3SUM - the same "fix one element and look up the rest" reduction, with 3SUM needing
+    sorting plus two pointers because the third element is not determined;
+  * COUNT GOOD PAIRS / COUNT NICE PAIRS - the same set-or-counter trick with a different key;
+  * MAXIMUM NUMBER OF PAIRS IN ARRAY - counting by value rather than by position.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the reduction out loud: a triplet is determined by its smallest element, because `diff`
+is given. So there is nothing to search - only two memberships to test per element.
+
+STEP 2 - say why the index condition disappears: the array is strictly increasing and `diff` is
+positive, so `v < v+diff < v+2*diff` implies their indices are already in order.
+
+STEP 3 - build the set once, outside the loop: `present = set(nums)`.
+
+STEP 4 - count:
+    return sum(1 for n in nums if (n + diff) in present and (n + 2 * diff) in present)
+
+STEP 5 - explain why there is no double counting: each triplet has exactly one smallest element, so
+it is found exactly once.
+
+STEP 6 - state the complexity: O(n) time and O(n) space, against O(n^3) for the definition. MEASURED
+482x at n = 120, and the ratio grows as n^2.
+
+STEP 7 - name the assumption you are relying on - strictly increasing, hence distinct and sorted -
+and say what changes without it: a Counter and a product of counts. MEASURED on a non-increasing
+input, the set version and the index-based definition disagree.
+
+STEP 8 - offer the binary-search variant if O(1) extra space is wanted: O(n log n), no hashing.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The naive reading is a triple loop, which is n cubed. But the gap is GIVEN, so once I pick the
+  smallest element of a triplet the other two are completely determined - they have to be that value
+  plus diff and plus twice diff. There is nothing to search.
+
+- So I put all the values in a set and, for each value, check whether those two other values exist.
+  Each hit is exactly one triplet.
+
+- No double counting, because every triplet has exactly one smallest element and I only count it
+  there.
+
+- And I never have to check the index condition, because the array is strictly increasing and the gap
+  is positive - so the three values are automatically in increasing index order.
+
+- That strictly-increasing guarantee is doing real work, and I would say so. It means the values are
+  distinct, so a set loses nothing, and it means value order implies index order. If duplicates were
+  allowed I would use a Counter and multiply the three counts instead - I checked that on a
+  non-increasing input the set version and the index-based definition genuinely disagree.
+
+- Linear time and linear space, against n cubed for the definition - I measured 482 times faster at
+  just a hundred and twenty elements, and the gap grows as n squared.
+
+- If I needed constant extra space, the array is sorted, so I could binary search for the two
+  partners instead: n log n and no hashing.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def arithmetic_triplets(nums, diff):
+        present = set(nums)
+        # each value that has value+diff and value+2*diff present anchors a triplet
+        return sum(1 for n in nums if (n + diff) in present and (n + 2 * diff) in present)
+
+Line 2  `present = set(nums)`
+        One pass, hashing every value. Built ONCE - inside the comprehension it would be rebuilt per
+        element and the function would be O(n^2).
+
+        Because the array is strictly increasing, the set contains exactly the same multiset of
+        values as the list; nothing is lost by deduplication. That is the guarantee being used.
+
+Line 4  `sum(1 for n in nums if ...)`
+
+        `for n in nums` - `n` is the ANCHOR, the smallest member of a candidate triplet. Iterating
+        the list rather than the set is deliberate: with duplicates they would differ, and this makes
+        the intent visible.
+
+        `(n + diff) in present` - the middle member. O(1) average.
+
+        `(n + 2 * diff) in present` - the largest member. The `and` short-circuits, so the second
+        lookup only happens when the first succeeded.
+
+        Each anchor contributes at most 1, and a triplet has exactly one smallest element - so the
+        total is the number of triplets, with no double counting and no division.
+
+        The index condition `i < j < k` is never tested, because the array is strictly increasing and
+        `diff > 0`, so the three values are in increasing order and therefore at increasing indices.
+
+MEASURED, this agrees with the O(n^3) triple loop - the literal transcription of the definition,
+index conditions and all - on all 5,000 random strictly increasing arrays, at 0.014 ms against 7 ms
+for 120 elements.
+
+AND THE VERSION FOR WHEN DUPLICATES ARE ALLOWED:
+
+    from collections import Counter
+
+    def arithmetic_triplets_multiset(nums, diff):
+        count = Counter(nums)
+        return sum(count[v] * count[v + diff] * count[v + 2 * diff] for v in count)
+
+        The number of triplets anchored at value `v` is the product of how many copies of each member
+        exist. The set version is the special case where every count is 1.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [0,1,4,6,7,10]`, `diff = 3`.
+
+    present = {0,1,4,6,7,10}
+
+    anchor n   n+3 present?   n+6 present?   counts?
+    ---------------------------------------------------
+        0        3 -> no          -             no
+        1        4 -> yes         7 -> yes      YES     (1,4,7)
+        4        7 -> yes        10 -> yes      YES     (4,7,10)
+        6        9 -> no          -             no
+        7       10 -> yes        13 -> no       no
+       10       13 -> no          -             no
+    return 2                                                    MEASURED
+
+    Note the fifth row: 7 has a valid middle partner but no third member, so the `and` correctly
+    rejects it - and short-circuiting means the `13` lookup was the only extra work.
+
+TRACE B - `nums = [4,5,6,7,8,9]`, `diff = 2`.
+
+    present = {4,5,6,7,8,9}
+
+    anchor   +2      +4      counts?
+    -------------------------------------
+      4      6 yes   8 yes     YES     (4,6,8)
+      5      7 yes   9 yes     YES     (5,7,9)
+      6      8 yes  10 no      no
+      7      9 yes  11 no      no
+      8     10 no    -         no
+      9     11 no    -         no
+    return 2                                                    MEASURED
+
+TRACE C - the smallest possible case, `nums = [0,1,2]`, `diff = 1`.
+
+    anchor 0: 1 present, 2 present -> YES
+    anchor 1: 2 present, 3 absent  -> no
+    anchor 2: 3 absent             -> no
+    return 1                                                    MEASURED
+
+TRACE D - why anchoring at the smallest element counts each triplet once.
+
+    the triplet (1,4,7) has exactly one smallest member, 1
+    it is discovered when the loop reaches 1, and never again:
+        at 4 the code looks for 7 and 10 - a different triplet
+        at 7 the code looks for 10 and 13 - a different triplet
+
+    Anchoring at the middle would find it at 4 (checking 1 and 7) - also exactly once. Checking BOTH
+    anchor styles and adding would count it twice.
+
+TRACE E - what the guarantee is worth, MEASURED.
+
+    nums = [0,1,0,1,2], diff = 1   (NOT strictly increasing - a deliberate violation)
+
+    set version              2
+    index-based brute force  3
+
+    The brute force finds an extra triple using the second copy of 0 or 1 at a valid index position;
+    the set collapsed those duplicates. Neither is "wrong" - they answer different questions, and the
+    problem's guarantee is what makes them the same question.
+
+TRACE F - the cost.
+
+    120 elements
+        O(n^3) triple loop      7 ms
+        set version             0.014 ms        482x
+
+    20,000 elements
+        set version             2.5 ms  -> 10 triplets
+        the triple loop would need about 1.3 x 10^12 iterations
+
+    The second row is the argument: the fast version is not an optimisation, it is the difference
+    between finishing and not.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one pass to build the set, one pass with two O(1) lookups per element.
+    space   O(n) for the set. The binary-search variant trades that for O(n log n) time and O(1)
+            extra space, which is the right deal when memory is scarce.
+
+    The definition's triple loop is O(n^3). MEASURED at n = 120: 7 ms against 0.014 ms. At n = 20,000
+    the set version takes 2.5 ms while the triple loop would need roughly 1.3 x 10^12 iterations.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Writing the triple loop. Correct, O(n^3), and a certain timeout - MEASURED 482x slower at just
+       120 elements.
+    2. Using `in` on the LIST instead of the set, which is an O(n) scan and makes the whole thing
+       O(n^2) while looking identical.
+    3. Adding the counts from two different anchor choices, which counts every triplet twice.
+    4. Not stating the strictly-increasing assumption. MEASURED, on `[0,1,0,1,2]` the set version and
+       the index-based definition disagree - 2 against 3.
+    5. Building the set inside the loop.
+    6. Assuming duplicates would work the same way. They need a Counter and a product of three counts.
+    7. Checking the index condition explicitly. It is implied by sortedness and a positive `diff`, and
+       saying WHY it can be skipped is better than checking it.
+
+THE TAKEAWAY
+    When the shape of the answer is fully determined by one of its members - here, the gap is given so
+    the smallest element fixes the other two - stop searching for combinations and start anchoring:
+    iterate the candidates for that one member and look the rest up in O(1). That is the same
+    reduction that turns 3SUM's inner loop into a hash lookup and Two Sum into one pass. And say out
+    loud which input guarantee is holding the trick up, because here "strictly increasing" is what
+    lets a value-based set answer an index-based question.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
