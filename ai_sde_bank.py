@@ -274021,6 +274021,1352 @@ THE TAKEAWAY
     it is worth knowing by shape and not by memory.""",
 ]
 
+_EX_P1AO["Check if Array Is Sorted and Rotated"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - could this array have started out sorted, before someone
+rotated it?
+
+ROTATING an array means cutting it at some position and swapping the two pieces. Sort
+`[1,2,3,4,5]` and then rotate it by two:
+
+    sorted     1 2 3 4 5
+    cut here         |
+    rotated    4 5 1 2 3
+
+The question: given an array, could it have been produced that way? Note that zero rotation
+counts, so an already-sorted array is a yes.
+
+    [3,4,5,1,2]   -> True    the sorted array rotated by three
+    [2,1,3,4]     -> False   no rotation of [1,2,3,4] looks like this
+    [1,2,3]       -> True    rotated by zero
+    [1,1,1]       -> True    duplicates are allowed, and non-decreasing is enough
+    [2,1]         -> True    [1,2] rotated by one
+
+THE ONE-LINE TEST. Walk the array in a CIRCLE, comparing each element with the next and
+wrapping from the last back to the first. Count how many times an element is strictly greater
+than the one after it. Call each of those a DROP. The array is a rotated sorted array exactly
+when the drop count is 0 or 1.
+
+MEASURED against a brute-force check that compares the array against every rotation of its own
+sorted copy: the drop test agrees on all 40,000 random arrays tested, with values drawn from a
+tiny range so that duplicates are everywhere - 68.2% of those arrays contained a repeat.""",
+
+    """2. THE INTUITION - a rotation cuts the sorted order in exactly one place.
+
+Lay a sorted array out in a CIRCLE rather than a line:
+
+        1 -> 2 -> 3 -> 4 -> 5
+        ^                   |
+        +-------------------+
+
+Going round the circle, every step goes up except one - the step from the largest element back
+to the smallest. That single downward step is the seam.
+
+Rotating does not change the circle at all. It only changes WHERE YOU START READING. So every
+rotation of a sorted array has exactly the same property: going round the circle, at most one
+step goes down.
+
+    [1,2,3,4,5]  circle steps: 1<2, 2<3, 3<4, 4<5, 5>1     one drop (the wrap)
+    [4,5,1,2,3]  circle steps: 4<5, 5>1, 1<2, 2<3, 3<4     one drop (in the middle)
+    [1,1,1]      circle steps: 1=1, 1=1, 1=1               zero drops
+
+Which is why the test counts drops CIRCULARLY and allows 0 or 1. Zero happens when every
+element is equal - MEASURED, 349 of 20,000 genuinely-rotated random arrays had zero drops, the
+rest had exactly one.
+
+AND WHY IT IS NEVER 1 FOR A BAD ARRAY. If the array is not a rotation of its sorted self, the
+values go down and come back up more than once around the circle, so at least two drops exist.
+There is no way to have exactly one drop and not be a rotated sorted array: the segment after
+the drop is non-decreasing, the segment before it is non-decreasing, and the wrap-around
+comparison is what checks that the tail's largest value does not exceed the head's smallest.
+That last check is the one people leave out.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NON-DECREASING - each element is greater than or equal to the one before. `[1,2,2,5]` is
+non-decreasing. This is what "sorted" means here; strictly increasing would forbid the
+duplicates the problem explicitly allows.
+
+ROTATION - moving the first k elements to the end (or equivalently the last k to the front).
+`[1,2,3,4]` rotated by 1 is `[2,3,4,1]`. A rotation by 0 leaves the array alone, which is why
+an already-sorted array is a valid answer.
+
+DROP (also called a break or an inversion point) - a position where an element is STRICTLY
+greater than the next one. `[3,4,5,1,2]` has one drop, between 5 and 1.
+
+CIRCULAR COMPARISON - comparing the last element with the first, as if the array's ends were
+joined. Written as `nums[(i+1) % n]`, where the modulo turns index n into index 0.
+
+`%` HERE IS AN INDEX WRAP, NOT ARITHMETIC. `(i+1) % n` equals `i+1` for every position except
+the last, where it equals 0. It exists purely to avoid an `if i == n-1` special case.
+
+STRICTLY GREATER `>` versus GREATER-OR-EQUAL `>=` - `>` treats equal neighbours as fine, which
+they are. Using `>=` counts every repeated value as a drop, and MEASURED that is wrong on
+25.3% of arrays.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the wrap-around, and the comparison operator.
+
+BUG 1 - COMPARING ONLY WITHIN THE ARRAY, `for i in range(n-1)`, with no wrap.
+
+This counts drops between adjacent pairs but never compares the last element with the first -
+and that comparison is what rules out arrays whose tail is too big.
+
+MEASURED on 40,000 random arrays: wrong on 5,089 of them, 12.7%. Four of the failures:
+
+    nums                    truth     without the wrap
+    [1,4,4,2]               False           True
+    [1,3,3,2,4]             False           True
+    [2,4,2,3]               False           True
+    [1,2,2,1,2,2,4]         False           True
+
+Take `[1,4,4,2]`. Inside the array there is exactly one drop, 4 > 2, so the no-wrap version
+says yes. But if this were a rotation of a sorted array, the sorted array would be `[1,2,4,4]`,
+whose rotations are `[2,4,4,1]`, `[4,4,1,2]` and `[4,1,2,4]` - and none of them is
+`[1,4,4,2]`. The circular comparison is what catches it: the last element is 2 and the first is
+1, and 2 > 1, so the wrap is a SECOND drop. Two drops means no.
+
+The failures are all in the same direction: the no-wrap version says True when the answer is
+False. It never rejects a valid array, so a test suite made of valid inputs passes it
+completely.
+
+BUG 2 - USING `>=` INSTEAD OF `>`.
+
+MEASURED: wrong on 10,136 of 40,000, 25.3%. Failures:
+
+    nums          truth      with >=
+    [4,4]         True        False
+    [2,2]         True        False
+    [3,3,2,2]     True        False
+    [1,2,1]       True        False
+
+Every failure is an array with a repeated value, and this one fails the other way - it rejects
+arrays that are valid. `[4,4]` is `[4,4]` sorted and rotated by zero; it has no drops at all,
+but `>=` scores both comparisons as drops.
+
+The problem says non-decreasing, so equal neighbours are ordinary. MEASURED, 68.2% of the test
+arrays contained a duplicate, so this is not an exotic input.
+
+THE TWO BUGS ARE OPPOSITE, WHICH IS THE USEFUL THING TO REMEMBER. Forgetting the wrap accepts
+invalid arrays; using `>=` rejects valid ones. If you write a quick test suite of only valid
+inputs you catch the second bug and miss the first entirely.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the circular drop count in the code below. One pass, O(n) time, O(1) space,
+no branching beyond the comparison. This is the answer.
+
+ALTERNATIVE B - find the drop, then verify the two halves explicitly: locate the single index
+where `nums[i] > nums[i+1]`, then check that `nums[i+1:] + nums[:i+1]` is sorted. Correct, and
+it makes the reasoning visible, at the cost of building a new list. Useful if the interviewer
+asks you to also RETURN the rotation amount, which is `i+1`.
+
+ALTERNATIVE C - `sorted(nums)` and compare against every rotation. O(n^2) time (or O(n) with a
+string-search trick), and it is what I used as the brute-force oracle for the measurements
+above. Good as a correctness check, wasteful as an answer.
+
+ALTERNATIVE D - the concatenation trick: an array is a rotation of another exactly when it
+appears as a contiguous block inside that array doubled. Check `nums` is a sublist of
+`sorted(nums) + sorted(nums)`. Cute, O(n) with KMP, and far more machinery than one drop count.
+
+WHAT CHANGES IF DUPLICATES ARE FORBIDDEN. Nothing in this solution - `>` already handles both
+cases. It matters enormously in the SEARCH version of this problem, where duplicates destroy
+the binary search's ability to tell which half is sorted and push the worst case to O(n).
+
+THE FAMILY - rotated-sorted-array problems, which come as a ladder:
+  * this one, the O(n) yes-or-no;
+  * FIND MINIMUM IN ROTATED SORTED ARRAY - binary search for the drop, O(log n);
+  * SEARCH IN ROTATED SORTED ARRAY - binary search where each step decides which half is the
+    sorted one;
+  * FIND MINIMUM / SEARCH IN ROTATED SORTED ARRAY II - the same with duplicates allowed, where
+    the answer degrades to O(n) in the worst case;
+  * CHECK IF ARRAY IS SORTED (no rotation) - the same loop without the wrap-around, which is
+    exactly the bug above being the correct answer to a different question.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the invariant out loud first: laid out in a circle, a rotated sorted array has at
+most one step that goes down. That sentence is the algorithm.
+
+STEP 2 - `n = len(nums)`. You need it for the modulo.
+
+STEP 3 - count drops circularly:
+    breaks = sum(1 for i in range(n) if nums[i] > nums[(i+1) % n])
+`range(n)`, not `range(n-1)` - the last iteration is the wrap-around comparison and it is the
+one doing the real work.
+
+STEP 4 - `>` and not `>=`. Equal neighbours are allowed by "non-decreasing".
+
+STEP 5 - `return breaks <= 1`. Zero drops means every element is equal (or n is 1); one drop is
+the seam.
+
+STEP 6 - name both failure directions before being asked: without the wrap you accept arrays
+like `[1,4,4,2]` that are not rotations at all; with `>=` you reject `[4,4]`, which is.
+
+STEP 7 - if asked for the rotation amount as well, note that the index just AFTER the single
+drop is where the original sorted array began.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Think of the array as a circle rather than a line. A sorted array laid out in a circle goes
+  up at every step except one, the wrap from the largest element back to the smallest.
+  Rotating does not change the circle, only where you start reading it - so every rotation of a
+  sorted array has that same property.
+
+- So I count the positions where an element is strictly greater than the next one, comparing
+  circularly with the last element against the first. If that count is zero or one, the answer
+  is yes.
+
+- The wrap-around comparison is the part that matters. Without it, an array like `[1,4,4,2]`
+  passes - it has exactly one internal drop - even though no rotation of `[1,2,4,4]` produces
+  it. Comparing the tail back to the head is what rules that out, and on random inputs the
+  missing wrap is wrong about thirteen per cent of the time, always by accepting something it
+  should reject.
+
+- The comparison must be strictly greater. The problem says non-decreasing, so `[4,4]` is a
+  valid sorted array; using greater-or-equal would count its equal pair as a drop and reject
+  it, which is wrong on about a quarter of arrays once duplicates are in play.
+
+- One pass, O(n) time, O(1) space. And if the interviewer also wants the rotation amount, it is
+  the index right after the drop.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def check_sorted_rotated(nums):
+        n = len(nums)
+        # a rotated sorted array has at most one 'drop' (nums[i] > next), circularly
+        breaks = sum(1 for i in range(n) if nums[i] > nums[(i + 1) % n])
+        return breaks <= 1
+
+Line 2  `n = len(nums)`
+        Needed twice: as the loop bound and as the modulus.
+
+Line 4  `sum(1 for i in range(n) if nums[i] > nums[(i + 1) % n])`
+        Read the pieces separately.
+
+        `range(n)` - every index INCLUDING the last. The final iteration is the wrap
+        comparison, and dropping it is MEASURED wrong on 12.7% of inputs.
+
+        `(i + 1) % n` - the next index, wrapping to 0 after the last. For i = n-1 this is
+        `n % n = 0`. It replaces an `if i == n - 1: j = 0 else: j = i + 1`.
+
+        `>` - strictly greater. Equal neighbours are not drops, because "sorted" here means
+        non-decreasing. MEASURED, `>=` is wrong on 25.3%.
+
+        `sum(1 for ...)` - counts how many comparisons were true. `sum(nums[i] > ... for i in
+        ...)` would also work, since Python's booleans are 1 and 0, and it is idiomatic; the
+        explicit `1` is easier to read out loud.
+
+Line 5  `return breaks <= 1`
+        0 or 1, not exactly 1. Zero happens when the array is all one value, or has length 1 -
+        MEASURED, 349 of 20,000 genuinely rotated arrays had zero drops.
+
+        An early-exit version is worth mentioning if the interviewer cares about the constant
+        factor: stop and return False the moment the count reaches 2, instead of finishing the
+        pass. Same asymptotics, and it avoids scanning the rest of a clearly-bad array.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [3,4,5,1,2]`, n = 5. Valid.
+
+    i    nums[i]   (i+1)%n   nums[next]   drop?    running count
+    ------------------------------------------------------------------
+    0       3          1          4        no            0
+    1       4          2          5        no            0
+    2       5          3          1        YES           1
+    3       1          4          2        no            1
+    4       2          0          3        no            1     <- the wrap comparison
+    breaks = 1 -> return True                                       MEASURED
+
+    The wrap comparison at i = 4 asks whether the tail's last element (2) exceeds the head's
+    first (3). It does not, which is what confirms the two runs join up correctly.
+
+TRACE B - `nums = [1,4,4,2]`, n = 4. INVALID, and only the wrap catches it.
+
+    i    nums[i]   next   drop?
+    ----------------------------------
+    0       1        4      no
+    1       4        4      no      <- equal, and `>` correctly says this is not a drop
+    2       4        2      YES
+    3       2        1      YES     <- the wrap: tail 2 is bigger than head 1
+    breaks = 2 -> return False                                      MEASURED
+
+    Without the wrap, the count stops at 1 and the function wrongly returns True. This is the
+    12.7% bug in four lines.
+
+TRACE C - `nums = [4,4]`, n = 2. Valid, and only `>` gets it right.
+
+    with `>`                      with `>=`
+    i=0: 4 > 4  -> no             i=0: 4 >= 4 -> YES
+    i=1: 4 > 4  -> no             i=1: 4 >= 4 -> YES
+    breaks = 0 -> True            breaks = 2 -> False       MEASURED, and False is wrong
+
+TRACE D - `nums = [2,1,3,4]`, n = 4. Invalid in the ordinary way, caught without the wrap too.
+
+    i=0: 2 > 1  YES      count 1
+    i=1: 1 > 3  no
+    i=2: 3 > 4  no
+    i=3: 4 > 2  YES      count 2      <- the wrap agrees
+    return False                                                    MEASURED
+
+TRACE E - `nums = [1,1,1]`. The zero-drop case.
+
+    every comparison is 1 > 1, which is false, so breaks = 0
+    return True - and it is correct: [1,1,1] sorted is [1,1,1], rotated by anything.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one comparison per element, including the wrap. With an early exit at two
+            drops the average case is faster on invalid inputs, but the worst case is
+            unchanged.
+    space   O(1) - a counter. The verify-the-two-halves alternative allocates a rotated copy,
+            which is O(n) space for no asymptotic gain.
+
+    Lower bound: you cannot do better than O(n). Any element you do not look at could be the
+    one that breaks the order, and unlike SEARCHING a rotated array there is no sorted
+    structure you are allowed to assume yet - proving the structure exists is the task.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `range(n-1)` - no wrap-around comparison. MEASURED wrong on 5,089 of 40,000 arrays
+       (12.7%), always by ACCEPTING an invalid array, so a test suite of valid inputs will
+       never catch it.
+    2. `>=` instead of `>`. MEASURED wrong on 10,136 of 40,000 (25.3%), always by REJECTING a
+       valid array with duplicates. `[4,4]` is the two-element counterexample.
+    3. `breaks == 1` instead of `breaks <= 1`. Rejects a fully-sorted all-equal array; MEASURED,
+       349 of 20,000 valid rotated arrays have zero drops.
+    4. Assuming the array is strictly increasing. The problem allows duplicates, and MEASURED
+       68.2% of small random arrays contain one.
+    5. Sorting first. `sorted(nums)` answers a different question - whether the multiset is the
+       same - and destroys the very order you are being asked about.
+    6. Reaching for binary search. It is the right tool for FINDING the rotation point in a
+       known-rotated array; here you have to verify the property, which needs every element.
+
+THE TAKEAWAY
+    Rotation is a fact about a CIRCLE, so test it circularly: count the positions where the
+    value goes down, wrapping the last element back to the first, and accept 0 or 1. The two
+    tempting mistakes fail in opposite directions - forgetting the wrap accepts bad arrays,
+    using `>=` rejects good ones - which is why both need to be in your head at once when you
+    write the single line.""",
+]
+
+_EX_P1AO["Count Elements With Strictly Smaller and Greater Elements"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count the elements that are neither the smallest nor the
+largest value in the array.
+
+An element qualifies if the array contains SOMETHING SMALLER than it and also SOMETHING LARGER
+than it. Take `[11,7,2,15]`:
+
+    2   nothing smaller                    no
+    7   2 is smaller, 11 and 15 larger     YES
+    11  7 is smaller, 15 is larger         YES
+    15  nothing larger                     no
+    answer 2                                                MEASURED
+
+Sitting under that definition is a simpler one. "Something smaller exists" means the element is
+not the MINIMUM value. "Something larger exists" means it is not the MAXIMUM value. So the
+answer is: how many elements are strictly between the min and the max.
+
+    lo, hi = min(nums), max(nums)
+    return sum(1 for x in nums if lo < x < hi)
+
+MEASURED against the literal O(n^2) reading of the problem - for each element, scan the array
+for something smaller and something larger - the two agree on all 40,000 random arrays tested.
+
+TWO TRAPS, BOTH ABOUT COUNTING. The comparisons must be STRICT, and you count ELEMENTS, not
+distinct VALUES. MEASURED, the non-strict version is wrong on 100% of inputs and counting
+distinct values is wrong on 37.5%.""",
+
+    """2. THE INTUITION - why "not the minimum" is the same as "something smaller exists".
+
+Take any element x. Is there an element smaller than x?
+
+    If x is the smallest VALUE in the array, then no - everything else is equal to it or
+    bigger. So x does not qualify.
+
+    If x is not the smallest value, then the minimum of the array is smaller than x, and the
+    minimum is in the array. So x does qualify.
+
+That is the whole equivalence, and it collapses an "is there something smaller" search into a
+single comparison against `min(nums)`. The same argument runs the other way for `max`.
+
+WHY THE COMPARISONS MUST BE STRICT. The condition is "strictly smaller" and "strictly greater".
+An element that EQUALS the minimum does not have anything smaller than it, even if the
+minimum appears five times - all five copies are equal to it, not smaller. So the test is
+`lo < x`, not `lo <= x`.
+
+THE ALL-EQUAL CASE FALLS OUT AUTOMATICALLY. If every element is the same, then `lo == hi` and
+`lo < x < hi` is false for every x, so the answer is 0. Which is correct: no element has
+anything strictly smaller OR strictly greater. MEASURED, 15.6% of the small random arrays
+tested were all-equal, so this is not an edge case you can leave for later.
+
+AN EQUIVALENT FORMULA WORTH KNOWING: `len(nums) - count(lo) - count(hi)` when `lo != hi`, and 0
+when they are equal. Same answer, and it is the version to reach for if you already have a
+frequency table for another reason.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STRICTLY SMALLER - `y < x`, with equality excluded. The word "strictly" in a problem statement
+is always pointing at the difference between `<` and `<=`, and it is always load-bearing.
+
+MINIMUM / MAXIMUM VALUE - the smallest and largest values present, not positions. If the
+array is `[3,1,1,9]`, the minimum is 1 and both copies of it are minima.
+
+ELEMENT versus VALUE - `[2,2,3,1,1]` has five ELEMENTS and three distinct VALUES. This problem
+counts elements: the two 2s each qualify, so they contribute 2 to the answer, not 1.
+
+CHAINED COMPARISON - `lo < x < hi` in Python means `lo < x and x < hi`, evaluated with `x`
+computed once. It is not `(lo < x) < hi`, which is what the same characters would mean in C or
+Java. If you are writing Java, spell out the `&&`.
+
+DEGENERATE ARRAY - one that makes the general formula meaningless. Here, an array of fewer than
+three elements, or one where every value is equal: in both cases the answer is 0, and both fall
+out of the strict comparison without a special case.
+
+O(n) versus O(n^2) - the literal reading of the problem is "for each element, search the array
+twice", which is quadratic. Replacing the two searches with two precomputed numbers is what
+makes it linear.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - strictness, and counting the wrong thing.
+
+BUG 1 - NON-STRICT COMPARISONS, `lo <= x <= hi`.
+
+Every element of every array satisfies `lo <= x <= hi` - that is what min and max mean - so
+this version returns `len(nums)` every time.
+
+MEASURED on 40,000 random arrays: wrong on 40,000 of 40,000. 100%. It is the rare bug that
+never accidentally works, which is at least honest: the first test case exposes it.
+
+BUG 2 - COUNTING DISTINCT VALUES INSTEAD OF ELEMENTS, e.g.
+`len({x for x in nums if lo < x < hi})`.
+
+MEASURED wrong on 15,018 of 40,000, 37.5%. Three failures:
+
+    nums                       correct    distinct-values
+    [5,1,2,4,4,3,2,1]              5              3
+    [3,1,2,3,1,4,2,5]              5              3
+    [4,4,3,3,4,2]                  2              1
+
+Read the third row. The array is `[4,4,3,3,4,2]`; the minimum is 2 and the maximum is 4, so the
+qualifying elements are the two 3s - that is 2 elements, of 1 distinct value. The problem asks
+how many ELEMENTS have both properties, and duplicates count separately.
+
+This bug is invisible on any array without duplicates, which is exactly the kind of example
+people write by hand.
+
+BUG 3 - ASSUMING THE ARRAY HAS AT LEAST THREE DISTINCT VALUES. It might be all one value.
+MEASURED, 15.6% of small random arrays drawn from a five-value range were all-equal. The strict
+comparison already returns 0 for them - but a solution written as "sort, then count everything
+except the first and last elements" returns `n - 2`, which for `[7,7,7,7]` is 2 instead of 0.
+That version is wrong for a subtle reason: it excludes two POSITIONS when the problem excludes
+two VALUES.
+
+BUG 4 - `sorted(nums)[1:-1]` and counting the length. The same trap as bug 3, in its most
+tempting form. It is right whenever the minimum and the maximum each appear exactly once - so
+`[1,2,2,2,3]` gives 3, correctly - and wrong the moment either extreme repeats: `[1,1,2,3]`
+gives 2 where the answer is 1, because the second 1 has nothing strictly smaller than it. Do
+not reason about positions when the problem is about values.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - `min`, `max`, then one counting pass. Three linear passes, O(1) space, no
+allocation. The answer.
+
+ALTERNATIVE B - `len(nums) - nums.count(lo) - nums.count(hi)` with a guard for `lo == hi`.
+Also three-ish passes and it makes the "everything except the extreme VALUES" reading explicit.
+The guard is the price: when `lo == hi` you would subtract the same count twice and get a
+negative number.
+
+ALTERNATIVE C - a `Counter`, then the same subtraction. O(n) space, and worth it only if you
+need the frequencies for something else.
+
+ALTERNATIVE D - sort, then count while skipping the leading run of minima and the trailing run
+of maxima. O(n log n), correct if you skip RUNS rather than single positions, and strictly
+worse than the linear version. Its one advantage is that it makes the duplicate trap visually
+obvious.
+
+ALTERNATIVE E - the literal O(n^2) reading: for each element, scan for something smaller and
+something larger. This is the brute force I used as the oracle for the measurements. Worth
+stating out loud as the starting point precisely so you can say why it collapses to linear.
+
+THE FAMILY - problems where a per-element search collapses into one or two precomputed
+aggregates:
+  * HOW MANY NUMBERS ARE SMALLER THAN THE CURRENT NUMBER - the same collapse, using a
+    frequency prefix sum instead of a single min;
+  * AVERAGE SALARY EXCLUDING THE MINIMUM AND MAXIMUM - the same "exclude one occurrence versus
+    all occurrences" distinction, with the opposite answer: there you exclude exactly one copy,
+    here you exclude every copy;
+  * SPECIAL ARRAY / MAJORITY ELEMENT / KTH LARGEST - all reframe a per-element question as a
+    global one;
+  * RANGE COUNTING with prefix sums, the general form of "how many elements satisfy a
+    comparison against a fixed value".""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - restate the condition in terms of the whole array before writing anything: an element
+has something strictly smaller exactly when it is not the minimum value, and something strictly
+greater exactly when it is not the maximum value.
+
+STEP 2 - compute both extremes once: `lo, hi = min(nums), max(nums)`.
+
+STEP 3 - count the elements strictly between them:
+    return sum(1 for x in nums if lo < x < hi)
+
+STEP 4 - say the two words that matter: STRICT, and ELEMENTS. Strict, because an element equal
+to the minimum has nothing smaller than it. Elements, because duplicates each count.
+
+STEP 5 - name the all-equal case and show that the code already handles it: `lo == hi` makes
+the chained comparison false everywhere, so the answer is 0 with no special case.
+
+STEP 6 - state the complexity honestly: three linear passes, O(n) time, O(1) space, versus the
+O(n^2) literal reading you started from.
+
+STEP 7 - test three inputs: `[1,1,1]`, all equal, expect 0; `[2,2,3,1,1]`, duplicates at both
+extremes, expect 2 - the two 2s, since 1 is the minimum and 3 the maximum; and `[11,7,2,15]`,
+expect 2.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The literal reading is quadratic: for each element, scan the array for something smaller and
+  something larger. But "something smaller exists" just means the element is not the minimum
+  value, and "something larger exists" means it is not the maximum. Both of those are one
+  comparison once I know the min and the max.
+
+- So: find the min and the max, then count the elements strictly between them. Three linear
+  passes, constant space.
+
+- Strictly is the word to be careful with. An element equal to the minimum has nothing smaller
+  than it, even if the minimum appears several times, because those copies are equal rather
+  than smaller. Using less-than-or-equal would return the whole array length every time.
+
+- And I count elements, not distinct values. If the array is `[4,4,3,3,4,2]` the answer is 2 -
+  the two 3s - not 1. Deduplicating is wrong on well over a third of random arrays with
+  repeats.
+
+- If every element is equal, the min equals the max and the count is zero, which the strict
+  comparison gives me for free. I would not sort and count the middle positions: that excludes
+  two POSITIONS, where the problem excludes two VALUES, so it breaks the moment an extreme is
+  duplicated.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def count_elements(nums):
+        lo, hi = min(nums), max(nums)
+        return sum(1 for n in nums if lo < n < hi)   # exclude the extremes
+
+Line 2  `lo, hi = min(nums), max(nums)`
+        Two linear passes, both in C. Computing them once outside the loop is the entire
+        optimisation: inside the loop, each would make the solution O(n^2).
+
+        If the array can be empty, both calls raise ValueError - the problem's constraints
+        exclude it, and saying so is better than adding a guard.
+
+Line 3  `sum(1 for n in nums if lo < n < hi)`
+        `lo < n < hi` is Python's chained comparison, and it means `lo < n and n < hi` with `n`
+        evaluated once. In Java you would write `lo < n && n < hi`.
+
+        BOTH comparisons are strict. `lo <= n <= hi` is true for every element of every array,
+        so that version returns `len(nums)` - MEASURED wrong on 100% of inputs.
+
+        `sum(1 for ...)` counts ELEMENTS. Wrapping the same expression in a set to count
+        distinct values is MEASURED wrong on 37.5% of arrays.
+
+        When `lo == hi` - an all-equal array - the condition is `lo < n` and `n < lo`, which
+        cannot both hold, so the sum is 0. No special case needed, and MEASURED that covers
+        15.6% of small random arrays.
+
+AND THE FREQUENCY-BASED EQUIVALENT, if you already have counts:
+
+    def count_elements_via_counts(nums):
+        lo, hi = min(nums), max(nums)
+        if lo == hi:
+            return 0                       # every element is both extremes
+        return len(nums) - nums.count(lo) - nums.count(hi)
+
+        The guard is not optional here: without it, an all-equal array subtracts its own length
+        twice and returns a negative number.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [11,7,2,15]`.
+
+    lo = min = 2
+    hi = max = 15
+
+    x     2 < x ?    x < 15 ?    counts?
+    ----------------------------------------
+    11      yes        yes         YES
+     7      yes        yes         YES
+     2      no         yes         no
+    15      yes        no          no
+    total 2                                                 MEASURED
+
+TRACE B - `nums = [2,2,3,1,1]`, duplicates at both ends.
+
+    lo = 1, hi = 3
+
+    x     1 < x    x < 3    counts?
+    ------------------------------------
+     2     yes      yes       YES
+     2     yes      yes       YES
+     3     yes      no        no
+     1     no       yes       no
+     1     no       yes       no
+    total 2                                                 MEASURED
+
+    Both 2s count separately. A distinct-values version would answer 1 here.
+
+TRACE C - `nums = [1,1,1]`, all equal.
+
+    lo = 1, hi = 1
+    every test is `1 < 1 and 1 < 1` -> false
+    total 0                                                 MEASURED
+
+    Compare the sort-and-slice approach: `sorted(nums)[1:-1]` is `[1]`, length 1 - wrong,
+    because it drops two POSITIONS rather than two VALUES.
+
+TRACE D - `nums = [4,4,3,3,4,2]`, the distinct-values failure from section 4.
+
+    lo = 2, hi = 4
+
+    x     2 < x    x < 4    counts?
+    ------------------------------------
+     4     yes      no        no
+     4     yes      no        no
+     3     yes      yes       YES
+     3     yes      yes       YES
+     4     yes      no        no
+     2     no       yes       no
+    total 2                                                 MEASURED
+    distinct-values version: the set is {3}, so it answers 1 - MEASURED, and wrong.
+
+TRACE E - `nums = [5]`, a single element.
+
+    lo = hi = 5, the loop tests `5 < 5` which is false, total 0. Correct: a lone element has
+    nothing smaller and nothing larger.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n). Three linear passes - `min`, `max`, and the counting comprehension. The two
+            built-ins run in C, so in CPython this beats a single hand-written loop that tracks
+            all three quantities at once.
+    space   O(1). Two numbers and a counter. The `Counter` and sorting variants cost O(n) space
+            or O(n log n) time for no gain.
+
+    The brute force this replaces is O(n^2): for each element, two scans of the array. On an
+    array of 100,000 elements that is 10^10 comparisons against 300,000 - the difference
+    between an instant answer and one that never finishes.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Non-strict comparisons. MEASURED wrong on 100% of inputs - it returns `len(nums)` every
+       time, because every element satisfies `min <= x <= max` by definition.
+    2. Counting distinct values instead of elements. MEASURED wrong on 37.5% of random arrays,
+       and invisible on any array without duplicates.
+    3. Sorting and counting the middle POSITIONS, `sorted(nums)[1:-1]`. Correct only when both
+       extremes appear exactly once; wrong whenever a minimum or maximum repeats, and wrong on
+       every all-equal array.
+    4. Forgetting the all-equal case in the subtraction formula `n - count(lo) - count(hi)`,
+       which goes negative without a `lo == hi` guard. MEASURED, 15.6% of small random arrays
+       are all-equal.
+    5. Recomputing `min(nums)` or `max(nums)` inside the loop. Correct, and quietly O(n^2) -
+       the single most common way to write an accidentally quadratic solution.
+    6. Writing `lo < n < hi` in Java or C and expecting Python's meaning. There it parses as
+       `(lo < n) < hi`, comparing a boolean with an integer.
+
+THE TAKEAWAY
+    "Does something smaller exist?" is a question about the whole array, not about the element,
+    so answer it once with `min` instead of n times with a scan - that single move takes the
+    problem from O(n^2) to O(n). Then hold on to the two words the statement is pointing at:
+    STRICTLY, which forces `<` over `<=`, and ELEMENTS, which forbids deduplicating.""",
+]
+
+_EX_P1AO["Count Good Pairs"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how many ways can you pick two equal elements?
+
+A GOOD PAIR is a pair of POSITIONS `(i, j)` with `i < j` where the values match:
+`nums[i] == nums[j]`. Count them.
+
+    nums = [1,2,3,1,1,3]
+    the 1s sit at positions 0, 3, 4      -> pairs (0,3), (0,4), (3,4)   = 3
+    the 3s sit at positions 2, 5         -> pair  (2,5)                 = 1
+    the 2 is alone                       -> 0
+    answer 4
+
+THE OBVIOUS SOLUTION IS TWO NESTED LOOPS, and it is O(n^2). The whole content of this problem
+is noticing that you never need to look at the pairs individually: if a value appears `c` times,
+the number of ways to choose two of those positions is a formula,
+
+    c * (c - 1) / 2
+
+so one pass to count occurrences and one pass over the counts gives the answer.
+
+HOW BIG IS THE DIFFERENCE? MEASURED, on arrays of values drawn from 1..50:
+
+    n        double loop      counter formula      speed-up
+    2,000       58.9 ms            0.10 ms            595x
+    4,000      218.7 ms            0.15 ms          1,458x
+    8,000      910.3 ms            0.22 ms          4,093x
+
+Watch the middle column rather than the ratio: doubling n multiplies the double loop's time by
+about four - the signature of O(n^2) - while the formula barely moves. The ratio grows without
+limit, which is the real point.""",
+
+    """2. THE INTUITION - counting pairs without enumerating them.
+
+Suppose the value 7 appears at five positions. How many pairs `(i, j)` with `i < j` can you make
+from five positions? This is the standard "choose 2" count:
+
+    the first position pairs with the 4 after it
+    the second pairs with the 3 after it
+    the third with 2
+    the fourth with 1
+    the fifth with 0
+    total 4 + 3 + 2 + 1 + 0 = 10
+
+and that sum is `c*(c-1)/2` with c = 5: 5*4/2 = 10. The general reason: there are `c` choices
+for the first element and `c-1` for the second, giving `c*(c-1)` ORDERED pairs, and each
+unordered pair was counted twice - once as (a,b) and once as (b,a) - so divide by 2.
+
+WHY THE VALUES CAN BE TREATED SEPARATELY. A good pair needs both elements to be equal, so a
+pair never spans two different values. The pairs partition cleanly by value, and the total is
+just the sum over values.
+
+THE OTHER WAY TO SEE IT, WHICH IS ALSO A VALID ONE-PASS SOLUTION. Walk the array left to right,
+keeping a running count of how many times each value has been seen. When you arrive at a value
+you have already seen 3 times, this element forms 3 new pairs - one with each earlier copy. Add
+the current count, then increment it.
+
+    nums = [1,2,3,1,1,3]
+    x=1  seen[1]=0  add 0   seen[1]=1     total 0
+    x=2  seen[2]=0  add 0   seen[2]=1     total 0
+    x=3  seen[3]=0  add 0   seen[3]=1     total 0
+    x=1  seen[1]=1  add 1   seen[1]=2     total 1
+    x=1  seen[1]=2  add 2   seen[1]=3     total 3
+    x=3  seen[3]=1  add 1   seen[3]=2     total 4
+
+MEASURED: the formula version, this running-count version and the O(n^2) double loop agree on
+all 2,000 random arrays tested. The running version is the one to reach for if the array
+arrives as a stream, because it never needs the whole input at once.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PAIR OF INDICES `(i, j)` with `i < j` - a pair of POSITIONS, not values, and unordered. `(0,3)`
+and `(3,0)` are the same pair, which is why the `i < j` constraint appears: it picks one
+representative of each.
+
+FREQUENCY / COUNT - how many times a value appears. `Counter([1,2,1])` gives `{1: 2, 2: 1}`.
+
+COMBINATIONS, "c choose 2" - the number of ways to pick 2 things from c without regard to
+order. Written `C(c,2)` or `c choose 2`, and equal to `c*(c-1)/2`.
+
+TRIANGULAR NUMBER - the sum 1 + 2 + ... + (c-1), which is the same quantity. It is why the
+answer for an array of n equal values is n(n-1)/2: MEASURED, 5,000 copies of the same value
+give 12,497,500 pairs, and 5000*4999/2 is exactly that.
+
+HASH MAP / `Counter` - a dictionary from value to count. Building one is O(n) and it is the only
+extra memory this solution uses.
+
+INTEGER DIVISION `//` versus FLOAT DIVISION `/` - `c*(c-1)` is always even (one of two
+consecutive integers is even), so both give the same VALUE for small numbers - but `/` returns
+a float, which stops being exact once the products get large. See section 4.
+
+QUADRATIC BLOW-UP - the double loop performs about n^2/2 comparisons. At n = 8,000 that is 32
+million, and MEASURED it takes 910 ms in Python against 0.22 ms for the formula.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the double loop, and float division.
+
+BUG 1 - SHIPPING THE O(n^2) DOUBLE LOOP.
+
+It is correct. That is what makes it dangerous: it passes every small test and then times out.
+MEASURED at n = 8,000 it takes 910.3 ms against 0.22 ms - and the worst case is an array of
+identical values, where every pair is good:
+
+    n = 5,000, all elements equal
+    double loop   524.2 ms       formula   0.178 ms
+    answer        12,497,500 pairs, which is exactly 5000*4999/2
+
+Note the answer itself is over twelve million while the input is five thousand elements. The
+number of pairs is quadratic in n even when the algorithm is not, which is precisely why you
+must count them with a formula rather than enumerate them.
+
+BUG 2 - `c * (c - 1) / 2` WITH FLOAT DIVISION.
+
+For small counts this is harmless: `c*(c-1)` is always even, so the float is exact and equals
+the integer. MEASURED at c = 10^9, `c*(c-1)/2` gives 4.999999995e+17, which compares EQUAL to
+the exact integer 499999999500000000 - still fine.
+
+It breaks when the product exceeds what a double can represent exactly, which is 2^53, about
+9*10^15. MEASURED at c = 10^18:
+
+    c*(c-1)//2  =  499999999999999999500000000000000000     exact
+    c*(c-1)/2   =  5e+35                                    a rounded float
+    the two differ by 21,710,318,687,008,980,992
+
+Array sizes never reach 10^18, so this will not fail this problem - but `//` costs nothing, it
+keeps the type an integer, and the same habit does matter in the pair-counting problems where
+the counts come from a range rather than an array. Use `//` and never think about it again.
+
+BUG 3 - COUNTING ORDERED PAIRS, i.e. forgetting to halve. `c*(c-1)` counts (i,j) and (j,i)
+separately, doubling every answer. The symptom is an answer exactly twice the expected one,
+which is easy to spot and easy to write.
+
+BUG 4 - `c*c/2` or `c*(c+1)/2`. The first counts pairing an element with itself; the second is
+the triangular number one term too far. For c = 3 the correct answer is 3, while `c*c/2` gives
+4.5 and `c*(c+1)/2` gives 6. If you cannot remember which, derive it in one line: c choices for
+the first, c-1 for the second, halved because order does not matter.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - `Counter`, then sum `c*(c-1)//2`. Two passes, O(n) time, O(k) space where k is
+the number of distinct values. The answer, and it reads as the mathematics.
+
+ALTERNATIVE B - the running-count pass in section 2: add `seen[x]` to the total, then increment
+it. One pass, same complexity, and it works on a stream where you never hold the whole array.
+MEASURED to agree with the formula on all 2,000 random arrays tested. This is the version to
+prefer if the follow-up is "now answer after every element".
+
+ALTERNATIVE C - sort, then count runs of equal values and apply the formula per run. O(n log n)
+and no hash map, so it is the answer when memory is the constraint or when the values are not
+hashable.
+
+ALTERNATIVE D - if the values are bounded and small (the problem often says 1..100), use a
+fixed-size array of counts instead of a dictionary. Same algorithm, less overhead, no hashing.
+Worth naming: it turns O(k) space into O(1) when k is a constant.
+
+ALTERNATIVE E - the double loop. Correct, O(n^2), and the right thing to write on the board
+FIRST as the baseline you are about to improve. MEASURED, 595x slower at n = 2,000 and 4,093x
+at n = 8,000.
+
+THE FAMILY - counting pairs without enumerating them:
+  * NUMBER OF EQUIVALENT DOMINO PAIRS - literally this problem with the value being a
+    normalised pair;
+  * COUNT NICE PAIRS IN AN ARRAY - the same counting, after mapping each element through a
+    function so that "equal" means "equal after transformation";
+  * TWO SUM / SUBARRAY SUM EQUALS K - the same "how many earlier things match" idea, where the
+    key is a prefix sum rather than the value itself;
+  * COUNT PAIRS WITH GIVEN XOR, or with a given difference - the same running dictionary with a
+    computed key;
+  * HANDSHAKE / MAXIMUM NUMBER OF EDGES problems - where c*(c-1)/2 is the answer directly.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the baseline and then improve it out loud: the double loop is O(n^2); pairs never
+span two different values, so group by value and count each group with a formula.
+
+STEP 2 - build the frequency table: `counts = Counter(nums)`.
+
+STEP 3 - apply "c choose 2" to each count and add them up:
+    return sum(c * (c - 1) // 2 for c in counts.values())
+
+STEP 4 - use `//`, not `/`. It keeps the result an integer and it is exact at any size.
+
+STEP 5 - derive the formula rather than recalling it, in case you are asked: c ways to pick the
+first position, c-1 for the second, and every pair is counted twice, so halve.
+
+STEP 6 - offer the one-pass running-count version as an alternative, and note that it is the one
+that survives the "what if the array arrives as a stream" follow-up.
+
+STEP 7 - state the complexity: O(n) time, O(k) space for k distinct values, or O(1) space if the
+value range is bounded and you use a fixed array.
+
+STEP 8 - test `[1,1,1,1]`, expect 6, which is 4*3/2 and catches every wrong variant of the
+formula at once.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The brute force is the two nested loops, comparing every pair. That is O(n^2), and on
+  eight thousand elements it is already close to a second in Python.
+
+- The observation is that a good pair always has the two elements EQUAL, so pairs never cross
+  between different values. That means I can group by value and count each group separately.
+
+- If a value appears c times, the number of index pairs among those positions is c choose 2 -
+  c times c minus one, over two. That is c ways to pick the first, c minus one for the second,
+  divided by two because each pair gets counted in both orders.
+
+- So: one pass to build a frequency table, one pass over the frequencies applying the formula.
+  O(n) time and O(k) space for k distinct values.
+
+- I use integer division so the result stays an integer and stays exact.
+
+- If the array were a stream, I would use the equivalent one-pass version: keep a running count
+  per value, and when I see a value add however many times I have already seen it, then
+  increment. Same total, and it also answers the running version of the question after every
+  element.
+
+- One thing worth flagging: the ANSWER can be quadratic even though the algorithm is not - five
+  thousand identical elements give over twelve million pairs - which is exactly why counting
+  them with a formula rather than listing them is the point.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    from collections import Counter
+
+    def num_identical_pairs(nums):
+        counts = Counter(nums)
+        # each value with count c contributes c*(c-1)/2 pairs
+        return sum(c * (c - 1) // 2 for c in counts.values())
+
+Line 1  `from collections import Counter`
+        A dict subclass that counts occurrences. `Counter([1,2,1])` is `{1: 2, 2: 1}`. Built in
+        one C-level pass over the input.
+
+Line 4  `counts = Counter(nums)`
+        The only extra memory: one entry per DISTINCT value, not per element. On the problem's
+        usual constraint of values in 1..100 that is at most 100 entries regardless of n.
+
+Line 6  `sum(c * (c - 1) // 2 for c in counts.values())`
+        Read the pieces.
+
+        `counts.values()` - just the counts. The VALUES themselves are irrelevant to the answer;
+        only how many times each occurs matters, which is worth saying because it tells you the
+        same code solves any variant where "equal" is replaced by "equal after transforming".
+
+        `c * (c - 1)` - ordered pairs from c positions.
+
+        `// 2` - unordered. Integer division: `c*(c-1)` is always even because one of two
+        consecutive integers is even, so nothing is lost, and the result stays an `int`. `/ 2`
+        would return a float, which is exact here but stops being exact past 2^53.
+
+        `sum(...)` - values partition the pairs, so the totals add.
+
+        Counts of 1 contribute `1*0//2 = 0`, so singletons need no filtering.
+
+AND THE ONE-PASS STREAMING VERSION:
+
+    def num_identical_pairs_stream(nums):
+        seen = Counter()
+        total = 0
+        for x in nums:
+            total += seen[x]      # pairs with every earlier copy of x
+            seen[x] += 1          # now record this one
+        return total
+
+        The ORDER of those two lines is the whole trick. Incrementing first would pair the
+        element with itself and inflate every answer by exactly the number of elements.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [1,2,3,1,1,3]`, the formula version.
+
+    Counter pass
+        1 -> 3 occurrences (positions 0, 3, 4)
+        2 -> 1
+        3 -> 2 (positions 2, 5)
+
+    formula pass
+        c = 3   ->  3*2//2 = 3
+        c = 1   ->  1*0//2 = 0
+        c = 2   ->  2*1//2 = 1
+        total 4
+
+    Cross-check by listing them: (0,3), (0,4), (3,4), (2,5). Four pairs. Agreed.
+
+TRACE B - the same array through the streaming version.
+
+    x    seen[x] before   total after adding   seen[x] after
+    ---------------------------------------------------------
+    1          0                  0                  1
+    2          0                  0                  1
+    3          0                  0                  1
+    1          1                  1                  2
+    1          2                  3                  3
+    3          1                  4                  2
+    total 4 - the same answer, reached one element at a time.
+
+TRACE C - `nums = [1,1,1,1]`, the input that separates every wrong formula.
+
+    c = 4
+    correct     c*(c-1)//2 = 4*3//2 = 6      pairs (0,1)(0,2)(0,3)(1,2)(1,3)(2,3)
+    c*(c-1)                = 12              ordered pairs - forgot to halve
+    c*c//2                 = 8               allows pairing an element with itself
+    c*(c+1)//2             = 10              the triangular number one term too far
+
+    Only one of those four is 6, and writing the six pairs out takes ten seconds.
+
+TRACE D - the quadratic blow-up, measured.
+
+    5,000 identical elements
+        formula     5000*4999//2 = 12,497,500        computed in 0.178 ms
+        double loop enumerates all 12,497,500        524.2 ms
+
+    The formula does 1 multiplication where the loop does 12.5 million comparisons, and the
+    answers are identical - MEASURED.
+
+TRACE E - the float hazard, at a scale no array reaches but the habit still matters.
+
+    c = 10^9    c*(c-1)//2 = 499999999500000000
+                c*(c-1)/2  = 4.999999995e+17   equal to the integer - still exact
+    c = 10^18   c*(c-1)//2 = 499999999999999999500000000000000000
+                c*(c-1)/2  = 5e+35             off by 21,710,318,687,008,980,992
+
+    A double keeps about 15-16 significant digits; the exact answer has 36.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one pass to count, one pass over the distinct values. The second pass is at
+            most as long as the first and usually far shorter.
+    space   O(k) for k distinct values. When the value range is bounded - the problem usually
+            says 1..100 - that is O(1), and a fixed-size list of counts beats a dictionary.
+
+    Against the brute force: O(n^2) time, O(1) space. MEASURED, 58.9 ms vs 0.10 ms at n = 2,000,
+    218.7 ms vs 0.15 ms at n = 4,000, and 910.3 ms vs 0.22 ms at n = 8,000 - the ratio going
+    595x, 1,458x, 4,093x as n doubles, which is what "one is quadratic and one is linear" looks
+    like in a table.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Submitting the double loop. It is correct and it times out; MEASURED 910 ms at n = 8,000
+       where the formula takes 0.22 ms.
+    2. Getting "c choose 2" wrong - `c*c/2`, `c*(c+1)/2`, or forgetting to halve. Test on four
+       identical elements, where the answer is 6 and every wrong variant gives something else.
+    3. Float division. Exact for realistic sizes and not exact in general; `//` keeps the type
+       right and costs nothing.
+    4. Incrementing before adding in the streaming version, which pairs each element with
+       itself and inflates the total by exactly n.
+    5. Building a dictionary keyed by INDEX rather than by value - a common slip that makes
+       every count 1 and the answer 0.
+    6. Assuming the values are small integers without checking. They usually are, which is what
+       makes the fixed-array optimisation available - but a `Counter` works either way.
+
+THE TAKEAWAY
+    When a problem asks HOW MANY pairs rather than WHICH pairs, you almost never need to
+    enumerate them: group the elements by whatever makes a pair valid, then count each group
+    with c*(c-1)/2. That single move is the difference between O(n^2) and O(n), and it
+    generalises immediately - change "equal values" to "equal after some transformation" and the
+    same three lines solve nice pairs, equivalent dominoes and pairs with a given XOR.""",
+]
+
+_EX_P1AO["Count Items Matching a Rule"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count the rows of a small table that match one filter.
+
+Each item is a list of three strings in a fixed order: `[type, color, name]`. A rule arrives as
+two strings - which column to look at, and what value it must equal.
+
+    items = [["phone","blue","pixel"],
+             ["computer","silver","lenovo"],
+             ["phone","gold","iphone"]]
+
+    rule ("color", "silver")   -> 1     MEASURED
+    rule ("type",  "phone")    -> 2     MEASURED
+
+THE ONLY DECISION IN THE PROBLEM is how to turn the rule KEY - the word `"type"`, `"color"` or
+`"name"` - into the column index 0, 1 or 2. A dictionary does it in one lookup:
+
+    idx = {"type": 0, "color": 1, "name": 2}[rule_key]
+    return sum(1 for item in items if item[idx] == rule_value)
+
+That is the whole solution: one dictionary lookup, then one linear pass counting equal strings.
+
+It is an easy problem, and it is worth doing carefully anyway, because it contains the single
+most damaging habit a Python interviewer can catch you in - comparing strings with `is` instead
+of `==`. MEASURED on 200,000 items read through a JSON round trip, `is` finds 0 matches where
+`==` finds 66,674.""",
+
+    """2. THE INTUITION - a name-to-position lookup, and why a dictionary beats a chain of ifs.
+
+The data is POSITIONAL: the type is always at index 0, the color at index 1, the name at index
+2. The rule is NOMINAL: it names a field in words. All you need is the translation between
+them, and there are three natural ways to write it:
+
+    a dictionary        {"type": 0, "color": 1, "name": 2}[rule_key]
+    a list index        ["type", "color", "name"].index(rule_key)
+    an if-chain         0 if rule_key == "type" else 1 if rule_key == "color" else 2
+
+All three are correct and all three are O(1) for three keys. The dictionary is the one to write
+because it states the mapping as DATA rather than as control flow: it reads as a table, it
+extends to thirty fields without growing the code, and it raises a KeyError on an unknown key
+instead of silently falling through to the last branch - which is what the if-chain does.
+
+MEASURED on 200,000 items, the counting pass dominates everything anyway:
+
+    dictionary lookup + count      5.6 ms
+    if-chain + count               5.8 ms
+
+The lookup itself is unmeasurable next to the 200,000 string comparisons. So choose on
+readability and failure behaviour, not speed - and say that out loud, because "I picked the
+dictionary because it is faster" would be a claim you cannot support.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RULE KEY - the field NAME to filter on: `"type"`, `"color"` or `"name"`.
+
+RULE VALUE - the string that field must equal.
+
+POSITIONAL DATA - a record whose fields are identified by their position in a list, so
+`item[1]` means "color" only by convention. The opposite is a dict record, `{"color": ...}`,
+where the field names travel with the data.
+
+LOOKUP TABLE - a dictionary used to translate one fixed set of values into another. Here,
+three field names into three indices.
+
+`==` (EQUALITY) - do these two objects have the same VALUE. For strings, do they contain the
+same characters.
+
+`is` (IDENTITY) - are these two names bound to the very same object in memory. For strings this
+is almost never what you want, and section 4 measures why.
+
+STRING INTERNING - CPython's optimisation of reusing one object for certain strings, mostly
+those that look like identifiers and appear as literals in source code. It is what makes
+`"phone" is "phone"` true inside a single module, and it is why an `is` bug can pass every test
+you write by hand and fail on real input.
+
+GENERATOR EXPRESSION - `sum(1 for item in items if ...)` builds nothing; it counts as it goes,
+so the memory cost is constant regardless of how many items match.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - `is` instead of `==` on strings.
+
+This problem compares strings, and Python has two operators that look interchangeable and are
+not.
+
+    ==   do they contain the same characters
+    is   are they literally the same object
+
+MEASURED, the three-line experiment that shows why the difference hides:
+
+    a = "silver"                # a literal
+    b = "sil" + "ver"           # folded into a literal at compile time
+    parts = ["sil", "ver"]
+    c = "".join(parts)          # built at run time
+
+    a is b   ->  True           the compiler produced one shared object
+    a is c   ->  False          a different object with identical contents
+    a == c   ->  True           and they are still equal
+
+So an `is` comparison works for strings written directly in your test file and fails for
+strings that were computed, read from a file, parsed from JSON, or received over the network -
+which is every string in a real program.
+
+MEASURED on data that has been through a JSON round trip, so the strings are freshly allocated
+exactly as they would be in production:
+
+    3 items,      rule ("color","silver")     ==  gives 1        is  gives 0
+    3 items,      rule ("type","phone")       ==  gives 2        is  gives 0
+    200,000 items, rule ("color","silver")    ==  gives 66,674   is  gives 0
+
+Zero. Every time. And the code raises nothing, logs nothing, and runs slightly FASTER -
+MEASURED 4.4 ms against 5.6 ms - because a pointer comparison is cheaper than comparing
+characters. A wrong answer that is quicker and quieter than the right one is the worst kind.
+
+ONE MORE MEASUREMENT, BECAUSE THE FOLKLORE HERE IS OUT OF DATE. People often say short strings
+are always interned, so `is` is safe for them. MEASURED on this interpreter, building
+`[str(i) for i in range(5)]` twice and comparing element by element with `is` gives False for
+all five - even single-character strings. Interning is an implementation detail that changes
+between versions; it is not a rule you can rely on.
+
+THE OTHER MISTAKES IN THIS PROBLEM, briefly:
+  * hard-coding the index for one key and forgetting the others - test all three rule keys;
+  * `items.count(rule_value)` - counts whole ITEMS equal to the value, not fields, and always
+    returns 0;
+  * building a filtered LIST and taking its length, which allocates for no reason;
+  * an if-chain whose final `else` silently accepts an unknown key as `"name"`.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - dictionary lookup then a counting generator. O(n) time, O(1) space. The answer.
+
+ALTERNATIVE B - `["type","color","name"].index(rule_key)`. Correct and it scans the list, which
+is fine for three entries. It raises ValueError on an unknown key, which is reasonable
+behaviour. The dictionary version says the same thing more directly.
+
+ALTERNATIVE C - the if-chain. MEASURED at the same speed (5.8 ms vs 5.6 ms on 200,000 items).
+Its flaw is the silent fall-through: with `else 2`, a rule key of `"colour"` counts names.
+
+ALTERNATIVE D - convert each item to a dict first, `{"type": t, "color": c, "name": n}`, then
+compare `item[rule_key]`. This removes the index mapping entirely and is the right SHAPE if the
+data is used for more than one query - but it allocates a dictionary per item, so for a single
+count it is strictly more work.
+
+ALTERNATIVE E - if many rules will be evaluated against the same items, invert the work: build,
+once, a dictionary from (field, value) to count. Then each rule is a single O(1) lookup instead
+of an O(n) scan. This is the follow-up question worth pre-empting - "what if there are a million
+rules" - and the answer is indexing, which is what a database would do.
+
+THE FAMILY - trivially small problems whose real content is a mapping or a lookup:
+  * DESIGN AN AUTHENTICATION MANAGER / DESIGN PARKING SYSTEM - the same "map a name to a slot"
+    step inside a class;
+  * COUNTING PROBLEMS WITH A PREDICATE - `sum(1 for x in xs if pred(x))` is the shape;
+  * GROUP ANAGRAMS / GROUP BY - the general form of alternative E, where you index by a
+    computed key instead of scanning per query;
+  * anything involving a WHERE clause: this is one column, one equality, no index - a full
+    table scan in miniature.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - map the rule key to a column index with a dictionary literal:
+    idx = {"type": 0, "color": 1, "name": 2}[rule_key]
+Write it inline. Naming it as a module-level constant is better style if the function is called
+repeatedly, since the dict is then built once rather than per call.
+
+STEP 2 - count in one pass:
+    return sum(1 for item in items if item[idx] == rule_value)
+
+STEP 3 - use `==`. Say it out loud: `is` compares identity, and it silently returns 0 for
+strings that came from anywhere other than a source literal.
+
+STEP 4 - do not build an intermediate list. `sum` over a generator counts without allocating.
+
+STEP 5 - decide what an unknown rule key should do. The dictionary raises KeyError, which is
+usually right. If the specification says unknown keys count nothing, catch it explicitly rather
+than letting an if-chain fall through.
+
+STEP 6 - state the complexity: O(n) time for n items, O(1) space, and the lookup is O(1).
+
+STEP 7 - pre-empt the scaling follow-up: for many rules against the same data, precompute a
+map from (field, value) to count and answer each rule in O(1).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The items are positional - type, color, name - and the rule names a field in words, so all I
+  need is a translation from the name to the index. A small dictionary does that in one lookup.
+
+- Then it is a single pass, counting the items whose field at that index equals the rule value.
+  I use a generator inside `sum` so nothing is allocated.
+
+- I compare with `==`, not `is`. That matters more than it looks: `is` asks whether the two
+  strings are the same object, and Python only shares string objects for literals it sees in
+  the source. Anything parsed from JSON or read from a file is a fresh object, so `is` would
+  return zero matches - silently, and slightly faster than the correct version, which is what
+  makes it hard to catch.
+
+- I would use the dictionary rather than an if-chain, not for speed - the lookup is invisible
+  next to the scan - but because an if-chain's final `else` quietly accepts an unknown key,
+  where the dictionary raises.
+
+- O(n) time and O(1) space.
+
+- If the follow-up is a large number of rules against the same items, I would flip it around:
+  build a map from field-and-value to a count once, and then each rule is an O(1) lookup. That
+  is the difference between scanning a table and having an index on it.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def count_matches(items, rule_key, rule_value):
+        idx = {"type": 0, "color": 1, "name": 2}[rule_key]
+        return sum(1 for item in items if item[idx] == rule_value)
+
+Line 2  `idx = {"type": 0, "color": 1, "name": 2}[rule_key]`
+        A dictionary literal built and immediately indexed. The mapping is DATA - three
+        name-to-position facts - so a data structure states it better than three branches.
+
+        It raises `KeyError` for an unrecognised key. That is a feature: an if-chain ending in
+        `else 2` would treat `"colour"` as `"name"` and return a plausible wrong number.
+
+        If this function is called in a loop, hoist the dict to module level so it is
+        constructed once. For a single call the difference is unmeasurable.
+
+Line 3  `sum(1 for item in items if item[idx] == rule_value)`
+
+        `item[idx]` - the selected field of this item. All the field-name logic happened once,
+        on line 2; the loop is now a plain equality test.
+
+        `==` - VALUE equality, comparing characters. MEASURED, replacing it with `is` on
+        JSON-sourced data returns 0 matches where the correct answer is 66,674, raises nothing,
+        and runs 4.4 ms against 5.6 ms - faster, silent and wrong.
+
+        `sum(1 for ...)` - a generator expression, so no list is built. `len([... for ... if
+        ...])` gives the same number and allocates a list proportional to the number of
+        matches.
+
+        The pass is O(n) with one string comparison per item, and string equality short-circuits
+        on the first differing character, so mismatched values cost almost nothing.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the standard example, rule `("color", "silver")`.
+
+    items = [["phone",   "blue",   "pixel"],
+             ["computer","silver", "lenovo"],
+             ["phone",   "gold",   "iphone"]]
+
+    line 2: idx = {"type":0,"color":1,"name":2}["color"] = 1
+
+    item                              item[1]    == "silver"?   running count
+    -------------------------------------------------------------------------
+    ["phone","blue","pixel"]          "blue"        no                0
+    ["computer","silver","lenovo"]    "silver"      YES               1
+    ["phone","gold","iphone"]         "gold"        no                1
+    return 1                                                        MEASURED
+
+TRACE B - the same items, rule `("type", "phone")`.
+
+    idx = 0
+
+    item[0]        == "phone"?    count
+    -------------------------------------
+    "phone"           YES           1
+    "computer"        no            1
+    "phone"           YES           2
+    return 2                                                        MEASURED
+
+TRACE C - the `is` bug on exactly the same data, after a JSON round trip.
+
+    items = json.loads(json.dumps(items))     # identical contents, fresh string objects
+
+    rule ("color","silver")     with ==  ->  1        with is  ->  0     MEASURED
+    rule ("type","phone")       with ==  ->  2        with is  ->  0     MEASURED
+
+    Nothing about the data changed; only where the string objects came from. If the same items
+    had been typed as literals in the test file, `is` would have returned the right answers and
+    the bug would have shipped.
+
+TRACE D - the interning demonstration, step by step.
+
+    a = "silver"                 one object, call it OBJ1
+    b = "sil" + "ver"            constant-folded by the compiler into the same OBJ1
+    parts = ["sil","ver"]
+    c = "".join(parts)           a NEW object OBJ2, contents "silver"
+
+    a is b   True     both names point at OBJ1
+    a is c   False    OBJ1 and OBJ2 are different objects
+    a == c   True     both contain s-i-l-v-e-r                        all MEASURED
+
+TRACE E - at scale, 200,000 items sourced through JSON, rule ("color","silver").
+
+    ==        66,674 matches      5.6 ms
+    is             0 matches      4.4 ms
+    if-chain  66,674 matches      5.8 ms
+
+    Two things to read off this. The wrong version is FASTER, because comparing two pointers is
+    cheaper than comparing six characters. And the dictionary versus if-chain difference - 5.6
+    against 5.8 ms - is noise next to the scan, so the choice between them is about
+    readability and error behaviour, not performance.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) for n items - one dictionary lookup, then one string comparison per item.
+            String comparison is O(length) in the worst case but short-circuits at the first
+            differing character, so mismatches are effectively free.
+    space   O(1) - the three-entry dictionary and a running count. The generator allocates
+            nothing per item.
+
+    For MANY rules over the same data, the shape changes: precompute a map from (field, value)
+    to count in one O(n) pass, then answer each rule in O(1). Scanning per query is a full table
+    scan; precomputing is an index.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `is` instead of `==` for the string comparison. MEASURED: 0 matches instead of 66,674 on
+       JSON-sourced data, with no exception and a slightly faster runtime. It passes any test
+       whose strings are literals in the same source file, which is how it survives to
+       production.
+    2. Relying on interning "because short strings are always interned". MEASURED on this
+       interpreter, two separately-built one-character strings are not identical.
+    3. An if-chain with a bare `else` for the last field, which turns a typo in the rule key
+       into a silent wrong answer instead of a KeyError.
+    4. `len([item for item in items if ...])` instead of `sum(1 for ...)`. Correct, and it
+       allocates a list of every match for no reason.
+    5. `items.count(rule_value)` - counts whole items equal to a string, which is never true, so
+       it returns 0.
+    6. Hard-coding one index and testing only that rule key. Test all three.
+
+THE TAKEAWAY
+    Turn a name into a position with a lookup table rather than a branch: it states the mapping
+    as data, extends without new code, and fails loudly on an unknown key. And carry one rule out
+    of this problem permanently - compare strings with `==`, never with `is`. Identity happens to
+    work for literals because the compiler shares them, which is exactly what makes the bug
+    invisible in tests and total in production.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
