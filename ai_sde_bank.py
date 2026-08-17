@@ -314487,6 +314487,2011 @@ ordered structure must also be DISK-shaped: a high fanout turns 27 random reads 
 million rows, which is why the on-disk index is a B-tree and the in-memory one is free to be anything.""",
 ]
 
+_EX_P1AO["Why do ensembles (bagging, boosting) usually beat a single model?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - why does averaging two hundred mediocre models beat one carefully
+built model?
+
+Because prediction error has TWO parts, and bagging and boosting attack DIFFERENT ONES.
+
+    BIAS      the model is not flexible enough to represent the truth. It is wrong the same way
+              every time, no matter what data you train it on.
+    VARIANCE  the model is too sensitive to the particular training set. Retrain on a different
+              sample and you get a noticeably different model.
+
+BAGGING (random forests) trains many high-variance models on bootstrap samples and AVERAGES them.
+Averaging independent noisy estimates gives a steadier one, so it cuts VARIANCE and leaves bias alone.
+BOOSTING trains models SEQUENTIALLY, each fitting the errors the ensemble has left, which cuts BIAS.
+
+MEASURED ON THIS MACHINE, an empirical bias-variance decomposition: 25 independent training sets of
+400 rows, error measured against the TRUE function so label noise is excluded:
+
+    model                        bias^2   variance    total
+    -------------------------   -------   --------   ------
+    one depth-8 tree             0.2972     1.1009   1.3980
+    25 bagged depth-8 trees      0.3591     0.2884   0.6475     <- variance cut 3.8x, bias unchanged
+    one depth-1 stump            3.2867     0.2692   3.5559
+    25 bagged stumps             3.2158     0.1202   3.3359     <- bias unchanged, so total barely moves
+    100 boosted stumps           1.2694     0.1359   1.4052     <- BIAS cut 2.6x
+
+Read the two middle columns rather than the total. Bagging moved the VARIANCE column and left bias
+where it was. Boosting moved the BIAS column. The same weak learner - a depth-1 stump - was barely
+helped by bagging (3.5559 -> 3.3359) and enormously helped by boosting (3.5559 -> 1.4052).
+
+They are not two flavours of the same idea. They are two different medicines for two different
+diseases.""",
+
+    """2. THE INTUITION - averaging cancels noise; correcting removes a systematic error.
+
+BAGGING is asking twenty-five people to estimate the number of sweets in a jar and taking the mean.
+Each guess is wildly off, but the errors point in random directions, so they cancel. What averaging
+CANNOT fix is a shared misconception: if everyone forgot the jar has a false bottom, every guess is too
+high and the average is too high by the same amount. That shared misconception is BIAS.
+
+BOOSTING is different. The first person guesses. The second is told "you were 200 too high" and
+guesses the correction. The third corrects what remains. Nobody is averaged; each one attacks the
+residual error the group still has. That removes systematic error - it removes BIAS.
+
+MEASURED, which learner benefits from which:
+
+    base learner              1 model   25 bagged   100 bagged     gain
+    -----------------------   -------   ---------   ----------   ------
+    depth-8 tree (UNSTABLE)    1.2961      0.6106       0.6017    2.15x
+    depth-1 stump (STABLE)     3.5584      3.3112       3.3404    1.07x
+
+A deep tree has enormous variance - it memorises whichever 400 rows it happened to see - so averaging
+it works. A stump has almost none: it picks one threshold on one feature and does so fairly reliably.
+There is nothing to average away, and bagging it buys 7%.
+
+Now the same stumps, boosted:
+
+    1 stump                3.5584
+    25 boosted stumps      2.6070
+    100 boosted stumps     1.4433
+    400 boosted stumps     1.0739       <- a 3.3x improvement on the same weak learner that bagging
+                                           could not move at all
+
+The identical weak learner that bagging could not improve is transformed by boosting, because its
+error was never randomness - it was that one threshold on one feature cannot represent a sine wave.
+Stack four hundred corrections and it can.""",
+
+    """3. EVERY TERM DEFINED.
+
+ENSEMBLE. Several models combined into one prediction.
+
+BIAS. The error from a model family being too simple to represent the truth. Formally, the squared
+difference between the AVERAGE prediction (over training sets) and the true function. MEASURED at
+3.2867 for a stump and 0.2972 for a depth-8 tree.
+
+VARIANCE. The error from sensitivity to the training sample. Formally, how much the prediction varies
+across training sets. MEASURED at 1.1009 for a depth-8 tree and 0.2692 for a stump.
+
+IRREDUCIBLE ERROR / NOISE. The part nobody can remove. Excluded from every number here by measuring
+against the TRUE function rather than against noisy labels - which is why these decompositions are
+clean.
+
+BIAS-VARIANCE DECOMPOSITION. `expected error = bias^2 + variance + noise`. The reason this entry has
+two answers instead of one.
+
+BOOTSTRAP. Sampling n rows WITH REPLACEMENT from a dataset of n rows. About 63.2% of the original rows
+appear in any given bootstrap sample; the rest are the out-of-bag set.
+
+BAGGING (bootstrap aggregating). Train a model per bootstrap sample; average (regression) or vote
+(classification).
+
+OUT-OF-BAG (OOB) ERROR. Evaluate each row using only the trees that did NOT see it. A free validation
+set, which is why random forests need less cross-validation.
+
+RANDOM FOREST. Bagging plus FEATURE SUBSAMPLING at every split. The feature subsampling is not
+incidental - it exists specifically to DECORRELATE the trees. See section 4.
+
+BOOSTING. Sequential fitting, each model trained on what the ensemble has got wrong so far.
+
+GRADIENT BOOSTING. Boosting where each new model fits the NEGATIVE GRADIENT of the loss with respect
+to the current prediction. For squared error that gradient is simply the residual `y - F(x)`.
+
+WEAK LEARNER. A model barely better than chance. Boosting's premise is that many of these, each
+correcting the last, beat one strong model. MEASURED: 400 stumps reached 1.0739 from a single stump's
+3.5584.
+
+SHRINKAGE / LEARNING RATE. Adding only a fraction of each new model. Slows fitting and improves
+generalisation; the most effective regulariser in boosting.
+
+STACKING / BLENDING. Train a meta-model on the base models' predictions, rather than averaging.
+
+CORRELATION (rho) BETWEEN MEMBERS. The correlation of the members' ERRORS. The single most important
+quantity in this entry, and the one people never mention. MEASURED below.
+
+DIVERSITY. The general name for members making different mistakes. Achieved by different data
+(bootstrap), different features (random forest), different algorithms (stacking) or different random
+seeds.
+
+STABLE vs UNSTABLE LEARNER. Whether a small change to the training data changes the model much. Deep
+trees and k-NN with small k are unstable; linear models, stumps and k-NN with large k are stable.
+Bagging helps the first group and not the second.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the whole thing depends on the members' errors being
+INDEPENDENT, and nobody says so.
+
+MEASURED, 25 depth-8 trees built three ways, with the mean pairwise CORRELATION of their errors:
+
+    member construction        mean error correlation   single-member MSE   25-member MSE    gain
+    ------------------------   ----------------------   -----------------   -------------   ------
+    identical (same data)                       1.000              1.2961          1.2961   1.00x
+    bootstrap samples                           0.327              1.7949          0.6317   2.84x
+    bootstrap + feature subset                  0.377              4.8112          1.9234   2.50x
+
+The first row is the point. Twenty-five copies of the same model, averaged, give EXACTLY the original
+model - 1.2961 both times, a gain of 1.00x. Ensembling is not a free lunch you get from having more
+models; it is a payment for DIVERSITY, and identical models have none.
+
+THE ARITHMETIC BEHIND IT, which is worth memorising:
+
+    Var(average of M members) = rho * s^2  +  (1 - rho) * s^2 / M
+
+The second term shrinks with M. The first does not. So CORRELATION IS A HARD FLOOR:
+
+    members M    rho = 0.00   rho = 0.30   rho = 0.60   rho = 0.95
+    ----------   ----------   ----------   ----------   ----------
+             1        1.000        1.000        1.000        1.000
+             5        0.200        0.440        0.680        0.960
+            25        0.040        0.328        0.616        0.952
+           100        0.010        0.307        0.604        0.950
+        10,000        0.000        0.300        0.600        0.950
+
+At rho = 0.95, going from ONE member to TEN THOUSAND cuts the variance by 5%. No amount of compute
+gets you past the correlation floor - which is exactly why a random forest subsamples FEATURES as well
+as rows. It is not an optimisation; it is a deliberate attack on rho.
+
+THE HONEST NEGATIVE IN THAT TABLE, and it is instructive: the feature-subsampling row was WORSE than
+plain bagging (1.9234 against 0.6317), because with only four features, restricting each tree to two
+of them crippled the members - their individual MSE went from 1.7949 to 4.8112. Decorrelation only
+pays if the members stay individually competent. Random forests use roughly sqrt(features) per split
+because real datasets have dozens or hundreds of columns; apply the same rule to a four-column dataset
+and you have thrown away half the signal to buy 0.05 of correlation.
+
+THE SECOND TRAP - assuming ensembles always help. They help when the base learner has the disease the
+method treats. MEASURED: bagging a stump gained 1.07x. If your model underfits, more copies of it will
+also underfit.
+
+THE THIRD TRAP - reading only the total error column. In the decomposition, bagging the depth-8 tree
+moved bias^2 slightly UP (0.2972 -> 0.3591) while cutting variance 3.8x. If you only look at the
+total you learn that it helped; if you look at the columns you learn WHY, and therefore when it will
+not.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - which method for which disease, and what else is in the box.
+
+DIAGNOSE FIRST. Compare training error and validation error:
+    training error HIGH, validation error similar     -> UNDERFITTING, i.e. BIAS. Boosting, a bigger
+                                                         model, better features.
+    training error LOW, validation error much higher  -> OVERFITTING, i.e. VARIANCE. Bagging, more
+                                                         data, regularisation.
+Reaching for an ensemble without doing this is how people bag an underfitting model and wonder why
+nothing happened. MEASURED: 1.07x.
+
+THE BAGGING FAMILY (variance reduction, members trained INDEPENDENTLY and therefore in PARALLEL):
+    BAGGING            bootstrap samples, average. Works on any unstable learner.
+    RANDOM FOREST      bagging + feature subsampling at each split, specifically to lower rho.
+                       Robust, hard to misconfigure, gives feature importances and OOB error free.
+    EXTRA TREES        random thresholds as well as random features - even more decorrelation, even
+                       weaker individual members. Sometimes better, sometimes the mistake measured
+                       above.
+
+THE BOOSTING FAMILY (bias reduction, members trained SEQUENTIALLY and therefore not parallelisable
+across members):
+    ADABOOST           re-weight misclassified examples upward each round.
+    GRADIENT BOOSTING  fit each new model to the negative gradient of the loss. The general form.
+    XGBOOST / LIGHTGBM / CATBOOST   industrial gradient boosting: histogram binning, regularisation,
+                       clever handling of missing values and categoricals. These are what win on
+                       tabular data - see the trees-vs-deep-learning entry, where a from-scratch
+                       version of exactly this beat a neural network by 9 accuracy points.
+
+OTHER WAYS TO GET DIVERSITY:
+    STACKING           train different ALGORITHM FAMILIES (a tree ensemble, a linear model, a neural
+                       net) and learn how to combine them. Their errors are far less correlated than
+                       25 trees' are, which is the whole reason it works - and the reason Kaggle
+                       winners are usually stacks.
+    SNAPSHOT ENSEMBLES  save several checkpoints from one training run with a cyclic learning rate.
+                       Ensemble benefit at one training run's cost.
+    DROPOUT / MC DROPOUT  approximately an ensemble of subnetworks.
+    DIFFERENT SEEDS    the cheapest diversity there is for neural networks, and often worth 1-2 points.
+
+THE COSTS, which are real:
+    - M times the inference cost and M times the memory. A 500-tree forest is not free at 10,000 QPS.
+    - interpretability: one tree is readable, 500 are not (hence SHAP and permutation importance).
+    - boosting cannot parallelise ACROSS members, only within a split search.
+    - boosting overfits if you keep going; bagging essentially does not, which is why more trees in a
+      random forest is safe and more rounds in a booster needs early stopping.
+
+WHEN A SINGLE MODEL WINS: when you need interpretability for a regulator, when latency or memory is
+tight, when the data is tiny enough that variance is dominated by noise anyway, or when the base
+learner is already low-variance and low-bias.""",
+
+    """6. HOW TO CODE IT.
+
+BAGGING - five lines:
+
+  1. `for m in range(M):` draw `i = rng.integers(0, n, n)` - n indices WITH REPLACEMENT. That is the
+     bootstrap, and the `n` twice matters: same size as the original, sampled with replacement.
+  2. Fit a model on `X[i], y[i]`.
+  3. Predict by `np.mean([m.predict(X) for m in models], axis=0)` for regression, or a majority vote
+     for classification.
+  4. Use a DEEP, unpruned base learner. Bagging's job is to remove variance, so give it variance to
+     remove - a pruned tree is the wrong base model here.
+  5. For a random forest, also restrict each SPLIT to a random subset of features (about
+     sqrt(features) for classification, features/3 for regression).
+
+BOOSTING - also five, and the shape is completely different:
+
+  6. Initialise the prediction to a constant: `F = y.mean()`.
+  7. Each round, compute the RESIDUAL `y - F` (this is the negative gradient of squared error).
+  8. Fit a SHALLOW model to that residual - depth 1 to 3, not depth 8. Boosting wants high-bias,
+     low-variance members.
+  9. `F += learning_rate * tree.predict(X)`. The learning rate (0.1) is the shrinkage, and it is the
+     single most effective regulariser here.
+ 10. Stop by early stopping on a validation set, not by a fixed count - boosting DOES overfit.
+
+MEASURING THE BIAS-VARIANCE DECOMPOSITION, which is what turns this from folklore into a result:
+
+ 11. Generate R INDEPENDENT training sets (25 here) from the same distribution. This is the step that
+     makes the whole thing possible and is why it is a simulation rather than something you can do on
+     real data.
+ 12. Fit the model on each and predict the SAME fixed test set. Collect an R x n_test matrix.
+ 13. `bias^2 = mean((P.mean(axis=0) - f_true)^2)` - how wrong the AVERAGE model is.
+ 14. `variance = mean(P.var(axis=0))` - how much the predictions move across training sets.
+ 15. Compare against `f_true`, NOT against noisy `y`. Comparing against noisy labels adds the
+     irreducible error to every row and muddies the decomposition.
+
+MEASURING THE CORRELATION, which is the step everyone skips:
+
+ 16. Build the R x n_test matrix of ERRORS (`prediction - truth`), take `np.corrcoef` of it, and
+     average the strictly-upper-triangular entries. That is rho.
+ 17. Do it for identical members too. Getting exactly 1.000 and exactly 1.00x gain is the sanity
+     check that your ensemble code and your intuition agree.
+ 18. Print single-member MSE alongside ensemble MSE. Without it you cannot tell a good decorrelation
+     from one that simply broke the members - which is exactly what the feature-subsampling row showed.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Because they attack different parts of prediction error.
+
+BAGGING - random forests - trains many high-variance models on bootstrap samples and AVERAGES them.
+Averaging independent noisy estimates gives a steadier one, so it cuts VARIANCE without raising bias.
+
+BOOSTING - gradient boosting - trains models SEQUENTIALLY, each one fitting the errors the ensemble
+still has. That mainly reduces BIAS, turning weak learners into a strong one.
+
+I measured the decomposition rather than asserting it: 25 independent training sets, error measured
+against the true function so noise is excluded. A single depth-8 tree had bias-squared 0.2972 and
+variance 1.1009. Bagging 25 of them cut the variance to 0.2884 - 3.8x - and left bias essentially
+alone at 0.3591. A single depth-1 stump had bias-squared 3.2867 and variance only 0.2692, so bagging
+it moved the total from 3.5559 to 3.3359 - a 7% gain, basically nothing, because there was no variance
+to cancel. Boosting those SAME stumps cut bias-squared to 1.2694 and the total to 1.4052. Same weak
+learner, two methods, opposite outcomes - which is the clearest way to say they are not
+interchangeable.
+
+The thing I'd emphasise is that both rely on members making somewhat INDEPENDENT errors. I measured
+that too: 25 IDENTICAL trees averaged give exactly the original model - error correlation 1.000, gain
+1.00x. With bootstrap samples the correlation drops to 0.327 and the gain is 2.84x. And the arithmetic
+says the variance of an average is rho times sigma-squared plus (1 minus rho) sigma-squared over M -
+so correlation is a HARD FLOOR. At rho = 0.95, going from one member to ten thousand cuts variance by
+5%. That is precisely why a random forest subsamples FEATURES as well as rows: it is a deliberate
+attack on rho, not an optimisation.
+
+There is a caveat I found by measuring it: in my four-feature dataset, feature subsampling made things
+WORSE - 1.9234 against 0.6317 for plain bagging - because restricting each tree to two of four
+features crippled the members, whose individual error went from 1.79 to 4.81. Decorrelation only pays
+if the members remain individually competent, which is why the sqrt(features) rule is for datasets
+with dozens of columns.
+
+So the practical rule is to diagnose first. High training error means bias, so boost. Low training
+error and a big validation gap means variance, so bag. Ensembling identical or highly correlated
+models gains nothing at all."
+
+THE ONE SENTENCE TO NOT FUMBLE: bagging cancels variance and boosting cancels bias - and both are
+worthless if the members make the same mistakes, because correlation is a floor no amount of members
+can get below.""",
+
+    """8. THE CODE LINE BY LINE.
+
+BAGGING:
+
+    i = r.integers(0, len(y), len(y))
+    models.append(Tree(depth).fit(X[i], y[i]))
+
+The bootstrap, and both `len(y)` arguments matter. Sampling n from n WITH REPLACEMENT gives a sample
+the same SIZE as the original but a different COMPOSITION - about 63.2% of the rows appear at least
+once, and some appear several times. Sampling without replacement would give you back the identical
+dataset and, as measured, an identical model.
+
+    np.mean([m.predict(X) for m in models], axis=0)
+
+The whole aggregation step. For classification this becomes a majority vote or an average of predicted
+probabilities.
+
+    Tree(8)     # for bagging
+    Tree(1)     # for boosting
+
+The base learner depth is where the two methods diverge in code, and it is not arbitrary. Bagging
+needs variance to cancel, so its members are DEEP and unpruned. Boosting needs to add corrections
+slowly, so its members are SHALLOW. Swap them and both methods get worse.
+
+BOOSTING:
+
+    F = np.full(len(y), y.mean())
+
+Start at a constant - the best possible zero-parameter prediction.
+
+    t = Tree(depth).fit(X, y - F)
+
+`y - F` is the residual, and for squared error it IS the negative gradient of the loss with respect to
+the prediction. That equivalence is what makes "fit the residual" and "gradient boosting" the same
+algorithm, and it is what lets you swap in logistic loss (residual becomes `y - p`) without changing
+the structure.
+
+    F += lr * t.predict(X)
+
+SHRINKAGE. Adding only 10% of each tree means no single member dominates and the ensemble approaches
+the answer gradually. It is the most effective regulariser boosting has.
+
+THE DECOMPOSITION:
+
+    for s in range(R):
+        Xtr, ftr, ytr = make(400, 1000+s)
+        P.append(fit_predict(Xtr, ytr))
+
+R INDEPENDENT training sets, each with a different seed, each producing a prediction on the SAME test
+set. This is the step that makes bias and variance separately measurable, and it is only possible
+because the data is synthetic - on real data you have one training set and the decomposition is
+theoretical.
+
+    bias2 = np.mean((P.mean(0) - fte)**2)
+    var   = np.mean(P.var(0))
+
+`P.mean(0)` is the AVERAGE MODEL across training sets; how wrong that average is, is bias. `P.var(0)`
+is how much the predictions wobble across training sets; that is variance. Note `fte` - the TRUE
+function - not `yte`. Comparing to noisy labels would add the irreducible error to every row and hide
+the effect being measured.
+
+THE CORRELATION:
+
+    E = P - fte
+    C = np.corrcoef(E)
+    rho = np.mean(C[np.triu_indices(len(C), 1)])
+
+Correlate the members' ERRORS, not their predictions. Predictions are correlated simply because they
+are all trying to predict the same thing - that would give a high number for any competent ensemble
+and tell you nothing. It is the ERRORS whose independence matters, and `triu_indices(n, 1)` takes the
+strict upper triangle so the diagonal of 1.0s does not inflate the mean.
+
+    single = np.mean([np.mean(e**2) for e in E])
+
+The average member's error, reported ALONGSIDE the ensemble's. Without this column you cannot
+distinguish "I decorrelated the members" from "I broke the members" - which is exactly what the
+feature-subsampling row turned out to be.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the decomposition, five models, 25 independent training sets.
+
+    model                      bias^2    variance    total     what changed vs its single version
+    -----------------------   -------   ---------   ------    ---------------------------------
+    one depth-8 tree           0.2972      1.1009   1.3980    (baseline)
+    25 bagged depth-8 trees    0.3591      0.2884   0.6475    variance /3.8, bias +0.06
+    one depth-1 stump          3.2867      0.2692   3.5559    (baseline)
+    25 bagged stumps           3.2158      0.1202   3.3359    variance /2.2, bias unchanged
+    100 boosted stumps         1.2694      0.1359   1.4052    BIAS /2.6
+
+Follow the depth-8 rows: 1.1009 -> 0.2884 is a 3.8x cut in variance, and the total fell 2.16x. Bias
+moved from 0.2972 to 0.3591 - slightly UP, which is expected and is the small price bagging charges.
+
+Follow the stump rows: variance fell 2.2x, and it did not matter, because variance was only 0.2692 of
+a 3.5559 total. 92% of that model's error was bias, and bagging does not touch bias.
+
+Now the last row against the third: boosting the same stumps cut bias^2 from 3.2867 to 1.2694 while
+variance stayed near 0.13. That is the whole entry in two numbers.
+
+TRACE B - the same comparison as raw MSE, sweeping ensemble size.
+
+    base learner              1 model   25 members   100 members   400 members
+    -----------------------   -------   ----------   -----------   -----------
+    BAGGED depth-8 trees       1.2961       0.6106        0.6017             -
+    BAGGED depth-1 stumps      3.5584       3.3112        3.3404             -
+    BOOSTED depth-1 stumps     3.5584       2.6070        1.4433        1.0739
+
+Two things to notice. Bagging FLATTENS - 0.6106 at 25 members and 0.6017 at 100, essentially converged
+- because it has hit the correlation floor. Boosting keeps improving with more rounds: 2.6070, 1.4433,
+1.0739 - which is also why boosting can eventually OVERFIT and bagging essentially cannot.
+
+TRACE C - the diversity experiment, which is the mechanism.
+
+    member construction        rho      single-member MSE   25-member MSE    gain    reading
+    ------------------------   ------   -----------------   -------------   -----   ----------------
+    identical (same data)       1.000              1.2961          1.2961   1.00x   no diversity, no gain
+    bootstrap samples           0.327              1.7949          0.6317   2.84x   members individually
+                                                                                    WORSE, ensemble better
+    bootstrap + 2 of 4 feats    0.377              4.8112          1.9234   2.50x   over-decorrelated:
+                                                                                    members ruined
+
+The middle row contains the counter-intuitive fact that makes bagging work: each bootstrap tree is
+INDIVIDUALLY WORSE than the tree trained on all the data (1.7949 against 1.2961), because it saw only
+63% of the rows. The ensemble of worse models beats the single better model, by 2.05x. You are
+deliberately damaging each member to buy independence.
+
+The third row shows that trade going too far. rho barely improved (0.327 -> 0.377, in the wrong
+direction here) while single-member MSE nearly tripled, so the ensemble got worse. With four features,
+sqrt(4) = 2 is far too aggressive; the rule is designed for datasets with dozens of columns.
+
+TRACE D - the correlation floor, computed from `rho*s^2 + (1-rho)*s^2/M`.
+
+    members    rho=0.00   rho=0.30   rho=0.60   rho=0.95
+    --------   --------   --------   --------   --------
+           1      1.000      1.000      1.000      1.000
+           5      0.200      0.440      0.680      0.960
+          25      0.040      0.328      0.616      0.952
+         100      0.010      0.307      0.604      0.950
+      10,000      0.000      0.300      0.600      0.950
+
+Read across the bottom row: with perfectly independent members, ten thousand of them reduce variance
+to zero. At rho = 0.30 they floor at 0.300. At rho = 0.95 they floor at 0.950 - a 5% improvement for
+ten thousand times the compute. This table is why "just add more trees" stops helping, and why the
+research effort went into DECORRELATION rather than into ensemble size.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, for M members over n rows and d features:
+
+    bagging, training      O(M x single-model cost), and EMBARRASSINGLY PARALLEL - M cores, M-fold
+                           speedup, because members are independent
+    boosting, training     O(M x single-model cost), and STRICTLY SEQUENTIAL across members - you can
+                           only parallelise inside one member's split search
+    inference, both        O(M x single-model cost). A 500-tree forest is 500 tree traversals per
+                           prediction, which is the real production cost of an ensemble
+    memory                 O(M x model size)
+    variance reduction     rho*s^2 + (1-rho)*s^2/M - floors at rho*s^2 no matter how large M is
+    bias reduction         bagging: none (MEASURED 3.2867 -> 3.2158 on stumps)
+                           boosting: substantial (MEASURED 3.2867 -> 1.2694)
+    overfitting risk       bagging: essentially none as M grows - MEASURED 0.6106 at 25, 0.6017 at 100
+                           boosting: real, and grows with M. Use early stopping.
+
+THE MISTAKES:
+
+    - Not diagnosing first. MEASURED: bagging a high-bias stump bought 1.07x. If the model underfits,
+      averaging copies of it also underfits.
+    - Using shallow trees for bagging or deep trees for boosting. Bagging needs variance to cancel;
+      boosting needs weak, high-bias members to correct.
+    - Forgetting the independence requirement. MEASURED: 25 identical models gave a gain of exactly
+      1.00x.
+    - Thinking more members always helps. The correlation floor says otherwise: at rho = 0.95, ten
+      thousand members buy 5%.
+    - Over-decorrelating. MEASURED: feature subsampling to 2 of 4 columns tripled the members' own
+      error and made the ensemble 3.0x worse than plain bagging.
+    - Correlating PREDICTIONS instead of ERRORS. Predictions are correlated for any competent
+      ensemble; only the errors' independence matters.
+    - Measuring the decomposition against noisy labels. That adds irreducible error to every row and
+      hides the effect.
+    - Running boosting to a fixed round count without early stopping. It overfits; bagging does not.
+    - Ignoring inference cost. M times the latency and M times the memory is a real production
+      constraint at high QPS.
+    - Ensembling models from the same family and expecting stacking-level gains. The largest
+      decorrelation available usually comes from a DIFFERENT ALGORITHM, not a different seed.
+
+THE TAKEAWAY. An ensemble is not "more model, therefore better". It is a targeted treatment: bagging
+averages away VARIANCE, boosting corrects away BIAS, and the decomposition measured here shows each one
+moving its own column and leaving the other alone. Both are paid for in the same currency -
+INDEPENDENCE between members - and the arithmetic puts a hard floor on what that currency can buy:
+identical members give a gain of exactly 1.00x, and at 0.95 correlation ten thousand members give 5%.
+Diagnose which error you have, choose the method that treats it, and spend your effort making the
+members disagree rather than making more of them.""",
+]
+
+_EX_P1AO["Why do hedged requests reduce tail latency, and why not just send duplicate requests always?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - your servers are fast. The 50th percentile is 9 milliseconds. And
+your users complain the service is slow, because a request that fans out to a hundred servers waits for
+the SLOWEST one.
+
+MEASURED ON THIS MACHINE - a server that is typically 9-12 ms but stalls for about a second 1% of the
+time (garbage collection, a cold cache, a noisy neighbour on the same CPU):
+
+    ONE server:   p50 9.1 ms   p95 16.6 ms   p99 812.6 ms   p999 1156.5 ms
+
+Now watch what happens when a request must wait for the slowest of N of those servers:
+
+    leaves    p50       p95       p99      p999    P(at least one stalls)
+    ------   ------   -------   -------   -------  ----------------------
+         1      9.1      16.4      27.2    1153.2                    1.0%
+         5     13.6      30.8    1120.5    1193.1                    4.9%
+        20     18.0    1095.8    1179.4    1198.2                   18.2%
+       100    922.3    1179.1    1196.0    1199.6                   63.4%
+       500   1145.4    1196.1    1199.2    1199.9                   99.3%
+
+At 100 leaves, the MEDIAN request takes 922 milliseconds. Every individual server is still fast 99% of
+the time; nothing has changed about any of them. But `1 - 0.99^100 = 63.4%`, so most requests touch at
+least one stalled server, and the fan-out's p50 has become the single server's p99.
+
+HEDGED REQUESTS fix this without buying any hardware. Wait until a request is clearly running slow -
+past the p95 for that operation - then send a SECOND copy to a different replica and take whichever
+answers first. MEASURED, same 100-leaf fan-out:
+
+    policy             p50       p95      p99      p999    extra requests
+    ---------------   ------   ------   ------   -------   --------------
+    no hedging        926.8   1180.2   1195.9    1199.6              0.0%
+    hedge after p95    25.1     33.5     46.3    1080.9              5.0%
+    ALWAYS duplicate   15.0     19.7     30.8    1081.8            100.0%
+
+The p95 hedge took the median from 926.8 ms to 25.1 ms - 36.9x - for five percent extra load.""",
+
+    """2. THE INTUITION - two independent unlikely events are far less likely than one, and that is the
+whole trick.
+
+If one server stalls 1% of the time, and a second, independent server also stalls 1% of the time, then
+BOTH stalling is roughly 0.01% - one in ten thousand. Sending a second copy converts your tail from
+"the probability one server is slow" into "the probability two independent servers are slow at the same
+moment", which is the PRODUCT rather than the sum.
+
+That product is why the effect is so large. And the reason it works is that server slowness is mostly
+INDEPENDENT: server A's garbage collection has nothing to do with server B's cold cache. When the
+slowness is NOT independent - the whole cluster is overloaded, the shared database is slow, a network
+link is congested - hedging does nothing, because both copies hit the same problem. This is the single
+most important caveat and it is why real systems disable hedging when the cluster is hot.
+
+NOW THE SECOND HALF OF THE QUESTION, which is the more interesting one: if duplicating is so
+effective, why not do it always?
+
+Because duplicating everything DOUBLES the load on the entire fleet. And load does not translate into
+latency linearly - it translates into it catastrophically, near saturation.
+
+MEASURED, an 8-server pool with a 10 ms mean service time, queue WAIT time by base utilisation:
+
+    base utilisation   no hedging (1.00x load)      p95 hedge (1.05x)          always duplicate (2.00x)
+                       p50      p99     p999        p50     p99   p999          p50        p99       p999
+    ----------------   -------------------------   ---------------------   ---------------------------
+                0.30   0.00     0.00     1.77      0.00   0.00    2.44        0.00       8.14      14.63
+                0.50   0.00     4.33     9.60      0.00   5.19   10.70      207.10     985.23    1015.64
+                0.70   0.00    13.95    22.56      0.00  17.03   26.70    35853.28   70184.71   70850.90
+                0.85   1.08    34.04    50.02      3.54  49.70   68.79    51579.85  101392.32  102346.81
+
+A pool at 50% utilisation, always-duplicating, is at 100% utilisation - and its median queue wait goes
+from 0.00 ms to 207 ms. At 70% base utilisation, duplication puts you at 140% offered load: the queue
+never drains and the measured wait is 35.8 SECONDS. The p95 hedge, at 1.05x load, is essentially
+indistinguishable from no hedging at every utilisation.
+
+THAT is the elegance of triggering at p95. Hedges fire only for the ~5% of requests that are ALREADY
+slow, so the extra load is bounded to a few percent - while capturing almost all of the tail-latency
+benefit.""",
+
+    """3. EVERY TERM DEFINED.
+
+TAIL LATENCY. The slow end of the latency distribution: p99, p999, p9999. The number your worst-served
+users actually experience.
+
+p50 / p95 / p99 / p999. Percentiles. p99 = 99% of requests were faster than this. p999 is the
+99.9th - one request in a thousand.
+
+FAN-OUT. One incoming request producing many parallel sub-requests to leaf servers, whose results are
+combined. Search, feeds, and most recommendation systems work this way.
+
+TAIL AMPLIFICATION / TAIL COMPOUNDING. A fan-out's latency being the MAXIMUM of its leaves', so rare
+slowness at any leaf becomes common slowness overall. MEASURED: 1% per-server stall becoming a 63.4%
+chance at 100 leaves.
+
+HEDGED REQUEST. Send the request; if it has not answered by some threshold, send a second copy to a
+different replica; take the first answer; cancel the other.
+
+TIED REQUEST. A refinement: send BOTH copies immediately, but have each one, when it starts executing,
+tell the other to cancel. This cuts the wasted work further because a queued-but-not-started duplicate
+costs almost nothing. Google's "The Tail at Scale" paper is the reference.
+
+BACKUP REQUEST. The same idea as a hedge, under a different name.
+
+SPECULATIVE EXECUTION. The batch-processing version: MapReduce and Spark re-launch straggler tasks on
+other nodes.
+
+STRAGGLER. The one slow component holding up everything else.
+
+REQUEST CANCELLATION. Telling the loser to stop. Without it, a hedge costs a full extra unit of work
+rather than a partial one.
+
+UTILISATION. Offered work divided by capacity. The number that decides whether extra load is free or
+fatal. MEASURED above.
+
+QUEUEING DELAY. Time spent waiting to be served, as distinct from service time. Grows as
+`utilisation / (1 - utilisation)` - which is why it explodes near 1.
+
+MICRO-BURST. A brief spike in arrivals that fills a queue even though the average rate is comfortable.
+Another reason a system running at 85% has a bad tail.
+
+NOISY NEIGHBOUR. Another tenant on the same physical machine consuming CPU, cache or disk bandwidth.
+
+GARBAGE COLLECTION PAUSE. A common independent-per-server cause of a stall, which is exactly the kind
+hedging is good at.
+
+CORRELATED FAILURE. When both copies are slow for the same reason - cluster overload, a shared
+dependency, a network partition. Hedging is useless here, and can make it worse.
+
+ADAPTIVE / BUDGETED HEDGING. Only allowing hedges to consume a fixed fraction of total requests (gRPC
+uses a 10% retry budget by default), and disabling them entirely under load. This is what makes the
+technique safe in production.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "our p99 is fine, our servers are fast" - said about servers
+that are individually fast and collectively not.
+
+The compounding table is the thing to internalise. `P(at least one of N is slow) = 1 - (1-p)^N`:
+
+    leaves N     p = 1%      p = 0.1%    p = 0.01%
+    ---------   ---------   ---------   ---------
+            1       1.0%        0.1%       0.01%
+           10       9.6%        1.0%        0.1%
+          100      63.4%        9.5%        1.0%
+        1,000      100.0%      63.2%        9.5%
+
+Read the diagonal: a fan-out of 100 needs a per-server stall rate of 0.01% to keep the overall stall
+rate at 1%. That is a HUNDRED TIMES stricter requirement than the single-server case. Which means
+"make every server more reliable" is a losing strategy at scale - you cannot buy two more nines out of
+every leaf. Hedging is the strategy that works instead, because it attacks the PRODUCT rather than the
+sum.
+
+THE SECOND TRAP - hedging too eagerly. MEASURED:
+
+    policy             p50    p99     p999   extra requests
+    ---------------   -----   ----   ------   --------------
+    no hedging        926.8  1195.9  1199.6             0.0%
+    hedge after p95    25.1    46.3  1080.9             5.0%
+    hedge after p50    19.4    39.1  1086.5            60.4%
+    ALWAYS duplicate   15.0    30.8  1081.8           100.0%
+
+Look at what the extra 95 percentage points of load buy you: p50 from 25.1 down to 15.0 ms, and p99
+from 46.3 to 30.8. Better, certainly. And you paid TWENTY TIMES the extra load for it, and - per
+section 2 - at any utilisation above 50% you have destroyed the system to get it. Hedging at p50 is the
+same mistake in miniature: 60.4% extra load for a 5.7 ms improvement in p50.
+
+The p95 threshold is where the curve bends. It is not a magic number - it is "the point past which a
+request is genuinely anomalous", and the right threshold is the one that fires on a few percent of
+requests for YOUR distribution.
+
+THE THIRD TRAP - expecting hedging to fix p999. MEASURED, it does not:
+
+    no hedging        p999 = 1199.6 ms
+    hedge after p95   p999 = 1080.9 ms      only 1.1x better
+    ALWAYS duplicate  p999 = 1081.8 ms      no better than the p95 hedge
+
+Because at the extreme tail you are in the regime where BOTH copies stalled, or where the hedge itself
+was slow. A second copy multiplies the probability of a stall; it does not eliminate it. If you need
+p999, you need three copies, or you need to fix the stall.
+
+THE FOURTH TRAP - forgetting the correlation assumption. Every number above assumes the two replicas
+stall INDEPENDENTLY. When the cause is shared - the cluster is hot, the backing store is slow, a switch
+is congested - hedging adds load to an already-struggling system and makes it worse. That is why
+production implementations always carry a BUDGET (gRPC defaults to 10% of requests) and a kill switch
+tied to system load.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the other ways to attack a tail, and where hedging sits among
+them.
+
+REDUCE THE FAN-OUT ITSELF. Every number in this entry gets better if N is smaller. Fewer, larger shards
+means fewer chances to hit a straggler. MEASURED: at 20 leaves the p50 was 18.0 ms; at 100 it was
+922.3.
+
+FIX THE STALL. Hedging is a mitigation, not a cure. If the 1% stall is a stop-the-world GC pause, tune
+or replace the collector; if it is a cold cache, pre-warm it; if it is a noisy neighbour, isolate the
+workload. The measured p999 of 1,080 ms survived every hedging policy, and the only thing that removes
+it is removing the stall.
+
+RUN AT LOWER UTILISATION. The queueing table is the argument: p99 wait went 13.95 ms at 70%
+utilisation to 34.04 ms at 85%, on the same hardware doing nearly the same work. Headroom IS a tail
+strategy.
+
+THE REDUNDANCY FAMILY, in increasing cost:
+    HEDGED REQUEST (this entry)     one extra copy, only for the slow tail. ~5% extra load.
+    TIED REQUEST                    both copies sent immediately, each cancels the other on start.
+                                    Better latency than a hedge, and less waste than duplication,
+                                    because a queued duplicate that never started cost nothing.
+    ALWAYS DUPLICATE                100% extra load. MEASURED to be catastrophic above 50%
+                                    utilisation and only 1.7x better on p50 than the p95 hedge.
+    QUORUM READS                    read from 3, take the first 2. Common in Dynamo-style stores; the
+                                    same product-of-probabilities idea with a consistency benefit
+                                    attached.
+    SPECULATIVE EXECUTION           the batch version - MapReduce and Spark relaunch stragglers.
+
+THE ROUTING FAMILY, which reduces how often a slow server is chosen at all:
+    LEAST-OUTSTANDING-REQUESTS      route to the replica with the fewest in-flight requests. A stalled
+                                    server accumulates in-flight requests and stops being chosen -
+                                    which is passive hedging.
+    LATENCY-AWARE / POWER-OF-TWO    sample two replicas, pick the less loaded. Nearly all the benefit
+                                    of full load-awareness for none of the coordination.
+    LOAD SHEDDING                   reject work you cannot serve in time, fast, rather than queueing it.
+
+THE SAFETY MECHANISMS, which are what make hedging deployable:
+    A RETRY/HEDGE BUDGET            cap hedges at a fixed fraction of total requests. gRPC defaults to
+                                    10%. This bounds the damage when everything is slow at once.
+    DISABLE UNDER LOAD              never hedge when the fleet is hot. The queueing table shows why:
+                                    at 70% utilisation, doubling load costs 35 seconds of wait.
+    PER-OPERATION THRESHOLDS        the p95 of a cheap lookup and of an expensive aggregation are very
+                                    different numbers. One global threshold is wrong for both.
+    CANCELLATION                    without it, the losing copy runs to completion and you pay full
+                                    price for every hedge.
+
+THE PRINCIPLE TO STATE: spend a little redundant work PRECISELY WHERE it buys tail-latency improvement,
+and nowhere else.""",
+
+    """6. HOW TO CODE IT.
+
+THE HEDGE, in the client:
+
+  1. Send the request, and start a timer for the threshold - the p95 for THIS operation, measured
+     continuously, not a constant you guessed once.
+  2. If the response arrives first, cancel the timer. Done, and this is the ~95% path where nothing
+     extra happens.
+  3. If the timer fires first, send a second copy to a DIFFERENT replica. A hedge to the same replica
+     is worthless - it will queue behind the request that is already stuck.
+  4. Return whichever completes first.
+  5. CANCEL THE LOSER. Without cancellation a hedge costs a full duplicate unit of server work, and
+     your 5% extra requests become 5% extra completed work rather than 5% extra started work.
+  6. Guard it with a BUDGET: a token bucket allowing hedges to be at most, say, 5-10% of requests over
+     a rolling window. When everything is slow, everything wants to hedge, and that is exactly when
+     you must not.
+  7. Guard it with a LOAD CHECK: if fleet utilisation is above your threshold, do not hedge at all.
+
+MEASURING WHY IT WORKS:
+
+  8. Model the server as BIMODAL, not as a single distribution: typical (log-normal around 10 ms) with
+     probability 0.99, and stalled (uniform 800-1200 ms) with probability 0.01. A single log-normal
+     will not reproduce the phenomenon, because the whole point is a rare, large, INDEPENDENT stall.
+  9. Model the fan-out as `max(...)` over N samples. That one function is tail amplification.
+ 10. Sweep N and print p50/p95/p99/p999 side by side with `1-(1-p)^N`. Seeing the analytic probability
+     next to the measured percentiles is what makes the mechanism obvious rather than surprising.
+ 11. Model the hedge as: `if a <= threshold: t = a else: t = min(a, threshold + fresh_sample())`. The
+     `threshold +` matters - the hedge does not start until the threshold has elapsed, so its total
+     latency includes that wait.
+ 12. Count the EXTRA REQUESTS as a percentage of total leaf calls. Without that column you would
+     conclude always-duplicating is simply better.
+
+MEASURING WHY YOU CANNOT DO IT ALWAYS - this is the half people skip:
+
+ 13. Build a queueing simulation: Poisson arrivals into a pool of servers with exponential service
+     times, requests going to the earliest-free server.
+ 14. Parameterise it by BASE utilisation and a LOAD MULTIPLIER (1.00 for no hedging, 1.05 for a p95
+     hedge, 2.00 for always-duplicating).
+ 15. Report the WAIT time, not total latency - the wait is the part duplication damages.
+ 16. Sweep base utilisation from 0.3 to 0.85 and print all three policies together. The 2.00x column
+     going from 0.00 ms to 35,853 ms across that sweep is the entire argument against
+     always-duplicating, and it needs no explanation once it is on screen.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Tail latency in a large system is dominated not by the average server but by the occasional slow one:
+a server doing garbage collection, serving a cold cache, sharing a noisy CPU, or briefly queueing. In a
+request that fans out to many servers, the SLOWEST component gates the whole response - so even if each
+server is fast 99% of the time, a request touching 100 of them is very likely to hit at least one slow
+one. Tail latency COMPOUNDS.
+
+I measured that. A server with a 1% chance of a one-second stall has a p50 of 9.1 ms on its own. Fan
+out to 100 of them and the request's MEDIAN becomes 922 ms, because `1 - 0.99^100` is 63.4% - most
+requests hit at least one stall. Nothing about any individual server changed.
+
+HEDGED REQUESTS attack this directly: wait until a request is clearly running slow - past, say, the p95
+for that operation - then send a second copy to a DIFFERENT replica and take whichever finishes first.
+Because one server's slowness is usually independent of another's, the probability that BOTH are slow
+is roughly the PRODUCT of the individual probabilities, so the tail collapses toward the typical
+latency. Measured: the 100-leaf fan-out went from a p50 of 926.8 ms to 25.1 ms, and a p99 of 1,195.9 ms
+to 46.3 ms.
+
+The reason you don't just duplicate every request always is COST. Sending two copies of everything
+doubles the load on the whole fleet, and a system running near capacity tips into overload - which
+itself creates queueing and makes latency WORSE, defeating the purpose. I measured that too: an
+8-server pool at 50% base utilisation, always-duplicating, is at 100% offered load, and its median
+queue wait went from 0.00 ms to 207 ms. At 70% base it went to 35.8 SECONDS, because the queue never
+drains. The p95 hedge, at 1.05x load, was indistinguishable from no hedging at every utilisation
+tested.
+
+The elegance of the p95 trigger is that hedges only fire for the small fraction of requests that are
+ACTUALLY slow - about 5% - so the extra load is bounded to a few percent while capturing almost all of
+the benefit. Always-duplicating bought only 25.1 ms down to 15.0 ms on p50 for twenty times the extra
+load.
+
+Two refinements worth naming. TIED REQUESTS send both copies immediately but have each tell the other
+to cancel once it starts executing, which cuts the wasted work further, because a duplicate that only
+ever sat in a queue cost nothing. And you never hedge when the system is already hot, because that
+amplifies the overload - in practice that is a hedge budget, typically capped at 10% of requests.
+
+The principle: spend a little redundant work precisely where it buys tail-latency improvement, not
+everywhere."
+
+THE ONE SENTENCE TO NOT FUMBLE: a second copy turns the probability of a slow response into the PRODUCT
+of two independent slow probabilities, and triggering it at p95 buys almost all of that for about five
+percent extra load.""",
+
+    """8. THE CODE LINE BY LINE - the simulation, since the argument is in the numbers.
+
+    def server_latency(r):
+        if r.random() < 0.01: return r.uniform(800, 1200)
+        return r.lognormvariate(2.2, 0.35)
+
+The server model, and the most important lines here. It is BIMODAL: a typical mode around 9-12 ms and
+a rare stall of about a second. A single log-normal, however heavy-tailed, does not reproduce the
+phenomenon, because the whole effect depends on a rare, LARGE, INDEPENDENT event that a second replica
+almost certainly does not share.
+
+    lat = [max(server_latency(r) for _ in range(n)) for _ in range(40000)]
+
+Fan-out, in one `max`. The request completes when the SLOWEST leaf completes. Everything about tail
+amplification is in that function name.
+
+    p_any = 1 - (1 - 0.01) ** n
+
+The analytic companion to the simulation. Printing it next to the measured percentiles is what turns
+"the p50 became 922 ms" from surprising into obvious - 63.4% of requests hit a stall, so the median
+request is a stalled one.
+
+    if a <= hedge_after:
+        t = a
+    else:
+        extra += 1
+        b = hedge_after + server_latency(r)
+        t = min(a, b)
+
+The hedge. Three details:
+
+    `a <= hedge_after`      the hedge only fires for requests already past the threshold. This is what
+                            bounds the extra load to the tail fraction - about 5% at a p95 threshold.
+    `hedge_after + ...`     the hedge STARTS at the threshold, so its total latency includes that wait.
+                            Modelling it as a fresh sample from zero would flatter hedging.
+    `min(a, b)`             take whichever finishes. Note `a` is still in the min - the original might
+                            still win, and often does.
+
+    extra / total
+
+The cost column. Report it as a percentage of ALL leaf requests, not of hedged ones, or you cannot
+compare policies. This is the column that shows the p50-triggered hedge costing 60.4% and buying
+almost nothing.
+
+THE QUEUEING SIMULATION:
+
+    rate = util * servers / service_mean * dup_factor
+
+The load multiplier applied to the ARRIVAL RATE. `dup_factor` is 1.00, 1.05 or 2.00, and everything
+else is identical between the three columns - which is what makes them comparable.
+
+    i = min(range(servers), key=lambda k: free[k])
+    start = max(t, free[i])
+    waits.append(start - t)
+
+Route to the earliest-free server; the wait is how long after arrival service actually began. Recording
+the WAIT rather than the total latency isolates the effect duplication has - service time is unchanged,
+queueing is not.
+
+    free[i] = start + r.expovariate(1/service_mean)
+
+Exponential service times. Combined with Poisson arrivals this is an M/M/c queue, whose wait grows as
+`utilisation / (1 - utilisation)` - the function that goes vertical near 1 and produces the 35,853 ms
+in the table.
+
+    tag = '' if util*2.0 < 1.0 else '  <- OVERLOADED'
+
+Flagging the rows where the effective utilisation exceeds 1. Above that point the queue never drains
+and the "latency" you measure is really a function of how long you ran the simulation - which is worth
+saying out loud rather than quoting 70,000 ms as though it were a stable number.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one server, then the fan-out, measured.
+
+    percentile   one server   5 leaves   20 leaves   100 leaves   500 leaves
+    ----------   ----------   --------   ---------   ----------   ----------
+    p50                 9.1       13.6        18.0        922.3       1145.4
+    p95                16.6       30.8      1095.8       1179.1       1196.1
+    p99               812.6     1120.5      1179.4       1196.0       1199.2
+    p999             1156.5     1193.1      1198.2       1199.6       1199.9
+
+Follow the p50 row: 9.1, 13.6, 18.0, 922.3. It is well-behaved up to 20 leaves and then falls off a
+cliff. Follow the p95 row: it goes over a second at TWENTY leaves. The cliff moves left as you look
+further into the tail, which is the same fact stated three ways - what was your p99 becomes your p95
+becomes your p50 as the fan-out grows.
+
+    P(at least one stall)   1.0%   4.9%   18.2%   63.4%   99.3%
+
+That row explains the whole table. At 500 leaves, 99.3% of requests contain a stall, so the median
+request IS a stalled request.
+
+TRACE B - the four policies at 100 leaves, measured.
+
+    policy             p50      p95      p99      p999    extra load   p50 gain
+    ---------------   -----   ------   ------   -------   ----------   --------
+    no hedging        926.8   1180.2   1195.9    1199.6         0.0%          -
+    hedge after p95    25.1     33.5     46.3    1080.9         5.0%     36.9x
+    hedge after p50    19.4     25.5     39.1    1086.5        60.4%     47.8x
+    ALWAYS duplicate   15.0     19.7     30.8    1081.8       100.0%     61.8x
+
+Read the last two columns together. Going from no hedging to a p95 hedge costs 5% and buys 36.9x.
+Going from a p95 hedge to always-duplicating costs another 95 percentage points - nineteen times the
+extra load - and buys a further 1.7x. That is the diminishing return that makes the p95 trigger the
+right answer.
+
+And look at the p999 column: 1199.6, 1080.9, 1086.5, 1081.8. Essentially flat. No hedging policy fixes
+the extreme tail, because at p999 you are in the both-copies-stalled regime.
+
+TRACE C - what always-duplicating does to a loaded system. 8 servers, 10 ms service, QUEUE WAIT.
+
+    base util   no hedging (1.00x)      p95 hedge (1.05x)     always duplicate (2.00x)   effective util
+    ---------   --------------------   --------------------   ------------------------   --------------
+                p50     p99    p999    p50     p99    p999     p50        p99      p999
+         0.30   0.00    0.00    1.77   0.00    0.00    2.44    0.00       8.14     14.63             0.60
+         0.50   0.00    4.33    9.60   0.00    5.19   10.70  207.10     985.23   1015.64             1.00
+         0.70   0.00   13.95   22.56   0.00   17.03   26.70   35853    70185     70851              1.40
+         0.85   1.08   34.04   50.02   3.54   49.70   68.79   51580    101392    102347             1.70
+
+The 0.30 row is the only one where always-duplicating is survivable, and even there the p999 wait went
+from 1.77 ms to 14.63 ms. From 0.50 onward the effective utilisation is at or above 1.0 and the queue
+never drains - those five-digit numbers are a system that has fallen over, not a system that is slow.
+
+Meanwhile the p95-hedge columns are within a few milliseconds of the no-hedging columns at every
+utilisation. That is the entire safety argument: a 5% load increase is noise, a 100% increase is a
+capacity decision.
+
+TRACE D - the compounding arithmetic, `1 - (1-p)^N`.
+
+    leaves N     p = 1%     p = 0.1%    p = 0.01%
+    ---------   --------   ---------   ---------
+            1       1.0%        0.1%       0.01%
+           10       9.6%        1.0%        0.1%
+          100      63.4%        9.5%        1.0%
+        1,000     100.0%       63.2%        9.5%
+
+Read down a column and the rate compounds; read along the diagonal and you see the cost of scale: to
+hold the overall stall rate at 1% you need per-server 1% at N=1, 0.1% at N=10, and 0.01% at N=100. Each
+tenfold increase in fan-out demands another nine from every leaf, forever. That is not achievable, which
+is precisely why the answer is redundancy rather than reliability.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, in the terms that decide the design:
+
+    fan-out latency              O(max of N samples). MEASURED: p50 9.1 ms -> 922.3 ms from 1 to 100
+                                 leaves, with no change to any server.
+    P(at least one slow)         1 - (1-p)^N. MEASURED 63.4% at p=1%, N=100.
+    P(both copies slow)          approximately p^2 IF INDEPENDENT. This is the whole mechanism.
+    hedge extra load             the tail fraction you trigger on. MEASURED 5.0% at a p95 threshold,
+                                 60.4% at p50, 100% for always-duplicating.
+    hedge benefit                MEASURED 36.9x on p50, 25.8x on p99, and 1.1x on p999.
+    queueing wait                grows as u/(1-u). MEASURED p99 wait 4.33 ms at u=0.5 and 34.04 ms at
+                                 u=0.85 - 7.9x for 1.7x the load.
+    always-duplicate cost        MEASURED: survivable below u=0.5, catastrophic above. 35,853 ms
+                                 median wait at u=0.7.
+    tied requests                the same benefit with less waste, because a cancelled-before-start
+                                 duplicate costs almost nothing.
+
+THE MISTAKES:
+
+    - Believing fast servers give a fast fan-out. MEASURED: 99%-fast servers give a 63.4% chance of a
+      stall at 100 leaves.
+    - Trying to fix the tail by making every leaf more reliable. Each tenfold increase in fan-out
+      demands another nine from every server. That is not a strategy.
+    - Duplicating everything. MEASURED: at 70% base utilisation it takes the median queue wait to 35.8
+      seconds, because the offered load is 140% of capacity.
+    - Hedging too eagerly. A p50 trigger cost 60.4% extra load and improved p50 by 5.7 ms over a p95
+      trigger.
+    - Hedging to the SAME replica. It queues behind the request that is already stuck.
+    - Forgetting cancellation. Without it every hedge is a full duplicate of work, not a partial one.
+    - No hedge budget. When everything is slow, every request wants to hedge, and hedging is exactly
+      what you must not do then. gRPC's default is 10%.
+    - Hedging through CORRELATED slowness - cluster overload, a shared database, a congested link.
+      Both copies hit the same wall and you have only added load.
+    - Expecting hedging to fix p999. MEASURED flat at ~1,080 ms under every policy. The extreme tail
+      needs the stall fixed, or three copies.
+    - Using one global threshold. The p95 of a cheap lookup and of an expensive aggregation are
+      different numbers; measure per operation.
+
+THE TAKEAWAY. Tail latency at scale is not an average problem, it is a MAXIMUM problem: a fan-out is
+only as fast as its slowest leaf, so rare slowness becomes common slowness and your p99 becomes your
+p50. Redundancy fixes it because two independent slow events are far rarer than one - the probabilities
+MULTIPLY - and the measured effect is 36.9x on the median. The reason to hedge rather than duplicate is
+that load and latency are not linearly related: 5% extra load is invisible and 100% extra load takes a
+half-loaded pool to a 207 ms median wait and a 70%-loaded pool to 35 seconds. So trigger the redundancy
+only where it pays, cap it with a budget, and turn it off when the fleet is hot.""",
+]
+
+_EX_P1AO["Why do recommendation and ad systems use a two-stage retrieval-then-ranking architecture instead of one big model?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - YouTube has to pick about twenty videos to show you, from a corpus
+of billions, in under 200 milliseconds, millions of times a second.
+
+The obvious design is one big accurate model that scores every video. Do the arithmetic and it dies
+immediately.
+
+MEASURED ON THIS MACHINE - a 200,000-item corpus with 32-dimensional embeddings, and a "heavy ranker"
+that uses a bilinear user-item interaction term (the kind of cross feature a good ranker has):
+
+    heavy ranker over ALL 200,000 items      65.63 ms per request
+    two-tower dot product over all items      5.37 ms per request      12.2x cheaper
+
+    extrapolating the heavy ranker to a 1,000,000,000-item corpus:   328 SECONDS per request
+
+Three hundred and twenty-eight seconds. Not milliseconds. And that is one request, in numpy, on one
+machine, for a model far simpler than a real ranker.
+
+But you cannot solve it by making the model cheap either, because ranking QUALITY - the precise
+ordering of what the user sees - is what drives watch time and revenue, and it needs heavy models with
+rich cross features.
+
+THE TWO-STAGE ARCHITECTURE splits the problem into two sub-problems with OPPOSITE targets:
+
+    STAGE 1, RETRIEVAL   optimises RECALL and SPEED. Cheaply narrow a billion items to a few hundred
+                         plausible candidates without missing the good ones. Ordering does not matter.
+    STAGE 2, RANKING     optimises PRECISION. Now that the set is a few hundred, spend real compute on
+                         a rich model to order them accurately.
+
+MEASURED, the result: retrieval alone gave precision@10 of 0.0557. Retrieving 1,000 candidates and then
+ranking them gave 0.6100 - a 10.9x improvement - at essentially the same latency.""",
+
+    """2. THE INTUITION - a librarian who fetches a trolley, and an expert who reads the trolley.
+
+You ask a research library for the ten most relevant papers. The librarian does not read every paper -
+they use the catalogue, grab fifty plausible ones, and wheel them over. That takes a minute. Then a
+domain expert reads those fifty properly and picks the best ten. That takes an hour.
+
+Neither could do the job alone. The expert cannot read ten million papers. The librarian cannot judge
+which ten are best. But together they get expert-quality selection at librarian-scale throughput,
+because the expensive judgement is applied only to a shortlist the cheap process produced.
+
+WHY STAGE 1 MUST USE A "TWO-TOWER" MODEL, which is the architectural detail worth understanding: it
+embeds the USER and each ITEM independently into the same vector space, and scores them with a plain
+DOT PRODUCT. That constraint looks like a limitation and it is the entire point:
+
+    because the item embedding does not depend on the user, EVERY ITEM VECTOR CAN BE COMPUTED OFFLINE
+    and put in an index.
+
+At request time you embed only the user - one forward pass - and do an APPROXIMATE NEAREST NEIGHBOUR
+search over the precomputed index, which is SUBLINEAR in the corpus size. You never score items
+individually at all.
+
+A ranking model can do the opposite. It is allowed joint user-item CROSS features - "has this user
+watched this creator before", "how does this item's topic interact with this user's session" -
+precisely because it only runs on a few hundred candidates, where per-item compute is affordable.
+
+    stage 1: user and item encoders must be SEPARATE, so item vectors precompute
+    stage 2: user and item features can be JOINED, because there are only a few hundred
+
+MEASURED, the cost of that separation. The two-tower can only express the dot-product part of the true
+relevance; the cross term is invisible to it. So its own top-10 is poor - precision@10 of 0.0557 - but
+its top-1000 CONTAINS 61.0% of the true top 10. It is a bad ranker and a good filter, which is exactly
+the job.""",
+
+    """3. EVERY TERM DEFINED.
+
+CORPUS. The full set of candidate items - videos, products, ads, songs. Millions to billions.
+
+CANDIDATE GENERATION / RETRIEVAL. Stage 1. Reduce the corpus to a shortlist.
+
+RANKING. Stage 2. Order the shortlist accurately.
+
+RE-RANKING. An optional stage 3 applying diversity, freshness, business rules and de-duplication to the
+final list.
+
+PRE-RANKER. An optional cheap model BETWEEN retrieval and ranking, narrowing, say, 10,000 to 500 - used
+when even the ranker cannot afford the retrieval output.
+
+RECALL@K. Of the items that truly belong in the top 10, what fraction appear in stage 1's K candidates.
+The metric stage 1 is optimised for. MEASURED below from 5.6% at K=10 to 98.5% at K=20,000.
+
+PRECISION@K. Of the K items you finally showed, what fraction are truly good. The metric stage 2 is
+optimised for.
+
+TWO-TOWER MODEL / DUAL ENCODER. Separate user and item encoders producing vectors in a shared space,
+scored by dot product or cosine. The separation is what makes precomputation possible.
+
+CROSS FEATURES / INTERACTION FEATURES. Features computed from the user and item TOGETHER. A two-tower
+model deliberately cannot use them; a ranker's advantage is that it can.
+
+EMBEDDING. A dense vector representing a user or item.
+
+ANN (approximate nearest neighbour). Finding the nearest vectors without comparing against all of them.
+HNSW, IVF, ScaNN, FAISS. Sublinear, at the cost of occasionally missing a true neighbour.
+
+INDEX. The precomputed, searchable structure of item embeddings, rebuilt on a schedule.
+
+CANDIDATE SOURCES. In production, stage 1 is usually SEVERAL retrievers unioned: an embedding ANN, a
+"similar to what you just watched" lookup, trending items, subscriptions, a fresh-content pool. This is
+how systems get recall a single retriever cannot.
+
+MULTI-TASK HEAD. One ranking model predicting several outcomes at once - click, watch time, like, "not
+interested" - combined into a final score. Standard in modern rankers.
+
+LATENCY BUDGET. The total time allowed, split across stages. Typically tens of milliseconds for
+retrieval and tens for ranking.
+
+QPS. Queries per second. Multiplies every per-request cost by an enormous factor.
+
+RECALL CEILING. The fact that stage 2 can only reorder what stage 1 gave it, so stage-1 recall is a
+HARD UPPER BOUND on final quality. MEASURED exactly below - it is the most important idea in this
+entry.
+
+CO-DESIGN. Training the stages against each other rather than separately, so retrieval learns to
+surface items the ranker values.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the RECALL CEILING. Stage 2 cannot recover what stage 1
+threw away, and the measurement shows this as an exact equality rather than a rough principle.
+
+MEASURED, four candidate-set sizes, with the stage-2 ranker being the true relevance function:
+
+    K (candidates)   stage-1 recall@10   final precision@10
+    --------------   -----------------   ------------------
+                50               16.0%                16.0%
+               200               32.0%                32.0%
+             1,000               61.0%                61.0%
+             5,000               87.8%                87.8%
+
+Not "close to". EQUAL, in every row. A perfect ranker applied to a candidate set containing 32% of the
+true top 10 returns exactly 32% of the true top 10, because there is nothing else to return. Stage-1
+recall is not a soft influence on final quality - it is a CEILING, and every point of it you lose is a
+point of final quality you can never get back no matter how good your ranker is.
+
+The practical consequence is that a team spending six months on ranker architecture while retrieval
+misses 40% of the good items is optimising under a lid. This is also why real systems union several
+CANDIDATE SOURCES: each covers a different failure mode of the others, and candidate-source diversity
+buys recall that no single retriever can.
+
+THE SECOND TRAP - concluding "so just retrieve more". MEASURED, the recall/latency curve:
+
+    K            recall@10   stage-2 latency for K items
+    ----------   ---------   ---------------------------
+            10        5.6%                       5.79 ms
+            50       16.0%                       4.22 ms
+           200       32.0%                       4.99 ms
+         1,000       61.0%                       4.70 ms
+         5,000       87.8%                       8.85 ms
+        20,000       98.5%                      16.36 ms
+
+Recall does climb all the way to 98.5%. But look at what it costs: ranking 20,000 items took 16.36 ms
+against 4.70 ms for 1,000. And that is my toy ranker - a real one with hundreds of features and a deep
+network is orders of magnitude more expensive per item, which is precisely why stage 2 is restricted to
+a few hundred. The candidate count is a DIAL between the recall ceiling and the ranking budget, and
+finding the right setting is most of the engineering.
+
+THE THIRD TRAP - assuming the two-tower model is just a weaker ranker that you tolerate. It is a
+DIFFERENT SHAPE of model, and the shape is the reason it exists. MEASURED:
+
+    architecture                             precision@10
+    --------------------------------------   ------------
+    retrieval only (two-tower top-10)              0.0557
+    two-stage: retrieve 200, then rank             0.3203
+    two-stage: retrieve 1,000, then rank           0.6100
+    a single heavy model over everything           1.0000
+
+The two-tower is a terrible ranker - 0.0557, barely better than nothing. It is an excellent FILTER: its
+top 1,000 contains 61% of the true top 10 out of 200,000 items. If you evaluate stage 1 with a ranking
+metric you will conclude it is broken. Evaluate it with recall@K and it is doing its job perfectly.
+
+THE FOURTH TRAP - forgetting that the single-model row is not an option. Its precision@10 is 1.0000 and
+its cost is 65.63 ms for 200,000 items, extrapolating to 328 seconds for a billion. The two-stage
+architecture is not a compromise chosen for elegance; it is the only point in the design space that
+satisfies both constraints at all.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what each stage can be built from, and where the pattern
+recurs.
+
+STAGE 1, CANDIDATE SOURCES - production systems union several:
+    EMBEDDING ANN (two-tower)   the general-purpose one. Precomputed item vectors, sublinear search.
+    ITEM-TO-ITEM / CO-VISITATION "people who watched this also watched" - a precomputed neighbour list,
+                                extremely cheap and often the single highest-precision source.
+    INVERTED INDEX / BM25       keyword or tag matching. Still how web search retrieval largely works.
+    RULE-BASED POOLS            subscriptions, trending, editorially curated, fresh-in-the-last-hour.
+                                These exist because embeddings are bad at cold-start and at recency.
+    GRAPH WALKS                 random walks over a user-item graph (Pinterest's Pixie).
+    Unioning them is not redundancy - each covers a different failure of the others, and the union's
+    recall is the ceiling on everything downstream.
+
+THE ANN FAMILY, since stage 1's sublinearity depends on it:
+    HNSW       a navigable small-world graph. Best recall/latency in memory; high memory cost.
+    IVF        cluster the corpus, search a few clusters. Cheaper memory, tunable via `nprobe`.
+    PQ         product quantisation - compress vectors to bytes. Massive memory saving, some recall
+               loss. Usually combined as IVF-PQ.
+    ScaNN, FAISS, DiskANN are the implementations. All of them expose a RECALL/LATENCY dial, which
+    stacks on top of the K dial measured above - and both feed the same ceiling.
+
+STAGE 2, RANKERS:
+    GBDT (XGBoost/LightGBM)     still extremely strong on tabular ranking features. See the
+                                trees-vs-deep-learning entry.
+    WIDE AND DEEP / DLRM / DCN  the deep-recommender family, built specifically to learn feature
+                                CROSSES that a two-tower cannot express.
+    MULTI-TASK RANKERS          predict click, watch time, like, share and "not interested" together,
+                                then combine. This is how you stop optimising a proxy - see the
+                                offline-versus-online entry, where a click-only ranker raised
+                                click-through 79.5% and cut retention 20.9%.
+
+STAGE 3, RE-RANKING: diversity (do not show ten videos from one creator), freshness, de-duplication,
+business rules, ad load, exploration slots.
+
+WHY NOT ONE MODEL - the alternatives that people propose, and why they fail:
+    "score everything with a small model"  that IS stage 1. You have just renamed it, and you have
+                                           given up the quality that stage 2 provides.
+    "cache the scores"                     scores depend on the USER and the CONTEXT, so a cache
+                                           entry is per user per moment. Nothing to reuse.
+    "precompute per user offline"          works for a daily email digest; useless for a session that
+                                           depends on what was watched thirty seconds ago.
+    "distill the ranker into a two-tower"  a real and useful technique - it improves stage 1's recall
+                                           - but it cannot remove the cross features, because the
+                                           whole point of the tower separation is that item vectors
+                                           must not depend on the user.
+
+THE SAME PATTERN ELSEWHERE, which is what makes this worth knowing beyond recommenders: web search
+(cheap retrieval, then learning-to-rank), RAG (embedding retrieval, then a cross-encoder reranker, then
+the LLM), face recognition (detect, then embed, then match), and speculative decoding in LLM serving (a
+cheap draft model proposes, an expensive model verifies). All of them are "select few from enormous
+under a latency budget", and all of them answer it by splitting recall from precision.""",
+
+    """6. HOW TO CODE IT - and how to measure whether your two stages are actually co-operating.
+
+BUILDING THE PIPELINE:
+
+  1. STAGE 1 OFFLINE: compute an embedding for every item and build an ANN index. This is a batch job
+     that runs on a schedule, and its cost does not appear in your request latency at all - which is
+     the entire architectural payoff.
+  2. STAGE 1 ONLINE: embed the USER (one forward pass), query the index for the top K, union with your
+     other candidate sources, de-duplicate.
+  3. STAGE 2: fetch full features for those K items - including CROSS features that require both the
+     user and the item - and score them with the heavy model.
+  4. STAGE 3: apply diversity and business rules, then return the top N.
+  5. Keep a LATENCY BUDGET per stage and enforce it. A stage that occasionally takes 200 ms is a
+     stage that will define your p99 - see the hedged-requests entry.
+
+MEASURING IT, and each of these answers a different question:
+
+  6. LATENCY OF THE NAIVE DESIGN. Time the heavy scorer over the whole corpus, then extrapolate
+     linearly to your real corpus size. `65.63 ms for 200,000 -> 328 seconds for a billion` is the
+     number that ends the "why not one model" discussion in one line.
+  7. STAGE-1 RECALL@K. Compute the TRUE top 10 with the expensive model over everything (feasible
+     offline, on a sample of users), then check what fraction of it appears in stage 1's K candidates.
+     Sweep K. This is stage 1's only real metric.
+  8. DO NOT evaluate stage 1 with a ranking metric. MEASURED, its own top-10 precision was 0.0557,
+     which looks like a broken model and is in fact a working filter.
+  9. FINAL PRECISION@10 for the whole pipeline, and compare it against the recall from step 7. They
+     should be equal or nearly so - if final precision is well BELOW recall, your ranker is the
+     bottleneck; if they are equal, RETRIEVAL is the bottleneck and improving the ranker will do
+     nothing.
+ 10. That comparison is the single most useful diagnostic in this architecture and almost nobody
+     computes it. MEASURED here: 16.0/16.0, 32.0/32.0, 61.0/61.0, 87.8/87.8 - retrieval-bound in every
+     row.
+ 11. STAGE-2 LATENCY AS A FUNCTION OF K. Sweep it and plot against recall. That curve is where you
+     choose K, and it is a business decision, not a modelling one.
+
+BUILDING THE SIMULATION HONESTLY:
+
+ 12. The TRUE relevance must contain something the two-tower CANNOT express, or there is no reason for
+     stage 2 to exist. Here: a dot-product term (expressible) plus a BILINEAR cross term `(I@W)*u`
+     (not expressible by any dot product of independently-computed vectors).
+ 13. Scale that cross term so it is a CORRECTION, not the whole signal. My first run made it dominate,
+     and stage-1 recall came out at 5.4% at K=200 - a two-tower that useless would never be deployed,
+     and the resulting entry would have been about a broken system rather than a working one.
+ 14. Include popularity and freshness terms too, since real relevance is not purely about similarity.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"The fundamental tension is between SCALE and QUALITY. A recommender or ad system must select a handful
+of items from a corpus of millions to billions, in tens of milliseconds, at enormous QPS.
+
+You cannot run a rich, accurate scoring model over the entire corpus per request. I measured that: a
+heavy ranker with a user-item interaction term took 65.63 milliseconds over 200,000 items, which
+extrapolates to 328 SECONDS for a billion-item corpus. But you also don't want a cheap model making the
+final decision, because the precise ordering of what the user sees drives revenue and satisfaction, and
+that benefits from heavy models with cross features.
+
+The two-stage architecture resolves this by splitting the problem into two sub-problems with OPPOSITE
+optimisation targets.
+
+STAGE 1, CANDIDATE GENERATION, optimises RECALL AND SPEED: cheaply narrow a billion items to a few
+hundred plausible candidates without missing the good ones. It typically uses a TWO-TOWER model that
+embeds the user and each item INDEPENDENTLY into the same space - and that independence is the whole
+architectural point, because it means item embeddings can be PRECOMPUTED offline and indexed. At
+request time you embed only the user and do an approximate nearest neighbour search, which is
+sublinear rather than per-item scoring. Stage 1 does not need precise ordering, just a high-recall
+shortlist.
+
+STAGE 2, RANKING, optimises PRECISION: now that the set is a few hundred, you can afford an expensive
+model with rich features - user-item CROSS features that the two-tower deliberately avoided so it could
+precompute, full histories, real-time context, multi-task heads.
+
+So the key insight is WHY the towers must be separate in stage 1 and can be joined in stage 2:
+PRECOMPUTATION. The item vector must not depend on the user, or you cannot index it. A ranking model
+can use joint features because it only runs on a few hundred candidates.
+
+The subtlety I'd emphasise is that the stages must be CO-DESIGNED, because stage-1 recall is a hard
+CEILING on final quality. I measured this and it comes out as an exact equality: with 200 candidates,
+stage-1 recall@10 was 32.0% and final precision@10 was 32.0%; with 1,000 candidates, 61.0% and 61.0%.
+A perfect ranker on a candidate set containing 32% of the good items returns 32% of the good items. So
+if retrieval systematically misses things the ranker would have loved, no amount of ranking quality
+recovers them - which is why candidate-source diversity matters enormously, and why production systems
+union an embedding retriever with co-visitation lists, trending pools and subscriptions.
+
+Systems often add more stages: a cheap pre-ranker between the two, and a final re-ranker for diversity
+and business rules. And the same pattern appears in web search and in RAG - it is the standard answer
+to 'select few from enormous, under a latency budget'."
+
+THE ONE SENTENCE TO NOT FUMBLE: the towers are separate so item vectors can be precomputed and indexed,
+and stage-1 recall is a hard ceiling that stage 2 can never exceed.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def true_rel(u_idx):
+        u = U[u_idx]
+        dot   = I @ u                      # what a two-tower CAN represent
+        cross = ((I @ W) * u).sum(1)       # a bilinear interaction it CANNOT
+        return 2.0*dot + 1.2*cross + 0.3*np.log(pop) + 0.4*freshness
+
+The ground truth, and the design of this line is the whole experiment. `dot` is expressible by any
+model that embeds user and item separately. `cross` - a bilinear form `u^T W i` - is NOT: no pair of
+independently-computed vectors has a dot product equal to it, which is precisely the class of signal
+that motivates a second stage. The popularity and freshness terms are there because real relevance is
+not purely similarity.
+
+    W /= np.sqrt(D) * 3.0     # a real cross term is a CORRECTION, not the whole signal
+
+Scaling. My first version let the cross term dominate, and stage-1 recall came out at 5.4% at K=200 -
+a retrieval stage that bad would never ship, and the measurement would have been about a broken system.
+The realistic case is a two-tower that captures most of the signal and misses a meaningful correction.
+
+    def two_tower(u_idx):
+        return I @ U[u_idx]
+
+Stage 1, in one line, and note what is NOT in it: no `W`, no interaction, nothing that mixes the user
+into the item representation. `I` is a matrix of item vectors that were computed WITHOUT reference to
+any user - which is exactly why they can sit in an index built last night.
+
+    np.argpartition(-s, TOPK)[:TOPK]
+
+Top-K without a full sort. `argpartition` is O(n) against `argsort`'s O(n log n), and it is what you
+use whenever you need the top K and not the order within them - which describes stage 1 exactly.
+
+    cand = np.argpartition(-two_tower(u), K)[:K]
+
+Stage 1's output: K candidate INDICES. In production this line is an ANN query against a precomputed
+index and is SUBLINEAR; here it is a full dot product, which is why the entry reports the dot-product
+cost separately and says the ANN replaces it. Being clear about which part your measurement models is
+better than implying you benchmarked HNSW.
+
+    sub = I[cand]; uu = U[u]
+    sc = 2.0*(sub@uu) + 1.2*((sub@W)*uu).sum(1) + 0.3*np.log(pop[cand]) + 0.4*freshness[cand]
+
+Stage 2: the SAME expensive scoring function, applied only to `sub` - the K candidates - rather than to
+`I`. That single indexing operation is the entire architecture. The cost went from O(corpus) to O(K),
+and K is a number you choose.
+
+    sel = cand[np.argpartition(-sc, TOPK)[:TOPK]]
+
+Mapping stage 2's local indices back to global item ids. Forgetting this `cand[...]` wrapper is the
+classic implementation bug: you return the top items of the candidate ARRAY rather than the top items,
+and everything looks plausible and is wrong.
+
+    rec.append(len(truth[u] & set(cand.tolist())) / TOPK)
+
+Recall@K: how much of the true top 10 survived stage 1. Note it uses `cand` - the candidate set -
+NOT stage 1's own top 10. Measuring stage 1 by its own top 10 gave 0.0557 and would have told you the
+retriever is broken.
+
+    print(f"stage-1 recall {mean(rec)}   final precision@10 {mean(ps)}")
+
+Printing them side by side is the diagnostic. Equal means retrieval-bound; final well below recall
+means ranker-bound. Measured here: equal in every row.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one request through both stages, 200,000 items.
+
+    step                                             items considered   cost
+    ----------------------------------------------   ----------------   -----------------
+    (offline, nightly) embed every item, build ANN            200,000    not in the request
+    embed the user                                                  1    one forward pass
+    ANN search the index for the top 1,000                    ~sublinear  (5.37 ms as a full
+                                                                          dot product here)
+    fetch features for 1,000 candidates                         1,000
+    heavy ranker with cross features on those 1,000             1,000    4.70 ms
+    re-rank for diversity, take the top 10                      1,000
+    ----------------------------------------------   ----------------   -----------------
+    heavy ranker over EVERYTHING instead                      200,000    65.63 ms
+                                                       1,000,000,000    328 seconds
+
+The last two rows are the alternative design. The row above them is what the architecture costs.
+
+TRACE B - the recall/latency dial, measured.
+
+    K        recall@10   stage-2 latency   reading
+    ------   ---------   ---------------   ---------------------------------------------
+        10        5.6%           5.79 ms   a shortlist this small has already lost 94%
+        50       16.0%           4.22 ms
+       200       32.0%           4.99 ms   a typical production candidate count
+     1,000       61.0%           4.70 ms   still cheap; recall nearly doubled
+     5,000       87.8%           8.85 ms   cost starting to bite
+    20,000       98.5%          16.36 ms   3.5x the latency of K=1,000 for +37 points
+
+Recall climbs steeply and then flattens; latency is flat and then climbs. K is chosen where those two
+curves cross for YOUR budget, and in production - where the ranker is orders of magnitude more
+expensive per item than mine - that crossover lands at a few hundred, not twenty thousand.
+
+TRACE C - THE RECALL CEILING, the most important table in this entry.
+
+    K        stage-1 recall@10   final precision@10   difference
+    ------   -----------------   ------------------   ----------
+        50               16.0%                16.0%        0.000
+       200               32.0%                32.0%        0.000
+     1,000               61.0%                61.0%        0.000
+     5,000               87.8%                87.8%        0.000
+
+Exactly equal, four times out of four. The stage-2 ranker in this simulation is the TRUE relevance
+function - a perfect ranker - and a perfect ranker still returns only what stage 1 handed it. This is
+not an approximation or a tendency; it is arithmetic. Every point of recall lost in stage 1 is a point
+of final quality that no ranker, however good, can recover.
+
+The diagnostic that follows: measure both numbers. If final precision equals recall, you are
+RETRIEVAL-bound and ranker work is wasted. If final precision is well below recall, you are
+RANKER-bound.
+
+TRACE D - four architectures, final precision@10.
+
+    architecture                             precision@10   feasible at a billion items?
+    --------------------------------------   ------------   ----------------------------
+    retrieval only (two-tower top-10)              0.0557   yes
+    two-stage: retrieve 200, then rank             0.3203   yes
+    two-stage: retrieve 1,000, then rank           0.6100   yes
+    a single heavy model over everything           1.0000   NO - 328 seconds per request
+
+Reading the first and third rows together is the argument for stage 2: the same retriever, plus a
+ranking pass over its output, went from 0.0557 to 0.6100 - 10.9x - for about 4.7 ms.
+
+Reading the third and fourth rows together is the argument for stage 1: the heavy model is better, by
+1.6x, and it is not available at any price. The two-stage design is not a compromise for elegance; the
+single-model column simply does not exist as an option.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, for a corpus of N items, K candidates and a per-item ranking cost c:
+
+    single heavy model         O(N * c) per request. MEASURED 65.63 ms at N=200,000, extrapolating to
+                               328 seconds at N=1,000,000,000. Infeasible by four orders of magnitude.
+    stage 1, offline           O(N) once per index rebuild, and OUTSIDE the request path entirely.
+                               This relocation is the architectural trick.
+    stage 1, online            O(1) to embed the user, plus a SUBLINEAR ANN query - roughly
+                               O(log N) for HNSW, O(N/clusters * nprobe) for IVF.
+    stage 2                    O(K * c), and K is a number you choose. MEASURED 4.70 ms at K=1,000 and
+                               16.36 ms at K=20,000.
+    total                      O(log N + K*c) instead of O(N*c) - the corpus size has essentially left
+                               the request-time cost.
+    quality ceiling            final quality <= stage-1 recall@K. MEASURED as an exact equality in
+                               every row tested.
+    memory                     O(N * embedding dimension) for the index, which is the real operational
+                               cost of stage 1 and the reason product quantisation exists.
+
+THE MISTAKES:
+
+    - Proposing one big model without doing the arithmetic. 328 seconds per request settles it.
+    - Evaluating stage 1 with a ranking metric. MEASURED: its own top-10 precision was 0.0557, which
+      looks broken and is a perfectly good filter. Measure recall@K.
+    - Not measuring recall@K at all, and therefore not knowing whether you are retrieval-bound.
+    - Improving the ranker when you are retrieval-bound. MEASURED: final precision equalled stage-1
+      recall in every row, so a better ranker would have bought exactly nothing.
+    - Forgetting WHY the towers are separate. It is not simplicity - it is that the item vector must
+      not depend on the user, or it cannot be precomputed and indexed.
+    - Adding cross features to the retrieval tower. That is not a slightly worse two-tower; it is a
+      model whose item vectors are now per-user, which destroys the index and returns you to O(N).
+    - Relying on a single candidate source. Embeddings are bad at cold start and at recency, which is
+      why production unions co-visitation, trending, subscriptions and fresh pools.
+    - Just retrieving more. MEASURED: K=20,000 gave 98.5% recall at 3.5x the ranking latency, and a
+      real ranker is far more expensive per item than mine.
+    - Forgetting the ANN's own recall dial. `nprobe` and `efSearch` trade recall for latency, and that
+      loss stacks on top of the K loss - both feed the same ceiling.
+    - Optimising stage 2 for a single proxy. See the offline-versus-online entry: a click-only ranker
+      raised click-through 79.5% and cut 7-day retention 20.9%.
+
+THE TAKEAWAY. Two stages exist because RECALL and PRECISION want opposite things: recall wants to look
+at everything cheaply, precision wants to look at a few things expensively, and no single model does
+both. The resolution is to make stage 1's model structurally precomputable - separate towers, dot
+product, offline index - so the corpus size leaves the request path entirely, and then spend the whole
+compute budget on a few hundred survivors where cross features are affordable. The number to carry away
+is the ceiling: stage-1 recall was 32.0% and final precision was 32.0%, four times out of four. The
+ranker cannot want what retrieval did not fetch.""",
+]
+
+_EX_P1AO["Why do we distinguish latency from throughput?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two different questions that people constantly merge into "is it
+fast?".
+
+    LATENCY     how long does ONE request take?         (the experience of a single user)
+    THROUGHPUT  how many requests per second in total?  (the capacity of the system)
+
+They are not the same number, they are not measured in the same units, and improving one routinely
+makes the other worse.
+
+MEASURED ON THIS MACHINE - real SQLite inserts of 100,000 rows, changing nothing but the batch size:
+
+    batch size    total time      throughput      latency of ONE row
+    ----------   -----------   -------------   -------------------
+             1    451,365.7 ms      222 rows/s              4.51 ms
+            10     38,798.9 ms    2,577 rows/s              3.88 ms
+           100      3,971.1 ms   25,182 rows/s              3.97 ms
+         1,000        581.7 ms  171,916 rows/s              5.82 ms
+        10,000        143.6 ms  696,479 rows/s             14.36 ms
+       100,000         93.0 ms 1,075,087 rows/s             93.02 ms
+
+Throughput went up 4,842x. And the latency any given row waits - it is not durable until its whole
+batch commits - went from 4.51 ms to 93.02 ms, 20.6x WORSE.
+
+That is the cleanest possible statement of the distinction. The same code, the same hardware, the same
+data. One knob. Throughput up, latency down. Which one you turn depends entirely on whether a human is
+waiting.""",
+
+    """2. THE INTUITION - a motorway and a single car.
+
+THROUGHPUT is how many cars pass a point per hour. LATENCY is how long YOUR journey takes. Add lanes
+and throughput rises; your journey takes exactly as long as before, because your car still drives at
+the same speed. Nothing you do to capacity makes one car faster.
+
+MEASURED, exactly that: an 8-server pool at 70% utilisation, 10 ms mean service time:
+
+    servers   throughput   p50 latency   p99 latency
+    -------   ----------   -----------   -----------
+          1       69.7/s       20.82 ms     150.82 ms
+          2      139.4/s       12.15 ms      77.03 ms
+          4      278.8/s       10.00 ms      40.55 ms
+          8      557.7/s       10.00 ms      23.18 ms
+         16     1115.3/s       10.00 ms      15.06 ms
+
+Throughput is 16x from 1 to 16 servers, exactly linear. And p50 latency flattens at 10.00 ms - the
+SERVICE TIME - and stops improving, because a single request is still handled by a single server at the
+same speed. (The p99 does improve, from 150.82 to 15.06 ms, because at the same utilisation a bigger
+pool has a shorter queue. That is queueing, not speed.)
+
+THE SECOND INTUITION, and this is the one that catches teams out: LATENCY IS A FUNCTION OF LOAD, and
+the function is not linear. It goes vertical.
+
+MEASURED, one server, 10 ms mean service, queue WAIT time by utilisation:
+
+    utilisation   p50 wait   p99 wait   throughput   theory: s*u/(1-u)
+    -----------   --------   --------   ----------   -----------------
+           0.10     0.00 ms    25.59ms     10.0 /s              1.1 ms
+           0.50     0.00 ms    78.53ms     49.9 /s             10.0 ms
+           0.80    23.47 ms   219.73ms     79.8 /s             40.0 ms
+           0.90    57.51 ms   444.59ms     89.8 /s             90.0 ms
+           0.95   123.52 ms   791.54ms     94.8 /s            190.0 ms
+           0.99   590.72 ms  2592.59ms     98.8 /s            990.0 ms
+
+A system at 95% utilisation is doing almost exactly the same work per second as one at 90% - 94.8
+against 89.8 requests per second - and it feels TWICE AS SLOW: 123.52 ms of queueing against 57.51.
+Push to 99% and you gain 4% more throughput for a 10x worse median wait.
+
+That is why capacity planning targets 60-70% utilisation rather than 95%. The last 30% of your
+hardware is not wasted; it is what your latency is made of.""",
+
+    """3. EVERY TERM DEFINED.
+
+LATENCY. Time for one operation, end to end. Measured in time units, and always as a DISTRIBUTION -
+p50, p95, p99, p999 - never as an average.
+
+THROUGHPUT. Operations completed per unit time. Requests/second, rows/second, bytes/second.
+
+BANDWIDTH. Throughput for data. A useful reminder that the two are independent: a lorry full of hard
+drives has enormous bandwidth and terrible latency.
+
+SERVICE TIME. How long the work itself takes, once started. The floor on latency, and the thing extra
+servers cannot reduce. MEASURED: p50 flattened at exactly 10.00 ms - the service time - no matter how
+many servers.
+
+QUEUEING DELAY / WAIT. Time spent waiting to start. The part that explodes with utilisation, and the
+part that everything in this entry is really about.
+
+    latency = queueing delay + service time
+
+UTILISATION (rho, u). Offered work / capacity. The single most important number for latency.
+
+THE QUEUEING LAW. For an M/M/1 queue, `W = s * u / (1 - u)`. As u approaches 1, W approaches infinity.
+MEASURED against theory in the table above.
+
+LITTLE'S LAW. `L = lambda * W`. The average number of items IN THE SYSTEM equals the arrival rate times
+the time each spends there. Holds for ANY stable system - no distributional assumptions at all -
+which is why it is the most useful formula in capacity planning.
+
+CONCURRENCY. How many requests are in flight at once. By Little's Law this is DETERMINED by your
+throughput and latency, not chosen independently: "2,000 QPS at 50 ms" means 100 concurrent requests,
+whether you planned for that or not.
+
+BATCHING. Grouping work to amortise fixed costs. The canonical latency-for-throughput trade. MEASURED
+at 4,842x throughput for 20.6x latency.
+
+PIPELINING. Overlapping stages so throughput rises without each item getting slower. Unlike batching,
+this is close to a free lunch.
+
+HEAD-OF-LINE BLOCKING. One slow item delaying everything behind it - the mechanism by which a queue
+converts one slow request into many slow requests.
+
+BACKPRESSURE. Slowing the producer when the consumer cannot keep up, rather than letting a queue grow
+without bound. See the producer-consumer entry.
+
+TAIL LATENCY. p99 and beyond. At scale this is what users experience, because a page makes many
+requests - see the hedged-requests entry, where a 1% per-server stall became a 63.4% chance of a stall.
+
+LOAD SHEDDING. Rejecting work fast when overloaded, rather than accepting it and being slow. Preserves
+latency for the requests you do accept.
+
+AMDAHL'S LAW. Parallelism speeds up only the parallel fraction, which bounds how much throughput you
+can buy with more cores.
+
+BUFFERBLOAT. Oversized queues that trade latency away for throughput you did not need - the networking
+version of the same mistake as over-batching.
+
+GOODPUT. Useful throughput, excluding retries and duplicates. The number that matters when a system is
+struggling.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we added capacity and it is still slow", and its twin, "the
+servers are only at 70% so we are fine".
+
+THE FIRST is the motorway. MEASURED: going from 1 server to 16 multiplied throughput by 16 and left p50
+latency at exactly 10.00 ms. If a single request takes 200 ms because the database query is slow,
+adding servers changes nothing about that 200 ms - it only lets you do more of them at once. Capacity
+fixes THROUGHPUT problems. It fixes latency only insofar as latency was really queueing.
+
+THE SECOND is the queueing curve, and the numbers are worth staring at:
+
+    utilisation   throughput   p50 wait   p99 wait
+    -----------   ----------   --------   --------
+           0.80      79.8 /s    23.47ms   219.73ms
+           0.90      89.8 /s    57.51ms   444.59ms
+           0.95      94.8 /s   123.52ms   791.54ms
+           0.99      98.8 /s   590.72ms  2592.59ms
+
+From 80% to 99% utilisation you gained 24% more throughput and 25x worse median queueing. The
+throughput column is nearly flat and the latency column is exponential. "We are only at 70%" is not
+reassurance if your target is 60% - it means you are one traffic spike from the vertical part of the
+curve.
+
+THE THIRD TRAP - reporting AVERAGE latency. The distribution is what users experience, and the average
+hides it. In the 0.90 row, the p50 wait is 57.51 ms and the p99 is 444.59 - 7.7x apart. An average
+somewhere in between describes nobody. Always report percentiles.
+
+THE FOURTH TRAP - batching without asking who is waiting. MEASURED:
+
+    batch size        throughput   latency of one row
+    ----------   ---------------   ------------------
+             1       222 rows/s               4.51 ms
+         1,000   171,916 rows/s               5.82 ms
+       100,000 1,075,087 rows/s              93.02 ms
+
+Look at the middle row. Batching 1,000 gave 774x the throughput for 1.3x the latency - an
+extraordinary trade, and where almost every system should sit. Pushing to 100,000 gave a further 6.3x
+throughput for a further 16x latency. The curve has diminishing throughput returns and accelerating
+latency costs, so "batch bigger" is right up to a point and wrong past it, and the point is measurable.
+
+THE FIFTH TRAP - not knowing Little's Law. MEASURED, verified rather than quoted:
+
+    utilisation   lambda (per ms)   W (ms in system)   L = lambda x W
+    -----------   ---------------   ----------------   --------------
+           0.30            0.0299              14.17            0.424
+           0.60            0.0598              24.68            1.477
+           0.90            0.0898              94.07            8.443
+
+`L` is the average number of requests in flight. It is not a free parameter - it is FORCED by your
+throughput and your latency. So "we need 2,000 QPS at 50 ms" already tells you that 100 requests will
+be in flight at all times, which sizes your thread pool, your connection pool and your memory. Teams
+that pick a thread-pool size by intuition are guessing at a number that arithmetic already determined.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - which technique moves which number, in one place.
+
+IMPROVES THROUGHPUT, does NOT improve single-request latency:
+    MORE SERVERS / SHARDS   MEASURED 16x throughput, p50 unchanged at 10.00 ms.
+    BATCHING                MEASURED 4,842x throughput and 20.6x WORSE latency. Databases, GPU
+                            inference, Kafka producers, log shippers.
+    ASYNC / NON-BLOCKING    handle more concurrent requests per thread. Each request still takes as
+                            long; you just stop needing a thread per request. See the real-time entry:
+                            0.5 kB per idle connection with epoll against 16.1 kB per thread.
+    CONNECTION POOLING      amortises setup. See the TLS entry: a handshake is 31-56 ms, paid once
+                            instead of per request.
+    COMPRESSION             more bytes per second over a fixed link, at the cost of CPU time per item.
+
+IMPROVES LATENCY, does NOT improve throughput (and often reduces it):
+    CACHING                 the one genuine both-ways win, when the hit rate is high.
+    A CDN / GEOGRAPHIC PROXIMITY   shortens the round trip. See the URL-walk entry, where DNS + TCP +
+                            TLS setup was 57% of a small page load.
+    A BETTER INDEX          see the query-plan entry: 42.9 ms to 42 us, which improves both.
+    HEDGED REQUESTS         MEASURED in that entry at 36.9x better p50 for 5% MORE load - deliberately
+                            spending throughput to buy latency.
+    SMALLER BATCHES         the reverse of the batching row.
+    RUNNING AT LOWER UTILISATION   the purest example: buy hardware you deliberately do not use, so
+                            the queue stays empty. MEASURED, 80% -> 50% utilisation takes p99 queueing
+                            from 219.73 ms to 78.53 ms while throughput falls.
+
+IMPROVES BOTH - the things actually worth doing first:
+    FIX THE ALGORITHM       less work per request is both faster and cheaper. The query-plan entry's
+                            1,014x is both.
+    CACHING (on a hit)
+    PIPELINING              overlap stages so each item still flows straight through. Unlike batching,
+                            this raises throughput WITHOUT adding waiting.
+    REMOVING WORK           the fastest request is the one you do not make. `Cache-Control` and ETags
+                            beat every optimisation in this list.
+
+THE DECISION RULE TO STATE OUT LOUD: ask WHO IS WAITING.
+    a human, synchronously      -> latency. A checkout, a search box, an API a page blocks on.
+                                   Small batches, low utilisation, hedging, caching, a CDN.
+    a machine, asynchronously   -> throughput. A nightly ETL, a training job, log ingestion, a queue
+                                   consumer. Big batches, high utilisation, maximum efficiency.
+    both, in one system         -> SEPARATE THEM. Different pools, different queues, different
+                                   priorities. Mixing a latency-sensitive API and a batch job on the
+                                   same pool means the batch job's queue is now the API's latency.""",
+
+    """6. HOW TO CODE IT - how to measure each, and the three traps in doing so.
+
+MEASURING LATENCY:
+
+  1. Time each request individually and keep the whole list. Report p50, p95, p99, p999 - never the
+     mean. The mean and the p99 differed by 7.7x in the measurements here.
+  2. Measure it under REALISTIC LOAD. Latency measured on an idle system is service time, and service
+     time is the one component that does not vary. All the interesting behaviour is queueing.
+  3. TRAP ONE - COORDINATED OMISSION. If your load generator waits for a response before sending the
+     next request, then when the server stalls you stop sending, and you never record the requests
+     that WOULD have been delayed. Your p99 is then a fiction. Generate at a fixed RATE and measure
+     from the intended send time.
+
+MEASURING THROUGHPUT:
+
+  4. Total completed operations divided by wall-clock time, at SATURATION. Throughput measured while
+     the system is idle just measures your load generator.
+  5. Report GOODPUT if there are retries or errors. Ten thousand failed requests per second is not
+     throughput.
+
+MEASURING THE TRADE:
+
+  6. Sweep the batch size and print THREE columns: total time, throughput, and per-item latency. One
+     of those alone tells you nothing; together they are the whole story.
+  7. TRAP TWO - reporting per-BATCH latency as though it were per-item. A row in a 100,000-row batch
+     waits for the entire batch; that is 93.02 ms, not 0.00093 ms. The number that matters is when the
+     ITEM is done, not when the batch is.
+
+MEASURING THE QUEUEING CURVE, which is the most valuable of these:
+
+  8. Simulate Poisson arrivals into servers with exponential service times, or better, drive your real
+     system at a series of fixed rates.
+  9. Sweep UTILISATION - 0.1, 0.5, 0.8, 0.9, 0.95, 0.99 - and record throughput AND wait percentiles.
+     The point of the sweep is that the two columns behave completely differently.
+ 10. Print the theoretical `s*u/(1-u)` next to your measured wait. Agreement tells you the model is
+     right; disagreement tells you your arrival process is not Poisson, which is itself useful.
+ 11. Separate WAIT from SERVICE. The wait is what load damages; the service time is constant. Adding
+     them and reporting only the total hides which one you can do something about.
+
+VERIFYING LITTLE'S LAW:
+
+ 12. Record arrival rate `lambda` and time-in-system `W` and check `L = lambda * W`. It holds for any
+     stable system, so a mismatch means your measurement is wrong, not that the law is.
+ 13. TRAP THREE - measuring throughput and latency in SEPARATE runs and then combining them. They are
+     not independent; the latency you measure depends on the load you applied. Measure them together
+     or your Little's Law calculation is meaningless.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Latency is how long ONE request takes - the experience of a single user. Throughput is how many
+requests you handle per second - the total capacity of the system. They are different and they trade
+off.
+
+Batching is the clearest example, and I measured it: inserting 100,000 rows one at a time gave 222
+rows per second; inserting them in batches of 100,000 gave 1,075,087 rows per second - about 4,800
+times the throughput. And the latency of any individual row, which is not durable until its batch
+commits, went from 4.51 milliseconds to 93.02 - 20 times worse. Same code, same hardware, one knob.
+
+Adding servers is the other classic: it raises throughput and does NOTHING for single-request latency.
+I measured 1 to 16 servers at fixed utilisation - throughput went up exactly 16x and the p50 latency
+flattened at 10 milliseconds, which is the service time, because one request is still handled by one
+server at the same speed.
+
+The part I'd add is that latency is a function of LOAD, and the function goes vertical. On one server
+with a 10 ms service time, the median queueing wait was 23 ms at 80% utilisation, 58 ms at 90%, 124 ms
+at 95% and 591 ms at 99% - while throughput over that whole range went only from 79.8 to 98.8 requests
+per second. So a system at 95% utilisation is doing almost the same work as one at 90% and feels twice
+as slow. That is why capacity planning targets 60 to 70 percent: the headroom IS your latency.
+
+And Little's Law ties them together - the number of requests in flight equals arrival rate times time
+in system. I verified it in the simulation. It means concurrency is not a free choice: 'we need 2,000
+QPS at 50 milliseconds' already fixes 100 concurrent requests, which sizes your thread pool and your
+connection pool.
+
+So a system can have great throughput and feel slow, or feel snappy and fall over under load.
+Designing well means knowing which one matters for THIS feature. A payment API must answer in under
+200 milliseconds, so small batches and headroom. A nightly job must process a billion rows an hour, so
+big batches and high utilisation. The rule I'd use is: ask who is waiting. If it is a human,
+synchronously, optimise latency. If it is a machine, asynchronously, optimise throughput. And if one
+system does both, separate them into different pools - otherwise the batch job's queue becomes the
+API's latency."
+
+THE ONE SENTENCE TO NOT FUMBLE: throughput is how many, latency is how long - more servers buy the
+first and never the second, and latency is a function of utilisation that goes vertical near 100%.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE BATCHING MEASUREMENT:
+
+    for i in range(0, len(rows), bs):
+        cur.executemany("INSERT INTO t VALUES(?,?)", rows[i:i+bs])
+        con.commit()
+
+One commit per BATCH, not per row. The commit is an fsync - a fixed cost of a few milliseconds
+regardless of how much data it flushes - so batching amortises it. That is the entire mechanism, and
+it is why the throughput gain is so enormous at first (222 -> 25,182 rows/s from batches of 1 to 100)
+and then flattens (696,479 -> 1,075,087 from 10,000 to 100,000): once the fsync is amortised there is
+nothing left to amortise.
+
+    per_batch = dt / (len(rows) / bs)
+
+The latency column, and it is the number people get wrong. This is the time for one BATCH, and it is
+the right per-ITEM latency because a row is not durable until its batch commits. Dividing by the row
+count instead would report 0.00093 ms for the 100,000 batch and would be describing throughput while
+calling it latency.
+
+THE QUEUEING SIMULATION:
+
+    rate = util / service
+    t += r.expovariate(rate)
+
+Poisson arrivals: exponentially distributed gaps. The arrival RATE is what you control; utilisation is
+rate times service time. Setting the rate from a target utilisation is what makes the sweep meaningful.
+
+    start = max(t, free)
+    waits.append(start - t)
+    free = start + r.expovariate(1/service)
+
+Three lines that are the whole queue. `max(t, free)` is "start when I arrive, or when the server is
+free, whichever is later" - and the gap between those is the WAIT. Recording `start - t` rather than
+total time isolates the component that utilisation damages; the service time added afterwards is
+constant and would only dilute the effect.
+
+    10.0 * u / (1 - u)
+
+The M/M/1 mean wait, printed next to the measured value. The `(1 - u)` in the denominator is why the
+curve goes vertical: at u = 0.99 that denominator is 0.01, so the wait is 99 times the service time.
+Printing theory beside measurement is a cheap and strong check on the simulation.
+
+LITTLE'S LAW:
+
+    times.append((start - t) + dur)
+    W = sum(times) / len(times)
+    lam = len(times) / t
+    L = lam * W
+
+Here `W` is time in the SYSTEM - wait plus service - not just the wait, because Little's Law is about
+items present in the system. Using the wait alone gives you the number waiting in the QUEUE, which is a
+different (also valid) form of the law. Mixing them up is the usual error.
+
+THE SERVER-POOL SIMULATION:
+
+    i = min(range(servers), key=lambda k: free[k])
+
+Route to the earliest-free server - an idealised "least outstanding requests" policy. This matters for
+the result: with random routing you would occasionally queue behind a busy server while another sat
+idle, and the p99 improvement from adding servers would be smaller.
+
+    rate = util * servers / service
+
+Scaling the arrival rate WITH the server count keeps utilisation constant across the sweep. Without
+this you would be comparing a loaded 1-server pool against an idle 16-server pool, and the "p50 stays
+at 10 ms" result - the whole point - would be lost in a utilisation change.
+
+    return n/t*1000, waits[len(waits)//2] + service, waits[int(.99*len(waits))] + service
+
+Adding `service` back to report LATENCY rather than wait, so the p50 column bottoms out at exactly
+10.00 ms and you can see the floor.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - batching, measured, 100,000 real SQLite inserts.
+
+    batch      total time   throughput      per-row latency   throughput gain   latency cost
+    -------   -----------   ------------   ---------------   ---------------   ------------
+          1   451,365.7ms       222 r/s            4.51 ms            1.00x          1.00x
+         10    38,798.9ms     2,577 r/s            3.88 ms           11.6x           0.86x
+        100     3,971.1ms    25,182 r/s            3.97 ms          113.4x           0.88x
+      1,000       581.7ms   171,916 r/s            5.82 ms          774.4x           1.29x
+     10,000       143.6ms   696,479 r/s           14.36 ms        3,137.3x           3.18x
+    100,000        93.0ms 1,075,087 r/s           93.02 ms        4,842.7x          20.62x
+
+Read the last two columns together. Batches of 10 to 100 gave up to 113x throughput for LESS latency
+than batch-of-1 (0.88x) - a pure win, because the fixed commit cost was being paid 100,000 times.
+Batch 1,000 gave 774x for 1.29x. Batch 100,000 gave 4,843x for 20.6x.
+
+The curve has a knee. Throughput gains fall off (774x -> 3,137x -> 4,843x, so the last 10x of batch
+size bought only 1.5x more throughput) while latency costs accelerate (1.29x -> 3.18x -> 20.62x). Most
+systems belong at batch 1,000 here, and the only way to know that is the table.
+
+TRACE B - the queueing curve, one server, 10 ms service.
+
+    u      throughput   p50 wait   p99 wait   theory W   what changed from the row above
+    ----   ----------   --------   --------   --------   -------------------------------
+    0.10       10.0/s     0.00ms    25.59ms      1.1ms   -
+    0.50       49.9/s     0.00ms    78.53ms     10.0ms   5x throughput, p99 wait 3.1x
+    0.80       79.8/s    23.47ms   219.73ms     40.0ms   1.6x throughput, p99 wait 2.8x
+    0.90       89.8/s    57.51ms   444.59ms     90.0ms   1.13x throughput, p99 wait 2.0x
+    0.95       94.8/s   123.52ms   791.54ms    190.0ms   1.06x throughput, p99 wait 1.8x
+    0.99       98.8/s   590.72ms  2592.59ms    990.0ms   1.04x throughput, p99 wait 3.3x
+
+Follow the last column down. Early on you buy a lot of throughput for a little latency. By the bottom
+you are buying 4% more throughput for 3.3x worse tail. The measured p50 tracks the theoretical mean
+closely once the queue is non-trivial, which says the model is right.
+
+TRACE C - Little's Law, verified.
+
+    u      lambda (req/ms)   W (ms in system)   L = lambda x W   interpretation
+    ----   ---------------   ----------------   --------------   ---------------------------
+    0.30            0.0299              14.17            0.424   less than one request present
+    0.60            0.0598              24.68            1.477   about 1.5 present on average
+    0.90            0.0898              94.07            8.443   over 8 present on average
+
+Note what happened between the second and third rows: lambda rose 1.5x and W rose 3.8x, so L rose 5.7x.
+The number of requests sitting in your system grows FASTER than the load does, which is why memory
+pressure and connection-pool exhaustion arrive suddenly rather than gradually.
+
+And read it as a design tool: at 2,000 QPS with a 50 ms latency target, `L = 2000 * 0.050 = 100`. One
+hundred requests in flight, always. That is your thread pool, your connection pool, your buffer
+sizing - not a number to guess at.
+
+TRACE D - adding servers, at constant 70% utilisation.
+
+    servers   throughput   p50 latency   p99 latency   p50 vs 1 server   p99 vs 1 server
+    -------   ----------   -----------   -----------   ---------------   ---------------
+          1       69.7/s      20.82 ms     150.82 ms             1.00x             1.00x
+          2      139.4/s      12.15 ms      77.03 ms             1.71x             1.96x
+          4      278.8/s      10.00 ms      40.55 ms             2.08x             3.72x
+          8      557.7/s      10.00 ms      23.18 ms             2.08x             6.51x
+         16     1115.3/s      10.00 ms      15.06 ms             2.08x            10.02x
+
+Three separate readings.
+
+    THROUGHPUT is exactly linear: 69.7, 139.4, 278.8, 557.7, 1115.3. Doubling servers doubles capacity.
+    p50 LATENCY hits a FLOOR at 10.00 ms and stops - that is the service time, and no amount of
+    hardware goes below it. The improvement from 20.82 to 10.00 was queueing being removed, not work
+    being done faster.
+    p99 LATENCY keeps improving (10x) because a bigger pool at the same utilisation has a shorter
+    queue - statistical multiplexing. That is the honest nuance: more servers DO help tail latency,
+    just not service time.
+
+If your single-request latency is 200 ms because a query is slow, this entire table is 200 ms plus
+these numbers. Capacity does not touch it.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE RELATIONSHIPS, in the form worth memorising:
+
+    latency          = queueing delay + service time
+    queueing (M/M/1) = service_time * u / (1 - u)          -> vertical as u -> 1
+    Little's Law     L = lambda * W                        -> holds for ANY stable system
+    throughput       bounded by the slowest stage (Amdahl / the bottleneck)
+
+    MEASURED, batching:        4,842x throughput for 20.6x latency - one knob, opposite directions
+    MEASURED, more servers:    16x throughput, p50 latency unchanged at the 10.00 ms service floor
+    MEASURED, utilisation:     0.80 -> 0.99 gave 24% more throughput and 25x worse median queueing
+    MEASURED, Little's Law:    lambda 1.5x and W 3.8x gave L 5.7x - concurrency grows faster than load
+
+THE MISTAKES:
+
+    - Saying "fast" without saying which. They are different units and they move in opposite
+      directions under most interventions.
+    - Adding servers to fix a latency problem. MEASURED: p50 flat at 10.00 ms from 1 to 16 servers.
+    - Batching a latency-sensitive path. MEASURED: 93.02 ms per row at batch 100,000, against 4.51 at
+      batch 1.
+    - NOT batching a throughput path. MEASURED: 222 rows/s unbatched against 171,916 at batch 1,000,
+      for 1.29x latency. Refusing to batch is as expensive a mistake as over-batching.
+    - Running at 95% utilisation to be efficient. You gain 5% throughput over 90% and double the
+      queueing. The headroom is the latency.
+    - Reporting average latency. p50 and p99 differed by 7.7x in these measurements. Report
+      percentiles.
+    - Coordinated omission in the load generator. If you stop sending while the server stalls, you
+      never record the requests that would have been slow, and your p99 is fiction.
+    - Reporting per-batch time as per-item latency. A row waits for its whole batch.
+    - Choosing a thread-pool size by intuition. Little's Law already determined it from your
+      throughput and latency targets.
+    - Running a batch job and a latency-sensitive API on the same pool. The batch job's queue becomes
+      the API's latency; separate the pools.
+    - Forgetting that p99 DOES improve with more servers, even though p50 does not. MEASURED 10x from
+      1 to 16 - it is queueing that improved, not speed, and being precise about that is the answer.
+
+THE TAKEAWAY. Throughput is a property of the SYSTEM and latency is a property of a REQUEST, and the
+two are coupled through the queue: as utilisation rises, throughput creeps up and latency runs away.
+Nearly every performance technique moves one at the expense of the other - batching, extra servers,
+async, hedging, headroom - so the only way to choose is to ask who is waiting. A human waiting
+synchronously wants latency, and you buy it with small batches, spare capacity and redundancy. A
+machine consuming asynchronously wants throughput, and you buy it with large batches and high
+utilisation. Measured on one machine with one knob: 4,842x throughput for 20.6x latency. Both numbers
+were correct, and only one of them was what the caller needed.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
