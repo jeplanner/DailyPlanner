@@ -268062,6 +268062,1519 @@ point and a half of accuracy. Measure mean confidence against accuracy before yo
 for it — and if you only want calibration, temperature scaling gets it without touching
 training or accuracy at all.""",
 ]
+_EX_P1AO["Implement Logistic Regression with gradient descent"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a linear score, squashed into a probability, trained
+by the simplest gradient there is.
+
+Logistic regression predicts P(y = 1) for a binary label. Two steps:
+
+  z = X @ w + b            a linear score, any real number
+  p = sigmoid(z)           squashed into (0, 1)
+
+Train it by minimising the LOG-LOSS, `-mean[y·log p + (1-y)·log(1-p)]`. And the reason
+this problem gets asked so often is what its gradient turns out to be:
+
+  dL/dw = Xᵀ(p - y) / n
+  dL/db = mean(p - y)
+
+NO SIGMOID DERIVATIVE ANYWHERE. The `p(1-p)` term from differentiating the sigmoid
+cancels exactly against the `1/p` from differentiating the log — the same shape as
+linear regression's gradient, just with p in place of the linear prediction.
+
+MEASURED against a central-difference numerical gradient, the analytic form matches to
+6.6e-11. And the cancellation is not cosmetic: swapping the log-loss for MSE puts the
+`p(1-p)` back, and MEASURED, that made the starting gradient 7,056x smaller and turned
+a 100-epoch problem into a 20,000-epoch one.""",
+
+    """2. THE INTUITION - why the log-loss and not squared error, and where the 2 went.
+
+THE CANCELLATION, IN ONE LINE. For a single sample,
+`dL/dz = dL/dp · dp/dz`. The log-loss gives `dL/dp = (p - y)/(p(1-p))`, and the sigmoid
+gives `dp/dz = p(1-p)`. Multiply them and the `p(1-p)` disappears: `dL/dz = p - y`.
+That is the whole reason the log-loss is the right loss for a sigmoid — it is chosen
+precisely so this cancels.
+
+WHY THAT MATTERS PRACTICALLY. `p(1-p)` is 0.25 at p = 0.5 and effectively zero at
+p = 0.001 or p = 0.999. If it survived into the gradient, a model that is CONFIDENTLY
+WRONG would get almost no gradient, because the sigmoid has saturated there. With the
+log-loss, `p - y` is largest exactly when the model is most wrong — which is what you
+want.
+
+MEASURED, initialising the weights to the opposite sign with large magnitude, so the
+model is 0.25% accurate and utterly confident (mean p(1-p) = 1.584e-04):
+
+  gradient norm at step 1:   log-loss  2.125e+00
+                             MSE       3.011e-04        ratio 7,056x
+
+  epochs to recover:         log-loss  ~100    (0.25% -> 99.75% accuracy)
+                             MSE       ~20,000
+
+NOTE THE MISSING 2. MSE's gradient carries a factor of 2 from differentiating a square.
+The log-loss has no square, so its gradient is `Xᵀ(p - y)/n` with no 2. Carrying MSE's
+`2/n` into a logistic model is a silent doubling of the learning rate.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SIGMOID (logistic function) - `σ(z) = 1/(1 + e^-z)`. Maps ℝ to (0, 1), σ(0) = 0.5, and
+is symmetric: σ(-z) = 1 - σ(z).
+
+LOGIT - the pre-sigmoid score z. Also the name for `log(p/(1-p))`, the inverse of the
+sigmoid, which is why the model is "linear in the log-odds".
+
+LOG-ODDS - `log(p/(1-p))`. Logistic regression asserts this is a linear function of the
+features, which is what makes each weight interpretable: w_j is the change in log-odds
+per unit of feature j.
+
+LOG-LOSS (binary cross-entropy) - `-mean[y log p + (1-y) log(1-p)]`. For y = 1 it is
+`-log p`; for y = 0 it is `-log(1-p)`. Only one term is ever active per sample.
+
+DECISION BOUNDARY - where z = 0, i.e. p = 0.5. A hyperplane, which is why logistic
+regression is a LINEAR classifier despite the nonlinear squashing.
+
+CONVEX - the log-loss has exactly one minimum, so gradient descent cannot get stuck.
+This is not true if you use MSE with a sigmoid — that surface is non-convex.
+
+SEPARABLE - the classes can be split perfectly by a hyperplane. Sounds ideal; is
+actually a problem, measured below.
+
+SATURATED - |z| large, so p is near 0 or 1 and the sigmoid's slope is near zero.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - three numerical failures, all in code that
+looks correct.
+
+FAILURE ONE: `1/(1 + np.exp(-z))` OVERFLOWS. For z = -800, `exp(800)` is inf, and
+`1/(1+inf)` is 0.0 — which happens to be the right answer, but numpy emits a
+RuntimeWarning and in float32 or with a slightly different arrangement you get nan
+instead. MEASURED:
+
+  z = -800  ->  0.0            (with an overflow warning)
+  z = -745  ->  0.0
+  z = -100  ->  3.72e-44
+
+The stable form branches on the sign: `1/(1+exp(-z))` for z ≥ 0, and `e^z/(1+e^z)` for
+z < 0, so the exponent argument is never positive. MEASURED, that returns 4.94e-324 at
+z = -745 instead of 0.0.
+
+FAILURE TWO: `log(0)` IS -inf. MEASURED, with p exactly 0.0 and y = 1, the log-loss is
+`inf`. And the sigmoid DOES reach exactly 1.0 in float64 — measured, σ(36) is
+0.9999999999999998 but σ(37) is exactly 1.0, so `log(1-p)` is `log(0)`. A logit of 37
+is not exotic on separable data.
+  The fix is `np.clip(p, 1e-15, 1 - 1e-15)`, which caps the per-sample loss at 34.54
+instead of inf.
+
+FAILURE THREE: ON SEPARABLE DATA THE WEIGHTS NEVER STOP GROWING. If a hyperplane
+separates the classes perfectly, the loss can always be reduced by scaling w up — the
+same boundary, more confidence. There is no finite minimum. MEASURED:
+
+  epochs        ||w||     log-loss
+     100       2.2381    3.64e-03
+   1,000       3.2265    4.48e-04
+  10,000       4.3202    5.46e-05
+ 100,000       5.5239    6.48e-06
+
+THE GROWTH IS LOGARITHMIC — measured across six decades, ||w|| gains about +1.0 for
+every 10x in epochs — so it never blows up, it just never converges. Accuracy was 100%
+from the first row. ADD ANY L2 AND IT STOPS: measured, with λ = 0.01 the norm is 1.6485
+at 1,000 epochs and still 1.6485 at 100,000.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+`sklearn.linear_model.LogisticRegression` in production. It defaults to L2 with C = 1.0
+— note it regularises BY DEFAULT, precisely because of the separable-data problem
+measured above — and solves with lbfgs, which converges in tens of iterations rather
+than thousands.
+
+NEWTON / IRLS. The log-loss's Hessian is `XᵀSX` with `S = diag(p(1-p))`, and it is
+cheap for small d. Newton's method converges in 5-10 iterations against gradient
+descent's thousands. This is what statistics packages actually use, and it is why R's
+`glm` has no learning rate.
+
+MINI-BATCH SGD once n is large. Same gradient, computed on a subset.
+
+LINEAR SVM when you only want the boundary and not a probability. Hinge loss instead of
+log-loss; it has a finite optimum on separable data (the max-margin one) and therefore
+does not need regularisation to converge.
+
+NAIVE BAYES when d is huge and n is small — it is the generative counterpart, needs no
+optimisation, and beats logistic regression in the low-data regime.
+
+GRADIENT BOOSTED TREES when the boundary is not linear. Logistic regression's boundary
+is a hyperplane, full stop; if the truth is curved you must engineer the features.
+
+AND THE ONE THAT IS NOT AN ALTERNATIVE: MSE with a sigmoid. It is non-convex, and
+MEASURED, it took 200x more epochs to recover from a confidently-wrong start because the
+`p(1-p)` factor survives into the gradient.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. STANDARDISE X. The convergence rate is governed by the feature scale exactly as
+in linear regression.
+
+STEP 2. WRITE A STABLE SIGMOID, branching on the sign of z. Two lines, and it removes
+the overflow warning permanently.
+
+STEP 3. `w = np.zeros(d)`, `b = 0.0`. Zero init is fine here — unlike a neural network,
+there is no symmetry to break because there is only one unit.
+
+STEP 4. FORWARD: `p = sigmoid(X @ w + b)`. Shapes (n,d)@(d,) + scalar -> (n,).
+
+STEP 5. `error = p - y`. THAT IS ALREADY dL/dz. No sigmoid derivative, no chain rule
+term. State the cancellation out loud — it is what the question is testing.
+
+STEP 6. `w -= lr * (X.T @ error) / n` and `b -= lr * error.mean()`. Note `/n` and not
+`2/n` — there is no square in the log-loss.
+
+STEP 7. IF YOU REPORT THE LOSS, CLIP p FIRST: `np.clip(p, 1e-15, 1-1e-15)`. MEASURED,
+without it the loss is inf as soon as a logit exceeds 37.
+
+STEP 8. ADD L2 UNLESS YOU HAVE A REASON NOT TO: `w -= lr * (grad + 2*lam*w)`. MEASURED,
+it is what makes the weights converge at all on separable data.
+
+STEP 9. DO NOT REGULARISE b.
+
+STEP 10. PREDICT WITH A THRESHOLD YOU CHOSE: `p > 0.5` is the default and is the right
+threshold only when the classes are balanced and the two error types cost the same.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'Logistic regression computes a linear score, X w plus b, and squashes it through a
+sigmoid to get a probability. It is trained on the log-loss, and the reason that
+particular loss is paired with that particular squashing function is that the gradient
+comes out beautifully: X transpose times p minus y, over n. The sigmoid derivative,
+p times one-minus-p, cancels exactly against the one-over-p from differentiating the
+log. So there is no chain-rule term to write — the error is just prediction minus
+label, same as linear regression. I checked that against a numerical gradient and it
+matches to about 1e-11.
+
+That cancellation is the whole point, not a convenience. If I used squared error with a
+sigmoid instead, the p-times-one-minus-p survives, and it is near zero whenever the
+model is confident. So a model that is confidently WRONG gets almost no gradient. I
+measured that: starting from weights of the wrong sign, the model is 0.25% accurate and
+the log-loss gradient is 2.1 while the MSE gradient is 3.0e-4 — seven thousand times
+smaller — and log-loss recovers to 99.75% in about a hundred epochs where MSE needs
+twenty thousand.
+
+Three things I would be careful about. The naive sigmoid overflows — I would branch on
+the sign so the exponent argument is never positive. The loss needs p clipped, because
+the sigmoid genuinely reaches exactly 1.0 in float64 at a logit of 37, and log of zero
+is negative infinity. And on perfectly separable data there is no finite optimum at
+all: the loss always falls by scaling the weights up, so the norm grows forever. I
+measured it growing logarithmically — about plus one for every tenfold increase in
+epochs, from 2.2 at a hundred epochs to 5.5 at a hundred thousand, with accuracy at
+100% the whole time. Any L2 term fixes it; measured, the norm pins at 1.65 and stays
+there. That is why sklearn regularises by default.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def sigmoid(z):                                  # 1
+      out = np.empty_like(z, dtype=float)
+      pos = z >= 0
+      out[pos] = 1 / (1 + np.exp(-z[pos]))         # 2
+      ez = np.exp(z[~pos])
+      out[~pos] = ez / (1 + ez)                    # 3
+      return out
+
+  def train(X, y, lr=0.1, epochs=1000, lam=0.0):
+      n, d = X.shape                               # 4
+      w = np.zeros(d)
+      b = 0.0
+      for _ in range(epochs):
+          p = sigmoid(X @ w + b)                   # 5
+          error = p - y                            # 6
+          w -= lr * ((X.T @ error) / n + 2*lam*w)  # 7, 8
+          b -= lr * error.mean()                   # 9
+      return w, b
+
+LINE 1-3. THE STABLE SIGMOID. The naive `1/(1+np.exp(-z))` computes `exp(+800)` for a
+large negative z, which overflows. Branching means the exponent argument is always ≤ 0,
+so `exp` is always in (0, 1]. MEASURED at z = -745: naive gives 0.0 with an overflow
+warning, stable gives 4.94e-324. Both are "close to zero"; only one is quiet, and in
+float32 the naive form gives nan rather than 0.
+
+LINE 4. `n, d = X.shape` — n samples, d features. `n` is the divisor on line 7.
+
+LINE 5. The forward pass. `(n,d) @ (d,) -> (n,)`, plus a scalar bias that broadcasts.
+
+LINE 6, THE LINE THE QUESTION IS ABOUT. `error = p - y` IS ALREADY dL/dz. No `p*(1-p)`,
+because it cancelled. MEASURED against a central-difference numerical gradient: max
+difference 6.594e-11.
+  Get the order backwards — `y - p` — and every update moves uphill.
+
+LINE 7. `(X.T @ error) / n`. NOTE: `/n`, NOT `2/n`. MSE's 2 comes from differentiating
+a square and the log-loss has no square. Copying `2/n` from a linear-regression
+implementation doubles the effective learning rate silently.
+
+LINE 8. `+ 2*lam*w`, the L2 term. MEASURED, without it on separable data ||w|| is 2.24
+at 100 epochs, 3.23 at 1,000, 4.32 at 10,000 and 5.52 at 100,000 — logarithmic and
+unending. With lam = 0.01 it is 1.6485 at 1,000 epochs and 1.6485 at 100,000.
+
+LINE 9. `error.mean()`, because the bias's gradient is `mean(p - y)` — the column of
+ones dotted with the error, divided by n. `error.sum()` without the `/n` is a factor of
+n too large and MEASURED, it diverges.
+  AND b IS NOT REGULARISED, deliberately.
+
+THE LINE FOR REPORTING THE LOSS, which is not in the training loop and must clip:
+
+      pc = np.clip(p, 1e-15, 1 - 1e-15)
+      loss = -np.mean(y*np.log(pc) + (1-y)*np.log(1-pc))
+
+MEASURED, σ(37) is exactly 1.0 in float64, so `log(1-p)` is `log(0)` = -inf without the
+clip. With it, the worst per-sample loss is 34.54.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the gradient is right. w = [0.3, -0.2], b = 0.1, n = 200:
+
+  analytic  Xᵀ(p-y)/n  =  [-0.87736978, -0.89345480]
+  numerical (central)  =  [-0.87736978, -0.89345480]
+  max difference           6.594e-11
+
+TRACE B - the sigmoid's float64 limits:
+
+  σ(-40) = 4.248e-18        == 0? False
+  σ(-34) = 1.714e-15        == 0? False
+  σ( 36) = 0.9999999999999998   == 1? False
+  σ( 37) = 1.0                  == 1? TRUE
+  σ( 40) = 1.0                  == 1? TRUE
+
+A logit of 37 is nothing on separable data — it is a weight norm of 5 against a feature
+of 7. So `log(1-p)` reaching -inf is a routine event, not an edge case.
+
+  p          log-loss unclipped     clipped to [1e-15, 1-1e-15]
+  0.0             inf                      34.5388
+  1e-20          46.0517                   34.5388
+  0.5             0.6931                    0.6931
+  1.0 (y=0)       inf                      34.5396
+
+TRACE C - separable data, no regularisation:
+
+  epochs        ||w||       log-loss      accuracy
+     100       2.2381      3.641e-03       1.0000
+   1,000       3.2265      4.483e-04       1.0000
+  10,000       4.3202      5.465e-05       1.0000
+ 100,000       5.5239      6.479e-06       1.0000
+
+And extended across six decades on a second dataset, the growth per 10x in epochs:
+
+    100 epochs  ||w|| = 2.1904
+  1,000         3.0968    (+0.9064)
+  10,000        4.0514    (+0.9546)
+  100,000       5.0483    (+0.9969)
+  1,000,000     6.0827    (+1.0344)
+
+A CONSTANT INCREMENT PER DECADE — the norm grows like log(epochs). It never explodes and
+it never converges. Accuracy was 100% at row one; every subsequent epoch bought
+confidence and nothing else.
+
+With λ = 0.01: ||w|| = 1.6485 at 1,000 epochs, 1.6485 at 10,000, 1.6485 at 100,000.
+
+TRACE D - log-loss versus MSE, from a confidently-wrong start (accuracy 0.25%, mean
+p(1-p) = 1.584e-04):
+
+  epoch      log-loss ||grad||   acc        MSE ||grad||   acc
+      1        2.125e+00       0.0025       3.011e-04    0.0025
+     10        2.064e+00       0.0025       3.018e-04    0.0025
+    100        1.431e-02       0.9975       3.092e-04    0.0025
+  1,000        1.665e-03       0.9975       4.036e-04    0.0025
+  5,000        6.719e-04       0.9975       1.160e-03    0.0050
+ 20,000        3.240e-04       0.9975       1.145e-04    0.9975
+
+The log-loss has solved the problem by epoch 100. MSE is still at 0.25% accuracy at
+epoch 5,000 and only escapes somewhere before 20,000 — a 200x difference, caused
+entirely by the `p(1-p)` factor that the log-loss cancels away.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(epochs · n · d): one matrix-vector product forward and one backward per epoch.
+SPACE O(n + d). Compare Newton/IRLS, which is O(n·d² + d³) per iteration but converges
+in 5-10 of them — for small d that is the better trade, and it is what statistical
+software actually uses.
+
+THE #1 MISTAKE: putting the sigmoid derivative in the gradient. `error * p * (1-p)` is
+the gradient of MSE-through-a-sigmoid, not of the log-loss. MEASURED, it makes the
+starting gradient 7,056x smaller on a confidently-wrong model and costs 200x the
+epochs.
+
+THE #2 MISTAKE: `2/n` instead of `/n`. Copied from linear regression, where the 2 comes
+from a square the log-loss does not have. Silently doubles the learning rate.
+
+THE #3 MISTAKE: the naive sigmoid. MEASURED, `exp(-z)` overflows for large negative z;
+in float32 that is nan rather than 0.
+
+THE #4 MISTAKE: computing the loss without clipping p. MEASURED, σ(37) is exactly 1.0
+in float64, so the loss is inf. The training loop is unaffected — only the reported
+number — which is why it survives.
+
+THE #5 MISTAKE: no regularisation on separable data, then wondering why the loss never
+plateaus. MEASURED, the weight norm grows like log(epochs) forever while accuracy has
+been 100% since epoch 100.
+
+THE #6 MISTAKE: `y - p` instead of `p - y`. Gradient ascent.
+
+THE #7 MISTAKE: `error.sum()` for the bias gradient without dividing by n. MEASURED,
+diverges.
+
+THE #8 MISTAKE: not standardising the features, which governs the convergence rate
+exactly as in linear regression.
+
+THE #9 MISTAKE: regularising the bias.
+
+THE TAKEAWAY: the entire point of pairing the sigmoid with the log-loss is that
+`dL/dz = p - y` — the `p(1-p)` from the sigmoid cancels the `1/p` from the log, so the
+gradient is `Xᵀ(p - y)/n` with no chain-rule term and, note, NO FACTOR OF 2, because
+there is no square. That cancellation is what keeps the gradient large exactly when the
+model is most wrong: measured from a confidently-wrong start, log-loss had a gradient
+2.1 against MSE-through-a-sigmoid's 3.0e-4, and recovered in 100 epochs against 20,000.
+The two things that will bite you are numerical — the naive sigmoid overflows, and
+σ(37) is exactly 1.0 in float64 so an unclipped loss is inf — and one that is
+structural: on separable data there is no finite optimum, so the weights grow like
+log(epochs) forever at 100% accuracy. Any L2 term pins them, which is why the library
+version regularises by default.""",
+]
+
+_EX_P1AO["Linear Regression via Gradient Descent"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - fit a line (or a hyperplane) by walking downhill, and
+know when not to.
+
+Fit `y = X·w + b` by minimising mean squared error. The loop is five lines:
+
+  for _ in range(epochs):
+      y_pred = X @ w + b
+      error  = y_pred - y
+      w -= lr * (2/n) * (X.T @ error)
+      b -= lr * (2/n) * error.sum()
+
+THE FIRST THING TO SAY OUT LOUD is that for linear regression specifically this is the
+wrong tool. There is an exact closed-form answer, `np.linalg.lstsq(X, y)`, with no
+learning rate and no epoch count. MEASURED on 500 samples and 3 features:
+
+  lstsq            0.295 ms  ->  b = 100.003937
+  5,000 GD epochs 32.333 ms  ->  b = 100.003937      difference 5.7e-14
+
+110x SLOWER FOR AN ANSWER THAT DIFFERS IN THE FOURTEENTH DECIMAL PLACE.
+
+Gradient descent earns its place when d is large enough that the O(d³) solve dominates
+— MEASURED, at n = 6,000 and d = 3,000, lstsq takes 21,694 ms and 200 GD epochs take
+4,727 ms, a 4.6x win the other way — or when the model is not linear at all, which is
+the real reason this loop is worth knowing.""",
+
+    """2. THE INTUITION - what the bias is doing, and why forgetting it is catastrophic
+rather than merely suboptimal.
+
+WITHOUT AN INTERCEPT the model is forced through the origin. That is not a small
+restriction — it means the model cannot even reproduce the mean of y.
+
+MEASURED, on data whose true intercept is 100.0:
+
+  with bias:     w = [1.9948, -1.0062, 0.5195]   b = 100.0039    MSE =    0.2472
+  without bias:  w = [-5.1766, -6.1269, -3.9635]                 MSE = 9903.3930
+
+  variance of y = 5.3197, so PREDICTING THE MEAN AND NOTHING ELSE gives MSE 5.32
+
+The no-intercept model is 1,861x worse than doing nothing at all. And look at what
+happened to the weights: they are unrecognisable. Denied an intercept, the optimiser
+contorted the slopes into an attempt to manufacture one out of the features, wrecking
+all three.
+
+WHAT THE BIAS GRADIENT IS. Appending a column of ones to X and letting w absorb b is
+mathematically identical; if you do it separately, the bias's "feature" is a constant 1,
+so `Xᵀerror` for that column is just `error.sum()`. Hence `(2/n)·error.sum()`, or
+equivalently `2·error.mean()`.
+
+A USEFUL SIMPLIFICATION: CENTRE THE DATA and the intercept disappears. MEASURED, on
+mean-centred X and y, 200 epochs gives b = -6.99e-15 and the same slopes, and the
+intercept is recovered afterwards as `y.mean() - X.mean(0) @ w` = 100.0039.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EPOCH - one full pass over the training data. In BATCH gradient descent, one epoch is
+one update. In mini-batch SGD an epoch is many updates.
+
+BATCH GRADIENT DESCENT - every step uses all n samples. What this code does.
+
+WEIGHTS w - one per feature, length d. BIAS b (intercept) - a single scalar.
+
+RESIDUAL / ERROR - `y_pred - y`. In that order.
+
+MSE - `(1/n)·Σ(y_pred - y)²`. Differentiating gives the 2 and keeps the 1/n.
+
+LEARNING RATE - the step size. Bounded above by `2/L`, where L is the largest
+eigenvalue of the Hessian `(2/n)XᵀX`.
+
+CONVERGENCE - the parameters stop changing. The loss surface here is a convex bowl with
+exactly one minimum, so convergence means the answer.
+
+CLOSED FORM / NORMAL EQUATIONS - `w = (XᵀX)⁻¹Xᵀy`. Exact, no hyperparameters.
+
+CONDITION NUMBER - the ratio of the bowl's widest to narrowest curvature. It, not the
+number of samples, is what sets the epoch count.
+
+STANDARDISE - subtract each column's mean and divide by its standard deviation. The
+single most consequential line in this whole program, and it is not in the function.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the epoch count does not depend on what you
+think it depends on.
+
+THE INTUITION PEOPLE HAVE: "a big intercept means a long walk from b = 0, so it will
+take more epochs." THAT IS WRONG, and it is worth measuring because the wrong intuition
+sends you tuning the wrong thing.
+
+MEASURED, epochs to bring b within 1% of the least-squares answer, starting from b = 0:
+
+  true intercept       lstsq b*        epochs
+        0.0             0.0039           48
+        1.0             0.9963           24
+       10.0             9.9878           22
+      100.0           100.0256           22
+    1,000.0           999.9923           22
+
+FLAT. Twenty-two epochs whether the target is 1 or 1,000, because the bias gradient is
+proportional to the CURRENT error — the step size scales with how far you are, so the
+approach is geometric and the number of halvings to reach a fixed RELATIVE accuracy is
+constant.
+
+WHAT DOES CONTROL THE EPOCH COUNT IS THE FEATURE SCALE. MEASURED, multiplying one
+feature column and using the maximum stable learning rate for each:
+
+  feature 0 scaled by      max stable lr      epochs to 0.1%
+        1x                  9.103e-01              28
+       10x                  1.011e-02             383
+      100x                  1.011e-04          38,548
+
+A HUNDRED-FOLD CHANGE IN ONE COLUMN COST A FACTOR OF 1,377 IN EPOCHS. Standardising
+the features is not a preprocessing nicety; it is the difference between 28 epochs and
+never.
+
+AND THE `2/n` ON THE BIAS. MEASURED, three variants at lr = 0.1, 5,000 epochs, true
+intercept 100:
+
+  b -= lr*(2/n)*error.sum()     ->  b = 100.003937      correct
+  b -= lr*2*error.sum()         ->  DIVERGED            missing the 1/n
+  b -= lr*(2/n)*error.mean()    ->  b =  86.208119      an extra 1/n
+
+The third is the nasty one: it does not diverge and it does not error. It converges
+n times too slowly, so after 5,000 epochs the intercept is 14% short and the run looks
+like it just needs more epochs.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+`np.linalg.lstsq(X, y)`. The default answer for linear regression. Exact, no
+hyperparameters, uses SVD so it handles rank-deficient X gracefully. MEASURED, 110x
+faster than 5,000 GD epochs for an answer agreeing to 5.7e-14.
+
+THE NORMAL EQUATIONS `np.linalg.solve(X.T@X, X.T@y)`. Faster than lstsq, but squares
+the condition number — a problem with condition number 1e8 becomes 1e16, which is the
+entire float64 budget. Prefer lstsq, or `solve` on the RIDGE system with a small λ.
+
+RIDGE, `solve(X.T@X + lam*I, X.T@y)`. Adds numerical stability and regularisation
+together, and is what you want any time d is close to n.
+
+MINI-BATCH SGD, once n is too large to hold or to multiply per step. The gradient is
+noisier but you get many more updates per pass.
+
+MOMENTUM or ADAM. Both attack the badly-conditioned case measured above — momentum
+improves the dependence on the condition number from κ to sqrt(κ), and Adam's
+per-parameter step sizes partially compensate for unscaled features.
+
+CROSSOVER, MEASURED — lstsq versus 200 GD epochs:
+
+  n=4,000  d=   10    lstsq     1.04 ms     GD      7.49 ms
+  n=4,000  d=  100    lstsq    22.71 ms     GD     37.61 ms
+  n=4,000  d=1,000    lstsq   717.36 ms     GD    807.89 ms
+  n=6,000  d=3,000    lstsq 21,694 ms       GD  4,727 ms
+
+The closed form wins comfortably to about d = 1,000 and loses badly by d = 3,000,
+because it is O(d³) and gradient descent is O(n·d) per epoch.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. STANDARDISE X FIRST: `X = (X - X.mean(0)) / X.std(0)`. MEASURED, worth a factor
+of 1,377 in epochs.
+
+STEP 2. CONSIDER CENTRING y TOO, which makes the intercept exactly zero during training
+and recoverable afterwards as `y.mean() - X.mean(0) @ w`.
+
+STEP 3. `n, d = X.shape`. `w = np.zeros(d)`, `b = 0.0`. Zero initialisation is correct
+here; the problem is convex and there is no symmetry to break.
+
+STEP 4. `y_pred = X @ w + b`. `(n,d)@(d,) -> (n,)`, plus a broadcast scalar. ASSERT
+`y.shape == (n,)` — a (n,1) target broadcasts the residual to (n,n) with no error.
+
+STEP 5. `error = y_pred - y`. Prediction minus target.
+
+STEP 6. `grad_w = (2/n) * (X.T @ error)` — shape (d,), matching w.
+
+STEP 7. `grad_b = (2/n) * error.sum()` — a scalar. `.sum()`, then the 2/n. MEASURED,
+`.mean()` here as well as the `/n` is a silent factor of n.
+
+STEP 8. UPDATE BOTH, then loop. Both updates use the SAME error, computed before either
+parameter moved.
+
+STEP 9. WATCH THE LOSS. Rising means lr > 2/L; halve it. Falling but glacially means
+either lr is too small or the features are unscaled — check the condition number of
+XᵀX before touching lr.
+
+STEP 10. STOP ON A CRITERION, not a fixed count. And for a genuinely linear model, say
+out loud that you would use lstsq.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'The loop is: predict, subtract to get residuals, form the two gradients, step both
+parameters downhill. The gradient of mean squared error with respect to w is two over n
+times X transpose times the residuals, and with respect to b it is two over n times the
+sum of the residuals — because the bias is just a feature that is always one, so its
+column of X transpose is a column of ones.
+
+The first thing I would say is that for a linear model this is the wrong tool. There is
+a closed form, and I measured it: lstsq took 0.3 milliseconds and five thousand
+gradient-descent epochs took 32, for answers that agreed to fourteen decimal places.
+Gradient descent only wins when d is large enough for the cubic solve to dominate — I
+measured the crossover somewhere past a thousand features, and at three thousand
+features gradient descent was 4.6 times faster. The real reason to know this loop is
+that it is the same loop when the model is not linear.
+
+Two things about the bias. Leaving it out is not a small loss of accuracy — the model is
+forced through the origin, so it cannot even reproduce the mean of y. I measured a
+mean-squared error of 9,903 against 5.3 for predicting the mean and nothing else, and
+the slopes came out completely wrong because the optimiser was trying to manufacture an
+intercept out of the features. And the intuition that a large intercept needs more
+epochs is false — the bias gradient is proportional to the current error, so it
+converges geometrically. I measured twenty-two epochs to get within one percent whether
+the true intercept was one or a thousand.
+
+What does control the epoch count is feature scale. I scaled one column by a hundred
+and, using the maximum stable learning rate in each case, the epochs to a fixed accuracy
+went from twenty-eight to thirty-eight thousand. So standardise first — that decision is
+worth more than any amount of learning-rate tuning.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def linear_regression_gd(X, y, lr=0.01, epochs=1000):
+      n, d = X.shape                          # 1
+      w = np.zeros(d)                         # 2
+      b = 0.0
+      for _ in range(epochs):
+          y_pred = X.dot(w) + b               # 3
+          error = y_pred - y                  # 4
+          grad_w = (2 / n) * X.T.dot(error)   # 5
+          grad_b = (2 / n) * error.sum()      # 6
+          w -= lr * grad_w                    # 7
+          b -= lr * grad_b
+      return w, b
+
+LINE 1. `X.shape[0]` is the SAMPLE count and it is the divisor in both gradients. Using
+`shape[1]` rescales the gradient by d/n and therefore the effective learning rate.
+
+LINE 2. Zero init. Fine here because the loss is convex with a single minimum — unlike a
+neural network, where zero init makes every unit identical forever.
+
+LINE 3. `(n,d) @ (d,) -> (n,)`, then `+ b` broadcasts the scalar. IF `y` IS SHAPE (n,1)
+RATHER THAN (n,), line 4 broadcasts to (n,n): 500 residuals become 250,000, the gradient
+is wrong, and nothing raises. Assert the shape.
+
+LINE 4. `y_pred - y`. The reverse turns descent into ascent — the symptom is a loss that
+grows monotonically from step one.
+
+LINE 5. `(d,n) @ (n,) -> (d,)`, the same shape as w, which is the check to state aloud.
+The 2 comes from differentiating the square; the 1/n from the mean.
+
+LINE 6, THE BIAS GRADIENT AND THE LINE PEOPLE GET WRONG. The bias's feature is a
+constant 1, so its entry of `Xᵀerror` is `error.sum()`. Then the same `2/n`.
+  MEASURED, at lr = 0.1 and 5,000 epochs with a true intercept of 100:
+    `(2/n)*error.sum()`   ->  b = 100.003937    correct
+    `2*error.sum()`       ->  DIVERGED          (gradient n times too large)
+    `(2/n)*error.mean()`  ->  b =  86.208119    (n times too small — converges, wrong)
+  The third is the dangerous one: no error, no divergence, just an answer that is 14%
+short and looks like it needs more epochs.
+
+LINE 7. Both parameters step using the SAME `error`, computed before either moved. That
+is what makes it a gradient step rather than a coordinate-descent step; updating w and
+then recomputing the error before updating b is a different (and also convergent, but
+different) algorithm.
+
+THE TWO LINES THAT ARE NOT HERE AND MATTER MOST:
+
+      X = (X - X.mean(0)) / X.std(0)                     # standardise
+      # and afterwards, if you centred y:
+      b = y.mean() - X.mean(0) @ w                       # recover the intercept
+
+MEASURED, standardising is worth 28 epochs against 38,548. And on centred data the
+trained bias is -6.99e-15, i.e. exactly zero, with the intercept recovered afterwards
+as 100.0039 — identical to training it directly.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+Setup: n = 500, d = 3, true w = [2, -1, 0.5], true b = 100, noise σ = 0.5.
+
+TRACE A - convergence at lr = 0.1, against the exact answer b* = 100.0103:
+
+  epochs        b          ||w - w*||
+     10      88.9453       2.808e+00
+     50     100.0077       2.256e-03
+    100     100.0103       1.194e-07
+    500     100.0103       3.087e-14
+  1,000     100.0103       3.087e-14
+
+Converged by epoch 100 and at machine precision by 500. Epochs 500 to 1,000 did nothing
+— which is the argument for a convergence criterion rather than a fixed count.
+
+TRACE B - the intercept's magnitude does not matter. Epochs to bring b within 1% of b*:
+
+  true intercept        b*           epochs
+       0.0            0.0039           48
+       1.0            0.9963           24
+      10.0            9.9878           22
+     100.0          100.0256           22
+   1,000.0          999.9923           22
+
+TRACE C - the feature scale does. Each row uses 90% of its own maximum stable lr:
+
+  scale of feature 0     max stable lr       epochs to 0.1%
+         1x               9.103e-01                28
+        10x               1.011e-02               383
+       100x               1.011e-04            38,548
+
+TRACE D - dropping the bias entirely:
+
+  with bias:     w = [ 1.9948, -1.0062, 0.5195]   b = 100.0039    MSE =    0.2472
+  without:       w = [-5.1766, -6.1269, -3.9635]                  MSE = 9903.3930
+  var(y) = 5.3197  -> predicting the mean scores MSE 5.3197
+
+TRACE E - GD against the closed form:
+
+  lstsq          0.295 ms   w = [1.994839, -1.006195, 0.519530]   b = 100.003937
+  5,000 epochs  32.333 ms   w = [1.994839, -1.006195, 0.519530]   b = 100.003937
+  max |Δw| = 3.06e-14,  |Δb| = 5.68e-14
+
+TRACE F - where the crossover is (lstsq vs 200 GD epochs):
+
+  n=4,000  d=   10        1.04 ms  vs      7.49 ms      lstsq wins 7x
+  n=4,000  d=  100       22.71 ms  vs     37.61 ms      lstsq wins 1.7x
+  n=4,000  d=1,000      717.36 ms  vs    807.89 ms      roughly even
+  n=6,000  d=3,000   21,694.25 ms  vs  4,727.05 ms      GD wins 4.6x
+
+The closed form is O(d³) and GD is O(epochs·n·d). Between d = 1,000 and d = 3,000 the
+cube catches up and overtakes.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(epochs · n · d). SPACE O(n + d) beyond the data. The closed form is
+O(n·d² + d³) once. MEASURED, the crossover sits between d = 1,000 (roughly even) and
+d = 3,000 (GD 4.6x faster).
+
+THE #1 MISTAKE: not standardising the features. MEASURED, one column at 100x scale took
+the epoch count from 28 to 38,548 even using the maximum stable learning rate for each.
+
+THE #2 MISTAKE: omitting the bias. MEASURED, MSE 9,903 against 5.32 for predicting the
+mean — and it corrupts every slope, because the optimiser tries to synthesise an
+intercept out of the features.
+
+THE #3 MISTAKE: `(2/n)*error.mean()` for the bias gradient — the `/n` applied twice.
+MEASURED, no divergence, no error, just an intercept 14% short after 5,000 epochs.
+
+THE #4 MISTAKE: `2*error.sum()` — the `/n` omitted. MEASURED, diverges.
+
+THE #5 MISTAKE: `y - y_pred`. Gradient ascent.
+
+THE #6 MISTAKE: `y` shaped (n,1), so the residual broadcasts to (n,n). No error, wrong
+gradient.
+
+THE #7 MISTAKE: tuning the epoch count when the intercept is large. MEASURED, it is
+flat at 22 epochs from an intercept of 1 to an intercept of 1,000.
+
+THE #8 MISTAKE: a fixed epoch count with no convergence check. MEASURED, epochs 500 to
+1,000 changed nothing.
+
+THE #9 MISTAKE: using this at all for a linear model. MEASURED, 110x slower than lstsq
+for an answer differing by 5.7e-14.
+
+THE TAKEAWAY: the loop is predict, subtract, two gradients, two steps — and the bias is
+just a feature that is always 1, which is why its gradient is `(2/n)·error.sum()` and
+why omitting it is catastrophic rather than merely suboptimal (measured, MSE 9,903
+against 5.32 for predicting the mean, with all three slopes wrecked in the attempt to
+compensate). The intuition that a large intercept needs more epochs is false — measured
+flat at 22 epochs from an intercept of 1 to 1,000, because the bias gradient scales with
+the current error. What actually sets the epoch count is the FEATURE SCALE: 28 epochs
+against 38,548 for a single column scaled by 100. And for a genuinely linear model, say
+out loud that you would use lstsq — measured 110x faster for the same answer to fourteen
+decimals; this loop earns its keep past about a thousand features, or when the model
+stops being linear.""",
+]
+
+_EX_P1AO["R-squared (coefficient of determination) (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how much better than "just predict the average" is
+your model?
+
+  R² = 1 - SS_res / SS_tot
+     = 1 - Σ(y - pred)² / Σ(y - mean(y))²
+
+The denominator is the error a model would make if it ignored the features entirely and
+predicted the mean of y every time. The numerator is the error your model actually
+makes. So R² IS A COMPARISON AGAINST THE CONSTANT MODEL, scaled so that:
+
+  1.0  = perfect
+  0.0  = exactly as good as predicting the mean
+  < 0  = WORSE than predicting the mean
+
+MEASURED on y = [1, 2, 3, 4, 5]:
+
+  perfect prediction        R² =        1.0000
+  predict the mean          R² =        0.0000
+  off by 1 everywhere       R² =        0.5000
+  reversed                  R² =       -3.0000
+  predict 0 everywhere      R² =       -4.5000
+  predict 100 everywhere    R² =    -4704.5000
+
+ZERO IS NOT THE FLOOR. R² is unbounded below, and a negative value is not a bug — it is
+the metric telling you the model is actively harmful.""",
+
+    """2. THE INTUITION - it is a normalised MSE, and the normaliser is the thing that
+misleads.
+
+Rewrite it: `R² = 1 - MSE_model / Var(y)`. So R² is your error expressed as a FRACTION
+OF THE TARGET'S VARIANCE. That is its virtue — it is unitless, so you can compare a
+house-price model with a temperature model — and it is also the source of every
+misreading of it.
+
+BECAUSE THE DENOMINATOR IS A PROPERTY OF THE EVALUATION SET, NOT OF THE MODEL. Change
+which samples you evaluate on and R² moves even though the model did not.
+
+MEASURED. One fixed model, `pred = 2x`, on data `y = 2x + noise(σ=1)`:
+
+  full test set     (var(y) = 5.004)    R² = 0.7995     RMSE = 1.0016
+  narrow slice |x|<0.25 (var(y) = 1.074) R² = 0.0591     RMSE = 1.0051
+
+THE MODEL IS IDENTICAL AND ITS RMSE IS IDENTICAL. R² fell from 0.80 to 0.06 because the
+slice of test data has less variance to explain. A model deployed on a narrower
+population will always look worse by R², and better by R² on a wider one, with no change
+in its actual accuracy.
+
+WHICH GIVES THE RULE: R² answers "how much of the variation did you capture?", not "how
+accurate are you?". If you want accuracy, report RMSE or MAE in the target's units — and
+report R² alongside it, not instead of it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SS_res (residual sum of squares) - `Σ(y - pred)²`. The model's total squared error.
+
+SS_tot (total sum of squares) - `Σ(y - mean(y))²`. The constant model's total squared
+error. Also `n · Var(y)`.
+
+COEFFICIENT OF DETERMINATION - R²'s formal name.
+
+VARIANCE EXPLAINED - the usual verbal gloss, "R² = 0.8 means the model explains 80% of
+the variance". Accurate for an OLS fit on the training data; misleading everywhere else,
+because the "explained + unexplained = total" decomposition it rests on only holds when
+the residuals are orthogonal to the predictions, which OLS guarantees and nothing else
+does.
+
+ADJUSTED R² - `1 - (1 - R²)·(n-1)/(n-p-1)`, where p is the number of features. Penalises
+model size to offset R²'s guaranteed increase with every added feature.
+
+RMSE - `sqrt(mean((y-pred)²))`. Same information, in the target's own units, and NOT
+normalised by the target's variance.
+
+CORRELATION (Pearson r) - how linearly related two variables are, ignoring scale and
+offset. r² and R² coincide only in a specific case, measured below.
+
+OVERFITTING - the model fitting noise. R² on the training set cannot detect it, by
+construction.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - training R² can only go up, so it cannot
+tell you anything.
+
+ADD A FEATURE — ANY FEATURE, INCLUDING PURE RANDOM NOISE — AND TRAINING R² RISES. It
+must: the optimiser can always set the new coefficient to zero and do exactly as well,
+so the fitted value is at least as good. With finite data it will always find some
+spurious correlation and do slightly better.
+
+MEASURED, n = 50 samples, one real feature plus k columns of PURE NOISE independent of y:
+
+  features    train R²    adjusted R²    test R²
+       1        0.6098      0.6016        0.4556
+       6        0.6402      0.5900        0.4385
+      11        0.7056      0.6204        0.3505
+      21        0.7527      0.5673        0.2217
+      41        0.9312      0.5785       -1.4464
+      49        1.0000         nan        -8.1115
+
+AT 49 FEATURES AND 50 SAMPLES, TRAINING R² IS EXACTLY 1.0 AND TEST R² IS -8.11. The
+model reproduces the training set perfectly and is eight times worse than predicting
+the mean on new data. Every one of those 48 extra columns was noise.
+
+Adjusted R² does its job — it stays flat around 0.57-0.62 instead of climbing to 1.0 —
+but note it does not go NEGATIVE either, and at p = n - 1 its denominator is zero and it
+is nan. It is a warning light, not a validation set.
+
+THE OTHER TRAP IN THE SAME FAMILY: REPORTING r² INSTEAD OF R². Correlation squared
+ignores both bias and scale. MEASURED, on a fitted OLS model and then two corrupted
+versions of the same predictions:
+
+  OLS fit as-is:      R² =  0.942412    r² = 0.942412
+  predictions + 3:    R² = -1.293578    r² = 0.942412
+  predictions × 0.5:  R² =  0.666274    r² = 0.942412
+
+A model that is off by a constant 3 on every sample has r² of 0.94 and R² of -1.29.
+`np.corrcoef(y, pred)**2` is not R², and it flatters the model in exactly the cases you
+most need to catch.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+RMSE or MAE when you want to state accuracy in the target's units. "Off by $12,000 on
+average" is actionable; "R² = 0.83" is not. RMSE punishes large errors more; MAE is
+robust to outliers and is what you want when a few extreme values should not dominate.
+
+MAPE (mean absolute percentage error) when relative error is what matters and y is
+strictly positive. Undefined at y = 0 and asymmetric — it punishes over-prediction
+differently from under-prediction — so use it knowingly.
+
+ADJUSTED R² whenever you are comparing models with different numbers of features on the
+SAME data. MEASURED, it held flat at ~0.58 while raw R² climbed from 0.61 to 1.00 on
+pure noise.
+
+OUT-OF-SAMPLE R² — the same formula, computed on held-out data, with the mean taken from
+the TRAINING set. This is the honest version and the one that goes negative when it
+should. MEASURED above, it fell to -8.11 exactly where training R² hit 1.0.
+
+CROSS-VALIDATED R² when data is scarce. `sklearn.model_selection.cross_val_score` with
+`scoring='r2'`.
+
+AIC / BIC when you are doing model selection properly rather than eyeballing a fit
+statistic.
+
+AND FOR CLASSIFICATION, none of this applies. R² on 0/1 labels is computable and
+meaningless; use log-loss, AUC, or the confusion matrix.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. `ss_res = np.sum((y_true - y_pred) ** 2)`.
+
+STEP 2. `ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)`. THE MEAN IS OF y_true, NOT
+of y_pred. Using the prediction's mean is a common typo that makes the metric
+meaningless.
+
+STEP 3. `return 1 - ss_res / ss_tot`.
+
+STEP 4. GUARD THE ZERO DENOMINATOR. If y is constant, `ss_tot` is 0. MEASURED, a perfect
+prediction then gives nan (0/0) and an imperfect one gives -inf. Return 1.0 if
+`ss_res == 0` and 0.0 otherwise, and say that is a convention rather than a fact —
+sklearn does exactly this.
+
+STEP 5. FIX THE ARGUMENT ORDER AND KEEP IT. R² IS NOT SYMMETRIC. MEASURED,
+`r2(yt, yp) = 0.680000` and `r2(yp, yt) = -0.081081` on the same pair of arrays.
+
+STEP 6. FOR OUT-OF-SAMPLE R², USE THE TRAINING MEAN in `ss_tot`. Using the test set's
+own mean gives the test set information the model did not have.
+
+STEP 7. REPORT RMSE ALONGSIDE. MEASURED, R² moved from 0.80 to 0.06 on the same model
+while RMSE stayed at 1.00.
+
+STEP 8. REPORT THE NUMBER OF FEATURES with any training R², or report adjusted R²
+instead. MEASURED, 49 noise features on 50 samples gives training R² = 1.0000.
+
+STEP 9. NEVER USE `np.corrcoef(y, pred) ** 2` as a substitute. MEASURED, it reports 0.94
+for a model with R² of -1.29.
+
+STEP 10. IF R² IS NEGATIVE, DO NOT ASSUME A BUG. It means worse than the mean, which is
+information.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'R² is one minus the residual sum of squares over the total sum of squares. The
+denominator is the error you would make by ignoring the features and predicting the mean
+of y every time, so R² is a comparison against that constant model: one is perfect, zero
+is exactly as good as the mean, and negative means worse than the mean. Negative is not
+a bug — I measured predicting a constant 100 against targets one through five giving R²
+of minus four thousand seven hundred.
+
+Two things I would always say alongside it. First, training R² is useless for judging a
+model, because adding any feature can only increase it — the optimiser can always
+zero the new coefficient and do no worse. I measured that with one real feature and
+forty-eight columns of pure random noise on fifty samples: training R² went to exactly
+1.0 and test R² went to minus eight. Adjusted R² stayed around 0.58, which is what it is
+for, but it is a warning light rather than a validation set.
+
+Second, R² is normalised by the variance of the evaluation set, not by anything about
+the model. So the same model scores differently on different test sets. I measured one
+fixed model on a full test set and on a narrow slice of it: R² was 0.80 and then 0.06,
+while the RMSE was 1.00 in both cases. The model did not change. That is why I report
+RMSE in the target's units next to it — R² answers how much of the variation you
+captured, not how accurate you are.
+
+And two implementation details. R² is not symmetric, so swapping the arguments gives a
+different number — I measured 0.68 one way and minus 0.08 the other. And correlation
+squared is not R²: it ignores bias and scale, so a model whose predictions are all off by
+a constant three had r-squared of 0.94 and R² of minus 1.29.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def r2_score(y_true, y_pred):
+      ss_res = np.sum((y_true - y_pred) ** 2)              # 1
+      ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)     # 2, 3
+      return 1 - ss_res / ss_tot                           # 4
+
+LINE 1. The model's total squared error. Note this is a SUM, not a mean — and it does
+not matter, because line 4 takes a ratio and the 1/n cancels. Writing both as means is
+equally correct; mixing one of each is not.
+
+LINE 2. THE BASELINE. `np.mean(y_true)` — of the TRUE values. `np.mean(y_pred)` is a
+common typo, and it silently changes the metric into something with no interpretation:
+the denominator is then the variance of the predictions, which the model controls.
+
+LINE 3. `ss_tot` is `n · Var(y_true)`. THIS IS THE LINE THAT MAKES R² A PROPERTY OF THE
+EVALUATION SET AS MUCH AS OF THE MODEL. MEASURED, the same model on the same kind of
+data: R² = 0.7995 where var(y) = 5.004, and R² = 0.0591 where var(y) = 1.074, with RMSE
+1.0016 and 1.0051 respectively.
+
+LINE 4. `1 - ratio`. Unbounded below: `ss_res` can be arbitrarily larger than `ss_tot`.
+MEASURED, -4704.5 for a constant prediction of 100 against targets 1 to 5.
+
+WHAT THE FUNCTION DOES NOT HANDLE, AND MUST:
+
+      if ss_tot == 0:
+          return 1.0 if ss_res == 0 else 0.0
+
+MEASURED with a constant y: a perfect prediction gives 0/0 = nan, and a prediction off
+by 1 gives -inf. Neither is a usable number, and both come from a legitimate input — a
+test batch where every label happens to be the same class or value. The 1.0/0.0
+convention above is what sklearn returns, and it is a CONVENTION: with no variance in
+y, "fraction of variance explained" has no meaning.
+
+AND THE ASYMMETRY, worth an assertion in a shared codebase:
+
+  r2_score(y_true=yt, y_pred=yp)  =  0.680000
+  r2_score(y_true=yp, y_pred=yt)  = -0.081081
+
+MEASURED on `yt = [1,2,3,4,10]`, `yp = [1,2,3,4,6]`. The denominator uses the FIRST
+argument's variance, so swapping them changes what you are normalising by. Every
+metric library takes `(y_true, y_pred)` in that order; a positional swap gives a number
+that looks plausible and is wrong.
+
+FOR OUT-OF-SAMPLE USE, pass the training mean explicitly:
+
+      ss_tot = np.sum((y_test - train_mean) ** 2)
+
+Otherwise the baseline knows the test set's mean, which the model did not.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the scale, on y = [1, 2, 3, 4, 5] (SS_tot = 10):
+
+  prediction              SS_res      R²
+  exact                     0.0      1.0000
+  the mean (3.0)           10.0      0.0000
+  y + 1                     5.0      0.5000     (a constant offset of 1)
+  reversed [5,4,3,2,1]     40.0     -3.0000
+  all zeros                55.0     -4.5000
+  all 100                47045.0  -4704.5000
+
+Note `y + 1`: being off by exactly 1 on every sample still scores 0.5, because
+SS_res = 5 against SS_tot = 10. R² is forgiving of small systematic bias and brutal
+about large ones.
+
+TRACE B - training R² rises on pure noise. n = 50, one real feature, the rest random:
+
+  features    train R²    adjusted R²    test R²
+       1        0.6098      0.6016        0.4556
+       6        0.6402      0.5900        0.4385
+      11        0.7056      0.6204        0.3505
+      21        0.7527      0.5673        0.2217
+      41        0.9312      0.5785       -1.4464
+      49        1.0000         nan        -8.1115
+
+Train and test move in OPPOSITE directions from the very first added column. At p = 49
+and n = 50 the design matrix has as many free parameters as data points, the fit is
+exact, and adjusted R² is nan because its denominator `n - p - 1` is zero.
+
+TRACE C - the same model, two test sets. `pred = 2x`, `y = 2x + N(0,1)`:
+
+                            var(y)      R²        RMSE
+  full test set (n=4000)     5.004     0.7995    1.0016
+  slice |x| < 0.25           1.074     0.0591    1.0051
+
+TRACE D - correlation squared is not R². One OLS fit, then the same predictions
+corrupted:
+
+                          R²           r² = corrcoef²
+  as fitted           0.942412           0.942412
+  + 3 (constant bias) -1.293578           0.942412
+  × 0.5 (wrong scale)  0.666274           0.942412
+
+r² is invariant to any affine transformation of the predictions. R² is not, and that is
+exactly the property you want.
+
+TRACE E - zero variance in y (`y = [3,3,3,3,3]`):
+
+  perfect prediction        ->  0/0      ->  nan
+  prediction off by 1       ->  5/0      ->  -inf
+
+TRACE F - the asymmetry. `yt = [1,2,3,4,10]`, `yp = [1,2,3,4,6]`:
+
+  r2(y_true=yt, y_pred=yp) =  0.680000     SS_tot uses var(yt) = 41.2
+  r2(y_true=yp, y_pred=yt) = -0.081081     SS_tot uses var(yp) = 14.8
+
+Same 16 units of squared error; two different denominators; two different answers, one
+positive and one negative.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(n) — two passes over the arrays (one for the mean, one for the sums), or one if
+you compute the variance in the same sweep. SPACE O(1) beyond the inputs, or O(n) as
+written because `(y_true - y_pred) ** 2` allocates a temporary. For a metric this is
+never the bottleneck.
+
+THE #1 MISTAKE: judging a model by TRAINING R². It can only rise as features are added.
+MEASURED, 48 columns of pure noise took training R² from 0.61 to exactly 1.0000 while
+test R² went to -8.11.
+
+THE #2 MISTAKE: treating 0 as the floor and a negative value as a bug. MEASURED,
+predicting a constant 100 against targets 1-5 gives -4704.5. Negative means worse than
+the mean, which is a real thing for a model to be.
+
+THE #3 MISTAKE: comparing R² across different evaluation sets. MEASURED, the same model
+with the same RMSE of 1.00 scored 0.7995 and 0.0591 on two slices of the same data,
+because the denominator is the test set's variance.
+
+THE #4 MISTAKE: `np.corrcoef(y, pred)**2`. MEASURED, it reports 0.94 for predictions
+that are uniformly off by 3, where R² is -1.29. It is blind to bias and scale.
+
+THE #5 MISTAKE: no guard for constant y. MEASURED, nan or -inf.
+
+THE #6 MISTAKE: swapping the arguments. MEASURED, 0.68 becomes -0.08.
+
+THE #7 MISTAKE: `np.mean(y_pred)` in the denominator instead of `np.mean(y_true)`.
+
+THE #8 MISTAKE: reporting R² alone with no RMSE, so nobody can tell whether the model is
+accurate enough to use.
+
+THE #9 MISTAKE: using the test set's own mean for out-of-sample R², which hands the
+baseline information the model never had.
+
+THE TAKEAWAY: R² is `1 - MSE_model / Var(y)` — your error as a fraction of the target's
+variance — so it is a comparison against the constant model, and it is UNBOUNDED BELOW
+(measured, -4704.5 for a badly-chosen constant). Two properties make it easy to misread.
+Training R² can only increase with more features, so it cannot detect overfitting:
+measured, 48 columns of pure noise on 50 samples drove it to exactly 1.0000 while test
+R² fell to -8.11. And the denominator belongs to the EVALUATION SET, not the model —
+measured, one unchanged model with an unchanged RMSE of 1.00 scored 0.80 on a wide test
+set and 0.06 on a narrow slice of it. So report R² out-of-sample, report RMSE in the
+target's units beside it, and never substitute `corrcoef(y, pred)**2`, which ignores bias
+and scale and gave 0.94 where R² was -1.29.""",
+]
+
+_EX_P1AO["ReLU and its gradient (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - `max(0, x)`, and the gradient is a gate.
+
+  forward:   relu(x) = max(0, x)
+  backward:  pass the upstream gradient through where x > 0, block it where x <= 0
+
+That is the entire activation function that made deep networks trainable. Two things
+about it are worth understanding rather than memorising.
+
+FIRST, THE GRADIENT IS EXACTLY 1 ON THE ACTIVE SIDE. Not 0.25, not 0.9 — one. Which
+means a gradient flowing back through fifty ReLU layers along an active path is
+multiplied by 1.0 fifty times. MEASURED against the sigmoid, whose derivative peaks at
+0.25:
+
+  layers      sigmoid best case       ReLU (active path)
+     5           9.766e-04                  1.0
+    10           9.537e-07                  1.0
+    20           9.095e-13                  1.0
+    50           7.889e-31                  1.0
+
+At 20 layers the sigmoid's BEST POSSIBLE gradient is 9e-13. That is the vanishing
+gradient problem, and ReLU's flat 1 is the fix.
+
+SECOND, THE BACKWARD PASS ONLY NEEDS THE SIGN OF x. MEASURED, a float32 1024x4096
+activation tensor is 16.8 MB; the boolean mask is 4.2 MB and the packed bits are
+0.5 MB — 32x smaller.""",
+
+    """2. THE INTUITION - the gate, and what it costs.
+
+RELU IS A SWITCH, not a squasher. For a given input, each unit is either ON (identity,
+gradient 1) or OFF (zero, gradient 0). The network is therefore a LINEAR MODEL for any
+fixed pattern of which units are on — and the nonlinearity comes entirely from the
+pattern changing as the input changes. That is why deep ReLU networks are piecewise
+linear, and why they train so much more easily than smooth activations: on the active
+path, there is nothing to shrink the gradient.
+
+THE PRICE IS THAT "OFF" IS ABSOLUTE. A unit whose input is negative gets ZERO gradient,
+which means its weights do not move, which means its input stays negative. IF THAT
+HAPPENS FOR EVERY TRAINING SAMPLE, THE UNIT IS DEAD PERMANENTLY. It is not learning
+slowly; it is not learning at all, and nothing will revive it.
+
+MEASURED, a 64-unit hidden layer trained for 3,000 steps, counting units that output ≤ 0
+for EVERY sample in the training set:
+
+  lr = 0.01    0/64 dead     train acc 0.9902
+  lr = 0.1     0/64 dead     train acc 1.0000
+  lr = 1.0     0/64 dead     train acc 1.0000
+  lr = 5.0     8/64 dead     train acc 1.0000
+  lr = 20.0   60/64 dead     train acc 0.7266
+
+At lr = 20 the network has lost 94% of its capacity and cannot fit the training set. The
+cause is a single large update pushing the bias so far negative that no input recovers
+it.
+
+AND THE OTHER COST: RELU HALVES THE VARIANCE. MEASURED on N(0,1) input, the output has
+mean 0.3991 and variance 0.3402, with 49.94% of values exactly zero. THAT IS WHY HE
+INITIALISATION USES sqrt(2/n) RATHER THAN sqrt(1/n) — the 2 compensates for the half
+that ReLU throws away, so activation variance stays constant with depth.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ACTIVATION FUNCTION - the elementwise nonlinearity between linear layers. Without one, a
+stack of linear layers collapses to a single linear layer.
+
+RELU - Rectified Linear Unit, `max(0, x)`.
+
+FORWARD PASS - computing outputs from inputs. BACKWARD PASS - propagating gradients from
+the loss back to the parameters.
+
+UPSTREAM GRADIENT (`grad_output`) - the derivative of the loss with respect to this
+layer's OUTPUT, handed to you by the layer above.
+
+LOCAL GRADIENT - the derivative of this layer's output with respect to its input. For
+ReLU it is 1 or 0. The chain rule says multiply them, which for a 0/1 local gradient is
+a mask.
+
+DEAD UNIT - a unit whose pre-activation is ≤ 0 for every training sample, so it receives
+zero gradient forever.
+
+VANISHING GRADIENT - the product of many small local gradients shrinking toward zero
+with depth. Sigmoid's derivative maxes at 0.25, so 20 layers is at best 9e-13.
+
+SATURATION - an activation in a flat region where its derivative is near zero. ReLU does
+not saturate on the positive side, which is the whole point.
+
+SUBGRADIENT - a stand-in derivative at a non-differentiable point. ReLU has no
+derivative at exactly 0; any value in [0, 1] is a valid subgradient.
+
+HE INITIALISATION - weights drawn with variance `2/fan_in`, designed for ReLU.
+
+LEAKY RELU - `max(αx, x)` with α ≈ 0.01, so the negative side has a small nonzero
+gradient.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - `grad_output.copy()`, and the bug it prevents.
+
+  def relu_backward(grad_output, x):
+      grad = grad_output.copy()          # <- this line
+      grad[x <= 0] = 0
+      return grad
+
+WITHOUT THE `.copy()`, `grad[x <= 0] = 0` MUTATES THE CALLER'S ARRAY. MEASURED:
+
+  caller's grad before the call:  [1., 2., 3., 4.]
+  returned value:                 [0., 2., 0., 4.]
+  caller's grad AFTER the call:   [0., 2., 0., 4.]      <- overwritten
+
+The function returns the right answer, so a unit test on the return value passes. What
+breaks is anything the caller does with its own gradient afterwards — a residual
+connection that adds the same upstream gradient into two branches, a gradient-clipping
+step that reads the pre-mask norm, a second consumer in a multi-output graph. The symptom
+is a training run that is subtly wrong in a way that depends on execution order, which is
+the worst kind of bug to have.
+
+THE SECOND TRAP IS SUBTLER AND IS THE ONE PEOPLE ARGUE ABOUT: `x <= 0` versus `x < 0`.
+The derivative at exactly 0 does not exist, and any value in [0, 1] is a legitimate
+subgradient. MEASURED on `[-1e-300, 0.0, 1e-300]`:
+
+  with `x <= 0` (subgradient 0 at zero):  [0., 0., 1.]
+  with `x <  0` (subgradient 1 at zero):  [0., 1., 1.]
+
+IT NEVER MATTERS IN PRACTICE, because a float being exactly 0.0 after a matrix multiply
+is a measure-zero event. Frameworks use 0. Do not spend interview time on it — but do
+say you know the derivative is undefined there, because that is what is being probed.
+
+THE THIRD: PASSING THE WRONG ARRAY. The mask must come from the layer's INPUT x (or from
+the output, since `relu(x) > 0` iff `x > 0`), not from the upstream gradient. `grad[grad
+<= 0] = 0` is a plausible-looking typo that zeroes negative gradients — which are half of
+them — and quietly halves the learning signal.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+LEAKY RELU, `max(αx, x)` with α = 0.01. The negative side has slope α instead of 0, so a
+unit that goes negative still receives gradient and can come back. MEASURED on the same
+dying-ReLU experiment:
+
+  lr = 1.0     ReLU  0/64 dead      leaky  0/64 dead
+  lr = 5.0     ReLU  8/64 dead      leaky  8/64 dead
+  lr = 20.0    ReLU 60/64 dead      leaky 16/64 dead,  train acc 1.0000 vs 0.7266
+
+AT lr = 20 THE LEAKY VERSION STILL FITS THE TRAINING SET while plain ReLU has lost 94%
+of its units and cannot. Note it is not immune — 16 units still ended up inactive — but
+inactive is not the same as dead, because the gradient path remains open.
+
+PARAMETRIC RELU (PReLU) learns α per channel. A little better on ImageNet-scale vision,
+a little more to tune.
+
+ELU / SELU - smooth negative side with an exponential. Mean activations closer to zero,
+which helps optimisation, at the cost of an `exp` per element.
+
+GELU - `x·Φ(x)`, a smooth gate. The default in transformers. It costs more than a max
+and it removes the hard zero, which is why it is the standard where compute per token is
+not the constraint.
+
+SWISH / SiLU - `x·σ(x)`. Found by architecture search, and close to GELU in practice.
+
+AND THE ONE THAT IS NOT AN ALTERNATIVE: SIGMOID OR TANH IN A DEEP HIDDEN LAYER.
+MEASURED, sigmoid's BEST-CASE gradient factor is 0.25 per layer, so 20 layers is 9e-13
+and 50 layers is 7.9e-31. Those are the best cases, achieved only at x = 0. Tanh is
+better (derivative peaks at 1.0) but still saturates.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. FORWARD: `np.maximum(0, x)`. Elementwise, and note `np.maximum` (two arrays) not
+`np.max` (a reduction) — `np.max(0, x)` is a shape error at best and a wrong answer at
+worst.
+
+STEP 2. BACKWARD, FIRST LINE: `grad = grad_output.copy()`. Not optional. MEASURED, the
+alternative silently overwrites the caller's array.
+
+STEP 3. `grad[x <= 0] = 0`. The mask comes from x, the layer's INPUT.
+
+STEP 4. RETURN `grad`.
+
+STEP 5. IF MEMORY MATTERS, CACHE THE MASK, NOT x. MEASURED, a float32 1024x4096 tensor
+is 16.8 MB and its boolean mask is 4.2 MB — 4x — with packed bits at 0.5 MB, 32x.
+
+STEP 6. IF SPEED MATTERS, USE THE IN-PLACE FORM. MEASURED on a 4000x4000 array:
+`np.maximum(0, x)` 28.60 ms, `np.maximum(x, 0, out=x)` 13.97 ms — 2x, because there is
+no allocation.
+
+STEP 7. AVOID `np.where(x > 0, x, 0)`. MEASURED at 92.63 ms against 28.60 ms for
+`np.maximum` — 3.2x slower, because it builds a boolean array and selects from two
+sources.
+
+STEP 8. INITIALISE WITH He, `sqrt(2 / fan_in)`. MEASURED, ReLU takes N(0,1) input to
+variance 0.3402 with 49.94% zeros — the 2 in the numerator is compensating for exactly
+that.
+
+STEP 9. WATCH THE DEAD-UNIT FRACTION during training: `(z1 > 0).any(axis=0)` over a
+batch tells you which units never fire. MEASURED, it went 0% -> 12.5% -> 93.8% as the
+learning rate went 1 -> 5 -> 20.
+
+STEP 10. IF UNITS ARE DYING, LOWER THE LEARNING RATE FIRST and switch to leaky second.
+MEASURED, the learning rate was the cause in every case.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'ReLU is max of zero and x, and its derivative is one where x is positive and zero
+otherwise — so the backward pass is just the upstream gradient with the negative
+positions masked out. It is a gate, not a squasher.
+
+The reason it replaced sigmoid and tanh is that flat 1 on the active side. The sigmoid's
+derivative peaks at 0.25, so the best possible gradient through twenty sigmoid layers is
+0.25 to the twentieth, about 9e-13 — I checked the arithmetic across depths — and that is
+the vanishing gradient problem. ReLU multiplies by exactly one along any active path, so
+depth costs nothing.
+
+The price is dead units. A unit whose pre-activation is negative for every sample gets
+zero gradient, so its weights never move, so it stays negative — permanently. I measured
+that: a sixty-four unit layer had zero dead units up to a learning rate of one, eight
+dead at learning rate five, and sixty of sixty-four dead at twenty, at which point it
+could no longer fit its own training set. Leaky ReLU with a 0.01 negative slope kept
+that same run at 100% training accuracy with sixteen units inactive rather than sixty
+dead, because the gradient path stays open.
+
+Two implementation notes. The backward pass must copy the upstream gradient before
+masking, or it overwrites the caller's array — I measured the caller's gradient being
+changed in place, and since the return value is still correct, a unit test would not
+catch it. And you only need the SIGN of the input for the backward pass, not the input
+itself, so caching a boolean mask instead of the activations is four times less memory,
+or thirty-two times with packed bits.
+
+One thing worth knowing: ReLU zeroes half its input, so it halves the variance — I
+measured 0.34 out from 1.0 in, with 49.9% exact zeros. That is precisely why He
+initialisation uses square root of two over fan-in rather than one over fan-in.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def relu(x):
+      return np.maximum(0, x)              # 1
+
+  def relu_backward(grad_output, x):
+      grad = grad_output.copy()            # 2
+      grad[x <= 0] = 0                     # 3, 4
+      return grad
+
+LINE 1. `np.maximum` — ELEMENTWISE maximum of two arrays, broadcasting the scalar 0
+across x. NOT `np.max`, which is a reduction; `np.max(0, x)` interprets x as the `axis`
+argument and either errors or silently returns 0.
+  MEASURED alternatives on a 4000x4000 array, best of 5:
+
+    np.maximum(0, x)          28.60 ms
+    np.clip(x, 0, None)       28.27 ms
+    x * (x > 0)               40.54 ms
+    np.where(x > 0, x, 0)     92.63 ms
+    np.maximum(x, 0, out=x)   13.97 ms     in-place, no allocation
+
+  `np.where` is 3.2x slower than `np.maximum` for the identical result: it materialises a
+boolean array and then selects from two sources. `x * (x > 0)` builds the mask and does a
+multiply. The in-place form is 2x faster than any of them and is what a framework uses.
+
+LINE 2, THE LINE THE QUESTION IS REALLY ABOUT. Without it, line 3 writes into the array
+the caller passed in. MEASURED:
+
+    caller's grad before:  [1., 2., 3., 4.]
+    returned:              [0., 2., 0., 4.]
+    caller's grad after:   [0., 2., 0., 4.]
+
+  The RETURN VALUE IS CORRECT either way, so the bug is invisible to a test of the
+function and appears only where the caller reuses its gradient — residual connections,
+multi-consumer graphs, gradient clipping that reads the pre-mask norm.
+
+LINE 3. THE MASK COMES FROM `x`, THE LAYER'S INPUT. Equivalently from the OUTPUT, since
+`relu(x) > 0` exactly when `x > 0` — which is why frameworks cache the output and not
+the input, saving nothing in memory but one array in the graph. What it must NOT come
+from is `grad_output`: `grad[grad <= 0] = 0` zeroes negative gradients, roughly half of
+them, and halves the learning signal without erroring.
+
+LINE 4. `<= 0` versus `< 0` — the subgradient convention at exactly zero. MEASURED on
+`[-1e-300, 0.0, 1e-300]`: `<=` gives [0, 0, 1] and `<` gives [0, 1, 1]. Frameworks use
+`<=`. It is a measure-zero event and does not matter; knowing that the derivative is
+undefined there does.
+
+THE MEMORY VERSION, for a real training loop:
+
+      mask = x > 0                      # cache this, not x
+      out  = x * mask
+      ...
+      grad = grad_output * mask
+
+MEASURED, float32 1024x4096: activations 16.8 MB, boolean mask 4.2 MB (4x), packed bits
+0.5 MB (32x).""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - forward and backward on one small array.
+
+  x            = [-2.0,  -0.5,   0.0,   0.5,   3.0]
+  relu(x)      = [ 0.0,   0.0,   0.0,   0.5,   3.0]
+  grad_output  = [ 1.0,   1.0,   1.0,   1.0,   1.0]
+  mask (x > 0) = [   F,     F,     F,     T,     T]
+  relu_backward= [ 0.0,   0.0,   0.0,   1.0,   1.0]
+
+The gradient is the upstream value or zero — never anything in between. That is the
+whole function.
+
+TRACE B - depth. The multiplicative factor through L layers along the best possible path:
+
+  layers      sigmoid (0.25^L)      ReLU (1.0^L)
+      1          2.500e-01              1.0
+      5          9.766e-04              1.0
+     10          9.537e-07              1.0
+     20          9.095e-13              1.0
+     50          7.889e-31              1.0
+
+The sigmoid column is its BEST CASE, reached only at x = 0. A real network is worse.
+
+TRACE C - dying ReLU, 64 hidden units, 3,000 steps, counting units with z ≤ 0 for EVERY
+training sample:
+
+  learning rate      dead / 64        train accuracy
+      0.01            0  (0.0%)          0.9902
+      0.1             0  (0.0%)          1.0000
+      1.0             0  (0.0%)          1.0000
+      5.0             8 (12.5%)          1.0000
+     20.0            60 (93.8%)          0.7266
+
+And leaky ReLU (α = 0.01) on the same runs:
+
+      1.0             0  (0.0%)          1.0000
+      5.0             8 (12.5%)          1.0000
+     20.0            16 (25.0%)          1.0000
+
+At lr = 20 the difference is decisive: plain ReLU loses 94% of its units and cannot fit
+the training set; leaky loses 25% to inactivity and still reaches 100%.
+
+TRACE D - the in-place mutation:
+
+  before  [1., 2., 3., 4.]
+  after   [0., 2., 0., 4.]      the caller's own array, without `.copy()`
+
+TRACE E - output statistics on N(0,1) input, 200,000 samples:
+
+  input:   mean  0.0021   variance 0.9965
+  output:  mean  0.3991   variance 0.3402
+  fraction exactly zero:  0.4994   (theory 0.5)
+
+The mean is 1/sqrt(2π) = 0.3989 and the variance is (1/2 - 1/2π) = 0.3408. THE VARIANCE
+IS ROUGHLY A THIRD OF THE INPUT'S, and half the outputs are zero — which is what He
+initialisation's factor of 2 exists to undo.
+
+TRACE F - memory for the backward pass, float32 1024x4096:
+
+  the activations themselves      16.8 MB
+  a boolean mask                   4.2 MB     4x smaller
+  packed bits                      0.5 MB    32x smaller
+
+`relu_backward` only reads the SIGN of x, so anything that preserves the sign is enough.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(N) forward and O(N) backward, one comparison per element and no transcendental
+functions — which is why ReLU is cheaper than sigmoid, tanh, ELU or GELU, all of which
+need an `exp`. MEASURED on 16 million elements: 28.60 ms out-of-place, 13.97 ms in-place.
+SPACE O(N) for the output, plus O(N) that must be RETAINED until the backward pass —
+though only the sign, so a bool mask at 4x less or packed bits at 32x less.
+
+THE #1 MISTAKE: no `.copy()` in the backward pass. MEASURED, it overwrites the caller's
+array while returning the correct value, so unit tests pass and the failure depends on
+execution order.
+
+THE #2 MISTAKE: masking on the wrong array. `grad[grad <= 0] = 0` zeroes the negative
+half of the gradients and halves the learning signal without erroring.
+
+THE #3 MISTAKE: `np.max` instead of `np.maximum`.
+
+THE #4 MISTAKE: ignoring the dead-unit rate. MEASURED, 0% at lr = 1 and 93.8% at
+lr = 20, at which point the network could not fit its own training set. Instrument it
+with `(z > 0).any(axis=0)`.
+
+THE #5 MISTAKE: reaching for leaky ReLU before lowering the learning rate. MEASURED, the
+learning rate caused the deaths in every case; leaky mitigated (60 dead -> 16 inactive)
+rather than fixed.
+
+THE #6 MISTAKE: Xavier/Glorot initialisation with ReLU. MEASURED, ReLU cuts the variance
+to 0.34 of its input, so the activations shrink with depth. He's `sqrt(2/fan_in)` exists
+for precisely this.
+
+THE #7 MISTAKE: `np.where(x > 0, x, 0)` in a hot loop. MEASURED, 3.2x slower than
+`np.maximum` for the identical result.
+
+THE #8 MISTAKE: caching the full activation tensor when only its sign is needed.
+MEASURED, 16.8 MB against 0.5 MB.
+
+THE #9 MISTAKE: arguing about the derivative at exactly 0. It is undefined, any
+subgradient in [0,1] is valid, frameworks use 0, and a float is exactly 0.0 essentially
+never.
+
+THE TAKEAWAY: ReLU is a GATE — identity and gradient exactly 1 when on, zero and zero
+when off — and that flat 1 is why depth became trainable, measured against the sigmoid's
+best-case 9e-13 through twenty layers. The price is that "off" is permanent: a unit
+negative for every sample gets no gradient and cannot recover, measured at 0 of 64 dead
+units at lr = 1 and 60 of 64 at lr = 20, where the network could no longer fit its own
+training data — so watch the dead-unit rate and lower the learning rate before reaching
+for leaky. In code, the one line that matters is `grad_output.copy()` before masking,
+because without it you silently overwrite the caller's array while still returning the
+right answer; and remember the backward pass needs only the SIGN of x, which is 32x less
+memory than the activations, and that ReLU halves the variance, which is the entire
+reason He initialisation carries a 2.""",
+]
+
 
 
 
