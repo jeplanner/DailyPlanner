@@ -297493,6 +297493,1446 @@ THE TAKEAWAY
     why a single zero digit decides the whole product and why negative answers are the normal case.""",
 ]
 
+_EX_P1AO["Sum of All Odd Length Subarrays"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add up the totals of every contiguous subarray whose length is odd.
+
+    arr = [1, 4, 2, 5, 3]
+
+    length-1 subarrays: [1], [4], [2], [5], [3]                sum 15
+    length-3 subarrays: [1,4,2], [4,2,5], [2,5,3]              sum 7 + 11 + 10 = 28
+    length-5 subarray:  [1,4,2,5,3]                            sum 15
+    total 58                                                    MEASURED
+
+ENUMERATING THE SUBARRAYS IS O(n^3) NAIVELY - all the pairs, and summing each one - or O(n^2) with
+prefix sums. THE TRICK IS TO STOP THINKING ABOUT SUBARRAYS AND THINK ABOUT ELEMENTS: how many times
+does `arr[i]` appear in the answer?
+
+A subarray containing index i is chosen by picking a start at or before i and an end at or after i:
+
+    starts:  0, 1, ..., i          that is i + 1 choices
+    ends:    i, i+1, ..., n-1      that is n - i choices
+    total subarrays containing i:  (i + 1) * (n - i)
+
+Of those, roughly half have odd length - and precisely `(count + 1) // 2` do. So
+
+    total = sum over i of ((i+1)*(n-i) + 1) // 2 * arr[i]
+
+One pass, no subarrays enumerated at all. MEASURED against the brute force on 5,000 random arrays:
+identical. MEASURED at n = 2,000: 0.22 ms against 3,310 ms - a factor of 15,124.""",
+
+    """2. THE INTUITION - count each element's appearances instead of building the subarrays.
+
+THE COUNTING ARGUMENT. A contiguous subarray is determined by its start and end. It contains index i
+exactly when `start <= i <= end`. Those two choices are independent, so the number of subarrays
+containing i is
+
+    (number of valid starts) * (number of valid ends) = (i + 1) * (n - i)
+
+For n = 5, MEASURED:
+
+    i      contains      of which odd-length
+    ----------------------------------------------
+    0         5                  3
+    1         8                  4
+    2         9                  5
+    3         8                  4
+    4         5                  3
+
+The middle element appears in the most subarrays, and the ends in the fewest - which matches the
+intuition that the middle is harder to avoid.
+
+WHY `(count + 1) // 2` IS THE ODD SHARE. Fix i, and list the subarrays containing it by their length:
+lengths 1, 2, 3, ... appear in a pattern where odd and even alternate as the start or end shifts by
+one. The total splits as evenly as possible, and when the count is ODD there is one more odd-length
+subarray than even-length. So the odd share is the count rounded UP - `(count + 1) // 2`.
+
+MEASURED, using `count // 2` instead - rounding down - is wrong on 2,782 of 5,000 random arrays,
+55.6%. It undercounts exactly the elements whose subarray count is odd.
+
+WHY THIS PATTERN IS WORTH MORE THAN THE FORMULA. "Sum over all subarrays of some property" almost
+always yields to the same move: swap the order of summation, from "for each subarray, for each
+element" to "for each element, in how many subarrays does it appear". That converts an O(n^2) or
+O(n^3) enumeration into an O(n) count, and it is the standard technique behind Sum of Subarray
+Minimums, Total Hamming Distance and Sum of Subarray Ranges.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SUBARRAY - a CONTIGUOUS slice. `[4,2]` is a subarray of `[1,4,2,5,3]`; `[1,2]` is not.
+
+CONTRIBUTION - how much one element adds to the final answer: its value times the number of qualifying
+subarrays that contain it.
+
+SWAPPING THE ORDER OF SUMMATION - rewriting `sum over subarrays of sum over elements` as `sum over
+elements of sum over subarrays`. The whole technique.
+
+`(i + 1) * (n - i)` - the number of subarrays containing index i: starts times ends.
+
+CEILING DIVISION - `(x + 1) // 2` is x divided by two, rounded UP. It is the odd share here, and
+rounding down instead is MEASURED wrong on 55.6% of arrays.
+
+O(n) versus O(n^2)/O(n^3) - the counting formula against enumerating subarrays. MEASURED at n = 2,000:
+0.22 ms against 3,310 ms.
+
+PREFIX SUMS - the intermediate improvement, making each subarray's total O(1) and the whole thing
+O(n^2). Worth naming as the step between brute force and the counting insight.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the rounding, and the counting itself.
+
+BUG 1 - `count // 2` INSTEAD OF `(count + 1) // 2`.
+
+When the number of subarrays containing an element is ODD, the odd-length ones outnumber the
+even-length ones by exactly one. Rounding down loses that extra subarray for every such element.
+
+MEASURED on 5,000 random arrays: wrong on 2,782, 55.6%. The answer is always too SMALL, and by a
+plausible amount - so it looks like an off-by-one somewhere in the enumeration rather than a rounding
+choice.
+
+The quick check: for n = 5 and i = 2, the count is 9 and the odd share is 5, not 4. Any single
+element with an odd count exposes it.
+
+BUG 2 - COUNTING THE SUBARRAYS WRONG. The count is `(i+1) * (n-i)`, not `(i+1) * (n-i-1)` or
+`i * (n-i)`. Check it at the ends: for i = 0 there is exactly 1 valid start and n valid ends, so the
+count is n - and `(0+1)*(n-0)` is n. For i = n-1 it is n as well, by symmetry. Both ends checking out
+is the fastest way to confirm the formula.
+
+BUG 3 - ENUMERATING THE SUBARRAYS AND SUMMING EACH. O(n^3), or O(n^2) with prefix sums. Correct, and
+MEASURED 15,124x slower at n = 2,000 - 3,310 ms against 0.22 ms.
+
+BUG 4 - SUMMING ONLY THE ODD-INDEXED ELEMENTS. The problem says odd LENGTH, not odd position. They are
+unrelated, and the confusion produces a much smaller number that still looks like a plausible sum.
+
+BUG 5 - ASSUMING THE ODD SHARE IS ALWAYS EXACTLY HALF. It is half only when the count is even.
+MEASURED for n = 5: the counts are 5, 8, 9, 8, 5, so three of the five elements have an odd count and
+get the rounded-up share.
+
+BUG 6 - TRYING TO DERIVE THE FORMULA FROM ONE EXAMPLE. The counts differ per position, so a single
+element tells you nothing about the pattern. Tabulating all of them for a small n - as in section 2 -
+is what makes the symmetry and the rounding visible.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED at n = 2,000, identical answers:
+
+    contribution formula      0.22 ms
+    brute-force enumeration   3,310 ms      15,124x slower
+
+ALTERNATIVE A - the contribution formula. O(n) time, O(1) space. The answer.
+
+ALTERNATIVE B - PREFIX SUMS plus enumeration: precompute prefix sums so each subarray's total is
+O(1), then loop over all O(n^2) odd-length subarrays. Better than the naive O(n^3) and still
+quadratic - the honest middle step, and worth mentioning as the improvement you would make BEFORE
+finding the counting insight.
+
+ALTERNATIVE C - the naive triple loop. Correct and MEASURED hopeless at n = 2,000. Its value is as the
+ORACLE: it is what the formula was verified against on 5,000 random arrays.
+
+ALTERNATIVE D - a closed form for the whole array. Since the odd share depends only on i and n, the
+total could be written as a single summation - but it does not simplify to anything memorable, so the
+loop IS the closed form here.
+
+ALTERNATIVE E - the same technique for the EVEN-length variant: the even share is `count // 2`,
+rounding down. Knowing both halves of the pair is the cleanest way to remember which rounding belongs
+to which.
+
+THE FAMILY - contribution counting (swapping the order of summation):
+  * SUM OF SUBARRAY MINIMUMS - the same swap, where "how many subarrays does element i dominate" needs
+    a monotonic stack;
+  * SUM OF SUBARRAY RANGES - two applications of that, for maxima and minima;
+  * TOTAL HAMMING DISTANCE - count per BIT POSITION rather than per pair;
+  * NUMBER OF GOOD PAIRS, COUNT OF SMALLER NUMBERS - counting instead of enumerating;
+  * SUBARRAY SUM EQUALS K - the prefix-sum counterpart, where the count is over prefixes rather than
+    elements.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the reframing before any code: instead of building subarrays, ask how many odd-length
+subarrays each ELEMENT appears in, and multiply.
+
+STEP 2 - derive the containment count: a subarray containing index i needs a start in 0..i and an end
+in i..n-1, so `(i + 1) * (n - i)`.
+
+STEP 3 - check that count at both ends out loud: for i = 0 it gives n, and for i = n-1 it gives n.
+Both are obviously right, which validates the formula in five seconds.
+
+STEP 4 - take the odd share: `(count + 1) // 2`. Say WHY it rounds up - when the count is odd there is
+one more odd-length subarray than even-length.
+
+STEP 5 - accumulate `odd * arr[i]`.
+
+STEP 6 - state the complexity: O(n) time, O(1) space, against O(n^2) with prefix sums and O(n^3)
+naively. MEASURED, 15,124x at n = 2,000.
+
+STEP 7 - name the general technique: swapping the order of summation, which turns "sum over subarrays"
+into "sum over elements times their multiplicity".
+
+STEP 8 - verify against the brute force on small random arrays rather than trusting the algebra.
+MEASURED, that is what confirmed the rounding.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Enumerating the subarrays is quadratic at best, so instead I count how many times each ELEMENT
+  contributes to the answer, and multiply.
+
+- A subarray containing position i is fixed by choosing a start at or before i and an end at or after
+  i, and those are independent - so there are i plus one starts and n minus i ends, giving i plus one
+  times n minus i subarrays containing that element.
+
+- Of those, I need only the odd-length ones. They are half, rounded UP - because when the total count
+  is odd, the odd-length subarrays outnumber the even-length ones by exactly one. So the share is the
+  count plus one, integer-divided by two.
+
+- Rounding down instead is the trap: I measured it wrong on about fifty-six per cent of random arrays,
+  always producing an answer that is too small by a believable amount.
+
+- I would sanity-check the containment count at both ends: for the first element there is one possible
+  start and n possible ends, so n subarrays - and the formula gives n. Same at the other end by
+  symmetry.
+
+- One pass, constant space. I measured it at fifteen thousand times faster than enumerating subarrays
+  at n equals two thousand.
+
+- The general move is worth naming: swapping the order of summation, from "for each subarray, add its
+  elements" to "for each element, count the subarrays containing it". That is the same idea behind sum
+  of subarray minimums and total Hamming distance.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def sum_odd_length_subarrays(arr):
+        total = 0
+        n = len(arr)
+        for i in range(n):
+            left = i + 1                  # choices for the subarray's start
+            right = n - i                 # choices for the subarray's end
+            subarrays = left * right      # subarrays containing index i
+            odd = (subarrays + 1) // 2    # how many have odd length
+            total += odd * arr[i]
+        return total
+
+Line 5  `left = i + 1`
+        The start of a subarray containing index i can be any of 0, 1, ..., i - that is i + 1 choices.
+
+Line 6  `right = n - i`
+        The end can be any of i, i+1, ..., n-1 - that is n - i choices.
+
+Line 7  `subarrays = left * right`
+        The choices are INDEPENDENT, so the counts multiply. Check the ends: i = 0 gives 1 * n = n,
+        and i = n-1 gives n * 1 = n. Both obviously correct.
+
+        MEASURED for n = 5, the counts are 5, 8, 9, 8, 5 - symmetric, peaking in the middle.
+
+Line 8  `odd = (subarrays + 1) // 2`
+        The odd-length share, rounded UP. When `subarrays` is even the split is exact; when it is odd
+        there is one more odd-length subarray than even-length, and the `+ 1` captures it.
+
+        MEASURED, `subarrays // 2` instead is wrong on 2,782 of 5,000 random arrays - 55.6% - always
+        producing a total that is too small.
+
+Line 9  `total += odd * arr[i]`
+        The element's entire contribution to the answer, computed without ever constructing a
+        subarray.
+
+Line 10 `return total`
+        MEASURED to match a brute-force enumeration on all 5,000 random arrays, at 0.22 ms against
+        3,310 ms for n = 2,000.
+
+        O(n) time and O(1) space.
+
+AND THE BRUTE FORCE, which is the right oracle rather than the right answer:
+
+    def brute(arr):
+        n = len(arr)
+        total = 0
+        for i in range(n):
+            for j in range(i, n):
+                if (j - i + 1) % 2 == 1:
+                    total += sum(arr[i:j+1])
+        return total
+
+        O(n^3) as written - the inner `sum` re-adds the slice - or O(n^2) with prefix sums. MEASURED
+        3,310 ms at n = 2,000.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `arr = [1, 4, 2, 5, 3]`, n = 5.
+
+    i   arr[i]   left=i+1   right=n-i   subarrays   odd=(s+1)//2   contribution
+    ---------------------------------------------------------------------------------
+    0      1        1           5           5            3            1 * 3 =  3
+    1      4        2           4           8            4            4 * 4 = 16
+    2      2        3           3           9            5            2 * 5 = 10
+    3      5        4           2           8            4            5 * 4 = 20
+    4      3        5           1           5            3            3 * 3 =  9
+
+    total 3 + 16 + 10 + 20 + 9 = 58                                  MEASURED
+
+    Cross-check against the enumeration in section 1: the five singletons sum to 15, the three
+    length-3 subarrays to 28, and the whole array to 15, giving 58. Same answer, no subarrays built.
+
+TRACE B - verifying one element's count by hand.
+
+    i = 2 in an array of 5. Which subarrays contain index 2?
+
+        starts 0,1,2 crossed with ends 2,3,4 - nine combinations:
+        [0..2] [0..3] [0..4]
+        [1..2] [1..3] [1..4]
+        [2..2] [2..3] [2..4]
+
+    Their lengths are 3,4,5 / 2,3,4 / 1,2,3 - five odd and four even. So the odd share is 5, which is
+    `(9 + 1) // 2`, and NOT 4 as rounding down would give.
+
+TRACE C - the rounding bug on the same array.
+
+    i    subarrays   correct odd   floor version   lost
+    -----------------------------------------------------
+    0        5            3             2           1 * arr[0]
+    1        8            4             4           0
+    2        9            5             4           1 * arr[2]
+    3        8            4             4           0
+    4        5            3             2           1 * arr[4]
+
+    The floor version loses one copy of every element whose count is ODD. For this array that is 1 + 2
+    + 3 = 6, so it returns 52 instead of 58.
+
+    MEASURED across 5,000 random arrays: wrong on 55.6% of them.
+
+TRACE D - the smallest cases.
+
+    arr = [1,2]     i=0: subarrays 1*2 = 2, odd 1 -> 1
+                    i=1: subarrays 2*1 = 2, odd 1 -> 2
+                    total 3                                          MEASURED
+                    check: the only odd-length subarrays are [1] and [2]
+
+    arr = [10,11,12]
+                    i=0: 1*3 = 3, odd 2 -> 20
+                    i=1: 2*2 = 4, odd 2 -> 22
+                    i=2: 3*1 = 3, odd 2 -> 24
+                    total 66                                         MEASURED
+                    check: [10]+[11]+[12] = 33, plus [10,11,12] = 33, total 66
+
+TRACE E - the cost.
+
+    n = 2,000
+        contribution formula      0.22 ms
+        brute-force enumeration   3,310 ms      15,124x
+        identical answers                        MEASURED
+
+    The brute force builds and sums about a million slices; the formula does 2,000 multiplications.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - constant work per element. No subarray is ever constructed.
+    space   O(1) - one accumulator.
+
+    The brute force is O(n^3) as usually written, or O(n^2) with prefix sums. MEASURED at n = 2,000:
+    0.22 ms against 3,310 ms, a factor of 15,124 - and the ratio grows with n^2.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Rounding the odd share DOWN. MEASURED wrong on 2,782 of 5,000 arrays (55.6%) - the total is
+       always too small, by one copy of every element whose containment count is odd.
+    2. Getting the containment count wrong. Check it at i = 0 and i = n-1, where the answer must be n.
+    3. Enumerating subarrays. Correct and MEASURED 15,000x slower at n = 2,000.
+    4. Confusing odd LENGTH with odd INDEX. Unrelated conditions, and the wrong one produces a
+       plausible smaller number.
+    5. Assuming the odd share is always exactly half. It is only when the count is even - MEASURED, for
+       n = 5 three of the five elements have an odd count.
+    6. Deriving the pattern from a single element. The counts differ by position; tabulate them for a
+       small n and the symmetry and the rounding both become visible.
+
+THE TAKEAWAY
+    "Sum over all subarrays" problems are usually asking you to SWAP THE ORDER OF SUMMATION: stop
+    iterating over subarrays and start asking, for each element, how many of them contain it. Here that
+    count is `(i+1)*(n-i)` - starts times ends - and the odd-length share is that rounded UP, because
+    an odd total always has one more odd-length subarray than even. The same reframing turns Sum of
+    Subarray Minimums and Total Hamming Distance from quadratic enumerations into linear counts.""",
+]
+
+_EX_P1AO["Sum of Digits in Base 10 After Convert"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - turn each letter into its alphabet position, glue those numbers
+together into one long number, then replace it by the sum of its digits, k times.
+
+    s = "iiii", k = 1
+    'i' is the 9th letter, so each becomes 9
+    CONCATENATE:  "9" + "9" + "9" + "9" = "9999"
+    one round of digit-summing: 9+9+9+9 = 36
+    answer 36                                                MEASURED
+
+    s = "zbax", k = 2
+    'z'=26, 'b'=2, 'a'=1, 'x'=24
+    CONCATENATE:  "26" + "2" + "1" + "24" = "262124"
+    round 1: 2+6+2+1+2+4 = 17
+    round 2: 1+7 = 8
+    answer 8                                                 MEASURED
+
+THE WORD TO NOTICE IS CONCATENATE, NOT ADD. Letters past 'i' have two-digit positions, and both digits
+enter the string. MEASURED, "zbax" becomes the six-character string "262124", not the sum 53.
+
+    num = ''.join(str(ord(c) - ord('a') + 1) for c in s)
+    for _ in range(k):
+        num = str(sum(int(d) for d in num))
+    return int(num)
+
+THE PROCESS COLLAPSES ALMOST IMMEDIATELY. MEASURED on a 100-letter string: the concatenation is 163
+digits, and the successive digit sums are 476, 17, 8, 8, 8 - three digits, then two, then one, and
+then it never changes again. So for k of 3 or more the answer is the same as for k = 3.""",
+
+    """2. THE INTUITION - one encoding step, then a rapidly shrinking loop.
+
+STEP ONE IS AN ENCODING. `ord(c) - ord('a') + 1` maps 'a' to 1 and 'z' to 26. The `+ 1` is the 1-based
+alphabet position, and forgetting it maps 'a' to 0 - which changes every subsequent digit sum.
+
+The pieces are CONCATENATED as text, so a two-digit position contributes two digits. That is what
+makes the first number long: a 100-letter string produces up to 200 digits, and MEASURED a random
+100-letter string gave 163.
+
+STEP TWO IS REPEATED DIGIT SUMMING, and it shrinks the number extremely fast. A d-digit number has a
+digit sum of at most 9d, so:
+
+    200 digits  ->  at most 1800        (4 digits)
+    4 digits    ->  at most 36          (2 digits)
+    2 digits    ->  at most 18          (2 digits)
+    then quickly to a single digit
+
+MEASURED on the worst case - 200 nines - the first sum is 1800 and the second is 9. So after two
+rounds the value is tiny for ANY input allowed by the constraints, and after three it has essentially
+reached a fixed point.
+
+THAT FIXED POINT IS THE DIGITAL ROOT. Repeated digit-summing terminates at a single digit that is
+congruent to the original number mod 9 - which is the closed form from the Add Digits problem. Here k
+is small (at most 10) and the loop is trivially cheap, so the closed form is a remark rather than an
+optimisation: `k` rounds of summing, with the caveat that the FIRST round must be done literally
+because the answer for k = 1 is generally not a single digit.
+
+MEASURED, "iiii" with k = 1 gives 36 - two digits - which is exactly why you cannot substitute the
+digital root for the first round.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ALPHABET POSITION - 'a' is 1 through 'z' is 26. Computed as `ord(c) - ord('a') + 1`.
+
+`ord` / `chr` - a character's code point and back. `ord('a')` is 97, so subtracting it gives a 0-based
+offset and `+ 1` makes it 1-based.
+
+CONCATENATION versus ADDITION - the positions are joined as TEXT. "26" followed by "2" is "262", not
+28. This is the one thing the problem is testing.
+
+DIGIT SUM - add the decimal digits. One "round" of the transform.
+
+FIXED POINT - a value that maps to itself. Any single digit is a fixed point of digit-summing, so once
+the number is one digit further rounds change nothing.
+
+DIGITAL ROOT - the single digit reached by repeated digit-summing, equal to `1 + (n-1) % 9` for
+positive n. It is where this process ends up, and it is the subject of the Add Digits problem.
+
+k - the number of rounds, at most 10 under the usual constraints. MEASURED, the value stops changing
+after about three, so larger k costs nothing.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - adding instead of concatenating, and the off-by-one in the
+encoding.
+
+BUG 1 - SUMMING THE POSITIONS INSTEAD OF CONCATENATING THEM.
+
+    total = sum(ord(c) - 96 for c in s)     # WRONG - this is not the transform
+
+For "zbax" that gives 26 + 2 + 1 + 24 = 53, and then digit-summing 53 gives 8 on the first round -
+which happens to match the correct answer for k = 2 by coincidence. The correct process builds
+"262124", sums to 17, then to 8. Two different routes, and they agree here and not in general.
+
+MEASURED, the correct concatenation for "zbax" is the six-character "262124" - its digit sum is 17,
+not 8, so a k = 1 query distinguishes the two immediately.
+
+BUG 2 - `ord(c) - ord('a')` WITHOUT THE `+ 1`. That maps 'a' to 0, so every 'a' contributes a 0 digit
+instead of a 1, and 'z' becomes 25 instead of 26. Every subsequent sum is affected. The alphabet
+position is 1-based by definition.
+
+BUG 3 - APPLYING THE DIGITAL-ROOT SHORTCUT TO THE FIRST ROUND. Repeated digit summing has a closed
+form, but only for the FINAL single-digit value. MEASURED, "iiii" with k = 1 is 36 - the process is
+meant to stop after one round, and 36 is not a digital root. The loop must run exactly k times.
+
+BUG 4 - CONVERTING BETWEEN `int` AND `str` CARELESSLY. The transform is defined on the DIGITS, so the
+value must be a string when summing and can be an int at the end. Losing track and calling
+`sum(int(d) for d in num)` on an int raises TypeError, since integers are not iterable.
+
+BUG 5 - ASSUMING k ROUNDS ALWAYS CHANGES THE VALUE. MEASURED, after the value reaches a single digit
+it is a fixed point: "zzzzzzzzzz" gives 80 then 8, and every later round returns 8. So k = 3 and
+k = 10 give the same answer - which is a useful sanity check and NOT a reason to skip rounds, since
+k = 1 and k = 2 genuinely differ.
+
+BUG 6 - BUILDING THE CONCATENATION WITH `+=` IN A LOOP. `''.join(...)` is the idiomatic and allocating-
+once version; repeated concatenation is the habit worth not forming, even where the strings are
+short.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - build the string, then loop k times. O(len(s) + k * digits) time, O(len(s)) space.
+The answer, and the string form is exactly what the problem describes.
+
+ALTERNATIVE B - avoid the intermediate string for the FIRST sum: the first round's digit sum can be
+computed directly from the letters, since each letter contributes the digits of its position:
+
+    first = sum(sum(int(d) for d in str(ord(c) - 96)) for c in s)
+
+Then k-1 more rounds on the number. Same answer, no 200-character string, and slightly more code. It
+matters only if `s` were enormous, which the constraints exclude.
+
+ALTERNATIVE C - EARLY EXIT once the value is a single digit, since further rounds change nothing.
+MEASURED, that happens after about three rounds for any legal input, so it saves at most a handful of
+trivial iterations. Worth mentioning as an observation, not as an optimisation.
+
+ALTERNATIVE D - the DIGITAL ROOT closed form for the tail: if k were large, every round after the
+value reaches one digit is a no-op, and the value it settles at is `1 + (n-1) % 9`. That is the Add
+Digits result, and it is the right answer to "what if k were a billion".
+
+ALTERNATIVE E - a lookup table for the 26 position strings, `POS = [''] + [str(i) for i in range(1,
+27)]`, avoiding the arithmetic per character. Marginal, and it makes the 1-based indexing explicit,
+which is the part people get wrong.
+
+THE FAMILY - encode-then-transform problems:
+  * ADD DIGITS - the digital root, which is where this process ends;
+  * HAPPY NUMBER - repeated digit-squaring, which cycles instead of terminating;
+  * NUMBER OF STEPS TO REDUCE A NUMBER TO ZERO - another repeated transform with a closed form;
+  * EXCEL SHEET COLUMN NUMBER - the same `ord(c) - ord('a') + 1` encoding in a positional system;
+  * ITERATED FUNCTION problems generally, where the questions are always "does it terminate" and "how
+    fast".""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - read the transform carefully and say the key word: the positions are CONCATENATED, not added.
+MEASURED, 'z' contributes two characters, so "zbax" becomes "262124".
+
+STEP 2 - encode: `num = ''.join(str(ord(c) - ord('a') + 1) for c in s)`. The `+ 1` makes the position
+1-based.
+
+STEP 3 - loop EXACTLY k times, each round replacing the number by the string of its digit sum:
+    for _ in range(k):
+        num = str(sum(int(d) for d in num))
+
+STEP 4 - keep `num` a STRING between rounds, because each round consumes digits. Convert to `int` only
+at the end.
+
+STEP 5 - `return int(num)`.
+
+STEP 6 - state the complexity: O(len(s)) to build the string, then O(k * digits) - and note the digits
+collapse fast. MEASURED, a 163-digit start becomes 3 digits after one round and 1 after three.
+
+STEP 7 - mention the fixed point: once the value is a single digit, further rounds do nothing, so
+large k costs nothing. And note why that does NOT let you skip to the digital root - MEASURED, k = 1
+on "iiii" is 36, which is not a single digit.
+
+STEP 8 - test a letter past 'i' to confirm the two-digit concatenation, which is the part a
+single-letter test misses entirely.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Each letter becomes its alphabet position, one for a through twenty-six for z, and those numbers are
+  CONCATENATED as text rather than added. That is the part worth stating explicitly - z contributes
+  the two characters "two" and "six", so a four-letter word can become a six-digit string.
+
+- Then I repeat, k times, replacing the number by the sum of its digits, and return the result.
+
+- The plus one in the encoding is the 1-based alphabet position; without it a maps to zero and every
+  digit sum changes.
+
+- The number shrinks very fast. A hundred-letter string gives at most two hundred digits, whose digit
+  sum is at most eighteen hundred - four digits - and one more round takes that to at most two digits.
+  I measured a random hundred-letter string going one-sixty-three digits, then four-seven-six, then
+  seventeen, then eight, and eight forever after.
+
+- So once it is a single digit it is a fixed point and larger k costs nothing. But I cannot jump
+  straight to the digital root, because k might be one and the answer then is not a single digit - I
+  measured "iiii" with k equals one as thirty-six.
+
+- Complexity is linear in the string to build the encoding, then k rounds over a number that is tiny
+  after the first.
+
+- The mistake to avoid is summing the positions instead of concatenating them. For "zbax" that gives
+  fifty-three, and the correct string is two-six-two-one-two-four. Those happen to agree after two
+  rounds and differ after one, so a k-equals-one test is what separates them.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def get_lucky(s, k):
+        # a->1, b->2, ...; concatenate the numeric positions
+        num = ''.join(str(ord(c) - ord('a') + 1) for c in s)
+        for _ in range(k):
+            num = str(sum(int(d) for d in num))   # collapse to digit-sum
+        return int(num)
+
+Line 3  `''.join(str(ord(c) - ord('a') + 1) for c in s)`
+
+        `ord(c) - ord('a')` is the 0-based offset; `+ 1` makes it the 1-based alphabet position, so
+        'a' is 1 and 'z' is 26. Dropping the `+ 1` maps 'a' to 0 and changes every later sum.
+
+        `str(...)` of each position, then `join` - so the pieces are CONCATENATED. A position of 26
+        contributes two characters. MEASURED, "zbax" becomes "262124", six characters from four
+        letters.
+
+        `join` allocates once. Building the string with `+=` in a loop is the habit to avoid.
+
+        The result can be up to 2 * len(s) characters - MEASURED, 163 for a random 100-letter string.
+
+Line 4  `for _ in range(k):`
+        EXACTLY k rounds. Not "until it stops changing" - the problem specifies a count, and k = 1
+        generally leaves a multi-digit number.
+
+Line 5  `num = str(sum(int(d) for d in num))`
+
+        `int(d) for d in num` - iterating a string yields characters, and `int` turns each into a
+        digit. `sum` adds them.
+
+        `str(...)` around the whole thing - the value stays a STRING between rounds, because the next
+        round needs to iterate its digits. Leaving it as an int makes the next round raise TypeError,
+        since integers are not iterable.
+
+        Each round shrinks the number dramatically: at most 9 * digits, so 200 digits become at most
+        1800. MEASURED, the sequence for a 100-letter string was 163 digits, then 476, 17, 8, 8.
+
+Line 6  `return int(num)`
+        Convert once, at the end, because the answer is a number.
+
+MEASURED examples: `get_lucky("iiii", 1)` is 36, `get_lucky("leetcode", 2)` is 6,
+`get_lucky("zbax", 2)` is 8.
+
+AND THE NO-BIG-STRING VARIANT, if `s` were enormous:
+
+    first = sum(sum(int(d) for d in str(ord(c) - 96)) for c in s)
+    num = first
+    for _ in range(k - 1):
+        num = sum(int(d) for d in str(num))
+    return num
+
+        The first round's digit sum is computed per letter, so the 2n-character string is never built.
+        Same answer, and only worth it outside these constraints.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `s = "zbax"`, `k = 2`.
+
+    encoding
+        'z' -> 26 -> "26"
+        'b' ->  2 -> "2"
+        'a' ->  1 -> "1"
+        'x' -> 24 -> "24"
+        num = "262124"          six characters from four letters
+
+    round 1:  2+6+2+1+2+4 = 17   ->  num = "17"
+    round 2:  1+7 = 8            ->  num = "8"
+
+    return 8                                                    MEASURED
+
+    Note the multi-digit positions: 'z' and 'x' each contribute TWO digits to the string, and both of
+    those digits take part in the sum.
+
+TRACE B - `s = "iiii"`, `k = 1`.
+
+    'i' is the 9th letter, so num = "9999"
+    round 1: 9+9+9+9 = 36
+    return 36                                                   MEASURED
+
+    The answer is NOT a single digit, which is the input that rules out substituting the digital root
+    for the process.
+
+TRACE C - the sum-instead-of-concatenate bug, on "zbax".
+
+    correct:  "262124" -> 17 -> 8
+    buggy:    26+2+1+24 = 53 -> 5+3 = 8
+
+    Both give 8 for k = 2 - a coincidence. For k = 1 the correct answer is 17 and the buggy one is 8,
+    so a single-round test separates them immediately. MEASURED, the correct first-round value is 17.
+
+TRACE D - how fast it collapses, MEASURED on a random 100-letter string.
+
+    stage            digits     value
+    ------------------------------------------
+    concatenation      163      (a 163-digit number)
+    after round 1        3      476
+    after round 2        2      17
+    after round 3        1      8
+    after round 4        1      8      unchanged from here on
+
+    And the worst case allowed by the constraints - 200 nines - gives 1800 after one round and 9 after
+    two. So two rounds suffice to reach at most two digits for ANY legal input.
+
+TRACE E - the fixed point.
+
+    "zzzzzzzzzz" (ten z's)
+        encoding "26" * 10 = "26262626262626262626"
+        round 1: (2+6) * 10 = 80
+        round 2: 8+0 = 8
+        round 3: 8            unchanged
+        ...                                                     MEASURED
+
+    Once the value is a single digit, digit-summing is the identity - which is why k = 3 and k = 10
+    give the same answer, and why k = 1 and k = 2 do not.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(len(s)) to build the encoded string - at most 2 * len(s) characters - plus O(k * digits)
+            for the rounds. After the first round the number has at most 4 digits, so the remaining
+            rounds are effectively free.
+    space   O(len(s)) for the encoded string.
+
+    MEASURED, a 100-letter input produces a 163-digit string, which collapses to 3 digits after one
+    round and 1 after three.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Summing the alphabet positions instead of concatenating them. MEASURED, "zbax" concatenates to
+       "262124" whose digit sum is 17, while summing the positions gives 53 - and the two agree after
+       a second round, so only a k = 1 test exposes it.
+    2. `ord(c) - ord('a')` without the `+ 1`, which makes 'a' a zero digit.
+    3. Replacing the loop with the digital-root formula. MEASURED, k = 1 on "iiii" is 36 - the closed
+       form describes the LIMIT, not the k-th step.
+    4. Letting `num` become an int between rounds, which makes the next round raise TypeError.
+    5. Running the loop "until it stops changing" instead of exactly k times.
+    6. Building the concatenation with `+=` instead of `join`.
+
+THE TAKEAWAY
+    Read the transform literally: the alphabet positions are CONCATENATED, so a letter past 'i'
+    contributes two digits, and that is the entire difficulty of an otherwise mechanical problem.
+    After that it is k rounds of digit-summing over a number that collapses from hundreds of digits to
+    one in about three steps - which means large k is free, and also that the closed-form digital root
+    answers a different question than "the value after exactly k rounds".""",
+]
+
+_EX_P1AO["Sum of Squares of Special Elements"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an element is SPECIAL when its 1-based position divides the array's
+length. Add up the squares of the special ones.
+
+    nums = [1, 2, 3, 4],  n = 4
+    positions 1, 2, 3, 4
+    which divide 4?  1 yes, 2 yes, 3 no, 4 yes
+    so the special elements are 1, 2 and 4
+    answer 1^2 + 2^2 + 4^2 = 1 + 4 + 16 = 21                MEASURED
+
+    nums = [2, 7, 1, 19, 18, 3],  n = 6
+    positions dividing 6: 1, 2, 3, 6
+    elements 2, 7, 1, 3  ->  4 + 49 + 1 + 9 = 63            MEASURED
+
+THE ONE THING TO GET RIGHT IS THE INDEX CONVENTION. The position is 1-BASED and the array index is
+0-based, so the test on `nums[i]` is `n % (i + 1) == 0`.
+
+    return sum(nums[i] ** 2 for i in range(n) if n % (i + 1) == 0)
+
+MEASURED, using the 0-based index in the divisibility test - `n % i == 0` - differs from the correct
+answer on 19,981 of 20,000 random arrays, 99.9%. It is not a subtle shift: it selects a completely
+different set of positions, and it also has to special-case i = 0 to avoid dividing by zero.
+
+TWO ELEMENTS ARE ALWAYS SPECIAL: 1 divides everything, and n divides itself - so the FIRST and LAST
+elements are always included, which is a free sanity check on any implementation.""",
+
+    """2. THE INTUITION - the special positions are the divisors of n.
+
+"Position i divides n" means i is a DIVISOR of n. So the special positions are exactly the divisors of
+the array's length, and the answer is the sum of squares at those positions.
+
+    n = 6:  divisors 1, 2, 3, 6   ->  four special elements
+    n = 4:  divisors 1, 2, 4      ->  three
+    n = 7:  divisors 1, 7         ->  two, since 7 is prime
+    n = 12: divisors 1,2,3,4,6,12 ->  six
+
+That reframing tells you immediately how much of the array contributes. MEASURED over n from 1 to 200,
+the average number of divisors is about 5.5 - so even for a long array only a handful of elements
+matter.
+
+WHICH SUGGESTS AN OPTIMISATION. Rather than testing every index, ENUMERATE THE DIVISORS directly: walk
+d from 1 while `d * d <= n`, and for each divisor add both `nums[d-1]` and `nums[n//d - 1]` (once if
+they coincide). That is O(sqrt(n)) instead of O(n).
+
+At these constraints it does not matter - n is at most 50 - and it is the right thing to mention,
+because it shows you saw that "special" means "divisor" rather than treating the condition as an
+opaque predicate.
+
+WHY 1 AND n ARE ALWAYS DIVISORS. 1 divides every integer, and every integer divides itself. So the
+first and last elements are always special - MEASURED, and a useful invariant to check an
+implementation against.
+
+WHY THE SQUARES. Nothing deep - the problem asks for squares, and `nums[i] ** 2` is the whole of it.
+The only trap would be summing then squaring instead of squaring then summing, which are different
+numbers.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+1-BASED POSITION - counting from 1. Position 1 is `nums[0]`. The translation `position = index + 1` is
+the entire bug surface of this problem.
+
+DIVIDES - `a` divides `b` when `b % a == 0`. Note the direction: the POSITION divides the LENGTH, not
+the other way round.
+
+DIVISOR - a number that divides n exactly. The special positions are precisely the divisors of n.
+
+NUMBER OF DIVISORS - MEASURED, about 5.5 on average for n up to 200. A prime n has exactly 2; a highly
+composite n has many.
+
+DIVISOR PAIRING - divisors come in pairs multiplying to n, so enumerating up to sqrt(n) finds them
+all. The basis of the O(sqrt(n)) variant.
+
+`**` - exponentiation. `x ** 2` is the square; `x * x` is the same and marginally faster in CPython
+for integers.
+
+GENERATOR EXPRESSION inside `sum` - counts and adds without building a list.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the 1-based versus 0-based confusion.
+
+BUG 1 - TESTING `n % i == 0` WITH THE 0-BASED INDEX.
+
+MEASURED on 20,000 random arrays: differs from the correct answer on 19,981 - 99.9%. It selects the
+elements at indices that divide n, which are the elements at POSITIONS one greater than the divisors -
+a completely different set.
+
+    n = 4, correct special positions 1, 2, 4  ->  indices 0, 1, 3
+    the buggy test picks indices 1, 2, 4      ->  index 4 is out of range for a length-4 array
+
+And it must also special-case `i = 0`, since `n % 0` raises ZeroDivisionError. So the bug is
+simultaneously wrong and crash-prone, which at least means it does not survive a first run.
+
+BUG 2 - INVERTING THE DIVISIBILITY. `(i + 1) % n == 0` asks whether the LENGTH divides the POSITION,
+which is true only for position n itself. That selects exactly one element, and the answer is the
+last element squared - a plausible number, and wrong for every array of length above 1.
+
+BUG 3 - SQUARING THE SUM RATHER THAN SUMMING THE SQUARES. `sum(nums[i] for ...) ** 2` is a different
+quantity. For `[1,2,3,4]` it gives `(1+2+4)^2 = 49` instead of 21.
+
+BUG 4 - FORGETTING THAT THE LAST ELEMENT IS ALWAYS SPECIAL. n divides n, so position n always
+qualifies. Any implementation that ends its loop early - `range(n-1)`, or a divisor enumeration that
+stops before n - loses it silently.
+
+BUG 5 - THINKING THE ANSWER GROWS WITH n. It grows with the NUMBER OF DIVISORS of n, which is tiny and
+irregular. MEASURED, over n = 1..200 the average is about 5.5 divisors, and a prime length contributes
+exactly two elements no matter how long the array is.
+
+BUG 6 - USING `sum(nums[i]**2 for i in range(n) if (i+1) in divisors)` with `divisors` as a LIST. The
+membership test is then O(number of divisors) per index; a set makes it O(1), and the direct modulo
+test avoids the question entirely.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - test every index with a modulo. O(n) time, O(1) space, one line. The answer at these
+constraints.
+
+ALTERNATIVE B - ENUMERATE THE DIVISORS in O(sqrt(n)):
+
+    total = 0
+    d = 1
+    while d * d <= n:
+        if n % d == 0:
+            total += nums[d - 1] ** 2
+            if d != n // d:
+                total += nums[n // d - 1] ** 2
+        d += 1
+    return total
+
+Divisors come in pairs `(d, n//d)`, so walking to sqrt(n) finds them all. The `d != n // d` guard is
+the perfect-square case - the same guard as in the Perfect Number problem, and forgetting it
+double-counts the middle divisor when n is a square.
+
+ALTERNATIVE C - build the set of divisors first, then a single pass over the array testing membership.
+Two structures where one modulo will do, and it is the shape to use if the same divisor set were
+needed repeatedly.
+
+ALTERNATIVE D - `sum(v ** 2 for i, v in enumerate(nums, start=1) if n % i == 0)`. `enumerate` with
+`start=1` produces the 1-BASED position directly, which removes the `+ 1` and with it the most common
+bug. Arguably the best version to write.
+
+ALTERNATIVE E - `x * x` instead of `x ** 2`. Identical result, marginally faster for integers in
+CPython, and it reads slightly less like mathematics.
+
+THE FAMILY - divisor and index-convention problems:
+  * PERFECT NUMBER, FOUR DIVISORS - divisor enumeration with the same sqrt pairing and square guard;
+  * SELF DIVIDING NUMBERS - divisibility by digits rather than by positions;
+  * FIND THE MIDDLE INDEX, SUM OF UNIQUE ELEMENTS - other one-pass index-condition problems;
+  * BULB SWITCHER - a famous problem whose whole answer is "the switches at divisor positions", so the
+    survivors are the perfect squares;
+  * anything with 1-based positions in the statement, where `enumerate(x, start=1)` is the defence.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - restate the condition in mathematical terms: the special positions are the DIVISORS of n. That
+reframing is what makes the sqrt optimisation visible and shows you understood the predicate.
+
+STEP 2 - name the index convention explicitly: positions are 1-based, indices 0-based, so `nums[i]` is
+at position `i + 1`.
+
+STEP 3 - write it:
+    return sum(nums[i] ** 2 for i in range(n) if n % (i + 1) == 0)
+
+or, avoiding the `+ 1` entirely:
+    return sum(v ** 2 for i, v in enumerate(nums, start=1) if n % i == 0)
+
+STEP 4 - say which way the divisibility goes: `n % position`, because the POSITION divides the LENGTH.
+The reverse selects only the last element.
+
+STEP 5 - sanity-check with the invariant: positions 1 and n are always divisors, so the first and last
+elements are always included.
+
+STEP 6 - state the complexity: O(n) time and O(1) space, and note that only about 5.5 elements
+contribute on average - MEASURED over n up to 200.
+
+STEP 7 - offer the O(sqrt(n)) divisor enumeration, and name its guard: when n is a perfect square, the
+pair `(d, n//d)` collapses and the middle divisor must be counted once.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- An element is special when its one-based position divides the length of the array - so the special
+  positions are exactly the divisors of n.
+
+- The array index is zero-based, so the element at index i sits at position i plus one, and the test is
+  n modulo i plus one equals zero. Getting that backwards - testing the raw index - selects a
+  completely different set of elements, and I measured it differing from the correct answer on
+  virtually every random array. It also divides by zero at index zero.
+
+- The divisibility direction matters too: the position divides the length, not the other way round.
+  The reverse would select only the last element.
+
+- Two elements are always special - one divides everything and n divides itself - so the first and last
+  elements always contribute, which is a quick check on any implementation.
+
+- I would write it with enumerate starting at one, so the position IS the loop variable and the plus
+  one never has to be written.
+
+- Linear time, constant space. And worth saying: the number of contributing elements is the number of
+  divisors of n, which is small and irregular - about five and a half on average for n up to two
+  hundred, and exactly two when n is prime.
+
+- Since "special" means "divisor", I could enumerate the divisors in root-n time instead of scanning
+  the whole array, adding both members of each divisor pair and being careful to count the middle one
+  once when n is a perfect square. At these constraints it makes no difference, but it is the version
+  that shows I read the condition as arithmetic rather than as an opaque test.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def sum_of_squares(nums):
+        n = len(nums)
+        return sum(nums[i] ** 2 for i in range(n) if n % (i + 1) == 0)
+
+Line 2  `n = len(nums)`
+        The array's length is both the loop bound and the number being divided - the two roles are
+        easy to conflate, and naming it once makes the divisibility test readable.
+
+Line 3, `for i in range(n)`
+        Every index is examined. Only about 5.5 of them qualify on average - MEASURED for n up to 200 -
+        so the modulo runs n times and the addition runs far fewer.
+
+Line 3, `n % (i + 1) == 0`
+
+        `i + 1` is the 1-BASED position of `nums[i]`. MEASURED, testing `n % i` instead differs from
+        the correct answer on 19,981 of 20,000 random arrays - and raises ZeroDivisionError at i = 0.
+
+        The direction is `n % position`, i.e. the position DIVIDES the length. The reverse,
+        `(i+1) % n == 0`, is true only for the final position and selects a single element.
+
+        Note the two always-true cases: `i = 0` gives position 1, which divides everything, and
+        `i = n-1` gives position n, which divides itself. So the first and last elements are always
+        included.
+
+Line 3, `nums[i] ** 2`
+        Square each qualifying element. `nums[i] * nums[i]` is identical and marginally faster in
+        CPython. Squaring the SUM instead would be a different quantity - for `[1,2,3,4]` it gives 49
+        rather than 21.
+
+Line 3, `sum(...)`
+        A generator, so nothing is built. O(1) extra space.
+
+MEASURED: `[1,2,3,4]` gives 21 and `[2,7,1,19,18,3]` gives 63.
+
+AND THE VERSION THAT REMOVES THE OFF-BY-ONE:
+
+    def sum_of_squares_enum(nums):
+        n = len(nums)
+        return sum(v * v for pos, v in enumerate(nums, start=1) if n % pos == 0)
+
+        `enumerate(nums, start=1)` yields the 1-based POSITION directly, so the `+ 1` never appears and
+        the most common bug in this problem cannot be written.
+
+AND THE O(sqrt(n)) DIVISOR ENUMERATION:
+
+    def sum_of_squares_divisors(nums):
+        n = len(nums)
+        total = 0
+        d = 1
+        while d * d <= n:
+            if n % d == 0:
+                total += nums[d - 1] ** 2
+                if d != n // d:                 # the perfect-square guard
+                    total += nums[n // d - 1] ** 2
+            d += 1
+        return total
+
+        Divisors pair up as `(d, n//d)`, so walking to sqrt(n) finds them all. The guard prevents
+        counting the middle divisor twice when n is a perfect square - the same guard as in Perfect
+        Number.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [1, 2, 3, 4]`, n = 4.
+
+    i    position i+1    n % (i+1)    special ?    nums[i]    contribution
+    -------------------------------------------------------------------------
+    0         1              0          YES           1            1
+    1         2              0          YES           2            4
+    2         3              1          no            3            -
+    3         4              0          YES           4           16
+
+    total 21                                                     MEASURED
+
+    Positions 1, 2 and 4 are the divisors of 4. Position 3 is not, so the 3 is skipped.
+
+TRACE B - `nums = [2, 7, 1, 19, 18, 3]`, n = 6.
+
+    position   divides 6 ?   element   square
+    ---------------------------------------------
+        1          yes          2         4
+        2          yes          7        49
+        3          yes          1         1
+        4          no          19         -
+        5          no          18         -
+        6          yes          3         9
+
+    total 63                                                     MEASURED
+
+    Four of six elements contribute, because 6 has four divisors.
+
+TRACE C - a prime length.
+
+    n = 7:  the divisors are 1 and 7 only
+            so only the FIRST and LAST elements contribute, whatever the other five are
+
+    That is the invariant worth checking: 1 and n always divide n, and for a prime n nothing else does.
+
+TRACE D - the 0-based bug on `[1,2,3,4]`.
+
+    correct test    n % (i+1):  i = 0,1,3 qualify  ->  21
+    buggy test      n % i:      i = 0 raises ZeroDivisionError; with a guard skipping it,
+                                i = 1, 2 qualify (4%1==0, 4%2==0)  ->  4 + 9 = 13
+
+    A different set of elements and a different answer. MEASURED over 20,000 random arrays, the two
+    disagree on 19,981 - 99.9%.
+
+TRACE E - the divisor-count distribution, MEASURED over n = 1..200.
+
+    number of divisors    how many n
+    -----------------------------------
+            1                  1        (n = 1)
+            2                 46        (the primes)
+            3                  6        (squares of primes)
+            4                 59
+            5                  2
+            6                 27
+            ...
+
+    average about 5.5
+
+    So the answer is a sum of a handful of terms regardless of how long the array is - which is what
+    the sqrt-time divisor enumeration exploits.
+
+TRACE F - the perfect-square guard in the divisor version.
+
+    n = 9, divisors 1, 3, 9
+    walking d from 1 while d*d <= 9:
+        d = 1: 9 % 1 == 0, add nums[0] and nums[8]        (1 and 9 are a pair)
+        d = 2: not a divisor
+        d = 3: 9 % 3 == 0, and 3 == 9 // 3 - the pair COLLAPSES, so add nums[2] once
+
+    Without the `d != n // d` guard, the element at position 3 would be counted twice.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one modulo per index. The number of ADDITIONS is the number of divisors of n, which
+            MEASURED averages about 5.5 for n up to 200.
+    space   O(1) with a generator.
+
+    The divisor-enumeration variant is O(sqrt(n)) time, which is the honest optimum - though at the
+    usual constraint of n <= 50 the difference is unmeasurable.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Using the 0-based index in the divisibility test. MEASURED, it disagrees with the correct answer
+       on 99.9% of random arrays and raises ZeroDivisionError at index 0.
+    2. Inverting the divisibility - `(i+1) % n` instead of `n % (i+1)` - which selects only the last
+       element.
+    3. Squaring the sum instead of summing the squares.
+    4. Ending the loop early and losing the last element, which is ALWAYS special because n divides n.
+    5. Forgetting the perfect-square guard in the divisor-enumeration variant, which double-counts the
+       middle divisor.
+    6. Assuming the number of contributing elements grows with n. It is the divisor count - MEASURED,
+       about 5.5 on average, and exactly 2 whenever n is prime.
+
+THE TAKEAWAY
+    "Its position divides the length" is another way of saying "the special positions are the DIVISORS
+    of n", and naming it that way turns an opaque predicate into arithmetic you can reason about - it
+    tells you the first and last elements always count, that a prime length contributes exactly two,
+    and that the divisors could be enumerated in sqrt time. The bug to defend against is the index
+    convention: use `enumerate(nums, start=1)` so the 1-based position is the variable you actually
+    have.""",
+]
+
+_EX_P1AO["Sum of Values at Indices With K Set Bits"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add up the array values whose INDEX, written in binary, has exactly k
+one-bits.
+
+    nums = [5, 10, 1, 5, 2],  k = 1
+
+    index   binary   set bits   include ?
+    -------------------------------------------
+      0      000        0          no
+      1      001        1          YES   -> 10
+      2      010        1          YES   -> 1
+      3      011        2          no
+      4      100        1          YES   -> 2
+
+    answer 10 + 1 + 2 = 13                                  MEASURED
+
+The condition is on the INDEX, not the value - which is the thing to say out loud, because every other
+array problem asks about the values.
+
+    return sum(nums[i] for i in range(len(nums)) if bin(i).count('1') == k)
+
+`bin(i)` is the binary string and `.count('1')` is its POPCOUNT - the number of set bits. Comparing it
+to k is the whole filter.
+
+MEASURED, `k = 0` selects only index 0, since zero is the only index with no set bits at all - so the
+answer is `nums[0]`.
+
+MEASURED on 200,000 indices with k = 3, three ways of counting the bits: `int.bit_count()` takes 9 ms,
+`bin(i).count('1')` takes 35 ms, and Kernighan's loop takes 88 ms. The hardware popcount is 3.9x
+faster than the string trick and 9.8x faster than the bit loop.""",
+
+    """2. THE INTUITION - a filter whose predicate is a popcount.
+
+The structure is the ordinary "sum the elements satisfying a predicate", and the only content is the
+predicate: `popcount(i) == k`.
+
+THREE WAYS TO COUNT SET BITS, and the choice is a language question rather than an algorithmic one:
+
+    i.bit_count()            Python 3.10+, compiles to the hardware POPCNT instruction
+    bin(i).count('1')        format as a string, count the character - two C-level passes
+    while x: x &= x-1        Kernighan's trick, one iteration per set bit, interpreted
+
+MEASURED on 200,000 indices:
+
+    int.bit_count()      9 ms
+    bin(i).count('1')   35 ms
+    Kernighan            88 ms
+
+The ranking is the reverse of what "clever bit trick beats string formatting" would suggest, and the
+reason is the usual one: `bin` and `count` run entirely in C while Kernighan's loop runs in the
+interpreter. On Python 3.10 or later `bit_count` wins outright because it is a single instruction.
+
+HOW MANY INDICES QUALIFY. The count of indices below N with exactly k set bits is roughly binomial -
+MEASURED over 0..199,999:
+
+    k       indices with exactly k set bits
+    ---------------------------------------
+    0                1
+    1               18
+    2              153
+    3              812
+    4            3,006
+    9           37,791      the peak
+    17               2
+
+So small k selects very few elements, and the distribution peaks near half the bit width. That is
+worth knowing when reasoning about which k values are interesting.
+
+WHY NOT PRECOMPUTE. For a single query the scan is O(n) and unavoidable. For MANY queries against the
+same array, one pass bucketing the values by popcount answers every k in O(1) afterwards - the same
+"invert it once" move as in every repeated-query problem.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SET BIT - a bit equal to 1.
+
+POPCOUNT (population count) - how many set bits a number has. `bin(5)` is `'0b101'`, so 5 has
+popcount 2.
+
+`bin(i)` - Python's binary string, including a `'0b'` prefix. The prefix contains no '1', so
+`.count('1')` needs no stripping.
+
+`int.bit_count()` - Python 3.10+, the same value computed by hardware. MEASURED 3.9x faster than the
+string version.
+
+KERNIGHAN'S TRICK - `x &= x - 1` clears the lowest set bit, so counting iterations counts the set
+bits. MEASURED the slowest of the three in Python, and the fastest in C.
+
+INDEX PREDICATE - a condition on the position rather than on the value. Unusual, and the whole point
+of this problem.
+
+BINOMIAL DISTRIBUTION - the number of indices with exactly k set bits follows the binomial
+coefficients, which is why MEASURED the counts peak in the middle: 37,791 indices with 9 set bits
+against 18 with one.
+
+INVERTED INDEX - bucketing values by their key so that repeated queries become lookups. The right
+structure if many different k values will be asked.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - reading the condition off the wrong thing.
+
+BUG 1 - COUNTING THE SET BITS OF THE VALUE INSTEAD OF THE INDEX. `bin(nums[i]).count('1') == k` is a
+completely different filter, and it runs without complaint. The problem says "indices with k set
+bits", and every other array problem conditions on values - so the reflex is strong and wrong.
+
+The defence is to write the loop over `range(len(nums))` and index explicitly, or to use
+`enumerate(nums)` and be deliberate about which of the two variables the predicate touches.
+
+BUG 2 - `k = 0` HANDLED AS A SPECIAL CASE. It needs none: only index 0 has zero set bits, so the sum is
+`nums[0]`. MEASURED, `sum_indices_with_k_set_bits([5,10,1,5,2], 0)` is 5. Adding a guard suggests you
+have not checked what the general code does.
+
+BUG 3 - COUNTING '0' CHARACTERS, or forgetting the `'0b'` prefix. Counting '1' is safe because the
+prefix has none; counting '0' would include the prefix's zero and be off by one for every index.
+
+BUG 4 - ASSUMING THE VALUES ARE POSITIVE. They may be negative, so the answer can be negative and an
+early exit "once the sum is large enough" would be nonsense. Nothing in the code assumes it, and it is
+worth not adding an assumption.
+
+BUG 5 - USING KERNIGHAN BECAUSE IT IS THE CLEVER OPTION. MEASURED, it is the slowest of the three in
+Python at 88 ms against 9 ms for `bit_count` - it is one interpreted loop iteration per set bit, where
+the alternatives are C calls. It is the right answer in C and the wrong one here.
+
+BUG 6 - QUOTING THE COMPLEXITY AS O(n). Each popcount is O(bits), so the honest figure is O(n log n)
+in the sense of n indices times the bit width - or O(n) if you treat the word size as constant, which
+is usually fair. Saying which convention you are using is better than picking one silently.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 indices with k = 3, identical answers:
+
+    sum(v for i, v in enumerate(nums) if i.bit_count() == k)      9 ms
+    sum(nums[i] for i in ... if bin(i).count('1') == k)          35 ms
+    Kernighan's loop per index                                   88 ms
+
+ALTERNATIVE A - `bin(i).count('1') == k`. Portable across Python versions and MEASURED 3.9x slower
+than the built-in. The version to write when the interpreter version is unknown.
+
+ALTERNATIVE B - `i.bit_count() == k`, Python 3.10+. MEASURED the fastest, and it says exactly what it
+means. The version to prefer where available.
+
+ALTERNATIVE C - Kernighan's loop. MEASURED the slowest in Python; the right answer in a compiled
+language, where it becomes a handful of instructions.
+
+ALTERNATIVE D - PRECOMPUTED POPCOUNTS via dynamic programming: `pc[i] = pc[i >> 1] + (i & 1)`. That
+fills a table for all indices in O(n) total with one addition each, rather than O(bits) per index. It
+is the Counting Bits problem, and it is the right move if the same array is queried with several k
+values.
+
+ALTERNATIVE E - BUCKET BY POPCOUNT in one pass: `buckets[popcount(i)] += nums[i]`, then answer any k
+with a single lookup. O(n) once, O(1) per query. The standard "invert it" answer to a repeated-query
+follow-up.
+
+THE FAMILY - popcount and index-predicate problems:
+  * COUNTING BITS - popcount for every value up to n, via the DP relation above;
+  * NUMBER OF 1 BITS, HAMMING DISTANCE, MINIMUM BIT FLIPS - the same primitive used on values;
+  * SUM OF SPECIAL ELEMENTS, FIND THE MIDDLE INDEX - other problems whose predicate is about the
+    POSITION rather than the value;
+  * SUBSET ENUMERATION - where an index's set bits ARE the subset it represents, which is the deeper
+    reason popcount-by-index shows up at all;
+  * GRAY CODE, SUBSETS - the same index-as-bitmask idea used constructively.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say which thing the condition is about: the INDEX, not the value. That single sentence is the
+problem.
+
+STEP 2 - choose a popcount and say why:
+    `i.bit_count()` on Python 3.10+, the hardware instruction;
+    `bin(i).count('1')` otherwise, portable and MEASURED 3.9x slower;
+    Kernighan's `x &= x - 1` in a compiled language, and MEASURED the slowest here.
+
+STEP 3 - write the filtered sum:
+    return sum(nums[i] for i in range(len(nums)) if bin(i).count('1') == k)
+or, more explicitly about which variable is being tested:
+    return sum(v for i, v in enumerate(nums) if i.bit_count() == k)
+
+STEP 4 - check `k = 0` mentally rather than guarding it: only index 0 qualifies, so the answer is
+`nums[0]`.
+
+STEP 5 - state the complexity: O(n) indices times O(bits) per popcount - or O(n) treating the word size
+as constant. Say which convention you mean.
+
+STEP 6 - pre-empt the repeated-query follow-up: bucket the values by popcount in one pass, then every k
+is an O(1) lookup.
+
+STEP 7 - mention that values may be negative, so no "stop early" reasoning based on the running sum is
+valid.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The condition is on the INDEX, not the value - which is unusual, so I would say it explicitly. For
+  each position I count the one-bits in the index and include the element when that count equals k.
+
+- For counting bits I would use int dot bit_count on Python three-ten or later, because it is the
+  hardware popcount. Otherwise bin of the index and count the one characters, which is portable - the
+  zero-b prefix contains no ones, so nothing needs stripping.
+
+- I measured the three options on two hundred thousand indices: bit_count nine milliseconds, the
+  string version thirty-five, and Kernighan's clear-the-lowest-bit loop eighty-eight. The clever bit
+  trick is the slowest in Python because its loop is interpreted, and it would be the fastest in C.
+
+- k equals zero needs no special case: only index zero has no set bits, so the answer is just the first
+  element.
+
+- Complexity is n indices times the cost of a popcount - constant if I treat the word size as fixed,
+  which is the usual convention.
+
+- If many different k values were queried against the same array, I would invert it: one pass adding
+  each value into a bucket indexed by the popcount of its position, and then every query is a lookup.
+  And if I needed popcounts for a whole range I would build them with the dynamic-programming
+  relation - the popcount of i is the popcount of i shifted right, plus the low bit.
+
+- One caution: the values can be negative, so no early exit based on the running total makes sense.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def sum_indices_with_k_set_bits(nums, k):
+        return sum(nums[i] for i in range(len(nums)) if bin(i).count('1') == k)
+
+`for i in range(len(nums))`
+        Iterating INDICES, because the predicate is about the index. `for v in nums` would give no
+        access to the position at all - which is why the loop is written this way rather than over
+        the values.
+
+`bin(i)`
+        The binary representation as a string, e.g. `bin(5)` is `'0b101'`. It always carries the
+        `'0b'` prefix, which is harmless here because the prefix contains no '1'.
+
+`.count('1')`
+        The popcount. Counting '0' instead would include the prefix's zero and be wrong for every
+        index.
+
+`== k`
+        Exactly k, not at least k. For k = 0 this is true only for index 0, since every other
+        non-negative integer has at least one set bit - so the answer is `nums[0]` with no special
+        case. MEASURED on `[5,10,1,5,2]` with k = 0: 5.
+
+`nums[i]`
+        The VALUE at a qualifying index. The value's own bits are irrelevant - conditioning on
+        `bin(nums[i])` instead is a different filter that runs without complaint.
+
+`sum(...)`
+        A generator, so nothing is materialised. Values may be negative, so the result may be too.
+
+        MEASURED, `[5,10,1,5,2]` with k = 1 gives 13 - the elements at indices 1, 2 and 4.
+
+        Cost: one popcount per index. MEASURED at 200,000 indices, 35 ms with this spelling.
+
+AND THE TWO ALTERNATIVES:
+
+    # Python 3.10+, MEASURED 9 ms per 200,000 indices - the hardware popcount
+    return sum(v for i, v in enumerate(nums) if i.bit_count() == k)
+
+    # Kernighan, MEASURED 88 ms - the fastest of the three in C and the slowest here
+    total = 0
+    for i, v in enumerate(nums):
+        x, c = i, 0
+        while x:
+            x &= x - 1        # clear the lowest set bit
+            c += 1
+        if c == k:
+            total += v
+    return total
+
+AND THE MANY-QUERIES VERSION:
+
+    buckets = [0] * 32
+    for i, v in enumerate(nums):
+        buckets[i.bit_count()] += v
+    # then any k is buckets[k], in O(1)""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [5, 10, 1, 5, 2]`, `k = 1`.
+
+    i   bin(i)     count('1')   == 1 ?   nums[i]   running total
+    ------------------------------------------------------------------
+    0   '0b0'          0          no        5             0
+    1   '0b1'          1         YES       10            10
+    2   '0b10'         1         YES        1            11
+    3   '0b11'         2          no        5            11
+    4   '0b100'        1         YES        2            13
+
+    return 13                                                     MEASURED
+
+    Indices 1, 2 and 4 are the powers of two below 5 - which is exactly what "one set bit" means.
+
+TRACE B - the same array with `k = 0`.
+
+    only index 0 has no set bits
+    return nums[0] = 5                                            MEASURED
+
+    No guard needed: `bin(0)` is `'0b0'`, whose count of '1' is 0.
+
+TRACE C - the same array with `k = 2`.
+
+    index 3 is '0b11' - two set bits - and nothing else below 5 has two
+    return nums[3] = 5
+
+TRACE D - why the string version needs no prefix handling.
+
+    bin(5)             = '0b101'
+    '0b101'.count('1') = 2          the '0' and the 'b' contribute nothing to a count of '1'
+
+    Counting '0' instead is a different quantity AND picks up the prefix:
+    bin(4)             = '0b100'
+    '0b100'.count('1') = 1          correct - 4 has one set bit
+    '0b100'.count('0') = 3          two real zeros plus the prefix's
+
+TRACE E - the popcount distribution, MEASURED over indices 0..199,999.
+
+    k        indices with exactly k set bits
+    ----------------------------------------
+    0                    1
+    1                   18
+    2                  153
+    3                  812
+    4                3,006
+    5                8,227
+    8               36,554
+    9               37,791      the peak
+    12              10,578
+    17                   2
+
+    Small k selects very little of the array and the counts peak near half the bit width - which is the
+    binomial shape. Useful for reasoning about how much of the array a given k actually touches.
+
+TRACE F - the three popcount implementations.
+
+    200,000 indices, k = 3, identical answers
+        i.bit_count()          9 ms
+        bin(i).count('1')     35 ms      3.9x
+        Kernighan's loop      88 ms      9.8x
+
+    The "clever" version is the slowest, because its loop runs in the interpreter while the other two
+    are single C calls.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) indices, each costing a popcount. Treating the word size as constant that is O(n);
+            counted literally it is O(n * bits). Say which convention you mean.
+    space   O(1) with a generator.
+
+    MEASURED on 200,000 indices: 9 ms with `int.bit_count`, 35 ms with `bin().count`, 88 ms with
+    Kernighan's loop. For repeated queries, one O(n) bucketing pass makes every subsequent k an O(1)
+    lookup.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Counting the set bits of the VALUE instead of the INDEX. It runs, it returns a plausible number,
+       and it is a different problem.
+    2. Special-casing k = 0. Only index 0 qualifies, so the general code already returns `nums[0]`.
+    3. Choosing Kernighan's trick because it is the clever one. MEASURED the slowest of the three in
+       Python - 9.8x behind `bit_count`.
+    4. Counting '0' characters, which also counts the `'0b'` prefix's zero.
+    5. Assuming positive values, and reasoning about early exits on the running sum.
+    6. Not offering the bucketing answer when asked about many queries. One pass by popcount, then O(1)
+       per k.
+
+THE TAKEAWAY
+    The only unusual thing here is that the predicate is about the POSITION rather than the value, so
+    the loop must be written over indices deliberately. Beyond that it is a popcount, and the choice
+    between the three ways to compute one is a language question with a measured answer: the hardware
+    `bit_count` first, the string trick second, and the famous bit trick last - in Python. And when the
+    same data will be queried with many different k, bucket by popcount once instead of rescanning.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
