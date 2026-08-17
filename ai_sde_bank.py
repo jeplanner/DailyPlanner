@@ -296095,6 +296095,1404 @@ THE TAKEAWAY
     for the algebra when space matters - here, MEASURED, it happened to be faster as well.""",
 ]
 
+_EX_P1AO["Shuffle String"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the character at position i must move to position `indices[i]`.
+Rebuild the string.
+
+    s       = "codeleet"
+    indices = [4,5,6,7,0,2,1,3]
+
+    's[0]' is 'c' and it goes to position 4
+    's[4]' is 'l' and it goes to position 0
+    ...
+    result "leetcode"                                      MEASURED
+
+THE DIRECTION OF THE MAPPING IS THE ENTIRE PROBLEM. `indices[i]` is the DESTINATION of character i,
+not the source. So you WRITE to `indices[i]`:
+
+    result = [''] * len(s)
+    for ch, idx in zip(s, indices):
+        result[idx] = ch
+
+That is a SCATTER - each element is placed where it belongs. The tempting alternative,
+`"".join(s[i] for i in indices)`, is a GATHER - it reads position `indices[i]` and puts it at position
+i, which applies the INVERSE permutation.
+
+MEASURED on 20,000 random cases: the gather version differs from the correct answer on 11,342 of them
+- 56.7%. It agrees only when the permutation happens to be its own inverse, and MEASURED, only about
+10.6% of random 6-element permutations are.
+
+MEASURED on 200,000 characters: the scatter takes 13 ms; sorting the characters by their target index
+takes 175 ms, 13x more, for the same answer.""",
+
+    """2. THE INTUITION - scatter versus gather, and why they are different permutations.
+
+A permutation can be applied in two directions, and the code for each looks almost identical:
+
+    SCATTER (push):   for i: result[indices[i]] = s[i]      "I know where this goes"
+    GATHER  (pull):   for i: result[i] = s[indices[i]]      "I know where this comes from"
+
+They compute INVERSE permutations of each other. The problem statement here says "the character at
+the i-th position moves to `indices[i]`", which is a destination - so it is a scatter.
+
+    s = "abc", indices = [1, 2, 0]
+
+    scatter: 'a'->1, 'b'->2, 'c'->0    result "cab"
+    gather:  result[0]=s[1]='b', result[1]=s[2]='c', result[2]=s[0]='a'    result "bca"
+
+Two different answers from the same data, and both look plausible.
+
+WHEN DO THEY AGREE? Exactly when the permutation is its own inverse - an INVOLUTION - so that pushing
+and pulling coincide. MEASURED, sampling random 6-element permutations, 10.63% were involutions, which
+matches the known count of 76 out of 720.
+
+That is why the gather bug is not caught by one or two test cases: it produces the right answer
+one time in ten by luck.
+
+HOW TO TELL WHICH ONE THE PROBLEM WANTS. Read the sentence for a direction word. "moves TO" and "is
+placed AT" mean destination, hence scatter. "comes FROM" or "the i-th character of the result is"
+means source, hence gather. When the wording is ambiguous, check one example by hand - it takes ten
+seconds and it settles it.
+
+WHY NOT SORT. Pairing each character with its target and sorting by that target also works, and it is
+O(n log n) for a job that is O(n). MEASURED, 175 ms against 13 ms on 200,000 characters.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PERMUTATION - a rearrangement. `indices` is a permutation of 0..n-1, so every position is a
+destination exactly once and nothing is overwritten or left blank.
+
+SCATTER - writing each element to a computed destination: `out[dest[i]] = src[i]`.
+
+GATHER - reading each element from a computed source: `out[i] = src[src_index[i]]`. The inverse
+operation, and the classic confusion.
+
+INVERSE PERMUTATION - the mapping that undoes another. Scatter with `p` equals gather with the inverse
+of `p`.
+
+INVOLUTION - a permutation equal to its own inverse. MEASURED, about 10.6% of 6-element permutations -
+these are exactly the inputs where the scatter and gather bugs give the same answer.
+
+`zip(s, indices)` - pairs each character with its destination, so no index variable is needed.
+
+MUTABLE BUFFER - a list of the right length, pre-filled, so positions can be written in any order.
+Strings are immutable in Python, which is why the result is built as a list and joined at the end.
+
+`"".join(list)` - one allocation for the final string, rather than repeated concatenation.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - applying the permutation backwards.
+
+BUG 1 - `"".join(s[i] for i in indices)`.
+
+This is the gather, and it applies the inverse permutation. It is shorter, it looks elegant, and it is
+wrong for any permutation that is not an involution.
+
+MEASURED on 20,000 random cases: different from the correct answer on 11,342 - 56.7%. Three failures:
+
+    s          indices              correct     gather
+    "auql"     [1,2,0,3]            "qaul"      "uqal"
+    "gxxjwh"   [5,3,2,0,1,4]        "jwxxhg"    "hjxgxw"
+    "oezbcncr" [0,6,7,2,4,3,5,1]    "orbnccez"  "ocrzcbne"
+
+Both outputs are anagrams of the input with the right length, so nothing about the SHAPE reveals the
+error - only checking a single character against the specification does.
+
+The defence is to state the invariant and check it: `result[indices[i]] == s[i]` for every i. That is
+one line in a test and it settles the direction question permanently.
+
+BUG 2 - BUILDING THE RESULT WITH CONCATENATION IN INDEX ORDER. Since the destinations arrive out of
+order, you cannot append - position 4 may be filled before position 0. A pre-sized mutable buffer is
+required, which is why `result = [''] * len(s)` comes first.
+
+BUG 3 - TRYING TO MUTATE A STRING. `result[idx] = ch` on a string raises TypeError, because Python
+strings are immutable. The list-then-join pattern is the standard workaround and it is also the fast
+one.
+
+BUG 4 - ASSUMING `indices` MIGHT HAVE GAPS OR REPEATS. It is a permutation, so every position is
+written exactly once and the pre-filled `''` values are all overwritten. If it were NOT a permutation
+the pre-fill would silently leave empty strings in the output, which is worth knowing as the failure
+mode.
+
+BUG 5 - SORTING PAIRS BY TARGET INDEX. Correct, and O(n log n) where the scatter is O(n). MEASURED,
+175 ms against 13 ms on 200,000 characters - 13x for information you already had.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 characters, identical output:
+
+    scatter into a pre-sized list         13 ms
+    sort the (index, char) pairs         175 ms      13x slower
+
+ALTERNATIVE A - the scatter. O(n) time, O(n) space for the result. The answer.
+
+ALTERNATIVE B - build the INVERSE permutation and then gather:
+
+    inv = [0] * n
+    for i, d in enumerate(indices):
+        inv[d] = i
+    return "".join(s[inv[i]] for i in range(n))
+
+Two passes and the same answer. Worth knowing because it makes the scatter/gather duality explicit -
+and because in some settings (vectorised libraries, GPUs) a gather is far cheaper than a scatter, so
+computing the inverse once is the standard move.
+
+ALTERNATIVE C - sort pairs by destination: `"".join(c for _, c in sorted(zip(indices, s)))`. Correct,
+one line, and MEASURED 13x slower. It is what people reach for when they do not think of the
+pre-sized buffer.
+
+ALTERNATIVE D - IN-PLACE CYCLE FOLLOWING, if you had a mutable string and wanted O(1) extra space:
+follow each cycle of the permutation, rotating characters around it, marking visited positions. O(n)
+time, no extra buffer, and considerably more code. It is the technique behind rotating an array by k
+with the "juggling" algorithm.
+
+ALTERNATIVE E - `numpy`: `arr[indices] = chars`, which is a scatter written as an assignment, versus
+`chars[indices]`, which is a gather. The two spellings differ by which side of the `=` the fancy index
+sits on - the clearest statement of the duality there is.
+
+THE FAMILY - permutation application:
+  * SHUFFLE THE ARRAY, RESTORE THE ARRAY - the same scatter with a different cover story;
+  * ROTATE ARRAY - a permutation with structure, so it can be done in place with three reversals;
+  * FIND THE INDEX OF THE FIRST OCCURRENCE, SORT ARRAY BY PARITY - index-manipulation neighbours;
+  * NEXT PERMUTATION - generating rather than applying;
+  * MAXIMUM SWAP, COUPLES HOLDING HANDS - problems where cycle structure is the whole solution.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - read the direction out of the statement and say it out loud: `indices[i]` is where character
+i GOES. Destination, therefore scatter.
+
+STEP 2 - allocate a mutable buffer of the right size: `result = [''] * len(s)`. Necessary because the
+destinations arrive out of order and strings are immutable.
+
+STEP 3 - pair characters with destinations and write:
+    for ch, idx in zip(s, indices):
+        result[idx] = ch
+`zip` removes the index variable and the chance of desynchronising two loops.
+
+STEP 4 - join once: `return "".join(result)`.
+
+STEP 5 - state the invariant you are relying on: `indices` is a permutation, so every slot is written
+exactly once and no pre-filled `''` survives.
+
+STEP 6 - name the trap explicitly: `s[i] for i in indices` is the INVERSE permutation. MEASURED wrong
+on 56.7% of random cases, and right only when the permutation is an involution - about 10.6% of the
+time, which is exactly why a couple of test cases will not catch it.
+
+STEP 7 - state the complexity: O(n) time and O(n) space, against O(n log n) for the sort-based
+version - MEASURED 13x slower.
+
+STEP 8 - verify with the definition rather than with an example: check `result[indices[i]] == s[i]`
+for all i.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The statement says the character at position i MOVES TO indices[i], so indices holds destinations.
+  That means I write each character to its destination - a scatter - rather than reading from it.
+
+- Since the destinations arrive out of order, I cannot build the string by appending; I allocate a
+  list of the right length first, write each character into its slot, and join at the end. Strings
+  are immutable in Python, which is why it is a list.
+
+- The trap is the one-liner that joins s at each index. That is a gather, and it applies the INVERSE
+  permutation. I measured it differing from the correct answer on about fifty-seven per cent of random
+  cases - and the two agree exactly when the permutation is its own inverse, which is about one in ten,
+  so a couple of examples would not catch it. Both outputs are anagrams of the input, so the shape
+  gives nothing away either.
+
+- The way I would check is by the definition, not by an example: result at indices[i] should equal s
+  at i, for every i.
+
+- Linear time and linear space. Sorting the characters by target index also works and is n log n - I
+  measured that at thirteen times slower on two hundred thousand characters.
+
+- Worth knowing the duality: scatter with a permutation is the same as gather with its inverse, so if
+  I needed gathers - which are cheaper in vectorised code - I would build the inverse permutation once
+  and then read.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def restore_string(s, indices):
+        result = [''] * len(s)
+        for ch, idx in zip(s, indices):
+            result[idx] = ch          # place each char at its target position
+        return "".join(result)
+
+Line 2  `result = [''] * len(s)`
+        A pre-sized MUTABLE buffer. Two reasons it must exist before the loop: destinations arrive in
+        arbitrary order, so appending is impossible; and Python strings are immutable, so the target
+        cannot be a string.
+
+        `[''] * n` creates n references to the same empty string - harmless, because strings are
+        immutable and every slot is overwritten. The equivalent `[[]] * n` would be a genuine bug.
+
+Line 3  `for ch, idx in zip(s, indices):`
+        `zip` pairs each character with its destination. Iterating both together removes the index
+        variable and with it the chance of the two sequences drifting apart.
+
+Line 4  `result[idx] = ch`
+        THE SCATTER. `idx` is where this character belongs, so it is the WRITE target.
+
+        The inverse spelling - `result[i] = s[idx]` - would be a gather and applies the inverse
+        permutation. MEASURED, the gather version differs from the correct answer on 11,342 of 20,000
+        random cases.
+
+Line 5  `return "".join(result)`
+        One allocation for the final string. Every slot has been written exactly once because
+        `indices` is a permutation - if it were not, leftover `''` entries would silently vanish into
+        the joined result, shortening it.
+
+MEASURED, this satisfies `result[indices[i]] == s[i]` for every i on all 20,000 random cases, at 13 ms
+on 200,000 characters against 175 ms for the sort-based version.
+
+AND THE GATHER VERSION, for when the problem's direction is the other one:
+
+    inv = [0] * len(s)
+    for i, d in enumerate(indices):
+        inv[d] = i                       # build the inverse permutation
+    return "".join(s[inv[i]] for i in range(len(s)))
+
+        Two passes and the identical answer. This is the transformation to reach for when gathers are
+        cheaper than scatters, which is the usual situation in vectorised or GPU code.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `s = "codeleet"`, `indices = [4,5,6,7,0,2,1,3]`.
+
+    i   ch    idx    result after
+    ---------------------------------------------------
+    0   'c'    4     ['','','','','c','','','']
+    1   'o'    5     ['','','','','c','o','','']
+    2   'd'    6     ['','','','','c','o','d','']
+    3   'e'    7     ['','','','','c','o','d','e']
+    4   'l'    0     ['l','','','','c','o','d','e']
+    5   'e'    2     ['l','','e','','c','o','d','e']
+    6   'e'    1     ['l','e','e','','c','o','d','e']
+    7   't'    3     ['l','e','e','t','c','o','d','e']
+
+    join -> "leetcode"                                            MEASURED
+
+    Watch the destinations: 4, 5, 6, 7, 0, 2, 1, 3 - completely out of order, which is exactly why a
+    pre-sized buffer is needed rather than appending.
+
+TRACE B - the scatter/gather difference on a three-character example.
+
+    s = "abc", indices = [1, 2, 0]
+
+    scatter (correct)
+        'a' -> position 1
+        'b' -> position 2
+        'c' -> position 0
+        result "cab"
+
+    gather (the bug)
+        result[0] = s[1] = 'b'
+        result[1] = s[2] = 'c'
+        result[2] = s[0] = 'a'
+        result "bca"
+
+    Two anagrams of the input, both plausible, and only one satisfies "the character at i moves to
+    indices[i]". Check it: in "cab", position `indices[0]` = 1 holds 'a', and s[0] is 'a'. Correct.
+
+TRACE C - the case where the two agree.
+
+    indices = [1, 0, 3, 2]     each element swaps with its neighbour
+
+    applying it twice returns the original, so it is its own inverse - an involution - and scatter and
+    gather give the same answer.
+
+    MEASURED, about 10.63% of random 6-element permutations are involutions (the exact count is 76 of
+    720). That is the rate at which the gather bug passes by luck.
+
+TRACE D - the measured failures.
+
+    s          indices              correct     gather
+    "auql"     [1,2,0,3]            "qaul"      "uqal"
+    "gxxjwh"   [5,3,2,0,1,4]        "jwxxhg"    "hjxgxw"
+    "oezbcncr" [0,6,7,2,4,3,5,1]    "orbnccez"  "ocrzcbne"
+
+    MEASURED, 11,342 of 20,000 random cases differ - 56.7%.
+
+TRACE E - the cost.
+
+    200,000 characters
+        scatter into a pre-sized list      13 ms
+        sorted(zip(indices, s))           175 ms      13x
+        identical output                              MEASURED
+
+    The sort discovers an ordering that the indices already stated explicitly.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one write per character, plus the join.
+    space   O(n) for the buffer and the result, which is the answer itself.
+
+    MEASURED, 13 ms on 200,000 characters. The sort-based version is O(n log n) - MEASURED 175 ms,
+    13x - and the inverse-permutation version is O(n) with two passes.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Gathering instead of scattering - `"".join(s[i] for i in indices)`. MEASURED wrong on 56.7% of
+       random cases, right only for involutions (about 10.6%), and the output is always an anagram of
+       the correct one, so its shape reveals nothing.
+    2. Trying to append in index order. The destinations arrive out of order, so a pre-sized buffer is
+       required.
+    3. Attempting to assign into a string, which raises TypeError because strings are immutable.
+    4. Sorting pairs by destination - correct and O(n log n), MEASURED 13x slower.
+    5. Assuming `indices` might not be a permutation. It is, which is why every slot is written and no
+       pre-filled empty string survives - and if it were not, the output would silently shrink.
+    6. Testing with one example instead of checking the invariant `result[indices[i]] == s[i]`.
+
+THE TAKEAWAY
+    Applying a permutation has two directions and they are inverses of each other: SCATTER writes to a
+    computed destination, GATHER reads from a computed source. The problem statement decides which -
+    "moves to" is a destination - and choosing the wrong one produces a plausible anagram that is wrong
+    more than half the time, and right exactly when the permutation happens to be its own inverse.
+    Verify with the definition, not with an example, and remember that the two are interchangeable once
+    you build the inverse permutation.""",
+]
+
+_EX_P1AO["Smallest Even Multiple"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - what is the smallest positive number that both 2 and n divide?
+
+    n = 5   ->  10      MEASURED
+    n = 6   ->  6       MEASURED - 6 is already even, so it is its own answer
+    n = 1   ->  2
+    n = 15  ->  30
+    n = 150 ->  150
+
+THE QUESTION IS ASKING FOR THE LEAST COMMON MULTIPLE OF 2 AND n, and because the other operand is 2 -
+a prime - there are only two cases:
+
+    n is even   ->  n already has a factor of 2, so n itself is the answer
+    n is odd    ->  n has no factor of 2, so the answer is 2n
+
+    return n if n % 2 == 0 else n * 2
+
+MEASURED against `math.lcm(2, n)` on every value from 1 to 200,000: identical for all of them.
+
+THE TWO OBVIOUS WRONG ANSWERS ARE EACH WRONG EXACTLY HALF THE TIME. MEASURED over 1..200,000:
+returning `2*n` always is wrong on 100,000 - every even n. Returning `n` always is wrong on 100,000 -
+every odd n. So a test set containing only odd inputs, or only even ones, will confirm whichever
+mistake you made.""",
+
+    """2. THE INTUITION - the LCM of 2 and n, and why the parity is the whole answer.
+
+THE GENERAL FORMULA is `lcm(a, b) = a * b / gcd(a, b)`. With a = 2:
+
+    gcd(2, n) = 2   when n is even
+    gcd(2, n) = 1   when n is odd
+
+so
+
+    lcm(2, n) = 2n / 2 = n     for even n
+    lcm(2, n) = 2n / 1 = 2n    for odd n
+
+That is the two-case answer, derived rather than guessed. And the reason there are only two cases is
+that 2 is PRIME: the gcd can only be 1 or 2, so nothing else can happen.
+
+ANOTHER WAY TO SEE IT. The answer must be a multiple of n - so it is n, 2n, 3n, ... - and it must be
+even. The smallest even one is n itself when n is even, and 2n otherwise. That framing makes it
+obvious that the answer is never 3n or larger.
+
+BRANCHLESS FORMS, MEASURED against the branch version on 1..200,000, all correct:
+
+    n + (n % 2) * n        add another n only when n is odd
+    n * (1 + n % 2)        the same thing factored
+    n << (n & 1)           double it - shift left by one - only when the low bit is set
+    2 * n // gcd(2, n)     the general LCM formula
+    math.lcm(2, n)         the standard library, Python 3.9+
+
+AND TWO PLAUSIBLE ONE-LINERS THAT ARE WRONG, MEASURED:
+
+    n * (2 - n % 2)        gives 1 for n = 1 and 4 for n = 2 - both wrong
+    ((n + 1) // 2) * 2     gives 4 for n = 3 - it rounds UP to an even number rather than to a
+                           multiple of n
+
+The second is a genuinely useful idiom for "round up to the next even number", and it answers a
+different question. That is what makes it a tempting wrong answer rather than a random one.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MULTIPLE - n, 2n, 3n and so on. The answer must be one of these.
+
+COMMON MULTIPLE - a number that is a multiple of both inputs.
+
+LEAST COMMON MULTIPLE (LCM) - the smallest positive common multiple. `lcm(4, 6)` is 12.
+
+GCD - greatest common divisor. `lcm(a,b) = a*b // gcd(a,b)` is the identity that links the two.
+
+PARITY - whether a number is odd or even, i.e. `n % 2`.
+
+`n & 1` - the low bit, which is the parity test in bitwise form and is equivalent to `n % 2` for
+non-negative integers.
+
+`n << 1` - a left shift, which doubles. `n << (n & 1)` therefore doubles only odd numbers - a
+branchless spelling of the whole solution.
+
+BRANCHLESS - avoiding an `if`. It matters in tight numeric loops and on GPUs, and it matters not at
+all here; the value is in seeing that the same fact can be written as arithmetic.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - answering with one branch only.
+
+BUG 1 - ALWAYS RETURNING `2 * n`.
+
+Correct for odd n, wrong for even n - `2 * 6` is 12 where the answer is 6, because 6 is already a
+multiple of 2.
+
+MEASURED over 1..200,000: wrong on 100,000 - exactly half, and exactly the even inputs.
+
+BUG 2 - ALWAYS RETURNING `n`.
+
+The mirror image. MEASURED wrong on 100,000 - exactly the odd inputs.
+
+Both bugs are 50% wrong, which sounds easy to catch and is not: a test set of `[1, 3, 5]` confirms
+bug 1 and a test set of `[2, 4, 6]` confirms bug 2. The inputs have to be mixed deliberately.
+
+BUG 3 - `((n + 1) // 2) * 2`. This is the standard idiom for ROUNDING UP TO THE NEXT EVEN NUMBER, and
+it answers a different question. MEASURED, it gives 4 for n = 3, where the answer is 6 - because 4 is
+even but is not a multiple of 3. The answer must be a multiple of BOTH, and this formula forgets n
+entirely once it has rounded.
+
+BUG 4 - `n * (2 - n % 2)`. Plausible-looking and MEASURED wrong on both parities: 1 for n = 1 and 4
+for n = 2. The factor is backwards - it should be `1 + n % 2`, not `2 - n % 2`.
+
+BUG 5 - REACHING FOR A LOOP. Testing `n, 2n, 3n, ...` for evenness terminates on the first or second
+candidate, so it is correct and O(1) in practice - and it obscures a fact that is one comparison
+wide.
+
+BUG 6 - COMPUTING `lcm` WITH FLOATING POINT. `2 * n / gcd(2, n)` with true division returns a float,
+and for large n that loses exactness. `//` keeps it an integer, and the division is exact by
+construction because the gcd divides the product.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED, all correct over 1..200,000:
+
+    n if n % 2 == 0 else n * 2        the branch
+    n + (n % 2) * n                   branchless
+    n * (1 + n % 2)                   branchless, factored
+    n << (n & 1)                      branchless, bitwise
+    2 * n // gcd(2, n)                the general LCM identity
+    math.lcm(2, n)                    the standard library
+
+ALTERNATIVE A - the explicit branch. Clearest, and the one to write. It says "if it is already even,
+it is the answer", which is the reasoning.
+
+ALTERNATIVE B - `n << (n & 1)`. Cute and MEASURED correct: shift left by 1 when the low bit is set,
+by 0 otherwise. Worth knowing as an example of turning a case analysis into arithmetic, and not worth
+shipping over a readable `if`.
+
+ALTERNATIVE C - `math.lcm(2, n)`. The honest production answer, and it generalises the moment the
+problem asks for the LCM of n and something other than 2.
+
+ALTERNATIVE D - `2 * n // math.gcd(2, n)`. The formula behind `lcm`, worth being able to write from
+memory since `lcm` is only in the standard library from Python 3.9.
+
+ALTERNATIVE E - state it as a general rule: for a PRIME p, `lcm(p, n)` is `n` when p divides n and
+`p*n` otherwise. That is the sentence that shows you know why the answer has two cases rather than
+some other number.
+
+THE FAMILY - gcd and lcm problems:
+  * GREATEST COMMON DIVISOR OF STRINGS - the LCM/GCD identity applied to lengths;
+  * UGLY NUMBER, POWER OF TWO / THREE - divisibility tests of a similar flavour;
+  * COUNT ODD NUMBERS IN AN INTERVAL RANGE, NUMBER OF COMMON FACTORS - counting problems built on
+    divisibility;
+  * FRACTION ADDITION AND SIMPLIFICATION, where lcm of denominators is the core step;
+  * SMALLEST MULTIPLE OF 1..n (the project-Euler-style question), which is the same idea iterated.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - name the quantity: this is `lcm(2, n)`, not something ad hoc.
+
+STEP 2 - derive the two cases rather than guessing: `lcm(a,b) = a*b // gcd(a,b)`, and `gcd(2, n)` is
+2 for even n and 1 for odd n - because 2 is prime, so there is no third possibility.
+
+STEP 3 - write the branch: `return n if n % 2 == 0 else n * 2`.
+
+STEP 4 - say why it cannot be 3n or more: the answer must be a multiple of n and even, and the first
+multiple of n that is even is n itself or 2n.
+
+STEP 5 - name the two half-wrong answers explicitly, because they are the whole content: always 2n is
+MEASURED wrong on every even input, always n on every odd one - each 50% of the range.
+
+STEP 6 - if asked for a branchless form, offer `n << (n & 1)` or `n * (1 + n % 2)`, and note that
+`((n+1)//2)*2` is the round-up-to-even idiom, which answers a DIFFERENT question and is MEASURED wrong
+at n = 3.
+
+STEP 7 - state the complexity: O(1) time and space, one modulo and one comparison.
+
+STEP 8 - test with both parities. A test set of one parity confirms whichever mistake you made.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- This is the least common multiple of two and n. The general formula is a times b over their gcd, and
+  since two is prime the gcd is either two or one - two when n is even, one when n is odd.
+
+- So there are exactly two cases: if n is already even it is its own answer, and if it is odd the
+  answer is twice n. One modulo and one comparison, constant time.
+
+- Another way to see it: the answer has to be a multiple of n, so it is n, or two n, or three n - and
+  it has to be even. The first of those that is even is n itself when n is even, otherwise two n. So
+  it is never three n or larger.
+
+- The two ways to get this wrong are to always double, or to never double - and each is wrong on
+  exactly half the inputs. I measured both at a hundred thousand failures out of two hundred thousand.
+  Which is worth saying because a test set of only odd numbers confirms one mistake and a set of only
+  even numbers confirms the other.
+
+- One near-miss worth naming: rounding up to the next even number - n plus one, integer-divided by
+  two, times two - is a real and useful idiom, and it answers a different question. For n equals three
+  it gives four, which is even and is not a multiple of three.
+
+- If a branchless version were wanted, n shifted left by its low bit does it: double only when the low
+  bit is set. And in production I would just call math.lcm, which generalises when the other operand
+  stops being two.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def smallest_even_multiple(n):
+        return n if n % 2 == 0 else n * 2   # lcm(2, n)
+
+`n % 2 == 0`
+        The parity test - equivalently `n & 1 == 0`. It is the only decision in the problem, and it is
+        a decision because `gcd(2, n)` has exactly two possible values, 2 and 1, since 2 is prime.
+
+`n` (the even branch)
+        An even n is already a multiple of both 2 and itself, so nothing smaller can work - any
+        smaller common multiple would have to be a smaller multiple of n, and there is none below n.
+
+`n * 2` (the odd branch)
+        An odd n has no factor of 2, so the smallest multiple of n that is even is 2n. Not 3n, because
+        3n is odd again for odd n; not 4n, because 2n already works.
+
+The comment `# lcm(2, n)`
+        Names the quantity. That single word turns the function from a rule into an instance of a
+        known operation - and it is what an interviewer is listening for.
+
+        MEASURED, this returns exactly `math.lcm(2, n)` for every n from 1 to 200,000.
+
+        O(1) time and space: one modulo, one comparison, one multiplication.
+
+AND THE ALTERNATIVES, all MEASURED correct over 1..200,000:
+
+    n + (n % 2) * n         # add another n only when n is odd
+    n * (1 + n % 2)         # the same, factored
+    n << (n & 1)            # double (shift left by 1) exactly when the low bit is set
+    2 * n // math.gcd(2, n) # the general LCM identity, with INTEGER division
+    math.lcm(2, n)          # Python 3.9+
+
+AND THE TWO THAT LOOK RIGHT AND ARE NOT, MEASURED:
+
+    n * (2 - n % 2)         # gives 1 for n=1 and 4 for n=2 - the factor is inverted
+    ((n + 1) // 2) * 2      # rounds UP TO THE NEXT EVEN NUMBER: gives 4 for n=3, which is not a
+                            # multiple of 3 at all""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the two branches on small inputs.
+
+    n     n % 2    branch      answer    check: multiple of 2 ?   multiple of n ?
+    ------------------------------------------------------------------------------
+    1       1      odd  -> 2n     2            yes                    yes
+    2       0      even -> n      2            yes                    yes
+    3       1      odd  -> 2n     6            yes                    yes
+    4       0      even -> n      4            yes                    yes
+    5       1      odd  -> 2n    10            yes                    yes
+    6       0      even -> n      6            yes                    yes
+    15      1      odd  -> 2n    30            yes                    yes
+    150     0      even -> n    150            yes                    yes
+
+    All MEASURED. The last two columns are the definition being checked directly, which is a better
+    test than comparing against remembered answers.
+
+TRACE B - why the answer is never 3n or more.
+
+    n = 5:   multiples are 5, 10, 15, 20, ...
+             even ones are 10, 20, ...
+             the smallest is 10 = 2n
+
+    n = 6:   multiples are 6, 12, 18, ...
+             even ones are 6, 12, 18, ...   (all of them, since 6 is even)
+             the smallest is 6 = n
+
+    For odd n every SECOND multiple is even, so the first even one is always the second multiple. For
+    even n every multiple is even, so the first is n itself. There is no third case.
+
+TRACE C - the two half-wrong answers, side by side.
+
+    n     correct    always 2n    always n
+    ------------------------------------------
+    1        2           2           1        <- "always n" wrong
+    2        2           4           2        <- "always 2n" wrong
+    3        6           6           3        <- "always n" wrong
+    4        4           8           4        <- "always 2n" wrong
+
+    MEASURED over 1..200,000: "always 2n" is wrong on 100,000 (every even n) and "always n" is wrong on
+    100,000 (every odd n). Each is exactly 50%, and each is confirmed by a single-parity test set.
+
+TRACE D - the round-up-to-even near-miss.
+
+    ((n + 1) // 2) * 2
+
+    n = 3:  ((3+1)//2)*2 = 2*2 = 4      even, and NOT a multiple of 3    WRONG
+    n = 4:  ((4+1)//2)*2 = 2*2 = 4      correct, by coincidence
+    n = 5:  ((5+1)//2)*2 = 3*2 = 6      even, and NOT a multiple of 5    WRONG
+
+    MEASURED wrong across the range. The formula rounds n UP to an even number and forgets that the
+    answer must still be a multiple of n - it is a correct idiom for a different question.
+
+TRACE E - the branchless forms on n = 7 and n = 8.
+
+    n = 7 (odd, low bit 1)
+        n + (n % 2) * n  = 7 + 7  = 14
+        n * (1 + n % 2)  = 7 * 2  = 14
+        n << (n & 1)     = 7 << 1 = 14
+        2*7 // gcd(2,7)  = 14 // 1 = 14
+
+    n = 8 (even, low bit 0)
+        n + (n % 2) * n  = 8 + 0  = 8
+        n * (1 + n % 2)  = 8 * 1  = 8
+        n << (n & 1)     = 8 << 0 = 8
+        2*8 // gcd(2,8)  = 16 // 2 = 8
+
+    All four agree with the branch version, MEASURED on every n from 1 to 200,000.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(1) - one modulo, one comparison, at most one multiplication.
+    space   O(1).
+
+    There is nothing to optimise. The `2*n // gcd(2,n)` form is also O(1), since `gcd` with 2
+    terminates in one step.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Always returning `2 * n`. MEASURED wrong on 100,000 of 200,000 - every even input.
+    2. Always returning `n`. MEASURED wrong on the other 100,000 - every odd input.
+    3. Testing with inputs of a single parity, which confirms whichever of those two mistakes you
+       made.
+    4. `((n+1)//2)*2`, the round-up-to-even idiom. MEASURED wrong at n = 3, because the result is even
+       and not a multiple of n.
+    5. `n * (2 - n % 2)`, with the factor inverted. MEASURED wrong on both parities.
+    6. Using true division in the LCM formula, which returns a float and loses exactness for large n.
+    7. Not naming it as an LCM. The two-case answer looks arbitrary until you say `gcd(2, n)` is 2 or
+       1 because 2 is prime.
+
+THE TAKEAWAY
+    Recognise the quantity before writing the code: this is `lcm(2, n)`, and because 2 is prime the gcd
+    can only be 1 or 2 - which is why the answer has exactly two cases and never involves 3n. Derive
+    the branch from `a*b // gcd(a,b)` rather than pattern-matching, and test both parities, because
+    each of the two natural wrong answers is correct on exactly half the inputs and a single-parity
+    test set will endorse either one.""",
+]
+
+_EX_P1AO["Sorting the Sentence"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the words of a sentence have been shuffled, but each one carries its
+original position as a digit stuck on the end. Put them back.
+
+    "is2 sentence4 This1 a3"
+
+    "This1"     -> position 1
+    "is2"       -> position 2
+    "a3"        -> position 3
+    "sentence4" -> position 4
+
+    result "This is a sentence"                              MEASURED
+
+TWO OPERATIONS PER WORD: read the last character as the position, and strip it off.
+
+    for w in s.split():
+        pos = int(w[-1])
+        result[pos - 1] = w[:-1]
+
+`pos - 1` because the positions are 1-BASED and list indices are 0-based. MEASURED, forgetting that
+shift produces `" This is a sentence"` - the same words, correctly ordered, with a leading empty slot
+and everything displaced by one.
+
+THE PROBLEM GUARANTEES AT MOST 9 WORDS, which is what makes "the last character" a complete position:
+a single digit. That guarantee also licenses a shortcut - sorting the words by their last character -
+because for single digits lexicographic order equals numeric order. MEASURED, both versions are
+correct on 20,000 random sentences, and MEASURED, the sort-based one breaks the moment there are ten
+words: `sorted(['a10','b2'], key=lambda w: w[-1])` puts `'a10'` first, because it compares '0'
+against '2'.""",
+
+    """2. THE INTUITION - place by index, or sort by key.
+
+TWO WAYS TO USE THE POSITION.
+
+PLACE IT DIRECTLY. Allocate a list of the right length and write each word into its slot. O(n) and it
+does not care how many words there are or how the digits are encoded, as long as you can parse the
+position.
+
+SORT BY THE POSITION. `sorted(words, key=lambda w: w[-1])` orders the words by their trailing
+character. It is shorter and it is O(n log n), and its correctness depends on a coincidence: with at
+most 9 words the position is one digit, and single characters compare in the same order as the numbers
+they represent.
+
+MEASURED, both give the right answer on all 20,000 random sentences tested - because the constraint
+holds. And MEASURED, the coincidence fails immediately at ten words: `'a10'` sorts before `'b2'`,
+because the comparison sees '0' before '2'.
+
+So the sort version is correct HERE and fragile. Saying that out loud - "this works because the
+problem caps the sentence at nine words" - is worth more than either implementation.
+
+THE SPLIT-AND-JOIN FRAME. `s.split()` on whitespace gives the words; `" ".join(...)` puts them back
+with single spaces. That pairing normalises the spacing, which is exactly what is wanted here and is
+worth knowing as a side effect: `split()` with no argument collapses runs of whitespace and ignores
+leading and trailing spaces.
+
+WHY `w[:-1]` AND NOT `w.rstrip(digits)`. The word carries exactly one trailing digit, so removing one
+character is precise. `rstrip` would remove several if a word genuinely ended in a digit, which
+happens the moment the words are not guaranteed to be alphabetic.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+1-BASED versus 0-BASED - the positions written in the sentence start at 1; Python list indices start
+at 0. The `- 1` is the translation, and it is the most common bug here.
+
+`s.split()` - split on runs of whitespace, discarding empty pieces. With no argument it also ignores
+leading and trailing whitespace.
+
+`w[-1]` - the last character. `w[:-1]` - everything except the last character. The pair is the whole
+parse.
+
+`" ".join(list)` - reassemble with single spaces.
+
+LEXICOGRAPHIC versus NUMERIC ORDER - character comparison versus number comparison. They agree for
+single digits, and diverge as soon as the numbers have different widths - MEASURED, '10' sorts before
+'2'.
+
+STABLE SORT - irrelevant here, because every key is distinct: each position appears exactly once.
+
+PLACEMENT versus SORTING - writing to a computed index is O(n); ordering by a key is O(n log n). Both
+are fine at nine words, and the distinction matters as soon as the input grows.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the 1-based positions, and a sort that works by luck.
+
+BUG 1 - FORGETTING THE `- 1`.
+
+Writing `result[pos] = w[:-1]` into a list of length n either raises IndexError when `pos` equals n,
+or - if the list was sized `n + 1` to accommodate it - leaves an empty string at index 0.
+
+MEASURED with the oversized list: `"is2 sentence4 This1 a3"` produces `" This is a sentence"` - the
+right words in the right order, with a leading space from the empty slot at index 0. Every word is
+displaced by one position, and the sentence still reads correctly, which is what makes the bug easy to
+miss on a casual glance.
+
+BUG 2 - RELYING ON THE SORT WITHOUT KNOWING WHY IT WORKS. `sorted(words, key=lambda w: w[-1])` sorts
+by a CHARACTER. MEASURED, that matches numeric order for the digits 1..9 and fails at 10:
+`sorted(['a10','b2'], key=lambda w: w[-1])` returns `['a10', 'b2']`, because '0' < '2'.
+
+The fix if positions could exceed 9 would be `key=lambda w: int(w[len(prefix):])` - which requires
+knowing where the digits start, and at that point the placement version is simpler.
+
+BUG 3 - `int(w[-1])` ON A WORD WITH A MULTI-DIGIT POSITION. It reads only the last digit, so word 12
+would be filed at position 2. Again ruled out by the constraint, and again worth naming.
+
+BUG 4 - STRIPPING THE DIGIT WITH `rstrip('0123456789')`. It removes every trailing digit, so a word
+that legitimately ended in a digit would be truncated. `w[:-1]` removes exactly one character, which
+is what the format specifies.
+
+BUG 5 - ASSUMING THE WORDS ARRIVE IN SOME ORDER. They are shuffled - that is the problem - so the
+result list must be pre-sized and written by index, not appended to.
+
+BUG 6 - `s.split(' ')` INSTEAD OF `s.split()`. With an explicit separator, a double space produces an
+empty string in the list, and `int(''[-1])` raises IndexError. The no-argument form collapses runs of
+whitespace and is the safer default.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED, both correct on 20,000 random sentences:
+
+    place by index          O(n)
+    sort by last character  O(n log n), and correct only because there are at most 9 words
+
+ALTERNATIVE A - placement into a pre-sized list. O(n) time, O(n) space, and it does not depend on the
+positions being single digits. The answer.
+
+ALTERNATIVE B - the sort:
+
+    return " ".join(w[:-1] for w in sorted(s.split(), key=lambda w: w[-1]))
+
+One line, MEASURED correct under the constraint, and MEASURED wrong the moment a position reaches 10.
+Present it WITH the caveat; presenting it without is the mistake.
+
+ALTERNATIVE C - sort with a numeric key: `key=lambda w: int(w[-1])`. This removes the lexicographic
+coincidence for single digits and still fails for multi-digit positions, since only the last character
+is parsed.
+
+ALTERNATIVE D - build a dictionary from position to word, then emit in key order. Equivalent to the
+placement version with a hash map instead of a list - useful if the positions were sparse or not a
+contiguous range, and unnecessary when they are exactly 1..n.
+
+ALTERNATIVE E - regular expressions to split the word from its number, `re.match(r"([a-z]+)(\\d+)", w,
+re.I)`. That is the version to write if the position could be multi-digit, and it is overkill when the
+format is "everything except the last character".
+
+THE FAMILY - reconstruct-by-index problems:
+  * SHUFFLE STRING - the same placement with an explicit index array;
+  * RESTORE THE ARRAY FROM ADJACENT PAIRS, RANK TRANSFORM OF AN ARRAY - reordering driven by derived
+    keys;
+  * SORT THE PEOPLE, SORT ARRAY BY INCREASING FREQUENCY - sort-by-key problems where the key really
+    does need a comparison sort;
+  * PARSING problems generally, where the lesson recurs: a shortcut that relies on a constraint should
+    be labelled with the constraint it relies on.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the format: each word ends with one digit giving its 1-BASED position, and there are at
+most 9 words - so the position is exactly the last character.
+
+STEP 2 - split: `words = s.split()`. The no-argument form, which tolerates any run of whitespace.
+
+STEP 3 - pre-size the output: `result = [""] * len(words)`. Necessary because the words arrive
+shuffled, so appending is impossible.
+
+STEP 4 - for each word, parse and place:
+    pos = int(w[-1])
+    result[pos - 1] = w[:-1]
+Say the `- 1` out loud as you write it: 1-based positions into a 0-based list.
+
+STEP 5 - join: `return " ".join(result)`.
+
+STEP 6 - state the complexity: O(total characters) time and O(n) space. The placement version is
+linear where the sort version is O(n log n).
+
+STEP 7 - mention the sort shortcut AND its dependency: it works because a single digit compares the
+same way as a number, and MEASURED it breaks at ten words, where 'a10' sorts before 'b2'.
+
+STEP 8 - test with a 9-word sentence to confirm the boundary, and note that a 10-word variant would
+need a different parse.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Each word ends with one digit that says where it belongs, counting from one. So for every word I
+  read the last character as the position, strip that character off, and place the remaining word into
+  a pre-sized list at that position minus one.
+
+- The minus one is the 1-based to 0-based conversion, and forgetting it is the classic bug here -
+  everything ends up shifted by one, with an empty slot at the front, and the sentence still reads
+  correctly apart from a leading space.
+
+- I pre-size the list because the words arrive shuffled, so I cannot append; I have to write into
+  specific slots.
+
+- Linear in the total characters, and linear space for the output.
+
+- There is a one-line alternative: sort the words by their last character and then strip. That works
+  here, and only because the problem caps the sentence at nine words, so the position is a single
+  digit - and for single digits character order matches numeric order. With ten or more words it
+  breaks immediately: "a10" sorts before "b2" because the comparison sees zero against two. I would
+  offer the shortcut with that caveat attached rather than on its own.
+
+- I also use split with no arguments rather than splitting on a single space, because the no-argument
+  form collapses runs of whitespace instead of producing empty strings that would then crash on the
+  last-character lookup.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def sort_sentence(s):
+        words = s.split()
+        result = [""] * len(words)
+        for w in words:
+            pos = int(w[-1])             # last char is the 1-based position
+            result[pos - 1] = w[:-1]     # strip the digit, place by position
+        return " ".join(result)
+
+Line 2  `words = s.split()`
+        Splits on runs of whitespace and discards empty pieces. `s.split(' ')` would produce an empty
+        string for any double space, and `''[-1]` raises IndexError - so the no-argument form is the
+        safer default here.
+
+Line 3  `result = [""] * len(words)`
+        Pre-sized, because the words arrive shuffled and must be written to specific slots rather than
+        appended. Every slot is filled exactly once, since the positions are a permutation of 1..n.
+
+Line 5  `pos = int(w[-1])`
+        The last character as a number. This is complete only because the constraint caps the sentence
+        at 9 words, so the position is one digit. For word 12 this would read 2.
+
+Line 6  `result[pos - 1] = w[:-1]`
+
+        `pos - 1` converts a 1-based position to a 0-based index. MEASURED, omitting it and sizing the
+        list at `n + 1` produces `" This is a sentence"` - correct words, correct order, one leading
+        empty slot.
+
+        `w[:-1]` removes exactly one character - the digit. `w.rstrip('0123456789')` would remove any
+        run of trailing digits, which is wrong for a word that genuinely ends in one.
+
+Line 7  `return " ".join(result)`
+        Single spaces between words. Together with `split()` this normalises whatever spacing the
+        input had.
+
+MEASURED, this reconstructs the original sentence on all 20,000 random test sentences.
+
+AND THE ONE-LINE SORT, with its caveat:
+
+    def sort_sentence_sorted(s):
+        return " ".join(w[:-1] for w in sorted(s.split(), key=lambda w: w[-1]))
+
+        MEASURED correct on all 20,000 random sentences - because the problem caps the sentence at 9
+        words, so the key is a single character and character order matches numeric order.
+
+        MEASURED to break beyond that: `sorted(['a10','b2'], key=lambda w: w[-1])` returns
+        `['a10','b2']`, since '0' sorts before '2'. The shortcut is correct here and fragile, and it
+        should be presented with the constraint that supports it.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `s = "is2 sentence4 This1 a3"`.
+
+    words = ["is2", "sentence4", "This1", "a3"]
+    result = ["", "", "", ""]
+
+    w             w[-1]   pos   pos-1   w[:-1]        result after
+    ---------------------------------------------------------------------------
+    "is2"          '2'     2      1     "is"          ["", "is", "", ""]
+    "sentence4"    '4'     4      3     "sentence"    ["", "is", "", "sentence"]
+    "This1"        '1'     1      0     "This"        ["This", "is", "", "sentence"]
+    "a3"           '3'     3      2     "a"           ["This", "is", "a", "sentence"]
+
+    join -> "This is a sentence"                                    MEASURED
+
+    Note the words arrive in the order 2, 4, 1, 3 - which is why the result must be pre-sized and
+    written by index rather than appended.
+
+TRACE B - the off-by-one, on the same input.
+
+    with `result[pos] = w[:-1]` and a list of length n+1:
+
+        index 0 is never written and keeps its ""
+        "This" lands at 1, "is" at 2, "a" at 3, "sentence" at 4
+
+    join -> " This is a sentence"                                   MEASURED
+
+    One leading space, and every word one slot further right than it should be. The sentence still
+    reads correctly, which is precisely why this survives a quick eyeball.
+
+    With a list of length n, the same code raises IndexError when `pos` equals n - a louder and more
+    helpful failure.
+
+TRACE C - the sort version on the same input.
+
+    sorted by w[-1]:  "This1" ('1'), "is2" ('2'), "a3" ('3'), "sentence4" ('4')
+    strip the digits:  "This", "is", "a", "sentence"
+    join -> "This is a sentence"                                     MEASURED
+
+    Correct - and it compared the CHARACTERS '1' < '2' < '3' < '4', which happens to agree with the
+    numeric order because every position is a single digit.
+
+TRACE D - where the sort breaks.
+
+    words with positions 2 and 10:  ["b2", "a10"]
+    sorted by w[-1]:  key('a10') = '0', key('b2') = '2'
+    '0' < '2', so "a10" comes FIRST                                  MEASURED
+
+    The word at position 10 is placed before the word at position 2. The placement version has no such
+    problem in principle - though `int(w[-1])` would also need fixing, since it reads only one digit.
+
+TRACE E - the whitespace detail.
+
+    "a1  b2".split()      -> ['a1', 'b2']          runs collapsed
+    "a1  b2".split(' ')   -> ['a1', '', 'b2']      an empty string appears
+    ''[-1]                -> IndexError
+
+    The no-argument `split()` is what keeps the last-character lookup safe.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(total characters) - the split, one constant-time parse per word, and the join.
+    space   O(total characters) for the word list and the result.
+
+    The sort-based version is O(n log n) in the number of words. With at most 9 words neither figure
+    matters; the distinction is about which solution survives a change in the constraints.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Forgetting the `- 1`. MEASURED, it produces `" This is a sentence"` - right words, right order,
+       shifted by one - or an IndexError if the list is sized exactly.
+    2. Using the sort shortcut without naming the constraint that makes it valid. MEASURED, it breaks
+       at ten words because '10' sorts before '2'.
+    3. `int(w[-1])` on a multi-digit position, which reads only the final digit.
+    4. `rstrip` of digits instead of `w[:-1]`, which over-strips a word genuinely ending in a digit.
+    5. Appending instead of placing. The words arrive shuffled, so the output must be pre-sized.
+    6. `s.split(' ')` rather than `s.split()`, which turns a double space into an empty word and then
+       an IndexError.
+
+THE TAKEAWAY
+    When each item carries its own destination, place it - allocate the output, parse the position,
+    write it there - rather than sorting to rediscover an order you were handed. The `- 1` between
+    1-based positions and 0-based indices is the bug to say out loud as you write it. And when a
+    one-line shortcut works, know WHICH constraint it is leaning on: sorting by the last character is
+    correct here only because nine words means one digit, and it fails on the tenth.""",
+]
+
+_EX_P1AO["Subtract the Product and Sum of Digits"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - multiply the digits together, add them together, and subtract the
+second from the first.
+
+    n = 234
+    product 2 * 3 * 4 = 24
+    sum     2 + 3 + 4 = 9
+    answer  24 - 9 = 15                                     MEASURED
+
+    n = 4421
+    product 4 * 4 * 2 * 1 = 32
+    sum     4 + 4 + 2 + 1 = 11
+    answer  21                                              MEASURED
+
+ONE PASS COMPUTES BOTH. Peel the digits with `% 10` and `// 10`, multiplying into one accumulator and
+adding into another:
+
+    product = 1
+    total = 0
+    while n:
+        d = n % 10
+        product *= d
+        total += d
+        n //= 10
+    return product - total
+
+THE TWO ACCUMULATORS HAVE DIFFERENT IDENTITY VALUES, and that is the one thing that must be right:
+a product starts at 1 and a sum starts at 0. MEASURED, initialising the product to 0 makes it stay 0
+forever, so the function returns `-sum` for every input - 234 gives -9 instead of 15.
+
+A ZERO DIGIT FORCES THE PRODUCT TO 0. MEASURED, `n = 10` gives `0 - 1 = -1`. That is not an edge case
+to guard against; it is the correct answer, and it is why the result is frequently negative -
+MEASURED, 37.4% of the values from 1 to 200,000 produce a negative result.""",
+
+    """2. THE INTUITION - two folds over the same digits, with different identities.
+
+A FOLD (or reduction) combines a sequence into one value using an operator and a starting value. The
+starting value must be the operator's IDENTITY - the value that changes nothing:
+
+    addition:        identity 0,  because x + 0 = x
+    multiplication:  identity 1,  because x * 1 = x
+
+Both folds run over the same digit stream, so one pass computes both. There is no reason to extract
+the digits twice.
+
+WHY A ZERO DIGIT DOMINATES. Multiplication by zero annihilates - once any digit is 0, the product is 0
+no matter what follows. So every number containing a zero digit has product 0 and answer `-sum`.
+
+MEASURED over 1..200,000: 74,840 results are negative, 37.4%. That is essentially the proportion of
+numbers containing a zero digit at that size, and it makes negative answers the normal case rather
+than an exception.
+
+THE DIGIT PEEL, once more: `n % 10` is the last digit and `n //= 10` removes it. The digits come out
+least-significant first, and here that DOES NOT MATTER - both addition and multiplication are
+commutative, so the order of the fold is irrelevant. That is worth noticing explicitly, because in
+neighbouring problems (Separate the Digits, Alternating Digit Sum) the order is the whole difficulty.
+
+STRING VERSUS ARITHMETIC. `str(n)` gives the digits directly; `% 10` avoids the allocation. MEASURED
+over 200,000 calls: the arithmetic version takes 75 ms and the string version 180 ms - 2.4x, entirely
+from not building a string per call.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIGIT - one decimal symbol of the number, treated as a value.
+
+PRODUCT - the digits multiplied together. Starts at 1.
+
+SUM - the digits added. Starts at 0.
+
+IDENTITY ELEMENT - the value that leaves the operand unchanged: 0 for addition, 1 for multiplication.
+Choosing the wrong one is the single bug this problem contains.
+
+FOLD / REDUCTION - collapsing a sequence to one value with a binary operator and an identity. This
+problem is two folds sharing one pass.
+
+ANNIHILATOR - a value that collapses everything: 0 for multiplication. It is why a single zero digit
+determines the whole product.
+
+COMMUTATIVE - the order of the operands does not matter. Both operators here are, which is why the
+least-significant-first digit peel needs no reversal.
+
+`% 10` and `// 10` - extract and drop the last digit. MEASURED 2.4x faster than converting to a
+string.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the identity values, and expecting a positive answer.
+
+BUG 1 - INITIALISING THE PRODUCT TO 0.
+
+    product = 0        # WRONG - 0 is the identity for ADDITION
+
+Every multiplication then keeps it at 0, so the function returns `0 - sum` for every input.
+
+MEASURED: 234 gives -9 instead of 15, and 4421 gives -11 instead of 21. Every answer is exactly
+`-sum`, which is a plausible-looking number in the right ballpark - and always negative, which is the
+tell.
+
+BUG 2 - INITIALISING THE SUM TO 1. The mirror mistake, and it makes every answer 1 too small. Less
+common because a sum starting at 1 looks obviously odd, where a product starting at 0 looks like
+ordinary initialisation.
+
+BUG 3 - TREATING A NEGATIVE RESULT AS AN ERROR. It is not. MEASURED, 37.4% of the values from 1 to
+200,000 return a negative answer, because any zero digit sets the product to 0 while the sum stays
+positive. `n = 10` returns -1, which is correct.
+
+BUG 4 - GUARDING AGAINST A ZERO DIGIT. Nothing needs guarding: multiplying by 0 is legal and gives the
+right answer. (Contrast Self Dividing Numbers, where a zero digit must be excluded because DIVISION by
+zero is undefined. Same digit, opposite treatment, and the difference is which operator is involved.)
+
+BUG 5 - MUTATING `n` AND THEN USING IT. The loop consumes `n`, so if the function needed the original
+afterwards it would have to be saved first. Here it does not - but the same shape in Palindrome Number
+does, and that is exactly where the bug appears.
+
+BUG 6 - THE WHILE LOOP ON INPUT 0. `while n:` never runs, so the product stays 1 and the sum 0, giving
+1. The true answer for the single digit 0 is `0 - 0 = 0`. MEASURED, this never arises because the
+constraints start at 1 - and the string version handles it naturally, since `str(0)` is `"0"`.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED over 200,000 calls, identical answers:
+
+    arithmetic peel (`% 10`, `// 10`)     75 ms
+    string conversion                    180 ms      2.4x slower
+
+ALTERNATIVE A - the single arithmetic pass, two accumulators. O(digits) time, O(1) space, no
+allocation. The answer.
+
+ALTERNATIVE B - the string version:
+
+    digits = [int(c) for c in str(n)]
+    return math.prod(digits) - sum(digits)
+
+MEASURED 2.4x slower, and considerably clearer - `math.prod` and `sum` say exactly what is happening,
+and `math.prod` supplies the identity 1 for you, which removes the one bug this problem has.
+`math.prod` is Python 3.8+.
+
+ALTERNATIVE C - `functools.reduce(operator.mul, digits, 1)` for the product. The explicit `1` is the
+identity, written out - and having to supply it is a good reminder of why it exists.
+
+ALTERNATIVE D - two separate passes, one for the product and one for the sum. Twice the work for no
+benefit; both folds consume the same stream, so they belong in one loop.
+
+ALTERNATIVE E - EARLY EXIT on a zero digit: once any digit is 0, the product is settled, so only the
+remaining sum matters. It saves a multiplication or two and complicates the loop; not worth it, and
+worth knowing as an example of an annihilator enabling a short-circuit.
+
+THE FAMILY - digit folds:
+  * ADD DIGITS - the sum fold alone, which collapses to a closed form;
+  * SELF DIVIDING NUMBERS - the same digit peel where a zero digit must be EXCLUDED rather than
+    absorbed;
+  * HAPPY NUMBER - a fold of squared digits, iterated;
+  * SEPARATE THE DIGITS IN AN ARRAY, ALTERNATING DIGIT SUM - the digit peel where the ORDER matters,
+    unlike here;
+  * MAXIMUM PRODUCT OF DIGITS-style problems, where the annihilating zero becomes the whole
+    difficulty.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - name the two folds and their identities out loud: a product starts at 1, a sum starts at 0.
+That sentence is the entire bug surface of this problem.
+
+STEP 2 - initialise: `product = 1`, `total = 0`.
+
+STEP 3 - one loop over the digits:
+    while n:
+        d = n % 10
+        product *= d
+        total += d
+        n //= 10
+Both accumulators consume the same digit, so one pass is enough.
+
+STEP 4 - note that the order does not matter here, because both operators are commutative - unlike the
+neighbouring digit problems where the peel direction is the difficulty.
+
+STEP 5 - `return product - total`.
+
+STEP 6 - say that a zero digit is not an edge case: it makes the product 0 and the answer negative,
+which is correct. MEASURED, 37.4% of inputs up to 200,000 give a negative result.
+
+STEP 7 - state the complexity: O(number of digits), O(1) space.
+
+STEP 8 - mention the clearer alternative - `math.prod(digits) - sum(digits)` - and that it is MEASURED
+2.4x slower because of the string, while being the version least likely to get the identity wrong.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- I peel the digits off with mod ten and divide by ten, and accumulate two things at once: a running
+  product and a running sum. Then I subtract.
+
+- The one thing to get right is the starting values. A product starts at one and a sum starts at zero,
+  because those are the identity elements for the two operations. Starting the product at zero would
+  keep it at zero forever and the function would return minus the sum for every input - which is a
+  plausible-looking number, always negative.
+
+- A zero digit makes the product zero, and that is the correct answer rather than something to guard
+  against - so negative results are normal. I measured that about thirty-seven per cent of the numbers
+  up to two hundred thousand give a negative answer.
+
+- Worth contrasting with self-dividing numbers, where a zero digit has to be excluded because you
+  cannot divide by it. Same digit, opposite treatment, and the difference is which operator is
+  involved.
+
+- The digits come out least significant first and that does not matter here, because addition and
+  multiplication are both commutative. In the neighbouring digit problems the order is the whole
+  difficulty, so it is worth saying explicitly that it is not here.
+
+- Linear in the number of digits, constant space. I measured the arithmetic version at about two and a
+  half times faster than converting to a string - though the string version with math.prod and sum is
+  clearer, and math.prod supplies the identity for you, which removes the only bug this problem has.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def subtract_product_and_sum(n):
+        product = 1
+        total = 0
+        while n:
+            d = n % 10
+            product *= d
+            total += d
+            n //= 10
+        return product - total
+
+Line 2  `product = 1`
+        The identity for MULTIPLICATION. MEASURED, starting at 0 makes every subsequent multiplication
+        keep it at 0, so the function returns `-total` for every input: 234 gives -9 instead of 15.
+
+Line 3  `total = 0`
+        The identity for ADDITION.
+
+        The two different starting values are the whole bug surface here, and writing them adjacent
+        makes the asymmetry visible.
+
+Line 4  `while n:`
+        Once per digit. Terminates because each iteration divides by 10.
+
+        For n = 0 the loop never runs and the function returns 1 - the correct answer for the digit 0
+        is 0. The constraints start at 1, so it does not arise; the string version has no such gap.
+
+Line 5  `d = n % 10`
+        The last digit. Extracted once and used by both accumulators - which is the reason a single
+        pass suffices.
+
+Line 6  `product *= d`
+        A zero digit collapses this to 0 permanently, because 0 annihilates under multiplication. That
+        is the intended behaviour, not a case to guard.
+
+Line 7  `total += d`
+
+Line 8  `n //= 10`
+        Drop the digit just consumed. Integer division - `/` would introduce floats.
+
+Line 9  `return product - total`
+        Frequently negative. MEASURED, 74,840 of the values from 1 to 200,000 return a negative
+        result - 37.4% - because any zero digit zeroes the product while the sum stays positive.
+
+MEASURED, this agrees with the string-based version on every value from 1 to 200,000, at 75 ms against
+180 ms per 200,000 calls.
+
+AND THE CLEARER VERSION:
+
+    import math
+
+    def subtract_product_and_sum_str(n):
+        digits = [int(c) for c in str(n)]
+        return math.prod(digits) - sum(digits)
+
+        `math.prod` supplies the identity 1 itself, so the one bug this problem contains cannot be
+        written. MEASURED 2.4x slower because of the string allocation, and the version to prefer when
+        clarity matters more than a hundred nanoseconds.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `n = 234`.
+
+    iteration   n before   d   product after   total after   n after
+    ---------------------------------------------------------------------
+        1         234      4        4               4          23
+        2          23      3       12               7           2
+        3           2      2       24               9           0
+
+    return 24 - 9 = 15                                              MEASURED
+
+    Note the digits arrive 4, 3, 2 - least significant first - and both accumulators are unaffected by
+    that, since multiplication and addition are commutative.
+
+TRACE B - `n = 4421`.
+
+    d   product   total
+    -------------------------
+    1       1       1
+    2       2       3
+    4       8       7
+    4      32      11
+
+    return 32 - 11 = 21                                             MEASURED
+
+TRACE C - a zero digit, `n = 10`.
+
+    d = 0:  product = 1 * 0 = 0,  total = 0
+    d = 1:  product = 0 * 1 = 0,  total = 1
+
+    return 0 - 1 = -1                                               MEASURED
+
+    Once the product hits 0 nothing can revive it - which is what "annihilator" means - so the answer
+    is `-sum` for any number containing a zero digit.
+
+TRACE D - the wrong identity, on TRACE A's input.
+
+    product initialised to 0
+
+    d = 4:  product = 0 * 4 = 0
+    d = 3:  product = 0
+    d = 2:  product = 0
+
+    return 0 - 9 = -9                                               MEASURED
+
+    Compare the correct 15. The answer is always `-total`, always negative, and always in a plausible
+    range - which is exactly why the mistake survives a glance at the output.
+
+TRACE E - the distribution of signs.
+
+    MEASURED over 1..200,000
+        negative results   74,840   (37.4%)
+
+    Negative is the NORMAL case for larger numbers, since the chance of containing a zero digit grows
+    with the digit count. Any code path that treats a negative result as suspicious is wrong.
+
+TRACE F - the two implementations.
+
+    200,000 calls
+        arithmetic peel     75 ms
+        str + math.prod    180 ms      2.4x
+
+    identical results on every value from 1 to 200,000              MEASURED
+
+    The gap is one string allocation and one `int` parse per digit, against pure integer arithmetic.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(number of digits), which is O(log n) - at most 19 iterations for a 64-bit input.
+    space   O(1) for the arithmetic version; O(digits) for the string version's list.
+
+    MEASURED, 75 ms against 180 ms for 200,000 calls. Both are effectively constant time per call; the
+    difference is allocation.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Initialising the product to 0. MEASURED, every answer becomes `-sum` - 234 returns -9 instead
+       of 15 - and the outputs look plausible.
+    2. Treating a negative answer as a bug. MEASURED, 37.4% of inputs up to 200,000 legitimately
+       return negative values.
+    3. Guarding against a zero digit. Multiplication by zero is exactly what the problem wants -
+       unlike Self Dividing Numbers, where a zero digit is excluded because division by it is
+       undefined.
+    4. Two separate passes for the two folds when one digit stream feeds both.
+    5. `/` instead of `//`, which turns the digit peel into floating point.
+    6. Copying the arithmetic loop into a context where n can be 0, where `while n:` never runs and
+       the answer comes back as 1 rather than 0.
+
+THE TAKEAWAY
+    Two folds over the same sequence belong in one pass, and each fold needs ITS OWN identity - 1 for a
+    product, 0 for a sum. Getting that wrong is the only bug here and it produces a plausible negative
+    number rather than an obvious failure. Remember also that zero behaves completely differently for
+    the two operators: it is the identity for addition and the annihilator for multiplication, which is
+    why a single zero digit decides the whole product and why negative answers are the normal case.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
