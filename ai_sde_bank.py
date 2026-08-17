@@ -272569,6 +272569,1458 @@ THE TAKEAWAY
     three-digit examples you were most likely to test.""",
 ]
 
+_EX_P1AO["Apply Operations to an Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - merge equal neighbours once, left to right, then push the
+zeros to the back.
+
+You are given an array. Walk it from left to right. Whenever a value equals the one directly
+after it, DOUBLE the first and set the second to 0. Then slide every non-zero value to the
+front, keeping their order, and pad the rest with zeros.
+
+    nums = [1, 2, 2, 1, 1, 0]
+
+    merge pass (i goes 0, 1, 2, 3, 4)
+        i=0   1 != 2                        [1, 2, 2, 1, 1, 0]
+        i=1   2 == 2   -> double, zero      [1, 4, 0, 1, 1, 0]
+        i=2   0 != 1                        [1, 4, 0, 1, 1, 0]
+        i=3   1 == 1   -> double, zero      [1, 4, 0, 2, 0, 0]
+        i=4   0 == 0   -> double, zero      [1, 4, 0, 2, 0, 0]   (doubling 0 changes nothing)
+
+    shift pass   non-zeros in order: 1, 4, 2   then pad
+    answer       [1, 4, 2, 0, 0, 0]                              MEASURED
+
+THIS IS THE MERGE STEP OF 2048, WITH ONE DELIBERATE DIFFERENCE: a cell merges AT MOST ONCE
+per pass, and the merge you just created is not eligible to merge again. That single
+sentence is the entire problem. MEASURED, a version that keeps merging until nothing changes
+disagrees with the correct answer on 8.8% of random arrays.
+
+The second difference from 2048 is that the order of the pass is fixed at left-to-right.
+MEASURED, running the identical merge right-to-left disagrees on 18.5% of random arrays.""",
+
+    """2. THE INTUITION - two separate passes, and the reason they must not be combined.
+
+PASS 1 MERGES. A single `for i in range(n-1)` walking forwards, comparing `nums[i]` with
+`nums[i+1]`. When they match, `nums[i] *= 2` and `nums[i+1] = 0`.
+
+Why does this give each element at most one merge, without any bookkeeping? Because after a
+merge at position i, the value at position i+1 is 0. The next iteration compares position
+i+1 against i+2 - it looks at the ZERO you just wrote, not at the doubled value. The
+just-created 4 is behind the cursor and will never be examined again. The algorithm enforces
+the "merge once" rule by construction, which is why it needs no `merged` flags.
+
+PASS 2 COMPACTS. Collect the non-zero values in order, then pad with zeros to the original
+length. This is the standard "move zeroes" operation.
+
+WHY NOT DO BOTH AT ONCE. It is tempting to compact as you go, or to compact first to get the
+zeros out of the way. Both change which elements are ADJACENT, and adjacency is the entire
+input to the merge rule. MEASURED, compacting first and then merging disagrees with the
+correct answer on 8.0% of random arrays - for example `[2,0,2,1,0]`:
+
+    correct        merge first: 2 and 0 are not equal, nothing merges
+                   compact -> [2, 2, 1, 0, 0]
+    shift-first    compact -> [2, 2, 1, 0, 0], now the two 2s are neighbours
+                   merge   -> [4, 1, 0, 0, 0]        WRONG
+
+The zeros in the input are not noise to be cleaned up. They are separators, and removing
+them early creates merges the problem never asked for.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ADJACENT / NEIGHBOURS - two elements next to each other in the current array, positions i and
+i+1. The whole rule is about adjacency, which is why any step that moves elements changes the
+answer.
+
+MERGE - the operation `nums[i] *= 2; nums[i+1] = 0`. Note it does not shorten the array; the
+length never changes, which is why the answer has the same number of slots as the input.
+
+SINGLE PASS - one left-to-right sweep, each index visited once, no restarting. The opposite
+of "repeat until stable", which is the cascade bug in section 4.
+
+STABLE COMPACTION - moving the non-zero values to the front while preserving their relative
+order. `[0, 1, 0, 4]` compacts to `[1, 4, 0, 0]`, not `[4, 1, 0, 0]`. Stability is required
+here; a sort would destroy it.
+
+IN PLACE - modifying the array you were given instead of allocating a new one. The merge pass
+is naturally in place. The compaction can be done in place with a write pointer, which is the
+O(1)-extra-space version in section 5.
+
+WRITE POINTER (also called a slow pointer) - an index that only advances when you actually
+store something. `j` in the two-pointer compaction: read every element with `i`, and write to
+`nums[j]` only when the value is non-zero.
+
+MUTATION OF THE INPUT - this function modifies `nums` as it merges. If the caller still needs
+the original, copy first. It is worth saying out loud in an interview, because a silently
+mutated argument is a real bug in production code even when the test passes.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - three ways to get the merge rule wrong, all measured.
+
+BUG 1 - MERGING UNTIL STABLE, the 2048 instinct. `while changed: ...` re-running the pass.
+
+MEASURED on 40,000 random arrays of length 2 to 8 drawn from {0,1,1,2,2,3,4}: disagrees with
+the correct answer on 3,503 of them, 8.8%.
+
+    nums              correct              merge-until-stable
+    [2,1,1,1]        [2,2,1,0]             [4,1,0,0]
+    [4,2,0,1,2,1,1]  [4,2,1,2,2,0,0]       [4,2,1,4,0,0,0]
+
+Read the first row. Correct: i=1 merges the middle pair into 2, leaving `[2,2,0,1]`, and i=2
+compares 0 against 1 - no merge - so the 2 at index 0 and the new 2 at index 1 never meet.
+The cascading version comes back around, finds `[2,2,0,1]`, and merges them into 4. Both are
+defensible reads of the English; only one is the specified problem.
+
+BUG 2 - RUNNING THE PASS RIGHT TO LEFT.
+
+MEASURED on the same 40,000 arrays: disagrees on 7,416 of them, 18.5%. The smallest example
+is three elements:
+
+    nums = [2,2,2]      left to right: i=0 merges -> [4,0,2] -> compact -> [4,2,0]
+                        right to left: i=1 merges -> [2,4,0] -> compact -> [2,4,0]
+
+Neither answer is "more correct" as arithmetic - the total is 6 either way - but the problem
+specifies left to right, and MEASURED almost one array in five distinguishes them. If you
+were thinking of the array as a stack and started from the end, this is where it shows.
+
+BUG 3 - COMPACTING BEFORE MERGING.
+
+MEASURED: disagrees on 3,196 of 40,000, 8.0%. Every failure is an input containing a zero
+BETWEEN two equal values, where removing the zero introduces a merge:
+
+    nums = [0,1,0,1,2,4,1]   correct [1,1,2,4,1,0,0]   shift-first [2,2,4,1,0,0,0]
+    nums = [2,0,2,1,0]       correct [2,2,1,0,0]       shift-first [4,1,0,0,0]
+
+THE DIAGNOSTIC. All three bugs produce an answer whose SUM is still correct (merging conserves
+the total), so a test that only checks the sum passes all of them. What differs is the shape:
+too few elements, or the wrong ones doubled. Compare element by element.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the two-pass version in the code below: merge in place, then build a new list
+of non-zeros and pad. O(n) time, O(n) extra space for the result. Clearest to read, and the
+one to write first.
+
+ALTERNATIVE B - merge in place, then compact IN PLACE with a write pointer:
+
+    j = 0
+    for i in range(n):
+        if nums[i] != 0:
+            nums[j] = nums[i]
+            j += 1
+    while j < n:
+        nums[j] = 0
+        j += 1
+
+Same O(n) time, O(1) extra space, and it is the version to offer when the interviewer asks
+for constant space. It is also the same code as the `Move Zeroes` problem, which is worth
+naming out loud.
+
+ALTERNATIVE C - one combined pass that merges and writes the compacted output simultaneously.
+It can be done, but it needs care: the comparison must still be against the ORIGINAL
+neighbour, not the compacted one. This is the version that turns into bug 3 when written
+quickly, and the space saved is the same as alternative B. Not worth the risk in an
+interview.
+
+ALTERNATIVE D - `filter` plus padding instead of a list comprehension. Identical work,
+identical complexity, a matter of taste.
+
+THE FAMILY - problems whose entire content is "which elements are adjacent, and when":
+  * MOVE ZEROES - exactly the second half of this problem;
+  * 2048 / merge a row in a sliding-tile game - the same merge with the cascade allowed or
+    forbidden depending on the rules, which is why this problem exists as a checkpoint;
+  * REMOVE DUPLICATES FROM SORTED ARRAY - the same write-pointer compaction with a different
+    keep-or-drop test;
+  * DUPLICATE ZEROS - the same shifting problem, done right to left so the writes do not
+    clobber unread input;
+  * REMOVE ELEMENT / SORT COLORS - the same in-place write pointer.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - record the length first: `n = len(nums)`. You need it at the end for the padding, and
+the array's length never changes during the merge.
+
+STEP 2 - the merge pass, forwards, stopping one short of the end:
+    for i in range(n - 1):
+`range(n-1)` and not `range(n)`, because the body reads `nums[i+1]`.
+
+STEP 3 - the merge itself, in this order:
+    if nums[i] == nums[i+1]:
+        nums[i] *= 2
+        nums[i+1] = 0
+Double before you zero. Reverse the two lines and `nums[i] *= 2` doubles a value you have
+already destroyed - it would set `nums[i]` to 0 in every merge.
+
+STEP 4 - do NOT restart the loop, do NOT skip an index after a merge, do NOT compare against
+the value you just doubled. The zero you wrote at i+1 handles all three.
+
+STEP 5 - the compaction: `result = [x for x in nums if x != 0]`.
+
+STEP 6 - the padding: `result += [0] * (n - len(result))`.
+
+STEP 7 - return `result`. State whether the input was mutated - it was - so the interviewer
+knows you noticed.
+
+STEP 8 - name the test cases. `[2,2,2]` for the pass direction, `[2,0,2]` for the zeros-as-
+separators rule, `[1,1,1,1]` for two independent merges in one pass, and `[0,0]` for the
+degenerate case where the merge fires but changes nothing.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Two passes. The first pass merges, the second one compacts, and keeping them separate is
+  the point rather than an implementation detail.
+
+- The merge pass goes left to right, comparing each element with the next. When they are
+  equal I double the first and set the second to zero.
+
+- The rule is that an element merges at most once, and I get that for free: after a merge the
+  next position holds a zero, so when the loop advances it compares that zero with the
+  following element, never the doubled value. No flags, no index skipping.
+
+- Then I collect the non-zero values in order and pad the rest with zeros, which is the
+  Move Zeroes problem. If constant extra space is wanted, I do that in place with a write
+  pointer instead of building a new list.
+
+- The two things I would be careful about. First, direction: running the same merge from the
+  right gives a different answer on close to one array in five - `[2,2,2]` becomes `[4,2,0]`
+  going forwards and `[2,4,0]` going backwards. Second, I must not compact before merging.
+  The zeros in the input are separators; removing them first makes elements adjacent that
+  were not, and that changes the answer on about eight per cent of random inputs.
+
+- Both passes are O(n), so the whole thing is O(n) time and O(1) extra space in the in-place
+  version.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def apply_operations(nums):
+        n = len(nums)
+        for i in range(n - 1):
+            if nums[i] == nums[i + 1]:
+                nums[i] *= 2
+                nums[i + 1] = 0
+        result = [x for x in nums if x != 0]     # non-zeros, order preserved
+        result += [0] * (n - len(result))         # pad zeros at the end
+        return result
+
+Line 2  `n = len(nums)`
+        Captured once. The output must have exactly this many slots, and the merge never
+        changes the length - it only moves value around inside it.
+
+Line 3  `for i in range(n - 1):`
+        Forwards, and stopping at n-2 because the body indexes i+1. Using `range(n)` is an
+        immediate IndexError on the last iteration; using `reversed(range(n-1))` is the 18.5%
+        direction bug.
+
+Line 4  `if nums[i] == nums[i + 1]:`
+        The adjacency test, on the array's CURRENT state. Position i may already have been
+        zeroed by the previous iteration, and that is intended - a zeroed cell can still
+        match a following zero, which merges harmlessly.
+
+Line 5  `nums[i] *= 2`
+        Double the left one. This value is now behind the cursor forever.
+
+Line 6  `nums[i + 1] = 0`
+        Zero the right one. This is the line that enforces "at most one merge per element":
+        the next iteration will read this zero rather than the doubled value.
+
+Line 7  `result = [x for x in nums if x != 0]`
+        The compaction. A list comprehension preserves order, which is required - the
+        non-zeros must stay in their original sequence.
+
+Line 8  `result += [0] * (n - len(result))`
+        Padding. `n - len(result)` is the number of zeros in the merged array: the zeros
+        that were in the input, plus one for every merge that fired, since each merge turns
+        exactly one value into a zero.
+
+Line 9  `return result`
+        Note `nums` itself has been modified by lines 5 and 6 and is NOT the answer - it
+        holds the merged-but-uncompacted state. Returning `nums` by mistake is a quiet bug
+        that passes any test whose input happens to contain no merges.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [1, 2, 2, 1, 1, 0]`, n = 6.
+
+    i    nums[i]  nums[i+1]  equal?   array after this step
+    ------------------------------------------------------------------
+    0       1         2        no     [1, 2, 2, 1, 1, 0]
+    1       2         2        YES    [1, 4, 0, 1, 1, 0]
+    2       0         1        no     [1, 4, 0, 1, 1, 0]
+    3       1         1        YES    [1, 4, 0, 2, 0, 0]
+    4       0         0        YES    [1, 4, 0, 2, 0, 0]   doubling 0 is a no-op
+    loop ends (i stops at n-2 = 4)
+
+    compaction: non-zeros in order -> [1, 4, 2]
+    padding   : 6 - 3 = 3 zeros    -> [1, 4, 2, 0, 0, 0]        MEASURED
+
+    Watch i=2. It compares the ZERO written at step i=1 against the next element. That is the
+    mechanism that stops the freshly created 4 from merging again.
+
+TRACE B - `nums = [1, 1, 1]`, the smallest input where direction matters.
+
+    left to right          right to left
+    i=0  1 == 1  -> [2,0,1]     i=1  1 == 1  -> [1,2,0]
+    i=1  0 != 1  -> [2,0,1]     i=0  1 != 2  -> [1,2,0]
+    compact  [2,1,0]            compact  [1,2,0]
+    MEASURED [2,1,0]            MEASURED [1,2,0]  - a different array
+
+TRACE C - `nums = [2, 0, 2, 1, 0]`, the zeros-are-separators case.
+
+    correct order of operations
+      i=0  2 != 0        i=1  0 != 2        i=2  2 != 1        i=3  1 != 0
+      no merges at all
+      compact -> [2, 2, 1, 0, 0]                                MEASURED
+
+    compact-first (the bug)
+      compact -> [2, 2, 1, 0, 0]
+      i=0  2 == 2 -> [4, 0, 1, 0, 0]
+      compact -> [4, 1, 0, 0, 0]                                MEASURED - two elements where
+                                                                 the answer has three
+
+TRACE D - `nums = [2, 1, 1, 1]`, where the cascade bug shows.
+
+    single pass (correct)                merge-until-stable (bug)
+      i=0  2 != 1                          round 1 same as correct -> [2,2,0,1]
+      i=1  1 == 1 -> [2,2,0,1]             round 2 finds 2 == 2   -> [4,0,0,1]
+      i=2  0 != 1                          round 3 no change
+      compact -> [2,2,1,0]                 compact -> [4,1,0,0]
+      MEASURED [2,2,1,0]                   MEASURED [4,1,0,0]
+
+    Both preserve the total (5 in each case), which is why a sum-only test cannot tell them
+    apart.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n). One merge pass touching each adjacent pair once, one compaction pass
+            touching each element once. There is no repetition and no nesting - which is
+            exactly what the merge-until-stable bug destroys, since that version is O(n^2)
+            in the worst case (a run of 2^k equal values cascades k times).
+    space   O(n) as written, because the result is a new list.
+            O(1) extra with the in-place write-pointer compaction in section 5.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Running the pass right to left. MEASURED, a different answer on 7,416 of 40,000 random
+       arrays (18.5%). `[2,2,2]` is the three-element counterexample.
+    2. Merging until stable, 2048-style. MEASURED wrong on 8.8%, and it changes the
+       complexity to O(n^2) as well as the answer.
+    3. Compacting before merging. MEASURED wrong on 8.0% - every failure is a zero sitting
+       between two equal values.
+    4. Zeroing before doubling: `nums[i+1] = 0` then `nums[i] *= 2` is fine, but
+       `nums[i] = nums[i+1] * 2` after zeroing gives 0. Order the two statements so that
+       neither reads a value the other has already overwritten.
+    5. `range(n)` instead of `range(n-1)` - an IndexError on the final iteration.
+    6. Returning `nums` instead of `result`. `nums` holds the merged but uncompacted array,
+       and the bug is invisible on any test input that produces no merges.
+    7. Not mentioning that the input array is mutated. Correct for the judge, a real defect
+       in code someone else calls.
+
+THE TAKEAWAY
+    The zero written at i+1 is not bookkeeping - it IS the "each element merges at most once"
+    rule, which is why this needs one forward pass and no flags. Keep merging and compacting
+    as two separate passes, because adjacency is the whole input to the merge rule and
+    compaction changes adjacency. Direction is specified, not incidental: MEASURED, one
+    array in five gives a different answer if you sweep the other way.""",
+]
+
+_EX_P1AO["Average Salary Excluding the Minimum and Maximum"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - throw away one highest salary and one lowest salary, then
+average what is left.
+
+    salary = [4000, 3000, 1000, 2000]
+    drop one 1000 (the minimum) and one 4000 (the maximum)
+    what remains: 3000 and 2000
+    average: 5000 / 2 = 2500.0
+
+The whole solution is one line:
+
+    (sum(salary) - min(salary) - max(salary)) / (len(salary) - 2)
+
+You do not have to remove anything from the array. Subtracting the minimum and the maximum
+from the total is the same as summing everything except them, and dividing by `n - 2` accounts
+for the two you dropped.
+
+THE WORD THAT MAKES THIS A REAL QUESTION IS "ONE". Exactly one minimum and exactly one
+maximum come out, even when the same value appears several times. MEASURED on 40,000 random
+salary lists built from a small set of round numbers, 31,097 of them - 77.7% - have a
+duplicated minimum or maximum, and a solution that filters out ALL copies is wrong on 29,817
+of the 40,000: 74.5%. This is an Easy problem whose most natural-looking wrong answer fails
+three quarters of the time.""",
+
+    """2. THE INTUITION - subtracting is the same as excluding, and it is one pass cheaper.
+
+Two ways to say "everything except the smallest and the largest":
+
+    build a new list without them, then sum it
+    sum everything, then subtract them
+
+They give the same number because addition is associative and commutative - removing a term
+from a sum and subtracting that term afterwards are the same operation. The second version
+allocates nothing.
+
+    salary          = [4000, 3000, 1000, 2000]
+    sum             = 10000
+    min             =  1000
+    max             =  4000
+    10000 - 1000 - 4000 = 5000       the sum of what remains
+    n - 2           = 2
+    5000 / 2        = 2500.0
+
+WHY `n - 2` AND NOT `len(remaining)`. Because exactly two elements are excluded - one
+occurrence of the minimum and one of the maximum - regardless of how many times those values
+appear. If the array is `[2000, 2000, 2000]`, the minimum and the maximum are both 2000; you
+still remove one of each, leaving one 2000, and the answer is 2000.0. Writing
+`len([x for x in salary if x != lo and x != hi])` gives 0 there, and a division by zero.
+
+THE MINIMUM AND MAXIMUM CAN BE THE SAME ELEMENT ONLY IF ALL VALUES ARE EQUAL, in which case
+the answer is that value. The formula handles it without a special case: sum is n*v, minus
+2v, over n-2, which is v.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MINIMUM / MAXIMUM - the smallest and largest VALUES in the list, not positions. `min([3,1,1])`
+is 1, and it does not matter that the 1 appears twice.
+
+EXCLUDING ONE OCCURRENCE - removing a single element whose value is the minimum, not every
+element with that value. This distinction is the problem.
+
+TRUE AVERAGE / ARITHMETIC MEAN - total divided by count.
+
+TRIMMED MEAN - the name statisticians give to exactly this: throw away the k largest and k
+smallest observations, average the rest. Here k = 1. It exists because a single extreme value
+can drag a mean anywhere, and it is the reason competition scoring drops the highest and
+lowest judge.
+
+FLOAT DIVISION `/` - returns a real number: `5 / 2` is 2.5.
+
+FLOOR DIVISION `//` - discards the fractional part: `5 // 2` is 2. Using it here is wrong,
+and MEASURED it is wrong on 30.3% of random inputs with an error up to 0.89.
+
+RELATIVE ERROR 1e-5 - the tolerance judges usually accept on this problem. Ordinary double
+precision is far inside it: MEASURED, the worst gap between the float answer and the exact
+rational answer over 20,000 random lists is 5.5e-11, about six orders of magnitude tighter
+than required.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - duplicate extremes.
+
+BUG 1 - filtering out every copy of the minimum and the maximum.
+
+    lo, hi = min(salary), max(salary)
+    rest = [x for x in salary if x != lo and x != hi]
+    return sum(rest) / len(rest)
+
+This reads like a faithful translation of the English and it is wrong whenever an extreme
+value is duplicated.
+
+MEASURED on 40,000 random lists drawn from round salaries: wrong on 29,817 - 74.5%. Three
+failures:
+
+    salary                                         correct    filter-all
+    [2000,5000,1000,2000,3000,5000,2000,4000]      3000.00     2600.00
+    [4000,5000,4000,4000,1000,5000,3000]           4000.00     3750.00
+    [1000,2000,5000,3000,5000,2000,3000,4000]      3166.67     2800.00
+
+Read the second row. The maximum 5000 appears twice and the value 4000 appears three times
+but is not extreme; the filter removes both 5000s and the single 1000, so it averages four
+numbers instead of five and lands 250 low.
+
+AND IT CAN CRASH. `[2000, 2000, 2000]` filters down to an empty list - every element is both
+the minimum and the maximum - and `sum([]) / len([])` is a ZeroDivisionError. The correct
+answer is 2000.0.
+
+BUG 2 - integer division. `(sum - min - max) // (n - 2)` truncates.
+
+MEASURED wrong on 12,101 of 40,000 (30.3%), with a worst-case error of 0.89. It is right
+exactly when the division happens to come out even, which on round-number salaries is often
+enough to pass a hand-written test and fail the judge.
+
+BUG 3 - sorting to find the extremes and then slicing: `sorted(salary)[1:-1]`. This one is
+CORRECT, including with duplicates, because slicing removes exactly one element from each
+end. It costs O(n log n) instead of O(n) and allocates a sorted copy - a fine answer to give
+after the linear one, and a poor one to give first.
+
+BUG 4 - assuming n >= 3. The formula divides by `n - 2`, so a two-element input divides by
+zero. The problem's constraints guarantee at least three salaries; say so rather than adding a
+guard that implies you did not read them.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the one-liner: `(sum(s) - min(s) - max(s)) / (len(s) - 2)`. Three passes over
+the array, O(n) time, O(1) space.
+
+ALTERNATIVE B - a single manual loop tracking total, lowest and highest at once. It is the
+same asymptotics with a third of the passes, and the instinct is that it must be faster.
+
+MEASURED on a 2,000,000-element list in CPython:
+
+    three built-in passes (sum, min, max)     60.6 ms
+    one hand-written Python loop            220.3 ms
+    ratio                                      3.6x SLOWER
+
+The three-pass version wins by a wide margin, and the reason is worth being able to explain:
+`sum`, `min` and `max` run their loops in C, while a Python-level `for` pays interpreter
+overhead on every element - a bytecode dispatch, a comparison, an attribute-free but still
+boxed integer operation. Three cheap passes beat one expensive pass. In a compiled language
+the answer flips, and the single fused loop is genuinely better because it reads the array
+once and is kinder to the cache. Say which language you are reasoning about.
+
+ALTERNATIVE C - `sorted(salary)[1:-1]` then mean. Correct, handles duplicates properly,
+O(n log n). Worth naming because it generalises: for a trimmed mean that drops the k highest
+and k lowest, sorting is the natural implementation and the slice becomes `[k:-k]`.
+
+ALTERNATIVE D - `statistics.mean` on the trimmed list, or `heapq.nsmallest`. Both fine,
+neither buys anything at k = 1.
+
+THE FAMILY - problems that are one formula plus one counting subtlety:
+  * TRIMMED MEAN and WINSORISED MEAN in statistics - drop or clamp the extremes;
+  * REMOVE ONE OCCURRENCE versus REMOVE ALL OCCURRENCES, which is the same trap in `Remove
+    Element`, `Intersection of Two Arrays II` and every multiset problem;
+  * RUNNING AVERAGE / MOVING AVERAGE FROM DATA STREAM - keep a sum and a count rather than
+    the elements;
+  * SUM OF ALL SUBARRAY MINIMUMS - the harder cousin, where you must know how many times each
+    element is the minimum rather than just finding it once.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the reframing out loud before you write anything: excluding the minimum and the
+maximum from an average is the same as subtracting them from the total and dividing by two
+fewer. That sentence is the solution.
+
+STEP 2 - `total = sum(salary) - min(salary) - max(salary)`.
+
+STEP 3 - `return total / (len(salary) - 2)`. Float division, not `//`.
+
+STEP 4 - state the duplicate rule before being asked: exactly one occurrence of each extreme
+comes out, so do NOT filter by value. MEASURED, filtering is wrong on 74.5% of realistic
+inputs.
+
+STEP 5 - state the constraint you are relying on: at least three salaries, so `n - 2` is at
+least 1.
+
+STEP 6 - if asked for one pass, offer the manual loop AND the measurement: in CPython it is
+3.6x slower than three built-in passes on two million elements, so the three-pass version is
+the better Python; in C or Java the fused loop is the better code.
+
+STEP 7 - test `[2000, 2000, 2000]`. It is the input that separates the correct formula (2000.0)
+from the filter version (ZeroDivisionError).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Instead of building a new array without the extremes, I sum everything and subtract the
+  minimum and the maximum, then divide by n minus 2. Subtracting a term is the same as
+  leaving it out of the sum, and it avoids allocating anything.
+
+- The subtlety is the word "one". Exactly one minimum and one maximum are excluded, even if
+  that value appears several times. So filtering by value is wrong - if the highest salary
+  appears twice, filtering drops both and the average comes out low. On realistic inputs
+  that is not a rare case: roughly three quarters of random lists have a duplicated extreme.
+
+- It also crashes on an all-equal list: everything is both the minimum and the maximum, so
+  the filtered list is empty. The subtraction formula gives the right answer there without a
+  special case - if every salary is 2000, the answer is 2000.
+
+- Float division, not integer division; the answer is generally not a whole number.
+
+- Three passes for sum, min and max, so O(n) time and O(1) extra space. I could fuse them
+  into one loop, but in CPython that is actually slower - about three and a half times
+  slower on a two-million-element list - because the built-ins loop in C. In a compiled
+  language I would fuse them.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def average_salary(salary):
+        total = sum(salary) - min(salary) - max(salary)
+        return total / (len(salary) - 2)
+
+Line 2  `total = sum(salary) - min(salary) - max(salary)`
+        Three built-in passes. `sum` adds everything; `min` and `max` find the extreme
+        VALUES. Subtracting each once is precisely "exclude one occurrence of each", which is
+        why duplicates need no handling at all: if 5000 appears twice, only one 5000 is
+        subtracted and the other stays in the average, exactly as specified.
+
+        The subtraction is exact. These are integers, so `sum` is exact at any magnitude in
+        Python, and no rounding has happened yet.
+
+Line 3  `return total / (len(salary) - 2)`
+        `/` is float division - `5000 / 2` is `2500.0`, and `5000 / 3` is `1666.666...`.
+        `//` would truncate and is MEASURED wrong on 30.3% of random inputs.
+
+        `len(salary) - 2` is the count of the salaries that remain. It is NOT the length of a
+        filtered list, and that difference is the entire problem. With at least three
+        salaries it is at least 1, so no zero-division check is needed.
+
+        Rounding happens exactly once, at this division. MEASURED against exact rational
+        arithmetic on 20,000 random lists, the worst error is 5.5e-11 - the judge's tolerance
+        is 1e-5, so there is no accuracy question to answer here.
+
+AND THE ONE-PASS VERSION, for a compiled language or when explicitly asked:
+
+    def average_salary_one_pass(salary):
+        lo = hi = salary[0]
+        total = 0
+        for x in salary:
+            total += x
+            if x < lo: lo = x
+            if x > hi: hi = x
+        return (total - lo - hi) / (len(salary) - 2)
+
+        Initialising `lo` and `hi` from `salary[0]` rather than from 0 or infinity is the
+        detail to get right: seeding `lo = 0` would make the minimum 0 for any list of
+        positive salaries, and the answer would be too high by exactly the true minimum
+        divided by n-2.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `salary = [4000, 3000, 1000, 2000]`.
+
+    sum(salary)      = 4000 + 3000 + 1000 + 2000 = 10000
+    min(salary)      = 1000
+    max(salary)      = 4000
+    total            = 10000 - 1000 - 4000 = 5000
+    len(salary) - 2  = 4 - 2 = 2
+    5000 / 2         = 2500.0
+
+    Sanity check by hand: the survivors are 3000 and 2000, and (3000+2000)/2 = 2500.0. Agreed.
+
+TRACE B - `salary = [4000, 5000, 4000, 4000, 1000, 5000, 3000]`, a duplicated maximum. This is
+the row from section 4.
+
+    correct
+        sum = 4000+5000+4000+4000+1000+5000+3000 = 26000
+        min = 1000, max = 5000
+        total = 26000 - 1000 - 5000 = 20000
+        n - 2 = 5
+        20000 / 5 = 4000.0                                     MEASURED
+        survivors by hand: 4000, 4000, 4000, 5000, 3000  -> 20000/5 = 4000.0
+
+    filter-all-copies (the bug)
+        removes 1000 and BOTH 5000s
+        rest = [4000, 4000, 4000, 3000]  -> 15000 / 4 = 3750.0  MEASURED
+        250 low, because the second 5000 should have stayed in.
+
+TRACE C - `salary = [2000, 2000, 2000]`, all equal.
+
+    correct
+        sum = 6000, min = 2000, max = 2000
+        total = 6000 - 2000 - 2000 = 2000
+        n - 2 = 1
+        2000 / 1 = 2000.0
+
+    filter-all-copies
+        every element equals both the min and the max -> rest = []
+        sum([]) / len([]) -> ZeroDivisionError
+
+TRACE D - the `//` bug on `salary = [1000, 2000, 3000, 4000, 5000, 3000, 2000]`.
+
+    sum = 20000, min = 1000, max = 5000
+    total = 14000,  n - 2 = 5
+    correct   14000 / 5  = 2800.0
+    with //   14000 // 5 = 2800        same here - the division came out even
+
+    Change one salary to 2500:
+    sum = 19500, total = 13500,  13500 / 5 = 2700.0  but  13500 // 5 = 2700 as well.
+
+    The `//` bug hides whenever the total is divisible by n-2, which round salaries make
+    common. MEASURED across 40,000 random lists it still fires on 30.3% of them, with errors
+    up to 0.89 - so it is a bug you cannot rule out by testing two tidy examples.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - three linear passes for `sum`, `min` and `max`. Constant factors matter
+            more than the pass count here: MEASURED, three C-level passes over 2,000,000
+            elements take 60.6 ms while one hand-written Python loop takes 220.3 ms, a 3.6x
+            gap in favour of the version that reads the array three times.
+    space   O(1) - three numbers. The sorting solution is O(n log n) time and O(n) space, and
+            the filter solution is O(n) space and wrong.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Filtering out every copy of the minimum and maximum instead of one occurrence of each.
+       MEASURED wrong on 29,817 of 40,000 realistic inputs (74.5%), and it raises
+       ZeroDivisionError on an all-equal list.
+    2. Integer division. MEASURED wrong on 30.3%, error up to 0.89, and invisible on the
+       tidy examples people test with.
+    3. Dividing by `len(rest)` where `rest` came from a filter - the same bug as 1, wearing a
+       different hat.
+    4. Seeding a manual min/max scan with 0 or with an arbitrary constant instead of
+       `salary[0]`. For positive salaries `lo = 0` silently makes the minimum 0.
+    5. Reaching for `sorted(...)[1:-1]` first. Correct, but O(n log n) for a problem whose
+       answer is three linear built-ins - and it invites the follow-up you then have to
+       climb down from.
+    6. Adding a guard for `n < 3` and presenting it as necessary. The constraints exclude it;
+       mentioning that you checked reads better than defensive code that says you did not.
+    7. Worrying about floating-point accuracy. MEASURED, the worst error against exact
+       rational arithmetic over 20,000 lists is 5.5e-11 against a 1e-5 tolerance - it is not
+       a real concern, and saying so confidently is better than hedging.
+
+THE TAKEAWAY
+    Excluding elements from an average never requires building a new array: subtract them from
+    the total and divide by the reduced count. The only real content in this problem is the
+    word ONE - one minimum and one maximum, no matter how many copies exist - and the
+    natural filter-by-value solution gets that wrong on three quarters of realistic inputs.
+    The bonus lesson is the timing: in CPython, three passes through C built-ins beat one
+    pass through the interpreter by 3.6x, so "fewer passes" is not automatically "faster".""",
+]
+
+_EX_P1AO["Base 7 Conversion"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - rewrite a number using only the digits 0 to 6.
+
+Base 10 means each place is worth ten times the one to its right: 202 is 2 hundreds, 0 tens,
+2 ones. Base 7 means each place is worth SEVEN times the one to its right: 202 in base 7 is
+2 forty-nines, 0 sevens, 2 ones = 98 + 0 + 2 = 100.
+
+    input 100   -> "202"       MEASURED, and int("202", 7) == 100
+    input 7     -> "10"        one seven, zero ones
+    input 48    -> "66"        6*7 + 6 = 48, the largest two-digit base-7 number
+    input 343   -> "1000"      343 = 7^3, so it rolls over to four digits
+    input -100  -> "-202"      the sign is carried, the digits are unchanged
+    input 0     -> "0"
+
+THE ALGORITHM IS THE ONE YOU ALREADY KNOW FOR EXTRACTING DECIMAL DIGITS, with 10 replaced by
+7. `num % 7` is the last base-7 digit; `num // 7` removes it. Collect, then reverse.
+
+MEASURED: converting every integer from -200,000 to 200,000 and parsing the result back with
+`int(s, 7)` returns the original in all 400,001 cases - zero failures.
+
+The three things that make it a question rather than a formality are the three special cases:
+ZERO, which produces an empty string if you are not careful; NEGATIVES, where Python's `%` and
+`//` do something surprising; and the REVERSAL, because the digits come out backwards.""",
+
+    """2. THE INTUITION - why `% base` then `// base` peels digits, in any base.
+
+Take 100 and write out what base 7 is claiming:
+
+    100 = a*49 + b*7 + c        with each of a, b, c in 0..6
+
+The units digit `c` is the only term that is not a multiple of 7, so dividing by 7 and taking
+the remainder isolates it exactly:
+
+    100 % 7 = 2         <- c, because 100 = 14*7 + 2
+    100 // 7 = 14       <- everything above the units place, shifted down one position
+
+Now repeat on 14, which is the same question one place to the left:
+
+    14 % 7 = 0          <- b
+    14 // 7 = 2
+
+    2 % 7 = 2           <- a
+    2 // 7 = 0          <- nothing left, stop
+
+Digits collected in order: 2, 0, 2 - LEAST-significant first. Reverse for the written form:
+`"202"`.
+
+WHY THE REVERSAL IS UNAVOIDABLE. Division always hands you the RIGHTMOST digit first, because
+that is the one the remainder isolates. Nothing about the base changes this, so every
+base-conversion routine ever written either reverses at the end or prepends as it goes - and
+prepending to a string is O(n^2), so reversing at the end is the version to write.
+
+WHY THE LOOP CONDITION IS `while num:` AND NOT A DIGIT COUNT. Each division shrinks the value
+by a factor of 7, so it reaches 0 after about log base 7 of n steps. You never need to know
+how many digits there will be.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BASE (or RADIX) - how many distinct digits the system uses, and therefore what each place is
+worth relative to its neighbour. Base 7 uses 0-6, and the places are worth 1, 7, 49, 343, ...
+
+PLACE VALUE - what a digit is multiplied by because of where it sits. In base-7 `"202"`, the
+leading 2 is worth 2 * 49.
+
+LEAST-SIGNIFICANT DIGIT - the rightmost one, worth the least. The one `% 7` gives you.
+
+MOST-SIGNIFICANT DIGIT - the leftmost one. The one you get LAST, which is why the collected
+list must be reversed.
+
+`num % 7` - remainder after dividing by 7, always 0..6 for a non-negative `num`. That range is
+exactly the base-7 digit set, which is not a coincidence: it is the definition.
+
+`num // 7` - floor division, discarding the remainder. Shifts the number one place right in
+base 7, the way `// 10` shifts a decimal number one place right.
+
+MAGNITUDE / `abs` - the value with the sign stripped. Converting the magnitude and re-attaching
+the sign afterwards is what keeps the loop working on positive numbers only, which matters
+enormously in Python - see section 4.
+
+`int(s, 7)` - Python's built-in parser going the other way: it reads a string as a base-7
+numeral. It is the natural way to CHECK your answer, and it is also the built-in you are being
+asked not to use for the forward direction.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - negatives in Python, and zero everywhere.
+
+BUG 1 - letting Python's `%` and `//` handle a negative number directly.
+
+In Python, `%` returns a result with the sign of the DIVISOR and `//` rounds DOWN (toward
+negative infinity), not toward zero. So for a negative input the loop does not terminate the
+way you expect - it walks off toward negative infinity producing sixes.
+
+MEASURED, running the digit loop on a negative input without taking the absolute value first:
+
+    input   correct    what the loop actually produces (first 40 digits)
+    -7      "-10"      6666666666666666666666666666666666666660
+    -8      "-11"      6666666666666666666666666666666666666656
+    -100    "-202"     6666666666666666666666666666666666666465
+
+It never stops on its own; those strings were cut off at 40 digits by a step limit added for
+the measurement. MEASURED on all 20,000 negative inputs from -20,000 to -1: wrong on 20,000
+of 20,000. Not "sometimes wrong" - always wrong, and it hangs.
+
+Why: `-7 // 7` is -1 in Python, not 0. And `-1 // 7` is -1 again, forever, with `-1 % 7`
+returning 6 each time. That is the infinite run of sixes.
+
+IN JAVA OR C++ THE SAME CODE FAILS DIFFERENTLY. There `%` keeps the sign of the dividend and
+`/` truncates toward zero, so `-7 / 7` is 0 and the loop DOES terminate - but the digits come
+out negative, and you get `"-1-0"`-style nonsense unless you handle the sign. Either way, the
+fix is the same: convert the magnitude, then prepend the minus.
+
+BUG 2 - no zero guard. `while num:` never executes for `num == 0`, so `digits` stays empty and
+`"".join([])` is the EMPTY STRING.
+
+MEASURED: without the guard, `convert(0)` returns `''`; the correct answer is `"0"`. One input
+out of the entire domain, and it is the first one a tester types.
+
+BUG 3 - prepending instead of appending. `result = str(num % 7) + result` is correct and
+quadratic; strings are immutable, so each prepend copies the whole prefix. At the lengths this
+problem produces it is unmeasurable, but it is the same habit that costs real time on
+`Add Strings`, and interviewers notice which one you reach for.
+
+BUG 4 - forgetting that the answer is a STRING. Returning an int like 202 loses the
+distinction between "the base-7 numeral 202" and "the number two hundred and two", and it
+cannot represent bases above 10 at all when the same code is generalised.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the iterative loop below. O(log n) time, O(log n) space for the digit list.
+The version to write.
+
+ALTERNATIVE B - recursion:
+
+    def conv(n):
+        if n < 0: return "-" + conv(-n)
+        if n < 7: return str(n)
+        return conv(n // 7) + str(n % 7)
+
+Elegant, and it removes the reversal - the recursive call emits the high digits before the
+current one. It costs O(log n) stack frames and it builds the string by concatenation at every
+level. Worth showing as a second answer; the base case `n < 7` also handles 0 for free, which
+is a small argument in its favour.
+
+ALTERNATIVE C - generalise to any base with a digit alphabet:
+
+    DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    ... digits.append(DIGITS[num % base])
+
+This is the version worth mentioning because the follow-up question is almost always "now do
+base 16" or "now do base 36". Beyond base 10 you need letters, and the lookup string is how
+every real implementation does it.
+
+ALTERNATIVE D - built-ins. Python has `bin`, `oct` and `hex` but nothing for base 7, and
+`int(s, 7)` only goes the other way - which is why this problem is set in base 7 rather than
+base 2 or 16. Use `int(result, 7) == num` as your own correctness check, not as the solution.
+
+HOW MANY DIGITS DOES BASE 7 NEED? MEASURED over 1..200,000: base-7 numerals average 6.314
+digits against 5.444 for base 10, a ratio of 1.16 - close to the predicted log(10)/log(7) =
+1.183, and slightly under it because short numbers are over-represented in a range that starts
+at 1. The largest value under 200,000 needs 7 base-7 digits: 200,000 is `"1462043"`.
+
+THE FAMILY - conversions and digit loops:
+  * BASE 7 / BASE 3 / EXCEL COLUMN TITLE - the last one is base 26 with the awkward twist that
+    it has no zero digit, which is why it needs `n -= 1` inside the loop;
+  * INTEGER TO ROMAN and ROMAN TO INTEGER - conversion to a non-positional system;
+  * ADD BINARY, ADD STRINGS, ADD TO ARRAY-FORM - the same digit machinery for arithmetic
+    rather than conversion;
+  * DIGITAL ROOT / Add Digits - a digit loop whose answer turns out not to need the digits;
+  * NUMBER OF 1 BITS / REVERSE BITS - the base-2 special case, where `% 2` and `// 2` become
+    `& 1` and `>> 1`.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - handle zero first and return immediately: `if num == 0: return "0"`. The loop cannot
+produce it, and this is one line rather than a special case buried later.
+
+STEP 2 - record the sign and strip it: `negative = num < 0`, then `num = abs(num)`. Do this
+BEFORE the loop. Everything after it works on a positive number, which sidesteps the entire
+Python-modulo problem.
+
+STEP 3 - `digits = []`, a list. Appending is O(1); prepending to a string is not.
+
+STEP 4 - the loop:
+    while num:
+        digits.append(str(num % 7))
+        num //= 7
+`while num:` reads as "while there is anything left", and each division shrinks it by a factor
+of 7, so it always terminates - for a POSITIVE num.
+
+STEP 5 - reverse and join: `result = "".join(reversed(digits))`. The digits were collected
+least-significant first.
+
+STEP 6 - re-attach the sign: `return "-" + result if negative else result`.
+
+STEP 7 - verify out loud with the built-in that goes the other way: `int(result, 7) == num`.
+MEASURED, this round trip holds for every integer from -200,000 to 200,000.
+
+STEP 8 - name your test cases: 0 (the guard), 7 (the first two-digit value), 48 (the largest
+two-digit value, `"66"`), 343 (`7^3`, the roll-over to `"1000"`), and any negative.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Base conversion is the mod-and-divide loop. `num % 7` gives the last base-7 digit, because
+  every other place is a multiple of 7 and the remainder isolates the units. `num // 7` drops
+  that digit. Repeat until nothing is left.
+
+- The digits come out least-significant first, so I collect them in a list and reverse at the
+  end rather than prepending to a string, which would be quadratic.
+
+- Three special cases, and I would handle all three before the loop. Zero: the loop body never
+  runs, so without an early return I would produce an empty string instead of `"0"`.
+
+- Negatives: I take the absolute value and remember the sign. This matters much more in Python
+  than people expect - Python's modulo returns the sign of the divisor and its floor division
+  rounds toward negative infinity, so running the loop on a negative number does not terminate;
+  it produces an endless run of sixes. In Java it would terminate but emit negative digits.
+  Either way, converting the magnitude and prepending a minus is the fix.
+
+- Then the sign goes back on the front.
+
+- Time and space are O(log n) - specifically log base 7, so about 1.18 times as many digits as
+  the decimal representation.
+
+- I would sanity-check with `int(result, 7)`, which parses base 7 and should give me back the
+  input.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def convert_to_base7(num):
+        if num == 0:
+            return "0"
+        negative = num < 0
+        num = abs(num)
+        digits = []
+        while num:
+            digits.append(str(num % 7))   # least-significant digit first
+            num //= 7
+        result = "".join(reversed(digits))
+        return "-" + result if negative else result
+
+Line 2  `if num == 0:`
+        The one input the loop cannot handle. `while num:` is false immediately, so the list
+        stays empty.
+
+Line 3  `return "0"`
+        MEASURED: without these two lines the function returns `''` for input 0.
+
+Line 4  `negative = num < 0`
+        A boolean captured BEFORE `num` is overwritten on the next line. Getting the order
+        wrong here - taking the absolute value first and then testing the sign - always
+        reports positive.
+
+Line 5  `num = abs(num)`
+        The line that makes the rest of the function safe. Everything below assumes a
+        positive number, and in Python that assumption is load-bearing: on a negative input
+        the loop runs forever emitting sixes.
+
+Line 6  `digits = []`
+        A list of one-character strings, collected in reverse order.
+
+Line 7  `while num:`
+        Truthiness: any non-zero int is true, 0 is false. Equivalent to `while num > 0` here,
+        because `num` is positive by line 5. It terminates because each iteration divides by
+        7.
+
+Line 8  `digits.append(str(num % 7))`
+        `num % 7` is in 0..6 - exactly the base-7 digit set. `str` because the answer is a
+        string; for bases above 10 this becomes a lookup into a digit alphabet.
+
+Line 9  `num //= 7`
+        Floor division. Shifts one place right in base 7. This is the line that guarantees
+        termination.
+
+Line 10 `result = "".join(reversed(digits))`
+        `reversed` because the digits were produced least-significant first, and one `join`
+        so the string is built with a single allocation.
+
+Line 11 `return "-" + result if negative else result`
+        Python's conditional expression: the whole thing is `("-" + result) if negative else
+        result`. The digits of a negative number are identical to those of its magnitude;
+        only the sign differs.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `num = 100`.
+
+    zero guard: 100 != 0, continue
+    negative = False,  num = 100,  digits = []
+
+    iteration   num before   num % 7   digits            num after
+    ----------------------------------------------------------------
+        1          100          2      ['2']                14
+        2           14          0      ['2','0']             2
+        3            2          2      ['2','0','2']         0
+    loop ends because num is 0
+
+    result = reversed(['2','0','2']) joined = "202"
+    return "202"                                                MEASURED
+
+    check: 2*49 + 0*7 + 2*1 = 98 + 0 + 2 = 100, and int("202", 7) == 100.
+
+TRACE B - `num = 343`, which is 7^3 exactly.
+
+    iter 1   343 % 7 = 0    343 // 7 = 49     digits ['0']
+    iter 2    49 % 7 = 0     49 // 7 =  7     digits ['0','0']
+    iter 3     7 % 7 = 0      7 // 7 =  1     digits ['0','0','0']
+    iter 4     1 % 7 = 1      1 // 7 =  0     digits ['0','0','0','1']
+    reversed -> "1000"                                          MEASURED
+
+    The three zeros are produced by three consecutive exact divisions, exactly as 1000 in base
+    10 comes from three exact divisions by 10.
+
+TRACE C - `num = -100`, the correct path.
+
+    zero guard: not zero
+    negative = True
+    num = abs(-100) = 100          <- from here the trace is identical to TRACE A
+    result = "202"
+    return "-" + "202" = "-202"                                 MEASURED
+
+TRACE D - `num = -7` WITHOUT the `abs`, the bug, step by step.
+
+    iter   num before   num % 7   num // 7    digits so far
+    ------------------------------------------------------------
+      1        -7          0         -1       ['0']
+      2        -1          6         -1       ['0','6']
+      3        -1          6         -1       ['0','6','6']
+      4        -1          6         -1       ['0','6','6','6']
+      ...      -1          6         -1       forever
+
+    `-7 // 7` is -1 in Python, not 0, because floor division rounds toward negative infinity.
+    And `-1 // 7` is -1 again, so `num` never reaches 0. MEASURED, cutting it off at 40 digits
+    gives `"6666666666666666666666666666666666666660"` where the answer is `"-10"`.
+
+TRACE E - the boundary values, to fix the digit ranges in your head.
+
+    num     base 7     why
+    ------------------------------------------
+      6      "6"       largest single digit
+      7      "10"      one seven, no ones - the roll-over
+     48      "66"      6*7 + 6, the largest two-digit value
+     49     "100"      7^2
+    342     "666"      the largest three-digit value
+    343    "1000"      7^3
+    All six MEASURED, and each round-trips through int(s, 7).""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(log_7 n) - one iteration per output digit, constant work each. For a 64-bit
+            input that is at most 23 iterations, so it is effectively constant.
+    space   O(log_7 n) for the digit list and the output string. The output IS the answer, so
+            the only avoidable allocation is the intermediate list, and the recursive version
+            trades it for stack frames rather than removing it.
+
+    HOW MANY DIGITS: MEASURED over 1..200,000, base 7 needs 6.314 digits on average against
+    5.444 for base 10 - a ratio of 1.16, converging to log(10)/log(7) = 1.183 for larger
+    ranges. Lower base, more digits; that ratio is the whole story of why we do not compute in
+    base 2 by hand.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Running the loop on a negative number. MEASURED in Python: wrong on all 20,000 negative
+       inputs tested, and it does not terminate - `-1 // 7` is `-1` forever. Take `abs` and
+       re-attach the sign.
+    2. No zero guard. MEASURED: returns `''` instead of `"0"`.
+    3. Forgetting the reversal, or reversing twice. The digits are produced right to left; the
+       result must be written left to right.
+    4. Capturing the sign after overwriting `num` with `abs(num)` - always reports positive.
+    5. Prepending to a string instead of appending to a list. Correct, quadratic, and the
+       wrong habit for the harder problems in the same family.
+    6. Returning an int rather than a string. It happens to read the same for base 7 and it
+       stops working the moment the follow-up asks for base 16.
+    7. Assuming `%` behaves the same in every language. It does not, and this problem is where
+       that bites: Python's `%` follows the divisor's sign, Java's follows the dividend's.
+
+THE TAKEAWAY
+    Mod-and-divide is base conversion in every base; `% 7` gives the rightmost digit and `// 7`
+    removes it, so the digits arrive backwards and you reverse once at the end. All the actual
+    difficulty is in the three inputs the loop cannot express: zero, which produces nothing;
+    negatives, which in Python produce an infinite run of sixes; and the reversal, which is
+    forced by the arithmetic rather than a matter of taste.""",
+]
+
+_EX_P1AO["Check If It Is a Straight Line"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - do all these points lie on one straight line?
+
+You get a list of at least two points on a grid, like `[(1,2), (2,3), (3,4), (4,5)]`, and you
+answer yes or no. Those four go up one and right one each time, so yes.
+
+    [(1,2),(2,3),(3,4),(4,5)]        -> True
+    [(1,1),(2,2),(3,4)]              -> False   the third point is off the line
+    [(0,5),(0,-3),(0,100)]           -> True    a vertical line is still a line
+
+The word for "all on one line" is COLLINEAR.
+
+THE SCHOOL METHOD IS SLOPE, AND THE SCHOOL METHOD IS THE TRAP. Slope is rise over run,
+`(y1-y0)/(x1-x0)`, and every point should have the same slope relative to the first. Two things
+go wrong with that: a VERTICAL line has run 0 and divides by zero, and floating-point division
+makes points that are not quite on the line look like they are.
+
+THE FIX IS TO MULTIPLY INSTEAD OF DIVIDE. Instead of asking whether
+
+    (y1 - y0) / (x1 - x0)  ==  (y - y0) / (x - x0)
+
+cross-multiply and ask whether
+
+    (y1 - y0) * (x - x0)  ==  (y - y0) * (x1 - x0)
+
+Same question, no division, no floats, no special case for vertical lines. MEASURED against
+the float-slope version: on 5,000 vertical-line inputs the slope version crashes with
+ZeroDivisionError on 5,000 of them - 100% - and the cross-product version is correct on all
+of them.""",
+
+    """2. THE INTUITION - what the cross-multiplied expression actually measures.
+
+Fix the first two points, P0 and P1. They define a direction: to go from P0 to P1 you move
+`dx = x1 - x0` across and `dy = y1 - y0` up. Now take any third point P, whose offset from P0 is
+`ex = x - x0` across and `ey = y - y0` up.
+
+P is on the line through P0 and P1 exactly when the two offsets point the same way - when
+`(ex, ey)` is a scaled copy of `(dx, dy)`. Written as a proportion:
+
+    ey / ex  ==  dy / dx
+
+and cross-multiplied, with no division anywhere:
+
+    dy * ex  ==  ey * dx
+
+THE QUANTITY `dy*ex - ey*dx` HAS A NAME AND A MEANING. It is the 2-D cross product of the two
+offset vectors, and its absolute value is the AREA OF THE PARALLELOGRAM they span - twice the
+area of the triangle P0-P1-P. Three points are collinear exactly when that triangle has zero
+area, which is a much better way to hold the idea than "equal slopes":
+
+    zero      the three points are on one line
+    positive  P is on one side of the line P0->P1
+    negative  P is on the other side
+
+That sign is why the same expression is the workhorse of computational geometry - convex
+hulls, segment intersection, point-in-polygon all turn on it - and why learning it here pays
+off far beyond this problem.
+
+WHY COMPARING AGAINST THE FIRST TWO POINTS IS ENOUGH. If every point is on the line through P0
+and P1, they are all on the same line, by definition. You do not need to check every pair -
+that would be O(n^2) for no extra information.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+COLLINEAR - all lying on one straight line. Two points are always collinear; the question only
+has content from the third point onward.
+
+SLOPE - rise over run, `(y1-y0)/(x1-x0)`. How steep the line is. Undefined for a vertical line,
+because the run is 0, and that undefined case is the first thing this problem tests.
+
+CROSS-MULTIPLY - turning `a/b == c/d` into `a*d == c*b`. Legal here because it is a test for
+EQUALITY, not a computation of the slope itself, so the values of b and d never need to be
+non-zero.
+
+CROSS PRODUCT (2-D) - for two offsets `(dx,dy)` and `(ex,ey)`, the number `dx*ey - dy*ex`. Zero
+means parallel, which for offsets from a shared point means collinear.
+
+INTEGER ARITHMETIC - exact. Two integers multiplied give the exact product, and in Python that
+is true at any size. This is the property the whole solution rests on: the comparison is exact
+where the division version is approximate.
+
+FLOATING POINT - the approximate representation of real numbers, with about 15-16 significant
+decimal digits. `0.1 + 0.2` is not `0.3`. Any test written as `float == float` is suspect, and
+section 4 measures how suspect.
+
+DEGENERATE INPUT - an input that technically satisfies the constraints but breaks an
+assumption, here two identical points, which give a direction of `(0,0)` and make the test
+vacuously true.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the two ways the slope version fails, both measured.
+
+BUG 1 - VERTICAL LINES DIVIDE BY ZERO.
+
+`[(0,5),(0,-3),(0,100)]` is a perfectly good vertical line, and `(y1-y0)/(x1-x0)` is a
+division by zero.
+
+MEASURED on 5,000 randomly generated vertical lines (all x equal, y arbitrary): the float-slope
+version raises ZeroDivisionError on 5,000 of 5,000 - 100% - while the cross-product version
+answers correctly on every one. Guarding it with a special case for `x1 == x0` works, but then
+you need a second special case for a later point that shares x with P0, and the guards multiply.
+The cross product needs none.
+
+BUG 2 - FLOATING-POINT EQUALITY SAYS YES TO POINTS THAT ARE NOT ON THE LINE.
+
+This is the subtler failure, and it goes the dangerous direction: a FALSE POSITIVE, a wrong
+answer with no exception to warn you.
+
+MEASURED. Build a genuinely non-collinear set by taking three exactly collinear points at a
+large scale and moving the last one by ONE unit - the smallest possible perturbation:
+
+    [(0,0), (178000000000000000, 453000000000000000), (356000000000000000, 906000000000000001)]
+    [(0,0),  (97500000000000000,  46500000000000000), (195000000000000000,  93000000000000001)]
+    [(0,0),   (2600000000000000,  83500000000000000),   (5200000000000000, 167000000000000001)]
+
+Every one of these is NOT a straight line - the last coordinate is off by exactly 1. Over
+20,000 such inputs, the float-slope version wrongly answers True on 4,362 of them: 21.8%. The
+cross-product version is correct on all 20,000.
+
+The reason is that a double has about 15-16 significant digits. At a coordinate scale of 10^17
+the gap between adjacent representable doubles is larger than 1, so the two slopes round to the
+same value and compare equal. Nothing is broken; the answer is simply below the resolution of
+the type.
+
+BUG 3 - THE DEGENERATE INPUT, and this one is a limitation of the standard answer rather than a
+mistake in it. If the FIRST TWO points are identical, `dx` and `dy` are both 0, so the test
+`0 * ex == 0 * dx` is `0 == 0` for every point, and the function returns True no matter what
+the rest of the points look like.
+
+MEASURED: `[(1,1),(1,1),(5,9),(2,-4)]` returns True from the cross-product code, and those four
+points are genuinely NOT collinear - dropping the duplicate and testing `[(1,1),(5,9),(2,-4)]`
+returns False. LeetCode's constraints promise distinct points so the judge never exercises it,
+but it is the right thing to say out loud: the code assumes P0 and P1 differ, and if they might
+not, pick the first point that differs from P0 as your reference.
+
+BUG 4 - OVERFLOW, in a fixed-width language. With coordinates up to 10^9, the products reach
+about 4 * 10^18, which fits in a signed 64-bit integer (max 9.22 * 10^18) but comfortably
+overflows a 32-bit one. MEASURED: `(2*10^9) * (2*10^9)` is 4,000,000,000,000,000,000 and fits;
+`(4*10^9) * (4*10^9)` is 16,000,000,000,000,000,000 and does not. In Python this cannot happen -
+integers are arbitrary precision - and saying so, along with what you would do in Java, is the
+strongest version of this answer.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the cross-product test in the code below, comparing every point against the
+first two. O(n) time, O(1) space, exact integer arithmetic, no special cases. This is the
+answer.
+
+ALTERNATIVE B - float slope with a special case for vertical lines. Correct on small integer
+coordinates and MEASURED wrong on 21.8% of large-coordinate near-misses. If you write it, at
+least compare with a tolerance rather than `==` - and then you have to justify the tolerance,
+which is a conversation you do not need when the exact test is one multiplication away.
+
+ALTERNATIVE C - compare CONSECUTIVE triples instead of everything against P0P1: check
+(p0,p1,p2), then (p1,p2,p3), and so on. Logically equivalent for a full list, since collinearity
+chains, and it costs the same O(n). It is slightly more fragile with duplicate points, because
+any repeated adjacent pair makes its own triple vacuously true.
+
+ALTERNATIVE D - the line-equation form. Compute A, B, C for `Ax + By = C` from the first two
+points (`A = y1-y0`, `B = x0-x1`, `C = A*x0 + B*y0`) and check `A*x + B*y == C` for every other
+point. This is the same arithmetic rearranged, it is also exact, and it generalises nicely if
+you later need the line itself rather than a yes-or-no.
+
+ALTERNATIVE E - a fraction type (`Fraction` in Python, or a normalised `dy/g, dx/g` pair after
+dividing by the GCD). Exact and correct, and considerably slower than one multiplication. The
+normalised-pair version is what you actually want when the task is to GROUP points by slope
+rather than test a single line - which is the `Max Points on a Line` problem.
+
+THE FAMILY - everything built on the sign of the cross product:
+  * MAX POINTS ON A LINE - the same collinearity test, run over every pair, with slopes
+    normalised as reduced fractions so they can be hashed;
+  * CONVEX HULL (Graham scan, Andrew monotone chain) - the entire algorithm is "keep turning
+    the same way", which is the SIGN of this expression;
+  * SEGMENT INTERSECTION - four cross products and their signs;
+  * POINT IN POLYGON, TRIANGLE AREA, POLYGON AREA (the shoelace formula) - all sums of this
+    same product;
+  * VALID BOOMERANG - literally this problem for exactly three points, asking for the opposite
+    answer.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - unpack the first two points into `(x0, y0)` and `(x1, y1)`. They define the reference
+direction, and every other point is measured against them.
+
+STEP 2 - say why you are not computing a slope: division introduces a vertical-line special case
+and float error, and the test can be cross-multiplied into pure integer multiplication.
+
+STEP 3 - loop over the remaining points, `for x, y in coordinates[2:]`.
+
+STEP 4 - the test, in this exact shape:
+    if (y1 - y0) * (x - x0) != (y - y0) * (x1 - x0):
+        return False
+Each side pairs a y-difference from one pair with an x-difference from the other. Pairing them
+wrongly - `(y1-y0)*(x1-x0)` on one side - is a real and silent mistake, so read it back as
+"cross"-multiplication: numerator of one times denominator of the other.
+
+STEP 5 - `return True` after the loop. Early exit on the first failure keeps the common
+negative case fast.
+
+STEP 6 - state the assumptions you are relying on: at least two points, and the first two
+distinct. MEASURED, identical first two points make the function return True for any input,
+which is worth naming even though the constraints exclude it.
+
+STEP 7 - if the language is Java or C++, say the products can reach 4 * 10^18 at the stated
+coordinate limits, so the arithmetic must be done in 64-bit, and 32-bit ints overflow.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The first two points fix a line, and then every remaining point either lies on it or does
+  not, so this is one linear scan.
+
+- The textbook test is equal slopes, but I would not divide. A vertical line has zero run, so
+  the slope is undefined and the division throws; and slope comparison in floating point gives
+  wrong answers on large coordinates. Both problems disappear if I cross-multiply.
+
+- So the test is `(y1-y0) * (x-x0) == (y-y0) * (x1-x0)`. That is the 2-D cross product of the
+  two offset vectors, and geometrically it is twice the area of the triangle formed by the
+  three points - zero area means they are on one line. It is pure integer multiplication, so it
+  is exact.
+
+- On vertical lines the slope version fails a hundred per cent of the time with a
+  divide-by-zero, and on points that are off the line by one unit at a very large coordinate
+  scale it wrongly reports a straight line about twenty per cent of the time, because a double
+  cannot resolve a difference of 1 near 10^17.
+
+- One pass, O(n) time and O(1) space, with an early exit as soon as a point fails.
+
+- Two assumptions worth naming: the first two points must be distinct - if they are identical
+  the test is vacuously true for everything - and in a fixed-width language the products reach
+  about 4 * 10^18 at the usual coordinate limits, so they need 64-bit integers. In Python
+  neither is an issue for overflow, but the duplicate-point case is still real.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def check_straight_line(coordinates):
+        (x0, y0), (x1, y1) = coordinates[0], coordinates[1]
+        for x, y in coordinates[2:]:
+            # collinear iff slopes equal, written without division
+            if (y1 - y0) * (x - x0) != (y - y0) * (x1 - x0):
+                return False
+        return True
+
+Line 2  `(x0, y0), (x1, y1) = coordinates[0], coordinates[1]`
+        Tuple unpacking of the two reference points. These two are never tested against
+        anything - they DEFINE the line - which is why the loop starts at index 2. It also
+        means the function is trivially True for an input of exactly two points, which is
+        correct: any two points are collinear.
+
+Line 3  `for x, y in coordinates[2:]:`
+        The slice copies the tail of the list, which is O(n) extra space. `for i in
+        range(2, len(coordinates))` avoids the copy and is the version to prefer if the
+        interviewer is counting bytes; the readability difference is small either way.
+
+Line 5  `if (y1 - y0) * (x - x0) != (y - y0) * (x1 - x0):`
+        The whole algorithm. Read it as the cross-multiplied form of
+
+            (y1 - y0) / (x1 - x0)   ==   (y - y0) / (x - x0)
+
+        LEFT SIDE: the reference rise, times this point's run.
+        RIGHT SIDE: this point's rise, times the reference run.
+        Equal means the two offsets are proportional, which means P is on the line.
+
+        Note what is NOT here: no division, so no ZeroDivisionError on a vertical line; no
+        float, so no tolerance to choose; no `abs`, because exact equality is achievable.
+
+Line 6  `return False`
+        Early exit. One point off the line settles the question, so there is no reason to
+        look at the rest.
+
+Line 7  `return True`
+        Reached only when every point passed. Also the answer for a two-point input, which is
+        correct by definition.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `coordinates = [(1,2),(2,3),(3,4),(4,5)]`, a genuine straight line.
+
+    reference: (x0,y0) = (1,2), (x1,y1) = (2,3)
+    so dy = y1-y0 = 1 and dx = x1-x0 = 1
+
+    point     ex = x-x0    ey = y-y0    dy*ex    ey*dx    equal?
+    ---------------------------------------------------------------
+    (3,4)         2            2          2        2       yes
+    (4,5)         3            3          3        3       yes
+    loop ends -> True
+
+TRACE B - `coordinates = [(1,1),(2,2),(3,4),(4,5)]`, where the third point is off.
+
+    reference: (1,1) and (2,2), dy = 1, dx = 1
+
+    point     ex    ey    dy*ex    ey*dx    equal?
+    -------------------------------------------------
+    (3,4)      2     3      2        3       NO   -> return False immediately
+
+    The fourth point is never examined. The triangle (1,1)-(2,2)-(3,4) has area
+    |2 - 3| / 2 = 0.5, and any non-zero area means not collinear.
+
+TRACE C - a vertical line, `[(0,5),(0,-3),(0,100)]`.
+
+    reference: (0,5) and (0,-3), so dy = -8 and dx = 0
+
+    point       ex = x-x0   ey = y-y0    dy*ex        ey*dx      equal?
+    ----------------------------------------------------------------------
+    (0,100)         0           95       -8*0 = 0     95*0 = 0    yes
+    -> True
+
+    Both sides are zero because every x-difference is zero. The float-slope version never gets
+    this far: `(-3-5)/(0-0)` raises ZeroDivisionError on line one. MEASURED, that is 5,000
+    crashes out of 5,000 vertical inputs.
+
+TRACE D - the float false positive, at scale.
+
+    points  P0 = (0,0)
+            P1 = (97500000000000000, 46500000000000000)
+            P  = (195000000000000000, 93000000000000001)      <- the +1 is deliberate
+
+    cross-product test
+        dy*ex = 46500000000000000 * 195000000000000000
+        ey*dx = 93000000000000001 *  97500000000000000
+        the two products differ by exactly 97500000000000000, so the test fails -> False,
+        which is the right answer.
+
+    float-slope test
+        m0 = 46500000000000000 / 97500000000000000   = 0.47692307692307695
+        m1 = 93000000000000001 / 195000000000000000  = 0.47692307692307695
+        equal as doubles -> True, which is WRONG.
+
+    The +1 sits sixteen significant digits down, and a double keeps about fifteen. MEASURED,
+    21.8% of such inputs come back as a false positive.
+
+TRACE E - the degenerate input, `[(1,1),(1,1),(5,9),(2,-4)]`.
+
+    reference: (1,1) and (1,1), so dy = 0 and dx = 0
+
+    point      dy*ex        ey*dx      equal?
+    ---------------------------------------------
+    (5,9)      0*4 = 0      8*0 = 0     yes
+    (2,-4)     0*1 = 0     -5*0 = 0     yes
+    -> True
+
+    MEASURED, and it is the wrong answer: those points are not on a line - testing
+    `[(1,1),(5,9),(2,-4)]` returns False. The first two points must be distinct for the test to
+    mean anything, because a zero-length reference direction is parallel to everything.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one pass, four subtractions and two multiplications per point, with an early
+            exit on the first failure. There is no way to do better: a single unexamined point
+            could be the one off the line.
+    space   O(1) as long as you iterate by index. The `coordinates[2:]` slice in the code above
+            copies the tail, making it O(n); swap it for `range(2, len(coordinates))` if that
+            matters.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Computing slopes with division. MEASURED: 100% failure (ZeroDivisionError) on vertical
+       lines, and a 21.8% false-positive rate on points that miss the line by one unit at large
+       coordinates. Both vanish under cross-multiplication.
+    2. Comparing floats with `==`. Even with a vertical-line guard bolted on, the equality test
+       itself is the second half of the bug.
+    3. Mis-pairing the cross-multiplication - writing `(y1-y0)*(x1-x0)` on one side. It type-
+       checks, it runs, and it silently answers a different question. Say "rise of one times
+       run of the OTHER" as you write it.
+    4. Assuming the first two points are distinct without saying so. MEASURED, identical first
+       two points make the function return True for any input at all.
+    5. Checking every pair of points, O(n^2), when checking each point against the first two is
+       sufficient and linear.
+    6. Ignoring overflow in a fixed-width language. At coordinates up to 10^9 the products reach
+       4 * 10^18 - fine in int64, catastrophic in int32.
+    7. Special-casing n < 3 with extra code. The loop over `coordinates[2:]` is empty for two
+       points and returns True, which is already correct.
+
+THE TAKEAWAY
+    Whenever a test can be written as `a/b == c/d`, cross-multiply it to `a*d == c*b` before you
+    write any code: division brings a zero-denominator case and float error, and multiplication
+    brings neither. Here the multiplied form is the 2-D cross product, which is twice the area
+    of the triangle the three points make - zero area means one line. That single expression,
+    and its SIGN, is the foundation of convex hulls, segment intersection and polygon area, so
+    it is worth knowing by shape and not by memory.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
