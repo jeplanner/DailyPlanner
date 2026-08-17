@@ -275367,6 +275367,1494 @@ THE TAKEAWAY
     invisible in tests and total in production.""",
 ]
 
+_EX_P1AO["Count Negatives in a Sorted Matrix"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count the negative numbers in a grid that is sorted downhill
+in both directions.
+
+The grid is NON-INCREASING along every row (left to right) and NON-INCREASING down every
+column. So the biggest value is the top-left corner and the smallest is the bottom-right:
+
+     4  3  2 -1
+     3  2  1 -1
+     1  1 -1 -2
+    -1 -1 -2 -3
+
+Counting negatives by looking at all sixteen cells works and is O(rows*cols). The sorted
+structure lets you do it in O(rows + cols) instead, and the trick is where you STAND.
+
+START AT THE BOTTOM-LEFT CORNER. From there:
+
+    if the cell is NEGATIVE, then everything to its RIGHT in that row is negative too (the row
+    only goes down), so add the whole rest of the row at once and step UP;
+
+    if the cell is not negative, then everything ABOVE it in that column is not negative either
+    (the column only goes down as you descend), so that column is finished - step RIGHT.
+
+Each step either moves up one row or right one column, so the walk is at most rows + cols
+steps. MEASURED on a 1000x1000 grid it visits 1,489 cells out of 1,000,000 - 0.15% of the
+grid - and gets the same answer as reading all of them.""",
+
+    """2. THE INTUITION - why the bottom-left corner is the only sensible place to stand.
+
+A corner is useful when the two directions you can move give you OPPOSITE information. Look at
+each corner in turn:
+
+    TOP-LEFT (the largest value). Moving right makes values smaller; moving down makes values
+    smaller. Both directions do the same thing, so learning that this cell is not negative
+    tells you nothing about which way to go. Useless.
+
+    BOTTOM-RIGHT (the smallest value). Moving left makes values bigger, moving up makes values
+    bigger. Again both the same. Useless.
+
+    BOTTOM-LEFT. Moving up makes values BIGGER, moving right makes values SMALLER. The two
+    moves disagree, which is exactly what you need: a test at this cell eliminates a whole row
+    or a whole column.
+
+    TOP-RIGHT. Also works, by the mirror-image argument - moving down makes values smaller,
+    moving left makes them bigger - and it counts negatives above rather than to the right.
+
+So the algorithm is not "start at the bottom-left because someone said so". It is "stand where
+your two available moves have opposite effects", which is the same idea as the staircase search
+in `Search a 2D Matrix II`.
+
+WHAT EACH TEST ELIMINATES, precisely:
+
+    cell < 0   -> every cell to the right in this row is <= it, hence negative.
+                  Add `cols - c` and move up. One row is finished.
+    cell >= 0  -> every cell above in this column is >= it, hence non-negative.
+                  Move right. One column is finished, contributing nothing.
+
+Every step retires an entire row or an entire column, and there are `rows + cols` of them, so
+the walk cannot take longer than that.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NON-INCREASING - each value is less than or equal to the one before. `[5,5,2,-1]` is
+non-increasing. Not the same as strictly decreasing; equal neighbours are allowed, and nothing
+in this algorithm cares.
+
+SORTED IN BOTH DIRECTIONS - the rows are non-increasing AND the columns are non-increasing. That
+is a much stronger statement than "each row is sorted", and it is what makes the staircase
+possible.
+
+STAIRCASE WALK (also called the saddleback search) - a traversal that starts at a corner and
+moves in two directions only, never backtracking, retiring a row or column at every step.
+
+MONOTONIC - always moving one way. The walk's row index only ever decreases and its column
+index only ever increases, which is why it terminates in at most rows + cols steps.
+
+`cols - c` - the number of cells from column c to the end of the row, inclusive. Getting this
+off by one is the classic slip: at c = 0 it must be the whole row width.
+
+O(rows + cols) versus O(rows * cols) - the difference between walking the edge of the grid and
+reading all of it. MEASURED on 1600x1600, 0.91 ms against 65.5 ms.
+
+BINARY SEARCH PER ROW - the other sublinear approach: each row is sorted, so find the first
+negative in it with binary search. O(rows * log cols), which is asymptotically worse than the
+staircase but still far better than reading everything.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - standing in the wrong corner, and the off-by-one.
+
+BUG 1 - STARTING AT THE TOP-LEFT.
+
+It feels natural - that is where arrays start - and it produces a walk that looks plausible:
+if the cell is negative, add the rest of the row and move down; otherwise move right.
+
+MEASURED on 3,000 random grids satisfying the sort constraints: wrong on 576 of them, 19.2%.
+
+What goes wrong: at the top-left, both available moves lead to SMALLER values, so a
+non-negative cell tells you nothing about the cells below it, and moving right skips rows that
+may contain negatives further along. It is right on grids that happen to be all-negative or
+all-positive - which is why a casual test can pass. MEASURED, one such grid where it agrees:
+
+        [-5, -11, -13, -14]
+        [-5, -13, -13, -15]
+        [-6, -13, -15, -16]
+        [-7, -14, -16, -17]
+    negatives 16, staircase 16, top-left version 16
+
+Every cell is negative, so the first test succeeds and the walk marches down the first column
+adding full rows. Try it on a grid with a mixture and it drifts.
+
+BUG 2 - THE OFF-BY-ONE IN `cols - c`.
+
+When the cell at column c is negative, the negatives in that row are at columns c, c+1, ...,
+cols-1. That is `cols - c` cells, not `cols - c - 1` and not `cols - c + 1`. Check it at the
+extremes: at c = 0 the whole row of width `cols` is negative, and `cols - 0` is `cols`. At
+c = cols-1 exactly one cell is negative, and `cols - (cols-1)` is 1.
+
+BUG 3 - MOVING BOTH POINTERS IN THE SAME ITERATION. Each test justifies exactly one move. Doing
+`r -= 1` and `c += 1` together skips cells diagonally and silently undercounts.
+
+BUG 4 - ASSUMING THE ROWS ARE SORTED ASCENDING. This problem is non-INCREASING, so the negatives
+are on the RIGHT and at the BOTTOM. The same algorithm with the sort order reversed starts at
+the top-left instead. Read the direction from the problem statement rather than from memory; it
+is the single most common way to get a correct algorithm pointed the wrong way.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the staircase walk. O(rows + cols) time, O(1) space. The answer.
+
+ALTERNATIVE B - binary search per row for the first negative, then add `cols - index`.
+O(rows * log cols) and correct - MEASURED to agree with the brute force on all 3,000 random
+grids. It uses only the row ordering and ignores the column ordering entirely, which is worth
+saying out loud: it is the right answer to the weaker version of this problem where only rows
+are sorted.
+
+MEASURED, all three on the same grids:
+
+    grid          brute force     staircase     per-row binary search
+    400x400          4.3 ms         0.11 ms            0.39 ms
+    800x800         15.9 ms         0.23 ms            1.21 ms
+    1600x1600       65.5 ms         0.91 ms            3.31 ms
+
+The staircase is about 70x faster than reading the grid at 1600x1600, and about 3.6x faster
+than the per-row binary search - which is the log factor showing up as a constant.
+
+ALTERNATIVE C - `sum(1 for row in grid for x in row if x < 0)`. O(rows*cols), one line, and
+often the right ENGINEERING answer for a small grid because it needs no proof. Write it first,
+then improve it. MEASURED it is 65 ms on 2.56 million cells - not slow in absolute terms, but
+it throws away the structure the problem went out of its way to give you.
+
+ALTERNATIVE D - since each row is sorted, the count of negatives per row is non-decreasing as
+you go DOWN. So you can start each row's binary search from the previous row's boundary, which
+is the staircase again, arrived at from a different direction.
+
+THE FAMILY - staircase / saddleback searches on doubly-sorted matrices:
+  * SEARCH A 2D MATRIX II - the original: find a target, same corner, same walk;
+  * KTH SMALLEST ELEMENT IN A SORTED MATRIX - counts cells below a threshold with this same
+    walk inside a binary search on the value;
+  * FIND A PEAK ELEMENT II, MEDIAN OF A ROW-SORTED MATRIX - the same "use the structure, do not
+    read the grid" instinct;
+  * MAX SUM OF A RECTANGLE / matrix prefix sums - the other big family, where the trick is
+    precomputation rather than a walk.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the corner argument out loud before writing: stand where the two possible moves
+have OPPOSITE effects on the value. Bottom-left is such a corner; top-left is not.
+
+STEP 2 - `rows, cols = len(grid), len(grid[0])`.
+
+STEP 3 - start the pointers at the bottom-left: `r, c = rows - 1, 0`.
+
+STEP 4 - loop while both pointers are in range: `while r >= 0 and c < cols:`. Note the
+asymmetry - `r` counts down toward -1, `c` counts up toward `cols`.
+
+STEP 5 - the negative branch:
+    if grid[r][c] < 0:
+        count += cols - c
+        r -= 1
+Add the whole remaining row, then retire the row.
+
+STEP 6 - the non-negative branch:
+    else:
+        c += 1
+Retire the column. No addition: the cells above in this column are all non-negative.
+
+STEP 7 - exactly one pointer moves per iteration. Never both.
+
+STEP 8 - return the count, and state the complexity as O(rows + cols) time, O(1) space.
+
+STEP 9 - test a grid with no negatives at all (the walk should march right and add nothing) and
+one that is entirely negative (it should march up adding a full row each time).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The brute force reads every cell, which is fine and O(rows times cols). But the grid is sorted
+  downhill in both directions, and that lets me answer it by walking the edge instead.
+
+- I start at the bottom-left corner. The reason that corner and not another: from there, moving
+  up makes values bigger and moving right makes them smaller, so the two moves give me opposite
+  information. From the top-left both moves make values smaller, so a test there tells me
+  nothing.
+
+- If the current cell is negative, then everything to its right in that row is negative too,
+  because the row is non-increasing - so I add the whole rest of the row in one step and move
+  up a row. If the cell is not negative, then everything above it in the column is also not
+  negative, so I move right and retire that column.
+
+- Every step finishes a whole row or a whole column, so the walk takes at most rows plus cols
+  steps. On a thousand-by-thousand grid it visits about fifteen hundred cells out of a million.
+
+- O(rows + cols) time, O(1) space. If only the rows were sorted and not the columns, I would
+  binary search each row instead, which is rows times log cols - still much better than reading
+  everything, and about three times slower than the staircase in practice.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def count_negatives(grid):
+        rows, cols = len(grid), len(grid[0])
+        count = 0
+        r, c = rows - 1, 0                # start at the bottom-left corner
+        while r >= 0 and c < cols:
+            if grid[r][c] < 0:
+                count += cols - c        # all cells to the right are negative too
+                r -= 1                    # move up a row
+            else:
+                c += 1                    # move right
+        return count
+
+Line 2  `rows, cols = len(grid), len(grid[0])`
+        `len(grid)` is the number of rows; `len(grid[0])` the number of columns. This assumes a
+        non-empty grid with non-empty rows, which the constraints guarantee.
+
+Line 4  `r, c = rows - 1, 0`
+        The bottom-left cell. `rows - 1` is the last row index; column 0 is the leftmost. The
+        entire performance of the algorithm rests on this line being this corner.
+
+Line 5  `while r >= 0 and c < cols:`
+        The walk ends when it leaves the grid - off the top (`r < 0`) or off the right edge
+        (`c == cols`). Both are legitimate finishes: running off the top means every remaining
+        row was counted, running off the right means no negatives remain.
+
+Line 6  `if grid[r][c] < 0:`
+        Strictly less than zero. Zero is not negative, and in a grid containing zeros the `<=`
+        version would over-count by the whole tail of every row containing one.
+
+Line 7  `count += cols - c`
+        The number of cells from column c to column cols-1 inclusive. All of them are negative
+        because the row is non-increasing and this one already is. Check the two ends: c = 0
+        gives `cols` (the whole row), c = cols-1 gives 1 (just this cell).
+
+Line 8  `r -= 1`
+        This row is fully accounted for, so move up. Note the row above may have FEWER
+        negatives - the column ordering guarantees its values are greater or equal - which is
+        why `c` does not reset.
+
+Line 10 `c += 1`
+        The cell is non-negative, so every cell above it in this column is non-negative too and
+        contributes nothing. Retire the column by moving right. `count` is untouched.
+
+Line 11 `return count`
+        Reached with at most `rows + cols` iterations behind it - MEASURED, 1,489 on a
+        1000x1000 grid.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the 4x4 grid from section 1.
+
+     4  3  2 -1
+     3  2  1 -1
+     1  1 -1 -2
+    -1 -1 -2 -3
+
+    rows = 4, cols = 4, start r=3, c=0, count=0
+
+    step   r  c   grid[r][c]   negative?   action                    count
+    -----------------------------------------------------------------------
+      1    3  0      -1          yes       += 4-0 = 4, r -> 2           4
+      2    2  0       1          no        c -> 1                       4
+      3    2  1       1          no        c -> 2                       4
+      4    2  2      -1          yes       += 4-2 = 2, r -> 1           6
+      5    1  2       1          no        c -> 3                       6
+      6    1  3      -1          yes       += 4-3 = 1, r -> 0           7
+      7    0  3      -1          yes       += 4-3 = 1, r -> -1          8
+    r < 0, loop ends, return 8
+
+    Check by counting the grid by hand: row 0 has one negative, row 1 has one, row 2 has two,
+    row 3 has four. 1+1+2+4 = 8. Agreed.
+
+    Seven steps for a sixteen-cell grid, and the ratio only improves as the grid grows.
+
+TRACE B - a grid with no negatives at all.
+
+     5 4 3
+     4 3 2
+     3 2 1
+
+    step   r  c   grid[r][c]   action
+    -------------------------------------
+      1    2  0        3       c -> 1
+      2    2  1        2       c -> 2
+      3    2  2        1       c -> 3
+    c == cols, loop ends, return 0.
+
+    Three steps, no additions. The walk never left the bottom row - it did not need to, because
+    a non-negative bottom row means the whole column above it is non-negative.
+
+TRACE C - an all-negative grid, the opposite extreme.
+
+    -1 -2
+    -3 -4
+
+    r=1, c=0: -3 < 0 -> count += 2-0 = 2, r=0
+    r=0, c=0: -1 < 0 -> count += 2-0 = 2, r=-1
+    return 4.
+
+    Two steps, and each added a full row. The walk marched straight up the left edge.
+
+TRACE D - the scale measurement, so the O(rows+cols) claim is concrete.
+
+    1000 x 1000 grid, 1,000,000 cells
+        staircase visits 1,489 cells - 0.1489% of the grid
+        brute force visits 1,000,000
+
+    1600 x 1600 grid, 2,560,000 cells
+        brute force              65.5 ms
+        staircase                 0.91 ms      about 70x faster
+        per-row binary search     3.31 ms      correct, and the log factor costs 3.6x""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(rows + cols). Every iteration decrements `r` or increments `c`, and each can move
+            at most `rows` and `cols` times respectively. MEASURED, 1,489 steps on a 1000x1000
+            grid.
+    space   O(1) - two indices and a counter.
+
+    The alternatives, MEASURED on the same grids: brute force O(rows*cols), 65.5 ms at
+    1600x1600; per-row binary search O(rows log cols), 3.31 ms; staircase, 0.91 ms.
+
+    A note on what "faster" means here: the staircase does not read most of the grid, so it also
+    wins on memory traffic, which is why the gap is larger than the operation count alone
+    suggests.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Starting at the top-left. MEASURED wrong on 576 of 3,000 random grids (19.2%), and right
+       on the uniform grids people test with. The corner must be one where the two moves have
+       opposite effects.
+    2. `cols - c - 1` or `cols - c + 1` instead of `cols - c`. Check it at c = 0: the whole row
+       is `cols` cells.
+    3. Moving both pointers in one iteration. Each comparison justifies exactly one move.
+    4. `<= 0` instead of `< 0`. Zero is not negative, and in a grid with zeros this over-counts
+       an entire row tail per occurrence.
+    5. Reading the sort direction from memory instead of the statement. This problem is
+       non-increasing, so negatives cluster bottom-right; the ascending version of the same
+       problem wants the opposite corner.
+    6. Resetting `c` to 0 when moving up a row. It is not needed - the row above has at least as
+       many non-negative cells - and it turns the walk back into O(rows*cols).
+
+THE TAKEAWAY
+    On a matrix sorted in both directions, stand at a corner where your two moves have OPPOSITE
+    effects on the value - bottom-left or top-right - and every comparison retires a full row or
+    a full column. That turns O(rows*cols) into O(rows + cols) and is the same staircase used by
+    Search a 2D Matrix II and Kth Smallest in a Sorted Matrix. The corner is not a detail; it is
+    the algorithm.""",
+]
+
+_EX_P1AO["Count Odd Numbers in an Interval Range"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how many odd numbers are there between low and high,
+including both ends?
+
+    low = 3, high = 7    the odds are 3, 5, 7             -> 3
+    low = 8, high = 10   the odds are 9                   -> 1
+    low = 0, high = 0    there are none                   -> 0
+    low = 1, high = 1    just 1                           -> 1
+    All MEASURED.
+
+You must not loop. The constraints allow `high` up to 10^9, and MEASURED, looping over
+[0, 10^7] takes 328 ms in Python - extrapolating to 10^9 is about 33 seconds. The formula
+answers [0, 10^9] in 1.2 MICROSECONDS.
+
+THE STANDARD SHAPE FOR ANY "HOW MANY IN A RANGE" QUESTION is to answer it for a range that
+starts at zero, then subtract:
+
+    count in [low, high]  =  count in [0, high]  -  count in [0, low-1]
+
+Define `f(x)` = how many odd numbers are in [0, x]. Then
+
+    f(x) = (x + 1) // 2
+
+because [0, x] contains x+1 integers and they alternate even, odd, even, odd starting with the
+even number 0 - so exactly half of them, rounded down, are odd.
+
+    answer = f(high) - f(low - 1)
+
+MEASURED against a literal loop on every pair `0 <= low <= high < 200` - all 20,100 pairs -
+zero mismatches.""",
+
+    """2. THE INTUITION - why `(x+1)//2` counts the odds in [0, x], and why subtracting works.
+
+FIRST, THE COUNTING FUNCTION. The integers 0 through x are
+
+    0, 1, 2, 3, ..., x        that is x+1 numbers
+
+and they alternate even, odd, even, odd starting from EVEN. If x+1 is even, the two kinds split
+exactly in half. If x+1 is odd, there is one more even than odd, because the sequence starts
+and ends on an even number. Both cases are `(x+1) // 2`:
+
+    x = 0   numbers 0            1 number    odds 0    (0+1)//2 = 0   correct
+    x = 1   numbers 0,1          2 numbers   odds 1    (1+1)//2 = 1   correct
+    x = 2   numbers 0,1,2        3 numbers   odds 1    (2+1)//2 = 1   correct
+    x = 3   numbers 0..3         4 numbers   odds 2    (3+1)//2 = 2   correct
+    x = 7   numbers 0..7         8 numbers   odds 4    (7+1)//2 = 4   correct
+
+SECOND, THE SUBTRACTION. Every odd number in [0, high] is either in [low, high] or in
+[0, low-1], never both and never neither. So subtracting the second count from the first leaves
+exactly the odds in [low, high]. This is the discrete version of a definite integral, and it is
+called a PREFIX-COUNT or inclusion-exclusion argument.
+
+WATCH THE `low - 1`, NOT `low`. If you subtract `f(low)` you remove `low` itself from the count
+when `low` is odd - the ends of the range are INCLUSIVE, so the boundary belongs to the answer.
+
+    low = 3, high = 7
+        f(7)   = (7+1)//2 = 4      odds in [0,7]: 1,3,5,7
+        f(2)   = (2+1)//2 = 1      odds in [0,2]: 1
+        4 - 1  = 3                 odds in [3,7]: 3,5,7            correct
+        using f(3) = 2 instead gives 2, silently dropping the 3.
+
+AND `low = 0` IS SAFE. `f(-1) = (-1+1)//2 = 0`, which is right: there are no odd numbers in an
+empty range.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+INCLUSIVE RANGE - both endpoints belong to the range. [3,7] contains 3 and 7. Nearly every
+off-by-one in this problem comes from treating one end as exclusive.
+
+ODD NUMBER - not divisible by 2. In code, `x % 2 == 1` for non-negative x, or `x & 1`.
+
+PREFIX COUNT - the count from 0 up to x. Almost every range-counting problem is easier as a
+difference of two prefix counts than as a direct computation, because a prefix has one moving
+end instead of two.
+
+INCLUSION-EXCLUSION (the simple case) - counting a range by counting a bigger one and
+subtracting the part you did not want.
+
+FLOOR DIVISION `//` - integer division rounding down. `(7+1)//2` is 4, `(6+1)//2` is 3. This is
+what makes one formula cover both the even and odd cases.
+
+O(1) - constant time. The whole point: the answer does not depend on how big the range is.
+MEASURED, [0, 10^9] takes 1.2 microseconds.
+
+CLOSED FORM - an expression that computes the answer directly rather than by iteration. The
+skill being tested is recognising that one exists.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - guessing the formula instead of deriving it.
+
+Two guesses are extremely common, and both are wrong most of the time.
+
+BUG 1 - `(high - low) // 2`.
+
+The reasoning is "about half the numbers in the range are odd, and the range has high-low
+numbers in it". Both halves of that sentence are off: the range has `high - low + 1` numbers,
+and whether the odd count rounds up or down depends on the PARITY OF THE ENDS.
+
+MEASURED over all 20,100 pairs with `0 <= low <= high < 200`: wrong on 15,050 of them - 74.9%.
+Failures:
+
+    low  high   correct   (high-low)//2
+     0     1       1            0
+     0     3       2            1
+     0     5       3            2
+
+BUG 2 - `(high - low) // 2 + 1`.
+
+The correction people reach for after seeing bug 1 fail on an inclusive range.
+
+MEASURED: wrong on 5,050 of 20,100 - 25.1%. Failures:
+
+    low  high   correct   (high-low)//2 + 1
+     0     0       0             1
+     0     2       1             2
+     0     4       2             3
+
+Look at the first row: `low = high = 0` should be 0, because 0 is even, and this version
+returns 1. Both guesses are right exactly when the ends have the right parity and wrong
+otherwise - which is why they survive a hand-written test or two.
+
+THE REAL RULE, if you want the direct formula rather than the prefix difference: the answer is
+`(high - low) // 2` PLUS one if either end is odd. That is fiddly enough to get wrong under
+pressure, which is precisely why `f(high) - f(low-1)` is the version worth memorising - it has
+no cases at all.
+
+BUG 3 - SUBTRACTING `f(low)` INSTEAD OF `f(low - 1)`. Silently drops `low` when `low` is odd.
+The symptom is an answer one too small on exactly the inputs where the range starts on an odd
+number - half of them.
+
+BUG 4 - LOOPING. Correct and far too slow: MEASURED, 328 ms for a range of 10^7, so roughly 33
+seconds at the constraint limit of 10^9. This is the difference between an accepted solution
+and a timeout, not a matter of style.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the prefix difference, `f(high) - f(low-1)` with `f(x) = (x+1)//2`. O(1), no
+cases, and it generalises. The answer.
+
+ALTERNATIVE B - the direct formula with a parity correction:
+
+    (high - low) // 2 + (1 if low % 2 == 1 or high % 2 == 1 else 0)
+
+Correct, and it needs the case analysis that the prefix version avoids. Write it only if the
+interviewer asks you to avoid a helper.
+
+ALTERNATIVE C - `(high + 1) // 2 - low // 2`. The same thing with the algebra already done,
+since `f(low-1) = ((low-1)+1)//2 = low//2`. Shorter, and slightly harder to explain from cold -
+which is the trade you are making.
+
+ALTERNATIVE D - the loop. O(high - low), MEASURED at 328 ms for 10^7 elements. Worth writing on
+the board as the definition you are about to replace, then deleting.
+
+THE GENERALISATION WORTH SAYING OUT LOUD - the same shape counts multiples of ANY k in a range:
+
+    count of multiples of k in [0, x]      = x // k          (plus 1 if you count 0)
+    count of multiples of k in [low, high] = high//k - (low-1)//k
+
+Odd numbers are "numbers congruent to 1 mod 2", so the same prefix-difference technique covers
+"how many numbers in [low, high] are divisible by 7", "how many end in 3", and so on. If you
+can state that generalisation, this Easy problem is finished in twenty seconds and you have
+shown the pattern behind it.
+
+THE FAMILY - range counting by prefix difference:
+  * COUNT ODD NUMBERS IN AN INTERVAL RANGE - this one;
+  * NUMBER OF DIGIT ONE, COUNT NUMBERS WITH UNIQUE DIGITS - digit DP built on the same
+    subtract-the-prefix idea;
+  * RANGE SUM QUERY - the same difference of prefixes, with sums instead of counts;
+  * SUBARRAY SUM EQUALS K - prefix sums in a hash map, the same principle one level up;
+  * COUNT PRIMES / SIEVE questions, where you precompute a prefix table and then answer each
+    range in O(1).""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the reframing before writing anything: turn a two-ended range into the difference
+of two prefixes, because a prefix has only one moving end.
+
+STEP 2 - write the helper:
+    def odds_up_to(x):
+        return (x + 1) // 2
+and justify it in one sentence: [0, x] holds x+1 integers, alternating starting from even, so
+half of them rounded down are odd.
+
+STEP 3 - `return odds_up_to(high) - odds_up_to(low - 1)`.
+
+STEP 4 - say `low - 1` deliberately, and say why: the range is inclusive, so `low` itself must
+stay in the count.
+
+STEP 5 - check the helper at 0 and -1 out loud. `f(0) = 0` (zero is even), `f(-1) = 0` (empty
+range). Those two make `low = 0` safe with no guard.
+
+STEP 6 - state the complexity: O(1) time and space, independent of the size of the range.
+MEASURED, [0, 10^9] in 1.2 microseconds against about 33 seconds for the loop.
+
+STEP 7 - offer the generalisation: replacing 2 with k counts multiples of k over the same
+range with the same two lines.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- I would not loop - the range can be a billion wide, and that is seconds of work for an answer
+  that has a formula.
+
+- The standard move for a range count is to turn it into a difference of two prefix counts. Let
+  f of x be the number of odd values in [0, x]. Then the answer for [low, high] is f(high) minus
+  f(low minus 1).
+
+- f itself is `(x + 1) // 2`. The range [0, x] has x plus one integers; they alternate even,
+  odd, starting from zero which is even; so the odd count is half of them, rounded down.
+
+- The `minus 1` matters. The range is inclusive, so if I subtracted f(low) I would remove `low`
+  itself whenever `low` is odd - which is half the inputs.
+
+- It also handles low equal to zero without a special case, because f of minus one is zero.
+
+- I would specifically avoid the two guesses people make - `(high - low) // 2` and that plus
+  one. The first is wrong about three quarters of the time and the second about a quarter,
+  because whether the count rounds up depends on the parity of both ends. The prefix version has
+  no cases at all.
+
+- O(1) time and space. And the same two lines count multiples of any k if you replace the 2.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def count_odds(low, high):
+        def odds_up_to(x):
+            return (x + 1) // 2                      # count of odds in [0, x]
+        return odds_up_to(high) - odds_up_to(low - 1)
+
+Line 2  `def odds_up_to(x):`
+        A nested helper, defined where it is used. Naming it is what makes line 4 readable as
+        the sentence "odds up to high, minus odds up to low-1".
+
+Line 3  `return (x + 1) // 2`
+        `x + 1` is how many integers are in [0, x] - the `+1` is because both ends are
+        included.
+        `// 2` is floor division, so it rounds down. That rounding is exactly right: when the
+        count of integers is odd, the extra one is an EVEN number, because the sequence starts
+        and ends on even.
+
+        Check the boundaries. `f(0) = 1//2 = 0` - zero is even, so there are no odds in [0,0].
+        `f(-1) = 0//2 = 0` - the empty range. That second one is why `low = 0` needs no guard.
+
+        Note this assumes `x >= -1`. The problem's constraints give `low >= 0`, so the smallest
+        argument ever passed is -1.
+
+Line 4  `return odds_up_to(high) - odds_up_to(low - 1)`
+        Inclusion-exclusion. Every odd number in [0, high] lies either in [low, high] or in
+        [0, low-1], so the subtraction leaves precisely the ones wanted.
+
+        `low - 1` and not `low`. With `low = 3`, `f(3) = 2` counts the 3 as already-removed and
+        the answer comes out one short. MEASURED, that error fires on every range starting at an
+        odd number.
+
+        Both calls are three arithmetic operations, so the whole function is constant time
+        regardless of the range - MEASURED, 1.2 microseconds for [0, 10^9].
+
+AND THE ALGEBRAICALLY SIMPLIFIED FORM, worth recognising when you see it in someone else's code:
+
+    return (high + 1) // 2 - low // 2
+
+        because `odds_up_to(low - 1)` is `((low - 1) + 1) // 2`, which is `low // 2`.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `low = 3, high = 7`.
+
+    odds_up_to(7)  = (7 + 1) // 2 = 4        the odds in [0,7] are 1, 3, 5, 7
+    odds_up_to(2)  = (2 + 1) // 2 = 1        the odds in [0,2] are 1
+    answer          = 4 - 1 = 3              the odds in [3,7] are 3, 5, 7      MEASURED
+
+TRACE B - `low = 8, high = 10`. An even-to-even range.
+
+    odds_up_to(10) = 11 // 2 = 5             1,3,5,7,9
+    odds_up_to(7)  =  8 // 2 = 4             1,3,5,7
+    answer          = 5 - 4 = 1              just the 9                          MEASURED
+
+TRACE C - the boundary inputs, side by side with the two common guesses.
+
+    low  high   f(high)  f(low-1)  correct   (high-low)//2   (high-low)//2 + 1
+    --------------------------------------------------------------------------
+     0    0        0         0        0            0                1
+     0    1        1         0        1            0                1
+     0    2        1         0        1            1                2
+     1    1        1         0        1            0                1
+     2    2        1         1        0            0                1
+     3    7        4         1        3            2                3
+
+    Read the last two columns. Neither guess is right on more than a few rows; MEASURED over all
+    20,100 pairs in [0,200), the first is wrong 74.9% of the time and the second 25.1%.
+
+TRACE D - why `low - 1` and not `low`, on `low = 3, high = 7`.
+
+    correct     f(7) - f(2) = 4 - 1 = 3      counts 3, 5, 7
+    wrong       f(7) - f(3) = 4 - 2 = 2      counts 5, 7 - the 3 was subtracted away
+
+    `f(3)` includes the number 3, and 3 is inside the range being asked about. Subtracting a
+    prefix that overlaps the range is the whole error.
+
+TRACE E - the scale that rules out looping.
+
+    range              method     time
+    ------------------------------------------
+    [0, 10^7]          loop       328 ms          (5,000,000 odds)
+    [0, 10^9]          loop       ~33 s, extrapolated
+    [0, 10^9]          formula    1.2 microseconds (500,000,000 odds)
+
+    Both MEASURED except the extrapolation, which is linear in the range width and therefore
+    safe to extrapolate.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(1) - two additions, two divisions, one subtraction. Independent of `high - low`.
+    space   O(1).
+
+    The loop is O(high - low), which at the problem's limit of 10^9 is not a constant-factor
+    difference but the difference between microseconds and half a minute.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `(high - low) // 2`. MEASURED wrong on 74.9% of the 20,100 pairs tested - it ignores both
+       the inclusive end and the parity of the endpoints.
+    2. `(high - low) // 2 + 1`. MEASURED wrong on 25.1% - right when a range boundary is odd,
+       wrong when both ends are even, including the smallest case `low = high = 0`.
+    3. Subtracting `f(low)` rather than `f(low - 1)`. Drops `low` itself whenever it is odd,
+       which is half of all inputs.
+    4. Looping. Correct, and MEASURED at roughly 33 seconds at the constraint limit.
+    5. Special-casing `low = 0` unnecessarily. `f(-1)` is 0, so the formula already handles it -
+       but you should CHECK that rather than assume it, because it is the one input where the
+       helper receives a negative argument.
+    6. Using `x % 2 == 1` on negative numbers in a language where `%` can return -1. Not an
+       issue here, since the constraints are non-negative, but the habit matters: `x & 1` is
+       parity-safe everywhere.
+
+THE TAKEAWAY
+    Convert every range count into a difference of two PREFIX counts - `f(high) - f(low-1)` -
+    because a prefix has one moving end and therefore no case analysis. Here `f(x) = (x+1)//2`,
+    and the `-1` is what keeps the inclusive lower bound inside the answer. The same two lines,
+    with `//k` in place of `//2`, count the multiples of any k in any range, which is the actual
+    reusable idea hiding inside an Easy problem.""",
+]
+
+_EX_P1AO["Count Symmetric Integers"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count the numbers in a range whose first half of digits adds up
+to the same total as its second half.
+
+A number is SYMMETRIC when it has an EVEN number of digits and the digits in the left half sum
+to the same value as the digits in the right half.
+
+    1203    left 1+2 = 3, right 0+3 = 3        symmetric
+    1221    left 1+2 = 3, right 2+1 = 3        symmetric
+    11      left 1, right 1                    symmetric
+    123     three digits - odd length          NOT symmetric, by definition
+    1234    left 1+2 = 3, right 3+4 = 7        not symmetric
+
+Note it is the SUMS that must match, not the digit strings. 1203 is symmetric and its two
+halves, "12" and "03", are completely different. MEASURED over [1, 10000]: 624 numbers are
+symmetric, of which 525 have halves that are not equal as strings - so the "compare the halves"
+misreading loses 84% of the answers.
+
+THE CONSTRAINT MAKES BRUTE FORCE THE RIGHT ANSWER. `high` is at most 10^4, so the whole search
+space is ten thousand numbers, and MEASURED, scanning all of them takes 8.4 ms. Say that out
+loud - "the range is bounded at ten thousand, so a direct scan is 10^4 iterations and that is
+the appropriate solution" - because knowing WHEN brute force is correct engineering is part of
+what is being tested.""",
+
+    """2. THE INTUITION - three questions per number, in order.
+
+For each number in the range, ask:
+
+    1. HOW MANY DIGITS does it have?  `s = str(num)`, then `len(s)`.
+    2. IS THAT EVEN?  If not, skip immediately - odd-length numbers are never symmetric.
+    3. DO THE TWO HALVES SUM EQUALLY?  Split at `len(s)//2` and compare the two digit sums.
+
+The order matters for a small but real reason: the length check is cheap and rejects a large
+fraction of the range at once, so it belongs first. Over [1, 10000] the odd-length numbers -
+1 through 9, then 100 through 999 - are 909 of the 10,000, so the parity test alone retires 9%
+of the work before any summing happens.
+
+WHY ODD LENGTH IS EXCLUDED BY DEFINITION RATHER THAN BY ARITHMETIC. With an odd digit count
+there is no way to split the digits into two equal halves - the middle digit belongs to neither -
+so the question does not apply. The problem does not ask you to ignore the middle digit; it
+says such numbers are not symmetric at all. This is a definition to obey, not a rule to derive,
+and MEASURED it accounts for a 54-number discrepancy under 1000 alone.
+
+WHERE THE ANSWERS ACTUALLY ARE. MEASURED, over [1, 10000]:
+
+    2-digit symmetric numbers:   9      11, 22, 33, ..., 99
+    3-digit:                     0      odd length
+    4-digit:                   615
+    total:                     624
+
+The nine two-digit ones are exactly the repdigits, because with one digit on each side "equal
+sums" and "equal digits" mean the same thing. From four digits onward the two notions come
+apart, which is where all the interesting cases live.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SYMMETRIC (in this problem) - even digit count, and the two half-sums are equal. It is a
+problem-specific definition, not the everyday meaning of symmetric, and in particular it is NOT
+"a palindrome": 1221 is both, but 1203 is symmetric and not a palindrome, while 12321 is a
+palindrome and not symmetric (odd length).
+
+DIGIT SUM - add the digits of a number or of part of one. The digit sum of "12" is 3.
+
+HALF - the first `len(s)//2` characters, and the rest. For a four-digit number, characters 0-1
+and 2-3.
+
+STRING SLICING - `s[:half]` is everything before index `half`, `s[half:]` is everything from it
+onward. Together they partition the string with no overlap and nothing missing, which is why
+this pair of slices is the safe way to split.
+
+`sum(map(int, s))` - turn each character into an int and add them. `map(int, "123")` yields 1,
+2, 3, and `sum` adds them to 6.
+
+INCLUSIVE RANGE - `range(low, high + 1)`. The `+1` is required; the problem includes `high`.
+
+BRUTE FORCE - checking every candidate. Here it is the correct choice because the range is
+capped at 10^4; that cap is information the problem gives you deliberately.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two misreadings of the definition.
+
+BUG 1 - COMPARING THE HALVES THEMSELVES INSTEAD OF THEIR SUMS.
+
+    if s[:half] == s[half:]        # WRONG
+
+MEASURED over [1, 10000]: this finds 99 numbers where the correct answer is 624. It counts only
+the numbers whose two halves are identical strings - 11, 22, ..., 99, then 1010, 1111, 1212 and
+so on - and misses 525 genuine answers.
+
+The first ten it loses:
+
+    1001   1+0 = 1, 0+1 = 1        halves "10" and "01" differ
+    1102   1+1 = 2, 0+2 = 2        halves "11" and "02" differ
+    1120   1+1 = 2, 2+0 = 2
+    1203   1+2 = 3, 0+3 = 3
+    1221, 1230, 1304, 1322, 1331, 1340
+
+This is the single most common way to get this problem wrong, and the reason is that the two
+readings coincide for every two-digit number - so the first examples you check all pass.
+
+BUG 2 - FORGETTING THE EVEN-LENGTH RULE.
+
+If you compute `half = len(s) // 2` and compare the sums without checking the parity of the
+length, an odd-length number gets split unevenly - for a three-digit number, `half` is 1, so you
+compare one digit against two.
+
+MEASURED over [1, 10000]: this counts 678 numbers instead of 624 - 54 too many. The extras
+under 1000 begin
+
+    101   left "1" = 1, right "01" = 1
+    110   left "1" = 1, right "10" = 1
+    202, 211, 220, 303, 312, 321, 330, 404 ...
+
+Every one is a three-digit number, and the definition excludes all of them.
+
+BUG 3 - `range(low, high)` instead of `range(low, high + 1)`. Standard inclusive-range slip;
+the symptom is being exactly one short whenever `high` itself is symmetric.
+
+BUG 4 - PREMATURE CLEVERNESS. It is tempting to build a digit-DP or a counting formula. With
+`high <= 10^4` the direct scan takes 8.4 ms MEASURED, and a wrong clever solution scores zero
+where a right simple one scores full marks. Build the fast version only if the constraints
+demand it - and section 5 shows what it looks like when they do.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the direct scan with string slicing. O((high-low) * digits), MEASURED 8.4 ms
+across the entire constraint range. The answer.
+
+ALTERNATIVE B - the same scan without converting to a string: count digits by repeated division,
+then peel `num % 10` off `half` times for the low sum and `half` more times for the high sum.
+MEASURED to agree exactly with the string version over [1, 10000]. It avoids allocation, which
+matters in a language without cheap strings and matters very little in Python. Worth writing if
+the interviewer says no string conversion.
+
+ALTERNATIVE C - the counting approach, for when the range is not bounded at 10^4. Instead of
+testing each number, count how many HALVES have each digit sum, then combine.
+
+For four-digit numbers: the first half runs over 10..99 and the second over 00..99. Build the
+distribution of digit sums for each side, and the number of symmetric four-digit numbers is
+
+    sum over s of  A[s] * B[s]
+
+where A[s] counts first halves with digit sum s and B[s] counts second halves with digit sum s.
+MEASURED: this gives 615, exactly matching the brute-force count of four-digit symmetric
+numbers, and it runs in 0.14 ms against 8.4 ms - because it examines 190 halves instead of
+10,000 numbers.
+
+This is a CONVOLUTION of two digit-sum distributions, and it is the idea that scales: for
+2k-digit numbers you build the distribution over k-digit halves once and multiply, which stays
+fast when `high` is 10^18 and a scan is impossible.
+
+ALTERNATIVE D - full digit DP, counting symmetric numbers up to x and answering the range as
+`g(high) - g(low-1)`. This is the general tool. It is far more machinery than this problem needs
+and exactly the right answer to "now do it for high up to 10^18".
+
+THE FAMILY - digit-property counting:
+  * PALINDROME NUMBER, SUPER PALINDROMES - digit structure rather than digit sums;
+  * COUNT NUMBERS WITH UNIQUE DIGITS, NUMBERS AT MOST N GIVEN DIGIT SET - the digit-DP ladder
+    this problem sits at the bottom of;
+  * NUMBER OF DIGIT ONE - the classic prefix-count-by-digit problem;
+  * SUM OF DIGITS / ADD DIGITS - the same digit-extraction machinery with a different question;
+  * ALTERNATING DIGIT SUM - a digit sum with signs, and the same string-versus-arithmetic
+    choice about which end to start from.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the constraint out loud: `high <= 10^4`, so a direct scan of at most ten thousand
+numbers is the right engineering choice, and say what you would do instead if the bound were
+10^18 (count by half-sum distribution, section 5).
+
+STEP 2 - loop over the inclusive range: `for num in range(low, high + 1):`. The `+1` is not
+optional.
+
+STEP 3 - convert once: `s = str(num)`. Do it a single time and reuse it, rather than calling
+`str` again for each half.
+
+STEP 4 - reject odd lengths first: `if len(s) % 2 == 0:`. Cheapest test, biggest cull.
+
+STEP 5 - split at the midpoint: `half = len(s) // 2`, then `s[:half]` and `s[half:]`.
+
+STEP 6 - compare the SUMS, not the strings:
+    if sum(map(int, s[:half])) == sum(map(int, s[half:])):
+        count += 1
+Say the word "sums" as you write it - MEASURED, the string comparison finds 99 of the 624
+answers.
+
+STEP 7 - return the count, and give the complexity as O((high - low) * number of digits), which
+is at most about 40,000 digit operations at the constraint limit.
+
+STEP 8 - test 1203 (symmetric, different halves), 11 (symmetric), 123 (odd length, rejected) and
+1234 (even length, unequal sums).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- For each number in the range I convert it to a string once, check that the digit count is
+  even, split it in half, and compare the sum of the left digits with the sum of the right
+  digits.
+
+- Two things in the definition are easy to misread, and I would say both explicitly. It is the
+  SUMS that must match, not the halves themselves - 1203 is symmetric because one plus two
+  equals zero plus three, even though "12" and "03" are different. And odd-length numbers are
+  excluded outright, not split with the middle digit going to one side.
+
+- Both misreadings are large. Comparing the halves as strings finds 99 numbers under ten
+  thousand where the answer is 624. Forgetting the even-length rule finds 678.
+
+- On complexity: the range is capped at ten thousand, so the direct scan is at most ten thousand
+  iterations with a handful of digit operations each - about eight milliseconds measured. That
+  is the right solution for these constraints, and I would say so rather than reaching for
+  something clever.
+
+- If the bound were much larger, I would count instead of scanning: build the distribution of
+  digit sums over all possible half-values once, then the count of symmetric numbers is the sum
+  over s of the number of left halves with sum s times the number of right halves with sum s.
+  For four-digit numbers that examines 190 halves instead of ten thousand numbers - measured,
+  0.14 milliseconds against 8.4, and it gives the same 615.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def count_symmetric_integers(low, high):
+        count = 0
+        for num in range(low, high + 1):
+            s = str(num)
+            if len(s) % 2 == 0:
+                half = len(s) // 2
+                if sum(map(int, s[:half])) == sum(map(int, s[half:])):
+                    count += 1
+        return count
+
+Line 3  `for num in range(low, high + 1):`
+        Inclusive on both ends. Without the `+1`, `high` itself is never tested - a one-off
+        error that only shows when `high` happens to be symmetric.
+
+Line 4  `s = str(num)`
+        One conversion per number, reused three times below (length, left half, right half).
+        Converting inside the comparison would triple the work for no benefit.
+
+Line 5  `if len(s) % 2 == 0:`
+        The definition's first clause. It is also the cheapest test, so it goes first: over
+        [1, 10000] it rejects 909 numbers - all of 1..9 and 100..999 - before any summing.
+
+Line 6  `half = len(s) // 2`
+        The split point. For a four-character string this is 2, so `s[:2]` and `s[2:]` are the
+        two halves. This line is only reached for even lengths, so the two halves are genuinely
+        equal in size.
+
+Line 7  `sum(map(int, s[:half])) == sum(map(int, s[half:]))`
+        `s[:half]` is the left half, `s[half:]` the right - together they cover the string
+        exactly once. `map(int, ...)` converts each character to a digit; `sum` adds them.
+
+        SUMS, not strings. MEASURED, `s[:half] == s[half:]` finds 99 numbers instead of 624,
+        because it demands the halves be identical rather than merely equal-weight.
+
+Line 8  `count += 1`
+
+Line 9  `return count`
+        MEASURED, 624 for the whole constraint range [1, 10^4], reached in 8.4 ms.
+
+AND THE NO-STRING VERSION, if asked for it:
+
+    def count_symmetric_arith(low, high):
+        count = 0
+        for num in range(low, high + 1):
+            digits = 0
+            m = num
+            while m:
+                digits += 1
+                m //= 10
+            if digits % 2:
+                continue                       # odd length is never symmetric
+            m = num
+            low_sum = high_sum = 0
+            for _ in range(digits // 2):       # the RIGHT half comes off first
+                low_sum += m % 10
+                m //= 10
+            for _ in range(digits // 2):
+                high_sum += m % 10
+                m //= 10
+            if low_sum == high_sum:
+                count += 1
+        return count
+
+        MEASURED to give the identical 624 over [1, 10000]. Note the peeling order: `% 10`
+        takes digits from the RIGHT, so the first loop accumulates the second half of the
+        written number. It does not matter here because the test is symmetric, but it is the
+        same direction trap as in Alternating Digit Sum.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `num = 1203`, a symmetric number whose halves are not equal.
+
+    s = "1203"
+    len(s) = 4, and 4 % 2 == 0, so continue
+    half = 2
+    s[:2] = "12"   -> map(int, ...) yields 1, 2   -> sum 3
+    s[2:] = "03"   -> yields 0, 3                 -> sum 3
+    3 == 3  ->  count += 1
+
+    The string comparison would have asked whether "12" == "03", which is false. That single
+    difference is worth 525 of the 624 answers under 10,000.
+
+TRACE B - `num = 123`, rejected on length.
+
+    s = "123", len(s) = 3, 3 % 2 == 1  ->  the `if` fails, nothing else runs.
+
+    The buggy version computes `half = 1` and compares sum("1") = 1 against sum("23") = 5. Here
+    they differ, so it happens to agree - but on 101 it compares 1 against 0+1 = 1 and wrongly
+    counts it. MEASURED, 54 such false positives under 1000.
+
+TRACE C - the full range, block by block.
+
+    block         count   note
+    -----------------------------------------------------------------
+    1..9              0   odd length (one digit)
+    10..99            9   11,22,33,44,55,66,77,88,99 - exactly the repdigits
+    100..999          0   odd length
+    1000..9999      615   the interesting ones
+    10000             0   five digits, odd
+    total           624                                            MEASURED
+
+    The two-digit block is 9 because with a single digit on each side, equal sums IS equal
+    digits - which is precisely why testing only two-digit examples hides the string-comparison
+    bug.
+
+TRACE D - the counting alternative on the four-digit block, to see why it is faster.
+
+    left halves  run over 10..99   (90 values, since a four-digit number cannot start with 0)
+    right halves run over 00..99   (100 values)
+
+    build A[s] = how many left halves have digit sum s
+          B[s] = how many right halves have digit sum s
+    answer = sum over s of A[s] * B[s]
+
+    MEASURED: 615, identical to the scan, computed from 190 halves instead of 9,000 numbers -
+    0.14 ms against 8.4 ms for the whole range.
+
+TRACE E - the near-misses, to fix the definition in mind.
+
+    number   digits   left sum   right sum   symmetric?
+    ----------------------------------------------------
+    1221       4        3           3          yes
+    1203       4        3           3          yes  (halves differ)
+    1234       4        3           7          no
+    12321      5        -           -          no   (odd length)
+    11         2        1           1          yes
+    10         2        1           0          no""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O((high - low + 1) * d) where d is the number of digits, so at most about 4 * 10^4
+            digit operations at the constraint limit. MEASURED, 8.4 ms for the entire range
+            [1, 10^4].
+    space   O(d) for the string of each number - effectively O(1). The arithmetic version is
+            genuinely O(1).
+
+    The counting alternative is O(10^(d/2)) - it enumerates HALVES rather than numbers, which is
+    the square root of the work. MEASURED on the four-digit block, 0.14 ms against 8.4 ms, with
+    the identical answer of 615. That is the version to reach for if the bound were 10^18, where
+    scanning is impossible and counting halves is still trivial.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Comparing the halves as strings rather than their sums. MEASURED, 99 found where the
+       answer is 624 - it loses 525 numbers, and it is invisible on every two-digit example
+       because there the two readings agree.
+    2. Omitting the even-length check. MEASURED, 678 instead of 624; every extra is an
+       odd-length number split unevenly by `len(s)//2`.
+    3. `range(low, high)` - excludes `high`, so the count is one short whenever `high` is itself
+       symmetric.
+    4. Calling `str(num)` several times per iteration instead of once. Correct, and three times
+       the allocations.
+    5. Reaching for digit DP at these constraints. The scan is 8.4 ms; complexity you cannot
+       finish correctly is worth less than simplicity you can.
+    6. Assuming symmetric means palindrome. 1203 is symmetric and not a palindrome; 12321 is a
+       palindrome and not symmetric.
+
+THE TAKEAWAY
+    Read the definition twice before coding: this problem hinges on EQUAL SUMS rather than equal
+    halves, and on even digit counts being a precondition rather than something to work around.
+    The two misreadings cost 525 answers and add 54 wrong ones respectively. Then let the
+    constraint pick the algorithm - at 10^4 a scan is correct engineering, and the moment the
+    bound grows you switch from testing numbers to counting halves by digit sum, which is the
+    square root of the work for the same answer.""",
+]
+
+_EX_P1AO["Count the Number of Consistent Strings"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count the words that use only letters from an allowed set.
+
+You get a string of ALLOWED characters and a list of words. A word is CONSISTENT if every one of
+its characters appears in the allowed set. Count the consistent words.
+
+    allowed = "ab"
+    words   = ["ad", "bd", "aaab", "baa", "badab"]
+
+    "ad"     uses a and d      d is not allowed      no
+    "bd"     uses b and d      d is not allowed      no
+    "aaab"   uses a and b      both allowed          YES
+    "baa"    uses b and a      both allowed          YES
+    "badab"  uses b, a, d      d is not allowed      no
+    answer 2
+
+REPEATS DO NOT MATTER. "aaab" uses only two distinct letters and is consistent; the word may be
+any length and may reuse allowed letters freely. That is why the natural expression of the test
+is about SETS: is the set of characters in the word a subset of the allowed set?
+
+    set(word) <= allowed_set
+
+`<=` between two sets is the SUBSET operator in Python, not a size comparison. MEASURED against
+two other formulations - checking every character individually, and a 26-bit bitmask - all three
+agree on all 20,000 random test cases.""",
+
+    """2. THE INTUITION - three ways to say the same thing, and what each costs.
+
+FORMULATION 1 - SUBSET. Collapse the word to its distinct characters, then ask whether that set
+is contained in the allowed set.
+
+    set(word) <= allowed_set
+
+Building `set(word)` is one pass over the word; the subset test then walks the (at most 26)
+distinct characters. Clear, and it says the definition almost literally.
+
+FORMULATION 2 - EVERY CHARACTER. Ask the question per character, and stop at the first failure.
+
+    all(ch in allowed_set for ch in word)
+
+This short-circuits: an inconsistent word fails at its first bad character instead of after
+building a whole set. For long words with an early rejection this is the faster shape.
+
+FORMULATION 3 - BITMASK. Since the alphabet is 26 lowercase letters, represent each set as an
+integer where bit i means "letter i is present". A word is consistent when it has no bits
+outside the allowed mask:
+
+    word_mask & ~allowed_mask == 0
+
+In C or Java this is the fastest by a wide margin - two machine instructions per word after the
+masks are built. MEASURED IN PYTHON IT IS THE SLOWEST of the three, at 140.4 ms against 70.9 and
+75.6 ms for 200,000 ten-character words, because every shift and OR is an interpreted bytecode
+operation on a boxed integer while `in` and `set` run inside C. Language matters more than
+theory here, and saying which language you are reasoning about is part of a good answer.
+
+WHAT ALL THREE SHARE: the allowed set is built ONCE, outside the loop over words. That is the
+only decision with an asymptotic consequence.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CONSISTENT - every character of the word is in the allowed set. A word using only some of the
+allowed letters is still consistent; the containment goes one way.
+
+SET - an unordered collection of distinct items with O(1) membership testing. `set("aaab")` is
+`{'a','b'}` - duplicates collapse, which is exactly what this problem wants.
+
+SUBSET, `<=` - `A <= B` is true when every element of A is in B. Python spells it `A <= B` or
+`A.issubset(B)`. It is NOT a comparison of sizes, and it is NOT the same as `A < B`, which
+additionally requires the two sets to differ.
+
+MEMBERSHIP `in` - `ch in allowed`. On a set this is a hash lookup, O(1). On a STRING it is a
+substring search, which for a single character is a scan of the string, O(len(allowed)).
+
+SHORT-CIRCUIT - `all(...)` stops at the first false element. That is why formulation 2 can beat
+formulation 1 on words that fail early.
+
+BITMASK - an integer used as a set of up to 64 flags. `1 << (ord(ch) - 97)` is the bit for a
+lowercase letter, and `|` unions, `&` intersects, `& ~mask` finds elements outside a set.
+
+ALPHABET SIZE - here 26, and constant. It is what makes the space O(1) rather than O(n) and what
+makes the bitmask possible at all.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two operators that look right and mean something else.
+
+BUG 1 - `word in allowed`.
+
+This reads like English - "is the word in the allowed characters" - and Python accepts it
+happily, because `in` on a string is a SUBSTRING test. `"ab" in "abc"` is True not because a and
+b are allowed characters but because "ab" appears consecutively inside "abc".
+
+MEASURED on 20,000 random cases: wrong on 693 of them, 3.5%. Failures:
+
+    allowed     words                      correct   `word in allowed`
+    "fhjipn"    ["kldi", "jh"]                1              0
+    "jcft"      ["ihae","ljgkb","iebla","jf"] 1              0
+    "bljzi"     ["bkije","jj","lch"]          1              0
+
+In every case the true consistent word - "jh", "jf", "jj" - uses only allowed letters but does
+not appear as a contiguous run inside the allowed string, so the substring test rejects it. And
+the failure rate is LOW, which is what makes it nasty: 96.5% of random cases agree, so a handful
+of tests will very likely pass.
+
+BUG 2 - `any` INSTEAD OF `all`.
+
+    any(ch in allowed_set for ch in word)      # WRONG
+
+This asks whether the word contains at least one allowed character, which is a far weaker
+condition.
+
+MEASURED: wrong on 11,818 of 20,000, 59.1%. It over-counts every time:
+
+    allowed "frv",      words ["ak","b","fabed"]                correct 0, any() gives 1
+    allowed "msotduv",  words ["kkfcb","ikde","jdhe",...]        correct 0, any() gives 2
+    allowed "mhotpcse", words ["jha","gafl","fhefe","dakih"]     correct 0, any() gives 3
+
+Unlike bug 1 this one fires immediately on almost any test, so it rarely survives - but it is
+worth naming because it is the difference between "all characters allowed" and "some character
+allowed", and those two English sentences are one word apart.
+
+BUG 3 - BUILDING THE ALLOWED SET INSIDE THE LOOP. `set(allowed)` per word turns an O(1) setup
+into O(number of words * 26). Correct, and quietly wasteful in exactly the way an interviewer
+notices.
+
+BUG 4 - ASSUMING A SET IS ALWAYS FASTER THAN A STRING SCAN. MEASURED on 200,000 ten-character
+words with a ten-character allowed string:
+
+    `ch in allowed` where allowed is a STRING     70.9 ms
+    `set(word) <= set(allowed)`                    75.6 ms
+    bitmask                                       140.4 ms
+
+The string version WINS at this size, because scanning ten characters in C beats building a
+Python set object per word. Change the shape and it flips: with a 25-character allowed string
+and words whose characters are absent, MEASURED 41.3 ms for the string scan against 29.1 ms for
+the set. The asymptotics say set; the constants say it depends on the alphabet size and the
+word length. Both are true, and the honest answer names both.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - `set(word) <= allowed_set`. The clearest statement of the definition. Builds a
+set per word, which is the cost.
+
+ALTERNATIVE B - `all(ch in allowed_set for ch in word)`. Short-circuits on the first bad
+character, so it is the better choice when words are long and rejections are common. Same
+asymptotics, no per-word allocation.
+
+ALTERNATIVE C - the bitmask. `word_mask & ~allowed_mask == 0`. The right answer in C, Java or
+Rust, where it compiles to a handful of instructions; MEASURED the slowest of the three in
+Python at 140.4 ms because the bit operations are interpreted. Say it as "in a compiled language
+I would use a 26-bit mask", which is a stronger answer than pretending it wins everywhere.
+
+ALTERNATIVE D - precompute a boolean array of 26 entries instead of a set. Avoids hashing
+entirely and is the classic C answer: `allowed[ch - 'a']`. Equivalent to the bitmask with one
+byte per letter instead of one bit.
+
+ALTERNATIVE E - `sum(set(w) <= a for w in words)` as a one-liner, relying on `True` summing as
+1. Idiomatic, and the explicit loop is easier to read aloud in an interview.
+
+WHAT CHANGES IF THE ALPHABET IS NOT 26 LOWERCASE LETTERS. Unicode breaks the bitmask and the
+26-entry array; the set version is the only one that survives unchanged. That is worth one
+sentence: the set solution is the general one, and the bitmask is an optimisation licensed by a
+constraint in the problem statement.
+
+THE FAMILY - subset and character-set membership problems:
+  * FIND WORDS THAT CAN BE FORMED BY CHARACTERS - the same question with COUNTS as well as
+    membership, so a set is no longer enough and you need a Counter;
+  * RANSOM NOTE - the multiset version, where letters must be available in sufficient quantity;
+  * VALID ANAGRAM, GROUP ANAGRAMS - equality of multisets rather than containment;
+  * WORD SEARCH II / trie-based filters - the same "reject words that use forbidden letters"
+    pruning, at scale;
+  * BITMASK SUBSET ENUMERATION problems, where this representation of a letter set is the
+    foundation.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - build the allowed set ONCE, before the loop: `allowed_set = set(allowed)`. This is the
+only step with a complexity consequence.
+
+STEP 2 - loop over the words: `for word in words:`.
+
+STEP 3 - test containment with the subset operator: `if set(word) <= allowed_set:` - and say
+out loud that `<=` here means SUBSET, not "less than or equal".
+
+STEP 4 - increment a counter, and return it.
+
+STEP 5 - name the alternative test and when you would prefer it: `all(ch in allowed_set for ch
+in word)` short-circuits on the first bad character and allocates nothing per word, so it wins
+for long words with early rejections.
+
+STEP 6 - name the two operator traps explicitly, because they are the content of the problem.
+`word in allowed` is a SUBSTRING test and MEASURED wrong on 3.5% of random inputs. `any` instead
+of `all` asks a completely different question and is MEASURED wrong on 59.1%.
+
+STEP 7 - state the complexity: O(total characters across all words) time, O(alphabet) space -
+which is O(1), since the problem fixes the alphabet at 26 lowercase letters.
+
+STEP 8 - offer the bitmask as the compiled-language optimisation, with the honest caveat that
+MEASURED in Python it is the slowest of the three.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- I put the allowed characters into a set once, outside the loop, so membership is a hash lookup
+  rather than a scan.
+
+- Then for each word I ask whether the set of its characters is a subset of the allowed set.
+  Duplicates in the word are irrelevant, which is exactly what turning the word into a set
+  expresses.
+
+- Two operators to be careful with. `word in allowed` looks like the right sentence in English
+  and is a SUBSTRING test in Python - it accepts a word only if its letters appear consecutively
+  inside the allowed string, so it rejects perfectly consistent words. And `any` instead of
+  `all` asks whether SOME character is allowed rather than every one, which over-counts heavily.
+
+- If words are long and often inconsistent, I would use `all(ch in allowed_set for ch in word)`
+  instead, because it stops at the first bad character and does not allocate a set per word.
+
+- Time is linear in the total number of characters across all words; space is the alphabet,
+  which is fixed at 26 here, so effectively constant.
+
+- In a compiled language I would use a 26-bit mask: one integer per set, and the test becomes a
+  single AND against the complement. In Python I measured that as the slowest of the three,
+  because the bit operations are interpreted while `in` and `set` run in C - so I would not use
+  it here.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def count_consistent(allowed, words):
+        allowed_set = set(allowed)
+        count = 0
+        for word in words:
+            if set(word) <= allowed_set:   # all characters are allowed
+                count += 1
+        return count
+
+Line 2  `allowed_set = set(allowed)`
+        Built once. `set("ab")` is `{'a','b'}`. Doing this inside the loop would repeat the work
+        for every word - correct, and an easy thing for an interviewer to point at.
+
+        Set membership is a hash lookup, O(1) per character, versus O(len(allowed)) for a scan
+        of the original string. At 26 possible characters that difference is small in absolute
+        terms - MEASURED, the string scan is actually faster for a short allowed string - but the
+        set is the version whose cost does not depend on the alphabet.
+
+Line 4  `for word in words:`
+
+Line 5  `if set(word) <= allowed_set:`
+        `set(word)` collapses the word to its distinct characters - `set("aaab")` is `{'a','b'}`
+        - so repeats cost nothing.
+
+        `<=` between sets is SUBSET. `{'a','b'} <= {'a','b','c'}` is True. It is not a size
+        comparison; `{'z'} <= {'a','b','c'}` is False even though both have fewer elements than
+        three. In Java the same test is `allowedSet.containsAll(wordSet)`.
+
+        The alternative that short-circuits: `all(ch in allowed_set for ch in word)` returns as
+        soon as a bad character appears, and never builds a set for the word.
+
+Line 6  `count += 1`
+
+Line 7  `return count`
+
+AND THE BITMASK VERSION, for a compiled language:
+
+    def count_consistent_mask(allowed, words):
+        allowed_mask = 0
+        for ch in allowed:
+            allowed_mask |= 1 << (ord(ch) - 97)      # bit per lowercase letter
+        count = 0
+        for word in words:
+            word_mask = 0
+            for ch in word:
+                word_mask |= 1 << (ord(ch) - 97)
+            if word_mask & ~allowed_mask == 0:       # no bit outside the allowed set
+                count += 1
+        return count
+
+        `word_mask & ~allowed_mask` isolates exactly the letters the word uses that are not
+        allowed; zero means none. MEASURED, identical answers to the set version on all 20,000
+        random cases, and 140.4 ms against 75.6 ms on 200,000 words - slower in Python, and the
+        fastest of the three in any compiled language.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `allowed = "ab"`, `words = ["ad","bd","aaab","baa","badab"]`.
+
+    allowed_set = {'a','b'}
+
+    word       set(word)       subset of {'a','b'}?    count
+    -------------------------------------------------------------
+    "ad"       {'a','d'}       no  ('d' is outside)      0
+    "bd"       {'b','d'}       no                        0
+    "aaab"     {'a','b'}       YES                       1
+    "baa"      {'a','b'}       YES                       2
+    "badab"    {'a','b','d'}   no                        2
+    return 2
+
+    Note "aaab" and "baa" produce the SAME set from different strings of different lengths -
+    which is the point of using a set at all.
+
+TRACE B - the substring bug, on the first failing case from the measurement.
+
+    allowed = "fhjipn",  words = ["kldi", "jh"]
+
+    correct
+        set("kldi") = {'k','l','d','i'}   -> 'k','l','d' not allowed -> no
+        set("jh")   = {'j','h'}           -> both in {'f','h','j','i','p','n'} -> YES
+        count 1
+
+    with `word in allowed`
+        "kldi" in "fhjipn"  ->  False    (correctly rejected, by accident)
+        "jh"   in "fhjipn"  ->  False    (WRONG - j and h are both allowed, but the substring
+                                          "jh" does not appear; the allowed string has them in
+                                          the order f, h, j)
+        count 0                                                        MEASURED
+
+    The bug depends on the ORDER of the allowed string, which has no meaning in this problem at
+    all.
+
+TRACE C - the `any` bug.
+
+    allowed = "frv",  words = ["ak","b","fabed"]
+
+    correct
+        "ak"    -> 'a','k' both disallowed          no
+        "b"     -> disallowed                        no
+        "fabed" -> 'f' allowed, 'a' not              no
+        count 0
+
+    with `any`
+        "ak"    -> is any character allowed? no      not counted
+        "b"     -> no                                not counted
+        "fabed" -> 'f' IS allowed                    counted
+        count 1                                                        MEASURED
+
+    `any` returns true on the strength of a single acceptable character in a word full of
+    forbidden ones.
+
+TRACE D - the bitmask, on `allowed = "ab"`, `word = "aaab"`.
+
+    allowed_mask: 'a' -> bit 0, 'b' -> bit 1        mask = 0b11 = 3
+    word_mask   : 'a','a','a','b'                   mask = 0b11 = 3  (OR is idempotent, so the
+                                                     three a's cost nothing)
+    ~allowed_mask has every bit EXCEPT 0 and 1 set
+    3 & ~3 = 0    ->  consistent
+
+    And for `word = "ad"`:  'a' -> bit 0, 'd' -> bit 3, word_mask = 0b1001 = 9
+    9 & ~3 = 8    ->  non-zero, so inconsistent, and the 8 tells you exactly which letter
+    offended (bit 3 = 'd').
+
+TRACE E - the timing table, so the "sets are always faster" reflex gets corrected.
+
+    200,000 words of 10 characters, allowed = 10 characters
+        `ch in allowed` (allowed is a plain string)     70.9 ms
+        `set(word) <= set(allowed)`                     75.6 ms
+        bitmask                                        140.4 ms
+        all three return 7,002
+
+    200,000 words of "zzzzzzzzzz", allowed = 25 characters not including z
+        `ch in allowed` string scan                     41.3 ms
+        set version                                     29.1 ms
+
+    The set wins when the allowed collection is long; the string scan wins when it is short. The
+    asymptotic argument is about the alphabet size, and at 26 letters the constants decide.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(total characters across all words + len(allowed)). Every character of every word is
+            examined at most once, and the allowed set is built once.
+    space   O(alphabet) - at most 26 entries for the allowed set, plus at most 26 for the
+            per-word set. With the alphabet fixed by the problem, that is O(1).
+
+    The short-circuiting variant has the same worst case and a better average, since an
+    inconsistent word stops at its first bad character rather than reading to the end.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `word in allowed` - a substring test wearing the right English sentence. MEASURED wrong on
+       3.5% of random cases, and the low rate is the danger: it depends on the ORDER of the
+       allowed string, which is meaningless here, so it passes most quick tests.
+    2. `any` instead of `all`. MEASURED wrong on 59.1% - it counts a word that contains at least
+       one allowed character.
+    3. Building `set(allowed)` inside the loop. Correct and repeated once per word.
+    4. Assuming a set always beats a scan. MEASURED, the plain string scan is faster for a short
+       allowed string (70.9 ms vs 75.6) and slower for a long one (41.3 vs 29.1).
+    5. Assuming a bitmask is always fastest. MEASURED it is the slowest of the three in Python,
+       at 140.4 ms - it is the right answer in a compiled language and the wrong one here.
+    6. Comparing lengths - `len(set(word)) <= len(allowed_set)` - which is not containment at
+       all and accepts any short word.
+    7. Hard-coding 26 letters when the input might be Unicode. The set version needs no change;
+       the mask and the fixed array do.
+
+THE TAKEAWAY
+    "Every character of the word is allowed" is literally a SUBSET test, so write it as one -
+    `set(word) <= allowed_set` - and build the allowed set exactly once. Then hold on to the two
+    operator traps this problem exists to teach: in Python, `in` on a string means SUBSTRING, not
+    membership in a character set, and `all` versus `any` is the difference between every
+    character and some character. Both compile, both run, and one of them is wrong 3.5% of the
+    time and the other 59.1%.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
