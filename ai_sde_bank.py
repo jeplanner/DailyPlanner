@@ -271103,6 +271103,1472 @@ changed — verified in bases 2, 8, 10 and 16.""",
 # NOTE the threshold: these entries already carry 6-7 examples in the older,
 # terser register, so the ten-section set must REPLACE them rather than fill a
 # gap. Every other _EX_* loop uses < 5, which would silently do nothing here.
+_EX_P1AO["Add Digits (digital root)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - keep adding up the digits until only one digit is left.
+
+Take 38. Add its digits: 3 + 8 = 11. That is still two digits, so do it again: 1 + 1 = 2.
+Two is one digit, so you stop and answer 2.
+
+    38  ->  3+8 = 11  ->  1+1 = 2      answer 2
+   999  ->  9+9+9 = 27  ->  2+7 = 9    answer 9
+     0  ->  already one digit          answer 0
+
+That repeated squashing has a name: the DIGITAL ROOT of the number. The interview
+question is never really about writing the loop - the loop is four lines and anybody can
+write it. The question is whether you know the loop is unnecessary, because there is a
+closed formula that gets the same answer with one arithmetic operation:
+
+    digital_root(n) = 0                if n == 0
+                    = 1 + (n - 1) % 9  otherwise
+
+MEASURED: the formula against the honest loop on every value from 0 to 200,000 -
+200,001 numbers, ZERO mismatches. Not a heuristic, not an approximation for large n; it
+is the same function written a different way.""",
+
+    """2. THE INTUITION - a number and its digit sum leave the same remainder when divided by 9.
+
+This is the one fact the whole problem rests on, and it is worth deriving rather than
+memorising, because the derivation is two lines.
+
+Write 5,283 out the way place value actually means it:
+
+    5283 = 5*1000 + 2*100 + 8*10 + 3*1
+
+Now look at the powers of ten, one remainder at a time:
+
+    1      = 1        remainder when divided by 9: 1
+    10     = 9 + 1    remainder: 1
+    100    = 99 + 1   remainder: 1
+    1000   = 999 + 1  remainder: 1
+
+EVERY power of ten is a run of nines plus one, so every power of ten leaves remainder 1.
+That means, working in remainders-mod-9, each digit contributes just itself times 1:
+
+    5283  ==  5*1 + 2*1 + 8*1 + 3*1  ==  5+2+8+3  ==  18   (mod 9)
+
+The number and its digit sum are interchangeable as far as division by 9 is concerned.
+MEASURED on every n from 1 to 50,000: the digit sum and the number itself give the same
+remainder mod 9 in all 50,000 cases, zero failures.
+
+Now apply that repeatedly. Every squashing step preserves the remainder mod 9, and every
+step makes the number smaller, so the process has to stop - and it stops at a single
+digit. A single digit that has the same remainder mod 9 as the original is completely
+pinned down, because the digits 1..9 hit each remainder exactly once:
+
+    digit        1  2  3  4  5  6  7  8  9
+    remainder    1  2  3  4  5  6  7  8  0
+
+So the answer IS the remainder mod 9, with the single wrinkle that a remainder of 0 must
+come back as 9, not 0. The expression `1 + (n-1) % 9` is exactly that wrinkle handled
+without an `if`: it shifts the range 1..9 down to 0..8, takes the remainder there, and
+shifts back up.
+
+    n = 9    -> 1 + (8 % 9)  = 1 + 8 = 9
+    n = 18   -> 1 + (17 % 9) = 1 + 8 = 9
+    n = 10   -> 1 + (9 % 9)  = 1 + 0 = 1
+    n = 38   -> 1 + (37 % 9) = 1 + 1 = 2""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIGIT SUM - add the digits once. 5283 -> 5+2+8+3 = 18. One pass, no repetition.
+
+DIGITAL ROOT - keep taking the digit sum until one digit remains. 5283 -> 18 -> 9. The
+answer this problem asks for.
+
+REMAINDER / MODULO - what is left over after division. `17 % 9` is 8, because 17 is one
+9 with 8 left over. The `%` symbol is read as `mod`.
+
+CONGRUENT MOD 9 - two numbers that leave the SAME remainder when divided by 9. 5283 and
+18 are congruent mod 9 (both leave 0). It is written `5283 == 18 (mod 9)`. The whole
+solution is one sentence in this vocabulary: a number is congruent to its digit sum mod 9.
+
+CASTING OUT NINES - the old accountancy trick built on exactly this fact. If you add two
+columns of figures and the digital roots do not agree, you made an arithmetic slip. It
+catches most errors and misses digit transpositions, because swapping two digits does not
+change their sum.
+
+CLOSED FORM - an answer computed by a fixed formula instead of by a loop whose length
+depends on the input. `1 + (n-1) % 9` is the closed form here.
+
+O(1) - the running time does not grow with the input. One remainder, one addition,
+whatever n is.
+
+IDEMPOTENT - applying the operation again changes nothing. The digital root is idempotent:
+the digital root of a single digit is itself, which is why the loop terminates.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two of them, and one is silent.
+
+MISTAKE 1: writing `return n % 9`.
+
+This is the natural first attempt once you have seen the mod-9 argument, and it is right
+for eight numbers out of every nine. It fails on the ninth.
+
+MEASURED over 1..100,000 against the honest loop: `n % 9` is WRONG on 11,111 of the
+100,000 - 11.1% - and every single failure is a multiple of 9. The first five are
+
+    n = 9    n % 9 = 0    correct answer 9
+    n = 18   n % 9 = 0    correct answer 9
+    n = 27   n % 9 = 0    correct answer 9
+    n = 36   n % 9 = 0    correct answer 9
+    n = 45   n % 9 = 0    correct answer 9
+
+The digital root never returns 0 for a positive number - it returns a digit from 1 to 9 -
+but `%` returns 0..8. The ranges do not line up, and 9 is where they part company.
+
+MISTAKE 2: dropping the `if n == 0` guard, which behaves DIFFERENTLY IN DIFFERENT
+LANGUAGES - and Python is the one that breaks.
+
+    Python:   (0 - 1) % 9  is  8   ->  1 + 8 = 9    WRONG, should be 0
+    Java/C++: (0 - 1) % 9  is -1   ->  1 + (-1) = 0 RIGHT, by luck
+
+Python's `%` always returns a result with the sign of the DIVISOR, so `-1 % 9` is 8.
+Java and C++ truncate toward zero, so `-1 % 9` is -1. Same three characters, two answers.
+MEASURED in Python: `1 + (0-1) % 9` evaluates to 9, and the correct answer is 0. If you
+learned the one-liner in Java and typed it into Python, you have shipped a bug on a single
+input - and n = 0 is exactly the input an interviewer will hand you.
+
+Keep the explicit zero guard in every language. It costs one line and it removes the
+argument entirely.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the honest loop. Sum the digits, repeat while the value is two digits or
+more. This is correct, obvious, and worth writing on the whiteboard first.
+
+How slow is it, really? MEASURED, counting how many squash rounds the loop performs:
+
+    over 0..200,000        0 rounds: 10 numbers (the single digits)
+                           1 round : 3,280
+                           2 rounds: 166,710
+                           3 rounds: 30,001
+
+    18-digit random numbers, 20,000 of them
+                           2 rounds: 5,355
+                           3 rounds: 14,645
+
+THE LOOP NEVER RUNS LONG. Even for numbers near 10^18 it finishes in three rounds, and the
+reason is worth saying out loud: an 18-digit number has a digit sum of at most 9*18 = 162,
+so after ONE round you are below 200 no matter how big you started. The formula is not
+rescuing you from a slow algorithm. It is the answer to a different question - do you know
+why the loop is short - and that is what is being tested.
+
+ALTERNATIVE B - `n % 9` with a special case: `return 9 if n % 9 == 0 and n > 0 else n % 9`.
+Correct, and equivalent to the formula. Use whichever you can explain faster; the `1 +
+(n-1) % 9` form is shorter and the shift-down-shift-up story is easy to tell.
+
+ALTERNATIVE C - string conversion, `sum(int(c) for c in str(n))` in a loop. Fine in Python,
+and it makes the digit sum obvious to a reader. It also drags in string allocation per
+round, and in an interview it invites the follow-up you may not want: do it without
+converting to a string.
+
+THE FAMILY - problems that turn a repeated digit operation into modular arithmetic:
+  * casting out nines, the checking trick this is built from;
+  * divisibility by 3 and by 9 (both are digit-sum tests, for the same reason);
+  * divisibility by 11 - alternating digit sum, because 10 == -1 (mod 11), which is the
+    same derivation with a different sign;
+  * ISBN and Luhn credit-card check digits - weighted digit sums mod 11 and mod 10;
+  * `Add Digits` sits next to `Add Strings` and `Add to Array-Form of Integer` in a
+    coding round because all three are digit-by-digit arithmetic, but this is the only
+    one where the loop can be thrown away entirely.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+Write the loop first, then replace it. Doing both, in that order, is the strongest answer
+in the room: it shows you can produce a correct baseline AND that you know why the closed
+form is the same function.
+
+STEP 1 - handle zero. `if num == 0: return 0`. Do this before anything else, so the
+formula never sees a value below 1.
+
+STEP 2 - the baseline loop, if you are asked for it:
+    while num >= 10:
+        num = sum of digits of num
+    return num
+
+STEP 3 - the closed form. `return 1 + (num - 1) % 9`.
+
+STEP 4 - justify it in one sentence: every power of ten leaves remainder 1 when divided by
+9, so a number and its digit sum are congruent mod 9; the digital root is the single digit
+1..9 with that remainder, and `1 + (n-1) % 9` shifts the range so the 0 case lands on 9.
+
+STEP 5 - state the two traps unprompted. `n % 9` alone is wrong on the multiples of 9;
+the zero guard is required in Python because `-1 % 9` is 8 there.
+
+STEP 6 - complexity. O(1) time, O(1) space, no allocation, no string conversion.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The obvious solution is a loop: sum the digits, and repeat while there is more than one
+  digit left. That is correct, and it terminates fast - a number below 10^18 has a digit
+  sum of at most 162, so you are down to three digits after one round and finished within
+  three rounds.
+
+- But there is a closed form. The key fact is that 10 leaves remainder 1 when divided by 9,
+  and so does every power of 10 - 100 is 99 plus 1, 1000 is 999 plus 1. So when you expand
+  a number in place value, each digit contributes just itself mod 9, which means the number
+  and its digit sum have the same remainder mod 9.
+
+- Every squashing step preserves that remainder, so the final single digit has it too. The
+  digits 1 through 9 cover the remainders 1,2,...,8,0 exactly once, so the remainder pins
+  the answer down completely.
+
+- The one wrinkle: the digital root of a positive number is never 0, it is 9 when the
+  number is divisible by 9. `n % 9` returns 0 there. So I write `1 + (n - 1) % 9`, which
+  shifts 1..9 down to 0..8, mods, and shifts back.
+
+- Zero is a special case - I return it directly. In Python `(0-1) % 9` is 8, so without the
+  guard the formula answers 9 for zero. In Java it would happen to work because Java's
+  remainder keeps the dividend's sign, but I would keep the guard in either language.
+
+- O(1) time and space. If the interviewer wants the loop, I will write both and say the
+  formula is the point of the question.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def add_digits(num):
+        if num == 0:
+            return 0
+        return 1 + (num - 1) % 9
+
+Line 1  `def add_digits(num):`
+        `num` is a non-negative integer. Nothing about the code assumes it fits in 64
+        bits - `%` on a Python int is exact at any size - so this works on a 500-digit
+        number as written.
+
+Line 2  `if num == 0:`
+        The only input the formula cannot handle. It is a genuine special case, not
+        defensive padding: zero is the one number whose digital root is 0, while the
+        formula's output range is 1..9.
+
+Line 3  `return 0`
+        The digital root of 0 is 0 - it is already a single digit, so the loop would exit
+        immediately without doing anything.
+
+Line 4  `return 1 + (num - 1) % 9`
+        Read it in three moves.
+          `num - 1`      shift the answer range from 1..9 down to 0..8
+          `% 9`          take the remainder, which now lands in 0..8 correctly
+          `1 +`          shift back up to 1..9
+        For num = 9: 8 % 9 = 8, plus 1 = 9. For num = 10: 9 % 9 = 0, plus 1 = 1. For
+        num = 38: 37 % 9 = 1, plus 1 = 2.
+
+And the baseline, for when the interviewer asks to see the loop first:
+
+    def add_digits_loop(num):
+        while num >= 10:
+            total = 0
+            while num:
+                total += num % 10      # last digit
+                num //= 10             # drop it
+            num = total
+        return num
+
+        The inner loop is the digit sum without a string conversion: `num % 10` is the
+        last digit, `num //= 10` removes it. The outer loop repeats the squash. `num >= 10`
+        is the right test - `num > 9` is the same thing, and `len(str(num)) > 1` is the
+        same thing with an allocation you do not need.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the loop on num = 5283, so you can see the squashing.
+
+    outer round 1   num = 5283
+        inner: total 0 -> 3 (num 528) -> 11 (num 52) -> 13 (num 5) -> 18 (num 0)
+        num = 18                    still >= 10, go again
+    outer round 2   num = 18
+        inner: total 0 -> 8 (num 1) -> 9 (num 0)
+        num = 9                     9 < 10, stop
+    return 9
+
+TRACE B - the formula on the same input, one line.
+
+    num = 5283
+    num - 1      = 5282
+    5282 % 9     = 8       because 5282 = 9*586 + 8, and 9*586 = 5274
+    1 + 8        = 9       matches the loop, in one operation instead of six
+
+TRACE C - the three inputs that separate a correct answer from a nearly-correct one.
+
+    num      n % 9     1 + (n-1) % 9     loop      verdict
+    ----------------------------------------------------------------
+    38         2            2              2       both agree
+    9          0            9              9       n % 9 is WRONG here
+    27         0            9              9       n % 9 is WRONG here
+    0          0            9 (Python)     0       formula needs the guard
+    10         1            1              1       both agree
+    99         0            9              9       n % 9 is WRONG here
+
+Reading the table: the `n % 9` column is wrong on exactly the rows where num is a multiple
+of 9, which MEASURED over 1..100,000 is 11,111 rows out of 100,000. The formula column is
+wrong on exactly one row, num = 0, which is why line 2 of the code exists.
+
+TRACE D - why the loop is always short, on the largest 64-bit input.
+
+    num = 9,223,372,036,854,775,807   (19 digits)
+    round 1 digit sum: 9+2+2+3+3+7+2+0+3+6+8+5+4+7+7+5+8+0+7 = 88
+    round 2 digit sum: 8+8 = 16
+    round 3 digit sum: 1+6 = 7
+    stop, answer 7.  Formula: 1 + (9223372036854775806 % 9) = 1 + 6 = 7. Agreed.
+
+    Three rounds, and it could not have been more: the first round can never produce
+    anything above 9 * 19 = 171.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    formula   time O(1)          one subtraction, one remainder, one addition
+              space O(1)         no allocation at all
+    loop      time O(log n)      the first digit sum reads every digit; after that the
+                                 value is at most 9 * (number of digits), so at most two
+                                 more rounds on any input a machine integer can hold
+              space O(1)         with the `% 10` / `// 10` version; O(log n) if you
+                                 convert to a string each round
+
+    MEASURED round counts: 0..200,000 finishes in 3 rounds or fewer for every input
+    (166,710 of them take exactly 2). 18-digit numbers: 3 rounds or fewer, always.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `return n % 9` - wrong on every multiple of 9. MEASURED: 11,111 wrong out of
+       100,000 inputs, all of them multiples of 9.
+    2. No zero guard - in Python, `1 + (0-1) % 9` is 9, and the answer is 0. One input,
+       and it is the input that gets tested.
+    3. Reaching for the formula without being able to derive it. The follow-up is always
+       WHY does mod 9 work, and the answer is that every power of ten is a run of nines
+       plus one.
+    4. Claiming the loop is slow. It is not - it is O(log n) with a tiny constant and at
+       most three rounds. Saying otherwise invites a correction you do not need.
+    5. `while len(str(num)) > 1` - correct but allocates a string per round for a test
+       that is `num >= 10`.
+
+THE TAKEAWAY
+    A number is congruent to its digit sum mod 9, because every power of ten leaves
+    remainder 1. That single fact collapses a repeat-until-stable loop into `1 + (n-1) % 9`,
+    with 0 handled separately and 9 - not 0 - as the answer for multiples of nine. If you
+    remember one line from this entry, remember that the digital root lives in 1..9 while
+    `%` lives in 0..8, and the whole formula is the shift that reconciles them.""",
+]
+
+_EX_P1AO["Add Strings"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add two numbers that arrive as text, without turning them
+into numbers.
+
+You are handed `num1 = "456"` and `num2 = "77"` and you must return `"533"`. The rule that
+makes it a question at all: you may not do `str(int(num1) + int(num2))`, and you may not
+use any big-integer library. Add them the way you were taught in primary school - right to
+left, one column at a time, carrying.
+
+      456
+    +  77
+    -----
+      533
+
+WHY THE RULE IS NOT ARBITRARY. The inputs can be longer than any fixed-width integer holds.
+A 64-bit signed integer stops at 9,223,372,036,854,775,807 - nineteen digits. MEASURED,
+this algorithm on `"9999999999999999999" + "1"` returns `"10000000000000000000"`, which is
+twenty digits and already past that ceiling. In Python `int()` would have coped, because
+Python integers are arbitrary precision. In Java or C++ the same shortcut silently wraps
+around to a negative number. The interviewer is asking you to write the part the language
+was doing for you.
+
+MEASURED on 40,000 random pairs of lengths 1 to 12 digits, checked against Python's own
+arithmetic: 40,000 correct out of 40,000.""",
+
+    """2. THE INTUITION - one loop, and the loop condition carries the whole problem.
+
+The body of the loop is the easy half. At each column you have at most three things to add
+- a digit from each string and a carry from the column to the right - so the total is at
+most 9 + 9 + 1 = 19:
+
+    total  = d1 + d2 + carry      # 0 .. 19
+    digit  = total % 10           # what you write down
+    carry  = total // 10          # 0 or 1, never more
+
+Because 19 is the ceiling, the carry can only ever be 0 or 1. That is worth saying out
+loud: you never need to carry a 2, in any base, when adding exactly two numbers.
+
+THE HARD HALF IS WHEN TO STOP. The loop condition is
+
+    while i >= 0 or j >= 0 or carry:
+
+three conditions joined by OR, each doing separate work:
+
+    i >= 0     num1 still has digits left
+    j >= 0     num2 still has digits left
+    carry      there is a 1 with nowhere to go yet
+
+The third one is the one people leave out, and it is the reason `"999" + "1"` is `"1000"` -
+FOUR characters out of three-character inputs. That leading 1 is produced by an iteration
+that runs after BOTH strings are exhausted.
+
+The other two are why you cannot use `and`. `and` stops at the shorter string, which throws
+away the entire prefix of the longer one.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CARRY - the amount that will not fit in the current column and moves left. Adding two
+digits it is always 0 or 1, because the biggest column total is 9+9+1 = 19.
+
+TWO-POINTER FROM THE RIGHT - `i` walks num1 backwards, `j` walks num2 backwards. They move
+together even when the strings have different lengths; the shorter one simply runs off the
+end and starts contributing 0.
+
+`ord(ch) - ord('0')` - the character-to-digit conversion. Characters are stored as code
+numbers, and the digit characters are consecutive: `'0'` is 48, `'1'` is 49, up to `'9'` at
+57. Subtracting 48 turns the character `'7'` (code 55) into the number 7. `int(ch)` does the
+same thing in Python; `ord` is the version that translates directly into Java's `ch - '0'`
+and is what an interviewer expects to see in this problem.
+
+SENTINEL ZERO - when a pointer has walked past the front of its string, treat the missing
+digit as 0. That is what `if i >= 0 else 0` is for, and it is what lets one loop handle two
+strings of different lengths without a second loop.
+
+AMORTISED APPEND - adding to the end of a Python list is O(1) on average, so building the
+answer as a list and joining once is O(n). Building it by prepending to a string is O(n^2),
+which section 4 measures.
+
+LEADING ZERO - a result like `"0533"`. The problem statement forbids it. This algorithm
+cannot produce one from valid inputs, because the only way to get an extra leading
+character is the final carry, and a carry is always 1.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the missing carry, and it fires far more often than
+people expect.
+
+BUG 1 - dropping `or carry` from the loop condition.
+
+MEASURED on 40,000 random pairs: wrong on 2,434 of them, 6.1%. Four of the failures:
+
+    num1            num2            correct         without `or carry`
+    75131378        60643908        135775286        35775286
+    918098261       815623034       1733721295       733721295
+    9               8               17               7
+    988033453511    776260145380    1764293598891    764293598891
+
+The pattern is identical every time: the leading digit is missing, and what remains is the
+correct answer modulo a power of ten. It is the kind of bug that looks almost right in a
+quick glance at the output, which is exactly why it survives to the interview.
+
+AND 6.1% UNDERSTATES IT. That figure is diluted by random pairs of very different lengths,
+where the longer number's leading digits absorb the carry. MEASURED on 20,000 pairs of
+EQUAL length - which is what a hand-written test case usually looks like - it is wrong on
+12,088 of them: 60.4%. If your test cases are `"123" + "456"` you may not catch it; if they
+are equal-length and random, you will catch it six times out of ten.
+
+BUG 2 - writing `and` instead of `or`.
+
+MEASURED on the same 40,000 pairs: wrong on 38,733 of them, 96.8%. It only gets the answer
+right when the strings happen to be the same length AND there is no final carry.
+
+    num1          num2           correct        with `and`
+    510846882     13684511782    14195358664    195358664
+    40721829      93             40721922       22
+
+The second row is the tell: `"93"` is two characters, so the loop runs twice and returns a
+two-character answer, discarding six digits of `num1`. `and` does not produce a slightly
+wrong number - it produces a number of the wrong LENGTH.
+
+BUG 3 - building the string by prepending, `result = str(digit) + result`.
+
+This is correct but quadratic: strings are immutable, so each prepend copies everything
+built so far. MEASURED, building an n-digit result both ways:
+
+    n         prepend        list + join      ratio
+    20,000      5.9 ms          2.4 ms         2.5x
+    40,000     19.4 ms          6.7 ms         2.9x
+    80,000     76.7 ms          9.9 ms         7.7x
+
+Watch the two columns separately rather than just the ratio. Doubling n from 40,000 to
+80,000 takes the prepend version from 19.4 ms to 76.7 ms - four times the work for twice the
+input, which is the signature of O(n^2). The list version goes from 6.7 ms to 9.9 ms, which
+is roughly linear. The ratio grows without bound; at 80,000 digits it is already 7.7x.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - `str(int(num1) + int(num2))`. One line, correct in Python for inputs of any
+size, and it is the answer the question exists to forbid. Say it out loud anyway - it shows
+you know the language does arbitrary-precision arithmetic - and then say why it does not
+answer the question: in Java or C++ the same expression overflows past nineteen digits, and
+the point of the exercise is to write the digit-by-digit addition that a big-integer library
+performs internally.
+
+ALTERNATIVE B - reverse both strings first, then walk forward with a single index. Same
+algorithm, and some people find `for k in range(max(len(a), len(b)))` easier to reason about
+than two backwards pointers. It costs two extra string allocations and it still needs the
+after-the-loop carry check, so it removes no real difficulty.
+
+ALTERNATIVE C - pad the shorter string with leading zeros so both have the same length, then
+one clean loop. This trades the `if i >= 0 else 0` sentinel for an O(n) padding step. It is
+a legitimate readability choice and worth naming in an interview; the sentinel version is
+what most solutions show because it allocates nothing.
+
+ALTERNATIVE D - process in chunks of nine digits at a time, converting each chunk with
+`int()`. This is what real big-integer libraries do, in base 2^32 or base 10^9 rather than
+base 10, precisely so one machine addition handles nine decimal digits. Mentioning it is a
+strong senior signal: the algorithm is the same, the base is a performance knob.
+
+THE FAMILY - the same skeleton, different base or container:
+  * Add Binary - the identical loop with `% 2` and `// 2` instead of `% 10` and `// 10`;
+  * Add to Array-Form of Integer - the digits arrive as a list and the second operand is
+    an int, so `k` itself plays the role of the carry;
+  * Multiply Strings - the same digit arithmetic in a double loop, where the carry can be
+    much larger than 1 and that is the whole difficulty;
+  * Add Two Numbers (linked list) - the same loop, walking nodes instead of indices, and
+    conveniently already stored least-significant-first;
+  * Plus One - the degenerate case where one operand is 1, so the loop can stop at the
+    first digit below 9.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - two pointers at the ENDS. `i = len(num1) - 1`, `j = len(num2) - 1`. Right to left,
+because that is where addition starts.
+
+STEP 2 - `carry = 0` and an empty list `result = []`. A list, not a string - see the
+quadratic measurement in section 4.
+
+STEP 3 - the loop condition, all three parts: `while i >= 0 or j >= 0 or carry:`. Write this
+line before you write the body, and say the third condition out loud as you write it.
+
+STEP 4 - read each digit with a sentinel: `d1 = ord(num1[i]) - ord('0') if i >= 0 else 0`,
+and the same for `d2`. A pointer that has run off the front contributes 0.
+
+STEP 5 - the three lines of arithmetic: `total = d1 + d2 + carry`, append `total % 10`,
+set `carry = total // 10`.
+
+STEP 6 - decrement both pointers unconditionally: `i -= 1; j -= 1`. They are allowed to go
+negative; the sentinel in step 4 is what makes that safe.
+
+STEP 7 - after the loop, `return "".join(reversed(result))`. The digits were produced
+least-significant first, so the reverse is not optional.
+
+STEP 8 - test three inputs before the interviewer asks: `"999" + "1"` for the final carry,
+`"1" + "9999"` for the length mismatch, and `"0" + "0"` for the smallest case.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- I add them the way you add on paper: right to left, one column at a time, keeping a carry.
+  I cannot convert the strings to integers, because the whole point is that they may be
+  longer than a 64-bit integer - nineteen digits is the ceiling and these strings can be
+  longer.
+
+- Two pointers start at the last character of each string. At every step I read a digit from
+  each - or zero if that pointer has already run off the front, which is how one loop
+  handles strings of different lengths - add the carry, write down the total mod 10, and
+  keep the total over 10 as the new carry.
+
+- The carry is only ever 0 or 1, because the largest a column can be is nine plus nine plus
+  one, which is nineteen.
+
+- The loop condition is the part I would be careful about: it runs while EITHER pointer is
+  still valid OR the carry is non-zero. That last clause is what turns `"999" + "1"` into a
+  four-digit answer. Without it the leading digit is dropped, and on equal-length inputs
+  that happens on about sixty per cent of random pairs, so it is not an edge case.
+
+- I collect the digits in a list and join at the end rather than prepending to a string,
+  because strings are immutable and prepending would make it quadratic - at eighty thousand
+  digits that is already about eight times slower.
+
+- The digits come out least-significant first, so I reverse before joining.
+
+- Time is O(max(n, m)) - one pass over the longer input plus at most one extra step for the
+  carry - and space is the output, which is at most one character longer than the longer
+  input.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def add_strings(num1, num2):
+        i, j = len(num1) - 1, len(num2) - 1
+        carry = 0
+        result = []
+        while i >= 0 or j >= 0 or carry:
+            d1 = ord(num1[i]) - ord('0') if i >= 0 else 0
+            d2 = ord(num2[j]) - ord('0') if j >= 0 else 0
+            total = d1 + d2 + carry
+            result.append(str(total % 10))
+            carry = total // 10
+            i -= 1; j -= 1
+        return "".join(reversed(result))
+
+Line 2  `i, j = len(num1) - 1, len(num2) - 1`
+        Both pointers start on the LAST character - the units digit. `len(s) - 1` and not
+        `len(s)`, or the first read is out of range.
+
+Line 3  `carry = 0`
+        Nothing has overflowed yet. It stays in {0, 1} for the whole run.
+
+Line 4  `result = []`
+        A list of one-character strings. Appending is amortised O(1); the alternative,
+        prepending to a string, is O(n^2) and section 4 measures the gap.
+
+Line 5  `while i >= 0 or j >= 0 or carry:`
+        The three exit conditions. In Python a non-zero int is truthy, so `or carry` reads
+        as `or carry != 0`. Removing this clause is the classic bug: MEASURED wrong on 6.1%
+        of random pairs and 60.4% of equal-length pairs.
+
+Line 6  `d1 = ord(num1[i]) - ord('0') if i >= 0 else 0`
+        `ord('7') - ord('0')` is 55 - 48 = 7. The `else 0` is the sentinel: once `i` has gone
+        negative, num1 contributes nothing. Note it does NOT index with a negative `i`,
+        which in Python would silently wrap around to the END of the string and produce a
+        wrong answer with no error at all.
+
+Line 7  Same for `d2`.
+
+Line 8  `total = d1 + d2 + carry`
+        At most 9 + 9 + 1 = 19.
+
+Line 9  `result.append(str(total % 10))`
+        The column's digit. `% 10` because the base is ten.
+
+Line 10 `carry = total // 10`
+        Integer division. 0 when total < 10, 1 when total >= 10 - never anything else.
+
+Line 11 `i -= 1; j -= 1`
+        Both move every iteration, including the ones where a pointer is already negative.
+        That is safe because of the sentinel and it keeps the loop body branch-free.
+
+Line 12 `return "".join(reversed(result))`
+        `result` holds the digits units-first. `reversed` gives an iterator over them in
+        reverse; `"".join` glues them with no separator. One allocation for the whole
+        answer.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `num1 = "456"`, `num2 = "77"`. Different lengths and a carry that survives.
+
+    start   i=2  j=1  carry=0  result=[]
+
+    iter 1  num1[2]='6' -> d1=6    num2[1]='7' -> d2=7
+            total = 6 + 7 + 0 = 13
+            append '3'                       result=['3']
+            carry = 13 // 10 = 1
+            i=1  j=0
+
+    iter 2  num1[1]='5' -> d1=5    num2[0]='7' -> d2=7
+            total = 5 + 7 + 1 = 13
+            append '3'                       result=['3','3']
+            carry = 1
+            i=0  j=-1
+
+    iter 3  num1[0]='4' -> d1=4    j is -1 -> d2=0     <-- the sentinel earns its keep
+            total = 4 + 0 + 1 = 5
+            append '5'                       result=['3','3','5']
+            carry = 0
+            i=-1 j=-2
+
+    check   i < 0, j < 0, carry == 0  ->  all three false, loop ends
+    return  reversed(['3','3','5']) joined = "533"
+
+TRACE B - `num1 = "999"`, `num2 = "1"`. The iteration that exists only because of `or carry`.
+
+    iter 1  d1=9 d2=1 carry=0  total=10  append '0'  carry=1   i=1  j=-1
+    iter 2  d1=9 d2=0 carry=1  total=10  append '0'  carry=1   i=0  j=-2
+    iter 3  d1=9 d2=0 carry=1  total=10  append '0'  carry=1   i=-1 j=-3
+    iter 4  i<0 and j<0, but carry==1 -> LOOP RUNS ANYWAY
+            d1=0 d2=0 carry=1  total=1   append '1'  carry=0   i=-2 j=-4
+    end     "1000"
+
+    Delete `or carry` and iteration 4 never happens: the answer is "000", the correct answer
+    modulo 1000. That is the 6.1% / 60.4% bug from section 4, in four lines.
+
+TRACE C - the state table for `"9" + "8"`, the smallest input that carries.
+
+    step   i   j   d1  d2  carry_in  total  digit  carry_out
+    ------------------------------------------------------------
+     1     0   0   9   8      0       17      7        1
+     2    -1  -1   0   0      1        1      1        0
+    result list ['7','1'] -> reversed -> "17"
+
+    With `or carry` removed, step 2 is skipped and the function returns "7". MEASURED, that
+    is one of the failing pairs in the 40,000-pair run.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(max(n, m))   where n and m are the two lengths. The loop body is constant
+                           work, and it runs max(n, m) times plus at most one extra
+                           iteration for a final carry.
+    space   O(max(n, m))   the result list, which is at most max(n, m) + 1 characters.
+                           That is output, not working memory - there is no auxiliary
+                           structure beyond a handful of integers.
+
+    The `str(int(a) + int(b))` shortcut is not free either: converting a decimal string to a
+    Python int is superlinear in the number of digits, so it is not even asymptotically
+    better - and it does not exist at all in a fixed-width language.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Omitting `or carry`. MEASURED wrong on 2,434 of 40,000 random pairs (6.1%), and on
+       12,088 of 20,000 EQUAL-LENGTH pairs (60.4%). Always drops the leading digit.
+    2. `and` instead of `or`. MEASURED wrong on 38,733 of 40,000 (96.8%) - it truncates the
+       answer to the length of the shorter input.
+    3. Prepending to a string instead of appending to a list. Correct but O(n^2): MEASURED
+       76.7 ms against 9.9 ms at 80,000 digits, and the gap widens with n.
+    4. Forgetting to reverse at the end. The digits are generated units-first, so the
+       unreversed answer is the correct digits in the wrong order - "335" for 456 + 77.
+    5. Indexing with a negative pointer instead of using the sentinel. Python wraps negative
+       indices to the end of the string, so this reads real characters and produces a wrong
+       answer with no exception raised.
+    6. `int(num1[i])` inside a Java-flavoured answer. Fine in Python; in Java the
+       equivalent is `num1.charAt(i) - '0'`, which is why `ord(...) - ord('0')` is the
+       version worth practising.
+
+THE TAKEAWAY
+    Column addition with a carry is three lines - total, digit, carry - and the entire
+    difficulty is the loop condition, which must include the carry as a third reason to keep
+    going. Build the answer in a list and reverse once. Once you have this skeleton you have
+    Add Binary (change 10 to 2), Add to Array-Form (the operand becomes the carry) and Add
+    Two Numbers on a linked list, which is the same loop without the reversal.""",
+]
+
+_EX_P1AO["Add to Array-Form of Integer"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a number arrives as a list of its digits, and you must add
+an ordinary integer to it.
+
+`num = [1, 2, 0, 0]` is the number 1200, most-significant digit first. Add `k = 34` and
+return the digit list of the answer: `[1, 2, 3, 4]`.
+
+    num = [1,2,0,0]   k = 34    ->  [1,2,3,4]        MEASURED
+    num = [9,9,9,9]   k = 1     ->  [1,0,0,0,0]      MEASURED - the answer is LONGER
+    num = [2,1,5]     k = 806   ->  [1,0,2,1]        MEASURED - 215 + 806 = 1021
+    num = [0]         k = 10000 ->  [1,0,0,0,0]      MEASURED - k alone is the answer
+
+The array can be very long - long enough that the number it represents does not fit in any
+machine integer - which is exactly why it was handed to you as an array. `k` is small
+enough to be a normal int.
+
+THE ONE IDEA WORTH TAKING AWAY: you do not need to convert anything, and you do not need to
+split `k` into digits first. `k` IS the carry. Add the current digit into `k`, write down
+`k % 10`, keep `k // 10`, and repeat while there is either an array digit left OR anything
+left in `k`. That one substitution removes an entire phase from the obvious solution.
+
+MEASURED on 40,000 random pairs (numbers up to 10^12, k up to 10,000) against Python's own
+arithmetic: 40,000 correct out of 40,000.""",
+
+    """2. THE INTUITION - why folding k into the carry is legitimate.
+
+Start with the ordinary school method. Adding 215 and 806 you go column by column, and at
+each column you hold a carry that is 0 or 1:
+
+      215
+    + 806
+    -----
+     1021
+
+Now write the same thing differently. Instead of splitting 806 into the digits 8, 0, 6 and
+lining them up, notice what the units column actually needs: the units digit of 806, which
+is `806 % 10`. And what does the tens column need? The units digit of `806 // 10 = 80`.
+Each column needs one digit of k, and taking `% 10` then `// 10` peels them off in exactly
+the order the loop wants them.
+
+So instead of a carry in {0, 1} plus a separate digit of k, keep ONE running value that is
+both at once:
+
+    k = k + num[i]        # fold this column's array digit into the running value
+    digit = k % 10        # the column's output
+    k = k // 10           # everything that moves left: the carry AND k's remaining digits
+
+The carry and the rest of k live in the same variable because they play the same role -
+they are both "value that belongs to the columns further left". That is the whole trick.
+
+Check it against the school method on 215 + 806:
+
+    i=2  k = 806 + 5 = 811   digit 1   k -> 81
+    i=1  k = 81  + 1 = 82    digit 2   k -> 8
+    i=0  k = 8   + 2 = 10    digit 0   k -> 1
+    i<0  k = 1              digit 1   k -> 0        <-- runs on k alone
+    reversed: 1021
+
+The fourth iteration had no array digit at all. It happened because `k` was still non-zero,
+and that is why the loop condition is `while i >= 0 or k`.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ARRAY FORM - a number stored as a list of digits, most-significant first. `[1,2,0,0]` is
+1200, not 0021. The order matters: it is the order you would write the number down, which is
+the OPPOSITE of the order the addition loop consumes it in.
+
+MOST-SIGNIFICANT DIGIT - the leftmost one, the one worth the most. In `[1,2,0,0]` it is the
+1, worth a thousand.
+
+CARRY - value that will not fit in the current column and belongs one column to the left.
+In ordinary two-number addition it is 0 or 1. Here it is `k // 10`, which starts large and
+shrinks, so calling it "the carry" is a slight stretch until k is exhausted - after which it
+is a genuine 0-or-1 carry again.
+
+FOLD - to merge one value into another that is already being tracked. Here, folding
+`num[i]` into `k` means the loop needs only one accumulator instead of two.
+
+RIPPLE - a carry that keeps propagating left through consecutive 9s. `[9,9,9,9] + 1` ripples
+through all four digits and then creates a fifth. MEASURED: on a number that is 15 nines,
+adding 1 produces a carry at all 15 positions.
+
+`//` FLOOR DIVISION - integer division that discards the remainder. `806 // 10` is 80.
+Together with `% 10` it is the standard way to peel digits off the right-hand end.
+
+`[::-1]` - Python slice notation for a reversed copy of a list. The loop produces digits
+least-significant first, so the answer has to be flipped before returning.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - stopping when the array runs out.
+
+BUG 1 - writing `while i >= 0` instead of `while i >= 0 or k`.
+
+This is by far the most common version, because the array feels like the thing being
+iterated over. It silently discards whatever is left in `k` when the array is exhausted -
+which includes the case where `k` is longer than the array, and the case where a carry pops
+out of the top.
+
+MEASURED on 40,000 random pairs: wrong on 12,413 of them - 31.0%, nearly one in three.
+Three failures:
+
+    num          k       correct     `while i >= 0` only
+    [9,7,1,0]   8916     18626             8626
+    [3,7,9]     9894     10273              273
+    [7,8]       215       293               93
+
+Look at the third row. The array has two digits, so the loop runs twice, so the answer has
+two digits - `93` instead of `293`. When k is longer than the array, this bug does not
+merely lose a leading 1, it truncates the answer to the array's length.
+
+BUG 2 - the two-phase solution: split `k` into its own digit list, add the two lists
+column by column, return.
+
+This is the natural "make it look like Add Strings" approach, and the addition itself is
+fine. What people forget is the carry that survives PAST the last column of both operands.
+
+MEASURED: wrong on 2,574 of 40,000 - 6.4%. Two failures:
+
+    num          k       correct     two-phase
+    [9,7,1,0]   8916     18626        8626
+    [3,7,9]     9894     10273        0273
+
+The second row is the diagnostic one: `0273` has the right number of digits and a leading
+zero where the 1 should be. That is a carry computed and then thrown away, and a leading
+zero in the output is the visible symptom.
+
+HOW OFTEN DOES THE ANSWER GET LONGER AT ALL? MEASURED over the same 40,000 pairs, comparing
+the length of the answer to the length of `num`:
+
+    grew by 0 digits   27,587
+    grew by 1 digit     5,572
+    grew by 2 digits    3,622
+    grew by 3 digits    3,218
+    grew by 4 digits        1
+
+31% of inputs produce an answer longer than the input array - which is precisely the 31%
+that bug 1 gets wrong. The two numbers match because they are the same event.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - `int("".join(map(str, num))) + k`, then split the result back into digits.
+In Python this is correct for any length, because Python integers are arbitrary precision.
+Say it, then say why it is not the answer: in Java or C++ the join-and-parse overflows past
+nineteen digits, and the problem hands you an array specifically to signal that the number
+may be longer than that. It is also not free - parsing an n-digit decimal string into an
+integer is superlinear in n, so it is not even a performance win.
+
+ALTERNATIVE B - two-phase: convert `k` to a digit list, then run the standard Add Strings
+loop over the two lists. Correct IF you remember the trailing carry, and MEASURED wrong on
+6.4% of inputs when you do not. It also allocates a second list. The fold-into-k version
+does the same work with one accumulator and no second pass, which is why it is the version
+worth knowing.
+
+ALTERNATIVE C - mutate `num` in place from the right, stopping early once the carry becomes
+0. This is a genuine optimisation when k is small: adding 1 to `[1,2,3,4]` touches one digit
+and stops, instead of walking all four. The catch is that it cannot grow the array in place,
+so you still need a branch for the case where a carry escapes the front. Worth mentioning as
+a follow-up, not as the first answer.
+
+ALTERNATIVE D - process several digits per iteration by working in base 10^9 rather than
+base 10. This is how big-integer libraries actually store numbers, so one machine addition
+covers nine decimal digits. A strong thing to name if the interviewer asks how a real
+BigInteger does it.
+
+THE FAMILY - the same column-addition skeleton with a different container:
+  * Add Strings - both operands are strings, and the carry is a separate 0-or-1 variable;
+  * Add Binary - identical loop in base 2;
+  * Plus One - this problem with k fixed at 1, which is why the early-exit optimisation is
+    the standard answer there;
+  * Add Two Numbers (linked list) - the same loop with pointers, and the digits are already
+    stored least-significant first so no reversal is needed;
+  * Multiply Strings - the same digit arithmetic where the carry can exceed 1, which is
+    where this skeleton stops being enough.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - point at the END of the array: `i = len(num) - 1`. Array form is most-significant
+first, and addition starts at the least-significant end, so the loop walks backwards.
+
+STEP 2 - `result = []` for the output digits, which will come out in reverse order.
+
+STEP 3 - the loop condition, and it is the whole problem: `while i >= 0 or k:`. Two reasons
+to keep going - the array still has digits, or `k` still has value. Not `and`, and not
+`while i >= 0`.
+
+STEP 4 - inside the loop, if the array still has a digit, fold it in and step back:
+    if i >= 0:
+        k += num[i]
+        i -= 1
+Guarding the fold rather than the whole iteration is what lets the loop run on `k` alone
+after the array is exhausted.
+
+STEP 5 - emit one digit and shrink k:
+    result.append(k % 10)
+    k //= 10
+These two lines never change, whether `k` currently holds a genuine carry, a leftover chunk
+of the original k, or both added together.
+
+STEP 6 - return `result[::-1]`. The digits were produced least-significant first.
+
+STEP 7 - name your test cases before running them: `[0] + 10000` (array shorter than k),
+`[9,9,9,9] + 1` (full ripple), `[1,2,0,0] + 34` (the ordinary case), `[1,2,3] + 0` (k is
+zero - the loop must still run and copy the array out).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The array holds the digits most-significant first, so I walk it from the back, which is
+  where addition starts.
+
+- The trick I would use is not to split `k` into digits at all. I keep `k` as a single
+  running value and fold each array digit into it: `k += num[i]`. Then the digit I write
+  down is `k % 10` and what moves to the next column is `k // 10`. That one variable is
+  doing two jobs at once - it holds the carry AND whatever is left of the original k - and
+  they can share a variable because they mean the same thing: value belonging to the columns
+  further left.
+
+- The loop runs while EITHER the array has digits left OR `k` is still non-zero. That second
+  condition is the one that matters. If I only loop over the array I lose everything that
+  escapes past the front - and that is not an edge case: on random inputs the answer is
+  longer than the input array about thirty per cent of the time, and those are exactly the
+  cases that break.
+
+- Digits come out least-significant first, so I reverse before returning.
+
+- Time is O(max(length of the array, number of digits in k)) - one pass, constant work per
+  column. Space is the output list. I never build a second digit list for k, and I never
+  convert the array to an integer, which is important because the array can be longer than
+  any fixed-width integer holds.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def add_to_array_form(num, k):
+        i = len(num) - 1
+        result = []
+        while i >= 0 or k:
+            if i >= 0:
+                k += num[i]              # fold in the current digit
+                i -= 1
+            result.append(k % 10)        # output digit
+            k //= 10                     # carry to the next position
+        return result[::-1]
+
+Line 2  `i = len(num) - 1`
+        The last index, the units digit. Array form is written the way you would say the
+        number, so the units digit is at the END.
+
+Line 3  `result = []`
+        Digits will be appended least-significant first. Appending to a list is O(1)
+        amortised; prepending to one is O(n) per operation and would make the whole
+        function quadratic.
+
+Line 4  `while i >= 0 or k:`
+        The two independent reasons to continue. `or`, never `and`: with `and` the loop stops
+        the moment either runs out. Dropping the `or k` clause entirely is MEASURED wrong on
+        31.0% of random inputs.
+
+Line 5  `if i >= 0:`
+        Guarded so that iterations after the array is exhausted are still legal. Note it
+        guards ONLY the fold - the emit-a-digit lines below run every iteration regardless.
+
+Line 6  `k += num[i]`
+        The fold. After this line `k` is the true value of everything from this column
+        leftwards: the incoming carry, plus k's remaining digits, plus this array digit.
+
+Line 7  `i -= 1`
+        Step left. Inside the guard, so `i` never runs further negative than -1 and can
+        never be used as a negative index - which in Python would silently read from the
+        END of the list.
+
+Line 8  `result.append(k % 10)`
+        The units digit of the current accumulator is this column's answer. It is a digit
+        0..9 by construction.
+
+Line 9  `k //= 10`
+        Shift right. Everything above the units digit moves to the next column. When k's
+        original digits are used up this value is 0 or 1 and behaves exactly like an
+        ordinary carry.
+
+Line 10 `return result[::-1]`
+        Reverse. `[::-1]` builds a reversed copy in O(n); `result.reverse()` would flip it
+        in place with no extra allocation and is equally acceptable.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `num = [2,1,5]`, `k = 806`. Same number of digits on both sides, and the answer is
+one digit longer than either.
+
+    start  i=2  k=806  result=[]
+
+    iter 1  i >= 0, so k = 806 + 5 = 811,  i -> 1
+            append 811 % 10 = 1            result=[1]
+            k = 811 // 10 = 81
+
+    iter 2  i >= 0, so k = 81 + 1 = 82,    i -> 0
+            append 82 % 10 = 2             result=[1,2]
+            k = 8
+
+    iter 3  i >= 0, so k = 8 + 2 = 10,     i -> -1
+            append 10 % 10 = 0             result=[1,2,0]
+            k = 1
+
+    iter 4  i < 0, so no fold. But k == 1, so the loop condition held.
+            append 1 % 10 = 1              result=[1,2,0,1]
+            k = 0
+
+    check   i < 0 and k == 0  ->  stop
+    return  [1,2,0,1][::-1] = [1,0,2,1]     i.e. 1021 = 215 + 806     MEASURED
+
+TRACE B - `num = [9,9,9,9]`, `k = 1`. Maximum ripple.
+
+    step   i    k in   fold        k after fold   digit   k out
+    -------------------------------------------------------------
+     1     3      1    +9 = 10          10          0       1
+     2     2      1    +9 = 10          10          0       1
+     3     1      1    +9 = 10          10          0       1
+     4     0      1    +9 = 10          10          0       1
+     5    -1      1    (none)            1          1       0
+    result [0,0,0,0,1] -> reversed -> [1,0,0,0,0]            MEASURED
+
+    Step 5 is the only one that produces a non-zero digit, and it exists purely because of
+    `or k`. MEASURED: on a 15-digit number of all nines, adding 1 produces a carry at all 15
+    positions and then a sixteenth digit.
+
+TRACE C - `num = [0]`, `k = 10000`. The array is shorter than k.
+
+    step   i    k in    fold      digit   k out    result
+    ---------------------------------------------------------
+     1     0   10000    +0        0       1000     [0]
+     2    -1    1000    none      0        100     [0,0]
+     3    -1     100    none      0         10     [0,0,0]
+     4    -1      10    none      0          1     [0,0,0,0]
+     5    -1       1    none      1          0     [0,0,0,0,1]
+    reversed -> [1,0,0,0,0]                                   MEASURED
+
+    Four of the five iterations run with no array digit at all. A `while i >= 0` loop would
+    return `[0]` here - the answer truncated to the array's length, which is the 31% bug.
+
+TRACE D - `num = [1,2,3]`, `k = 0`. The condition is `or`, so the array still gets copied.
+
+    iter 1  k = 0 + 3 = 3    digit 3   k -> 0   (i now 1; k is 0 but i >= 0, so continue)
+    iter 2  k = 0 + 2 = 2    digit 2   k -> 0
+    iter 3  k = 0 + 1 = 1    digit 1   k -> 0
+    i < 0 and k == 0 -> stop.  reversed -> [1,2,3]
+
+    If the condition had been `and`, the loop would never start, and the function would
+    return an empty list for a perfectly ordinary input.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(max(n, d))   n = len(num), d = number of digits in k. Each iteration emits
+                           exactly one output digit and does constant work, and the number
+                           of output digits is max(n, d) or one more.
+    space   O(max(n, d))   the result list, which is output. No second digit list for k, no
+                           integer conversion, no auxiliary structure.
+
+    Compare the shortcuts. Join-and-parse is O(n^2)-ish in CPython for the decimal parse and
+    impossible in a fixed-width language. Two-phase splits k into a list first, which is one
+    extra allocation and one extra pass for no benefit.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `while i >= 0` - loop over the array only. MEASURED wrong on 12,413 of 40,000 inputs
+       (31.0%), and when k is longer than the array it truncates the answer to the array's
+       length rather than merely losing a digit.
+    2. Two-phase addition that drops the final carry. MEASURED wrong on 6.4%, and the
+       symptom is a leading zero where the 1 should be.
+    3. `and` instead of `or` in the loop condition. Returns an empty list whenever k is 0,
+       and truncates otherwise - trace D shows it on an input with nothing unusual about it.
+    4. Forgetting the reversal. The digits come out units-first; returning them unreversed
+       gives the right digits in exactly the wrong order.
+    5. Putting `i -= 1` outside the `if i >= 0` guard. `i` then runs to -2, -3 and further,
+       and if any later code indexes with it, Python reads from the END of the list and
+       produces a wrong answer with no error.
+    6. Converting the array to an int because Python allows it. Correct here, wrong in the
+       language the interviewer is thinking in, and it dodges the question being asked.
+
+THE TAKEAWAY
+    The carry and the remaining value of k are the same kind of thing - value that belongs to
+    the columns to the left - so keep them in ONE variable. Fold the array digit into k, emit
+    `k % 10`, shift with `k //= 10`, and loop while the array has digits OR k is non-zero.
+    That last `or` is worth thirty-one percent of the test cases.""",
+]
+
+_EX_P1AO["Alternating Digit Sum"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add up the digits, but flip between plus and minus as you
+go, starting with a plus on the leftmost digit.
+
+Take n = 521. The digits are 5, 2, 1, and the signs alternate starting positive:
+
+    +5  -2  +1  =  4
+
+Take n = 886996:
+
+    +8 -8 +6 -9 +9 -6 = 0
+
+    n = 521        ->  4      MEASURED
+    n = 111        ->  1      MEASURED
+    n = 886996     ->  0      MEASURED
+    n = 4          ->  4      MEASURED (single digit, so just itself)
+
+The answer can be negative - `n = 10` gives +1 - 0 = 1, but `n = 19` gives +1 - 9 = -8. And
+it stays small: MEASURED over every n from 1 to 200,000 the result never leaves the range
+-26 to 27, because each digit contributes at most 9 and the signs mostly cancel. MEASURED,
+89,256 of those 200,000 inputs produce a negative answer, so returning an unsigned type or
+clamping at zero is wrong on 45% of inputs.
+
+THE ONLY REAL DECISION IN THIS PROBLEM IS DIRECTION. The problem says the MOST-significant
+digit is positive. The natural digit-extraction loop - `n % 10`, `n //= 10` - produces
+digits from the LEAST-significant end. Get that backwards and you compute the negation of
+the right answer on half your inputs. Section 4 measures exactly which half.""",
+
+    """2. THE INTUITION - one accumulator, one sign variable, and the sign flips every step.
+
+The whole algorithm is:
+
+    total = 0
+    sign  = +1
+    for each digit, left to right:
+        total = total + sign * digit
+        sign  = -sign
+
+`sign` is a variable that only ever holds +1 or -1, and `sign = -sign` is the flip. There is
+no modulo-2 index arithmetic needed - no `if i % 2 == 0` - because negating a number is the
+cheapest possible way to alternate between two states.
+
+WHY LEFT TO RIGHT IS THE AWKWARD DIRECTION. To walk left to right you need the digits in
+written order, which in Python means `str(n)` - the string is already most-significant
+first. To walk right to left you use arithmetic - `n % 10` peels the units digit, `n //= 10`
+drops it - and you never allocate anything. The arithmetic version is the one that
+translates to any language, but it hands you the digits in the WRONG order for this problem.
+
+That leaves two honest choices:
+  (a) convert to a string and walk forwards with `sign` starting at +1; or
+  (b) walk backwards with arithmetic and start `sign` at +1 if the digit COUNT is odd and
+      -1 if it is even.
+
+MEASURED: choice (b) with the parity-corrected starting sign agrees with choice (a) on
+every n from 1 to 200,000 - all 200,000 - and choice (b) with `sign` naively started at +1
+disagrees on 103,187 of them.
+
+WHY PARITY IS THE FIX. If the number has d digits, the leftmost digit is at position 0 from
+the left and position d-1 from the right. Its sign must be +1. Walking from the right the
+signs go +1, -1, +1, ... so position d-1 carries `(-1)^(d-1)`, which is +1 when d is odd and
+-1 when d is even. Starting the backwards walk at -1 for even d cancels that exactly.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIGIT - a single character 0-9 of the written number. 521 has three digits: 5, 2, 1.
+
+MOST-SIGNIFICANT DIGIT - the leftmost one. The problem anchors the positive sign here, which
+is the entire source of difficulty.
+
+ALTERNATING SUM - a sum where the terms alternate in sign: a - b + c - d ... Also called a
+signed digit sum.
+
+SIGN VARIABLE - a variable holding +1 or -1 that is multiplied into each term. `sign = -sign`
+alternates it. The alternative, `sign = 1 if i % 2 == 0 else -1`, is the same thing with
+extra arithmetic and one more chance to get the parity wrong.
+
+PARITY - whether a count is odd or even. Here, the parity of the DIGIT COUNT decides whether
+a right-to-left walk agrees with a left-to-right walk or is its exact negation.
+
+`n % 10` and `n //= 10` - the digit-peeling pair. `521 % 10` is 1 (the units digit) and
+`521 // 10` is 52 (the number with its units digit removed). Repeating gives every digit,
+least-significant first, without any string allocation.
+
+`str(n)` - the decimal text of n, most-significant first. `str(521)` is `"521"`, and
+iterating it yields the characters `'5'`, `'2'`, `'1'` in written order.
+
+DIVISIBILITY BY 11 - the classic use of this quantity: a number is divisible by 11 exactly
+when its alternating digit sum is. Section 5 measures it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - starting from the wrong end, and it is a coin flip
+whether the test case catches you.
+
+THE BUG - writing the natural arithmetic loop:
+
+    total = 0; sign = 1
+    while n:
+        total += sign * (n % 10)
+        n //= 10
+        sign = -sign
+
+This walks right to left and starts positive, so the UNITS digit gets the plus sign instead
+of the leading digit.
+
+MEASURED over every n from 1 to 200,000, against the correct left-to-right answer:
+
+    wrong on 103,187 of 200,000  =  51.6%
+
+and - this is the part worth memorising - EVERY SINGLE ONE of those 103,187 disagreements
+is the EXACT NEGATION of the right answer. Not a nearby number, not a partial sum: the sign
+flipped, nothing else. So a wrong answer of -4 where 4 was expected is diagnostic; it means
+direction, not arithmetic.
+
+WHICH INPUTS IT BREAKS ON. MEASURED, broken down by digit count:
+
+    digits   inputs tested   wrong
+    -------------------------------------
+      1            9            0        never wrong
+      2           90           81        wrong unless the answer is 0
+      3          900            0        never wrong
+      4        9,000        8,385        wrong unless the answer is 0
+      5       90,000            0        never wrong
+      6      100,001       94,721        wrong unless the answer is 0
+
+THE PATTERN IS PERFECT. Odd digit counts: never wrong. Even digit counts: wrong on every
+input except the ones whose alternating sum happens to be 0 (0 is its own negation, so it
+survives the flip). MEASURED and confirmed as an identity, not a tendency: for every n up to
+200,000, the right-to-left sum equals the left-to-right sum when the digit count is odd, and
+equals MINUS it when the digit count is even.
+
+WHY THIS IS SO DANGEROUS IN AN INTERVIEW. The two examples people reach for first are `521`
+and `111` - both three digits - and MEASURED both give the same answer either way: 4 and 1.
+You can write the bug, test it twice, watch it pass twice, and ship it. Any two-digit or
+four-digit test case exposes it immediately.
+
+THE FIX, if you want the arithmetic loop rather than the string: start the sign by parity.
+
+    sign = 1 if len(str(n)) % 2 == 1 else -1
+
+MEASURED: with that one line, the backwards loop matches the forwards one on all 200,000
+inputs. But note it needs the digit count, which means either `str(n)` (defeating the point)
+or a `log10`/counting loop - which is why the string version is usually the better answer.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - string walk, forwards, sign starting at +1. The version in the code below.
+O(d) time, O(d) space for the string, and impossible to get the direction wrong because the
+string is already in written order.
+
+ALTERNATIVE B - arithmetic walk, backwards, with the parity-corrected starting sign. O(d)
+time and genuinely O(1) space if you count the digits with repeated division instead of
+`str`. Use it when the interviewer says no string conversion. MEASURED to agree with A on
+all 200,000 inputs when the starting sign is corrected, and to disagree on 51.6% when it is
+not.
+
+ALTERNATIVE C - compute the backwards sum with a naive +1 start and then negate if the digit
+count is even. Identical to B, expressed as a post-correction instead of a pre-correction.
+Some people find `return total if d % 2 else -total` clearer than seeding the sign.
+
+ALTERNATIVE D - index parity: `sum((-1)**i * int(c) for i, c in enumerate(str(n)))`. A
+one-liner, correct, and `(-1)**i` is a power operation per digit where a negation would do.
+Fine to write, worth knowing it is doing more work than necessary.
+
+THE FAMILY - problems built on signed or weighted digit sums:
+  * DIVISIBILITY BY 11 - a number is divisible by 11 exactly when its alternating digit sum
+    is. The reason is the same congruence argument as the digital root, with a different
+    base: 10 leaves remainder -1 when divided by 11, so 10^k alternates between +1 and -1
+    mod 11. MEASURED over 1..200,000: the test agrees with `n % 11 == 0` on every input,
+    zero failures - and it works from EITHER end, because a sign flip cannot change whether
+    a number is a multiple of 11;
+  * DIGITAL ROOT / Add Digits - the same machinery with base 9 and no signs;
+  * LUHN CHECKSUM on credit cards - a digit sum where alternate digits are doubled rather
+    than negated, walking from the right;
+  * ISBN-10 check digit - digits weighted 10, 9, 8 ... mod 11;
+  * ALTERNATING SUBARRAY SUM and similar array problems - the same `sign = -sign` idiom over
+    elements instead of digits.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - decide the direction OUT LOUD before writing anything. The problem says the leading
+digit is positive; the arithmetic loop produces trailing digits first; therefore either walk
+the string forwards or correct the starting sign by parity. Saying this sentence is most of
+the interview.
+
+STEP 2 - `total = 0` and `sign = 1`. The leading digit is positive, so the first sign is +1.
+
+STEP 3 - iterate `str(n)`, which is already most-significant first:
+    for ch in str(n):
+
+STEP 4 - accumulate: `total += sign * int(ch)`.
+
+STEP 5 - flip: `sign = -sign`. Not `sign *= -1` (same thing, more characters), not an
+index-parity test.
+
+STEP 6 - return `total`. Do not clamp it, do not take an absolute value: MEASURED, 89,256 of
+the first 200,000 inputs have a negative answer.
+
+STEP 7 - name two test cases: one with an ODD digit count and one with an EVEN digit count.
+The even one is the only kind that catches a direction bug, and MEASURED it catches it on
+every even-length input whose answer is not zero.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- I walk the digits from the most-significant end, keeping a running total and a sign
+  variable that starts at plus one and flips every digit. Total plus sign times digit, then
+  negate the sign.
+
+- The one thing I would be careful about is direction. The problem anchors the plus sign on
+  the LEADING digit, but the usual way to extract digits - mod ten, divide by ten - gives
+  them to me from the trailing end. So I convert to a string and walk forwards, because the
+  string is already in written order.
+
+- If I were told not to convert to a string, I would keep the arithmetic loop and set the
+  starting sign from the digit count: plus one if the number of digits is odd, minus one if
+  it is even. That is because the leading digit sits at position d minus one from the right,
+  so it naturally gets sign minus-one to the power d minus one.
+
+- Getting that wrong is not a small error - it returns exactly the negation of the right
+  answer, and it happens on every even-length input. Three-digit examples like 521 pass
+  either way, which is what makes it easy to miss.
+
+- The answer can be negative and I return it as-is.
+
+- Time is linear in the number of digits, which is about log base ten of n. Space is O(1) if
+  I use the arithmetic loop, or O(d) for the string version.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def alternate_digit_sum(n):
+        total = 0
+        sign = 1
+        for ch in str(n):
+            total += sign * int(ch)          # add or subtract this digit
+            sign = -sign                     # flip sign for the next digit
+        return total
+
+Line 2  `total = 0`
+        The accumulator. It ends up in a small range - MEASURED, never outside -26..27 for
+        n up to 200,000 - because the alternating signs cancel most of the mass.
+
+Line 3  `sign = 1`
+        Positive, because the FIRST digit the loop sees is the most-significant one and the
+        problem says that one is added. This single line is where the whole problem lives.
+
+Line 4  `for ch in str(n):`
+        `str(n)` is most-significant first, so iterating it goes left to right - written
+        order. This is the deliberate choice: the arithmetic alternative hands digits over
+        in the opposite order and needs a parity correction.
+
+Line 5  `total += sign * int(ch)`
+        `int(ch)` turns the character `'5'` into the number 5. Multiplying by `sign`, which
+        is +1 or -1, adds or subtracts it. No branch needed.
+
+Line 6  `sign = -sign`
+        The alternation. +1 becomes -1 becomes +1. Cheaper and harder to get wrong than
+        testing an index for evenness.
+
+Line 7  `return total`
+        Signed. Roughly 45% of inputs return a negative number, so any clamping or unsigned
+        type here is a bug.
+
+AND THE NO-STRING VERSION, for when it is asked for:
+
+    def alternate_digit_sum_arith(n):
+        d = 0
+        m = n
+        while m:                     # count the digits first
+            d += 1
+            m //= 10
+        sign = 1 if d % 2 == 1 else -1   # so the LEADING digit ends up positive
+        total = 0
+        while n:
+            total += sign * (n % 10)
+            n //= 10
+            sign = -sign
+        return total
+
+        MEASURED: identical to the string version on every n from 1 to 200,000. Drop the
+        parity line - start `sign` at 1 unconditionally - and it disagrees on 103,187 of
+        them, always by a sign flip.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - n = 886996, six digits, the correct forwards walk.
+
+    step   ch    sign in    sign*digit    total after    sign out
+    ---------------------------------------------------------------
+      1    '8'     +1           +8             8            -1
+      2    '8'     -1           -8             0            +1
+      3    '6'     +1           +6             6            -1
+      4    '9'     -1           -9            -3            +1
+      5    '9'     +1           +9             6            -1
+      6    '6'     -1           -6             0            +1
+    return 0                                             MEASURED
+
+    Note `total` goes negative at step 4 and comes back. Any code that clamps at zero
+    mid-loop would have returned 6.
+
+TRACE B - n = 521 versus n = 5210, the same digits with a zero appended, showing the trap.
+
+    n = 521 (odd length)
+      forwards :  +5 -2 +1        =  4
+      backwards:  +1 -2 +5        =  4          SAME - the bug is invisible here
+
+    n = 5210 (even length)
+      forwards :  +5 -2 +1 -0     =  4
+      backwards:  +0 -1 +2 -5     = -4          NEGATED - the bug is visible here
+
+    MEASURED across all of 1..200,000: odd digit counts agree in every single case, even
+    digit counts are the exact negation in every case where the answer is not zero.
+
+TRACE C - n = 10, the smallest input that separates the two directions.
+
+    forwards  : ch='1' sign=+1 total=1 ; ch='0' sign=-1 total=1     ->  1     MEASURED
+    backwards : digit 0 sign=+1 total=0 ; digit 1 sign=-1 total=-1  -> -1     MEASURED
+
+    Two digits, and the two answers are 1 and -1. If you only ever test three-digit numbers
+    you will never see this.
+
+TRACE D - the parity fix on n = 5210, four digits so `d = 4`, `sign` starts at -1.
+
+    step   n before   digit   sign in   total after   sign out
+    -------------------------------------------------------------
+      1     5210        0       -1          0            +1
+      2      521        1       +1          1            -1
+      3       52        2       -1         -1            +1
+      4        5        5       +1          4            -1
+    n is 0, loop ends, return 4  -  matching the forwards walk exactly.
+
+    The only difference from the buggy version is line `sign = 1 if d % 2 == 1 else -1`,
+    and it moves the answer from -4 to 4.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(d) where d is the number of digits, and d is about log10(n). Constant work per
+            digit - one multiply, one add, one negate.
+    space   O(d) for the string version, because `str(n)` allocates.
+            O(1) for the arithmetic version - two ints and a sign.
+
+    For a 64-bit input d is at most 19, so this is effectively constant time in practice.
+    There is no faster approach; every digit must be looked at, and unlike the digital root
+    there is no modular shortcut, because the answer is not a residue - it is a signed sum
+    that ranges over roughly -9d/2 to +9d/2.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Walking right to left with the sign starting at +1. MEASURED wrong on 103,187 of
+       200,000 inputs (51.6%) - every even-length number whose answer is not zero - and the
+       wrong answer is always the exact negation. The `n % 10` loop makes this the DEFAULT
+       mistake, not an unlucky one.
+    2. Testing only odd-length numbers. MEASURED, the direction bug is invisible on all
+       1-, 3- and 5-digit inputs. `521` and `111` both pass with the bug in place.
+    3. Returning `abs(total)` or an unsigned type. MEASURED, 89,256 of the first 200,000
+       inputs have a genuinely negative answer.
+    4. Index-parity arithmetic - `(-1)**i` or `if i % 2 == 0` - instead of `sign = -sign`.
+       Correct, slower, and an extra place to get the off-by-one wrong.
+    5. Forgetting that the answer can be 0 for a non-zero input. `886996` returns 0, and 0
+       is also what an empty or mishandled loop returns, so 0 is a poor sentinel value.
+    6. Treating leading zeros as meaningful. The input is an integer; `str(n)` never carries
+       leading zeros, so there is nothing to strip - but if the input arrives as a STRING in
+       a variant of the problem, leading zeros would shift every sign.
+
+THE TAKEAWAY
+    Alternating anything is `sign = -sign`, and the only real question is which end you start
+    from. The problem says the leading digit is positive; the natural `% 10` loop starts at
+    the trailing digit; reconcile the two either by walking the string forwards or by seeding
+    the sign from the parity of the digit count. Get it wrong and you return exactly minus
+    the right answer on every even-length input, which is half of all inputs and none of the
+    three-digit examples you were most likely to test.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
