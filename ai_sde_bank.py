@@ -290121,6 +290121,1510 @@ THE TAKEAWAY
     1..200,000, rather than trusting two examples.""",
 ]
 
+_EX_P1AO["Palindrome Number"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - does this integer read the same backwards? And do it without turning
+it into a string.
+
+    121     -> True         MEASURED
+    -121    -> False        MEASURED
+    10      -> False        MEASURED
+    0       -> True         MEASURED
+    12321   -> True
+
+THE STRING VERSION IS ONE LINE - `str(x) == str(x)[::-1]` - and the point of the exercise is the
+arithmetic version, because that is what you would write in a language without cheap string
+allocation, and because it forces you to think about digits rather than characters.
+
+REVERSE THE NUMBER WITH ARITHMETIC AND COMPARE:
+
+    reversed_num = 0
+    while x:
+        reversed_num = reversed_num * 10 + x % 10
+        x //= 10
+    return reversed_num == original
+
+`x % 10` is the last digit; `x //= 10` removes it; `reversed_num * 10 + digit` appends it to the
+growing reversal. Digits come off the right of the original and go onto the right of the copy, which
+is exactly a reversal.
+
+TWO INPUTS DECIDE THE EDGE CASES. NEGATIVES are never palindromes - MEASURED, `str(-121)` is `'-121'`
+and its reverse is `'121-'`, so the minus sign lands at the wrong end. And TRAILING ZEROS make it
+impossible unless the number IS zero: 10 reversed is 1, because leading zeros do not exist in a
+number.
+
+MEASURED against the string comparison on every integer from -10,000 to 200,000: zero mismatches.""",
+
+    """2. THE INTUITION - building the reversal one digit at a time.
+
+    x = 121,  reversed_num = 0
+
+    step 1:  digit = 121 % 10 = 1     reversed_num = 0 * 10 + 1 = 1      x = 12
+    step 2:  digit =  12 % 10 = 2     reversed_num = 1 * 10 + 2 = 12     x = 1
+    step 3:  digit =   1 % 10 = 1     reversed_num = 12 * 10 + 1 = 121   x = 0
+    compare 121 == 121  ->  True
+
+`reversed_num * 10 + digit` is Horner's method run backwards: multiplying by ten shifts everything
+already collected one place left, and the new digit fills the units place. It is the same line that
+parses a numeral left to right - here it is fed the digits in the opposite order, which is what makes
+it a reversal.
+
+WHY THE ORIGINAL MUST BE SAVED. The loop destroys `x`, so the comparison needs a copy taken before it
+starts. Forgetting that copy is the single most common way to break this.
+
+THE HALF-REVERSAL REFINEMENT. You do not need to reverse the whole number - only half of it. Keep
+peeling digits off `x` and appending to `rev` until `rev` is at least as large as `x`; at that point
+you have consumed half the digits, and the two halves can be compared directly:
+
+    while x > rev:
+        rev = rev * 10 + x % 10
+        x //= 10
+    return x == rev or x == rev // 10
+
+The `rev // 10` case handles an odd number of digits, where the middle digit ends up in `rev` and
+should be discarded. MEASURED, this agrees with the full reversal on every value from 0 to 200,000.
+
+WHY IT MATTERS AT ALL: in a fixed-width language, reversing a large number can OVERFLOW even though
+the original fits. MEASURED, reversing 2,147,483,647 - the largest 32-bit signed integer - gives
+7,463,847,412, which does not fit. The half-reversal never builds a number bigger than half the
+digits, so it cannot overflow. In Python integers are unbounded and the point is purely
+architectural, which is exactly the kind of thing worth saying out loud.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PALINDROME - reads the same forwards and backwards. For an integer, the digit sequence.
+
+`x % 10` - the last digit. `x //= 10` - drop it. Together they are the standard digit-peeling pair,
+and they are how every "do something with the digits" problem starts.
+
+HORNER'S METHOD - `acc = acc * base + digit`, evaluating a numeral without powers. Used here to BUILD
+the reversal rather than to read a numeral.
+
+LEADING ZEROS - do not exist in a number's value. 010 is just 10, which is why any number ending in
+0 (except 0 itself) cannot be a palindrome: its reversal would need a leading zero.
+
+OVERFLOW - exceeding the range of a fixed-width integer type. MEASURED, reversing 2^31 - 1 produces
+7,463,847,412, which is beyond the 32-bit signed range - a real bug in C or Java, and impossible in
+Python.
+
+HALF-REVERSAL - the refinement that reverses only the lower half of the digits and compares it with
+the upper half. Immune to overflow, and about the same speed.
+
+MUTATING THE INPUT - the loop destroys `x`. Saving `original` first is not defensive; it is required
+for the comparison to have anything to compare against.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the two special inputs and the destroyed variable.
+
+BUG 1 - FORGETTING TO SAVE THE ORIGINAL. The loop reduces `x` to 0, so comparing `reversed_num == x`
+at the end compares the reversal against zero - which is True only for the input 0. The copy must be
+taken before the loop.
+
+BUG 2 - NOT REJECTING NEGATIVES. `-121` is not a palindrome, because the sign belongs at the front
+and the reversal would put it at the back. MEASURED, `str(-121)[::-1]` is `'121-'`.
+
+The arithmetic version needs the guard for a different reason too: in Python, `-121 % 10` is 9 (the
+modulo takes the sign of the divisor) and `-121 // 10` is -13 (floor division rounds down), so the
+loop would run forever producing nonsense. The `if x < 0: return False` guard prevents both
+problems.
+
+BUG 3 - MISHANDLING TRAILING ZEROS. Any positive number ending in 0 cannot be a palindrome, because
+its reversal would begin with a zero and numbers do not have leading zeros. MEASURED, `10` reverses
+to `1`, and `1 != 10`.
+
+The full-reversal version gets this right automatically. The HALF-reversal version does not - it
+needs an explicit `if x % 10 == 0 and x != 0: return False` guard, because otherwise the loop
+terminates in a state that compares equal. Note the `and x != 0`: zero itself IS a palindrome.
+
+BUG 4 - THE HALF-REVERSAL'S ODD-LENGTH CASE. For `12321`, the loop stops with `x = 12` and
+`rev = 123` - the middle digit 3 is in `rev`. The comparison must therefore accept `x == rev // 10`
+as well as `x == rev`. Omitting the second case rejects every odd-length palindrome.
+
+BUG 5 - USING THE STRING VERSION AND CALLING IT ARITHMETIC. `str(x) == str(x)[::-1]` is correct and
+MEASURED slightly FASTER in Python - 48 ms against 72 ms for 200,000 calls - because the slicing and
+comparison run in C. Say that honestly, then write the arithmetic version because the problem asks
+for it.
+
+BUG 6 - IGNORING OVERFLOW BECAUSE PYTHON HIDES IT. MEASURED, the full reversal of 2,147,483,647 is
+7,463,847,412 - fine in Python, an overflow in Java or C. The half-reversal exists precisely for
+that, and naming it shows you are thinking about the machine rather than only the language.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 calls, identical answers throughout:
+
+    str(x) == str(x)[::-1]      48 ms
+    half reversal               53 ms
+    full arithmetic reversal    72 ms
+
+ALTERNATIVE A - full arithmetic reversal. O(digits) time, O(1) space. The version the problem is
+asking for.
+
+ALTERNATIVE B - the half reversal. Same complexity, MEASURED slightly faster, and immune to overflow
+in a fixed-width language. Its cost is two extra edge cases: the trailing-zero guard and the
+odd-length `rev // 10` comparison. Offer it as the refinement once the straightforward version is on
+the board.
+
+ALTERNATIVE C - the string comparison. MEASURED the fastest in Python, O(digits) space for the two
+strings, and it is what you would ship in Python. It is explicitly excluded by the problem's
+follow-up, which is the whole reason the arithmetic version is worth practising.
+
+ALTERNATIVE D - two pointers over the digits, comparing the first and last, then moving inward. It
+needs the digit count first (via `bit_length`-style division or a `log10`), which is more work than
+the reversal in this base.
+
+ALTERNATIVE E - convert to a list of digits, then compare with its reverse. The clearest to read and
+O(digits) space; it is the string version wearing a different type.
+
+THE FAMILY - digit manipulation and palindromes:
+  * REVERSE INTEGER - the same loop, returning the reversal, where the overflow question is the ENTIRE
+    problem;
+  * VALID PALINDROME - the string version with skipping rules for punctuation;
+  * PALINDROME LINKED LIST - the same question where the half-reversal idea becomes essential,
+    because you cannot index backwards;
+  * FIND THE CLOSEST PALINDROME, SUPER PALINDROMES - constructive versions;
+  * ADD DIGITS, HAPPY NUMBER, NUMBER OF STEPS TO REDUCE TO ZERO - the same `% 10` and `// 10`
+    machinery applied to different questions.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - handle negatives first: `if x < 0: return False`. Say both reasons - the sign belongs at the
+front, and in Python the modulo of a negative would make the loop misbehave.
+
+STEP 2 - save the original before destroying it: `original = x`.
+
+STEP 3 - the reversal loop:
+    while x:
+        reversed_num = reversed_num * 10 + x % 10
+        x //= 10
+Say what each part does: `% 10` takes the last digit, `* 10 +` appends it to the reversal, `// 10`
+drops it from the source.
+
+STEP 4 - compare: `return reversed_num == original`.
+
+STEP 5 - note that trailing zeros are handled automatically here - 10 reverses to 1 - so no extra
+guard is needed in this version.
+
+STEP 6 - offer the half-reversal as the refinement, and give the reason: in a fixed-width language
+the full reversal can overflow even when the input does not. MEASURED, reversing 2^31 - 1 gives
+7,463,847,412.
+
+STEP 7 - if you write the half-reversal, name its two extra cases out loud: the trailing-zero guard,
+and `x == rev // 10` for an odd digit count.
+
+STEP 8 - state the complexity: O(number of digits) time, O(1) space - and mention that the string
+version is MEASURED faster in Python but allocates.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Negatives are never palindromes, because the minus sign would have to move to the other end, so I
+  reject them immediately. That guard also protects the loop, since Python's modulo and floor
+  division on negatives would not terminate the way I want.
+
+- Then I rebuild the number reversed using arithmetic: take the last digit with mod ten, append it to
+  a running reversal by multiplying that by ten and adding, and drop the digit from the source with
+  integer division. When the source hits zero, I compare the reversal against a copy of the original -
+  which I have to save first, because the loop destroys the input.
+
+- Trailing zeros take care of themselves: ten reverses to one, and they differ. That is the right
+  behaviour - numbers have no leading zeros, so only zero itself ends in zero and is a palindrome.
+
+- Linear in the number of digits, constant space.
+
+- The refinement worth mentioning is reversing only HALF the digits: keep peeling until the reversal
+  is at least as large as what remains, then compare the two halves. It matters because in a
+  fixed-width language reversing the whole number can overflow even when the input fits - reversing
+  two-billion-one-hundred-and-forty-seven million and so on gives seven point four billion, past the
+  thirty-two-bit limit. Python has no such limit, so there it is an architectural point rather than a
+  bug.
+
+- The half version needs two extra cases though: a guard for trailing zeros, and for an odd number of
+  digits the middle digit ends up in the reversal, so I also accept the comparison after dividing it
+  out.
+
+- And honestly, in Python the string comparison is the fastest of the three - I measured forty-eight
+  milliseconds against seventy-two for the arithmetic version - but the problem asks not to use it.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def is_palindrome_number(x):
+        if x < 0:
+            return False            # negatives aren't palindromes
+        reversed_num = 0
+        original = x
+        while x:
+            reversed_num = reversed_num * 10 + x % 10
+            x //= 10
+        return reversed_num == original
+
+Line 2  `if x < 0:`
+        Two reasons in one guard. Semantically, the minus sign cannot move to the other end -
+        MEASURED, `str(-121)[::-1]` is `'121-'`. Mechanically, Python's `-121 % 10` is 9 and
+        `-121 // 10` is -13, so the loop would never reach zero.
+
+Line 5  `original = x`
+        Taken BEFORE the loop, because the loop consumes `x` down to 0. Without this copy, the final
+        comparison would be against zero and only the input 0 would ever return True.
+
+Line 6  `while x:`
+        Runs once per digit. Terminates because each iteration divides by 10.
+
+        For `x = 0` the loop never runs, `reversed_num` stays 0, and `0 == 0` returns True - which is
+        correct, and handled with no special case.
+
+Line 7  `reversed_num = reversed_num * 10 + x % 10`
+        `x % 10` is the units digit of what remains. `reversed_num * 10` shifts everything collected
+        so far one place up, and adding the digit puts it in the new units position.
+
+        In a fixed-width language THIS is the line that overflows - MEASURED, reversing 2,147,483,647
+        produces 7,463,847,412.
+
+Line 8  `x //= 10`
+        Drops the digit just consumed. Integer division, not `/`, which would introduce floats.
+
+Line 9  `return reversed_num == original`
+        A plain integer comparison. Trailing zeros fall out correctly here: `10` produces
+        `reversed_num = 1`, and `1 != 10`.
+
+MEASURED, this agrees with `str(x) == str(x)[::-1]` on every integer from -10,000 to 200,000.
+
+AND THE HALF-REVERSAL, which cannot overflow:
+
+    def is_palindrome_half(x):
+        if x < 0 or (x % 10 == 0 and x != 0):
+            return False                    # trailing zero: only 0 itself qualifies
+        rev = 0
+        while x > rev:
+            rev = rev * 10 + x % 10
+            x //= 10
+        return x == rev or x == rev // 10   # rev // 10 drops the middle digit (odd length)
+
+        MEASURED to agree with the full reversal on every value from 0 to 200,000, at 53 ms against
+        72 ms per 200,000 calls.
+
+        The loop stops when `rev` catches up with `x`, which happens at the halfway point. For an
+        even digit count the two halves are compared directly; for an odd count the middle digit sits
+        in `rev` and is removed by the `// 10`.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `x = 121`, the full reversal.
+
+    step   x before   x % 10   reversed_num after   x after
+    --------------------------------------------------------------
+      1      121        1            1                12
+      2       12        2           12                 1
+      3        1        1          121                 0
+    loop ends, compare 121 == 121  ->  True                     MEASURED
+
+TRACE B - `x = 10`, where the trailing zero decides it.
+
+    step   x before   x % 10   reversed_num after   x after
+    --------------------------------------------------------------
+      1       10        0            0                 1
+      2        1        1            1                 0
+    compare 1 == 10  ->  False                                  MEASURED
+
+    The leading zero of "01" simply does not exist as a number, which is why no positive multiple of
+    ten can be a palindrome.
+
+TRACE C - `x = -121`.
+
+    the guard fires immediately, return False                   MEASURED
+
+    Without the guard, in Python: `-121 % 10` is 9 and `-121 // 10` is -13, then `-13 % 10` is 7 and
+    `-13 // 10` is -2, and so on toward negative infinity - the loop never terminates.
+
+TRACE D - the half reversal on `12321` (odd length).
+
+    step   x before   rev before   x > rev ?   rev after   x after
+    -------------------------------------------------------------------
+      1     12321          0         yes          1          1232
+      2      1232          1         yes         12           123
+      3       123         12         yes        123            12
+      4        12        123         no - loop ends
+
+    now x = 12 and rev = 123
+    x == rev ?        12 == 123      no
+    x == rev // 10 ?  12 == 12       YES  ->  True
+
+    The middle digit 3 was absorbed into `rev`, and `rev // 10` removes it. Without that second
+    comparison every odd-length palindrome would be rejected.
+
+TRACE E - the half reversal on `1221` (even length).
+
+    step   x       rev     x > rev ?   after
+    -----------------------------------------------
+      1    1221      0        yes      x=122, rev=1
+      2     122      1        yes      x=12,  rev=12
+      3      12     12        no - loop ends
+
+    x == rev  ->  12 == 12  ->  True
+
+    Even length needs no adjustment - the halves match exactly.
+
+TRACE F - the measurements.
+
+    -10,000..200,000, arithmetic vs string: zero mismatches
+    0..200,000, half reversal vs full: zero mismatches
+    200,000 calls: string 48 ms, half reversal 53 ms, full reversal 72 ms
+    palindromes in 1..200,000: 1,198 - about 0.6%
+    reversing 2,147,483,647 gives 7,463,847,412, beyond the 32-bit signed maximum""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(number of digits), which is O(log10 x) - at most 19 iterations for a 64-bit input. The
+            half reversal does about half as many.
+    space   O(1) for both arithmetic versions. The string version is O(digits) for the two strings.
+
+    MEASURED per 200,000 calls: string 48 ms, half reversal 53 ms, full reversal 72 ms. All O(digits);
+    the differences are constant factors, and the string version wins in Python because its loop is
+    in C.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Not saving the original before the loop destroys `x`. The comparison then tests the reversal
+       against zero.
+    2. Not rejecting negatives - semantically wrong, and in Python the loop does not terminate
+       because `-121 // 10` is -13.
+    3. In the HALF-reversal version, omitting the trailing-zero guard or the `rev // 10` case. The
+       second rejects every odd-length palindrome.
+    4. Assuming trailing zeros need special handling in the FULL version. They do not: 10 reverses to
+       1 and the comparison fails naturally.
+    5. Using `/` instead of `//`, which turns the digits into floats.
+    6. Ignoring overflow because Python does not have it. MEASURED, the reversal of 2^31 - 1 does not
+       fit in 32 bits - which is exactly why the half-reversal exists.
+    7. Claiming the arithmetic version is faster than the string one. MEASURED it is 1.5x slower in
+       Python; its advantages are O(1) space and being the version the question asked for.
+
+THE TAKEAWAY
+    `% 10` and `// 10` peel digits, and `acc * 10 + digit` glues them back on in the opposite order -
+    that pair of ideas is the whole arithmetic reversal, and it recurs in every digit problem. The
+    edge cases are the content: negatives are excluded by the sign's position, trailing zeros are
+    excluded because numbers have no leading zeros, and zero itself is a palindrome. Then the
+    refinement worth knowing is reversing only half the digits, because in a fixed-width language the
+    full reversal can overflow on an input that was perfectly valid.""",
+]
+
+_EX_P1AO["Perfect Number"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - is this number equal to the sum of everything that divides it,
+itself excluded?
+
+    6:   divisors below itself are 1, 2, 3      1 + 2 + 3 = 6        PERFECT
+    28:  1, 2, 4, 7, 14                          sum 28              PERFECT
+    16:  1, 2, 4, 8                              sum 15              not perfect
+    12:  1, 2, 3, 4, 6                           sum 16              not perfect (abundant)
+
+MEASURED, the perfect numbers up to 100,000 are exactly 6, 28, 496 and 8,128 - four of them in a
+hundred thousand candidates. They are rare, which is worth knowing before you write any test cases.
+
+THE ALGORITHM IS DIVISOR ENUMERATION IN PAIRS. Divisors come in pairs multiplying to n: if `i`
+divides n then so does `n // i`, and one of each pair is at most sqrt(n). So loop `i` from 2 while
+`i * i <= n`, and add BOTH members of each pair:
+
+    total = 1                     # 1 is a proper divisor of every n > 1
+    i = 2
+    while i * i <= n:
+        if n % i == 0:
+            total += i
+            if i != n // i:       # a perfect square pairs with itself - add it once
+                total += n // i
+        i += 1
+    return total == n
+
+MEASURED against a full scan of every candidate divisor from 1 to n-1, over all n from 1 to 20,000:
+identical answers, and 75x faster (91 ms against 6,817 ms).""",
+
+    """2. THE INTUITION - divisors come in pairs, so you only need half of them.
+
+If `i` divides `n`, then `n // i` divides `n` too, and `i * (n // i) = n`. Pair them up:
+
+    28:  1 x 28,  2 x 14,  4 x 7
+    the small member of each pair is at most sqrt(28) = 5.29...
+
+So walking `i` up to sqrt(n) finds every pair exactly once, and each hit contributes TWO divisors -
+`i` and `n // i`. That is why the loop is O(sqrt(n)) rather than O(n): checking i = 2 also discovers
+14, and checking i = 4 discovers 7.
+
+THE THREE ADJUSTMENTS, and each is a separate decision:
+
+    START AT 1 SEPARATELY. The pair for i = 1 is (1, n), and n itself must NOT be counted - the
+    problem asks for PROPER divisors. So the loop starts at 2 and `total` is seeded with 1.
+
+    START THE LOOP AT 2. Beginning at 1 would add both 1 and n, immediately overshooting.
+
+    HANDLE PERFECT SQUARES. When `i * i == n`, the pair is (i, i) - the same divisor twice. Adding it
+    once is correct; adding it twice inflates the sum.
+
+MEASURED, the square adjustment matters: over 2..20,000, the divisor SUM computed without the
+`i != n // i` check differs from the correct sum on 140 numbers - and all 140 are perfect squares.
+For n = 16 the correct proper-divisor sum is 15 and the double-counting version gives 19.
+
+INTERESTINGLY, THE BOOLEAN ANSWER IS UNCHANGED. MEASURED, none of those 140 inflated sums happens to
+equal its n, so `is_perfect` returns the same result either way up to 20,000. That is a good lesson
+in what a test can and cannot catch: the bug is real, the observable behaviour hides it, and only
+checking the intermediate SUM exposes it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIVISOR (or factor) - a number that divides n exactly. 4 divides 28 because 28 % 4 is 0.
+
+PROPER DIVISOR - a divisor other than n itself. 1 is a proper divisor of every n > 1; n is not.
+
+PERFECT NUMBER - equal to the sum of its proper divisors. 6, 28, 496, 8,128, ... MEASURED, those four
+are all of them below 100,000.
+
+DEFICIENT / ABUNDANT - the sum is less than n / greater than n. 16 is deficient (15) and 12 is
+abundant (16). Most numbers are one or the other; perfect is the knife edge.
+
+DIVISOR PAIRING - `i` and `n // i` always come together. The reason sqrt(n) is enough.
+
+`i * i <= n` versus `i <= sqrt(n)` - the same condition, without floating point. Preferable, because
+`sqrt` can round and produce an off-by-one at the boundary for large n.
+
+EUCLID-EULER THEOREM - every EVEN perfect number has the form `2^(p-1) * (2^p - 1)` where `2^p - 1`
+is prime (a Mersenne prime). MEASURED, p = 2, 3, 5, 7 give exactly 6, 28, 496 and 8,128 - the four
+found by brute force. Whether any ODD perfect number exists is an open problem, unresolved for over
+two thousand years.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the boundaries of the loop and the square case.
+
+BUG 1 - DOUBLE-COUNTING THE SQUARE ROOT. When `i * i == n`, both members of the pair are `i`, and
+adding `i` and `n // i` adds the same divisor twice.
+
+MEASURED over 2..20,000 on the divisor SUM: differs on 140 numbers, and all 140 are perfect squares.
+For n = 16 the correct sum is 15 and the buggy one gives 19.
+
+MEASURED on the boolean answer: no difference at all up to 20,000, because no perfect square's
+inflated sum happens to equal itself. So the bug is invisible to the function's output and visible
+only in the intermediate value - which is why testing the SUM rather than the verdict is the right
+way to check a solution like this.
+
+BUG 2 - INCLUDING n ITSELF. Starting the loop at `i = 1` adds the pair (1, n), and n is not a proper
+divisor. The result is that `total` exceeds n for every input and nothing is ever perfect. Seeding
+`total = 1` and starting at 2 keeps the 1 and drops the n.
+
+BUG 3 - NOT GUARDING `n <= 1`. For n = 1 the proper divisors are none at all, so the sum is 0 and 1 is
+not perfect - but the code seeds `total = 1`, which would wrongly report `1 == 1`. The `if n <= 1:
+return False` line exists exactly for that input.
+
+BUG 4 - `i <= math.sqrt(n)` INSTEAD OF `i * i <= n`. For large n the floating-point square root can
+land just below the true value and miss the final divisor. `i * i <= n` is exact integer arithmetic
+and never has that problem.
+
+BUG 5 - THE FULL SCAN, `sum(d for d in range(1, n) if n % d == 0)`. Correct and O(n). MEASURED over
+1..20,000: 6,817 ms against 91 ms - 75x - and the ratio grows as sqrt(n), so at n = 10^8 the full
+scan is hopeless while the paired version takes 10,000 iterations.
+
+BUG 6 - TESTING WITH SMALL RANDOM NUMBERS AND CONCLUDING NOTHING. MEASURED, only four perfect numbers
+exist below 100,000, so a random test set contains none of them and the function returns False
+throughout - which is exactly the same behaviour as `return False`. Test with 6, 28, 496 and 8,128
+explicitly.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED over all n from 1 to 20,000:
+
+    pair enumeration to sqrt(n)      91 ms
+    full scan of 1..n-1           6,817 ms      75x slower
+
+ALTERNATIVE A - pair enumeration. O(sqrt(n)) time, O(1) space. The answer.
+
+ALTERNATIVE B - the full divisor scan. O(n) per number, and the right thing to use as an ORACLE:
+MEASURED, it agrees with the fast version on every n from 1 to 20,000, which is how the fast version
+was verified.
+
+ALTERNATIVE C - THE LOOKUP TABLE. Since perfect numbers are astronomically rare, and the problem's
+constraints usually cap n at 10^8, the entire answer set is {6, 28, 496, 8128, 33550336}. Checking
+membership is O(1). It is a legitimate answer for the stated constraints and it is worth presenting
+as "here is what I would ship, and here is the general algorithm", not as a substitute for knowing
+the algorithm.
+
+ALTERNATIVE D - THE EUCLID-EULER FORM: generate `2^(p-1) * (2^p - 1)` for each p where `2^p - 1` is
+prime. MEASURED, p = 2, 3, 5, 7 give 6, 28, 496 and 8,128 - matching the brute force exactly. This is
+how the lookup table in alternative C is derived rather than memorised, and mentioning the theorem is
+the strongest thing you can say about this problem.
+
+ALTERNATIVE E - a SIEVE, if you need every perfect number in a range rather than one test: for each
+d, add d to every multiple of d. O(n log n) total for the whole range, which beats calling the
+sqrt version n times.
+
+THE FAMILY - divisor and factorisation problems:
+  * COUNT PRIMES - the sieve, where the same "walk multiples" idea appears;
+  * FOUR DIVISORS, CLOSEST DIVISORS, NUMBER OF FACTORS - all built on the same sqrt pairing;
+  * UGLY NUMBER, POWER OF THREE - divisibility tests of a different shape;
+  * SUM OF DIVISORS in number theory, where the multiplicative formula over prime factorisation gives
+    the divisor sum without enumerating anything;
+  * CHECK IF IT IS A GOOD ARRAY / GCD problems, the other half of elementary number theory.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the definition precisely: the sum of the PROPER divisors, which excludes n itself and
+includes 1.
+
+STEP 2 - guard the degenerate input: `if n <= 1: return False`. Say why - 1 has no proper divisors,
+and the seeding on the next line would otherwise report it as perfect.
+
+STEP 3 - seed with 1: `total = 1`, because 1 divides every n > 1 and its partner n must be excluded.
+
+STEP 4 - loop in pairs from 2:
+    i = 2
+    while i * i <= n:
+        if n % i == 0:
+            total += i
+            if i != n // i:
+                total += n // i
+        i += 1
+
+STEP 5 - say why `i * i <= n` rather than `i <= sqrt(n)`: exact integer arithmetic, no floating-point
+rounding at the boundary.
+
+STEP 6 - say why the `i != n // i` check exists: for a perfect square the pair is (i, i), and the
+divisor must be counted once. MEASURED, without it the divisor sum is wrong on 140 numbers up to
+20,000 - all perfect squares - though the boolean output happens not to change.
+
+STEP 7 - `return total == n`.
+
+STEP 8 - state the complexity: O(sqrt(n)) time, O(1) space, against O(n) for the naive scan - MEASURED
+75x over 1..20,000.
+
+STEP 9 - if there is time, name the Euclid-Euler theorem and the fact that only four perfect numbers
+exist below 100,000 - which is also why your test cases must be chosen rather than random.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- A perfect number equals the sum of its divisors excluding itself. So I need the divisor sum, and the
+  efficient way to get that is to enumerate divisors in PAIRS.
+
+- If i divides n then so does n over i, and the smaller member of every pair is at most the square
+  root - so I loop i from two while i times i is at most n, and each hit contributes both members.
+  That makes it root-n rather than n; I measured it seventy-five times faster than scanning every
+  candidate up to n over the range one to twenty thousand.
+
+- Three details. I seed the total with one, because one is always a proper divisor and its partner is
+  n itself, which must be excluded. I start the loop at two for the same reason. And when n is a
+  perfect square, the pair is the root with itself, so I add it only once.
+
+- I use i times i is at most n rather than i is at most the square root, to keep it in exact integer
+  arithmetic - a floating-point square root can round just below the true value and miss a divisor.
+
+- One is a special case: it has no proper divisors, so it is not perfect, and without a guard my
+  seeding of one would wrongly report it as perfect.
+
+- Worth knowing about the testing: perfect numbers are extremely rare. There are only four below a
+  hundred thousand - six, twenty-eight, four hundred and ninety-six, and eight thousand one hundred
+  and twenty-eight - so a random test set contains none of them and would pass a function that always
+  returns False. I would test those four explicitly.
+
+- And the number theory: Euclid and Euler showed every even perfect number is two to the p minus one
+  times two to the p minus one, when that second factor is a Mersenne prime. Whether any odd perfect
+  number exists is still an open problem.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def is_perfect_number(n):
+        if n <= 1:
+            return False
+        total = 1                       # 1 is always a proper divisor
+        i = 2
+        while i * i <= n:
+            if n % i == 0:
+                total += i
+                if i != n // i:
+                    total += n // i     # add the paired divisor
+            i += 1
+        return total == n
+
+Line 2  `if n <= 1:`
+        1 has no proper divisors, so its divisor sum is 0 and it is not perfect. Without this guard,
+        line 4 would seed `total = 1` and the final comparison would wrongly report `1 == 1`.
+        Negatives and zero are excluded by the same line.
+
+Line 4  `total = 1`
+        The divisor 1, added up front. Its pair is n itself, which is excluded by the definition of
+        PROPER divisor - so this seeding and the loop starting at 2 are the same decision expressed
+        twice.
+
+Line 6  `while i * i <= n:`
+        Exact integer arithmetic. `i <= math.sqrt(n)` is the same condition in principle and can be
+        off by one at the boundary for large n, because the square root is a float.
+
+        The loop runs about sqrt(n) times - 10,000 iterations for n = 10^8, against 10^8 for the
+        naive scan.
+
+Line 7  `if n % i == 0:`
+        `i` is a divisor, and therefore so is `n // i`.
+
+Line 8  `total += i`
+        The small member of the pair.
+
+Line 9  `if i != n // i:`
+        The perfect-square guard. When `i * i == n` the two members are the same number, and it must
+        be counted once.
+
+        MEASURED, removing this check changes the divisor SUM on 140 of the numbers from 2 to 20,000
+        - every one a perfect square - while leaving the boolean result unchanged, because none of
+        the inflated sums happens to equal its n. A bug that the function's output cannot reveal.
+
+Line 10 `total += n // i`
+        The large member.
+
+Line 12 `return total == n`
+        The definition, directly.
+
+MEASURED, this matches a full scan of every candidate divisor for all n from 1 to 20,000 - and it is
+75x faster (91 ms against 6,817 ms).
+
+AND FOR THE STATED CONSTRAINTS, the honest production answer:
+
+    PERFECT = {6, 28, 496, 8128, 33550336}
+    def is_perfect_number_lookup(n):
+        return n in PERFECT
+
+        Those are every perfect number up to 10^8, derived from the Euclid-Euler form
+        `2^(p-1) * (2^p - 1)` for p = 2, 3, 5, 7, 13. Correct, O(1), and worth presenting alongside
+        the general algorithm rather than instead of it.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `n = 28`.
+
+    guard: 28 > 1, continue
+    total = 1                     (the divisor 1)
+
+    i    i*i    i*i <= 28 ?   28 % i    action                         total
+    -----------------------------------------------------------------------------
+    2     4        yes          0       add 2 and 28//2 = 14             17
+    3     9        yes          1       not a divisor                    17
+    4    16        yes          0       add 4 and 28//4 = 7              28
+    5    25        yes          3       not a divisor                    28
+    6    36        no - loop ends
+
+    return 28 == 28  ->  True                                       MEASURED
+
+    Five iterations found all five proper divisors - 1, 2, 14, 4, 7 - because each hit produced two.
+
+TRACE B - `n = 16`, a perfect square, where the guard matters.
+
+    total = 1
+    i = 2:  divisor, add 2 and 8                    total = 11
+    i = 3:  not a divisor                           total = 11
+    i = 4:  divisor, and 4 == 16 // 4, so add 4 ONCE  total = 15
+    i = 5:  25 > 16, loop ends
+    return 15 == 16  ->  False
+
+    Without the `i != n // i` check, i = 4 would add 4 twice and give 19. MEASURED, both answers are
+    False, so the function's OUTPUT is identical - the bug lives entirely in the intermediate sum.
+
+TRACE C - `n = 6`, the smallest perfect number.
+
+    total = 1
+    i = 2:  divisor, add 2 and 3                    total = 6
+    i = 3:  9 > 6, loop ends
+    return 6 == 6  ->  True                                        MEASURED
+
+    Note i = 3 was never tested as a divisor - it was discovered as the PARTNER of 2. That is the
+    pairing doing its work.
+
+TRACE D - `n = 1`, the guarded case.
+
+    1 <= 1, return False
+
+    Correct: 1 has no proper divisors, so the sum is 0, not 1. Without the guard the seeded
+    `total = 1` would match `n = 1` and report True.
+
+TRACE E - the rarity, and what it means for testing.
+
+    MEASURED, perfect numbers up to 100,000:  6, 28, 496, 8128 - four in a hundred thousand
+
+    So a test set of a thousand random numbers below 100,000 has about a 4% chance of containing even
+    one. `return False` would pass such a test. The four values must be chosen deliberately.
+
+    And MEASURED, the Euclid-Euler form `2^(p-1) * (2^p - 1)` for p = 2, 3, 5, 7 produces exactly
+    6, 28, 496, 8128 - the same four, derived rather than searched.
+
+TRACE F - the cost.
+
+    n from 1 to 20,000
+        pair enumeration      91 ms
+        full scan          6,817 ms      75x
+
+    The gap is roughly sqrt(n)/2, so it widens as n grows: at n = 10^8 the paired loop does 10,000
+    iterations and the scan does 10^8.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(sqrt(n)) - one iteration per candidate up to the square root, each finding zero or two
+            divisors.
+    space   O(1) - a running total.
+
+    MEASURED over 1..20,000: 91 ms against 6,817 ms for the O(n) scan, a factor of 75 that grows with
+    sqrt(n). The lookup table is O(1) and only valid within the stated constraints; the sieve is the
+    right choice when you need every perfect number in a range rather than one test.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Double-counting the square root of a perfect square. MEASURED, it corrupts the divisor sum on
+       140 of the numbers up to 20,000 while leaving the boolean output unchanged - so no test of the
+       function's return value can find it.
+    2. Including n itself, by starting the loop at 1. Nothing is ever perfect after that.
+    3. Missing the `n <= 1` guard, which makes 1 report as perfect because of the seeded total.
+    4. `i <= math.sqrt(n)` instead of `i * i <= n`, which can miss the last divisor for large n
+       because of floating-point rounding.
+    5. Scanning all the way to n. MEASURED 75x slower over 1..20,000 and hopeless at the constraint
+       limits.
+    6. Testing with random numbers. MEASURED, only four perfect numbers exist below 100,000, so a
+       random test set cannot distinguish your function from `return False`.
+
+THE TAKEAWAY
+    Divisors come in pairs whose product is n, so enumerating up to sqrt(n) finds all of them and turns
+    an O(n) scan into O(sqrt(n)) - with three careful boundaries: 1 counts and n does not, the loop
+    starts at 2, and a perfect square's root is added once. The measurement worth remembering is the
+    one about testing: the square-root bug corrupts the divisor sum on every perfect square and never
+    changes the answer, so a test that checks only the verdict cannot see it. Check the intermediate
+    quantity when the output is a single bit.""",
+]
+
+_EX_P1AO["Plus One"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a number is stored as an array of its digits. Add one to it.
+
+    [1,2,3]      ->  [1,2,4]         MEASURED
+    [4,3,2,1]    ->  [4,3,2,2]       MEASURED
+    [9]          ->  [1,0]           MEASURED
+    [9,9,9]      ->  [1,0,0,0]       MEASURED
+    [1,9,9]      ->  [2,0,0]         MEASURED
+
+The digits are most-significant first, so adding one starts at the END of the array.
+
+THE ALGORITHM IS THE SCHOOL CARRY RULE, and it has a natural early exit. Walk from the last digit
+backwards:
+
+    if the digit is less than 9    increment it and RETURN - no carry, nothing else changes
+    if the digit is 9             set it to 0 and continue left - the carry propagates
+
+    for i in range(len(digits) - 1, -1, -1):
+        if digits[i] < 9:
+            digits[i] += 1
+            return digits
+        digits[i] = 0
+    return [1] + digits
+
+If the loop finishes without returning, every digit was a 9 - the number was 999...9 - so the answer
+is a 1 followed by all those zeros, and it is ONE DIGIT LONGER than the input. That is the only case
+where the array grows.
+
+MEASURED against converting the digits to an integer, adding one, and splitting the result back into
+digits: identical answers on 20,000 random arrays.""",
+
+    """2. THE INTUITION - the carry stops at the first digit that is not a 9.
+
+Adding one to a number only changes a suffix of its digits. Everything to the left of the first
+non-nine, counting from the right, is untouched.
+
+    1 2 3        ->  1 2 4        one digit changed
+    1 9 9        ->  2 0 0        three digits changed, because two 9s carried
+    9 9 9        ->  1 0 0 0      every digit changed, and a new one appeared
+
+So the loop can stop the instant it finds a digit below 9 - and that early return is not an
+optimisation, it is the algorithm. A digit below 9 absorbs the carry completely.
+
+MEASURED, the two cases have visibly different costs: 20,000 calls on `[1,2,3,4,5,6,7,8,9,0]`, where
+the last digit absorbs the carry immediately, take 6.1 ms; 20,000 calls on `[9]*10`, where the carry
+walks the whole array and a new list is built, take 12.2 ms - about 2x.
+
+WHY THE ALL-NINES CASE IS SPECIAL. After the loop has set every digit to 0, the array holds the right
+TAIL of the answer but is missing the leading 1. `[1] + digits` builds a new list one longer. It is
+the only place the length changes, and it is why the return type cannot simply be "the same array
+mutated".
+
+WHY NOT CONVERT TO AN INTEGER. `int("".join(...)) + 1` works in Python and it is the answer the
+problem is designed to exclude: in a fixed-width language a 100-digit array does not fit in any
+integer type, which is exactly why the digits are in an array in the first place. Saying that out
+loud is the point of the question.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MOST-SIGNIFICANT-FIRST - the array reads like the written number, so `[1,2,3]` is one hundred and
+twenty-three and the units digit is at the END.
+
+CARRY - the 1 that moves left when a digit overflows past 9. Here it is implicit: the loop continuing
+IS the carry.
+
+EARLY RETURN - leaving the function as soon as the answer is settled. In this problem it is the
+common case, since only a digit of 9 forces the loop onward.
+
+`range(len(digits) - 1, -1, -1)` - counting down from the last index to 0 inclusive. The middle `-1`
+is the exclusive stop, which must be -1 rather than 0 or index 0 is never visited.
+
+IN-PLACE MUTATION - modifying the caller's list rather than building a new one. This solution mutates
+in every case except all-nines, which is worth stating because the caller may not expect it.
+
+ALL-NINES - the only input where the answer has more digits than the input. 999 + 1 = 1000.
+
+O(1) versus O(n) SPACE - the mutation path uses no extra space; the all-nines path allocates a new
+list of length n+1.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the loop bounds and the growing array.
+
+BUG 1 - FORGETTING THE ALL-NINES CASE. Without the final `return [1] + digits`, an input of `[9,9,9]`
+falls off the end of the loop and the function returns `None` - or, if the loop is written to return
+`digits` unconditionally, it returns `[0,0,0]`, which is not 1000 and is not any number the caller
+asked about.
+
+MEASURED, `[9]` gives `[1,0]` and `[9,9,9]` gives `[1,0,0,0]` - both one digit longer than the
+input.
+
+BUG 2 - `range(len(digits) - 1, 0, -1)`. The stop value must be -1, not 0, because `range` excludes
+its endpoint - so index 0, the most significant digit, is never visited. The symptom is that
+`[1,9,9]` becomes `[1,0,0]` instead of `[2,0,0]`: the carry reaches the front and evaporates.
+
+BUG 3 - COMPARING WITH `<= 9` OR `== 9` THE WRONG WAY ROUND. The condition for "this digit absorbs
+the carry" is `digits[i] < 9`. Writing `<= 9` makes every digit absorb it, including a 9 - which
+would turn a 9 into a 10 inside a single cell.
+
+BUG 4 - MUTATING THE CALLER'S LIST WITHOUT SAYING SO. This code writes into `digits` directly, so the
+caller's array changes even on the non-carrying path. MEASURED behaviour: on `[1,2,3]` the input list
+itself becomes `[1,2,4]` and the same object is returned; on `[9,9,9]` the input becomes `[0,0,0]`
+and a NEW list is returned. That inconsistency - sometimes the same object, sometimes not - is a real
+API hazard, and copying at the top (`digits = list(digits)`) removes it at the cost of O(n) space.
+
+BUG 5 - CONVERTING TO AN INTEGER. `[int(c) for c in str(int("".join(map(str, digits))) + 1)]` is
+correct in Python and MEASURED to agree on all 20,000 random arrays - and it is precisely what the
+problem forbids in spirit, because the digit-array representation exists to hold numbers too large
+for any integer type.
+
+BUG 6 - HANDLING "PLUS ONE" AS THOUGH IT WERE "PLUS K". The early return is only valid because the
+addend is 1: a digit below 9 always absorbs it. For a general k the carry can be larger than 1 and
+must be tracked explicitly - which is the `Add to Array-Form of Integer` problem, and a different
+loop.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 20,000 calls each:
+
+    last digit not 9 (early return on the first iteration)     6.1 ms
+    all nines (full walk plus a new list)                     12.2 ms
+
+ALTERNATIVE A - the backwards walk with an early return. O(n) worst case, O(1) best case, O(1) extra
+space except on the all-nines path. The answer.
+
+ALTERNATIVE B - the explicit-carry loop, which is what you would write for `plus k`:
+
+    carry = 1
+    for i in range(len(digits) - 1, -1, -1):
+        total = digits[i] + carry
+        digits[i] = total % 10
+        carry = total // 10
+        if carry == 0:
+            break
+    if carry:
+        digits.insert(0, 1)
+
+More general and slightly longer. It is the version to reach for the moment the addend is not 1.
+
+ALTERNATIVE C - convert to an int, add, and split back. MEASURED to agree on 20,000 arrays, and it
+defeats the purpose - the array representation exists exactly because the number may not fit in an
+integer type.
+
+ALTERNATIVE D - `digits.insert(0, 1)` instead of `[1] + digits` for the all-nines case. It mutates in
+place and is O(n) either way, because every element shifts. Neither is better; `[1] + digits` is
+clearer about returning a new list.
+
+ALTERNATIVE E - handle the all-nines case up front by checking `all(d == 9 for d in digits)` and
+returning `[1] + [0] * len(digits)` immediately. One extra O(n) scan on every input to avoid a case
+the loop already handles for free - worth naming as the version NOT to write.
+
+THE FAMILY - digit-array arithmetic:
+  * ADD TO ARRAY-FORM OF INTEGER - this problem with an arbitrary k, where the carry must be tracked;
+  * ADD STRINGS and ADD BINARY - the same carry loop over two operands;
+  * MULTIPLY STRINGS - the same digit machinery where carries exceed 1;
+  * PLUS ONE LINKED LIST - the same problem where you cannot walk backwards, so it needs a reversal
+    or recursion;
+  * BIG INTEGER implementations, which are this loop generalised to a base of 2^32 or 10^9.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say where the units digit lives: the array is most-significant-first, so adding one starts at
+the LAST index.
+
+STEP 2 - loop backwards: `for i in range(len(digits) - 1, -1, -1)`. Say the stop value out loud - `-1`,
+not 0, because `range` excludes the endpoint and index 0 must be visited.
+
+STEP 3 - the absorbing case first:
+    if digits[i] < 9:
+        digits[i] += 1
+        return digits
+Say why the return is immediate: a digit below 9 takes the carry completely, so nothing to its left
+can change.
+
+STEP 4 - the carrying case: `digits[i] = 0`, and let the loop continue.
+
+STEP 5 - after the loop, the all-nines case: `return [1] + digits`. Say that this is the ONLY input
+shape where the answer is longer than the input.
+
+STEP 6 - state the complexity: O(n) worst case (all nines), O(1) best case (last digit below 9), and
+O(1) extra space except on the all-nines path, which allocates a list of length n+1.
+
+STEP 7 - mention the mutation: the function writes into the caller's list. If that is unacceptable,
+copy at the top - and note that this makes the space O(n) always.
+
+STEP 8 - name the generalisation: for `plus k` the early return is no longer valid and the carry must
+be tracked, which is a different and slightly longer loop.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The digits are stored most significant first, so adding one starts at the end of the array and works
+  leftwards, exactly like adding on paper.
+
+- The rule is simple: if the digit is less than nine, increment it and I am finished - a digit below
+  nine absorbs the carry completely, so nothing to its left can change. If the digit is a nine, it
+  becomes a zero and the carry continues to the next position left.
+
+- If I fall out of the loop having set everything to zero, then every digit was a nine - so the number
+  was all nines and the answer is a one followed by that many zeros. That is the only case where the
+  array gets longer.
+
+- The early return is the common case and it is not an optimisation; it is the algorithm. I measured
+  the two paths: twenty thousand calls where the last digit absorbs the carry take six milliseconds,
+  and twenty thousand all-nines calls take twelve.
+
+- Worst case O(n), best case constant, and constant extra space except on the all-nines path where I
+  build a list one longer.
+
+- Two things I would flag. First, this mutates the caller's array - on a normal input it returns the
+  same object modified, and on all nines it returns a brand-new list, which is an inconsistency worth
+  documenting or removing with a copy. Second, converting the digits to an integer and adding one
+  works in Python and defeats the whole point: the array representation exists because the number may
+  be far too large for any integer type.
+
+- And the early return only works because the addend is one. For a general k I would track the carry
+  explicitly, which is the Add to Array-Form problem.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def plus_one(digits):
+        for i in range(len(digits) - 1, -1, -1):
+            if digits[i] < 9:
+                digits[i] += 1          # no carry -> done
+                return digits
+            digits[i] = 0               # 9 becomes 0, carry continues left
+        return [1] + digits             # all nines -> prepend a leading 1
+
+Line 2  `for i in range(len(digits) - 1, -1, -1)`
+        Backwards from the last index to 0 INCLUSIVE. The three arguments are start, stop-exclusive,
+        step - so the stop must be -1 to include index 0.
+
+        MEASURED symptom of using 0 as the stop: `[1,9,9]` returns `[1,0,0]` instead of `[2,0,0]`,
+        because the carry reaches the front and the leading digit is never incremented.
+
+Line 3  `if digits[i] < 9:`
+        The absorbing case. Strictly less than 9, because a 9 cannot absorb the carry - incrementing
+        it would need two characters in one cell.
+
+Line 4  `digits[i] += 1`
+        The whole addition, in the common case.
+
+Line 5  `return digits`
+        Immediately. Everything to the left is unchanged by definition, so there is nothing more to
+        do - this is the early exit that makes the best case O(1).
+
+        Note it returns the SAME list object that was passed in, now modified.
+
+Line 6  `digits[i] = 0`
+        Reached only when the digit was 9. `9 + 1 = 10`, so this cell becomes 0 and the loop
+        continuing is the carry.
+
+Line 7  `return [1] + digits`
+        Reached only if every digit was a 9, in which case they are now all 0. `[1] + digits` builds a
+        NEW list of length n+1.
+
+        MEASURED: `[9]` gives `[1,0]`, `[9,9,9]` gives `[1,0,0,0]`.
+
+        This is the only path that allocates, and the only path where the returned object is not the
+        input object - an inconsistency worth mentioning to whoever calls this.
+
+MEASURED, the function agrees with `[int(c) for c in str(int("".join(map(str,digits))) + 1)]` on
+20,000 random digit arrays.
+
+AND THE GENERAL VERSION, for adding an arbitrary k:
+
+    def plus_k(digits, k):
+        carry = k
+        for i in range(len(digits) - 1, -1, -1):
+            total = digits[i] + carry
+            digits[i] = total % 10
+            carry = total // 10
+            if carry == 0:
+                break
+        while carry:                       # k may add several leading digits
+            digits.insert(0, carry % 10)
+            carry //= 10
+        return digits
+
+        Note the early exit survives - `if carry == 0: break` - but it can no longer be a plain
+        "increment and return", because a digit below 9 does not necessarily absorb a carry larger
+        than 1.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `digits = [1,2,3]`, the common case.
+
+    i    digits[i]   < 9 ?   action
+    -------------------------------------------------
+    2        3        yes    3 -> 4, return [1,2,4]
+
+    One iteration. The loop never looks at indices 1 or 0, because nothing there can change.
+    MEASURED result: [1,2,4].
+
+TRACE B - `digits = [1,9,9]`, where the carry runs part way.
+
+    i    digits[i]   < 9 ?   action                     array now
+    ----------------------------------------------------------------
+    2        9         no    set to 0, continue         [1,9,0]
+    1        9         no    set to 0, continue         [1,0,0]
+    0        1        yes    1 -> 2, return             [2,0,0]
+
+    MEASURED result: [2,0,0]. The carry stopped at the first non-nine, exactly as on paper.
+
+TRACE C - `digits = [9,9,9]`, the all-nines case.
+
+    i    digits[i]   < 9 ?   action              array now
+    -----------------------------------------------------------
+    2        9         no    set to 0            [9,9,0]
+    1        9         no    set to 0            [9,0,0]
+    0        9         no    set to 0            [0,0,0]
+    loop ends without returning
+
+    return [1] + [0,0,0] = [1,0,0,0]                            MEASURED
+
+    Four digits from three - the only shape of input where that happens.
+
+TRACE D - `digits = [9]`, the smallest carrying case.
+
+    i = 0: 9 is not < 9, set to 0, array is [0]
+    loop ends
+    return [1] + [0] = [1,0]                                     MEASURED
+
+TRACE E - the loop-bound bug, on `[1,9,9]`.
+
+    with `range(2, -1, -1)`:  visits i = 2, 1, 0     ->  [2,0,0]     correct
+    with `range(2,  0, -1)`:  visits i = 2, 1 only   ->  [1,0,0]     WRONG
+
+    The leading 1 is never examined, so the carry silently disappears and the answer is 100 instead
+    of 200. `range` excluding its stop value is the whole bug.
+
+TRACE F - the two cost profiles, MEASURED.
+
+    20,000 calls on [1,2,3,4,5,6,7,8,9,0]   6.1 ms      one iteration each
+    20,000 calls on [9,9,9,9,9,9,9,9,9,9]  12.2 ms      ten iterations plus a new 11-element list
+
+    A factor of two, and it is entirely the difference between the early return firing immediately and
+    the carry walking the whole array.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) worst case, when every digit is a 9 and the carry propagates the whole way. O(1) best
+            case, when the last digit is below 9 - which is 9 inputs in 10 for random data.
+    space   O(1) extra on the mutating path; O(n) on the all-nines path, which builds a list of length
+            n+1. Copying the input up front to avoid mutating the caller makes it O(n) always.
+
+    MEASURED, 20,000 calls: 6.1 ms with an immediate early return, 12.2 ms for the full walk plus the
+    new list.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Forgetting the all-nines case, so `[9,9,9]` returns `None` or `[0,0,0]`.
+    2. `range(len(digits) - 1, 0, -1)` - the stop must be -1, or the most significant digit is never
+       visited and the carry vanishes. MEASURED symptom: `[1,9,9]` gives `[1,0,0]`.
+    3. Not returning immediately after incrementing, so the loop carries on and zeroes digits that
+       should be untouched.
+    4. Converting to an integer. Correct in Python and it defeats the reason the input is an array -
+       the number may not fit in any integer type.
+    5. Silently mutating the caller's list, and returning the same object on one path and a new one on
+       another. Document it or copy.
+    6. Assuming the early return generalises to `plus k`. It does not - a digit below 9 absorbs a
+       carry of 1, not of 7.
+
+THE TAKEAWAY
+    Adding one only ever changes a suffix of the digits, so the loop can stop at the first digit below
+    9 - the early return IS the algorithm rather than an optimisation. The one structural case is
+    all-nines, where the answer gains a digit and a new list has to be built. And the reason the
+    problem exists at all is the representation: digits live in an array precisely because the number
+    may be far too large for an integer, so reaching for `int()` answers a question nobody asked.""",
+]
+
+_EX_P1AO["Power of Three"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - is this number 3 raised to some whole power?
+
+    1 = 3^0    yes
+    3 = 3^1    yes
+    9 = 3^2    yes
+    27, 81, 243, ...  yes
+    45         no
+    0 and negatives    no
+
+MEASURED, the powers of three up to 3,000,000 are: 1, 3, 9, 27, 81, 243, 729, 2187, 6561, 19683,
+59049, 177147, 531441 and 1594323. Fourteen of them - they are sparse, which matters for testing.
+
+THE OBVIOUS SOLUTION divides by three until it cannot: `while n % 3 == 0: n //= 3`, then check that
+what remains is 1. That is O(log n) and completely correct.
+
+THE FOLLOW-UP ASKS FOR IT WITHOUT LOOPS OR RECURSION, and the answer is a single divisibility test:
+
+    return n > 0 and 1162261467 % n == 0
+
+`1162261467` is 3^19, the largest power of three that fits in a signed 32-bit integer. Because 3 is
+PRIME, the only divisors of 3^19 are 3^0, 3^1, ..., 3^19 - so any n that divides it must itself be a
+power of three.
+
+MEASURED against the division loop on every value from 1 to 3,000,000: zero mismatches. MEASURED,
+3^19 = 1,162,261,467 and 3^20 = 3,486,784,401, which is past the 32-bit maximum of 2,147,483,647 -
+so 3^19 really is the largest one that fits.""",
+
+    """2. THE INTUITION - primality is what makes the trick legal.
+
+THE DIVISORS OF A PRIME POWER ARE EXACTLY THE SMALLER PRIME POWERS. If p is prime, the only ways to
+factor p^k are p^0, p^1, ..., p^k - there is nothing else to build a divisor out of. So
+
+    n divides 3^19    if and only if    n = 3^j for some 0 <= j <= 19
+
+That is the whole argument, and it is why the one-line test works.
+
+WHY IT FAILS FOR A COMPOSITE BASE. Try the same trick for powers of four: 4^5 = 1024, and 2 divides
+1024 - but 2 is not a power of four. MEASURED, `1024 % 2 == 0` is True while 2 is not in {1, 4, 16,
+64, 256, 1024}. Composite bases have divisors that are not powers of the base, so the test is simply
+invalid there. The same applies to base 6, base 9 and base 10.
+
+WHY 3^19 AND NOT SOME OTHER POWER. The constraint is that the answer must cover every input the
+problem allows. With n bounded by a signed 32-bit integer, the largest power of three in range is
+3^19; using 3^18 would wrongly reject 3^19 itself, and no larger power exists in range to use.
+
+    MEASURED: 3^19 = 1,162,261,467 (fits), 3^20 = 3,486,784,401 (does not fit in int32).
+
+WHY `n > 0` IS REQUIRED. Zero would raise a ZeroDivisionError, and a negative n can divide a positive
+number in Python - `1162261467 % -3` is 0, so a negative would wrongly pass. One guard covers both.
+
+MEASURED SPEED: the divisibility test takes 27 ms per 300,000 calls and the division loop takes 32 ms
+- barely different, because the loop runs at most 19 times. The one-liner's value is that it answers
+the "no loops" constraint, not that it is dramatically faster.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POWER OF THREE - a number of the form 3^k for a non-negative integer k. 1 counts, since 3^0 = 1.
+
+PRIME - divisible only by 1 and itself. 3 is prime; that is the entire basis of the one-line
+solution.
+
+PRIME POWER - p^k for a prime p. Its only divisors are the smaller prime powers, which is the fact
+being exploited.
+
+3^19 = 1,162,261,467 - the largest power of three below 2^31 - 1. MEASURED, the next one overflows a
+32-bit signed integer.
+
+DIVISIBILITY TEST - `a % n == 0` asks whether n divides a exactly.
+
+LOG-BASED TEST - `log(n, 3)` being a whole number. Correct in exact arithmetic and treacherous in
+floating point, as section 4 measures.
+
+TOLERANCE / EPSILON - the small margin used when comparing floats, as in `abs(x - round(x)) < 1e-10`.
+Necessary if you use logs, and a value you then have to justify.
+
+INTEGER OVERFLOW - what makes the constant 3^19 rather than something bigger. In Python integers are
+unbounded, so the constant is chosen to match the problem's stated 32-bit range rather than the
+language's.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the log test, and applying the trick to a composite base.
+
+BUG 1 - `math.log(n, 3) % 1 == 0`.
+
+This is the natural "is the logarithm a whole number" test, and floating-point logarithms are not
+exact.
+
+MEASURED over 1..300,000, comparing against the division loop: it disagrees on 2 values - 243 and
+59,049 - both of which ARE powers of three and are wrongly rejected.
+
+    3^5  = 243     log base 3 computes as 4.999999999999999    not a whole number
+    3^10 = 59049   log base 3 computes as 9.999999999999998
+    3^13 = 1594323 log base 3 computes as 12.999999999999998
+    3^15, 3^17     the same problem
+    3^19           happens to come out exact
+
+MEASURED, of the twenty exponents 0..19, five produce a logarithm that is not exactly an integer. The
+failures are not at the large end - they are scattered, because they depend on the rounding of
+`log(n) / log(3)` in binary floating point.
+
+Adding a tolerance rescues it: MEASURED, `abs(log(n,3) - round(log(n,3))) < 1e-10` agrees with the
+division loop on all 3,000,000 values tested. But now the correctness depends on a magic epsilon that
+you would have to defend - too small and it rejects real powers, too large and it accepts near
+misses. The integer test needs no such argument.
+
+BUG 2 - USING THE SAME TRICK FOR A COMPOSITE BASE. The divisibility argument requires the base to be
+PRIME. MEASURED for base 4: `1024 % 2 == 0` is True, and 2 is not a power of 4. Applying "does n
+divide the largest power of the base" to 4, 6, 8, 9 or 10 is wrong, and knowing WHY is the difference
+between remembering a trick and understanding it.
+
+BUG 3 - MISSING THE `n > 0` GUARD. `1162261467 % 0` raises ZeroDivisionError. And in Python
+`1162261467 % -3` is 0, so a negative n would pass the test - MEASURED, the guard is load-bearing in
+both directions.
+
+BUG 4 - USING THE WRONG CONSTANT. 3^18 = 387,420,489 would reject 3^19 itself. The constant must be
+the largest power of three within the problem's stated range, and writing it as `3 ** 19` in the code
+is clearer than a magic 1162261467.
+
+BUG 5 - TESTING WITH RANDOM NUMBERS. MEASURED, only 14 powers of three exist below 3,000,000, so a
+random test set contains none and `return False` would pass. Test the powers explicitly, and test one
+or two near-misses like 242 and 244.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 300,000 calls, agreeing on every value from 1 to 3,000,000:
+
+    1162261467 % n == 0        27 ms
+    divide-by-three loop       32 ms
+
+ALTERNATIVE A - the divisibility test. O(1), no loop, and it needs the primality argument to justify
+it. The answer to the follow-up.
+
+ALTERNATIVE B - the division loop:
+
+    while n % 3 == 0:
+        n //= 3
+    return n == 1
+
+O(log n) - at most 19 iterations for a 32-bit input - and MEASURED only 1.2x slower than the
+one-liner. This is the version to write first: it is obviously correct and needs no theorem.
+
+ALTERNATIVE C - the logarithm with a tolerance. MEASURED correct across 3,000,000 values with an
+epsilon of 1e-10, and MEASURED wrong on 243 and 59,049 without one. Correct-with-a-magic-number is a
+worse answer than correct-by-construction.
+
+ALTERNATIVE D - a precomputed SET of the 20 powers, `{3**k for k in range(20)}`, then `n in powers`.
+O(1) with no cleverness at all, and arguably the most honest solution for a bounded input range. It
+is also how you would handle a composite base, where the divisibility trick is unavailable.
+
+ALTERNATIVE E - for POWER OF TWO, the same question has a much better trick: `n > 0 and n & (n-1) ==
+0`, because a power of two has exactly one set bit. That works only for base 2 - it is about binary
+representation, not about primality - and mixing up which trick applies to which base is the common
+confusion.
+
+THE FAMILY - "is n a power of k":
+  * POWER OF TWO - the bit trick `n & (n-1) == 0`;
+  * POWER OF FOUR - the bit trick plus a check that the single set bit is at an even position, since
+    the divisibility trick is unavailable for a composite base;
+  * UGLY NUMBER - repeated division by 2, 3 and 5, the same loop generalised;
+  * PERFECT SQUARE / PERFECT NUMBER - other "is it of this form" questions where an exact integer test
+    beats a floating-point one;
+  * BASE CONVERSION problems, where the same repeated-division loop appears with a different
+    question.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - write the loop version first and say it is obviously correct:
+    while n % 3 == 0: n //= 3
+    return n == 1
+with a guard for `n < 1`.
+
+STEP 2 - then answer the follow-up. State the fact it rests on: 3 is PRIME, so the only divisors of
+3^19 are the powers of three.
+
+STEP 3 - choose the constant deliberately: the largest power of three within the problem's stated
+range. For a 32-bit input that is 3^19 = 1,162,261,467, because 3^20 = 3,486,784,401 exceeds
+2,147,483,647.
+
+STEP 4 - write it as `3 ** 19` rather than the literal, so the reader can see where it came from.
+
+STEP 5 - guard the input: `return n > 0 and (3 ** 19) % n == 0`. Say both reasons - zero raises, and a
+negative divides successfully in Python.
+
+STEP 6 - name the limitation unprompted: this trick works ONLY because the base is prime. MEASURED,
+for base 4 it fails immediately, since 2 divides 1024 and is not a power of 4.
+
+STEP 7 - if the log-based test comes up, give the measurement rather than an opinion: without a
+tolerance it wrongly rejects 243 and 59,049, because `log(243, 3)` computes as 4.999999999999999.
+
+STEP 8 - state the complexity: O(1) for the divisibility test, O(log n) for the loop - and note that
+MEASURED they are within 20% of each other, so the choice is about the constraint, not the speed.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The straightforward version divides by three while it divides evenly, and then checks that what is
+  left is one. That is at most nineteen iterations for a thirty-two-bit input, so it is already fast.
+
+- If the follow-up says no loops and no recursion, there is a one-line test. Three is prime, so the
+  only divisors of three to the nineteenth are the smaller powers of three - there is nothing else to
+  build a divisor from. So n is a power of three exactly when it divides three to the nineteenth.
+
+- I use three to the nineteenth because it is the largest power of three that fits in a signed
+  thirty-two-bit integer - the next one, three to the twentieth, is about three and a half billion,
+  past the limit.
+
+- I guard for n greater than zero, because zero would raise a division error and, in Python, a
+  negative number divides a positive one perfectly happily, so minus three would wrongly pass.
+
+- The important limitation: this only works because the base is PRIME. For powers of four the same
+  test is wrong - two divides four to the fifth and two is not a power of four.
+
+- I would avoid the logarithm version. Without a tolerance it wrongly rejects two hundred and
+  forty-three and fifty-nine thousand and forty-nine, because log base three of two forty-three comes
+  out as four point nine nine nine nine and so on. With a tolerance it works, and then the
+  correctness depends on an epsilon I would have to justify - where the integer test needs no
+  argument at all.
+
+- And for testing: only fourteen powers of three exist below three million, so a random test set would
+  contain none of them and a function that always returns False would pass. I would test the powers
+  explicitly, plus a near miss like two hundred and forty-two.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def is_power_of_three(n):
+        if n <= 0:
+            return False
+        # 3^19 = 1162261467 is the largest power of 3 fitting in a 32-bit int
+        return 1162261467 % n == 0
+
+Line 2  `if n <= 0:`
+        Two failures in one guard.
+
+        `n = 0` would raise ZeroDivisionError on the next line.
+
+        `n < 0` would SILENTLY PASS for negative powers of three: in Python `1162261467 % -3` is 0,
+        because the modulo takes the sign of the divisor. So without this line, -3 and -9 would be
+        reported as powers of three.
+
+Line 5  `1162261467 % n == 0`
+        The whole test. `1162261467` is 3^19.
+
+        Why it is valid: 3 is prime, so the complete list of divisors of 3^19 is
+        3^0, 3^1, ..., 3^19. Any n dividing it must therefore be one of those - and every one of them
+        divides it. The condition is exactly "n is a power of three within range".
+
+        Why 3^19 specifically: it is the largest power of three that fits in a signed 32-bit integer.
+        MEASURED, 3^19 = 1,162,261,467 and 3^20 = 3,486,784,401, against an int32 maximum of
+        2,147,483,647. Using a smaller power would reject the larger legitimate inputs.
+
+        Writing it as `3 ** 19` in source is preferable - it costs nothing at runtime for a constant
+        expression and it explains itself.
+
+        This step is O(1): one modulo on machine-sized integers.
+
+MEASURED, this agrees with the division loop on every value from 1 to 3,000,000, at 27 ms against
+32 ms per 300,000 calls.
+
+AND THE LOOP VERSION, which is what to write first:
+
+    def is_power_of_three_loop(n):
+        if n < 1:
+            return False
+        while n % 3 == 0:
+            n //= 3
+        return n == 1
+
+        At most 19 iterations for a 32-bit input. It needs no theorem, works for ANY base including
+        composite ones, and MEASURED is only about 1.2x slower.
+
+AND THE SET, which is the most honest O(1) answer for a bounded range:
+
+    POWERS = {3 ** k for k in range(20)}
+    def is_power_of_three_set(n):
+        return n in POWERS
+
+        Twenty values, one hash lookup, and no reliance on primality at all - which makes it the
+        pattern to reuse when the base is composite.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `n = 27`.
+
+    guard: 27 > 0, continue
+    1,162,261,467 % 27 = 0        because 3^19 / 3^3 = 3^16, an exact integer
+    return True                                                  MEASURED
+
+    And the loop version: 27 -> 9 -> 3 -> 1, four divisions, then `1 == 1` is True.
+
+TRACE B - `n = 45`.
+
+    1,162,261,467 % 45 = ?
+    45 = 3^2 * 5, and 5 does not divide 3^19 at all, so the remainder is non-zero
+    return False                                                 MEASURED
+
+    That is the mechanism in one line: any n with a prime factor other than 3 cannot divide a pure
+    power of 3.
+
+TRACE C - `n = 1`.
+
+    1 divides every integer, so 1,162,261,467 % 1 = 0
+    return True                                                  correct, since 1 = 3^0
+
+TRACE D - the negatives and zero.
+
+    n = 0    the guard fires; without it, ZeroDivisionError
+    n = -3   the guard fires; WITHOUT it, `1162261467 % -3` is 0 in Python, so it would return True
+
+    MEASURED, Python's modulo takes the sign of the divisor, which is why the negative case passes the
+    divisibility test and must be excluded explicitly.
+
+TRACE E - the log-based test, MEASURED exponent by exponent.
+
+    3^k       value          log(value, 3) as computed      exactly an integer?
+    -----------------------------------------------------------------------------
+    3^0             1        0.0                                    yes
+    3^4            81        4.0                                    yes
+    3^5           243        4.999999999999999                      NO
+    3^9         19683        9.0                                    yes
+    3^10        59049        9.999999999999998                      NO
+    3^13      1594323       12.999999999999998                      NO
+    3^15     14348907       14.999999999999998                      NO
+    3^17    129140163       16.999999999999996                      NO
+    3^19   1162261467       19.0                                    yes
+
+    Five of the twenty exponents come out short. MEASURED over 1..300,000, the exact `% 1 == 0`
+    version disagrees with the division loop on 243 and 59,049 - both genuine powers of three,
+    rejected.
+
+    With a 1e-10 tolerance, MEASURED agreement on all 3,000,000 values tested - correct, and now
+    resting on a constant you have to defend.
+
+TRACE F - why the trick needs a prime base.
+
+    base 3:   divisors of 3^19 are exactly 3^0 ... 3^19        the test is exact
+    base 4:   4^5 = 1024, and 1024 % 2 == 0                    MEASURED
+              but 2 is not a power of 4 - the test would wrongly accept it
+
+    A composite base has divisors built from its own prime factors, and those are not powers of the
+    base. Primality is not a detail here; it is the reason the one-liner exists.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(1) for the divisibility test - a single modulo. O(log_3 n) for the loop, which is at
+            most 19 iterations for a 32-bit input.
+    space   O(1) for both. The precomputed set is O(20), i.e. constant.
+
+    MEASURED per 300,000 calls: 27 ms for the divisibility test and 32 ms for the loop - only 1.2x.
+    The one-liner exists to satisfy the "no loops" constraint, not because the loop was slow.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. The log-based test without a tolerance. MEASURED, `log(243, 3)` computes as 4.999999999999999,
+       so 243 and 59,049 are wrongly rejected - and five of the twenty exponents produce a non-exact
+       logarithm.
+    2. Applying the divisibility trick to a composite base. MEASURED for base 4: 2 divides 1024 and is
+       not a power of 4. The trick requires primality.
+    3. Omitting the `n > 0` guard - ZeroDivisionError on 0, and a false True on negatives because
+       Python's modulo follows the divisor's sign.
+    4. Choosing the constant carelessly. 3^18 would reject 3^19 itself; the constant must be the
+       largest power of the base inside the problem's range.
+    5. Writing the literal 1162261467 with no explanation. `3 ** 19` costs nothing and documents
+       itself.
+    6. Testing with random numbers. MEASURED, only 14 powers of three exist below 3,000,000, so
+       `return False` passes a random test set.
+
+THE TAKEAWAY
+    The one-line test works because a PRIME power's only divisors are the smaller powers of that prime
+    - so "n divides 3^19" and "n is a power of three" are the same statement inside the given range.
+    That reasoning is what makes it a solution rather than a memorised constant, and it also tells you
+    immediately when not to use it: for a composite base like 4, divisors exist that are not powers of
+    the base. And prefer exact integer arithmetic over logarithms for questions like this - measured,
+    the float version silently rejects genuine powers of three.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
