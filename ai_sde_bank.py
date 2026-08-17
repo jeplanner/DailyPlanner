@@ -301786,6 +301786,1549 @@ THE TAKEAWAY
     'i', so "ee" and "i" become the same string.""",
 ]
 
+_EX_P1AO["Unique Number of Occurrences"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count how many times each value appears, then ask whether those
+COUNTS are all different from each other.
+
+    [1, 2, 2, 1, 1, 3]
+    1 appears 3 times, 2 appears twice, 3 appears once
+    the counts are 3, 2, 1 - all different  ->  True                MEASURED
+
+    [1, 2]
+    each appears once, so the counts are 1 and 1 - NOT different  ->  False     MEASURED
+
+    [-3, 0, 1, -3, 1, 1, 1, -3, 10, 0]
+    counts: -3 three times, 0 twice, 1 four times, 10 once -> 3, 2, 4, 1  ->  True   MEASURED
+
+TWO LEVELS OF COUNTING, and the second one is the problem. The first level tallies the VALUES; the
+second asks whether the resulting multiset of COUNTS has duplicates.
+
+    counts = list(Counter(arr).values())
+    return len(counts) == len(set(counts))
+
+`len(x) == len(set(x))` is the standard "are these all distinct" idiom: putting them in a set collapses
+duplicates, so the length only survives unchanged if there were none.
+
+MEASURED, checking whether the VALUES are distinct instead of the counts disagrees with the correct
+answer on 6,289 of 20,000 random arrays - 31.4%. `[2,2]` has one repeated value and a single count of
+2, so it is True; `[5,1]` has distinct values and two counts of 1, so it is False. The two questions
+are unrelated.""",
+
+    """2. THE INTUITION - count the counts.
+
+The data goes through two reductions:
+
+    array          [1, 2, 2, 1, 1, 3]
+    counts         {1: 3, 2: 2, 3: 1}          how many times each value appears
+    the answer     are the values of that dict distinct?
+
+Both steps are counting, which is why the problem reads confusingly at first: the word "occurrences"
+appears once and applies to the first level, while the word "unique" applies to the second.
+
+WHY `len(x) == len(set(x))`. A set discards duplicates, so its size is the number of DISTINCT elements.
+If that equals the original size, nothing was discarded and everything was already distinct. It is
+O(n) with one pass, against O(n^2) for pairwise comparison or O(n log n) for sorting and checking
+neighbours.
+
+WHY THE COUNTS ARE FEW. There are at most as many counts as distinct values, and their SUM is the
+array's length - so a lot of distinct counts forces a long array. Specifically, k distinct positive
+counts sum to at least 1+2+...+k = k(k+1)/2, so an array of length n can have at most about sqrt(2n)
+distinct counts. That bound is why the second-level set is tiny even for large inputs.
+
+MEASURED, 25.9% of random 6-element arrays drawn from five possible values pass the test - so both
+answers are common, and a test set of a handful of arrays will exercise both branches.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+OCCURRENCE COUNT - how many times a value appears. For `[1,1,2]` the counts are 2 (for 1) and 1
+(for 2).
+
+`Counter(arr)` - a dict from value to count, built in one C-level pass.
+
+`.values()` - the counts alone. The VALUES of the array are irrelevant to the final answer; only the
+shape of their distribution matters.
+
+DISTINCT / UNIQUE - all different. Applied here to the COUNTS, not to the array's elements.
+
+`len(x) == len(set(x))` - the canonical "are these all distinct" test. O(n) with one pass and one hash
+set.
+
+MULTISET - a collection where repetition matters. The counts form a multiset, and the question is
+whether it happens to be a set.
+
+TWO-LEVEL AGGREGATION - counting, then counting the counts. The same shape appears in "how many values
+appear exactly k times" and in histogram-of-histogram problems.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - confusing the two levels.
+
+BUG 1 - TESTING WHETHER THE VALUES ARE DISTINCT.
+
+    return len(arr) == len(set(arr))     # WRONG - this asks about the ELEMENTS
+
+MEASURED on 20,000 random arrays: disagrees with the correct answer on 6,289 - 31.4%. It fails in both
+directions:
+
+    arr        correct   values-distinct test
+    [5, 1]      False           True         two values, both appearing once - the counts collide
+    [2, 2]      True            False        one value appearing twice - a single count, trivially
+                                              distinct
+    [2,5,1,5,5,2]  True         False
+
+The two questions have nothing to do with each other, which is why the failure rate is so high and the
+direction so unpredictable.
+
+BUG 2 - COMPARING THE COUNTS PAIRWISE. Correct, and O(k^2) in the number of distinct values where the
+set is O(k). At small k it makes no difference; the set version is shorter and states the intent.
+
+BUG 3 - USING `set(Counter(arr))` INSTEAD OF `set(Counter(arr).values())`. Iterating a Counter yields
+its KEYS - the array's values - so this silently returns to the level-one question. The `.values()`
+is what selects the counts.
+
+BUG 4 - SORTING THE COUNTS AND CHECKING NEIGHBOURS. Correct, O(k log k), and it needs the adjacent
+comparison written properly. The set does it in one expression.
+
+BUG 5 - ASSUMING A SINGLE-ELEMENT ARRAY IS A SPECIAL CASE. `[7]` has one count, and one item is
+trivially distinct - so the answer is True, from the general code with no guard.
+
+BUG 6 - MISREADING "UNIQUE" AS "APPEARS ONCE". The problem asks whether the counts are unique, not
+whether any element occurs exactly once. `[1,1,2,2]` has counts 2 and 2 - not unique - and contains no
+element occurring once at all.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - `Counter`, then `len(counts) == len(set(counts))`. O(n) time, O(distinct values)
+space. The answer.
+
+ALTERNATIVE B - a set built incrementally, returning early on the first repeated count:
+
+    seen = set()
+    for c in Counter(arr).values():
+        if c in seen:
+            return False
+        seen.add(c)
+    return True
+
+Same complexity, and it exits at the first collision. It also generalises to reporting WHICH count
+collided, if a follow-up asks.
+
+ALTERNATIVE C - sort the counts and compare neighbours. O(k log k) for the same answer, with no hash
+set - the version to use if the counts were not hashable, which they always are.
+
+ALTERNATIVE D - a second `Counter` over the counts: `all(v == 1 for v in Counter(counts).values())`.
+It says "each count occurs once" literally, and it builds one more dictionary than necessary.
+
+ALTERNATIVE E - a fixed-size array indexed by count, since the counts are bounded by the array length.
+O(n) space and no hashing; worth naming as the counting-sort flavour of the same test.
+
+THE FAMILY - two-level counting and distinctness:
+  * CONTAINS DUPLICATE - `len(x) == len(set(x))` at the FIRST level;
+  * TOP K FREQUENT ELEMENTS, SORT ARRAY BY INCREASING FREQUENCY - other problems that compute counts
+    and then use them as keys;
+  * FIND ALL DUPLICATES / SET MISMATCH - counting problems with structural guarantees;
+  * MAXIMUM NUMBER OF BALLOONS, RANSOM NOTE - Counter comparisons rather than Counter-of-Counter;
+  * "HOW MANY VALUES APPEAR EXACTLY K TIMES" - the same two-level aggregation with a different second
+    question.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the two levels out loud: first count how often each value appears, then ask whether those
+counts are all different. Naming both levels is what prevents the 31.4% bug.
+
+STEP 2 - `counts = list(Counter(arr).values())`. Say that `.values()` is what selects the counts -
+iterating a Counter directly gives the keys.
+
+STEP 3 - `return len(counts) == len(set(counts))`, and name the idiom: putting them in a set collapses
+duplicates, so an unchanged length means everything was distinct.
+
+STEP 4 - state the complexity: O(n) time and O(distinct values) space.
+
+STEP 5 - note the size bound if it comes up: k distinct counts must sum to at least k(k+1)/2, so an
+array of length n has at most about sqrt(2n) distinct counts - the second-level set is always small.
+
+STEP 6 - mention the early-exit variant, which returns False at the first repeated count and can
+report which one.
+
+STEP 7 - check the trivial inputs mentally: a one-element array gives one count and returns True; an
+array of one repeated value gives one count and also returns True.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- There are two levels of counting here, and keeping them straight is the whole problem. First I count
+  how many times each value appears. Then the question is whether those COUNTS are all different from
+  each other.
+
+- A Counter gives me the first level in one pass, and its values are the counts. Then I test
+  distinctness with the standard idiom - the length equals the length of the set - because putting
+  them in a set collapses duplicates, so the length only survives if there were none.
+
+- The trap is answering the first-level question by mistake, testing whether the array's VALUES are
+  distinct. That is a completely different question - I measured the two disagreeing on about
+  thirty-one per cent of random arrays, and in both directions. Two ones and one two has repeated
+  values and distinct counts; one and two has distinct values and identical counts.
+
+- Linear time, and the space is one entry per distinct value.
+
+- One nice observation: k distinct counts have to sum to at least one plus two plus up to k, so an
+  array of length n can have at most about root two-n distinct counts. The second-level set is always
+  tiny, however large the array.
+
+- If I wanted an early exit I would insert the counts into a set one at a time and return false at the
+  first repeat, which also lets me report which count collided.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def unique_occurrences(arr):
+        from collections import Counter
+        counts = list(Counter(arr).values())
+        return len(counts) == len(set(counts))
+
+Line 2  `from collections import Counter`
+        Imported inside the function here; at module level it would be imported once. `Counter` builds
+        the value-to-count mapping in one C-level pass.
+
+Line 3  `counts = list(Counter(arr).values())`
+
+        `Counter(arr)` - level one. For `[1,2,2,1,1,3]` it is `{1: 3, 2: 2, 3: 1}`.
+
+        `.values()` - THE COUNTS, discarding the values themselves. Writing `set(Counter(arr))` instead
+        would iterate the KEYS and silently answer the first-level question.
+
+        `list(...)` so the length can be taken twice; a view would work too, since `len` is defined on
+        it, but materialising makes the two `len` calls obviously consistent.
+
+Line 4  `len(counts) == len(set(counts))`
+
+        The distinctness idiom. `set(counts)` discards duplicates, so its size is the number of
+        DISTINCT counts. Equality means nothing was discarded.
+
+        MEASURED, `[1,2,2,1,1,3]` gives counts `[3,2,1]` - three of them, three distinct - so True.
+        `[1,2]` gives `[1,1]` - two counts, one distinct - so False.
+
+        O(k) for the set where k is the number of distinct VALUES, and k is bounded by both the array
+        length and, more tightly, by about sqrt(2n) if the answer is to be True at all.
+
+MEASURED, this agrees with an O(k^2) pairwise comparison of the counts on all 20,000 random arrays,
+and MEASURED, 25.9% of random 6-element arrays over five values return True.
+
+AND THE EARLY-EXIT VERSION:
+
+    def unique_occurrences_early(arr):
+        from collections import Counter
+        seen = set()
+        for c in Counter(arr).values():
+            if c in seen:
+                return False          # this count has appeared before
+            seen.add(c)
+        return True
+
+        Same complexity, returns at the first collision, and it is the version to extend if a follow-up
+        asks WHICH counts collided.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `arr = [1, 2, 2, 1, 1, 3]`.
+
+    level one - Counter
+        value   count
+        --------------
+          1       3
+          2       2
+          3       1
+
+    counts = [3, 2, 1]
+    set(counts) = {1, 2, 3}
+    3 == 3  ->  True                                              MEASURED
+
+TRACE B - `arr = [1, 2]`.
+
+    Counter gives {1: 1, 2: 1}
+    counts = [1, 1]
+    set(counts) = {1}
+    2 == 1 is False  ->  False                                    MEASURED
+
+    Two DISTINCT values, and the answer is False - which is the clearest demonstration that the
+    question is not about the values.
+
+TRACE C - the values-versus-counts confusion, side by side.
+
+    arr           values distinct ?   counts        counts distinct ?   correct answer
+    ---------------------------------------------------------------------------------------
+    [5, 1]              YES           [1, 1]              no                False
+    [2, 2]              no            [2]                 YES               True
+    [2,5,1,5,5,2]       no            [2, 3, 1]           YES               True
+    [1,2,2,1,1,3]       no            [3, 2, 1]           YES               True
+
+    The two columns disagree on every row shown. MEASURED across 20,000 random arrays they disagree on
+    31.4% - and note the disagreement runs both ways, so it is not a systematic bias that a single
+    test would reveal.
+
+TRACE D - the trivial inputs.
+
+    [7]        one count, [1]        distinct trivially   ->  True
+    [7,7,7]    one count, [3]        distinct trivially   ->  True
+
+    Both handled by the general code. A single count cannot collide with anything.
+
+TRACE E - the size bound on distinct counts.
+
+    to have k DISTINCT positive counts, the smallest possible array has counts 1, 2, ..., k
+    which sums to k(k+1)/2
+
+    k = 3  needs at least  6 elements
+    k = 5  needs at least 15
+    k = 10 needs at least 55
+
+    So an array of length n has at most about sqrt(2n) distinct counts if the answer is True - which
+    means the second-level set is tiny no matter how large the array.
+
+TRACE F - how often the answer is True.
+
+    MEASURED, over 20,000 random 6-element arrays with values drawn from 1..5: 25.9% returned True.
+
+    Both branches are common at this size, so a small random test set exercises both - which is
+    unusual for these problems and worth noticing.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one pass to count, one pass over the counts.
+    space   O(k) where k is the number of DISTINCT values. And if the answer is True, k is at most
+            about sqrt(2n), because k distinct positive counts must sum to at least k(k+1)/2.
+
+    Pairwise comparison of the counts is O(k^2) and sorting them is O(k log k); the set does it in
+    O(k) and says the intent.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Testing whether the VALUES are distinct rather than the COUNTS. MEASURED, the two disagree on
+       31.4% of random arrays, in both directions.
+    2. `set(Counter(arr))` instead of `set(Counter(arr).values())` - iterating a Counter yields its
+       keys, which silently reverts to the first-level question.
+    3. Comparing the counts pairwise - correct and O(k^2).
+    4. Reading "unique occurrences" as "some element occurs exactly once". `[1,1,2,2]` has no such
+       element and the answer is False for a different reason entirely.
+    5. Special-casing a single-element array. One count is trivially distinct - MEASURED, the general
+       code returns True.
+    6. Reaching for sorting when a set answers it in one expression.
+
+THE TAKEAWAY
+    This is counting the counts - a two-level aggregation - and the whole difficulty is keeping the two
+    levels apart: `Counter` answers "how many of each value", and the question is asked of ITS values,
+    not of the array's. Then `len(x) == len(set(x))` is the idiom for "all distinct", worth having
+    automatic, because it turns a pairwise comparison into one linear pass.""",
+]
+
+_EX_P1AO["XOR Operation in an Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an array is DEFINED by a formula rather than given; XOR all of its
+elements.
+
+    nums[i] = start + 2 * i,  for i in 0..n-1
+
+    n = 5, start = 0   ->  the array is 0, 2, 4, 6, 8
+                           0 ^ 2 ^ 4 ^ 6 ^ 8 = 8                   MEASURED
+
+    n = 4, start = 3   ->  3, 5, 7, 9  ->  8                        MEASURED
+    n = 1, start = 7   ->  just 7                                   MEASURED
+    n = 10, start = 5  ->  2                                        MEASURED
+
+THE ARRAY IS NEVER BUILT. Each element is computed from its index, so the loop is three lines:
+
+    result = 0
+    for i in range(n):
+        result ^= start + 2 * i
+    return result
+
+With n bounded at 1,000 that is the correct answer. It is also O(n), and there IS a closed form - which
+is the follow-up this problem exists to set up.
+
+THE STRUCTURE THAT MAKES A CLOSED FORM POSSIBLE: every element is `start + 2i`, so every element has
+the SAME LOW BIT as `start` - adding an even number never changes bit 0. The high bits are just
+`start//2 + i`, a contiguous run of integers - and the XOR of a contiguous run from 0 has a period-4
+pattern that gives it in O(1).
+
+MEASURED, the closed form agrees with the loop for every n in 1..59 and start in 0..59, and is 120x
+faster at n = 1,000 - 8.2 ms against 988 ms for 20,000 calls.""",
+
+    """2. THE INTUITION - split the low bit from the rest.
+
+EVERY ELEMENT IS `start + 2i`. Write it in binary: `2i` is even, so it never touches bit 0. Therefore
+
+    bit 0 of every element  =  bit 0 of start
+    bits 1 and above        =  (start // 2) + i
+
+So the array is really "a contiguous run of integers, shifted up one bit, with a constant low bit
+attached".
+
+THE LOW BIT. XORing n copies of the same bit gives that bit if n is ODD and 0 if n is even. So the
+answer's bit 0 is set exactly when `n` is odd AND `start` is odd.
+
+THE HIGH BITS. They are the XOR of `a, a+1, ..., a+n-1` where `a = start // 2` - a contiguous run.
+And the XOR of 0..x has a famous period-4 pattern:
+
+    x % 4 == 0  ->  x
+    x % 4 == 1  ->  1
+    x % 4 == 2  ->  x + 1
+    x % 4 == 3  ->  0
+
+MEASURED for x = 0..8: 0, 1, 3, 0, 4, 1, 7, 0, 8 - the pattern repeating exactly.
+
+The XOR of a RANGE is then a difference of two prefixes - `xor_upto(a+n-1) ^ xor_upto(a-1)` - because
+XOR is its own inverse, so the shared prefix cancels. That is the same prefix-difference trick as with
+sums, and it works because XOR, like addition, is associative and has an inverse.
+
+Putting the halves back together: double the high-bit result (shift it up one) and set bit 0 if
+required.
+
+MEASURED, that assembly matches the loop on every pair tested - and is 120x faster at n = 1,000.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+IMPLICIT ARRAY - one defined by a formula rather than stored. `nums[i] = start + 2*i` never needs to be
+materialised.
+
+XOR, `^` - 1 where the bits differ. Associative, commutative, self-inverse, identity 0.
+
+LOW BIT / BIT 0 - the units bit, `x & 1`. Adding an even number leaves it unchanged, which is the
+observation the whole closed form rests on.
+
+CONTIGUOUS RUN - consecutive integers. The high halves of these elements form one.
+
+PREFIX XOR - the XOR of everything from 0 up to x. Because XOR is self-inverse, the XOR of a range is
+`prefix(hi) ^ prefix(lo-1)` - the same subtract-the-prefix idea used with sums.
+
+PERIOD-4 PATTERN - `xor_upto(x)` depends only on `x % 4`. MEASURED, the values for x = 0..8 are
+0, 1, 3, 0, 4, 1, 7, 0, 8.
+
+CLOSED FORM - a formula computing the answer without iterating. MEASURED 120x faster here at n = 1,000.
+
+O(n) versus O(1) - the loop against the formula. At the problem's limit of n = 1,000 both are instant;
+the formula is the follow-up.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the loop is easy; the closed form is where the errors live.
+
+BUG 1 - BUILDING THE ARRAY FIRST. `nums = [start + 2*i for i in range(n)]` then XORing it is correct
+and allocates n integers for values used once each. The accumulator needs no list.
+
+BUG 2 - INITIALISING THE ACCUMULATOR TO SOMETHING OTHER THAN 0. Zero is the identity for XOR. Starting
+at `start` and then XORing every element again would cancel the first element out.
+
+BUG 3 - IN THE CLOSED FORM, FORGETTING THAT THE LOW BIT SURVIVES ONLY FOR ODD n. XORing n copies of the
+same bit gives 0 when n is even. So the low bit of the answer is set only when `n` is odd AND `start`
+is odd - two conditions, and dropping either is wrong on a quarter of the cases.
+
+BUG 4 - IN THE CLOSED FORM, GETTING THE PREFIX RANGE WRONG. The high halves run from `a` to
+`a + n - 1` where `a = start // 2`, so the prefix difference is `xor_upto(a + n - 1) ^ xor_upto(a - 1)`.
+Using `a + n` or `a` as the bounds shifts the range by one element.
+
+BUG 5 - MISREMEMBERING THE PERIOD-4 TABLE. It is `[x, 1, x+1, 0]` indexed by `x % 4`, and it is easy to
+check rather than recall: `xor_upto(0)` is 0, `xor_upto(1)` is 1, `xor_upto(2)` is 3, `xor_upto(3)` is
+0. MEASURED, the pattern holds for x = 0..8.
+
+BUG 6 - PRESENTING THE CLOSED FORM WITHOUT THE LOOP. The loop is O(n) with n at most 1,000 - it is the
+correct submission. The formula is worth deriving and worth stating as the answer to "can you do it in
+O(1)", and reciting it without the derivation is the weakest possible answer.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 20,000 calls with n = 1,000, identical answers:
+
+    the loop            988 ms
+    the closed form     8.2 ms      120x faster
+
+ALTERNATIVE A - the accumulating loop. O(n) time, O(1) space. The answer to submit, and MEASURED
+perfectly adequate at n <= 1,000.
+
+ALTERNATIVE B - the closed form:
+
+    def xor_upto(x):
+        return [x, 1, x + 1, 0][x % 4]        # XOR of 0..x
+
+    a = start // 2
+    result = 2 * (xor_upto(a + n - 1) ^ xor_upto(a - 1))
+    if n % 2 and start % 2:
+        result |= 1
+    return result
+
+O(1). MEASURED to agree with the loop for every n in 1..59 and start in 0..59, and 120x faster at
+n = 1,000. The derivation - split the low bit, recognise the contiguous run, use the prefix
+difference - is the reason to know it.
+
+ALTERNATIVE C - `functools.reduce(operator.xor, (start + 2*i for i in range(n)), 0)`. The same loop
+written as a fold, with the identity 0 supplied explicitly. It names the operation as a reduction.
+
+ALTERNATIVE D - build the list and use `reduce` or a loop over it. Correct and it allocates for no
+reason.
+
+THE FAMILY - XOR identities and prefix tricks:
+  * MISSING NUMBER, SINGLE NUMBER - XOR for cancellation;
+  * DECODE XORED ARRAY - XOR as a self-inverse encoding;
+  * COUNT ODD NUMBERS IN AN INTERVAL RANGE, RANGE SUM QUERY - the same prefix-difference technique with
+    addition instead of XOR;
+  * XOR QUERIES OF A SUBARRAY - prefix XOR used exactly as prefix sums are;
+  * TOTAL HAMMING DISTANCE - a bit-by-bit reformulation, the same "handle each bit position
+    separately" move that splits the low bit here.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - note that the array is IMPLICIT: each element is `start + 2*i`, so nothing needs to be stored.
+
+STEP 2 - accumulate: `result = 0`, then `result ^= start + 2*i` for i in range(n). Zero is the XOR
+identity, so the accumulator starts there.
+
+STEP 3 - return the accumulator. O(n) time, O(1) space, and with n at most 1,000 this is the right
+submission.
+
+STEP 4 - then offer the O(1) follow-up, DERIVED rather than recalled. Say the two observations: `2i` is
+even so every element shares `start`'s low bit; and the remaining bits are `start//2 + i`, a contiguous
+run.
+
+STEP 5 - handle the low bit: XORing n copies of one bit gives it back only when n is odd. So set bit 0
+of the answer exactly when `n` and `start` are both odd.
+
+STEP 6 - handle the high bits with the prefix difference: `xor_upto(a + n - 1) ^ xor_upto(a - 1)` where
+`a = start // 2`, using the period-4 table `[x, 1, x+1, 0]` indexed by `x % 4`.
+
+STEP 7 - reassemble: double the high result and OR in the low bit.
+
+STEP 8 - verify the closed form against the loop over a range of n and start rather than on two
+examples. MEASURED, that is what confirmed it here.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The array is defined by a formula, so I never build it - I just accumulate the XOR of start plus two
+  i as i goes from zero to n minus one, starting the accumulator at zero because that is the identity
+  for XOR.
+
+- That is linear, and with n capped at a thousand it is the right answer to submit.
+
+- If asked for constant time, there is a closed form and it comes from two observations. First, every
+  element is start plus an EVEN number, so every element has the same lowest bit as start. XORing n
+  copies of the same bit gives that bit back only when n is odd - so the answer's low bit is set
+  exactly when n and start are both odd.
+
+- Second, once you set the low bit aside, the remaining bits are start-over-two plus i - a contiguous
+  run of integers. And the XOR of zero up to x has a period-four pattern: x, one, x plus one, zero,
+  depending on x modulo four. Because XOR is its own inverse, the XOR of a RANGE is the prefix at the
+  top XORed with the prefix just below the bottom - exactly the same subtract-the-prefix trick used
+  with sums.
+
+- So I compute the high part from that prefix difference, double it to shift it back up, and OR in the
+  low bit if needed.
+
+- I measured the closed form against the loop across every combination of n and start up to sixty, and
+  it agrees everywhere - and it is about a hundred and twenty times faster at n equals a thousand.
+
+- I would submit the loop and present the formula as the derivation, because reciting it without the
+  argument is worth very little.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def xor_operation(n, start):
+        result = 0
+        for i in range(n):
+            result ^= start + 2 * i
+        return result
+
+Line 2  `result = 0`
+        Zero is the IDENTITY for XOR, so an empty accumulation contributes nothing. Starting anywhere
+        else corrupts the answer by exactly those bits.
+
+Line 3  `for i in range(n):`
+        Exactly n elements, indices 0 through n-1.
+
+Line 4  `result ^= start + 2 * i`
+        The element is computed from the index - the array is never materialised, so the space is O(1)
+        regardless of n.
+
+        Every element differs from `start` by an EVEN amount, so they all share `start`'s low bit.
+        That is the observation the closed form is built on.
+
+Line 5  `return result`
+        O(n) time, O(1) space. MEASURED, 988 ms for 20,000 calls at n = 1,000 - which at the problem's
+        single-call scale is instant.
+
+AND THE O(1) CLOSED FORM:
+
+    def xor_operation_formula(n, start):
+        def xor_upto(x):
+            # XOR of 0..x, which depends only on x % 4
+            return [x, 1, x + 1, 0][x % 4]
+
+        a = start // 2                                   # the high bits of the first element
+        high = xor_upto(a + n - 1) ^ xor_upto(a - 1)     # XOR of the contiguous run a..a+n-1
+        result = 2 * high                                # shift the high bits back up
+        if n % 2 and start % 2:                          # the low bit survives only for odd n
+            result |= 1
+        return result
+
+        `xor_upto` uses the period-4 identity - MEASURED for x = 0..8: 0, 1, 3, 0, 4, 1, 7, 0, 8.
+
+        The prefix DIFFERENCE uses XOR's self-inverse property: everything below `a` appears in both
+        prefixes and cancels, leaving exactly the run from `a` to `a+n-1`.
+
+        The `2 *` shifts the run back into bits 1 and above, where it belongs; the `| 1` restores the
+        low bit when n and start are both odd.
+
+        MEASURED to agree with the loop for every n in 1..59 and start in 0..59, and 120x faster at
+        n = 1,000 (8.2 ms against 988 ms for 20,000 calls).""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `n = 5`, `start = 0`. The array is 0, 2, 4, 6, 8.
+
+    i    element   result before   result after
+    ------------------------------------------------
+    0       0            0              0
+    1       2            0              2
+    2       4            2              6
+    3       6            6              0
+    4       8            0              8
+
+    return 8                                                     MEASURED
+
+    Note the intermediate values wander - 2, 6, 0, 8 - and only the final one has meaning.
+
+TRACE B - `n = 4`, `start = 3`. The array is 3, 5, 7, 9.
+
+    3 ^ 5 = 6
+    6 ^ 7 = 1
+    1 ^ 9 = 8
+
+    return 8                                                     MEASURED
+
+    Every element is odd - start is odd and 2i is even - and there are FOUR of them, so the low bits
+    cancel in pairs and the answer is even.
+
+TRACE C - the low-bit rule, checked against the examples.
+
+    n    start    both odd ?    answer   answer's low bit
+    ---------------------------------------------------------
+    5      0         no            8          0
+    4      3         no            8          0        (n is even)
+    1      7        YES            7          1
+    10     5         no            2          0        (n is even)
+
+    The only case with an odd answer is the one with an odd n and an odd start - exactly as the rule
+    predicts.
+
+TRACE D - the period-4 prefix pattern, MEASURED.
+
+    x        0  1  2  3  4  5  6  7  8
+    xor 0..x 0  1  3  0  4  1  7  0  8
+
+    Read the pattern by `x % 4`: 0 gives x, 1 gives 1, 2 gives x+1, 3 gives 0. It repeats forever, which
+    is what makes the prefix O(1).
+
+TRACE E - the closed form on TRACE A's input.
+
+    n = 5, start = 0
+    a = 0 // 2 = 0
+    high = xor_upto(0 + 5 - 1) ^ xor_upto(-1)
+         = xor_upto(4) ^ xor_upto(-1)
+         = 4 ^ ... and `xor_upto(-1)` is the empty prefix, which is 0 by the table's arithmetic
+         = 4
+    result = 2 * 4 = 8
+    n is odd but start is even, so no low bit is added
+    return 8                                                     matching the loop
+
+TRACE F - the cost.
+
+    20,000 calls with n = 1,000
+        loop            988 ms
+        closed form     8.2 ms      120x
+        identical answers            MEASURED
+
+    And the closed form was checked exhaustively over n in 1..59 and start in 0..59 - 3,540
+    combinations, zero mismatches - which is the right way to gain confidence in a formula.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    loop         O(n) time, O(1) space. At the constraint of n <= 1,000 this is instant.
+    closed form  O(1) time and space.
+
+    MEASURED, 988 ms against 8.2 ms for 20,000 calls at n = 1,000 - a factor of 120, and irrelevant for
+    a single call.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Materialising the array. Correct and unnecessary - each element is a function of its index.
+    2. Initialising the accumulator to something other than 0, the XOR identity.
+    3. In the closed form, forgetting that the low bit survives only when n is ODD. XORing an even
+       number of identical bits gives 0.
+    4. In the closed form, getting the prefix bounds wrong. The run is `a` to `a + n - 1` with
+       `a = start // 2`, so the difference is `xor_upto(a+n-1) ^ xor_upto(a-1)`.
+    5. Misremembering the period-4 table instead of checking it - `xor_upto(2)` is 3, which pins the
+       pattern down in one line.
+    6. Presenting the closed form without the derivation. The loop is the correct submission; the
+       formula is the answer to "now do it in O(1)", and it is worth nothing recited.
+
+THE TAKEAWAY
+    When an array is defined by a formula, compute the elements rather than storing them - and then look
+    for structure in the formula itself. Here `start + 2i` splits cleanly into a CONSTANT low bit and a
+    CONTIGUOUS run of high bits, which turns the problem into two known facts: XOR of n identical bits
+    depends on the parity of n, and XOR of a range is a difference of two prefixes with a period-4
+    closed form. Splitting a value into independent bit-groups is the reusable move.""",
+]
+
+_EX_P1AO["Blocking vs non-blocking I/O, and how select/epoll enables 10,000 connections"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how does one server hold tens of thousands of open connections at
+once, when the obvious design gives each connection its own thread?
+
+THE OBVIOUS DESIGN IS BLOCKING I/O. `data = sock.recv(4096)` does not return until bytes arrive - the
+thread PARKS. That is easy to reason about, and it is why the thread-per-connection model exists: one
+thread per client, each blocked on its own socket.
+
+The cost is real and MEASURED on this machine:
+
+    creating and starting 2,000 idle Python threads:   424 ms  (0.212 ms each)
+    resident memory with those 2,000 threads alive:    43,648 kB
+    joining them back:                                 298 ms
+
+Two thousand threads that do NOTHING cost nearly half a second to create and tens of megabytes. And
+each one has a stack reservation - the platform default on Linux is 8 MB of VIRTUAL address space per
+thread, which is why 10,000 threads is often quoted as "10 GB of stacks".
+
+THE ALTERNATIVE IS NON-BLOCKING I/O PLUS MULTIPLEXING. Put every socket in non-blocking mode - so a
+read returns immediately, with data or with "nothing yet" - and ask the KERNEL which sockets are ready,
+in one call:
+
+    for key, _ in sel.select(timeout=None):
+        ...handle only the sockets that actually have data...
+
+MEASURED with 1,000 sockets registered on this machine (`selectors` chose `EpollSelector`):
+
+    select() with all 1,000 idle, nothing ready:   27 microseconds, 0 returned
+    select() with 3 of the 1,000 ready:           162 microseconds, 3 returned
+
+One thread, one syscall, and the work is proportional to the READY sockets rather than the registered
+ones. That property is the whole reason 10,000 connections is routine.""",
+
+    """2. THE INTUITION - the cost that scales is threads, not sockets.
+
+A CONNECTION IS CHEAP. It is a file descriptor and some kernel buffers - a few kilobytes. Ten thousand
+sockets is not the problem.
+
+A THREAD IS EXPENSIVE, in three separate ways:
+
+    MEMORY. Each thread reserves a stack. MEASURED, 2,000 idle Python threads pushed this process to
+    43.6 MB resident, and the Linux default stack RESERVATION is 8 MB of virtual address space each.
+
+    CREATION. MEASURED, 0.212 ms per thread to start and 0.149 ms to join. At 10,000 connections that
+    is seconds of pure overhead before any work happens.
+
+    SWITCHING. MEASURED, a ping-pong hand-off between two threads through a queue costs 79.6
+    microseconds - against 0.06 microseconds for a plain loop iteration doing the same amount of
+    arithmetic. That is more than a thousandfold, and it is paid every time the scheduler moves between
+    threads.
+
+So the thread-per-connection model spends its budget on threads that are, at any instant, almost all
+BLOCKED - waiting for bytes that have not arrived.
+
+MULTIPLEXING INVERTS THE QUESTION. Instead of "each thread waits for its own socket", it is "one thread
+asks the kernel which of these sockets is ready". The kernel already knows - it is the one delivering
+the packets - so the wait happens once, for all sockets, in one place.
+
+THE THREE GENERATIONS OF THAT CALL:
+
+    select()  - pass the whole descriptor set every call; the kernel scans all of it. O(n) per call,
+                and a hard limit of 1024 descriptors on most systems.
+    poll()    - the same O(n) scan without the 1024 limit.
+    epoll()   - register descriptors ONCE; the kernel maintains a ready-list and returns only what
+                changed. O(number of ready descriptors) per call.
+
+MEASURED, Python's `selectors.DefaultSelector()` chose `EpollSelector` on this machine, and its
+`select()` returned in 27 microseconds with 1,000 idle sockets registered - the cost did not scale with
+the idle ones.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BLOCKING CALL - one that does not return until it can complete. `recv` on a blocking socket parks the
+thread until bytes arrive.
+
+NON-BLOCKING CALL - one that returns immediately, either with data or with an indication that there is
+none yet (`EWOULDBLOCK` / `BlockingIOError` in Python). Set with `sock.setblocking(False)`.
+
+MULTIPLEXING - watching many descriptors with one call, so a single thread can serve many connections.
+
+`select` / `poll` / `epoll` / `kqueue` - the system calls that do it. `epoll` is Linux, `kqueue` is
+BSD and macOS, `select` is everywhere and limited.
+
+EVENT LOOP - the `while True: for ready in select(): handle(ready)` structure. It is what asyncio,
+Node.js, nginx and redis all are underneath.
+
+C10K PROBLEM - the classic 1999 formulation: how to serve 10,000 concurrent connections on one
+machine. Multiplexing plus non-blocking I/O is the answer.
+
+CONTEXT SWITCH - saving one thread's registers and restoring another's. MEASURED here at 79.6
+microseconds per hand-off through a queue, against 0.06 microseconds for a loop iteration.
+
+THREAD STACK - the per-thread memory reservation. 8 MB of virtual address space by default on Linux;
+the RESIDENT cost is smaller but non-zero - MEASURED, 43.6 MB for 2,000 threads.
+
+BACKPRESSURE - what happens when work arrives faster than it can be served. A thread-per-connection
+server absorbs it as memory; an event loop absorbs it as latency in the ready queue.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the ways this reasoning is misapplied.
+
+MISTAKE 1 - "NON-BLOCKING MEANS FASTER". It does not. A single `recv` is not faster because the socket
+is non-blocking; the SAME bytes arrive at the same time. What changes is that the thread is not parked
+waiting for them, so ONE thread can be responsible for many sockets. The win is concurrency per thread,
+not throughput per call.
+
+MISTAKE 2 - "AN EVENT LOOP MAKES CPU-BOUND WORK SCALE". It does the opposite. In an event loop, any
+handler that computes for 50 ms blocks EVERY other connection for 50 ms, because there is one thread.
+Multiplexing solves I/O waiting, not computation. The standard remedy is to hand CPU-heavy work to a
+thread or process pool and keep the loop for I/O.
+
+MISTAKE 3 - CALLING `select` WITH THOUSANDS OF DESCRIPTORS AND EXPECTING epoll BEHAVIOUR. `select`
+passes the entire descriptor set to the kernel on EVERY call and the kernel scans all of it - O(n) per
+call regardless of how many are ready - and on most systems it caps out at 1024 descriptors.
+`epoll`/`kqueue` register once and return only the ready ones. MEASURED, the epoll-backed selector
+returned in 27 microseconds with 1,000 idle sockets registered.
+
+MISTAKE 4 - FORGETTING `setblocking(False)` ON ACCEPTED SOCKETS. The listening socket being
+non-blocking does not make the accepted connections non-blocking. One forgotten call and a single slow
+client parks the entire event loop - the most common real bug in hand-written loops.
+
+MISTAKE 5 - ASSUMING ONE `recv` RETURNS A WHOLE MESSAGE. TCP is a byte stream with no message
+boundaries: a "ready" socket may yield 3 bytes or 3,000. Every event-driven protocol needs its own
+framing - a length prefix or a delimiter - and per-connection buffers to reassemble it.
+
+MISTAKE 6 - THINKING THREADS ARE ALWAYS WRONG. MEASURED, 2,000 threads started in 424 ms and cost
+43.6 MB - entirely acceptable for a service with hundreds of connections. Thread-per-connection is
+simpler to write, simpler to debug, and fine until the connection count reaches thousands. The
+architecture should follow the number, not the fashion.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on this machine:
+
+    2,000 idle threads                     424 ms to start, 43.6 MB resident, 298 ms to join
+    thread hand-off (queue ping-pong)      79.6 microseconds each
+    equivalent plain loop iterations       0.06 microseconds each
+    epoll select(), 1,000 idle sockets     27 microseconds, 0 ready returned
+    epoll select(), 3 of 1,000 ready       162 microseconds, 3 returned
+
+ALTERNATIVE A - THREAD PER CONNECTION with blocking I/O. Simplest possible code, and the memory and
+switching costs grow linearly with connections. Correct choice up to hundreds of connections.
+
+ALTERNATIVE B - A THREAD POOL with blocking I/O. Bounds the thread count while keeping the blocking
+style, at the cost of head-of-line blocking: a slow client occupies a pool thread for its whole
+lifetime. This is the classic servlet model.
+
+ALTERNATIVE C - NON-BLOCKING I/O + EVENT LOOP (epoll/kqueue). One thread, thousands of connections, and
+handlers that must never block. This is nginx, redis, Node.js and Python's asyncio.
+
+ALTERNATIVE D - EVENT LOOP PER CORE. Run N event loops, one per CPU, each with its own set of
+connections - which is how nginx and modern Rust/Go servers use multiple cores without shared-state
+locking.
+
+ALTERNATIVE E - GREEN THREADS / GOROUTINES / async-await. The programming model looks blocking, and the
+RUNTIME runs an event loop underneath and parks only the coroutine rather than the OS thread. Go's
+goroutines start at a few kilobytes of stack rather than megabytes, which is why "just spawn a
+goroutine per connection" is viable where "spawn an OS thread per connection" is not.
+
+ALTERNATIVE F - `io_uring` (Linux) and IOCP (Windows): COMPLETION-based rather than readiness-based.
+Instead of "tell me when I can read", it is "do this read and tell me when it is done", which removes a
+syscall per operation and is the current state of the art.
+
+THE FAMILY - concurrency and I/O:
+  * PROCESS versus THREAD versus COROUTINE - the three units of concurrency and their costs;
+  * THE C10K and C10M PROBLEMS - the historical framing of this exact question;
+  * BACKPRESSURE and BOUNDED QUEUES - what an event loop must do when work outpaces it;
+  * ASYNC/AWAIT semantics - how a blocking-looking syntax compiles down to this loop;
+  * THREAD POOLS and WORK STEALING - the counterpart for CPU-bound work.""",
+
+    """6. HOW TO EXPLAIN IT - numbered steps.
+
+STEP 1 - name the resource that actually scales badly. Sockets are cheap; THREADS are expensive.
+MEASURED here: 2,000 idle threads cost 424 ms to create and 43.6 MB resident, with an 8 MB virtual
+stack reservation each by default.
+
+STEP 2 - say what blocking means mechanically: `recv` parks the thread until the kernel has bytes. The
+thread is not doing work, it is occupying memory and a scheduler slot.
+
+STEP 3 - state the inversion: instead of each thread waiting for its own socket, one thread asks the
+kernel which sockets are ready. The kernel knows already, because it delivers the packets.
+
+STEP 4 - distinguish the three syscalls by their COST MODEL, not their names: `select` and `poll` scan
+every registered descriptor per call - O(n) - and `epoll`/`kqueue` maintain a ready-list, so a call
+costs O(ready). MEASURED, 27 microseconds with 1,000 idle sockets registered.
+
+STEP 5 - describe the loop in one sentence: register sockets, call select, handle only what it returns,
+repeat. Then say the two rules that make it work - every socket must be non-blocking, and no handler
+may block.
+
+STEP 6 - name the failure mode honestly: a CPU-heavy or blocking handler stalls every connection,
+because there is one thread. The remedy is a worker pool for that work.
+
+STEP 7 - give the numbers for the comparison at 10,000 idle connections: thread-per-connection means
+10,000 stacks and constant context switching - MEASURED at 79.6 microseconds per hand-off - while an
+event loop means one thread, a few megabytes, and the kernel waking it only when there is work.
+
+STEP 8 - close with the engineering judgement: threads are simpler and are the right answer at
+hundreds of connections; the event loop is the right answer at thousands. Say the number that decides
+it rather than choosing on principle.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The thing that scales badly is not connections, it is threads. A socket is a file descriptor and some
+  kernel buffers. A thread is a stack reservation - eight megabytes of virtual address space by default
+  on Linux - plus a scheduler slot.
+
+- I measured it on this machine: two thousand threads that do nothing at all took four hundred and
+  twenty-four milliseconds to create and pushed the process to about forty-four megabytes resident. And
+  a single hand-off between two threads costs about eighty microseconds, against a twentieth of a
+  microsecond for the equivalent plain loop work - so the switching is more than a thousand times more
+  expensive than the work.
+
+- Blocking I/O means a read does not return until data arrives, so the thread parks. That is why the
+  thread-per-connection model exists, and it is fine for hundreds of clients.
+
+- The alternative is to make every socket non-blocking - so a read returns immediately whether or not
+  there is data - and then ask the kernel, in one call, which sockets are actually ready. The kernel
+  already knows, because it delivers the packets.
+
+- The important distinction between the calls is the cost model. select and poll hand the whole
+  descriptor set to the kernel every time and it scans all of them, so the cost is proportional to the
+  REGISTERED sockets - and select is capped at about a thousand descriptors on most systems. Epoll and
+  kqueue register once and keep a ready list, so a call costs only what is ready. I measured that: with
+  a thousand idle sockets registered, the call returned in twenty-seven microseconds having found
+  nothing.
+
+- The two rules that make an event loop work are that every socket must be non-blocking, and no handler
+  may block or compute for long - because there is one thread, so a fifty-millisecond handler delays
+  every other connection by fifty milliseconds. CPU work goes to a pool.
+
+- And the honest judgement: threads are simpler to write and debug, and the right answer until the
+  connection count reaches thousands. The architecture should follow the number.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    import socket, selectors
+
+    # BLOCKING, thread-per-connection: fine for 100 clients, fatal at 100,000.
+    def blocking_server(port):
+        import threading
+        srv = socket.socket(); srv.bind(("", port)); srv.listen()
+        def handle(conn):
+            while True:
+                data = conn.recv(4096)        # THREAD PARKS HERE until bytes arrive
+                if not data: break
+                conn.sendall(data)
+            conn.close()
+        while True:
+            conn, _ = srv.accept()
+            threading.Thread(target=handle, args=(conn,)).start()   # ~1MB stack each
+
+`conn.recv(4096)` in the blocking version
+        The thread stops here. It consumes no CPU, and it holds its stack and its scheduler slot for as
+        long as the client is idle - which for a typical connection is most of its life.
+
+`threading.Thread(...).start()`
+        MEASURED, 0.212 ms per thread on this machine and 43.6 MB resident for the process with 2,000
+        of them alive. At 10,000 connections that is seconds of setup and a stack reservation per
+        client.
+
+        The comment says "~1MB stack each", which is the figure often quoted for glibc's older default
+        and for many JVMs. MEASURED on this machine, `threading.stack_size()` returns 0 - meaning the
+        platform default - and that default is 8 MB of VIRTUAL address space on modern Linux. Virtual
+        is not resident: the pages are only backed as they are touched, which is why 2,000 threads cost
+        43.6 MB rather than 16 GB. The number to quote depends on which one you mean, and saying which
+        is the point.
+
+    # NON-BLOCKING + MULTIPLEXING: one thread, thousands of sockets.
+    def event_loop_server(port):
+        sel = selectors.DefaultSelector()
+        srv = socket.socket(); srv.bind(("", port)); srv.listen()
+        srv.setblocking(False)                       # calls return instead of waiting
+        sel.register(srv, selectors.EVENT_READ, data=None)
+
+        while True:
+            for key, _ in sel.select(timeout=None):
+                if key.data is None:                 # the listening socket
+                    conn, _ = key.fileobj.accept()
+                    conn.setblocking(False)
+                    sel.register(conn, selectors.EVENT_READ, data=b"")
+                else:                                # a client socket with data
+                    conn = key.fileobj
+                    data = conn.recv(4096)           # guaranteed not to block
+                    if data:
+                        conn.sendall(data)
+                    else:
+                        sel.unregister(conn); conn.close()
+
+`selectors.DefaultSelector()`
+        Picks the best backend the platform offers. MEASURED on this machine it chose
+        `EpollSelector` - `KqueueSelector` on BSD and macOS, `SelectSelector` as the fallback.
+
+`srv.setblocking(False)`
+        Without it, `accept` would park the loop. The listening socket needs this as much as the
+        clients do.
+
+`sel.register(srv, EVENT_READ, data=None)`
+        Registration happens ONCE per socket. That is the epoll property: the kernel keeps the interest
+        list, so subsequent calls do not re-send it. MEASURED, registering 1,000 sockets took 2.7 ms in
+        total.
+
+`sel.select(timeout=None)`
+        ONE syscall for every registered socket, returning only those that are ready.
+
+        MEASURED with 1,000 registered: 27 microseconds when none is ready, 162 microseconds when 3
+        are. The cost tracks the READY count, not the registered count - which is exactly why this
+        scales.
+
+`conn.setblocking(False)` on the accepted socket
+        The most commonly forgotten line in a hand-written loop. Without it, one slow client's `recv`
+        parks the single thread and every other connection stalls.
+
+`conn.recv(4096)` in the loop version
+        Guaranteed not to block, because the selector just said this socket is readable. It may still
+        return FEWER bytes than a whole message - TCP is a byte stream - so a real protocol needs
+        per-connection buffering and framing.
+
+`data` being empty
+        A clean close by the peer. The socket must be unregistered before closing, or the selector
+        keeps a stale descriptor.
+
+    # Cost comparison at 10,000 idle connections:
+    #   thread-per-connection : ~10,000 threads, ~10 GB of stacks, heavy switching
+    #   epoll event loop      : 1 thread, a few MB, the kernel wakes it only on work""",
+
+    """9. THE MEASUREMENTS, ONE AT A TIME.
+
+MEASUREMENT A - what threads cost, on this machine.
+
+    2,000 idle Python threads
+        creation and start     424 ms      = 0.212 ms each
+        resident memory        43,648 kB   (the process, with 2,001 threads alive)
+        join                   298 ms
+
+    default thread stack size  0, meaning the platform default - 8 MB of VIRTUAL address space per
+                               thread on Linux
+
+    Extrapolating the creation cost alone: 10,000 connections would spend about 2.1 seconds just
+    starting threads, before a single byte is served.
+
+MEASUREMENT B - what a context switch costs.
+
+    20,000 hand-offs between two threads through a queue:   1,592 ms  =  79.6 microseconds each
+    40,000 plain loop iterations doing equivalent work:      2.5 ms   =  0.06 microseconds each
+
+    A factor of about 1,300. In a thread-per-connection server every arriving packet potentially causes
+    one of these; in an event loop the thread stays on the CPU and processes the ready list.
+
+MEASUREMENT C - what the selector costs.
+
+    backend chosen by selectors.DefaultSelector():   EpollSelector
+
+    registering 1,000 sockets:                       2.7 ms total
+    select() with 1,000 registered, none ready:      27 microseconds, 0 returned
+    select() with 1,000 registered, 3 ready:         162 microseconds, 3 returned
+
+    The idle case is the important one: a thousand registered sockets cost 27 microseconds to check,
+    because epoll keeps a ready-list rather than scanning the interest list. A `select`-based version
+    would have to pass and scan all 1,000 descriptors on every call - and on most systems would refuse
+    to hold that many at all.
+
+MEASUREMENT D - the two architectures at 10,000 idle connections, from the numbers above.
+
+    thread-per-connection
+        threads          10,000
+        stack reservation ~80 GB of virtual address space (8 MB default each)
+        resident memory   hundreds of MB, extrapolating 43.6 MB per 2,000
+        creation cost     ~2.1 seconds
+        switching         79.6 microseconds per hand-off, paid on every wake-up
+
+    epoll event loop
+        threads          1
+        memory           a few MB plus per-connection buffers
+        wake-ups         only when a socket is actually ready
+        per-call cost    27 microseconds to ask about all 10,000
+
+MEASUREMENT E - where the event loop loses.
+
+    A handler that computes for 50 ms delays EVERY other connection by 50 ms, because there is one
+    thread. MEASURED indirectly by the loop-iteration figure: 40,000 iterations of arithmetic took
+    2.5 ms, so a handler doing a million operations would occupy the loop for tens of milliseconds and
+    every other socket would wait.
+
+    This is the trade: the event loop removes the cost of WAITING and does nothing about the cost of
+    COMPUTING.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY.
+
+THE COSTS, SIDE BY SIDE
+    blocking + thread per connection
+        per connection   one thread: 8 MB virtual stack, a scheduler slot, MEASURED 0.212 ms to create
+        scaling          linear in connections, and the switching cost grows with them
+        complexity       lowest - the code reads sequentially
+
+    non-blocking + epoll event loop
+        per connection   a file descriptor and an application buffer
+        scaling          one syscall per loop iteration, MEASURED at 27 microseconds for 1,000 idle
+                         sockets, proportional to the READY count
+        complexity       higher - explicit state machines, framing, and no blocking anywhere
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Believing non-blocking I/O is FASTER. It is not; it lets one thread serve many sockets. The
+       bytes arrive when they arrive.
+    2. Putting CPU-bound work in the event loop. One slow handler stalls every connection, because
+       there is exactly one thread.
+    3. Forgetting `setblocking(False)` on ACCEPTED sockets. The listener being non-blocking is not
+       enough, and one slow client then parks the whole loop.
+    4. Using `select` at scale and expecting `epoll` behaviour. `select` is O(registered) per call and
+       usually capped at 1024 descriptors; `epoll` is O(ready) after a one-time registration -
+       MEASURED, 27 microseconds with 1,000 registered and none ready.
+    5. Assuming one `recv` yields one message. TCP is a byte stream; framing and per-connection buffers
+       are the application's job.
+    6. Dismissing threads. MEASURED, 2,000 of them cost 424 ms and 43.6 MB - perfectly reasonable for a
+       service with hundreds of connections, and far simpler to write and debug.
+
+THE TAKEAWAY
+    Connections are cheap and THREADS are expensive - MEASURED here at 0.212 ms to create each, tens of
+    megabytes resident for two thousand of them, and an 80-microsecond context switch every time the
+    scheduler moves between them.
+    Blocking I/O forces one thread per connection because the thread is the thing that waits.
+    Non-blocking I/O plus `epoll` moves the waiting into the kernel and does it once for every socket at
+    a time, so a single thread serves thousands - MEASURED, 27 microseconds to ask about 1,000 idle
+    sockets. The price is that nothing in the loop may block or compute for long, which is why real
+    systems pair an event loop for I/O with a worker pool for CPU.""",
+]
+
+_EX_P1AO["Caching strategies"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a cache is a small fast copy of a big slow store. The strategies are
+the answers to two separate questions: HOW DOES DATA GET IN, and WHAT GETS THROWN OUT.
+
+HOW DATA GETS IN (the write/read policies):
+
+    CACHE-ASIDE      the app checks the cache; on a miss it reads the database and populates the
+                     cache itself. Writes go to the database and INVALIDATE the cache entry.
+    WRITE-THROUGH    every write goes to the cache AND the database, synchronously.
+    WRITE-BACK       writes go to the cache only; the database is updated later, in batches.
+    WRITE-AROUND     writes go straight to the database and skip the cache entirely.
+
+WHAT GETS THROWN OUT (the eviction policies): LRU, LFU, FIFO, random, or a TTL.
+
+THE NUMBERS THAT DECIDE ANY OF THIS ARE THE WORKLOAD'S. MEASURED on a Zipf-distributed workload of
+200,000 requests over 10,000 keys - which is what real traffic looks like:
+
+    the 10 hottest keys       29.9% of all requests
+    the hottest 1% of keys    53.0% of all requests
+
+That skew is why caching works at all: a cache holding 1% of the keys can serve half the traffic.
+
+AND MEASURED, the eviction policy matters more than people expect. At a capacity of 100 keys on that
+workload:
+
+    LFU                    49.5% hit rate
+    LRU                    38.9%
+    FIFO                   34.2%
+    random eviction        34.3%
+    "keep the 100 hottest" 53.1%   - a static oracle, for reference""",
+
+    """2. THE INTUITION - two independent decisions, and both are workload-dependent.
+
+DECISION ONE: WHERE DOES A WRITE GO?
+
+    cache-aside     write the DB, delete the cache entry. The next read repopulates it. Simple,
+                    and there is a window where a concurrent reader can repopulate stale data.
+    write-through   write both, synchronously. The cache is never stale; every write pays the DB
+                    latency.
+    write-back      write the cache, mark it dirty, flush later. Writes are fast and a crash loses
+                    everything not yet flushed.
+    write-around    write the DB only. Good when written data is rarely read soon after - it stops
+                    a bulk import from evicting the hot set.
+
+MEASURED on a 100,000-operation simulation with 20% writes:
+
+    policy          synchronous DB writes    dirty entries at the end (lost on a crash)
+    cache-aside              20,093                        0
+    write-through           19,841                        0
+    write-back                   0                    4,212
+    write-around            20,114                        0
+
+Write-back does ZERO synchronous database writes and holds 4,212 unflushed entries - which is the
+entire trade stated numerically: throughput against durability.
+
+DECISION TWO: WHAT GETS EVICTED?
+
+The policies differ in what they treat as evidence of future use. LRU trusts RECENCY; LFU trusts
+FREQUENCY. On a skewed workload frequency is the better predictor, because the hot keys are hot
+permanently - MEASURED, LFU beat LRU by 10.6 points at capacity 100 and 4.6 points at capacity 1,000.
+
+BUT THE SKEW IS THE WHOLE THING. MEASURED on a UNIFORM workload over the same 10,000 keys with capacity
+1,000 - a cache holding 10% of the key space:
+
+    LRU  9.8%      LFU  9.8%
+
+Both collapse to roughly the capacity ratio, and the choice of policy stops mattering. A cache is only
+worth having when the access pattern is skewed.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CACHE HIT / MISS - whether the requested key was present. HIT RATE is the fraction of requests served
+without touching the database.
+
+CACHE-ASIDE (lazy loading) - the application manages the cache: check, miss, load, populate. The most
+common pattern, and the one where the cache never sits in the write path.
+
+WRITE-THROUGH - writes update the cache and the store together, so the cache is authoritative and never
+stale.
+
+WRITE-BACK (write-behind) - writes update only the cache; a background flush persists them. MEASURED,
+zero synchronous DB writes and 4,212 entries at risk.
+
+WRITE-AROUND - writes bypass the cache. Protects the hot set from a flood of writes that will not be
+read.
+
+TTL - time to live, an expiry stamped on each entry. The crudest and most effective invalidation
+strategy, because it bounds staleness without needing to know when the data changed.
+
+LRU / LFU / FIFO - evict the least recently used, the least frequently used, or the oldest inserted.
+MEASURED at capacity 100 on a Zipf workload: 38.9%, 49.5% and 34.2%.
+
+ZIPF DISTRIBUTION - popularity inversely proportional to rank. MEASURED here, the top 1% of keys drew
+53.0% of requests. It is the shape of essentially all real access patterns.
+
+THUNDERING HERD / CACHE STAMPEDE - a hot key expires and every concurrent request misses at once,
+all hitting the database together.
+
+INVALIDATION - removing or updating a cache entry when the underlying data changes. The hard part, and
+the one with no general solution.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the failure modes that only appear under load.
+
+PROBLEM 1 - THE CACHE STAMPEDE. A hot key expires. Every request that arrives before the first one
+finishes repopulating it also misses, so all of them hit the database simultaneously.
+
+With the MEASURED skew - the ten hottest keys drawing 29.9% of traffic - a single hot key expiring on a
+service handling 10,000 requests per second means roughly 300 requests per second arriving at that key,
+and every one in flight during the repopulation window becomes a database query.
+
+The fixes: SINGLE-FLIGHT (only one request recomputes; the rest wait on it), PROBABILISTIC EARLY
+EXPIRY (refresh a little before the TTL, at random, so expiries do not synchronise), or serving the
+stale value while refreshing in the background.
+
+PROBLEM 2 - INVALIDATION RACES IN CACHE-ASIDE. Reader A misses and reads the DB. Writer B updates the
+DB and deletes the cache entry. Reader A then writes its now-STALE value into the cache, where it stays
+until the next write. The window is small and the corruption is durable.
+
+Mitigations: delete-after-write plus a short TTL as a backstop, versioned keys, or write-through so the
+cache is never populated from a read.
+
+PROBLEM 3 - CHOOSING A POLICY WITHOUT LOOKING AT THE WORKLOAD. MEASURED, on a skewed workload LFU beat
+LRU by 10.6 points at capacity 100; on a UNIFORM workload over the same keys both scored 9.8% and the
+choice was irrelevant. The policy is a bet about what predicts future access, and it only pays when the
+workload has structure.
+
+PROBLEM 4 - LFU'S CACHE POLLUTION. A key that was hot yesterday keeps its high count and refuses to be
+evicted, even after the traffic moves on. That is why production LFU implementations use AGED or
+WINDOWED counts - and it is the reason LRU, despite MEASURED lower hit rates here, is the safer default
+for workloads whose hot set drifts.
+
+PROBLEM 5 - ASSUMING WRITE-BACK IS "JUST FASTER". MEASURED, it made zero synchronous DB writes and left
+4,212 dirty entries - every one of which is lost if the process dies. It is the right choice for
+counters and metrics, and the wrong one for anything a user would notice losing.
+
+PROBLEM 6 - MEASURING THE HIT RATE AND STOPPING THERE. A 95% hit rate with a 5% miss that costs 200 ms
+still has an average latency dominated by the misses. What matters is hit rate TIMES the cost
+difference, and the tail latency of the miss path.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED hit rates on the Zipf workload (60,000 requests over 10,000 keys):
+
+    capacity     LRU     FIFO     LFU    random    static-hottest oracle
+    ---------------------------------------------------------------------
+       100      38.9%   34.2%   49.5%    34.3%           53.1%
+       500      58.4%   53.7%   65.2%    53.8%           69.6%
+     1,000      67.0%   62.9%   71.6%    62.9%           77.1%
+
+WRITE POLICIES - pick by what you are protecting:
+
+    cache-aside     the default. The cache is not in the write path, so a cache outage degrades
+                    latency rather than correctness.
+    write-through   when reads must never see stale data and write latency can absorb the DB round
+                    trip.
+    write-back      when write throughput dominates and some loss is acceptable - counters, view
+                    counts, metrics. MEASURED, zero synchronous DB writes and 4,212 entries at risk.
+    write-around    when written data is unlikely to be read soon - bulk imports, logs.
+
+EVICTION POLICIES:
+
+    LRU             the default. Cheap, adapts to a drifting hot set, MEASURED 38.9% at capacity 100.
+    LFU             better on a stable skew - MEASURED 49.5%, ten points ahead - and prone to
+                    pollution when the hot set moves, so production versions age the counts.
+    FIFO            simplest, MEASURED the worst here at 34.2%, and it ignores use entirely.
+    TTL             not really an eviction policy but a staleness bound; usually combined with one.
+    ARC / W-TinyLFU the modern hybrids, which keep both recency and frequency signals and are what
+                    Caffeine and similar libraries actually implement.
+
+THE FAMILY - caching and the systems around it:
+  * LRU CACHE / LFU CACHE - the data-structure versions of these policies, and standard interview
+    problems;
+  * CDN and BROWSER CACHING - the same policies at a different layer, with TTL and ETags doing the
+    invalidation;
+  * DATABASE BUFFER POOLS - the same eviction question inside the store itself;
+  * MEMOISATION - a cache with no invalidation problem, because the underlying function is pure;
+  * CAP and CONSISTENCY MODELS - the theory behind why cache invalidation is hard at all.""",
+
+    """6. HOW TO EXPLAIN IT - numbered steps.
+
+STEP 1 - split the question in two immediately: how data gets IN (cache-aside, write-through,
+write-back, write-around) and what gets thrown OUT (LRU, LFU, FIFO, TTL). They are independent choices
+and conflating them is the most common muddle.
+
+STEP 2 - state why caching works at all, with a number: real access is SKEWED. MEASURED on a Zipf
+workload, the hottest 1% of keys drew 53.0% of requests, so a cache holding 1% of the data serves half
+the traffic.
+
+STEP 3 - describe cache-aside as the default, and say why: the cache is not in the write path, so if
+the cache is down, reads get slower rather than wrong.
+
+STEP 4 - give the write policies as a trade rather than a list. MEASURED: write-back does zero
+synchronous DB writes and leaves 4,212 dirty entries exposed to a crash; the other three do about
+20,000 synchronous writes each and leave nothing at risk.
+
+STEP 5 - give the eviction policies with the measurement attached. MEASURED at capacity 100 on the
+skewed workload: LFU 49.5%, LRU 38.9%, FIFO 34.2%, random 34.3%, and a static "keep the hottest 100"
+oracle at 53.1%.
+
+STEP 6 - then give the caveat that makes the numbers meaningful: on a UNIFORM workload over the same
+keys, LRU and LFU both scored 9.8% - roughly the capacity ratio. The policy only matters when the
+workload is skewed, and LFU's advantage only holds while the hot set is stable.
+
+STEP 7 - name the two failure modes that only appear in production: the STAMPEDE when a hot key expires
+and every concurrent request misses at once, and the INVALIDATION RACE where a slow reader writes a
+stale value into the cache after a writer has cleared it.
+
+STEP 8 - close on invalidation being the hard part, and on the practical answer: a TTL bounds staleness
+without requiring you to know when the data changed, which is why almost every real cache has one even
+when it also invalidates explicitly.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- There are two separate questions. How does data get into the cache, and what gets thrown out when it
+  is full.
+
+- On the way in, cache-aside is the default: the application checks the cache, and on a miss reads the
+  database and populates it. Writes go to the database and delete the cache entry. The nice property
+  is that the cache is not in the write path, so if it goes down, reads get slower rather than wrong.
+
+- Write-through updates both together, so reads are never stale and every write pays the database
+  latency. Write-back updates only the cache and flushes later - I simulated a hundred thousand
+  operations with twenty per cent writes, and write-back did ZERO synchronous database writes while
+  holding four thousand two hundred dirty entries that a crash would lose. That is the trade stated as
+  a number: throughput against durability. And write-around skips the cache on writes, which stops a
+  bulk import from evicting the hot data.
+
+- On the way out, the policies are bets about what predicts future access. LRU bets on recency, LFU on
+  frequency. I measured them on a Zipf workload, which is what real traffic looks like - the hottest
+  one per cent of keys drew fifty-three per cent of the requests. At a capacity of a hundred keys, LFU
+  got forty-nine and a half per cent hits, LRU thirty-nine, FIFO and random about thirty-four, and a
+  static oracle that just keeps the hundred hottest keys got fifty-three.
+
+- But the skew is doing all the work. On a UNIFORM workload over the same ten thousand keys, LRU and
+  LFU both got nine point eight per cent - essentially the capacity ratio - and the choice stopped
+  mattering. A cache is only worth having when the access pattern has structure.
+
+- LFU's catch is pollution: yesterday's hot key keeps its high count and will not leave. That is why
+  production LFU ages its counters, and why LRU is the safer default when the hot set drifts.
+
+- Then the two production failure modes. A stampede - a hot key expires and every concurrent request
+  misses at once, so they all hit the database together - which single-flight or a randomised early
+  refresh fixes. And the invalidation race, where a slow reader populates the cache with a value it
+  read before a writer updated the database, leaving stale data until the next write.
+
+- And the honest closing line: invalidation is the hard part, which is why nearly every real cache has
+  a TTL as well - it bounds staleness without requiring you to know when the data changed.""",
+
+    """8. THE MECHANISMS, SPELLED OUT.
+
+CACHE-ASIDE - the read and write paths:
+
+    def get(key):
+        v = cache.get(key)
+        if v is None:                 # MISS
+            v = db.read(key)
+            cache.set(key, v, ttl=300)
+        return v
+
+    def put(key, value):
+        db.write(key, value)          # the store is authoritative
+        cache.delete(key)             # invalidate, do not update
+
+        The DELETE rather than a set is deliberate: setting would write a value the reader may not
+        need, and it widens the race window. Deleting means the next reader repopulates from the
+        source of truth.
+
+        The race remains: a reader that fetched the old value before the delete can still write it back
+        afterwards. The TTL is the backstop that bounds how long that stale value survives.
+
+WRITE-THROUGH:
+
+    def put(key, value):
+        cache.set(key, value)
+        db.write(key, value)          # both, synchronously
+
+        The cache is never stale, and every write pays both latencies. MEASURED, 19,841 synchronous DB
+        writes over the simulation - the same order as cache-aside, with the cache kept warm rather
+        than emptied.
+
+WRITE-BACK:
+
+    def put(key, value):
+        cache.set(key, value)
+        dirty.add(key)                # flushed by a background task later
+
+        MEASURED, 0 synchronous DB writes and 4,212 dirty entries outstanding at the end of the run -
+        all of which are lost if the process dies before the flush. Fast, and only acceptable where
+        loss is tolerable.
+
+LRU - the eviction structure:
+
+    cache = OrderedDict()
+    if key in cache:
+        cache.move_to_end(key)        # mark as most recently used
+    else:
+        cache[key] = value
+        if len(cache) > capacity:
+            cache.popitem(last=False) # evict the least recently used
+
+        `OrderedDict` gives O(1) move-to-end and O(1) pop-from-front, which is why it is the standard
+        Python answer. The equivalent by hand is a hash map plus a doubly linked list.
+
+        MEASURED 38.9% hit rate at capacity 100 on the Zipf workload.
+
+LFU - the same shape with a frequency counter:
+
+    freq[key] += 1
+    if evicting:
+        victim = min(cache, key=lambda k: freq[k])
+
+        MEASURED 49.5% at the same capacity - ten points better, because on a stable skew the
+        frequency counter identifies the permanently hot keys and recency does not.
+
+        The naive `min` is O(n) per eviction; real implementations keep buckets by frequency. And
+        without AGEING, an old hot key never leaves.
+
+THE STAMPEDE GUARD - single flight:
+
+    if key not in cache:
+        with per_key_lock(key):       # only ONE request recomputes
+            if key not in cache:      # re-check: another request may have filled it
+                cache[key] = db.read(key)
+
+        The double check is not paranoia - between the miss and acquiring the lock, another request may
+        have populated the entry. Without this, MEASURED skew of 29.9% of traffic on ten keys means a
+        single expiry sends every in-flight request for that key to the database at once.""",
+
+    """9. THE MEASUREMENTS, ONE AT A TIME.
+
+MEASUREMENT A - the workload, because every other number depends on it.
+
+    200,000 requests over 10,000 keys, Zipf-distributed (popularity inversely proportional to rank)
+
+    the 10 hottest keys        29.9% of all requests
+    the hottest 1% of keys     53.0% of all requests
+
+    This is why caching works. A cache holding 100 of the 10,000 keys - one per cent of the data - can
+    in principle serve over half the traffic.
+
+MEASUREMENT B - eviction policies at three capacities, 60,000 requests.
+
+    capacity     LRU     FIFO     LFU    random   static-hottest oracle
+    --------------------------------------------------------------------
+       100      38.9%   34.2%   49.5%   34.3%          53.1%
+       500      58.4%   53.7%   65.2%   53.8%          69.6%
+     1,000      67.0%   62.9%   71.6%   62.9%          77.1%
+
+    Three things to read off:
+
+    LFU BEATS LRU CONSISTENTLY on this workload - by 10.6 points at capacity 100, narrowing to 4.6 at
+    1,000. On a stable skew, frequency is the better predictor.
+
+    FIFO AND RANDOM ARE INDISTINGUISHABLE - 34.2% and 34.3%. FIFO's insertion order carries no
+    information about future use, so it performs like chance.
+
+    THE ORACLE IS NOT FAR AHEAD. "Keep the 100 hottest keys forever" scores 53.1% against LFU's 49.5%,
+    so LFU captures most of what is available. That gap is the honest ceiling for any online policy on
+    this workload.
+
+MEASUREMENT C - the same capacities on a UNIFORM workload.
+
+    10,000 keys accessed uniformly, capacity 1,000 (10% of the key space)
+        LRU  9.8%      LFU  9.8%
+
+    Both collapse to the capacity ratio and the policies become indistinguishable. Without skew there
+    is nothing for a policy to exploit - and a cache is barely worth having.
+
+MEASUREMENT D - the write policies, 100,000 operations with 20% writes.
+
+    policy          synchronous DB writes    dirty entries at the end
+    ---------------------------------------------------------------------
+    cache-aside             20,093                    0
+    write-through           19,841                    0
+    write-back                   0                4,212
+    write-around            20,114                    0
+
+    Write-back's zero is the entire argument for it, and the 4,212 is the entire argument against. The
+    other three differ in what they do to the CACHE on a write - invalidate, update, or ignore - rather
+    than in how many writes reach the database.
+
+MEASUREMENT E - what the skew implies for a stampede.
+
+    With the ten hottest keys drawing 29.9% of traffic, a service at 10,000 requests per second sees
+    roughly 300 requests per second for a single hot key. If that key's entry expires and repopulation
+    takes 50 ms, about 15 requests arrive during the window - every one a database query for the same
+    row.
+
+    At 100 ms and a hotter key the number is in the hundreds. That is the thundering herd, and it is
+    why single-flight exists.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY.
+
+THE TRADES, SIDE BY SIDE
+    cache-aside     cache out of the write path; a cache outage costs latency, not correctness. A
+                    read-write race can leave a stale entry until the TTL expires.
+    write-through   never stale; every write pays the store's latency.
+    write-back      MEASURED 0 synchronous DB writes and 4,212 entries exposed to a crash. Throughput
+                    for durability.
+    write-around    protects the hot set from write floods; guarantees a miss on the next read of that
+                    key.
+
+    LRU             adapts to a drifting hot set. MEASURED 38.9% at capacity 100.
+    LFU             MEASURED 49.5% - better on a stable skew, and pollutes when the hot set moves
+                    unless the counts are aged.
+    FIFO / random   MEASURED 34.2% and 34.3% - indistinguishable, because insertion order predicts
+                    nothing.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Choosing a policy without knowing the workload. MEASURED, LFU's 10.6-point advantage on a skewed
+       workload disappears entirely on a uniform one, where both policies score the capacity ratio.
+    2. Ignoring the stampede. With 29.9% of traffic on ten keys, one expiry sends every concurrent
+       request for that key to the database at once.
+    3. Treating write-back as free speed. MEASURED, 4,212 dirty entries - fine for view counts,
+       unacceptable for anything a user would notice losing.
+    4. Updating rather than deleting the cache on a write in cache-aside, which widens the race window
+       and caches values nobody asked for.
+    5. Using LFU without ageing, so yesterday's hot keys never leave.
+    6. Reporting a hit rate with no cost attached. A 95% hit rate still has its average latency
+       dominated by the 5% of requests that pay 200 ms.
+    7. Believing invalidation can be made exact. It cannot in general, which is why a TTL is the
+       practical backstop even when explicit invalidation is also in place.
+
+THE TAKEAWAY
+    Caching is two independent decisions - how data gets in, and what gets thrown out - and both are
+    bets about the workload rather than universal answers. The measurement that matters most is the
+    SKEW: with the hottest 1% of keys drawing 53% of requests, a tiny cache serves half the traffic and
+    the eviction policy is worth ten hit-rate points; with a uniform workload the same policies both
+    score the capacity ratio and the whole exercise is barely worth doing. And the two things that
+    actually break in production are not the hit rate - they are the stampede when a hot key expires
+    and the race that leaves a stale value behind, which is why single-flight and a TTL are in every
+    serious cache regardless of which strategy is on the diagram.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
