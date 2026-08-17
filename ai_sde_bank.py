@@ -269574,6 +269574,1497 @@ right answer; and remember the backward pass needs only the SIGN of x, which is 
 memory than the activations, and that ReLU halves the variance, which is the entire
 reason He initialisation carries a 2.""",
 ]
+_EX_P1AO["Sinusoidal positional encoding (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - attention has no idea what order the tokens came in, so
+you add the order to the vectors.
+
+Self-attention computes, for every pair of tokens, how much one should attend to the
+other. That computation is a set operation — permute the input and the output permutes
+with it. "The dog bit the man" and "The man bit the dog" would be IDENTICAL to a
+transformer with no positional information.
+
+So you ADD a position-dependent vector to each token embedding before the first layer.
+The original Transformer used fixed sine and cosine waves:
+
+  PE[pos, 2i]   = sin(pos / 10000^(2i/d))
+  PE[pos, 2i+1] = cos(pos / 10000^(2i/d))
+
+Even dimensions get a sine, odd dimensions the cosine of the SAME frequency, and the
+frequency falls geometrically with the dimension index.
+
+THE PROPERTY THAT MAKES IT WORK, MEASURED: the dot product of two positional encodings
+depends ONLY on their separation, not on where they are in the sequence. At d = 128,
+PE(p)·PE(p+1) is 62.0937 at p = 0, 20, 40, 60 and 80 — spread 7.11e-15, i.e. float
+noise. THE ENCODING IS TRANSLATION-INVARIANT IN ITS INNER PRODUCT, which is exactly what
+lets attention learn "three tokens back" rather than "position 47".""",
+
+    """2. THE INTUITION - a binary counter made continuous.
+
+Think of how you write a position in binary: the lowest bit flips every step, the next
+every two, the next every four. Read the whole pattern and you know the number exactly.
+
+Sinusoidal encoding is that, with smooth waves instead of bits. Each pair of dimensions
+is a clock hand rotating at its own rate: fast hands distinguish nearby positions, slow
+hands distinguish distant ones. MEASURED at d = 512, the wavelengths:
+
+  dim   0     wavelength      6.3 positions
+  dim  50     wavelength     15.4
+  dim 100     wavelength     38.0
+  dim 200     wavelength    229.4
+  dim 400     wavelength  8,378.8
+  dim 510     wavelength 60,611.5
+
+FOUR ORDERS OF MAGNITUDE, from six positions to sixty thousand. That geometric spread is
+the design: no single frequency can both resolve adjacent tokens and distinguish
+position 10 from position 10,000, so you use all of them at once.
+
+WHY SINE AND COSINE IN PAIRS. Because `sin(a+b)` and `cos(a+b)` are linear combinations
+of `sin(a), cos(a), sin(b), cos(b)`. So shifting a position by k is a fixed ROTATION of
+each (sin, cos) pair — a linear map that does not depend on the position. MEASURED: fit
+a single matrix M on positions 0-63 for an offset of 7, then apply it to positions 70-89;
+maximum error 3.145e-05. ONE FIXED MATRIX SHIFTS ANY POSITION BY 7. That is what makes
+relative offsets learnable by a linear layer.
+
+AND THE NORM IS CONSTANT. MEASURED at d = 64, every position's encoding has norm 5.6569
+= sqrt(d/2), because half the dimensions are sines and half cosines and sin² + cos² = 1.
+No position is louder than another.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TOKEN EMBEDDING - the learned vector for a word or sub-word, length d_model. Carries
+what the token IS, not where it is.
+
+POSITIONAL ENCODING (PE) - a vector added to the embedding, carrying WHERE the token is.
+
+d_model - the model width, 512 in the original Transformer and 4096+ in modern ones.
+
+pos - the position index, 0 to seq_len - 1.
+
+FREQUENCY / ANGLE RATE - `1 / 10000^(2i/d)`. How fast that dimension's wave cycles.
+
+WAVELENGTH - `2π / frequency`. How many positions before the wave repeats.
+
+THE 10000 - the base of the geometric spread, chosen so the slowest wavelength is around
+10000·2π ≈ 63,000 positions. It is a hyperparameter that nobody tuned and everybody
+copied.
+
+ABSOLUTE vs RELATIVE position - "this is token 47" versus "this is three tokens after
+that one". Attention mostly wants the second, and the linear-shift property is how it
+gets it from the first.
+
+LEARNED POSITIONAL EMBEDDING - the alternative: a trainable lookup table with one row
+per position. Simpler, and it cannot handle a position past the last row.
+
+EXTRAPOLATION - working at sequence lengths longer than anything seen in training.
+
+ROPE (Rotary Position Embedding) - the modern replacement, which applies the rotation to
+the QUERY and KEY vectors inside attention instead of adding to the input.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the `// 2` in the exponent, which looks like a
+typo and is the entire design.
+
+The angle rate is `1 / 10000^(2·(i//2)/d)`, not `1 / 10000^(i/d)`. The integer division
+PAIRS UP adjacent dimensions so that dims 0 and 1 share a frequency, dims 2 and 3 share
+the next, and so on. Without it, every dimension gets its own frequency and the sine at
+dim 0 is no longer partnered with a cosine of the same rate.
+
+IT STILL RUNS. It still produces a unique vector per position. AND IT DESTROYS THE ONE
+PROPERTY YOU WANTED. MEASURED, the spread of PE(p)·PE(p+offset) across different p, for
+offsets 1, 5 and 10:
+
+  correctly paired (with //2):   2.665e-15      i.e. constant, to float precision
+  unpaired (without //2):        2.541e+00
+
+The correct version's dot product is a function of the offset ALONE. The unpaired
+version's varies by 2.5 depending on where in the sequence you are — so attention can no
+longer read "three tokens back" as a fixed signal, because it looks different at every
+absolute position.
+
+THE SECOND TRAP: THE INDEXING. `pe[:, 0::2] = sin(angles[:, 0::2])` — the sine is
+evaluated at the EVEN columns of the angle array, and the cosine at the odd ones. Since
+`i//2` makes columns 2i and 2i+1 carry the same angle, `angles[:, 0::2]` and
+`angles[:, 1::2]` are the same numbers, and you get sin/cos of the same argument. Write
+`pe[:, 0::2] = sin(angles[:, 0::2])` and `pe[:, 1::2] = cos(angles[:, 0::2])` and you get
+the same result; write `cos(angles)` over the whole array and slice after, and you also
+get the same result. What you must NOT do is pair a sine at one frequency with a cosine
+at another.
+
+THE THIRD: ADD, DON'T CONCATENATE. Adding seems lossy — you are corrupting the semantic
+vector with position noise — but d_model is large enough that the model learns to keep
+them in near-orthogonal subspaces, and concatenating would cost you d_model dimensions of
+width. MEASURED, the scales are deliberately comparable: at d = 512 a unit-variance
+embedding has norm ≈ 22.6 and the PE has norm exactly 16.0. FOR CONTRAST, adding the RAW
+INTEGER POSITION would put a component of magnitude 4096 against an embedding of norm
+22.6 — 181x — and drown the token entirely.""",
+
+    """5. THE ALTERNATIVES, AND WHAT ACTUALLY WON.
+
+LEARNED ABSOLUTE POSITION EMBEDDINGS. A trainable (max_len, d_model) table, one row per
+position. Used by BERT and GPT-2. Simpler, slightly better in-distribution, and it has a
+hard wall: THERE IS NO ROW FOR POSITION max_len. MEASURED, the sinusoidal function is
+defined at any position at all — position 100,000 evaluates fine, norm 8.0000 at d = 128,
+identical to position 0's norm.
+
+RELATIVE POSITION BIAS (T5, Shaw et al.). Add a learned scalar to the attention logits
+depending on the DISTANCE between query and key, usually bucketed. Directly encodes the
+thing you actually wanted, and generalises to longer sequences because the buckets
+saturate.
+
+ALiBi. Subtract `m·|i - j|` from the attention logits — a linear penalty on distance with
+a per-head slope. No embedding at all. Extrapolates remarkably well and costs nothing.
+
+ROPE (Rotary), which is what modern models use — LLaMA, GPT-NeoX, Qwen, most of what
+shipped after 2022. It takes the SAME rotation idea and applies it to the query and key
+vectors inside attention rather than adding to the input. The dot product `q·k` then
+depends only on the relative offset BY CONSTRUCTION, rather than approximately as here.
+It is the sinusoidal insight, moved to where it does the most good.
+
+NOTHING AT ALL. Decoder-only models with causal masking have been shown to learn position
+implicitly from the mask, since token i can see exactly i predecessors. It works and it is
+worse than doing it explicitly.
+
+SO WHY LEARN THIS ONE? Because it is the ancestor of all of them, the interview question,
+and the clearest place to see the property — dot product depending only on offset — that
+every successor is chasing.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. `pos = np.arange(seq_len)[:, None]` — shape (seq_len, 1).
+
+STEP 2. `i = np.arange(d_model)[None, :]` — shape (1, d_model).
+
+STEP 3. `angle_rates = 1.0 / np.power(10000, (2 * (i // 2)) / d_model)`. THE `// 2` IS
+NOT A TYPO. MEASURED, dropping it takes the offset-invariance of the dot product from
+2.665e-15 to 2.541e+00.
+
+STEP 4. `angles = pos * angle_rates` — broadcasting (seq_len,1) against (1,d_model) gives
+(seq_len, d_model) with no loop.
+
+STEP 5. `pe[:, 0::2] = np.sin(angles[:, 0::2])` and `pe[:, 1::2] = np.cos(angles[:, 1::2])`.
+
+STEP 6. STATE THE SHAPES: the result is (seq_len, d_model), the same shape as the batch
+of embeddings it will be added to (broadcast across the batch dimension).
+
+STEP 7. ADD, DO NOT CONCATENATE: `x = embeddings + pe[:seq_len]`.
+
+STEP 8. IN A REAL MODEL, SCALE THE EMBEDDINGS by `sqrt(d_model)` first — that is in the
+paper and is usually forgotten. Without it the embeddings are small relative to the PE at
+initialisation and the position signal dominates.
+
+STEP 9. PRECOMPUTE ONCE for the maximum length and slice. It is a constant; recomputing
+it every forward pass is pure waste.
+
+STEP 10. FOR ODD d_model, `0::2` gives one more column than `1::2`. The formula still
+works; just do not assume the two slices are the same width.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'Self-attention is permutation-equivariant — it sees a set, not a sequence — so without
+positional information "the dog bit the man" and "the man bit the dog" are literally the
+same input. The fix is to add a position-dependent vector to each token embedding before
+the first layer.
+
+The sinusoidal version uses sine and cosine waves whose frequencies fall geometrically
+across the dimensions. Think of it as a binary counter made smooth: the fastest
+dimensions flip every few positions and distinguish neighbours, the slowest have
+wavelengths in the tens of thousands and distinguish far-apart regions. I measured the
+span at d equals 512 — 6.3 positions at the first dimension and sixty thousand at the
+last.
+
+The property that makes it work is that the dot product between two positional encodings
+depends only on their SEPARATION, not on where they sit in the sequence. I measured that:
+at d equals 128, the dot product of positions p and p-plus-one is 62.0937 whether p is 0
+or 80, with a spread of 7e-15. That is what lets attention learn "three tokens back" as a
+fixed signal. Concretely, shifting a position by k is a fixed linear map — I fitted one
+matrix on positions 0 to 63 for an offset of 7 and applied it to positions 70 to 89 with
+a maximum error of 3e-05.
+
+The detail that gets missed is the floor-divide-by-two in the exponent, which pairs
+adjacent dimensions so a sine and a cosine share a frequency. Without it the code still
+runs and still gives a unique vector per position, but the offset-invariance is gone — I
+measured the spread going from 3e-15 to 2.5. And the whole point was the invariance.
+
+The practical argument for sinusoidal over a learned table is extrapolation: it is a
+function, so position 100,000 evaluates fine, whereas a table of size 512 simply has no
+row 512. Though in practice modern models use RoPE, which takes the same rotation idea
+and applies it to the queries and keys inside attention, so the relative dependence is
+exact rather than approximate.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def positional_encoding(seq_len, d_model):
+      pos = np.arange(seq_len)[:, None]                            # 1
+      i = np.arange(d_model)[None, :]                              # 2
+      angle_rates = 1.0 / np.power(10000, (2 * (i // 2)) / d_model)# 3, 4
+      angles = pos * angle_rates                                   # 5
+      pe = np.zeros((seq_len, d_model))
+      pe[:, 0::2] = np.sin(angles[:, 0::2])                        # 6
+      pe[:, 1::2] = np.cos(angles[:, 1::2])                        # 7
+      return pe
+
+LINE 1. `[:, None]` makes it (seq_len, 1) — a COLUMN. Without it the shape is (seq_len,)
+and line 5 either errors or, when seq_len == d_model, silently computes an elementwise
+product instead of the outer product you wanted.
+
+LINE 2. `[None, :]` makes it (1, d_model) — a ROW. The two together are what make line 5
+broadcast into the full matrix.
+
+LINE 3, `10000`. The base of the geometric frequency spread. It sets the slowest
+wavelength at 2π·10000 ≈ 62,800 positions. MEASURED at d = 512, the resulting range:
+wavelength 6.3 at dim 0, 38.0 at dim 100, 8,378.8 at dim 400 and 60,611.5 at dim 510.
+
+LINE 4, `2 * (i // 2)`. THE LINE THE QUESTION IS ABOUT. `i // 2` maps dimension indices
+0,1,2,3,... to 0,0,1,1,... so each ADJACENT PAIR shares one frequency — one gets the sine
+of it and one the cosine. That pairing is what makes a position shift a fixed rotation.
+  MEASURED, the spread of PE(p)·PE(p+k) across p, for k in {1,5,10}:
+    with `2*(i//2)`:  2.665e-15   (constant — a function of k alone)
+    with plain `i`:   2.541e+00   (varies with absolute position)
+
+LINE 5. `(seq_len,1) * (1,d_model) -> (seq_len,d_model)`. Broadcasting does the whole
+outer product with no loop and no allocation beyond the result.
+
+LINE 6-7. Even columns take the sine, odd the cosine. Because line 4 gave columns 2i and
+2i+1 the SAME angle, `angles[:, 0::2]` and `angles[:, 1::2]` hold identical numbers — so
+each pair is (sin θ, cos θ) for one θ, which is a point on the unit circle. THAT is why
+the norm is constant: MEASURED, every position at d = 64 has norm exactly 5.6569 =
+sqrt(d/2), because there are d/2 pairs and each contributes sin²+cos² = 1.
+
+HOW IT IS USED, and the line usually omitted:
+
+      x = embeddings * np.sqrt(d_model) + pe[:seq_len]
+
+The `sqrt(d_model)` scaling is in the paper. MEASURED at d = 512, the PE has norm 16.0
+and a unit-variance embedding has norm ≈ 22.6 — deliberately comparable, so neither
+drowns the other. FOR CONTRAST, adding the raw integer position at sequence length 4096
+would contribute a magnitude of 4096 against an embedding norm of 22.6 — 181x, and the
+token content would be gone.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the frequency ladder at d_model = 512:
+
+  dim     frequency        wavelength (positions)
+    0    1.000000e+00              6.3
+    2    9.646616e-01              6.5
+   10    8.353625e-01              7.5
+   50    4.067944e-01             15.4
+  100    1.654817e-01             38.0
+  200    2.738420e-02            229.4
+  400    7.498942e-04          8,378.8
+  510    1.036633e-04         60,611.5
+
+Fast hands at the low dimensions, slow hands at the high ones. Nothing in between is
+missing.
+
+TRACE B - constant norm and uniqueness, d = 64, 64 positions:
+
+  ||PE(0)|| … ||PE(5)||  =  5.6569, 5.6569, 5.6569, 5.6569, 5.6569, 5.6569
+  sqrt(d/2)              =  5.6569
+  all norms equal?          True
+  distinct encodings?       64 unique of 64
+
+TRACE C - THE CENTRAL PROPERTY. d = 128; PE(p)·PE(p+offset) at p = 0, 20, 40, 60, 80:
+
+  offset  0:  64.0000 ×5      spread 0
+  offset  1:  62.0937 ×5      spread 7.11e-15
+  offset  2:  57.3819 ×5      spread 7.11e-15
+  offset  5:  47.1850 ×5      spread 7.11e-15
+  offset 10:  42.8200 ×5      spread 1.42e-14
+  offset 50:  34.9550 ×5      spread 2.13e-14
+
+Five different absolute positions, identical dot products to fifteen significant figures.
+
+TRACE D - and it decays monotonically with distance, d = 128:
+
+  offset      0       1       2       4       8      16      32      64     128
+  dot    64.0000 62.0937 57.3819 48.5860 45.7205 39.7017 35.6778 30.5201 21.2988
+
+Nearby positions are similar; far positions are less similar. That is a usable inductive
+bias handed to the model for free.
+
+TRACE E - the fixed linear shift. Fit M by least squares so that `PE(p) @ M = PE(p+7)`
+using only positions 0-63, then TEST on positions 70-89:
+
+  max error = 3.145e-05
+
+One matrix, any position.
+
+TRACE F - the `// 2`. Spread of PE(p)·PE(p+k) across p, k in {1, 5, 10}:
+
+  with    `2*(i//2)`:   2.665e-15
+  without (plain `i`):  2.541e+00
+
+  freq(dim 0) = 1.000000, freq(dim 1) = 1.000000    correct — a PAIR
+  freq(dim 0) = 1.000000, freq(dim 1) = 0.562341    unpaired — sine and cosine of
+                                                    different waves
+
+TRACE G - extrapolation, d = 128:
+
+  position       0:  norm 8.0000,  first 4 dims [ 0.0000,  1.0000,  0.0000,  1.0000]
+  position     512:  norm 8.0000,  first 4 dims [ 0.0795, -0.9968, -0.3978, -0.9175]
+  position   4,095:  norm 8.0000,  first 4 dims [-0.9978, -0.0660,  0.6700, -0.7424]
+  position 100,000:  norm 8.0000,  first 4 dims [ 0.0357, -0.9994,  1.0000, -0.0016]
+
+A learned table with max_len = 512 has no row for position 512 at all.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(seq_len · d_model) to build, once — it is a constant matrix, so precompute it for
+the maximum length and slice. SPACE O(seq_len · d_model): at 4,096 positions and d = 4096
+that is 134 MB in float32, which is why long-context models with learned tables get
+expensive and why RoPE, which computes the rotation on the fly, is cheaper as well as
+better.
+
+THE #1 MISTAKE: dropping the `// 2`. MEASURED, the offset-invariance of the dot product
+goes from 2.665e-15 to 2.541e+00 — the property the whole construction exists to provide,
+gone, with no error and no visible symptom in the output shape.
+
+THE #2 MISTAKE: pairing a sine at one frequency with a cosine at another (the same bug
+from the indexing side). The (sin, cos) pair must be one point on one circle.
+
+THE #3 MISTAKE: forgetting `[:, None]` / `[None, :]`, so the broadcast is elementwise
+rather than outer. Errors unless seq_len == d_model, in which case it silently returns a
+(seq_len,) worth of nonsense broadcast wide.
+
+THE #4 MISTAKE: concatenating instead of adding, which costs d_model dimensions of model
+width for no gain.
+
+THE #5 MISTAKE: forgetting the `sqrt(d_model)` scaling on the embeddings, so the position
+signal dominates the token signal at initialisation.
+
+THE #6 MISTAKE: adding raw integer positions. MEASURED, magnitude 4096 against an
+embedding norm of 22.6 — 181x — and the content is erased.
+
+THE #7 MISTAKE: recomputing the matrix every forward pass. It never changes.
+
+THE #8 MISTAKE: assuming this is what modern models use. It is the ancestor; RoPE and
+ALiBi are what shipped.
+
+THE TAKEAWAY: attention sees a set, so position has to be injected, and the sinusoidal
+scheme does it with a ladder of frequencies spanning four orders of magnitude — measured,
+wavelengths from 6.3 to 60,611 positions at d = 512 — so that fast dimensions separate
+neighbours and slow ones separate regions. The property that earns its place is that the
+DOT PRODUCT OF TWO ENCODINGS DEPENDS ONLY ON THEIR OFFSET: measured constant to 7e-15
+across absolute positions, and a shift by k is one fixed linear map (fitted on positions
+0-63, applied at 70-89 with error 3e-05). That is entirely due to pairing adjacent
+dimensions as (sin, cos) of the same frequency, which is what the `// 2` in the exponent
+does — measured, remove it and the invariance collapses from 3e-15 to 2.5 while the code
+runs perfectly. And because it is a function rather than a table, it evaluates at
+position 100,000 as happily as at position 0, which is the argument that kept it alive
+until RoPE did the same thing better.""",
+]
+
+_EX_P1AO["Softmax + cross-entropy combined gradient (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the gradient of a classifier's loss with respect to its
+raw scores is `probs - labels`, and nothing else.
+
+Softmax turns logits into probabilities; cross-entropy scores those probabilities against
+a one-hot label. Differentiate the composition with respect to the LOGITS and you get:
+
+  dL/dlogits = (softmax(logits) - one_hot) / N
+
+No softmax Jacobian. No `1/p`. No chain of two terms. The messy pieces cancel exactly,
+and this is why every framework FUSES the two operations into one — PyTorch's
+`CrossEntropyLoss` takes logits, not probabilities, and warns you if you hand it a
+softmax output.
+
+MEASURED against a central-difference numerical gradient on 8 samples and 5 classes: max
+difference 3.133e-10.
+
+AND THE FUSION IS NOT JUST TIDINESS. MEASURED on a case where the true class has logit
+-1000 and another has +1000:
+
+  combined:  (p - y) = [1, 0, 0, 0, -1]        exact, bounded, correct
+  separate:  dL/dp = -y/p = [-0, nan, nan, nan, -inf]
+
+The true class's probability underflowed to exactly 0.0, so the separate path divides by
+zero. The combined form never forms that division at all.""",
+
+    """2. THE INTUITION - where the two ugly derivatives cancel.
+
+CROSS-ENTROPY with a one-hot label is `L = -log(p_correct)`, so `dL/dp_correct = -1/p`.
+That blows up as p approaches 0 — exactly when the model is most wrong.
+
+THE SOFTMAX JACOBIAN is `dp_i/dz_j = p_i(δ_ij - p_j)`. It has a factor of p in every
+entry, and it is a full K×K matrix per sample, not a vector.
+
+MULTIPLY THEM and the p in the Jacobian cancels the 1/p from the log. For the correct
+class the surviving term is `p_c - 1`; for every other class it is `p_j`. Written as one
+vector, that is `p - y`.
+
+READ WHAT THAT MEANS. The gradient on each logit is "how much probability you assigned"
+minus "how much you should have". If you gave the right class 0.7, its logit gets a push
+of -0.3 (increase it). A wrong class you gave 0.2 gets +0.2 (decrease it). BOUNDED IN
+[-1, 1] ALWAYS, no matter how confidently wrong the model is. Compare `-1/p`, which is
+unbounded.
+
+THE SAME CANCELLATION AS LOGISTIC REGRESSION. Binary logistic regression's gradient is
+`p - y`; this is the K-class version of the identical algebra. Sigmoid+log-loss and
+softmax+cross-entropy are chosen precisely because their derivatives cancel this way,
+which is why "use MSE on a softmax output" is a mistake rather than a preference.
+
+AND THE `/N` IS THE BATCH MEAN. Without it you have the gradient of the SUM, so the step
+size scales with batch size — MEASURED, the summed gradient norm grows from 1.03 at batch
+1 to 31.85 at batch 1024, a 31x change in effective learning rate for a change that was
+supposed to be about throughput.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LOGITS - the raw pre-softmax scores. Any real numbers, one per class. The thing you
+differentiate with respect to.
+
+SOFTMAX - `exp(z_i) / Σexp(z_j)`. Turns logits into a probability distribution:
+non-negative, sums to 1.
+
+CROSS-ENTROPY - `-Σ y_i log p_i`. With a one-hot y it is just `-log p_correct`.
+
+ONE-HOT - a vector with 1 at the true class and 0 elsewhere.
+
+JACOBIAN - the matrix of all partial derivatives of a vector output with respect to a
+vector input. Softmax's is K×K per sample; the fused form never builds it.
+
+LOG-SUM-EXP (LSE) - `max(z) + log(Σ exp(z - max(z)))`. The numerically safe way to
+compute `log(Σ exp(z))`.
+
+LOG-SOFTMAX - `z_i - LSE(z)`. Computes the log of the probability WITHOUT ever forming
+the probability, so it cannot underflow.
+
+MAX-SUBTRACTION (the stability shift) - subtracting `max(z)` before exponentiating.
+Mathematically a no-op because it cancels in the ratio; numerically essential.
+
+UNDERFLOW / OVERFLOW - a float becoming 0 or inf. `exp(710)` is inf in float64;
+`exp(-746)` is 0.
+
+FUSED KERNEL - one implementation computing loss and gradient together, which is what
+`nn.CrossEntropyLoss` is.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - three numerical failures, two of which the fused
+form simply does not have.
+
+FAILURE ONE: SOFTMAX WITHOUT THE MAX-SUBTRACTION. `np.exp(z)` overflows above about 709
+in float64. MEASURED:
+
+  logits ~100:   naive [0.6652, 0.2447, 0.0900]   stable [0.6652, 0.2447, 0.0900]
+  logits ~710:   naive [nan,    0.0,    0.0   ]   stable [0.6652, 0.2447, 0.0900]
+  logits ~800:   naive [nan,    nan,    nan   ]   stable [0.6652, 0.2447, 0.0900]
+  logits ~-745:  naive [1.0,    0.0,    0.0   ]   stable [0.6652, 0.2447, 0.0900]
+  logits ~-800:  naive [nan,    nan,    nan   ]   stable [0.6652, 0.2447, 0.0900]
+
+Note the answer is the SAME in every row — the distribution depends only on the
+DIFFERENCES between logits, so subtracting the max changes nothing mathematically and
+everything numerically. Note also that the large-NEGATIVE case fails too: all the
+exponentials underflow to 0 and the sum is 0/0.
+
+FAILURE TWO: BACKPROPAGATING THROUGH THE PIECES. MEASURED with logits [1000, 0, 0, 0,
+-1000] and the true class being the last one:
+
+  p                     = [1.0, 0.0, 0.0, 0.0, 0.0]      p_true underflowed to exactly 0
+  combined  (p - y)     = [1.0, 0.0, 0.0, 0.0, -1.0]     exact and correct
+  separate  dL/dp = -y/p= [-0.0, nan, nan, nan, -inf]
+  loss -log(p_true)     = inf
+  log-softmax: z_true - LSE(z) = -2000.0   ->  loss = 2000.0, finite and exact
+
+THE COMBINED GRADIENT IS CORRECT IN A CASE WHERE THE SEPARATE ONE IS -inf. And the loss
+is computable too, but only via log-softmax — you must never form p and then take its log.
+
+FAILURE THREE: FEEDING SOFTMAX OUTPUT TO A LOSS THAT EXPECTS LOGITS. `nn.CrossEntropyLoss`
+applies its own log-softmax. Passing probabilities means a softmax of a softmax: the
+result is a valid distribution, the training runs, the loss falls, and the model is much
+worse than it should be because the effective logits have been squashed into [0, 1] and
+the gradient is attenuated. It is the single most common PyTorch bug in this area and
+nothing warns you at runtime.""",
+
+    """5. THE ALTERNATIVES, AND WHAT THE FUSION BUYS.
+
+BACKPROP THROUGH THE PIECES, which is what an autodiff framework does if you write them
+separately. Correct in exact arithmetic; MEASURED, 155.81 ms against 110.85 ms for the
+fused form at N = 8192, K = 1000 — 1.4x — and it agrees to 1.355e-20 in the well-behaved
+case and gives -inf in the ill-conditioned one.
+
+BINARY CROSS-ENTROPY WITH LOGITS, for multi-LABEL problems where classes are not mutually
+exclusive. Sigmoid per class instead of one softmax, and the gradient is again `p - y`,
+same cancellation.
+
+`scipy.special.log_softmax` / `logsumexp` if you need the loss and not just the gradient.
+They handle the shift for you.
+
+SPARSE / INTEGER LABELS instead of one-hot. This is not a minor optimisation. MEASURED at
+N = 8192, K = 50000 — a vocabulary-sized output layer:
+
+  one-hot matrix, float64:   3.28 GB
+  integer labels:            0.066 MB
+
+And `(probs - onehot)` becomes `probs[np.arange(N), labels] -= 1`, done in place.
+MEASURED, identical result.
+
+LABEL SMOOTHING replaces the one-hot with a soft target; the gradient is still
+`p - target`, so nothing about the derivation changes.
+
+AND THE ONE THAT IS NOT AN ALTERNATIVE: MSE ON SOFTMAX OUTPUTS. The Jacobian's `p(1-p)`
+survives instead of cancelling, so a confidently-wrong model gets almost no gradient — the
+same failure as using MSE with a sigmoid, where the starting gradient was measured 7,056x
+smaller.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. SHIFT: `shifted = logits - np.max(logits, axis=1, keepdims=True)`. `axis=1`
+because each ROW is one sample's class scores. `keepdims=True` so the subtraction
+broadcasts per row.
+
+STEP 2. `exp = np.exp(shifted)`. Every argument is now ≤ 0, so every result is in (0, 1]
+and overflow is impossible.
+
+STEP 3. `probs = exp / np.sum(exp, axis=1, keepdims=True)`. The largest entry is exactly
+1 before normalising, so the denominator is at least 1 — no division by an underflowed
+sum either.
+
+STEP 4. `n = logits.shape[0]` — the BATCH size, axis 0.
+
+STEP 5. `return (probs - y_onehot) / n`. One subtraction, one divide.
+
+STEP 6. IF LABELS ARE INTEGERS, skip the one-hot entirely:
+`grad = probs; grad[np.arange(n), labels] -= 1; grad /= n`. MEASURED identical, and it
+saves 3.28 GB at K = 50,000.
+
+STEP 7. FOR THE LOSS, USE LOG-SOFTMAX: `loss = -(shifted[range(n), labels] -
+np.log(exp.sum(1))).mean()`. NEVER `-np.log(probs[...])`, which underflows.
+
+STEP 8. SAY THE CANCELLATION OUT LOUD: "the p in the softmax Jacobian cancels the 1/p
+from the log, so dL/dz is p minus y." That sentence is the answer to the question.
+
+STEP 9. NOTE THE BOUND: every entry of the gradient is in [-1, 1] before the `/n`. It
+cannot explode, which is a real robustness property.
+
+STEP 10. IN A FRAMEWORK, PASS LOGITS TO THE LOSS. Never softmax first.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'When softmax feeds cross-entropy, the gradient with respect to the LOGITS is just the
+predicted probabilities minus the one-hot labels, divided by the batch size. Nothing
+else.
+
+The reason is a cancellation. Cross-entropy with a one-hot target is minus log of the
+correct class probability, so its derivative with respect to that probability is minus
+one over p — which blows up exactly when the model is most wrong. The softmax Jacobian
+has a factor of p in every entry. Multiply them and the p cancels the one-over-p, leaving
+p minus y. I checked the combined form against a numerical gradient and it matches to
+3e-10.
+
+What that leaves you with is very readable: the push on each logit is how much
+probability you assigned minus how much you should have. If you gave the right class 0.7
+its logit gets a push of minus 0.3. Every entry is bounded in minus one to one no matter
+how wrong the model is, which is the opposite of the minus-one-over-p you started with.
+
+The fusion is not just elegance. Two things go wrong if you compute the pieces
+separately. The softmax itself overflows without subtracting the row max first — I
+measured logits around 710 giving nan, and around minus 800 also giving nan because
+everything underflows and the sum is zero over zero. And the separate backward pass
+divides by a probability that can be exactly zero: with logits of plus and minus a
+thousand, the true class probability underflows to 0.0, so minus y over p is minus
+infinity, while the combined form gives exactly minus one. That is why PyTorch's
+CrossEntropyLoss takes logits and not probabilities — and why softmaxing before passing
+them in is the classic bug: it runs, the loss falls, and the model is quietly worse.
+
+One practical note: never materialise the one-hot matrix at vocabulary scale. At eight
+thousand samples and fifty thousand classes that is 3.3 gigabytes, where the integer
+labels are 66 kilobytes and you can just subtract 1 in place at the label positions.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def softmax_ce_grad(logits, y_onehot):
+      shifted = logits - np.max(logits, axis=1, keepdims=True)   # 1, 2
+      exp = np.exp(shifted)                                      # 3
+      probs = exp / np.sum(exp, axis=1, keepdims=True)           # 4
+      n = logits.shape[0]                                        # 5
+      return (probs - y_onehot) / n                              # 6, 7
+
+LINE 1, `axis=1`. Rows are samples, columns are classes, so the max is PER SAMPLE.
+`axis=0` takes the max down each class column across the batch, which mixes samples
+together and is silently wrong — no error, and the resulting distributions still sum to 1
+so nothing downstream complains.
+
+LINE 2, THE SHIFT ITSELF. Mathematically a no-op: `exp(z-c)/Σexp(z-c) = exp(z)/Σexp(z)`
+because `exp(-c)` cancels top and bottom. Numerically it is the difference between
+working and nan. MEASURED, the naive form on logits around 710 gives [nan, 0, 0]; around
+800 gives all-nan; around -800 gives all-nan (everything underflows and the sum is 0). The
+shifted form returns [0.6652, 0.2447, 0.0900] in every one of those cases.
+
+LINE 3. After the shift the largest entry of `shifted` is exactly 0, so `exp` is in
+(0, 1]. Overflow is now impossible by construction.
+
+LINE 4. The sum is at least 1 (the maximum contributes exp(0) = 1), so the denominator
+can never underflow to zero.
+  `keepdims=True` again — shape (n,1) divides (n,K) row-wise. Without it the shape is
+(n,) and numpy broadcasts against the LAST axis, dividing each COLUMN by a different sum:
+an error unless n == K, and silently wrong when n == K.
+
+LINE 5. `shape[0]` is the BATCH size.
+
+LINE 6, THE WHOLE ANSWER. `probs - y_onehot`. Every entry lies in [-1, 1]: for the true
+class it is `p - 1` ∈ [-1, 0], for the rest it is `p` ∈ [0, 1]. MEASURED against a
+central-difference numerical gradient, max difference 3.133e-10.
+
+LINE 7, `/n`. The gradient of the MEAN loss over the batch. MEASURED, the summed gradient
+norm at batches 1, 32, 256, 1024 is 1.031, 5.775, 15.947, 31.853 — so omitting the `/n`
+makes the effective learning rate scale with batch size, and doubling the batch quietly
+doubles the step.
+
+THE VERSION FOR INTEGER LABELS, which is what production code does:
+
+      grad = probs                          # reuse, no copy
+      grad[np.arange(n), labels] -= 1
+      grad /= n
+
+MEASURED identical to the one-hot version, and at N=8192, K=50000 it avoids allocating a
+3.28 GB one-hot matrix where the labels are 0.066 MB.
+
+THE LOSS, WHICH MUST NOT USE `probs`:
+
+      loss = -(shifted[np.arange(n), labels] - np.log(exp.sum(1))).mean()
+
+MEASURED, with logits ±1000 the true probability is exactly 0.0 so `-log(probs)` is inf,
+while `z_true - logsumexp(z)` gives -2000.0 exactly.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the gradient is correct. 8 samples, 5 classes, logits ~ 3·N(0,1):
+
+  max | (probs - onehot)/N  -  central-difference gradient |  =  3.133e-10
+
+TRACE B - the max-subtraction, on logits [m, m-1, m-2]:
+
+  m       naive softmax                    stable softmax
+   100    [0.6652, 0.2447, 0.0900]         [0.6652, 0.2447, 0.0900]
+   500    [0.6652, 0.2447, 0.0900]         [0.6652, 0.2447, 0.0900]
+   710    [nan,    0.0,    0.0   ]         [0.6652, 0.2447, 0.0900]
+   800    [nan,    nan,    nan   ]         [0.6652, 0.2447, 0.0900]
+  -500    [0.6652, 0.2447, 0.0900]         [0.6652, 0.2447, 0.0900]
+  -745    [1.0,    0.0,    0.0   ]         [0.6652, 0.2447, 0.0900]
+  -800    [nan,    nan,    nan   ]         [0.6652, 0.2447, 0.0900]
+
+The correct answer is the same in every row — softmax depends only on logit DIFFERENCES,
+which are identical throughout. Note m = -745 fails silently with a plausible-looking
+[1, 0, 0] rather than a nan.
+
+TRACE C - the fused gradient survives where the separate one does not. Logits
+[1000, 0, 0, 0, -1000], true class = index 4:
+
+  probs                  = [1.0, 0.0, 0.0, 0.0, 0.0]        p_true is EXACTLY 0.0
+  combined (probs - y)   = [1.0, 0.0, 0.0, 0.0, -1.0]       exact
+  separate  -y / p       = [-0.0, nan, nan, nan, -inf]
+  loss via -log(p)       = inf
+  loss via z - logsumexp = 2000.0                            finite and exact
+
+TRACE D - a less extreme case, logits [50, 0, 0, 0, -50], true class index 4:
+
+  p_true                 = 3.720076e-44                      not zero, but tiny
+  combined gradient      = [1.0, 1.93e-22, 1.93e-22, 1.93e-22, -1.0]
+  separate dL/dp         = [..., -2.688e+43]
+
+The separate path produces a gradient of 2.7e43 where the correct answer is -1.0. Even
+before it becomes inf, it has lost all precision.
+
+TRACE E - the `/N`, gradient norms at four batch sizes:
+
+  batch    ||sum grad||    ||mean grad||
+      1        1.031          1.03099
+     32        5.775          0.18046
+    256       15.947          0.06229
+   1024       31.853          0.03111
+
+The summed norm grows like sqrt(N); the mean norm falls. Only one of these is invariant
+to how you happened to chunk the data.
+
+TRACE F - speed and memory, N = 8192, K = 1000:
+
+  fused     110.85 ms
+  separate  155.81 ms       1.4x slower, agreeing to 1.355e-20
+
+  one-hot at K = 50,000:   3.28 GB
+  integer labels:          0.066 MB      identical gradient""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(N·K): one max, one exp, one sum, one divide, one subtract — all elementwise or
+row-wise. The `exp` dominates. SPACE O(N·K) for the probabilities, which must be kept
+anyway. THE POINT OF THE FUSION IS THAT IT AVOIDS THE K×K SOFTMAX JACOBIAN PER SAMPLE —
+that would be O(N·K²), which at K = 50,000 is not a constant factor, it is impossible.
+
+THE #1 MISTAKE: softmaxing before a framework loss that expects logits. It runs, the loss
+falls, and the model is worse. Nothing warns you.
+
+THE #2 MISTAKE: no max-subtraction. MEASURED, nan at logits ~710 and also at ~-800, plus a
+plausible-looking wrong answer [1, 0, 0] at -745.
+
+THE #3 MISTAKE: computing the loss as `-log(probs[range(n), labels])`. MEASURED, inf when
+the true probability underflows to 0. Use `z_true - logsumexp(z)`.
+
+THE #4 MISTAKE: `axis=0` instead of `axis=1` for the max or the sum. Silently mixes
+samples; the rows still sum to 1.
+
+THE #5 MISTAKE: omitting `keepdims=True`, so the broadcast goes along the wrong axis —
+an error unless n == K, silent when n == K.
+
+THE #6 MISTAKE: omitting the `/N`. MEASURED, the summed gradient norm goes from 1.03 to
+31.85 between batch 1 and batch 1024, so batch size becomes a learning-rate knob.
+
+THE #7 MISTAKE: materialising a one-hot at vocabulary scale. MEASURED, 3.28 GB against
+0.066 MB.
+
+THE #8 MISTAKE: MSE on softmax outputs. The Jacobian's `p` no longer cancels, so a
+confidently-wrong model receives almost no gradient.
+
+THE TAKEAWAY: `dL/dlogits = (probs - onehot)/N`, because the factor of p in the softmax
+Jacobian cancels the 1/p from the log — verified against a numerical gradient to 3e-10 —
+and the result is readable as "what you predicted minus what was true", bounded in
+[-1, 1] however wrong the model is. That cancellation is why frameworks FUSE the two ops
+and why their loss functions take logits: computing the pieces separately means dividing
+by a probability that genuinely underflows to zero, measured as -inf where the fused form
+gives exactly -1.0, and it means an unshifted softmax that returns nan above logits of
+710 and below -800. Subtract the row max, keep the labels as integers rather than a
+one-hot matrix (3.28 GB versus 66 KB at vocabulary scale), and compute the loss through
+log-softmax rather than through the probabilities.""",
+]
+
+_EX_P1AO["Train-test split (numpy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - hold some data back, and hold it back honestly.
+
+Shuffle the row indices, cut at a boundary, and use the same index array to slice both X
+and y:
+
+  idx = rng.permutation(n)
+  cut = int(n * (1 - test_size))
+  train_idx, test_idx = idx[:cut], idx[cut:]
+
+THE SINGLE MOST IMPORTANT PROPERTY is that ONE permutation is applied to both X and y.
+Shuffle them independently and every row is now paired with a random label. MEASURED,
+drawing two permutations from the same generator:
+
+  one permutation applied to both:        labels aligned   True
+  two draws from the same rng:            labels aligned   False
+
+The second case produces a dataset with no relationship between features and targets. The
+code runs, training runs, and the model learns nothing — which looks like a modelling
+problem rather than a data-handling bug.
+
+AND THE SPLIT IS THE MEASUREMENT INSTRUMENT. Everything you report about the model comes
+from the test half, so an error here does not degrade the model, it corrupts the number
+you are using to judge it.""",
+
+    """2. THE INTUITION - why shuffle at all, and what the shuffle cannot fix.
+
+DATA ARRIVES ORDERED. Sorted by label, by date, by customer, by whoever exported it. Take
+the last 20% of a file sorted by class and your test set is entirely one class. Shuffling
+breaks that.
+
+BUT SHUFFLING IS NOT ENOUGH FOR TWO COMMON SITUATIONS.
+
+CLASS IMBALANCE. A random split does not guarantee both classes appear on both sides.
+MEASURED, 200 samples with 5% positives, 20% test (40 rows), across 2,000 random splits:
+
+  test positive rate:  mean 0.0501   min 0.0000   max 0.1500
+  splits with ZERO positives in the test set:  9.9%
+
+ONE IN TEN SPLITS PRODUCES A TEST SET WITH NO POSITIVES AT ALL, on which recall is
+undefined and accuracy is the score of predicting "negative". Stratified splitting fixes
+it exactly — MEASURED, mean 0.0500, min 0.0500, max 0.0500, and zero bad splits.
+
+ORDERED DATA. For prices, logs, sessions or anything with time, a random split puts
+TOMORROW IN TRAIN and YESTERDAY IN TEST. The model interpolates between known points
+instead of forecasting past them, and the offline score is optimistic in a way no amount
+of cross-validation reveals — because every fold has the same leak. The fix is not a
+better shuffle; it is a CUTOFF: train on rows before time t, test on rows after.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRAIN SET - what the model fits on. TEST SET - what you score it on, exactly once, at the
+end.
+
+VALIDATION SET - a third split used for tuning. If you tune on the test set, it is a
+validation set and your reported number is optimistic.
+
+`rng.permutation(n)` - a random ordering of `0..n-1`. Returns a new array;
+`rng.shuffle(a)` sorts in place and returns None.
+
+FANCY INDEXING - `X[idx]` where idx is an array. Returns a COPY, not a view, which is
+where the memory goes.
+
+STRATIFIED SPLIT - split each class separately, so the class proportions are preserved
+exactly in both halves.
+
+LEAKAGE - test information reaching the model. Any form of it makes the test score
+meaningless.
+
+GROUP LEAKAGE - rows that are not independent (multiple visits by one patient, several
+frames from one video) landing on both sides. The model memorises the group.
+
+TEMPORAL LEAKAGE - training on data from after the test period.
+
+SEED - the value that makes a split reproducible. Without one, two runs are not
+comparable.
+
+`test_size` - the fraction held out, typically 0.2. With `int()` truncation, the realised
+fraction is not exactly this.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - four ways to leak, and only one of them is
+about the split code.
+
+LEAK ONE: SHUFFLING X AND y SEPARATELY. MEASURED, two `permutation` calls from the same
+generator give different orderings, so the labels are scrambled relative to the rows.
+Notably, two generators seeded IDENTICALLY do give the same permutation — so the bug
+appears or does not depending on whether someone reused a generator, which makes it
+maddening to reproduce.
+
+LEAK TWO: FITTING THE SCALER BEFORE THE SPLIT. `X = (X - X.mean(0)) / X.std(0)` applied to
+the whole dataset uses the test set's mean and standard deviation. It is a small leak and
+it is real: the correct order is split, fit the scaler on train, then TRANSFORM test with
+the training statistics. The same applies to imputation, target encoding, feature
+selection and PCA.
+
+LEAK THREE: GROUPED ROWS. If a patient contributes ten visits and five land in train and
+five in test, the model memorises the patient rather than learning the condition. The test
+score is inflated by an amount that scales with how strong that memorisation is. The fix
+is to split by GROUP ID, not by row.
+
+LEAK FOUR: TIME. Covered above — the fix is a cutoff rather than a shuffle.
+
+AND ONE THING THAT IS NOT A LEAK BUT SURPRISES PEOPLE: `int(n * (1 - test_size))`
+truncates. MEASURED:
+
+  n = 10,      test_size 0.33  ->  train 6,      test 4        realised 0.4000
+  n = 7,       test_size 0.3   ->  train 4,      test 3        realised 0.4286
+  n = 101,     test_size 0.2   ->  train 80,     test 21       realised 0.2079
+  n = 1000000, test_size 0.33  ->  train 669999, test 330001   realised 0.3300
+
+At n = 7 you asked for 30% and got 43%. At a million rows the float arithmetic gives
+669,999 rather than 670,000. Neither matters for a large split; both matter when you are
+comparing two runs and one of them has three more test rows.""",
+
+    """5. THE ALTERNATIVES, AND WHEN EACH IS RIGHT.
+
+STRATIFIED SPLIT whenever the target is categorical and at all imbalanced. MEASURED, it
+takes the test positive rate from a range of 0.0000-0.1500 to exactly 0.0500 every time,
+and eliminates the 9.9% of splits with no positives at all. Cost: a few lines.
+
+GROUPED SPLIT (`GroupShuffleSplit`) whenever rows share an identity — patient, user,
+document, session. Splitting by row instead is the most common cause of a model that
+scores 0.95 offline and 0.6 in production.
+
+TIME-BASED SPLIT for anything ordered. Train before t, test after. And for repeated
+evaluation, WALK-FORWARD: expand the training window forward through time and score the
+next block each time.
+
+K-FOLD CROSS-VALIDATION when data is scarce. Every row is used for testing exactly once,
+so the estimate has much lower variance than a single 80/20. Note it costs k trainings,
+and it does NOT fix any of the four leaks above — k-fold with grouped rows leaks in every
+fold.
+
+STRATIFIED K-FOLD, the default for classification. Combines both.
+
+NESTED CROSS-VALIDATION when you are tuning hyperparameters AND reporting a score. An
+inner loop tunes; an outer loop scores. Without it, the reported number has seen the test
+data through the hyperparameter choice.
+
+`sklearn.model_selection.train_test_split` in practice, with `stratify=y`,
+`random_state=`, and `shuffle=False` for time series. Write the four lines in an
+interview; use the library at work.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. `n = X.shape[0]`. Assert `len(y) == n` before anything else — the alignment bug
+usually starts as a length mismatch that broadcasting hides.
+
+STEP 2. `idx = rng.permutation(n)`. ONE array. Take the rng as a parameter so the split is
+reproducible and testable.
+
+STEP 3. `cut = int(n * (1 - test_size))`. Know that this truncates; MEASURED, at n = 7 a
+requested 30% test becomes 43%.
+
+STEP 4. `train_idx, test_idx = idx[:cut], idx[cut:]`. Disjoint by construction — MEASURED,
+overlap 0 — which is worth saying because it is the one guarantee the code gives for free.
+
+STEP 5. RETURN `X[train_idx], X[test_idx], y[train_idx], y[test_idx]` — THE SAME index
+arrays for both. This is the whole correctness argument.
+
+STEP 6. IF THE TARGET IS CATEGORICAL AND IMBALANCED, STRATIFY: permute within each class
+and take the same fraction from each. MEASURED, it removes a 9.9% chance of an
+all-negative test set.
+
+STEP 7. IF THE DATA IS ORDERED, DO NOT SHUFFLE. Slice at a time cutoff.
+
+STEP 8. IF ROWS SHARE A GROUP ID, PERMUTE THE GROUPS, not the rows.
+
+STEP 9. FIT EVERY PREPROCESSOR ON TRAIN ONLY, then transform test.
+
+STEP 10. FOR LARGE X, RETURN THE INDICES rather than the slices. MEASURED, `X[train_idx]`
+plus `X[test_idx]` allocates a full second copy — 80 MB for an 80 MB array — so peak
+memory is 2x the dataset.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'Permute the row indices once, cut at the boundary, and index both X and y with the SAME
+index arrays. The single thing that must be right is that one permutation drives both — I
+checked what happens with two separate draws from the same generator and the labels end
+up scrambled relative to the rows, so the model is learning from noise and it looks like
+a modelling failure rather than a bug.
+
+Two situations where a plain random split is not enough. If the classes are imbalanced,
+a random split does not guarantee the minority class appears in the test set. I measured
+that on 200 samples with 5% positives and a 40-row test set: across two thousand random
+splits, the test positive rate ranged from zero to fifteen percent, and about one split in
+ten had no positives at all — so recall is undefined and accuracy is the score of
+predicting negative. Stratified splitting pinned it at exactly five percent every time.
+
+And if the data has any time ordering, a random split puts tomorrow in train and
+yesterday in test, so the model interpolates instead of forecasting. Cross-validation
+does not catch that, because every fold has the same leak. The fix is a cutoff rather
+than a shuffle.
+
+Beyond the split itself there are three more leaks I would check. Scalers and imputers
+must be fit on train only, or the test statistics reach the model. Rows that share an
+identity — a patient, a user, a video — must be split by group, not by row, or the model
+memorises the group. And if you tune on the test set it is a validation set, and your
+reported number is optimistic.
+
+One small thing worth knowing: int of n times one-minus-test-size truncates, so on small
+n the realised fraction is off — at seven rows a requested 30% test comes out at 43%. And
+fancy indexing copies, so returning the slices instead of the indices doubles your peak
+memory on a large dataset.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  import numpy as np
+
+  def train_test_split(X, y, test_size, rng):
+      n = X.shape[0]                                   # 1
+      idx = rng.permutation(n)                         # 2
+      cut = int(n * (1 - test_size))                   # 3
+      train_idx, test_idx = idx[:cut], idx[cut:]       # 4
+      return X[train_idx], X[test_idx], y[train_idx], y[test_idx]   # 5
+
+LINE 1. `shape[0]` — rows, i.e. samples. Add `assert len(y) == n`; a length mismatch here
+is the alignment bug in its earliest and most fixable form.
+
+LINE 2. ONE permutation, drawn from an rng PASSED IN rather than the global
+`np.random`. Passing it in is what makes the split reproducible, testable, and
+independent of whatever else in the program has been drawing random numbers.
+  `rng.permutation(n)` returns a new array. `rng.shuffle(arr)` mutates in place and
+returns None — assigning its result gives you None, which is a distinct and immediately
+obvious failure.
+
+LINE 3. `int()` TRUNCATES TOWARD ZERO. MEASURED:
+    n=10,  test_size 0.33  -> train 6,  test 4   (realised 0.4000)
+    n=7,   test_size 0.30  -> train 4,  test 3   (realised 0.4286)
+    n=101, test_size 0.20  -> train 80, test 21  (realised 0.2079)
+    n=1e6, test_size 0.33  -> train 669999, test 330001
+  The last one is float arithmetic: `1000000 * 0.67` is 669999.9999999999. Use
+`round()` if you care, and know that you rarely should.
+
+LINE 4. `idx[:cut]` and `idx[cut:]` partition a permutation, so the two halves are
+disjoint and their union is everything — MEASURED, overlap 0 rows. That is the one
+correctness property this code gives you for free, and it is worth stating.
+
+LINE 5, THE LINE THE QUESTION IS ABOUT. The SAME `train_idx` slices both X and y, so row
+i of `X_train` still belongs with element i of `y_train`. MEASURED:
+
+    one permutation applied to both:       aligned  True
+    two draws from the same generator:     aligned  False
+    two generators with the same seed:     aligned  True
+
+  The third row is why this bug is hard to reproduce: it depends on whether someone reused
+a generator object, not on the seed.
+
+WHAT IS MISSING, and belongs in anything real — STRATIFICATION:
+
+      test_idx = np.concatenate([
+          rng.permutation(np.where(y == c)[0])[:int(round((y == c).sum() * test_size))]
+          for c in np.unique(y)])
+
+MEASURED, this holds the test positive rate at exactly 0.0500 across 2,000 splits where
+the unstratified version ranged 0.0000 to 0.1500 with 9.9% of splits empty of positives.
+
+AND FOR LARGE DATA, RETURN THE INDICES: MEASURED, an 80 MB X produces 80 MB of slices in
+43.8 ms, so peak memory is 2x the dataset for the duration.""",
+
+    """9. THE TRACE, WITH REAL NUMBERS.
+
+TRACE A - the basic guarantee. n = 1000, test_size = 0.2:
+
+  train rows 800, test rows 200
+  overlap between train and test:  0
+
+TRACE B - alignment. X holds row indices, y is `(row % 3 == 0)`, so alignment is checkable:
+
+  one permutation applied to X and y:     aligned  True
+  two permutation calls, same generator:  aligned  False
+  two generators, same seed:              aligned  True
+
+TRACE C - `int()` truncation:
+
+  n          test_size    train      test     realised test fraction
+      10        0.20          8         2          0.2000
+      10        0.33          6         4          0.4000
+       7        0.30          4         3          0.4286
+       3        0.20          2         1          0.3333
+     101        0.20         80        21          0.2079
+     101        0.33         67        34          0.3366
+  1000000       0.33     669999    330001          0.3300
+
+TRACE D - CLASS IMBALANCE. 200 samples, 5% positive, 20% test (40 rows), 2,000 random
+splits:
+
+                          mean      min      max     splits with 0 positives
+  random split           0.0501   0.0000   0.1500          9.9%
+  stratified split       0.0500   0.0500   0.0500          0.0%
+
+Also measured: 0.6% of random splits gave a test set with three times the true positive
+rate. So the same model, evaluated on two different random splits of the same data, can
+show recall computed over 0 positives in one and over 6 in the other.
+
+TRACE E - memory. X is 10,000 × 1,000 float64:
+
+  X                        80.0 MB
+  X[train_idx] + X[test_idx]   80.0 MB allocated, in 43.8 ms
+
+Fancy indexing copies. Peak memory is 2x the dataset, which is the difference between
+fitting in RAM and not.
+
+TRACE F - what a random split does to ordered data. If rows are sorted by date, a random
+80/20 split means:
+
+  train contains rows from throughout the whole period, including AFTER every test row
+  test  contains rows surrounded on both sides by training data
+
+The model is being asked to interpolate, and it will be asked to extrapolate in
+production. Every k-fold fold has the same property, so cross-validation reports the same
+optimistic number k times and the low variance across folds reads as confidence.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(n) for the permutation, plus O(n·d) to materialise the copies. MEASURED, 43.8 ms
+to slice an 80 MB array. SPACE O(n·d) — the copies are the whole dataset again, so peak
+memory is 2x. For large data, return the indices and let the training loop slice batches.
+
+THE #1 MISTAKE: shuffling X and y independently. MEASURED, two draws from the same
+generator break the alignment; two generators with the same seed do not — so whether the
+bug appears depends on object reuse rather than on the seed, which is the worst possible
+reproducibility profile.
+
+THE #2 MISTAKE: fitting the scaler, imputer, encoder or PCA before the split. The test
+statistics reach the model.
+
+THE #3 MISTAKE: a random split on grouped rows. The model memorises the group and the
+test score is inflated by exactly as much as it memorised.
+
+THE #4 MISTAKE: a random split on time-ordered data, and then trusting cross-validation
+to catch it. Every fold leaks identically, and the low variance across folds looks like
+confidence.
+
+THE #5 MISTAKE: no stratification on an imbalanced target. MEASURED, 9.9% of splits had
+zero positives in the test set.
+
+THE #6 MISTAKE: no seed, so two runs are not comparable and a good result cannot be
+reproduced.
+
+THE #7 MISTAKE: tuning on the test set. That makes it a validation set, and the number you
+report has already been optimised against.
+
+THE #8 MISTAKE: assuming `int(n*(1-test_size))` gives the fraction you asked for.
+MEASURED, 43% test at n = 7 for a requested 30%.
+
+THE TAKEAWAY: permute the indices ONCE and use the same index arrays for X and y — that
+single fact is the whole correctness argument, and getting it wrong scrambles every label
+while looking like a modelling failure rather than a bug. Beyond that, the split code is
+the easy part: what actually invalidates a test score is stratification (measured, 9.9% of
+random splits on a 5%-positive target contained no positives at all, where stratified
+splitting held it at exactly 5.0% every time), preprocessing fitted before the split,
+grouped rows landing on both sides, and time-ordered data split at random so the model
+interpolates where it will be asked to forecast — and note that k-fold cross-validation
+fixes none of those, because every fold leaks the same way and the low variance across
+folds reads as confidence.""",
+]
+
+_EX_P1AO["Add Binary"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - add two binary strings the way you were taught to add
+numbers on paper.
+
+Given `a = "1010"` and `b = "1011"`, return `"10101"`. The strings can be longer than any
+integer type holds, so you cannot convert them — you add digit by digit from the right,
+carrying.
+
+  1010
++ 1011
+------
+ 10101
+
+At each position the arithmetic is the same three lines:
+
+  total = digit_a + digit_b + carry     # 0, 1, 2 or 3
+  output_bit = total % 2
+  carry      = total // 2
+
+`total` is at most 1+1+1 = 3, so the output bit is `total & 1` and the carry is `total >> 1`
+— never larger than 1.
+
+MEASURED against Python's own arithmetic on 20,000 random pairs up to 2^40: zero
+mismatches. And the reason to write it at all: `bin(int(a,2) + int(b,2))[2:]` is correct in
+Python and OVERFLOWS PAST 64 BITS in Java or C++, which is the point of the question.""",
+
+    """2. THE INTUITION - one loop, three termination conditions, and the third one is the
+whole problem.
+
+The loop condition is `while i >= 0 or j >= 0 or carry`. THREE conditions joined by OR,
+and each one is doing separate work:
+
+  i >= 0     a still has digits
+  j >= 0     b still has digits
+  carry      there is a 1 left over with nowhere to go yet
+
+MOST BUGS ARE THE THIRD. `"1" + "1"` is `"10"` — the result is LONGER than either input,
+and the extra bit exists only because the loop kept going after both strings were
+exhausted. MEASURED, dropping `or carry`:
+
+  a       b        correct    without `or carry`
+  1       1          10             0
+  11      1         100            00
+  1111    1       10000          0000
+  1010    1011    10101          0101
+
+Every one loses the leading 1 — and note it produces a string of the RIGHT length in
+three of the four cases, just with a zero where the carry should have been.
+
+AND USING `and` INSTEAD OF `or` FAILS DIFFERENTLY: MEASURED, `"1" + "1000"` gives `"1"`,
+because the loop stops the moment the shorter string runs out and the rest of the longer
+one is simply dropped.
+
+WHY `%` AND `//` AND NOT AN if/elif LADDER. `total` takes four values (0,1,2,3) and you
+could enumerate them. `total % 2` and `total // 2` handle all four with no branches, and
+they generalise to any base by replacing 2 with the base — MEASURED, the identical
+function works in bases 2, 8, 10 and 16 with only those two constants changed.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY STRING - a string of '0' and '1' characters, most significant bit first, so index 0
+is the LEFTMOST and largest place value.
+
+LEAST SIGNIFICANT BIT (LSB) - the rightmost, worth 1. Addition starts here because carries
+flow left.
+
+CARRY - the overflow from one position into the next. In binary it is 0 or 1 and can never
+be more, because the largest column total is 1+1+1 = 3.
+
+TWO-POINTER (from the right) - `i` and `j` walking independently backwards, each guarded by
+its own `>= 0` test, which is how strings of different lengths are handled without padding.
+
+`total % 2` - the remainder, i.e. the bit to write. Equivalently `total & 1`.
+
+`total // 2` - integer division, i.e. the carry. Equivalently `total >> 1`.
+
+AMORTISED / IN-PLACE STRING BUILDING - appending to a list and joining once at the end,
+rather than concatenating strings, which copies.
+
+MSB-FIRST vs LSB-FIRST - the loop produces bits least-significant first, so the result
+must be reversed before returning. That reversal is the reason for the list.
+
+BASE / RADIX - the number of distinct digits. Everything here generalises by swapping 2
+for any base.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the trailing carry, and the O(n²) string build.
+
+THE TRAILING CARRY is measured above and is the classic failure. The fix is one word in
+the loop condition, and the reason it is easy to miss is that the loop reads naturally as
+"while either string has digits left" — which is true, and incomplete.
+
+THE SECOND MISTAKE IS ABOUT HOW YOU BUILD THE OUTPUT. The natural thing to write is
+`out = str(bit) + out`, prepending so the string comes out in the right order without a
+reversal. IT IS O(n²): strings are immutable, so each prepend copies the entire result so
+far.
+
+MEASURED, adding two all-ones strings of n bits:
+
+  n bits      list + reverse      prepend to string      ratio
+   1,000          0.35 ms              0.41 ms           1.2x
+   4,000          1.84 ms              1.95 ms           1.1x
+  16,000          6.03 ms              8.61 ms           1.4x
+  64,000         25.00 ms             71.31 ms           2.9x
+
+NOTE THE SHAPE. At 1,000 bits the difference is 20% and invisible; by 64,000 it is 2.9x
+and growing, because one line is linear and the other is quadratic. A test on short inputs
+will never surface it. Append to a list and `"".join(reversed(result))` at the end.
+
+THE THIRD, and it is a judgement call rather than a bug: `bin(int(a,2) + int(b,2))[2:]`.
+It is correct, it is one line, and MEASURED it is 97.6x FASTER at 262,144 bits — 1.126 ms
+against 109.888 ms — because `int(a, 2)` is a C loop and the manual version is a Python
+loop. Both are O(n). SAY THIS OUT LOUD AND THEN WRITE THE MANUAL VERSION: it is the same
+complexity with a better constant in Python only, and it is exactly what the question is
+excluding, because in a language with fixed-width integers it silently overflows past 64
+bits.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+`bin(int(a,2) + int(b,2))[2:]`. Correct in Python, disqualifying as an answer, and
+overflow-prone in any language with fixed-width integers. MEASURED 97.6x faster at
+262,144 bits.
+
+BUILT-IN BIG INTEGERS in Java — `new BigInteger(a, 2).add(new BigInteger(b, 2)).toString(2)`.
+The honest production answer in that language, and the same "not what was asked".
+
+BIT MANIPULATION WITHOUT `+`: `while b: a, b = a ^ b, (a & b) << 1`. XOR is addition
+without carry; AND-then-shift is the carry. Elegant, and it is the answer to "add two
+integers without using +", a different question that assumes the values already fit in a
+machine word.
+
+PADDING THE SHORTER STRING with leading zeros so both are the same length, then a single
+loop with no `i >= 0` guards. Slightly cleaner to read, allocates an extra string, and
+still needs the trailing-carry case.
+
+RECURSION on the last characters. Works, and blows the stack at a few thousand digits.
+
+THE FAMILY. This is the same function as "Add Strings" (base 10), "Add to Array-Form of
+Integer" (digits in a list), "Plus One" (b is fixed at 1), "Add Two Numbers" (digits in a
+linked list, already least-significant first, so no reversal), and "Multiply Strings"
+(this used as the inner loop). MEASURED, one function with `%base` and `//base` handles
+bases 2, 8, 10 and 16 correctly — so learn the SHAPE once: WALK FROM THE RIGHT, CARRY,
+AND DO NOT FORGET THE LAST CARRY.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1. `i, j = len(a) - 1, len(b) - 1`. Two independent pointers, at the LAST character of
+each.
+
+STEP 2. `carry = 0`, `result = []`. A list, not a string.
+
+STEP 3. `while i >= 0 or j >= 0 or carry:` — THREE CONDITIONS, JOINED BY `or`. Write the
+`or carry` first if you tend to forget it.
+
+STEP 4. `total = carry`, then add each digit only if its pointer is still valid. That is
+what lets the two strings have different lengths with no padding.
+
+STEP 5. DECREMENT EACH POINTER INSIDE ITS OWN `if`. Decrementing both unconditionally
+walks the exhausted one to -1, -2, -3 — which in Python silently indexes from the RIGHT
+END and produces wrong digits with no error.
+
+STEP 6. `result.append(str(total % 2))` — the bit. `carry = total // 2` — the carry.
+
+STEP 7. `return "".join(reversed(result))`. One join, one reversal, both O(n).
+
+STEP 8. NO SPECIAL CASE FOR "0". `add_binary("0","0")` walks once, writes '0', and returns
+"0". MEASURED correct.
+
+STEP 9. STATE THE OUTPUT LENGTH: `max(len(a), len(b))` or one more, never two more, because
+the largest column total is 3 = '11' which is one bit plus one carry. MEASURED across the
+cases.
+
+STEP 10. MENTION THE ONE-LINER, THEN DISMISS IT, and say why: fixed-width overflow in
+other languages.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+'This is column addition on paper. Two pointers starting at the right end of each string, a
+carry, and a list to collect the output bits.
+
+At each step the total is the carry plus whichever digits are still available — each
+pointer guarded separately, which is how strings of different lengths work without padding
+anything. The total is at most three, so the bit I write is total mod two and the new carry
+is total integer-divided by two, and the carry can never exceed one.
+
+The loop condition has three parts joined by or: a has digits left, b has digits left, or
+there is still a carry. That third one is where the bugs are — "one plus one" is "one
+zero", and the leading one exists only because the loop kept running after both strings
+were exhausted. I checked what dropping it does: one plus one gives zero, and one-one-one-
+one plus one gives four zeros. Using and instead of or fails differently — it stops when
+the shorter string runs out and just drops the rest of the longer one.
+
+I collect into a list and join at the end rather than prepending to a string, because
+strings are immutable so prepending copies the whole result each time and makes it
+quadratic. I measured that: at a thousand bits it is a 20% difference and invisible, and at
+sixty-four thousand bits it is 2.9x and growing.
+
+I would mention that in Python you could write bin of int-a-base-2 plus int-b-base-2, and
+that it is about a hundred times faster because it is a C loop — I measured 1.1 milliseconds
+against 110 at a quarter of a million bits. But it is the answer the question is excluding,
+and in Java or C++ it overflows past sixty-four bits, which is the reason the digit-by-digit
+version is what gets asked.
+
+Linear time, linear space, and the same function does base ten or sixteen by changing the
+two and nothing else.'
+""",
+
+    """8. THE CODE, LINE BY LINE.
+
+  def add_binary(a, b):
+      i, j = len(a) - 1, len(b) - 1        # 1
+      carry = 0
+      result = []                          # 2
+      while i >= 0 or j >= 0 or carry:     # 3
+          total = carry                    # 4
+          if i >= 0:
+              total += int(a[i]); i -= 1   # 5
+          if j >= 0:
+              total += int(b[j]); j -= 1
+          result.append(str(total % 2))    # 6
+          carry = total // 2               # 7
+      return "".join(reversed(result))     # 8
+
+LINE 1. `len - 1` for each, INDEPENDENTLY. The strings may have different lengths and
+neither is padded; the two `if` guards on lines 5 do the rest.
+
+LINE 2. A LIST. Line 8 joins it once. The alternative — building a string by prepending —
+is O(n²) because strings are immutable: MEASURED, 25.00 ms versus 71.31 ms at 64,000 bits,
+and only 0.35 versus 0.41 at 1,000, so short tests do not reveal it.
+
+LINE 3, THE LINE THE PROBLEM IS ABOUT. THREE conditions, `or`. MEASURED, dropping
+`or carry`: "1"+"1" gives "0", "11"+"1" gives "00", "1111"+"1" gives "0000". Using `and`
+instead of `or`: "1"+"1000" gives "1", because the loop stops when the shorter string is
+exhausted.
+
+LINE 4. `total` starts at the carry, so the carry is folded in without a separate branch.
+
+LINE 5. THE DECREMENT IS INSIDE THE `if`. If you decrement unconditionally, an exhausted
+pointer goes to -1, -2, -3 — and `a[-1]` in Python is the LAST character, so it silently
+starts re-reading the string backwards from the end. No IndexError, wrong answer. In C or
+Java the same code is an out-of-bounds read.
+
+LINE 6. `total % 2` is the output bit; `total` is 0, 1, 2 or 3 so this is 0, 1, 0, 1.
+`total & 1` is the same thing.
+
+LINE 7. `total // 2` is 0, 0, 1, 1 — THE CARRY IS NEVER MORE THAN 1, which is worth stating
+because it is what bounds the output length. `total >> 1` is the same thing.
+
+LINE 8. `reversed()` returns an iterator and `join` consumes it — no intermediate list, and
+both operations are O(n). The bits came out least-significant-first because that is the
+direction addition flows.
+
+OUTPUT LENGTH, MEASURED:
+
+    "1"    + "1"    = "10"      1 -> 2
+    "11"   + "11"   = "110"     2 -> 3
+    "10"   + "01"   = "11"      2 -> 2
+    "111"  + "1"    = "1000"    3 -> 4
+    "1000" + "1"    = "1001"    4 -> 4
+
+  Always `max(len(a), len(b))` or exactly one more. Never two, because the biggest column
+total is 3 = '11'.
+
+GENERALISING TO ANY BASE — only two constants change:
+
+      result.append(DIGITS[total % base]); carry = total // base
+
+MEASURED correct in bases 2, 8, 10 and 16 on the same pair of numbers.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `"1010" + "1011"`, expected `"10101"`.
+
+  step   i   j   a[i] b[j]  carry_in  total   bit   carry_out   result
+  ----------------------------------------------------------------------------
+    1    3   3    0    1        0       1      1        0        [1]
+    2    2   2    1    1        0       2      0        1        [1,0]
+    3    1   1    0    0        1       1      1        0        [1,0,1]
+    4    0   0    1    1        0       2      0        1        [1,0,1,0]
+    5   -1  -1    -    -        1       1      1        0        [1,0,1,0,1]
+
+  loop ends: i < 0, j < 0, carry == 0
+  reversed and joined -> "10101"
+
+READ STEP 5. Both pointers are past the start and both `if` guards are false, so
+`total = carry = 1`. THAT STEP EXISTS ONLY BECAUSE OF `or carry`, and it is the leading 1
+of the answer.
+
+TRACE B - `"1" + "1000"`, expected `"1001"`, showing the unequal-length handling.
+
+  step   i   j   contributes         total   bit   carry   result
+    1    0   3    a[0]=1, b[3]=0       1      1      0      [1]
+    2   -1   2    b[2]=0 only          0      0      0      [1,0]
+    3   -1   1    b[1]=0 only          0      0      0      [1,0,0]
+    4   -1   0    b[0]=1 only          1      1      0      [1,0,0,1]
+
+  -> "1001". `i` sat at -1 for three steps and its guard kept it from being read.
+
+TRACE C - the failure modes, measured:
+
+  a       b        correct    drop `or carry`    `and` instead of `or`
+  1       1          10             0                    0
+  11      1         100            00                    0
+  1111    1       10000          0000                    0
+  1010    1011    10101          0101                 0101
+  1       1000     1001           1001                    1
+
+The `and` column is instructive: it is correct only when both strings are the same length
+AND there is no final carry.
+
+TRACE D - correctness at scale. 20,000 random pairs up to 2^40, compared against
+`bin(x+y)[2:]`: ZERO mismatches. Plus the edge cases: `"0"+"0"` -> `"0"`, `"0"+"10101"` ->
+`"10101"`.
+
+TRACE E - string building, all-ones inputs:
+
+  n bits     list + join      prepend
+   1,000        0.35 ms       0.41 ms
+   4,000        1.84 ms       1.95 ms
+  16,000        6.03 ms       8.61 ms
+  64,000       25.00 ms      71.31 ms
+
+TRACE F - against the one-liner:
+
+  n bits       manual        int(a,2)      ratio
+      64      0.026 ms      0.002 ms       11.9x
+   1,024      0.356 ms      0.006 ms       57.7x
+  16,384      6.527 ms      0.068 ms       96.4x
+ 262,144    109.888 ms      1.126 ms       97.6x
+
+Same asymptotic class; the ratio plateaus near 100x, which is the Python-loop-versus-C-loop
+constant.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+TIME O(max(m, n)) — one pass, constant work per position. SPACE O(max(m, n)) for the result
+list, which is unavoidable since the output is that long. MEASURED, 20,000 random pairs
+verified against Python's own arithmetic with zero mismatches.
+
+THE #1 MISTAKE: omitting `or carry` from the loop condition. MEASURED, "1"+"1" returns "0"
+and "1111"+"1" returns "0000". The result is often the right LENGTH with a zero where the
+leading one belongs, which is why it survives a casual check.
+
+THE #2 MISTAKE: `and` instead of `or`, which drops the tail of the longer string. MEASURED,
+"1"+"1000" returns "1".
+
+THE #3 MISTAKE: decrementing the pointers outside their `if` guards. In Python a negative
+index silently reads from the other end of the string — wrong answer, no error.
+
+THE #4 MISTAKE: building the output by prepending to a string. MEASURED, 2.9x at 64,000
+bits and growing, invisible below a few thousand.
+
+THE #5 MISTAKE: forgetting to reverse. The loop emits least-significant-first.
+
+THE #6 MISTAKE: `int(a[i]) + int(b[j])` without a bounds check, assuming equal lengths.
+
+THE #7 MISTAKE: adding a special case for empty strings or for "0". Neither needs one —
+MEASURED, "0"+"0" returns "0" through the normal path.
+
+THE #8 MISTAKE: submitting `bin(int(a,2)+int(b,2))[2:]`. MEASURED 97.6x faster and it is
+the answer the question exists to exclude, because in a fixed-width language it overflows
+past 64 bits.
+
+THE TAKEAWAY: column addition from the right, with `total = digit + digit + carry`, the
+output bit as `total % 2` and the new carry as `total // 2` — and the whole problem lives
+in the loop condition `while i >= 0 or j >= 0 or carry`, because the result can be one bit
+LONGER than either input and that bit is produced by an iteration that runs after both
+strings are exhausted. Measured, dropping `or carry` turns "1"+"1" into "0". Collect into a
+list and join once rather than prepending to a string (measured 2.9x at 64,000 bits, and
+invisible below a thousand), keep each pointer's decrement inside its own guard so an
+exhausted pointer never silently wraps to the far end of the string, and remember the same
+function is Add Strings, Plus One, and Add Two Numbers with only `%base` and `//base`
+changed — verified in bases 2, 8, 10 and 16.""",
+]
+
 
 
 
