@@ -306655,6 +306655,1912 @@ The buffer's bound is your backpressure policy, and its size is a real number wi
 126x runtime between capacity 1 and capacity 1,024, on identical work.""",
 ]
 
+_EX_P1AO["Reading a query plan and fixing a slow query"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - "this query is slow, what do you do?" is a real interview question,
+and the wrong answer is "add an index". The right answer starts with "run EXPLAIN and read the plan",
+because the database will TELL you what it is doing if you ask.
+
+A query plan is the database's step-by-step recipe: which table it reads, whether it walks the whole
+thing or seeks into an index, how it joins, whether it has to sort at the end. `EXPLAIN` shows you the
+plan it INTENDS; `EXPLAIN ANALYZE` runs the query and shows you what actually happened, with real row
+counts and real timings.
+
+MEASURED ON THIS MACHINE - a real one-million-row `orders` table plus 50,000 `customers`, in SQLite,
+36 MB on disk, 2,038 rows with status 'pending'. The same query, four times, changing only the
+indexes:
+
+    indexes present                          plan                                        time
+    --------------------------------------   ----------------------------------------   ---------
+    none                                     SCAN o + TEMP B-TREE FOR ORDER BY          42,900 us
+    (status)                                 SEARCH o USING INDEX (status=?)             2,000 us
+    (created_at, status)   <- wrong order    SEARCH o USING INDEX (created_at>?)         1,100 us
+    (status, created_at DESC)                SEARCH o USING INDEX (status=? AND ...)        42 us
+    (status, created_at DESC) covering       SEARCH o USING COVERING INDEX                  33 us
+
+Top row to bottom row is 1,014x, on identical data and an identical query. And rows three and four
+use the SAME TWO COLUMNS in a different ORDER, for a 26x difference. That is the detail this entry
+exists for.""",
+
+    """2. THE INTUITION - an index is the index at the back of a book, and the column ORDER is which word
+it is alphabetised by.
+
+Imagine a book index sorted by (topic, page). If you want "everything about paging, in page order",
+you flip to P, find "paging", and read straight down - the entries are already in page order because
+that was the second sort key. You stop as soon as you have fifty. That is
+`WHERE status='pending' ORDER BY created_at DESC LIMIT 50` with an index on `(status, created_at)`.
+
+Now imagine the same index sorted by (page, topic). To answer the same question you must walk every
+page number in order and check "is this one about paging?" You will find them in page order, yes -
+but you had to look at everything. That is the 1,100 us row above, and the plan even says so:
+`SEARCH o USING INDEX i_wrong (created_at>?)` - it used the index, and it still had to test `status`
+on every row it touched.
+
+THE RULE THAT FALLS OUT: equality columns first, then the range or sort column. `status = 'pending'`
+is an equality, so it pins you to one contiguous stretch of the index; `created_at` is the thing you
+want in order, so it goes second and the stretch is already sorted.
+
+THE SECOND INTUITION - a SORT node in a plan is a red flag, because a sort must see EVERY row before
+it can emit the first one. `LIMIT 50` cannot save you: you cannot know which fifty are the newest
+until you have looked at all 2,038. The right index removes the sort entirely, which is why the plan
+for the fast version has no `TEMP B-TREE FOR ORDER BY` line at all. Compare the two plans and the
+missing line IS the speedup.
+
+THE THIRD INTUITION - a COVERING index means every column the query needs is inside the index, so the
+database never goes back to the table. It read 33 us instead of 42 us here, on a small result; on a
+wide table with a big result the gap is much larger, because each row otherwise costs a separate
+random read of the heap.""",
+
+    """3. EVERY TERM DEFINED.
+
+QUERY PLAN. The tree of operations the database chose. Read it BOTTOM-UP and INSIDE-OUT: the leaves
+run first and feed their parents.
+
+EXPLAIN. Show the plan without running the query. Estimates only.
+
+EXPLAIN ANALYZE. Actually run it and annotate the plan with real row counts and real times. This is
+the one you want. (In SQLite the equivalent is `EXPLAIN QUERY PLAN`, which is what the measurements
+here used.)
+
+SEQ SCAN / SCAN / FULL TABLE SCAN. Read every row of the table. Correct and fast when you want most of
+the table; catastrophic when you want 2,038 rows out of 1,000,000.
+
+INDEX SCAN / SEARCH USING INDEX. Seek into a sorted structure and walk only the matching stretch.
+
+INDEX ONLY SCAN / COVERING INDEX. Every column the query needs is in the index, so the table itself is
+never read.
+
+B-TREE. The default index structure: a balanced tree keeping keys in sorted order, so it supports
+equality, ranges, and ORDER BY. This is why a B-tree cannot help `LIKE '%smith'` - a suffix is not a
+prefix, and sorted order gives you prefixes.
+
+COMPOSITE / MULTI-COLUMN INDEX. One index over several columns, sorted by the first, then the second
+within ties, and so on. THE ORDER IS PART OF THE INDEX. Measured: 26x between the two orders.
+
+SELECTIVITY / CARDINALITY. What fraction of rows a predicate keeps. `status='pending'` kept 2,038 of
+1,000,000 - 0.2%, highly selective, an excellent index candidate. A boolean column that is 50/50 is
+not.
+
+SARGABLE. "Search-ARGument-able" - a predicate the optimiser can turn into an index seek. Wrapping the
+COLUMN in a function or a cast destroys this. Measured below at 112x and 8,733x.
+
+ESTIMATED vs ACTUAL ROWS. The plan's guess against reality. A large gap means the statistics are stale
+and the planner chose its strategy on bad information. Fix with `ANALYZE`.
+
+STATISTICS. Sampled histograms of column values that the planner uses to guess selectivity.
+
+NESTED LOOP JOIN. For each row on the outer side, look up matches on the inner side. Great when the
+outer side is tiny and the inner side is indexed; terrible when the outer side has a million rows.
+
+HASH JOIN. Build a hash table from the smaller side, stream the larger side past it. Good for large
+unsorted joins; needs memory.
+
+MERGE JOIN. Both sides sorted on the join key, walked in lockstep.
+
+SORT SPILL / EXTERNAL MERGE. The sort did not fit in memory and used disk. In Postgres, `work_mem` is
+the knob. In a plan it appears as `Sort Method: external merge  Disk: 24MB`.
+
+ROWS REMOVED BY FILTER. Rows the node read and then threw away. A huge number here means you are
+reading data you did not want.
+
+N+1 QUERY. One query for a list, then one more per row for a related object. Measured below.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - NON-SARGABLE predicates, where you have the index, the
+query looks reasonable, and the index is silently ignored.
+
+MEASURED, on the same million-row table with an index on `created_at` and one on `customer_id`. Each
+pair of queries returns the IDENTICAL result:
+
+    query                                                  rows      time       plan
+    ---------------------------------------------------   -----   ---------   ----------------------
+    created_at >= 1690000000 AND created_at < 1691000000   10,069     239 us   SEARCH (index seek)
+    created_at/1000000 = 1690                              10,069  26,843 us   SCAN (full walk)
+                                                                   -> 112x slower
+
+    customer_id = 42                                           20     5.5 us   SEARCH (index seek)
+    CAST(customer_id AS TEXT) = '42'                            20  48,035 us   SCAN (full walk)
+                                                                   -> 8,733x slower
+
+Eight thousand seven hundred times, for a cast. The rule is simple and absolute: THE COLUMN MUST
+APPEAR BARE ON ONE SIDE OF THE COMPARISON. The moment you wrap it - a function, a cast, arithmetic -
+the database can no longer reason "the index is sorted by X, so I can seek", because it is sorted by
+X and not by f(X).
+
+The rewrite is always the same shape: move the transformation to the OTHER side, turning it into a
+range.
+
+    WHERE YEAR(created_at) = 2024                      -- BAD
+    WHERE created_at >= '2024-01-01'
+      AND created_at <  '2025-01-01'                   -- GOOD, same rows
+
+    WHERE customer_id::text = '42'                     -- BAD
+    WHERE customer_id = 42                             -- GOOD
+
+    WHERE name LIKE '%smith'                           -- BAD, a B-tree cannot seek a suffix
+    WHERE name LIKE 'smith%'                           -- GOOD, a prefix IS a range
+
+    WHERE LOWER(email) = 'a@b.com'                     -- BAD unless you build an index ON LOWER(email)
+
+THE SECOND TRAP: adding an index per column instead of one composite index. Three single-column
+indexes on `status`, `created_at`, `customer_id` do NOT give you what one `(status, created_at)` gives.
+Measured, `(status)` alone got the query to 2,000 us and still had to sort; `(status, created_at DESC)`
+got it to 42 us with no sort at all.
+
+THE THIRD TRAP: forgetting that indexes are not free. MEASURED, 20,000 inserts into the same table:
+
+    with 3 indexes    286.3 ms
+    with 0 indexes     55.7 ms      -> indexes made writes 5.1x slower
+
+Every index must be maintained on every insert, update and delete. "Index everything" is a real cost,
+paid on the write path, invisible in your read benchmark.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the fixes, in the order you should try them.
+
+1. FIX THE INDEX. Cheapest, safest, biggest win, and usually the answer.
+     - a composite index with equality columns first, then the range/sort column
+     - a covering index (`INCLUDE (...)` in Postgres, extra trailing columns in SQLite/MySQL) so the
+       query is answered without touching the table
+     - a PARTIAL index (`WHERE status='pending'`) when you only ever query a small slice - it is
+       smaller, hotter in cache, and cheaper to maintain
+     - an EXPRESSION index (`ON orders (LOWER(email))`) when you genuinely must query a function of a
+       column - this is how you make a non-sargable predicate sargable again
+
+2. REFRESH THE STATISTICS. If estimated rows and actual rows differ by 100x, the planner made a
+   reasonable decision on false information. `ANALYZE orders;` and re-check. This is free and people
+   never try it.
+
+3. REWRITE THE QUERY.
+     - make predicates sargable (section 4)
+     - stop using `SELECT *` - it defeats covering indexes and drags wide columns over the wire
+     - push filters down, so the join sees fewer rows
+     - replace a correlated subquery with a join or a window function
+     - `EXISTS` instead of `IN (SELECT ...)` when you only need existence
+     - keyset pagination (`WHERE id > :last ORDER BY id LIMIT 50`) instead of `OFFSET 100000`, which
+       must count and discard 100,000 rows every time
+
+4. FIX THE N+1. THE ORM CLASSIC, and worth its own step because it is not visible in any single slow
+   query - each of the 1,001 queries looks fast.
+
+   MEASURED, fetching 1,000 orders and each order's customer name:
+
+       N+1  (1 query + 1,000 lookups)     5.74 ms
+       one JOIN (1 query)                 0.48 ms      -> 11.9x
+
+   And that 11.9x is the OPTIMISTIC case, because this measurement ran against a local, in-process
+   database with zero network latency. Put a 0.5 ms round trip between the app and the database and
+   the arithmetic changes completely: 1,001 x 0.5 ms = 500 ms against one round trip of 0.5 ms. The
+   fix is eager loading - `select_related` / `joinedload` / `includes` - or one explicit join.
+
+5. ONLY THEN: caching, denormalisation, materialised views, read replicas, partitioning. These are
+   architectural changes with real costs (staleness, write amplification, operational surface). They
+   are the answer when the query is already optimal and the volume is genuinely too high - not before.
+
+WHEN A SEQ SCAN IS THE RIGHT PLAN, because interviewers ask: when you are reading a large fraction of
+the table. Random index lookups each cost a seek; a sequential read is streamed. Somewhere around
+5-20% of a table, depending on row width and storage, the scan wins, and a good planner switches on
+its own. "The planner refused my index" is often the planner being right.""",
+
+    """6. HOW TO CODE IT - the method, as a checklist you run every time.
+
+  1. MEASURE, do not speculate. `EXPLAIN ANALYZE <the query>`. Not `EXPLAIN` - you want actual rows
+     and actual times, not guesses.
+  2. READ THE PLAN BOTTOM-UP. The most indented nodes are the leaves and they execute first. The time
+     shown on a parent INCLUDES its children, so subtract to find where the time really went.
+  3. FIND THE EXPENSIVE NODE. Sort by `actual time`, not by how scary the node name looks.
+  4. COMPARE ESTIMATED vs ACTUAL ROWS on that node. A gap of 100x means stale statistics; run
+     `ANALYZE` and go back to step 1 before doing anything else.
+  5. CLASSIFY THE PROBLEM:
+       - `Seq Scan` + a highly selective filter + a huge `Rows Removed by Filter`  -> missing index
+       - `Sort` with `external merge ... Disk: NN MB`                              -> the index does
+         not provide the order, or you are sorting more than you need
+       - `Nested Loop` whose inner side ran a million times                        -> unindexed join
+         column, or a bad row estimate
+       - `Filter:` where you expected `Index Cond:`                                -> not sargable
+  6. FIX THE INDEX FIRST. Equality columns first, then the range/sort column. Add the selected columns
+     to make it covering if the row count is large.
+  7. RE-RUN `EXPLAIN ANALYZE`. Confirm the node changed - `Seq Scan` became `Index Scan`, the `Sort`
+     node disappeared. If the plan did not change, the index is not being used and you are back at
+     step 5 with a sargability problem.
+  8. CHECK THE WRITE SIDE. Time a bulk insert with and without the new index. Measured here: 5.1x.
+     If this table is write-heavy, that number is part of the decision.
+  9. COUNT THE QUERIES, not just their time. Log every statement for one request. If you see the same
+     query shape 1,000 times with different parameters, you have an N+1 and no amount of indexing will
+     fix the round trips.
+ 10. WRITE DOWN THE BEFORE AND AFTER. "42.9 ms to 0.042 ms" is the sentence that ends the discussion.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"I would not guess. I'd run EXPLAIN ANALYZE and read the plan bottom-up, because the leaves execute
+first.
+
+Two numbers matter on every node: the ESTIMATED versus ACTUAL row count, and the actual time. If
+estimate and actual differ by orders of magnitude, the planner chose its strategy on stale statistics
+and the fix is ANALYZE, not an index.
+
+Then I'd recognise the usual culprits. A sequential scan over a big table filtered down to a few rows
+means a missing index. A nested loop whose inner side runs a million times means an unindexed join
+column or a bad estimate. A sort that spills to disk means work_mem is too small or I'm sorting more
+than I need. And a predicate showing up as a FILTER rather than an INDEX COND means it isn't sargable -
+wrapping the column in a function or a cast disables the index.
+
+I measured all of this on a million-row table. The query started at 42.9 milliseconds with a full scan
+and a temp b-tree sort. An index on status alone got it to 2.0 ms but still sorted. The composite index
+on (status, created_at DESC) got it to 42 MICROseconds - about a thousand times faster than the
+original - because the planner can seek to status='pending' and walk created_at already in order, so
+LIMIT 50 stops after fifty rows and the sort node vanishes entirely.
+
+The column ORDER is the detail people miss. The same two columns as (created_at, status) took 1.1
+milliseconds - 26 times slower - because it can only seek on the date and must test status on every row
+it touches. Equality columns first, then the range or sort column.
+
+Sargability is the other big one. Same result set, index present: a range on the raw column took 239
+microseconds, the same filter written as an expression on the column took 26.8 milliseconds - 112x. A
+cast on the column was 8,733x slower than plain equality.
+
+Fixes in order of preference: fix the index, refresh the statistics, rewrite the query, and only then
+consider denormalising or caching. And I'd count queries as well as time - the N+1 problem is one
+query for the list plus one per row, so a thousand rows means a thousand and one round trips. Locally
+that measured 11.9x slower than a single join, and with real network latency it is far worse."
+
+THE ONE SENTENCE TO NOT FUMBLE: an index helps only if the planner can seek with it - which means the
+column appears bare in the predicate, the composite order matches equality-then-range, and the
+statistics are fresh enough that the planner believes it is worth using.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    EXPLAIN ANALYZE
+    SELECT o.id, o.total, c.name
+    FROM orders o
+    JOIN customers c ON c.id = o.customer_id
+    WHERE o.status = 'pending'
+      AND o.created_at >= now() - interval '7 days'
+    ORDER BY o.created_at DESC
+    LIMIT 50;
+
+Note the shape, because the shape determines the index: ONE equality (`status`), ONE range
+(`created_at`), ONE sort (`created_at DESC`), and a `LIMIT`. That is the classic "recent items of a
+type" query and it has a canonical index.
+
+    --  Limit  (actual time=3980..3980 rows=50)
+    --    ->  Sort  (actual rows=180000)  Sort Method: external merge  Disk: 24MB
+
+Read this bottom-up. The `Sort` produced 180,000 rows so that `Limit` could take 50. Everything above
+50 was work thrown away. `external merge  Disk: 24MB` means it did not fit in memory. Two red flags in
+one line.
+
+    --          ->  Seq Scan on orders  (cost estimated rows=1200  ACTUAL rows=180000)
+    --                Rows Removed by Filter: 9,820,000
+
+Three separate diagnoses in three numbers. `Seq Scan` - reading the whole table. `estimated 1200 vs
+ACTUAL 180000` - the planner was off by 150x, so run ANALYZE. `Rows Removed by Filter: 9,820,000` -
+it read ten million rows to keep 180,000, which is exactly what an index exists to avoid.
+
+    CREATE INDEX idx_orders_status_created ON orders (status, created_at DESC);
+
+`status` first because it is the EQUALITY. `created_at DESC` second because it is the range AND the
+sort order, and putting the direction in the index means the planner can walk it forwards rather than
+backwards. MEASURED: 42,900 us to 42 us.
+
+    CREATE INDEX idx_orders_covering
+        ON orders (status, created_at DESC) INCLUDE (id, total, customer_id);
+
+`INCLUDE` adds payload columns to the leaf pages WITHOUT making them part of the sort key. Now every
+column the SELECT needs lives in the index and the table is never touched. MEASURED: 42 us to 33 us -
+and the plan line changes from `SEARCH ... USING INDEX` to `SEARCH ... USING COVERING INDEX`, which is
+how you confirm it worked.
+
+    ANALYZE orders;
+
+Rebuilds the statistics. Do this before concluding anything about the plan, because a 150x estimate
+error will make the planner pick the wrong join strategy no matter how good your indexes are.
+
+    WHERE YEAR(created_at) = 2024                 -- function on the column: BAD
+    WHERE created_at >= '2024-01-01'
+      AND created_at <  '2025-01-01'              -- range on the raw column: GOOD
+
+The rewrite is mechanical: whatever you were doing to the column, do the inverse to the constants and
+express it as a range. MEASURED equivalent: 26,843 us versus 239 us.
+
+    # for order in Order.objects.all():        # 1 query
+    #     print(order.customer.name)           # + 1 query PER ORDER
+    # Order.objects.select_related("customer")   # ONE join
+
+`select_related` performs a SQL join and populates the related object in the same round trip;
+`prefetch_related` issues one extra query and joins in Python, which is what you want for
+many-to-many. MEASURED: 5.74 ms versus 0.48 ms locally, and the gap grows with every millisecond of
+network latency.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the same query, five index configurations, measured on 1,000,000 rows.
+
+    #  indexes on orders                     plan (SQLite EXPLAIN QUERY PLAN)                  time
+    -  ------------------------------------  ----------------------------------------------  --------
+    1  none                                  SCAN o                                          42,900us
+                                             SEARCH c USING INTEGER PRIMARY KEY (rowid=?)
+                                             USE TEMP B-TREE FOR ORDER BY
+    2  (status)                              SEARCH o USING INDEX i_status (status=?)         2,000us
+                                             USE TEMP B-TREE FOR ORDER BY
+    3  (created_at, status)                  SEARCH o USING INDEX i_wrong (created_at>?)      1,100us
+                                             [no sort node]
+    4  (status, created_at DESC)             SEARCH o USING INDEX (status=? AND created_at>?)    42us
+                                             [no sort node]
+    5  (status, created_at DESC) + payload   SEARCH o USING COVERING INDEX                       33us
+
+Follow the plan lines, not just the times, because the lines explain the times.
+
+    1 -> 2   `SCAN` became `SEARCH`. The scan stopped. 21x. The sort is still there.
+    2 -> 3   the sort node DISAPPEARED, because leading with `created_at` means the index already
+             delivers date order. Only 1.8x, though, because it must now test `status` on every row
+             it walks.
+    3 -> 4   the SAME TWO COLUMNS, reversed. 26x. Now BOTH things are true at once: it seeks straight
+             to `status='pending'`, and within that stretch the rows are already in date order, so
+             `LIMIT 50` reads fifty index entries and stops.
+    4 -> 5   `USING INDEX` became `USING COVERING INDEX`. The table is never read. 1.3x here on a
+             50-row result; much larger when the result is wide or big.
+
+    1 -> 4 overall: 42,900 us to 42 us = 1,014x, from one CREATE INDEX with the columns in the right
+    order.
+
+TRACE B - sargability, four queries, two identical result sets.
+
+    predicate                                  rows returned   time        plan
+    ----------------------------------------   -------------   ---------   ------------------
+    created_at >= 1690000000 AND < 1691000000         10,069     239 us    SEARCH (seek)
+    created_at/1000000 = 1690                         10,069  26,843 us    SCAN (walk it all)
+    customer_id = 42                                      20     5.5 us    SEARCH (seek)
+    CAST(customer_id AS TEXT) = '42'                      20  48,035 us    SCAN (walk it all)
+
+Same rows, both times. The only difference is whether the column appears bare. 112x and 8,733x.
+
+TRACE C - N+1 versus one join, 1,000 orders with their customer name.
+
+    approach                        statements   measured time   per statement
+    -----------------------------   ----------   -------------   -------------
+    N+1                                  1,001         5.74 ms         5.7 us
+    single JOIN                              1         0.48 ms       480.0 us
+
+    -> 11.9x, in-process, zero network latency
+    -> with a 0.5 ms network round trip:  1,001 x 0.5 = 500.5 ms  vs  0.5 ms  = ~1,000x
+
+The per-statement column is the trap: each individual query is FAST (5.7 us). Nothing in your slow-
+query log will flag them. You find an N+1 by counting statements, never by timing them.
+
+TRACE D - what the indexes cost on the write path, 20,000 inserts.
+
+    indexes on the table   time        per row
+    --------------------   ---------   --------
+    3                      286.3 ms     14.3 us
+    0                       55.7 ms      2.8 us
+
+    -> 5.1x. Each index is a B-tree that must be updated on every insert.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, in the terms the planner actually reasons about (N rows, K matching rows):
+
+    sequential scan                      O(N) reads, but SEQUENTIAL - cheap per row
+    B-tree index seek + range walk       O(log N + K) reads, but RANDOM - expensive per row
+    index seek that also gives ORDER BY  O(log N + LIMIT) - this is why row 4 measured 42 us
+    sort without a supporting index      O(N log N), and it must see ALL rows before emitting one
+    hash join                            O(build + probe), needs memory for the hash table
+    nested loop join                     O(outer x inner-lookup) - fine if outer is small
+    N+1                                  O(rows) round trips, which is O(rows x network RTT)
+
+The crossover between scan and index is why "add an index" is not automatically right: at high
+selectivity (0.2% here) the index wins by 1,000x; at low selectivity the random reads lose to the
+streamed scan, and a good planner will ignore your index on purpose.
+
+THE MISTAKES:
+
+    - Optimising without EXPLAIN. Everything in this entry is unguessable from the SQL text alone.
+    - One index per column instead of one composite index in the right order. Measured, 26x between
+      the two orders of the SAME two columns.
+    - Putting the sort column first in a composite index. Equality first, then range/sort.
+    - Indexing everything. Measured 5.1x slower writes with three indexes, plus the memory and disk.
+    - Assuming a LIMIT is cheap. With no supporting index, `ORDER BY ... LIMIT 50` still sorts all
+      180,000 rows and throws away 179,950.
+    - Non-sargable predicates. 112x for an expression, 8,733x for a cast, measured.
+    - Indexing a low-cardinality column. An index on a 50/50 boolean rarely pays; the planner will
+      scan anyway.
+    - Believing the plan is deterministic. It depends on statistics, on parameter values, and on
+      table size. A query that was fast at 10,000 rows can flip to a different plan at 10,000,000.
+    - Timing queries but not COUNTING them. The N+1's 1,001 statements were 5.7 us each - individually
+      invisible, collectively 11.9x.
+
+THE TAKEAWAY. Every slow query has a plan, and the plan names the problem: SCAN means missing index,
+SORT means the index does not provide the order, FILTER-where-you-expected-INDEX-COND means not
+sargable, and estimated-versus-actual means stale statistics. Fix the index first, in the order
+equality-then-range, and confirm the fix by watching the plan LINE change, not just the clock. On real
+data that path went from 42.9 milliseconds to 42 microseconds - and the last 26x of it came from
+nothing but swapping two column names.""",
+]
+
+_EX_P1AO["Real-time on the web: polling vs long polling vs SSE vs WebSockets"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - "how would you build live updates?" - a chat message appearing, a
+score changing, an LLM's tokens streaming in one at a time.
+
+The awkward fact underneath the question: ordinary HTTP is a CLIENT-ASKS, SERVER-ANSWERS protocol.
+The server has no way to start a conversation. So every technique below is a different trick for
+getting news OUT of a server that is not allowed to speak first.
+
+    SHORT POLLING    the client asks again every N seconds
+    LONG POLLING     the client asks, and the server HOLDS the request open until it has news
+    SSE              one long-lived response the server streams events down, forever, one direction
+    WEBSOCKETS       upgrade the connection out of HTTP entirely into a two-way channel
+
+MEASURED ON THIS MACHINE - a real local HTTP server, four events emitted over six seconds, a real
+client for each technique, counting real requests, real bytes and real end-to-end latency:
+
+    technique                requests   bytes   events got   mean latency   max latency
+    ----------------------   --------   -----   ----------   ------------   -----------
+    short polling, 0.25 s          24    6090            3        62.3 ms       82.3 ms
+    short polling, 1.0 s            6    1536            3       344.5 ms      516.0 ms
+    short polling, 2.0 s            3     771            2       756.6 ms     1008.2 ms
+    long polling                    4    1052            4         1.2 ms        1.6 ms
+    SSE                             1     129            4         0.5 ms        0.9 ms
+
+Read the last two rows against the first three. SSE used ONE request and 129 bytes to deliver four
+events at half a millisecond of latency. Short polling at 2-second intervals used three requests, 771
+bytes, MISSED an event entirely inside the window, and averaged 757 ms.
+
+That is 47x fewer bytes than the 0.25-second poll and 689x lower mean latency than the 1-second poll,
+for a technique that is still just HTTP.""",
+
+    """2. THE INTUITION - each technique is a different answer to "who is holding the phone".
+
+SHORT POLLING is ringing someone every thirty seconds to ask if anything happened. You will always be
+somewhere between zero and thirty seconds late, averaging fifteen. Measured: at a 1-second interval
+the mean latency was 344.5 ms and the max was 516.0 ms - almost exactly half the interval and the full
+interval, which is precisely the theory. And you pay for a full HTTP request every time whether
+anything happened or not: 24 requests and 6,090 bytes to deliver 3 events, or 2,030 bytes per event.
+
+LONG POLLING is ringing and staying on the line until they have something to say. Latency collapses -
+measured at 1.2 ms mean - because the server answers the instant the event exists. The cost is that
+your request is now sitting open on the server, and the moment you get an answer you must call
+straight back, so there is a small gap on every cycle and a lot of connection churn: 4 requests for 4
+events, which is one request per event forever.
+
+SSE (Server-Sent Events) is leaving the line open and letting them talk whenever they like. ONE
+request, held for the life of the page, over which the server writes text frames. Measured: 1 request,
+129 bytes, 0.5 ms mean latency. It is one-directional by design - the server talks, the client
+listens - and that constraint is why it is so simple: it is still an ordinary HTTP response that never
+ends, so proxies, load balancers and auth all work unchanged.
+
+WEBSOCKETS is hanging up the phone and opening a dedicated line. An HTTP request with
+`Upgrade: websocket` gets a `101 Switching Protocols` response, and after that the TCP connection is
+NOT HTTP any more - it carries WebSocket frames, in both directions, with a 2-to-6-byte header per
+message instead of HTTP's hundreds of bytes of repeated headers.
+
+THE DECISION RULE, which is the sentence to say out loud: if only the SERVER has news, SSE. If BOTH
+sides talk constantly, WebSockets. If updates are rare and latency does not matter, polling. And do
+not build a WebSocket layer for a page that refreshes once a minute.""",
+
+    """3. EVERY TERM DEFINED.
+
+REQUEST-RESPONSE. HTTP's model: the client sends a request, the server sends one response, done. The
+server cannot initiate.
+
+SHORT POLLING. Repeat the request on a timer. Latency averages half the interval - measured 344.5 ms
+mean at a 1-second interval.
+
+LONG POLLING (COMET). Send the request; the server does not answer until it has news or a timeout
+expires. The client immediately re-requests on receiving the answer.
+
+SERVER-SENT EVENTS (SSE). An HTTP response with `Content-Type: text/event-stream` that never
+completes. The server writes events into it as they occur.
+
+EVENTSOURCE. The browser API for SSE: `new EventSource("/stream")`. It reconnects automatically after
+a drop, and sends the `Last-Event-ID` header so the server can resume from where it stopped. You get
+that for free; with WebSockets you write it yourself.
+
+THE SSE WIRE FORMAT. Literally text lines: `id: 7`, `data: {...}`, `event: progress`, `retry: 3000`,
+terminated by a BLANK LINE. That blank line is the frame delimiter - forget it and the browser buffers
+forever waiting for it.
+
+WEBSOCKET. A protocol (RFC 6455) that starts as HTTP and then upgrades. Full-duplex, message-oriented,
+frame-based.
+
+HTTP UPGRADE / 101 SWITCHING PROTOCOLS. The handshake. Client sends `Upgrade: websocket`,
+`Connection: Upgrade`, `Sec-WebSocket-Key: <random>`. Server replies `101` with `Sec-WebSocket-Accept`
+= a hash of that key. After the 101 the connection is no longer HTTP.
+
+FRAME. A WebSocket message on the wire: 2 bytes of header for small payloads, plus 4 mask bytes from
+the client. Compare with an HTTP request's headers, measured at 254 bytes per poll in the
+experiment above.
+
+HEARTBEAT / PING-PONG. Periodic empty frames to prove the peer is alive. Necessary because NAT boxes
+and load balancers silently drop idle connections, leaving you with a HALF-OPEN connection that looks
+fine and delivers nothing.
+
+HALF-OPEN CONNECTION. One side thinks the connection is up, the other has gone. Only a heartbeat
+detects it.
+
+BACKOFF. Waiting progressively longer between reconnect attempts. Without it, a server restart brings
+every client back at the same instant - a THUNDERING HERD that knocks the server over again.
+
+STICKY SESSIONS / SESSION AFFINITY. Routing a client to the same backend every time. Necessary for
+WebSockets because the connection lives on ONE process.
+
+PUB/SUB. A shared bus (Redis, Kafka, NATS) so a message arriving at server A can be delivered to a
+client connected to server B. This is the piece people forget when asked to scale WebSockets.
+
+BUFFERING. A proxy holding your response until it is "complete". Fatal for SSE - nothing appears until
+the stream ends. `X-Accel-Buffering: no` turns it off for nginx.
+
+EPOLL. The Linux mechanism that makes tens of thousands of mostly-idle connections cheap. Measured
+below.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we'll use WebSockets" as a reflex, without pricing what it
+costs to operate.
+
+Look again at the measured table. SSE delivered every event at 0.5 ms mean latency, over ONE ordinary
+HTTP response, with 129 bytes of traffic. For a notification feed, a progress bar, a live score, or
+LLM token streaming, that is the entire requirement - and everything in your existing HTTP stack keeps
+working: the load balancer, the reverse proxy, the auth cookie, the CDN, the observability.
+
+Choosing WebSockets there means taking on, at minimum:
+
+    - HEARTBEATS. Nothing else detects a half-open connection. NAT tables drop idle flows.
+    - RECONNECT WITH BACKOFF, and resume semantics. EventSource does this for you; you must write it.
+    - AUTH AT THE HANDSHAKE. Browsers will not let you set custom headers on `new WebSocket(...)`, so
+      the token has to travel in a cookie or a query parameter, and per-message auth is not a thing.
+    - A PUB/SUB BUS, because a connection lives on one process and the event may be produced on
+      another. This is the item that turns "add WebSockets" into a change of architecture.
+    - PROXY SUPPORT. Some corporate proxies block the Upgrade. This is exactly why Socket.IO ships a
+      long-polling fallback.
+
+THE SECOND TRAP: buffering silently destroying an SSE stream. nginx buffers proxied responses by
+default, so your events accumulate and arrive all at once when the stream ends - which for an infinite
+stream is never. The symptom is "it works locally and shows nothing in production". Set
+`X-Accel-Buffering: no` and `Cache-Control: no-cache`, and disable compression, since a compressor
+will also wait for more input before emitting anything.
+
+THE THIRD TRAP: assuming a held-open connection is expensive. It is not, if your server uses epoll.
+
+MEASURED, 2,000 idle TCP connections held open on this machine:
+
+    opening 2,000 idle connections            304 ms
+    process RSS growth                        1,024 kB  =  0.5 kB per connection
+    ONE event-loop pass over all 2,000        0.7 us    =  0.4 ns per connection
+    the same pass with 10 of 2,000 readable   13.8 us, returning exactly 10 ready
+
+    thread-per-connection instead:
+    starting 2,000 parked threads             347 ms and 32,128 kB  =  16.1 kB per thread
+
+Two facts fall out. First, epoll's cost tracks the number of READY connections, not the number of OPEN
+ones - the idle pass cost 0.7 microseconds for two thousand sockets. Second, the connection is not
+what costs you; the THREAD is, at 16.1 kB against 0.5 kB, or 32x. "Held-open connections don't scale"
+is a statement about thread-per-connection servers, not about connections.
+
+THE FOURTH TRAP: no reconnect backoff. Restart a server holding 50,000 WebSocket clients and all
+50,000 reconnect within the same second. Exponential backoff plus JITTER - randomised delay - is what
+spreads them out. Without the jitter, backoff just synchronises the herd into slower waves.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - four techniques, and where each is genuinely right.
+
+SHORT POLLING is right when updates are rare, latency does not matter, and simplicity does. A build
+status page refreshing every 30 seconds. A dashboard. Anything where you would rather have zero
+long-lived state on the server. It also has one real virtue nothing else has: it is completely
+stateless, so any request can hit any server and there is nothing to clean up. MEASURED cost: 2,030
+bytes per delivered event at a 0.25 s interval, and it MISSED an event at the 2 s interval because the
+event arrived and was superseded inside the gap.
+
+LONG POLLING is right when you need low latency but cannot hold a streaming connection - an old proxy,
+a restrictive network, or a client library that only speaks request-response. MEASURED at 1.2 ms mean
+latency, which is essentially as good as SSE. Its cost is one request per event forever and awkward
+timeout handling: too short and you churn, too long and intermediaries kill your request for you.
+
+SSE is right whenever the flow is SERVER TO CLIENT ONLY:
+    - notifications, live scores, progress bars, deployment logs
+    - LLM TOKEN STREAMING, which is exactly this shape - the server has a stream of tokens and the
+      client has nothing to say back mid-generation. ChatGPT-style streaming is SSE.
+Free with it: automatic reconnect, `Last-Event-ID` resume, and the fact that it is ordinary HTTP so
+every proxy understands it. Its limits: text only (base64 your binary), one direction, and older
+browsers cap connections per origin - though HTTP/2 multiplexing removes that.
+
+WEBSOCKETS are right when BOTH sides talk continuously:
+    - chat, multiplayer games, collaborative editing, live cursors, trading terminals
+    - anything where the client emits high-frequency messages, since an HTTP request per keystroke is
+      absurd and a WebSocket frame header is 2-6 bytes
+Its cost is everything in section 4.
+
+WHAT ELSE IS IN THE FAMILY:
+    WEBRTC DATA CHANNELS   peer-to-peer, over UDP, unreliable-if-you-want. For latency-critical
+                           media and games where you would rather drop a packet than wait for it.
+    WEBTRANSPORT           the emerging HTTP/3 answer: multiple streams, optional unreliability, no
+                           head-of-line blocking. WebSockets over QUIC, roughly.
+    HTTP/2 SERVER PUSH     not this. It pushes RESOURCES into a cache; it is not a message channel,
+                           and it has been deprecated by browsers.
+    SOCKET.IO              a library on top: WebSockets with automatic long-polling fallback,
+                           reconnect, rooms and heartbeats already built.
+    GRPC STREAMING         the same idea for service-to-service, over HTTP/2.
+
+HOW YOU SCALE ANY OF THE LONG-LIVED ONES: many stateless gateway processes each holding connections,
+an epoll-based server so idle connections cost 0.5 kB and 0.4 ns per event-loop pass, and Redis or
+Kafka pub/sub fanning messages between the gateways - because the message may be produced on a server
+that is not the one holding the client.""",
+
+    """6. HOW TO CODE IT.
+
+SSE, SERVER SIDE:
+
+  1. Write a generator that YIELDS strings and never returns.
+  2. Each event is `id: <n>\\ndata: <payload>\\n\\n`. The blank line at the end is the delimiter and is
+     not optional.
+  3. Return it with `mimetype="text/event-stream"`.
+  4. Set `Cache-Control: no-cache` so nothing caches an infinite response.
+  5. Set `X-Accel-Buffering: no` so nginx streams instead of buffering. Skip this and production shows
+     nothing while localhost works perfectly.
+  6. Send a comment line (`: keepalive\\n\\n`) every 15-30 seconds if events are sparse - it keeps
+     intermediaries from timing the connection out, and the browser ignores comment lines.
+  7. Handle the client disappearing: writing to a closed socket raises, and you must catch it or you
+     leak the generator.
+
+SSE, CLIENT SIDE - three lines, and reconnect is free:
+
+  8. `const es = new EventSource("/stream")`
+  9. `es.onmessage = e => console.log(JSON.parse(e.data))`
+ 10. On a drop the browser reconnects on its own and sends `Last-Event-ID: <the last id you sent>`, so
+     step 2's `id:` field is what makes RESUME possible. Read that header and replay from there.
+
+WEBSOCKETS, SERVER SIDE:
+
+ 11. Keep a set of connected clients.
+ 12. On connect, add to the set. Authenticate HERE, at the handshake - it is the only place you have
+     the HTTP request.
+ 13. `async for message in ws:` to receive; fan out with `asyncio.gather` to broadcast.
+ 14. In a `finally:` block, DISCARD the client from the set. Every path - error, disconnect, cancel -
+     must remove it, or you leak both memory and doomed sends.
+ 15. Add a ping/pong heartbeat and drop peers that miss it.
+ 16. Publish to Redis/Kafka rather than to your local set, and have every gateway subscribe - otherwise
+     a message produced on server B never reaches a client on server A.
+
+CLIENT RECONNECT, for WebSockets (you must write this yourself):
+
+ 17. On close, wait `min(cap, base * 2 ** attempt)` seconds, TIMES a random factor between 0.5 and 1.5.
+     The jitter is the part people omit and it is the part that prevents the thundering herd.
+
+HOW TO MEASURE ANY OF IT:
+
+ 18. Emit events on a known schedule, timestamp each one at creation, timestamp it again at receipt,
+     and report mean AND max latency plus the request and byte counts. That is exactly how the table
+     in section 1 was produced, and it is what turns "SSE feels faster" into "125x lower mean latency
+     and 12x fewer bytes than a 1-second poll".""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"There are four options and each is right somewhere.
+
+SHORT POLLING - the client asks every N seconds. Trivial on plain HTTP, works through every proxy,
+completely stateless, and it wastes a request per interval per user. Latency averages half the
+interval. I measured that: at a 1-second interval the mean was 344 ms and the max was 516 ms, and at a
+2-second interval it actually MISSED an event inside the gap. Fine for a dashboard refreshing every
+30 seconds.
+
+LONG POLLING - the client asks and the server holds the request open until it has news or times out,
+then the client immediately asks again. Near-real-time on ordinary HTTP - I measured 1.2 ms mean
+latency - at the cost of a held connection per user, awkward timeout handling, and one request per
+event forever. It's how chat worked before WebSockets.
+
+SERVER-SENT EVENTS - one long-lived HTTP response the server streams text events over. It's
+one-directional, server to client, built into browsers as EventSource, and it reconnects automatically
+with a Last-Event-ID so you can resume. I measured one request, 129 bytes, and 0.5 ms mean latency for
+four events - against 24 requests and 6,090 bytes for the quarter-second poll. That's the right answer
+for notifications, live scores, progress bars, and LLM token streaming, which is exactly this shape.
+
+WEBSOCKETS - a genuinely bidirectional connection created by an HTTP Upgrade handshake, then a
+persistent frame-based channel with a 2-to-6-byte header per message instead of HTTP's hundreds of
+bytes. The right choice for chat, multiplayer games and collaborative editing. The cost is that it is
+no longer HTTP, so load balancers, proxies and auth need explicit support, and you have to write
+heartbeats, reconnect-with-backoff and resume yourself.
+
+My decision rule: if only the server has news, SSE. If both sides talk constantly, WebSockets. If
+updates are rare and latency doesn't matter, polling. Don't build a WebSocket layer for a page that
+refreshes every minute."
+
+IF THEY ASK ABOUT SCALE: "many stateless gateway processes holding the connections, with Redis or
+Kafka pub/sub fanning messages between them, because a connection lives on ONE server and the event
+may be produced on another. And an epoll-based server, because idle connections are nearly free - I
+measured 2,000 idle connections at 0.5 kB each and one event-loop pass over all of them at 0.7
+microseconds. Thread-per-connection is what does not scale: 16.1 kB per thread, 32x more."
+
+THE ONE SENTENCE TO NOT FUMBLE: SSE and WebSockets are not competitors on a quality axis - SSE is
+one-directional and stays inside HTTP, WebSockets are bidirectional and leave it, and the direction of
+your data decides which you need.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def sse_stream():
+        def gen():
+            event_id = 0
+            while True:
+
+An infinite generator. Flask consumes it lazily and writes each yielded chunk straight to the socket,
+so the response never completes - which is the entire mechanism.
+
+                yield f"id: {event_id}\\ndata: {payload}\\n\\n"
+
+The wire format, literally. `id:` is what the browser echoes back as `Last-Event-ID` after a reconnect,
+so it is your resume cursor - omit it and a dropped connection loses events silently. `data:` is the
+payload the browser hands to `onmessage`. THE TRAILING BLANK LINE (`\\n\\n`) is the frame delimiter; one
+`\\n` and the browser waits forever for the second.
+
+        return Response(gen(), mimetype="text/event-stream",
+
+`text/event-stream` is what makes the browser treat it as SSE rather than a slow download.
+
+                        headers={"Cache-Control": "no-cache",
+                                 "X-Accel-Buffering": "no"})
+
+`no-cache` because an infinite response must never be cached. `X-Accel-Buffering: no` tells nginx not
+to buffer - the single most common reason SSE works locally and shows nothing in production.
+
+    #   const es = new EventSource("/stream");
+    #   es.onmessage = e => console.log(JSON.parse(e.data));
+
+Three lines of client, and reconnection is already handled. That is the whole argument for SSE.
+
+    #   GET /ws HTTP/1.1              HTTP/1.1 101 Switching Protocols
+    #   Upgrade: websocket            Upgrade: websocket
+    #   Sec-WebSocket-Key: ...        Sec-WebSocket-Accept: <hash of the key>
+
+The handshake starts as ordinary HTTP, which is why WebSockets traverse port 80/443 and most
+firewalls. `Sec-WebSocket-Accept` is a SHA-1 of the key plus a fixed GUID - not security, just proof
+that the server understood the protocol rather than being a cache replaying a response. After the
+`101`, HTTP is over and the socket carries frames.
+
+    CLIENTS = set()
+
+    async def handler(ws):
+        CLIENTS.add(ws)
+
+The broadcast registry. Note that this set is PER PROCESS - the reason a second server instance needs
+a pub/sub bus, because it has its own separate set.
+
+        try:
+            async for message in ws:
+
+`async for` over the socket yields each inbound message and suspends when there is none, which is what
+lets one process hold thousands of connections on one thread.
+
+                await asyncio.gather(*[c.send(message) for c in CLIENTS])
+
+Fan-out, concurrently. In production you also want a per-client send queue with a bound, because one
+slow client blocking the gather backs up everyone.
+
+        finally:
+            CLIENTS.discard(ws)
+
+`finally`, not the happy path - errors, cancellations and disconnects must all remove the client.
+`discard` rather than `remove` so a double-removal cannot raise inside a `finally` and mask the real
+exception.
+
+AND THE FOUR PRODUCTION CONCERNS IN THE COMMENTS, each of which is a real outage:
+heartbeats (NAT drops idle connections and you never notice), backoff (a restart is a stampede),
+handshake auth (you cannot set headers on `new WebSocket`), and a shared pub/sub bus (the message
+arrives at the wrong server).""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the measured experiment, four events emitted at 1.5-second intervals over a 6-second window,
+against a real local HTTP server.
+
+    technique              requests   bytes   bytes/event   events   mean lat    max lat
+    --------------------   --------   -----   -----------   ------   ---------   ---------
+    short poll  0.25 s           24    6090        2030.0        3    62.3 ms     82.3 ms
+    short poll  1.00 s            6    1536         512.0        3   344.5 ms    516.0 ms
+    short poll  2.00 s            3     771         385.5        2   756.6 ms   1008.2 ms
+    long poll                     4    1052         263.0        4     1.2 ms      1.6 ms
+    SSE                           1     129          32.3        4     0.5 ms      0.9 ms
+
+Read down each column separately.
+
+REQUESTS: 24 -> 6 -> 3 -> 4 -> 1. Short polling's request count is set by the CLOCK and is unrelated
+to how much news there is; long polling's is set by the number of EVENTS; SSE's is one, forever.
+
+BYTES PER EVENT: 2,030 -> 32.3, a 63x difference. The 2,030 is almost entirely HTTP headers repeated
+24 times to deliver 3 events. SSE pays the headers once and then 32 bytes per event.
+
+MEAN LATENCY versus the poll interval: 62.3 ms at a 250 ms interval, 344.5 ms at 1,000 ms, 756.6 ms at
+2,000 ms. Each is close to HALF the interval, which is exactly the theory - an event arrives uniformly
+at random within the gap.
+
+MAX LATENCY versus the poll interval: 82.3, 516.0, 1008.2. Each is close to the FULL interval, again
+exactly as predicted.
+
+EVENTS DELIVERED: 3, 3, 2, 4, 4. The polling rows under-deliver because the window closed while events
+were still outstanding; the 2-second poll got only two of four. Long polling and SSE got all four.
+
+TRACE B - what happens on the wire for one SSE event, byte by byte.
+
+    server writes:   "id: 3\\n"                    6 bytes
+                     "data: evt3\\n"              11 bytes
+                     "\\n"                         1 byte   <- THE DELIMITER
+    browser fires:   onmessage with e.data = "evt3", e.lastEventId = "3"
+
+If the final `\\n` is missing, the browser has a complete-looking `data:` line and no delimiter, so it
+holds it and waits. The stream looks alive and delivers nothing. That single byte is the most common
+SSE bug.
+
+TRACE C - the cost of holding connections open, measured.
+
+    what                                                measurement
+    -------------------------------------------------  -------------------------------
+    open 2,000 idle TCP connections                     304 ms
+    RSS growth for those 2,000                          1,024 kB = 0.5 kB per connection
+    one epoll pass, 0 of 2,000 readable                 0.7 us   = 0.4 ns per connection
+    one epoll pass, 10 of 2,000 readable                13.8 us, returned exactly 10
+    start 2,000 parked THREADS instead                  347 ms, 32,128 kB = 16.1 kB each
+
+Compare the two idle-pass rows: 0.7 us with nothing ready, 13.8 us with ten ready. The event loop's
+cost scales with READY connections, not OPEN ones - that is the property that makes 100,000 idle
+WebSockets on one box a normal thing rather than an achievement. And 16.1 kB versus 0.5 kB is the
+32x argument against thread-per-connection.
+
+TRACE D - reconnect storm arithmetic, for the backoff discussion.
+
+    50,000 clients, server restarts, no backoff        50,000 connects in ~1 s
+    with backoff 1,2,4,8 s and NO jitter               ~50,000 connects at t=1, again at t=2, ...
+                                                       (still synchronised - backoff alone does not
+                                                        spread anything, it only delays the spike)
+    with backoff x random(0.5, 1.5)                    spread over a 1 s window at t=1, 2 s at t=2, ...
+
+The middle row is the point: exponential backoff WITHOUT jitter converts one spike into a series of
+spikes. The randomisation is the part that actually spreads the load.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, per client over a window containing E events and T/interval polls:
+
+    short polling    O(T / interval) requests regardless of E; latency ~ interval/2 mean, interval max
+                     MEASURED: 24 requests, 2,030 bytes/event, 344.5 ms mean at a 1 s interval
+    long polling     O(E) requests; latency ~ 0 plus one round trip
+                     MEASURED: 4 requests for 4 events, 1.2 ms mean
+    SSE              O(1) requests; latency ~ 0
+                     MEASURED: 1 request, 129 bytes total, 0.5 ms mean
+    WebSockets       O(1) connections, O(2-6) bytes of header per message in EITHER direction
+
+    server memory    ~0.5 kB per idle connection with epoll, MEASURED
+                     ~16.1 kB per connection with a thread each, MEASURED - 32x
+    event loop       O(ready), not O(open). MEASURED 0.7 us for 2,000 idle sockets
+
+THE MISTAKES:
+
+    - Reaching for WebSockets by default. If the data only flows one way, SSE gives you the same
+      latency (0.5 ms vs 1.2 ms measured) plus free reconnect and resume, and changes nothing about
+      your infrastructure.
+    - Forgetting nginx or a CDN buffers an SSE stream. Works locally, silent in production. Set
+      `X-Accel-Buffering: no` and `Cache-Control: no-cache`, and turn off compression on the route.
+    - Omitting the blank line between SSE events. The browser waits forever for the delimiter.
+    - Omitting `id:`. Then `Last-Event-ID` is empty on reconnect and you cannot resume.
+    - No heartbeat. NAT tables and load balancers drop idle flows; half-open connections pile up
+      looking healthy.
+    - No reconnect backoff, or backoff WITHOUT jitter. Backoff alone just turns one stampede into
+      several.
+    - Assuming a WebSocket connection can move between servers. It cannot. That is why the answer to
+      "how do you scale it" is always "plus a pub/sub bus".
+    - Trying to set auth headers on `new WebSocket(...)`. Browsers do not allow it. Authenticate at
+      the handshake, via cookie or query parameter, and validate before accepting.
+    - Assuming held-open connections are expensive. Measured 0.5 kB and 0.4 ns per event-loop pass.
+      It is THREADS that are expensive, not connections.
+    - Polling faster to fix latency. At a 250 ms interval you still averaged 62.3 ms and paid 2,030
+      bytes per delivered event. You cannot poll your way to a millisecond.
+
+THE TAKEAWAY. All four techniques exist because HTTP cannot let the server speak first, and they
+differ in exactly one dimension: WHO holds the connection open, and for how long. Short polling holds
+nothing and pays in latency and repeated headers. Long polling holds one request at a time and pays in
+churn. SSE holds one response forever and pays nothing extra, as long as the data flows one way.
+WebSockets stop being HTTP altogether and pay in operational complexity, which is worth it precisely
+when the client also has something to say. Pick by the DIRECTION of your data, not by which sounds most
+modern.""",
+]
+
+_EX_P1AO["Sharding vs Replication"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one database server is not enough. There are exactly two things you
+can do about it, and they solve different problems.
+
+    SHARDING     SPLIT the data. Server 1 holds users A-M, server 2 holds N-Z. Each server holds a
+                 DIFFERENT SUBSET.  ->  more data, more WRITES.
+    REPLICATION  COPY the data. Server 1, 2 and 3 all hold EVERY row. One takes the writes, the
+                 others serve reads.  ->  more READS, and survival when a server dies.
+
+The one-line test: if a server dies, does anything become unreachable? Under replication, no - another
+copy has it. Under sharding, yes - that shard's data is gone until it comes back. Which is exactly why
+real systems do BOTH: shard for capacity, replicate each shard for safety.
+
+MEASURED - one million users hashed across shards, on this machine:
+
+    4 shards:   min 249,375   max 250,434   spread 0.42% of the mean
+   10 shards:   min  99,400   max 100,514   spread 1.11% of the mean
+  100 shards:   min   9,815   max  10,227   spread 4.12% of the mean
+
+Hashing distributes the KEYS almost perfectly. Now the same 10 shards, weighted by realistic
+Zipf-distributed ACTIVITY rather than by key count:
+
+    hottest shard 17.1% of all requests, coldest 7.5%  (uniform would be 10.0%)
+    the hottest shard carries 2.29x the load of the coldest
+
+That gap is the whole difficulty of sharding in one number. Your keys are evenly spread and your
+TRAFFIC is not, because a few users are far busier than the rest.""",
+
+    """2. THE INTUITION - a library that has outgrown one building.
+
+SHARDING is opening a second building and moving half the books. Now you can hold twice as many books
+and two librarians can shelve simultaneously. But "find every book mentioning Napoleon" now means
+asking BOTH buildings and merging the answers, and if the second building burns down, those books are
+simply gone.
+
+REPLICATION is photocopying the entire library into a second building. Twice as many readers can be
+served, and if one building burns down nothing is lost. But you still cannot hold more books than fit
+in one building, and every new book must be photocopied into every branch - so writes got HARDER, not
+easier, and for a while the branches disagree about what exists.
+
+    sharding     helps: total data size, write throughput
+                 hurts: cross-shard queries, transactions, joins, uniqueness, resharding
+    replication  helps: read throughput, availability, geography
+                 hurts: nothing about write throughput; introduces LAG
+
+THE ASYMMETRY THAT MATTERS: replication multiplies your READ capacity by the number of copies and
+leaves WRITE capacity exactly where it was, because every write still has to happen on every copy.
+Sharding is the only one of the two that increases write capacity.
+
+MEASURED, the cost of a cross-shard query - the price sharding charges. Per-shard latency drawn from
+the same distribution, and the query must wait for the SLOWEST shard:
+
+    shards   single-shard p99   fan-out p99   mean fan-out latency
+    ------   ----------------   -----------   --------------------
+         1              11.03         11.03                   3.27
+         4              11.19         14.99                   5.55
+        10              10.81         17.26                   7.27
+       100              10.96         25.09                  12.69
+
+The single-shard column barely moves - each individual shard is just as fast as it ever was. The
+fan-out column climbs steadily, because you are no longer waiting for A typical shard, you are waiting
+for the WORST of N. Ten shards turned a 10.81 p99 into 17.26, and a hundred shards into 25.09. Tail
+latency is contagious across a fan-out, and that is why "just query all the shards" is not free.""",
+
+    """3. EVERY TERM DEFINED.
+
+SHARD / PARTITION. One server (or set of servers) holding a SUBSET of the rows. The words are used
+interchangeably; "partition" is also used for splitting a table within one server.
+
+SHARD KEY / PARTITION KEY. The column whose value decides which shard a row lives on. Choosing it is
+the single most consequential decision in a sharded design, because it decides which queries are
+cheap and which require a fan-out.
+
+HASH SHARDING. `shard = hash(key) % N`. Spreads keys evenly - measured 0.42% spread over 4 shards -
+and destroys range queries, because adjacent keys land on unrelated shards.
+
+RANGE SHARDING. Shard by key ranges (A-M, N-Z; or by date). Range queries stay on one shard; the risk
+is a HOTSPOT, because "today" is one range and all today's writes go to one shard.
+
+DIRECTORY / LOOKUP SHARDING. An explicit key-to-shard table. Maximum flexibility, and the lookup table
+becomes a bottleneck and a single point of failure.
+
+CONSISTENT HASHING. Placing shards and keys on a ring so that adding a shard moves only ~1/N of the
+keys instead of nearly all of them. Measured below at 9.6% versus 90.9%.
+
+VIRTUAL NODES (VNODES). Each physical shard placed at many points on the ring, which smooths the
+distribution and makes rebalancing finer-grained. The measurement below used 150 per node.
+
+RESHARDING / REBALANCING. Changing the number of shards and moving the data. The operation everyone
+underestimates.
+
+HOTSPOT / HOT SHARD. One shard receiving disproportionate traffic. Measured at 2.29x under a Zipf
+activity distribution even with perfectly even key placement.
+
+CELEBRITY PROBLEM. The extreme hotspot: one key (a celebrity's follower list, a viral post) that is
+too busy for any single shard. Sharding cannot help, because the unit of placement is the key.
+
+SCATTER-GATHER / FAN-OUT. Sending a query to every shard and merging. Latency becomes the MAX over
+shards - measured p99 10.81 -> 25.09 going from 1 to 100 shards.
+
+CROSS-SHARD JOIN / TRANSACTION. A join or transaction spanning shards. Usually unsupported, or
+supported via two-phase commit, which is slow and has its own failure modes.
+
+PRIMARY / LEADER, REPLICA / FOLLOWER. The server that accepts writes, and the copies that receive
+them.
+
+SYNCHRONOUS REPLICATION. The primary waits for the replica to acknowledge before confirming the write.
+No data loss on failover, higher write latency.
+
+ASYNCHRONOUS REPLICATION. The primary confirms immediately and ships the change afterwards. Fast, and
+a crash can lose the un-shipped tail.
+
+SEMI-SYNCHRONOUS. Wait for at least one replica. The usual compromise.
+
+REPLICATION LAG. How far behind a replica is. Measured below, with the staleness it causes.
+
+READ-YOUR-OWN-WRITES. The guarantee that after YOU write something, YOUR next read sees it. The
+guarantee most often broken by a naive read-replica setup.
+
+FAILOVER. Promoting a replica to primary when the primary dies.
+
+SPLIT BRAIN. Two servers both believing they are primary, accepting conflicting writes. Prevented by
+quorum or fencing.
+
+MULTI-PRIMARY / MULTI-MASTER. Several servers accepting writes, requiring conflict resolution.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two of them, and both are things nobody thinks about until
+production.
+
+TRAP ONE: `hash(key) % N` looks fine until you add a shard.
+
+MEASURED, one million keys, moving from 10 shards to 11:
+
+    mod-N (hash(key) % N)      908,895 of 1,000,000 keys move   =  90.9%
+    consistent hashing          19,143 of   200,000 keys move   =   9.6%   (ideal is 1/11 = 9.1%)
+
+Ninety-one percent. Adding ONE server to ten means moving almost your entire dataset, during which
+every one of those keys is either unavailable or being served from two places at once. Consistent
+hashing moves 9.6% - within half a point of the theoretical 9.1% - because a key only moves if the new
+shard landed between it and its old owner on the ring.
+
+This is not a micro-optimisation. It is the difference between "add a shard on a Tuesday afternoon"
+and "a three-week migration project".
+
+TRAP TWO: an even key distribution is not an even LOAD distribution.
+
+MEASURED, 10 shards, keys placed by hash (spread 1.11%, essentially perfect), traffic weighted by a
+Zipf distribution - which is what real user activity looks like:
+
+    hottest shard   17.1% of requests
+    coldest shard    7.5% of requests
+    ratio            2.29x
+
+Your monitoring dashboard shows 100,000 users per shard and looks balanced. One shard is doing more
+than twice the work of another. And the pathological version is the CELEBRITY PROBLEM: a single key
+so hot that no shard can serve it - at which point sharding has no answer at all, because the key is
+the unit of placement. The fixes are outside sharding: cache the hot key, or split it artificially
+(`celebrity_id + random(0..99)` as the shard key, then fan out the reads).
+
+TRAP THREE, on the replication side: replication does NOT scale writes.
+
+    1 primary + 0 replicas:  write capacity 1x,  read capacity 1x
+    1 primary + 1 replica:   write capacity 1x,  read capacity 2x
+    1 primary + 2 replicas:  write capacity 1x,  read capacity 3x
+    1 primary + 5 replicas:  write capacity 1x,  read capacity 6x
+
+Every write is still applied on every machine. Adding replicas to fix a write bottleneck makes it
+slightly WORSE, because the primary now has more streams to feed. Only sharding adds write capacity.
+
+TRAP FOUR: read-your-own-writes, broken by replication lag.
+
+MEASURED, a simulated lag distribution with p50 7.4 ms, p99 77.1 ms, max 502 ms:
+
+    a read   5 ms after the write hits a stale replica  65.14% of the time
+    a read  20 ms after the write hits a stale replica  16.05% of the time
+    a read 100 ms after the write hits a stale replica   0.49% of the time
+    a read 500 ms after the write hits a stale replica   0.00% of the time
+
+Sixty-five percent, at 5 ms. That is the classic bug: the user edits their profile, the app redirects,
+the redirected read goes to a replica, and the old value comes back. The fixes are to route reads to
+the PRIMARY for a short window after a write, to pin a session to one replica, or to pass the write's
+log position and wait for a replica that has caught up to it.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - things to try BEFORE sharding, and what sharding looks like
+when you must.
+
+DO THESE FIRST. Sharding is close to a one-way door; you should be able to say why you did not:
+    1. FIX THE QUERIES. See the query-plan entry: 42.9 ms to 42 us from one composite index, measured.
+       Most "we need to shard" moments are one missing index.
+    2. VERTICAL SCALING. A modern box takes hundreds of gigabytes of RAM and millions of IOPS. Boring,
+       instant, and reversible.
+    3. CACHING. Put Redis in front. It also happens to be the answer to the celebrity problem.
+    4. READ REPLICAS. If the load is read-heavy - and it usually is - this is the whole fix, and it
+       costs you only lag.
+    5. ARCHIVE / TIERING. Move rows older than a year to cold storage. Often shrinks the hot set by an
+       order of magnitude.
+    6. FUNCTIONAL PARTITIONING. Split by TABLE, not by row - orders on one server, analytics on
+       another. Much simpler than sharding, and no cross-shard row logic.
+    7. TABLE PARTITIONING WITHIN ONE SERVER. Postgres declarative partitioning gives you many benefits
+       of range sharding with none of the distribution.
+
+THE SHARD-KEY FAMILY, and what each buys:
+    hash(user_id)     even spread (measured 1.11% over 10 shards), all of one user's data co-located,
+                      no range scans
+    range on date     "last 7 days" stays on one shard; today's writes all hit ONE shard - a hotspot
+                      by construction
+    range on key      range scans work; distribution depends entirely on your key distribution
+    composite         e.g. hash(tenant_id) - the multi-tenant default, since a tenant's data is almost
+                      always queried together
+    directory         an explicit map; maximum flexibility, and a new single point of failure
+    consistent hash   what you want if the shard COUNT will ever change. Measured 9.6% moved vs 90.9%
+
+THE REPLICATION FAMILY:
+    async            fast writes, can lose the un-shipped tail on a crash
+    semi-sync        wait for one replica; the usual production default
+    sync             no data loss, and your write latency is now the SLOWEST replica's
+    quorum (W+R>N)   Dynamo-style: write to W, read from R, and if W+R>N a read always sees the latest
+                     write. This is the tunable version of the same idea.
+    multi-primary    writes anywhere, conflicts resolved by last-write-wins, vector clocks or CRDTs
+
+HOW THEY COMBINE, which is the answer to the interview question: shard for capacity, replicate each
+shard for availability. "Shard orders by hash(user_id) across 10 servers for write scale, and give
+each shard 2 read replicas" means 30 machines, 10 write-capacity units, 30 read-capacity units, and
+survival of any single machine failure.
+
+WHAT THE SYSTEMS DO: Vitess and Citus bolt sharding onto MySQL/Postgres; MongoDB and Cassandra shard
+natively (Cassandra with consistent hashing and vnodes, exactly the measurement above); DynamoDB and
+Spanner hide it entirely behind a partition key you still have to choose correctly.""",
+
+    """6. HOW TO CODE IT - the routing logic, and the measurements that justify it.
+
+HASH SHARDING, the naive version:
+
+  1. `shard = hash(key) % N`. Use a STABLE hash - `hashlib.md5` or similar - not Python's built-in
+     `hash()`, which is randomised per process by default and will route the same key to different
+     shards on different servers.
+  2. Verify the spread: bucket a million keys and print min, max and the spread as a percentage of the
+     mean. Measured 0.42% at 4 shards, 4.12% at 100 - the spread grows as buckets shrink, which is
+     just the law of large numbers.
+
+CONSISTENT HASHING, the version you can actually grow:
+
+  3. For each physical shard, hash `"<shard>#<v>"` for v in 0..149 and place all 150 points on a ring.
+     The vnodes are what make the distribution smooth; with one point per shard it is badly lumpy.
+  4. Sort the ring once.
+  5. To route a key: hash it, `bisect` into the sorted ring, wrap with `% len(ring)`, and take the
+     shard that point belongs to. That is "walk clockwise to the next node".
+  6. Prove it: build a 10-node ring and an 11-node ring, route the same keys through both, and count
+     the disagreements. Measured 9.6%, against 90.9% for mod-N.
+
+MEASURING THE HOTSPOT:
+
+  7. Do not weight keys equally. Generate Zipf weights (`1/(i+1)**alpha`), normalise, and accumulate
+     the WEIGHT per shard rather than the COUNT. Print the hottest and coldest share. Measured 17.1%
+     and 7.5% against a uniform 10.0%.
+
+MEASURING THE FAN-OUT COST:
+
+  8. Draw one latency sample per shard from a heavy-tailed distribution (log-normal is realistic).
+  9. Single-shard latency is one sample; fan-out latency is `max(samples)`.
+ 10. Sort 20,000 trials and take the 99th percentile of each. Repeat for 1, 4, 10, 100 shards. The
+     single-shard p99 stays flat and the fan-out p99 climbs - measured 11.03 to 25.09.
+
+MEASURING THE LAG WINDOW:
+
+ 11. Generate a realistic lag distribution (log-normal again) and sort it.
+ 12. For each candidate delay - 5, 20, 100, 500 ms - count what fraction of lags EXCEED it. That
+     fraction is your probability of a stale read at that delay. Measured 65.14% at 5 ms, 0.49% at
+     100 ms.
+ 13. That table IS your policy: it tells you how long "route reads to the primary after a write" has
+     to last.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"They're the two ways to scale a database and they solve different problems.
+
+SHARDING splits the data ACROSS servers - each one holds a different subset, typically by hash of a
+shard key like user_id. That's what buys you more total data and more WRITE throughput, because
+different servers accept different writes independently. What it costs you is that any query not
+scoped to the shard key becomes a fan-out, and cross-shard joins, transactions and uniqueness
+constraints get hard or impossible.
+
+REPLICATION copies the SAME data to multiple servers. That buys you read throughput and availability -
+if the primary dies, a replica is promoted. What it does NOT buy you is write throughput, because
+every write still has to be applied on every copy. That's the distinction people get wrong: five
+replicas gives you 6x reads and 1x writes.
+
+The cost of replication is LAG. I simulated a realistic lag distribution - p50 7 ms, p99 77 ms - and a
+read issued 5 milliseconds after a write hit a stale replica 65% of the time. That's the classic
+read-your-own-writes bug: user saves their profile, gets redirected, and sees the old value. You fix it
+by routing reads to the primary for a short window after a write, or by passing the write's log
+position and waiting for a replica that has caught up.
+
+The two big sharding gotchas I'd raise. First, use CONSISTENT HASHING, not hash % N. I measured going
+from 10 shards to 11: mod-N moved 90.9% of a million keys, consistent hashing with virtual nodes moved
+9.6%, against a theoretical ideal of 9.1%. Second, an even KEY distribution is not an even LOAD
+distribution - with keys spread within 1.1% across 10 shards but Zipf-distributed activity, the
+hottest shard took 17.1% of requests and the coldest 7.5%, a 2.3x imbalance.
+
+And I'd say what I'd try first, because sharding is close to a one-way door: fix the queries, scale up,
+add a cache, add read replicas, archive old data. Most 'we need to shard' moments are a missing index.
+
+In practice you combine them: shard for capacity and replicate each shard for availability. Shard
+orders by hash(user_id) across 10 servers, give each shard 2 read replicas."
+
+THE ONE SENTENCE TO NOT FUMBLE: sharding is the only one of the two that adds write capacity, and
+replication is the only one of the two that adds availability.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def h(k): return int(hashlib.md5(str(k).encode()).hexdigest(), 16)
+
+A STABLE hash. Python's built-in `hash()` is randomised per process (PYTHONHASHSEED) so the same key
+would route differently on two application servers - the kind of bug that shows up as "some users
+intermittently see no data". MD5 is fine here because this is placement, not security.
+
+    counts[h(k) % S] += 1
+
+The naive router, one line. Measured spread: 0.42% at 4 shards, 1.11% at 10, 4.12% at 100. The spread
+GROWS as you add shards because each bucket holds fewer keys, so the relative noise is larger - the
+law of large numbers running backwards.
+
+    weights = [1.0/((i+1)**Z) for i in range(100000)]
+
+Zipf. User 0 gets weight 1, user 1 gets 1/2, user 9 gets 1/10. This is the distribution of almost
+every human activity metric, and it is why key-count balance means nothing.
+
+    load[h('user%d' % i) % S] += w / tot
+
+Accumulating WEIGHT, not COUNT. Same routing, different measurement, and the answer changes from
+"1.11% imbalance" to "2.29x imbalance".
+
+    moved = sum(1 for k in KEYS if h(k) % 10 != h(k) % 11)
+
+The mod-N resharding cost, computed exactly rather than estimated. 908,895 out of a million.
+
+    class Ring:
+        def __init__(self, nodes, vnodes=150):
+            for n in nodes:
+                for v in range(vnodes):
+                    p = h('%s#%d' % (n, v)); self.ring.append(p); self.map[p] = n
+            self.ring.sort()
+
+Consistent hashing. Each node is placed at 150 points, so the ring has 1,500 points for 10 nodes. The
+vnode count is the smoothness knob: with 1 point per node the arcs between nodes vary wildly and one
+node ends up owning a third of the ring. Sorting once makes lookup a binary search.
+
+        def get(self, k):
+            p = h(k)
+            i = bisect.bisect(self.ring, p) % len(self.ring)
+            return self.map[self.ring[i]]
+
+"Walk clockwise to the next node." `bisect` finds the insertion point in O(log n); the `% len(ring)`
+is the WRAP - a key hashing past the last point belongs to the first node. Forget the modulo and every
+key above your highest ring point raises IndexError, which in testing looks like "it works for most
+keys".
+
+    ls = [lat() for _ in range(S)]
+    single.append(ls[0]); fan.append(max(ls))
+
+The fan-out cost in two lines. `ls[0]` is what one shard would have cost; `max(ls)` is what the
+scatter-gather costs, because the merge cannot start until the slowest shard replies. Everything about
+tail latency in distributed systems is contained in that `max`.
+
+    stale = sum(1 for l in lags if l > delay)
+
+The staleness probability at a given delay: the fraction of the lag distribution that exceeds it.
+65.14% at 5 ms is not a subtle effect - it is the majority case.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - key placement, one million users.
+
+    shards   min per shard   max per shard   spread vs mean
+    ------   -------------   -------------   --------------
+         4         249,375         250,434            0.42%
+        10          99,400         100,514            1.11%
+       100           9,815          10,227            4.12%
+
+Hashing works. If the interview stops here you would conclude sharding is balanced. It is not.
+
+TRACE B - the SAME placement, weighted by Zipf activity, 10 shards.
+
+    rank of shard    share of requests
+    --------------   -----------------
+    hottest                     17.1%
+    (uniform would be)          10.0%
+    coldest                      7.5%
+    ratio hottest/coldest        2.29x
+
+Same routing function, same key counts, and one shard is doing 2.29x the work. Nothing in the key
+distribution predicted this, because the imbalance is in the TRAFFIC, not the data.
+
+TRACE C - resharding 10 -> 11, key by key.
+
+    method               keys examined   keys that MOVE   percentage
+    ------------------   -------------   --------------   ----------
+    hash(k) % N              1,000,000          908,895        90.9%
+    consistent hashing         200,000           19,143         9.6%
+    theoretical ideal (1/11)                                    9.1%
+
+WHY mod-N is so bad, concretely: key with hash h moves unless `h % 10 == h % 11`, which happens only
+for a thin set of h. Nearly every key gets a new home. WHY consistent hashing is good: the new node's
+150 ring points each steal only the arc between themselves and the previous point, so exactly the keys
+in those arcs move - and nothing else is disturbed.
+
+TRACE D - the fan-out tax, 20,000 simulated queries per row.
+
+    shards   single-shard p99   fan-out p99   fan-out p99 / single   mean fan-out
+    ------   ----------------   -----------   --------------------   ------------
+         1              11.03         11.03                  1.00x           3.27
+         4              11.19         14.99                  1.34x           5.55
+        10              10.81         17.26                  1.60x           7.27
+       100              10.96         25.09                  2.29x          12.69
+
+Two columns to read together. The single-shard p99 is flat - no individual shard got slower. The
+fan-out p99 grew 2.29x at 100 shards, purely because you now wait for the worst of a hundred draws.
+This is why a well-chosen shard key matters so much: it decides how many of your queries hit ONE shard
+(the flat column) versus ALL shards (the climbing one).
+
+TRACE E - replication lag and stale reads. Lag distribution: p50 7.4 ms, p99 77.1 ms, max 502 ms.
+
+    read issued N ms after the write   chance of reading STALE data
+    --------------------------------   ----------------------------
+                                5 ms                        65.14%
+                               20 ms                        16.05%
+                              100 ms                         0.49%
+                              500 ms                         0.00%
+
+This table is directly actionable. If your policy is "route reads to the primary for 100 ms after a
+write", you have just quantified your residual bug rate as 0.49% of post-write reads. If your policy
+is "hope", it is 65% at the redirect-immediately-after-save latency that web apps actually have.
+
+TRACE F - putting them together.
+
+    design                                    machines   write cap   read cap   survives 1 failure?
+    ---------------------------------------   --------   ---------   --------   -------------------
+    1 primary                                        1          1x         1x   no
+    1 primary + 2 replicas                           3          1x         3x   yes
+    10 shards, no replicas                          10         10x        10x   NO - 1/10 data lost
+    10 shards x (1 primary + 2 replicas)            30         10x        30x   yes
+
+The third row is the one people propose by accident. Ten shards with no replicas has ten times the
+write capacity and is LESS available than a single server, because now any one of ten machines failing
+takes data offline.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, for N shards and R replicas per shard:
+
+    routing a key                     O(1) for hash%N, O(log(N x vnodes)) for consistent hashing
+    single-shard query                same as unsharded - measured p99 flat at ~11 across 1..100 shards
+    scatter-gather query              O(N) work, latency = MAX over N - measured p99 11.03 -> 25.09
+    resharding, mod-N                 O(90.9% of all data) moved. MEASURED
+    resharding, consistent hashing    O(1/(N+1) of all data) moved - measured 9.6% vs the 9.1% ideal
+    write capacity                    O(N), unaffected by R
+    read capacity                     O(N x (1 + R))
+    storage cost                      O(N x (1 + R)) copies of everything
+    failure tolerance                 survives R simultaneous failures per shard; with R=0 a single
+                                      machine loss takes 1/N of your data offline
+
+THE MISTAKES:
+
+    - Sharding before trying anything else. Fix the query first: 42.9 ms to 42 us from one index,
+      measured in the query-plan entry. Then scale up, cache, replicate, archive.
+    - `hash(key) % N`. Measured 90.9% of keys move when you add one shard. Use consistent hashing.
+    - Using Python's built-in `hash()` for routing. Randomised per process; the same key routes
+      differently on different app servers.
+    - Assuming even keys means even load. Measured 1.11% key spread and 2.29x traffic imbalance,
+      simultaneously.
+    - Expecting replicas to help writes. 5 replicas = 6x reads, 1x writes. Measured by definition.
+    - Ignoring read-your-own-writes. 65.14% stale at a 5 ms delay. Route post-write reads to the
+      primary, or wait for a replica at the right log position.
+    - Choosing a shard key that most queries do not filter on. Every such query becomes a fan-out and
+      inherits the tail-latency tax.
+    - Forgetting that cross-shard uniqueness is not free. `UNIQUE(email)` cannot be enforced by a
+      single shard when the shard key is user_id; you need a separate lookup table or a global
+      sequence.
+    - Sharding without replicating. Ten shards, zero replicas, is LESS available than one server.
+    - Forgetting the celebrity problem. One key too hot for one shard has no sharding answer; cache
+      it, or split it artificially and fan out.
+
+THE TAKEAWAY. Sharding and replication are not two speeds of the same dial - they add different
+capabilities. Splitting adds write and storage capacity and charges you in fan-out latency, resharding
+pain and lost cross-shard guarantees. Copying adds read capacity and availability and charges you in
+lag and staleness. Neither is a substitute for the other, and the production answer is almost always
+both: shard for capacity, replicate each shard for safety. Before either, try the boring things - the
+1,014x you can get from one correct index is larger than anything on this page.""",
+]
+
+_EX_P1AO["TCP flow control vs congestion control (and why your download speeds up gradually)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you start a big download and watch the speed climb over a few
+seconds instead of starting at full speed. Why?
+
+Because TCP does not know how fast it is allowed to go, so it finds out by trying. And there are TWO
+separate speed limits it must respect, which is the thing this question is really testing:
+
+    FLOW CONTROL       protects the RECEIVER.  "Do not send faster than I can absorb."
+    CONGESTION CONTROL protects the NETWORK.   "Do not send faster than the routers in between can
+                                                forward."
+
+The receiver ADVERTISES its limit in every ACK - a number called the receive window. The network
+advertises nothing at all, because no router will ever tell you it is full. So the sender must INFER
+congestion, from packet loss or rising delay, and adjust a second, private limit called the congestion
+window. The sender may have at most `min(receive window, congestion window)` bytes outstanding.
+
+MEASURED ON THIS MACHINE - a real 8 MB TCP transfer over loopback, changing NOTHING but the receiver's
+buffer size:
+
+    asked for SO_RCVBUF   kernel actually gave   time       throughput
+    -------------------   --------------------  --------   -----------
+    default                            131,072    2.2 ms    3,641.9 MB/s
+    2,048                                4,096   39.4 ms      202.9 MB/s
+    16,384                              32,768    9.8 ms      814.8 MB/s
+    262,144                            425,984    3.8 ms    2,088.0 MB/s
+    4,194,304                          425,984    3.2 ms    2,483.1 MB/s
+
+An 18x throughput difference on a link with essentially zero latency and infinite bandwidth, caused by
+nothing but the size of the receiver's buffer. That is FLOW CONTROL, visible and measurable, and it
+had nothing to do with congestion.
+
+(Two details worth noticing in that table: the kernel DOUBLES whatever you request - ask for 2,048 and
+it reports 4,096 - and it clamps at 425,984 here, so the last two rows got the same buffer.)""",
+
+    """2. THE INTUITION - two different bottlenecks, two different signals.
+
+FLOW CONTROL is a person taking dictation. They say "slow down, I'm still writing" and you slow down.
+The signal is EXPLICIT: it arrives in every ACK as "I have room for 64 KB more". If they say zero, you
+stop entirely and wait for a window update. There is no guesswork - the receiver knows its own buffer
+and tells you.
+
+CONGESTION CONTROL is driving onto a motorway you cannot see. Nobody is going to phone you and say
+"junction 14 is at capacity". You find out by noticing that cars started disappearing - that is packet
+LOSS - and you infer that you were pushing too hard. Because the signal is implicit and delayed, the
+algorithm has to be conservative and probing rather than reactive and precise.
+
+HOW IT PROBES, and this is the part that explains the gradual speed-up:
+
+    SLOW START             begin at ~1-10 segments and DOUBLE the window every round trip. Exponential,
+                           despite the name - it merely STARTS small.
+    CONGESTION AVOIDANCE   past a threshold, grow by about ONE segment per round trip. Linear.
+    FAST RECOVERY          on a triple duplicate ACK (mild loss), HALVE the window.
+    TIMEOUT                on a full timeout (severe), collapse the window to the start and slow-start
+                           again.
+
+That is ADDITIVE INCREASE, MULTIPLICATIVE DECREASE - AIMD - and it produces the famous sawtooth.
+
+MEASURED, the simulated congestion window, one value per round trip, ssthresh 16, a triple-dup-ACK at
+round trip 8:
+
+    1 -> 2 -> 4 -> 8 -> 16 -> 17 -> 18 -> 19 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14 -> 15 -> 16 -> ...
+
+And the same run where the loss is a TIMEOUT instead:
+
+    1 -> 2 -> 4 -> 8 -> 16 -> 17 -> 18 -> 19 -> 1 -> 2 -> 4 -> 8 -> 16 -> 17 -> 18 -> ...
+
+The first four values are identical and then they diverge completely: a triple-dup-ACK halves the
+window to 9, a timeout collapses it to 1. TCP treats "a packet went missing but later ones arrived" as
+mild and "I heard nothing at all" as severe, and the punishment differs accordingly.
+
+WHY THE RAMP-UP IS VISIBLE TO YOU, measured as round trips: reaching a window of 1,024 segments takes
+10 round trips by doubling and 1,023 round trips by adding one - 102x. Slow start's exponential phase
+is the only reason a download reaches full speed in seconds rather than minutes.""",
+
+    """3. EVERY TERM DEFINED.
+
+SEGMENT. TCP's unit of data on the wire. MSS (maximum segment size) is typically 1,460 bytes on
+Ethernet - 1,500 MTU minus 20 bytes of IP and 20 of TCP header.
+
+ACK. An acknowledgement carrying "I have received everything up to byte N". TCP ACKs are CUMULATIVE.
+
+RECEIVE WINDOW (rwnd). The receiver's advertised free buffer space, carried in a 16-bit field of every
+TCP header. This is FLOW CONTROL.
+
+WINDOW SCALING. A handshake option multiplying the window field by up to 2^14, because the raw 16-bit
+field caps at 65,535 bytes. Without it, see the table in section 4.
+
+ZERO WINDOW. The receiver advertising 0. The sender stops and sends periodic WINDOW PROBES until a
+window update arrives - otherwise a lost window update would deadlock the connection forever.
+
+CONGESTION WINDOW (cwnd). The sender's own, private limit, never transmitted. This is CONGESTION
+CONTROL.
+
+THE ACTUAL LIMIT. `min(rwnd, cwnd)` bytes may be unacknowledged at once. Both limits apply; the
+smaller wins.
+
+SSTHRESH (slow-start threshold). The cwnd value at which the sender switches from doubling to adding.
+Set to half the window on loss.
+
+SLOW START. cwnd doubles each RTT. Exponential.
+
+CONGESTION AVOIDANCE. cwnd grows by roughly one MSS per RTT. Linear.
+
+DUPLICATE ACK. The receiver got an out-of-order segment and re-sends its last cumulative ACK. THREE
+duplicates is the loss signal.
+
+FAST RETRANSMIT / FAST RECOVERY. Retransmit on three duplicate ACKs without waiting for the timeout,
+and halve cwnd rather than collapsing it.
+
+RTO (retransmission timeout). The timer. Firing it means total silence, which is treated as severe:
+cwnd back to the initial value.
+
+AIMD. Additive increase, multiplicative decrease. Provably converges to a fair share between competing
+flows, which is why it was chosen over anything smoother.
+
+BANDWIDTH-DELAY PRODUCT (BDP). bandwidth x round-trip time = the number of bytes "in flight" needed to
+keep the pipe full. If your window is smaller than the BDP, you idle waiting for ACKs. Measured below.
+
+LONG FAT NETWORK (LFN). High bandwidth AND high latency - an intercontinental link. Large BDP, so
+window scaling is mandatory.
+
+BUFFERBLOAT. Oversized router buffers that absorb excess packets instead of dropping them, so
+loss-based congestion control never gets its signal and latency balloons instead.
+
+CUBIC. Linux's default since 2006. Grows as a cubic function of time since the last loss - aggressive
+far from the last known limit, cautious near it.
+
+BBR. Google's algorithm. Instead of growing until something breaks, it MODELS the bottleneck bandwidth
+and the minimum RTT and paces to that. Far better on lossy paths and on bufferbloated ones.
+
+HEAD-OF-LINE BLOCKING. One lost segment stalls delivery of everything behind it, even though it has
+arrived, because TCP guarantees ordering. HTTP/2 could not fix this; HTTP/3 over QUIC does, by giving
+each stream its own ordering.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - four of them, and the third is why your intercontinental
+transfer is slow on a gigabit link.
+
+TRAP ONE: "slow start is slow". It is EXPONENTIAL. It merely STARTS small. Measured, round trips to
+reach a given window from cwnd=1:
+
+    target window   slow start (doubling)   congestion avoidance (+1)   ratio
+    -------------   ---------------------   -------------------------   -----
+             16                  4 RTTs                     15 RTTs        4x
+             64                  6 RTTs                     63 RTTs       10x
+          1,024                 10 RTTs                  1,023 RTTs      102x
+          8,192                 13 RTTs                  8,191 RTTs      630x
+
+Calling the exponential phase "slow" and the linear phase "avoidance" is a naming accident that has
+confused people for forty years. Say "slow start starts small and doubles" and you have made the point.
+
+TRAP TWO: attributing the receive window to congestion control, or forgetting that BOTH limits apply.
+The sender is bounded by `min(rwnd, cwnd)`. The loopback measurement in section 1 is the proof: the
+congestion window was irrelevant there (no congestion, no loss, zero RTT), and throughput still varied
+18x purely from the receive buffer.
+
+TRAP THREE: ignoring the BANDWIDTH-DELAY PRODUCT. This is the one that produces real-world confusion.
+
+MEASURED (computed exactly), the window needed to keep a pipe full:
+
+    link                       window needed   vs the 64 KB unscaled TCP window field
+    ------------------------   -------------   --------------------------------------
+       10 Mbps at  10 ms RTT         0.01 MB   FITS
+      100 Mbps at  20 ms RTT         0.25 MB   EXCEEDS
+    1,000 Mbps at 100 ms RTT        12.50 MB   EXCEEDS
+   10,000 Mbps at 100 ms RTT       125.00 MB   EXCEEDS
+
+And the consequence, stated as a hard ceiling - what an unscaled 64 KB window caps you at, no matter
+how fast the link:
+
+    RTT   1 ms  ->  at most   524.3 Mbps
+    RTT  10 ms  ->  at most    52.4 Mbps
+    RTT  50 ms  ->  at most    10.5 Mbps
+    RTT 100 ms  ->  at most     5.2 Mbps
+    RTT 200 ms  ->  at most     2.6 Mbps
+
+A gigabit link from London to Sydney, with no packet loss and no congestion whatsoever, would carry
+about 2.6 Mbps without window scaling. Nothing is broken; the sender is simply idle, waiting for ACKs
+before it is permitted to send more. THAT is why the window scaling option exists, and why it is one
+of the first things to check when a fast long link is inexplicably slow.
+
+TRAP FOUR: assuming loss always means congestion. On Wi-Fi it usually does not - a frame lost to radio
+interference is not a full router. TCP cannot tell the difference and halves its window anyway. Same
+for satellite and mobile. This is exactly why real-time media uses UDP and handles loss itself, and
+why QUIC (over UDP) can implement smarter loss handling than TCP's rules allow.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what people run instead of textbook TCP Reno, and why.
+
+THE LOSS-BASED LINE, all variations on AIMD:
+    TAHOE      the original. Any loss -> cwnd to 1 and slow start again. Brutal.
+    RENO       adds fast retransmit and fast recovery: a triple-dup-ACK halves the window instead of
+               collapsing it. This is the version in every textbook and in the simulation here.
+    NEW RENO   handles multiple losses in one window without repeatedly halving.
+    CUBIC      Linux's default. cwnd is a cubic function of time since the last loss, so it climbs
+               fast when far from the previous limit and flattens as it approaches it. Much better than
+               Reno on high-BDP links, because Reno's +1-per-RTT takes forever to refill a big pipe -
+               measured above at 1,023 RTTs to reach a 1,024-segment window.
+
+THE DELAY-BASED LINE, which reacts BEFORE loss:
+    VEGAS      watches RTT rise and backs off before queues overflow. Fair in theory, and it loses
+               badly when sharing a link with a loss-based flow, because the loss-based flow keeps
+               pushing while Vegas politely yields.
+    BBR        Google's. Estimates the bottleneck BANDWIDTH and the minimum RTT and PACES to their
+               product, rather than growing until something breaks. This is the important one to name:
+               it is dramatically better on lossy paths (where Reno misreads radio loss as congestion)
+               and on bufferbloated paths (where loss never arrives and Reno keeps growing while
+               latency climbs). It is also less "fair" to loss-based flows sharing the same link,
+               which is the standard criticism.
+
+THE ECN LINE - getting an EXPLICIT signal after all:
+    ECN        routers MARK packets instead of dropping them when queues build, and the receiver
+               echoes the mark. Congestion control without loss. Requires router support.
+    DCTCP      ECN taken further inside a datacentre, reacting proportionally to the fraction of
+               marked packets. Very low queueing delay.
+
+WHAT SITS ABOVE AND AROUND IT:
+    QUIC       congestion control moved into USER SPACE over UDP, so it can be updated without a
+               kernel change, and per-stream ordering so one lost packet does not stall unrelated
+               streams. HTTP/3 runs on it.
+    UDP + your own   what real-time media does: accept loss, conceal it, never retransmit stale audio.
+    MULTIPLE CONNECTIONS   the old download-accelerator trick. N connections each get their own cwnd,
+               so you take N shares of a link instead of one. It works, and it is a form of cheating.
+    BDP TUNING  `net.ipv4.tcp_rmem` / `tcp_wmem` and window scaling. Measured in section 1: the
+               receive buffer alone moved throughput 18x.
+
+THE THING TO SAY ABOUT ALL OF THEM: loss-based algorithms grow until something breaks and then back
+off; BBR measures the pipe and paces to it. That single sentence separates the two families.""",
+
+    """6. HOW TO CODE IT - you cannot rewrite the kernel's TCP, but you can simulate the window and you
+can measure flow control for real. Both are worth doing.
+
+SIMULATING THE SAWTOOTH:
+
+  1. Track three variables: `cwnd`, `ssthresh`, and a `phase` string. Start cwnd at 1 and phase at
+     "slow-start".
+  2. Loop once per ROUND TRIP, not per packet. The RTT is the clock of this algorithm and thinking in
+     packets will confuse you.
+  3. Record `(rtt, cwnd, phase)` at the TOP of each iteration, so the recorded value is the window in
+     effect during that round trip.
+  4. On a triple-dup-ACK event: `ssthresh = max(2, cwnd // 2)`, `cwnd = ssthresh`, phase becomes
+     "congestion-avoidance", and `continue` - you do not also grow this round.
+  5. On a TIMEOUT event instead: `ssthresh = max(2, cwnd // 2)` but `cwnd = 1` and phase returns to
+     "slow-start". Coding both makes the difference between the two loss signals concrete.
+  6. In slow start, `cwnd *= 2`, and switch phase when `cwnd >= ssthresh`.
+  7. In congestion avoidance, `cwnd += 1`.
+  8. Sum the cwnd column to get segments delivered, and multiply by the MSS for bytes. That converts
+     the pretty sawtooth into a throughput number you can compare.
+
+COMPUTING THE LIMITS:
+
+  9. `in_flight_limit = min(receive_window, congestion_window * mss)`. One line, and it is the answer
+     to "which window applies?" - both do.
+ 10. `bdp_bytes(mbps, rtt_ms) = mbps * 1e6 / 8 * (rtt_ms / 1000)`. Divide by 8 to get bytes from bits;
+     divide the RTT by 1,000 to get seconds. Compare the result against 65,535 to see whether window
+     scaling is required.
+ 11. The inverse is more useful in an argument: `max_throughput = window / rtt`. 65,535 bytes over a
+     100 ms RTT is 5.2 Mbps, full stop.
+
+MEASURING FLOW CONTROL FOR REAL:
+
+ 12. Open a listening socket and `setsockopt(SOL_SOCKET, SO_RCVBUF, n)` BEFORE `listen()` - accepted
+     sockets inherit the listener's buffer, and setting it after accept is often too late.
+ 13. Read back `getsockopt(SOL_SOCKET, SO_RCVBUF)` and print it. The kernel doubles your request (2,048
+     became 4,096) and clamps it (both 262,144 and 4,194,304 became 425,984). Report what you GOT, not
+     what you asked for - otherwise your table is fiction.
+ 14. Send a fixed number of megabytes and time it. Even on loopback, with no latency and no loss, the
+     smaller buffer forces more ACK round trips - measured 202.9 MB/s against 3,641.9 MB/s, 18x.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"They're two different problems that both throttle a TCP sender, and mixing them up is the standard
+mistake.
+
+FLOW CONTROL protects the RECEIVER - it stops a fast sender overwhelming a slow receiver's buffer. The
+mechanism is the RECEIVE WINDOW advertised in every ACK: 'I have room for 64 KB more'. The sender may
+never have more than that unacknowledged, and a window of zero halts it until a window update arrives.
+
+CONGESTION CONTROL protects the NETWORK - it stops all senders collectively overwhelming the routers
+in between. Nobody advertises that, because no router tells you it's full, so the sender must INFER
+congestion from packet loss or rising delay. The mechanism is a second, sender-side congestion window,
+and the sender may transmit at most the MINIMUM of the two windows.
+
+The algorithm explains a familiar experience. SLOW START begins with a couple of segments and DOUBLES
+the window every round trip - exponential, despite the name - until it hits a threshold or loses a
+packet. Then CONGESTION AVOIDANCE grows it by about one segment per round trip, linearly. A triple
+duplicate ACK signals mild loss, so fast recovery HALVES the window. A full timeout is treated as
+severe and collapses it back to the start. That additive-increase, multiplicative-decrease sawtooth is
+why a big download ramps up over a few seconds rather than starting at full speed.
+
+Two numbers I'd put on it. Reaching a 1,024-segment window takes 10 round trips by doubling and 1,023
+by adding one - a factor of 102, which is why the exponential phase exists at all. And the two loss
+signals really do differ: simulated, a triple-dup-ACK at round trip 8 takes the window from 19 to 9,
+while a timeout at the same point takes it to 1.
+
+I also measured flow control directly, which is the part people treat as theory. An 8 MB loopback
+transfer - no latency, no loss, so congestion control was irrelevant - ran at 3,642 MB/s with the
+default receive buffer and 203 MB/s with a 4 KB one. Eighteen times, from the receiver's buffer alone.
+
+The related thing to raise is the BANDWIDTH-DELAY PRODUCT: bandwidth times round-trip time is how many
+bytes must be in flight to keep the pipe full. A gigabit link at 100 ms RTT needs a 12.5 MB window, and
+the original TCP window field is 16 bits - 64 KB - which caps you at 5.2 Mbps at that RTT no matter how
+fast the link is. That's what the window scaling option is for.
+
+And a lossy Wi-Fi link is slow even with bandwidth to spare, because TCP reads radio loss as
+congestion and halves its window. That's why real-time media uses UDP, and why BBR - which models the
+bottleneck bandwidth and minimum RTT and paces to that instead of reacting to loss - does so much
+better on those paths."
+
+THE ONE SENTENCE TO NOT FUMBLE: flow control is EXPLICIT and protects the receiver; congestion control
+is INFERRED and protects the network; the sender obeys the smaller of the two.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def simulate_tcp(rounds=14, ssthresh=16, loss_at=None):
+        cwnd, phase, history = 1, "slow-start", []
+
+Three state variables. `cwnd` in SEGMENTS rather than bytes, because the algorithm's rules are all
+"one more segment" or "double". Starting at 1 is the textbook value; real Linux starts at 10, which
+saves several round trips on short connections and is a meaningful HTTP performance win.
+
+        for rtt in range(1, rounds + 1):
+
+The loop counter is a ROUND TRIP, not a packet. Everything TCP's congestion control does is clocked by
+ACKs coming back, so an RTT is the natural tick.
+
+            history.append((rtt, cwnd, phase))
+
+Recorded BEFORE any update, so the value is the window actually in effect during this round trip.
+Record it after and every row is off by one, which quietly ruins the sawtooth.
+
+            if loss_at and rtt == loss_at:
+                ssthresh = max(2, cwnd // 2)
+                cwnd = ssthresh
+                phase = "congestion-avoidance"
+                continue
+
+The triple-duplicate-ACK path. `cwnd // 2` is the MULTIPLICATIVE DECREASE. `max(2, ...)` keeps the
+window from collapsing to zero. Setting `cwnd = ssthresh` is what fast recovery does - it resumes at
+the halved value rather than restarting. The `continue` matters: you do NOT also grow in the round
+trip where you detected loss.
+
+            if phase == "slow-start":
+                cwnd *= 2
+
+The doubling. This one line is why a 10 GB download reaches line rate in about a dozen round trips
+rather than ten thousand. MEASURED: 10 RTTs to a 1,024-segment window versus 1,023 for the linear rule.
+
+                if cwnd >= ssthresh:
+                    phase = "congestion-avoidance"
+
+The handover. Note it is checked AFTER doubling, so the window can overshoot ssthresh slightly - which
+is exactly what real TCP does too.
+
+            else:
+                cwnd += 1
+
+ADDITIVE INCREASE. One segment per round trip. Gentle by design, because the sender has no idea how
+close it is to the limit and overshooting hurts everybody sharing the link.
+
+    def in_flight_limit(receive_window, congestion_window, mss=1460):
+        return min(receive_window, congestion_window * mss)
+
+The whole relationship between the two topics, in one `min`. `receive_window` is already in bytes
+because that is how it is advertised; `congestion_window` is in segments, so it needs the MSS
+multiplication. Mixing up the units here is the most common bug in this calculation.
+
+    def bdp_bytes(bandwidth_mbps, rtt_ms):
+        return bandwidth_mbps * 1_000_000 / 8 * (rtt_ms / 1000)
+
+`* 1_000_000` for mega, `/ 8` for bits to bytes, `/ 1000` for milliseconds to seconds. `bdp_bytes(1000,
+100)` = 12,500,000 - 12.5 MB in flight to saturate a gigabit link at 100 ms. Against a 65,535-byte
+window field, that is a 190x shortfall.
+
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
+
+Set this on the LISTENING socket before `listen()`. Accepted sockets inherit it; setting it after
+`accept()` is frequently ignored because the window was already negotiated in the handshake. And
+always read it back with `getsockopt` - the kernel doubled 2,048 to 4,096 and clamped 4,194,304 to
+425,984 here.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the congestion window, round trip by round trip. ssthresh 16, triple-dup-ACK at RTT 8.
+
+    RTT   cwnd   phase                  what happened
+    ---   ----   --------------------   -------------------------------------------
+      1      1   slow-start             initial window
+      2      2   slow-start             doubled
+      3      4   slow-start             doubled
+      4      8   slow-start             doubled
+      5     16   congestion-avoidance   doubled to 16, hit ssthresh, phase switched
+      6     17   congestion-avoidance   +1
+      7     18   congestion-avoidance   +1
+      8     19   congestion-avoidance   window is 19; LOSS DETECTED this round trip
+      9      9   congestion-avoidance   ssthresh = 19//2 = 9, cwnd = 9    <- the cliff
+     10     10   congestion-avoidance   +1
+     11     11   congestion-avoidance   +1
+     ...
+     20     20   congestion-avoidance   back above where it was, 12 RTTs later
+
+Rows 1-5 are the exponential ramp: 1, 2, 4, 8, 16 - five round trips to reach 16. Rows 6-8 are the
+linear crawl: 17, 18, 19 - three round trips for three segments. Row 9 is the multiplicative decrease.
+Rows 10-19 are the slow climb back, one segment per round trip, taking ten round trips to undo what one
+lost packet did.
+
+TRACE B - the SAME run with a TIMEOUT at RTT 8 instead.
+
+    RTT     1  2  3  4   5   6   7   8   9  10  11  12   13   14   15
+    dup-ACK 1  2  4  8  16  17  18  19   9  10  11  12   13   14   15
+    TIMEOUT 1  2  4  8  16  17  18  19   1   2   4   8   16   17   18
+
+Identical for eight round trips, then completely different. The dup-ACK case halves to 9 and crawls;
+the timeout case collapses to 1 and slow-starts. By RTT 13 the timeout case has actually caught up
+(16 vs 13), because doubling from 1 is faster than adding 1 from 9 - which is a nice reminder that the
+exponential phase is genuinely fast.
+
+TRACE C - what the three cases actually DELIVER over 20 round trips, at 1,460 bytes per segment.
+
+    scenario                segments   bytes
+    ---------------------   --------   -------
+    no loss                      391   0.57 MB
+    triple-dup-ACK at RTT 8      259   0.38 MB
+    TIMEOUT at RTT 8             256   0.37 MB
+
+One lost packet cost 33% of the transfer over this window. And the dup-ACK and timeout cases end up
+nearly equal here (259 vs 256) precisely because of the catch-up seen in Trace B - fast recovery's
+advantage is largest for SHORT flows, where there is no time to re-double.
+
+TRACE D - real flow control, an 8 MB loopback transfer, measured.
+
+    asked      kernel gave   time      throughput   vs default
+    --------   -----------   -------   ----------   ----------
+    default        131,072    2.2 ms   3,641.9MB/s        1.00x
+    2,048            4,096   39.4 ms     202.9MB/s        0.06x
+    16,384          32,768    9.8 ms     814.8MB/s        0.22x
+    262,144        425,984    3.8 ms    2,088.0MB/s       0.57x
+    4,194,304      425,984    3.2 ms    2,483.1MB/s       0.68x
+
+Row 2 against row 1 is the headline: 18x slower, from a 4 KB receive buffer, on a link with no latency
+and no loss whatsoever. Rows 4 and 5 got the SAME buffer (both clamped to 425,984) and differ only by
+run-to-run noise - which is itself a useful check that the effect is the buffer and not the request.
+
+TRACE E - ramp-up latency, computed for a 10 MB download from cwnd=1.
+
+    RTT       round trips to send 10 MB   time spent purely in ramp-up
+    -------   -------------------------   ----------------------------
+      1 ms                           13                          13 ms
+     20 ms                           13                         260 ms
+    100 ms                           13                       1,300 ms
+    300 ms                           13                       3,900 ms
+
+The round-trip COUNT is the same for all of them - that is the doubling doing its work, 13 rounds to
+cover 10 MB regardless of distance. What changes is what each round trip COSTS. This is why latency,
+not bandwidth, dominates the feel of a connection to a far-away server, and why CDNs exist.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, in round trips - the only unit that matters here:
+
+    reaching window W by doubling        O(log W) RTTs.   MEASURED: 10 RTTs to 1,024, 13 to 8,192
+    reaching window W by adding one      O(W) RTTs.       MEASURED: 1,023 to 1,024, 8,191 to 8,192
+    recovering from one triple-dup-ACK   O(W/2) RTTs at +1 per RTT
+    recovering from one timeout          O(log W) RTTs, since it slow-starts again
+    maximum throughput                   window / RTT, hard ceiling. 65,535 B / 100 ms = 5.2 Mbps
+    window needed for full utilisation   BDP = bandwidth x RTT. 1 Gbps x 100 ms = 12.5 MB
+
+THE MISTAKES:
+
+    - Saying slow start is slow. It is exponential; it merely STARTS small. Measured 102x fewer round
+      trips than the linear phase to reach a 1,024-segment window.
+    - Attributing the receive window to congestion control. The receive window is FLOW control, it is
+      explicit, and it is in every ACK header.
+    - Forgetting that the sender is limited by the MINIMUM of the two windows. Measured: with no
+      congestion at all, the receive buffer alone changed throughput 18x.
+    - Ignoring the bandwidth-delay product. A 64 KB window caps you at 5.2 Mbps at 100 ms RTT
+      regardless of link speed, which is why window scaling exists.
+    - Treating both loss signals the same. A triple-dup-ACK halves the window; a timeout collapses it
+      to the initial value. Simulated: 19 -> 9 versus 19 -> 1.
+    - Assuming loss means congestion. On Wi-Fi, satellite and mobile it usually means interference,
+      and TCP punishes you anyway.
+    - Reporting the buffer size you ASKED for. The kernel doubled 2,048 to 4,096 and clamped 4 MB to
+      425,984. Always `getsockopt` and report what you got.
+    - Thinking bufferbloat is fixed by bigger buffers. It is CAUSED by bigger buffers: oversized queues
+      absorb the excess instead of dropping it, so loss-based congestion control never gets its signal
+      and latency climbs instead of throughput falling.
+    - Forgetting head-of-line blocking. TCP's ordering guarantee means one lost segment stalls
+      everything behind it - the problem HTTP/2 could not solve and HTTP/3 over QUIC does.
+
+THE TAKEAWAY. TCP has two governors on the same throttle. One is a message from the receiver saying
+exactly how much room it has; obey it or you overflow a buffer. The other is a guess about the network,
+refined by probing - grow until something breaks, back off, grow again - because no router will ever
+tell you it is full. The sawtooth you get from that guessing is why your download ramps up rather than
+starting at full speed, the bandwidth-delay product is why a fast far-away link can still be slow, and
+the fact that loss is the ONLY signal is why Wi-Fi feels bad and why BBR, which measures the pipe
+instead of breaking it, exists at all.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
