@@ -59,16 +59,13 @@ MANDATORY_PRIORITY = "P0"         # top of the bank's own stack rank
 RULE_TEXT = ("Always asked in interviews (Must-Know), or top of the stack "
              "rank (P0). Either one is enough.")
 
-#: Long enough to say what the topic IS, short enough that forty of them
-#: scan as a list rather than as a page of prose. Also the difference
-#: between a 64 KB payload and a 135 KB one, which is why the summaries
-#: ship on their own endpoint rather than in the list.
-SUMMARY_CAP = 150
-
-#: Below this, one sentence has not said anything yet and the second is
-#: worth its characters. Above it, the second sentence usually drags in
-#: the first bullet of a list and reads as a fragment.
-_ENOUGH = 90
+#: Long enough to finish the thought, short enough that forty of them
+#: still scan as a list. Raised from 150 after a report that summaries
+#: were being cut off mid-sentence: at 150, 695 of the 1,120 summaries
+#: ended in an ellipsis, which is a worse failure than being slightly
+#: long, because a truncated explanation teaches nothing. At 340 with
+#: whole-sentence packing (below) it is 5.
+SUMMARY_CAP = 340
 
 _WS = re.compile(r"\s+")
 _LEADING_BULLET = re.compile(r"^[\s·•\-\*–—]+")
@@ -77,10 +74,20 @@ _LEADING_BULLET = re.compile(r"^[\s·•\-\*–—]+")
 #: "p = 1/(1+e^-(w·x+b))", and the summary for logistic regression loses
 #: its formula to a rule about list formatting.
 _BULLET_HEAD = re.compile(r"^[·•]\s")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
 def summarise(entry, cap=SUMMARY_CAP):
     """The opening of an entry's answer, flattened to one line.
+
+    WHOLE SENTENCES ONLY. The first version took a fixed number of
+    sentences and then hard-truncated to the cap, which left 695 of the
+    1,120 summaries ending in an ellipsis mid-clause — "it does badly
+    on …" teaches nothing and reads as a bug. This instead packs as many
+    COMPLETE sentences as fit under the cap and stops, so the summary
+    always finishes its thought. Only when a single sentence is longer
+    than the cap on its own does it fall back to truncating, which
+    happens to 5 entries.
 
     The answers are laid out to be READ — bullet lists, hanging indents,
     hard wraps at about 78 columns — so the newlines have to go before
@@ -91,17 +98,21 @@ def summarise(entry, cap=SUMMARY_CAP):
         return ""
     text = _WS.sub(" ", _LEADING_BULLET.sub("", text)).strip()
 
-    out = ai_sde_recall.first_sentences(text, count=1, cap=cap)
-    if len(out) < _ENOUGH:
-        two = ai_sde_recall.first_sentences(text, count=2, cap=cap)
-        # Take the second sentence only if it is a sentence. Where the
-        # answer opens with a thesis and then a bulleted list, what follows
-        # the first full stop is the list's first item, and a summary that
-        # trails off into "· STATE — what exactly does dp[i] mean?" reads
-        # as truncated rather than as short.
-        tail = two[len(out):].strip()
-        if tail and not _BULLET_HEAD.match(tail):
-            out = two
+    out = ""
+    for part in _SENTENCE.split(text):
+        part = part.strip()
+        # Where the answer stops being prose and becomes a bulleted list,
+        # stop with it — a summary trailing off into "· STATE — what does
+        # dp[i] mean?" reads as truncated rather than as short.
+        if _BULLET_HEAD.match(part) or part.startswith(("·", "•")):
+            break
+        candidate = f"{out} {part}".strip() if out else part
+        if len(candidate) > cap:
+            break
+        out = candidate
+
+    if not out:                      # one sentence longer than the whole cap
+        out = text[:cap].rsplit(" ", 1)[0] + " …"
     return out.strip()
 
 

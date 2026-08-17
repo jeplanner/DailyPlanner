@@ -229,14 +229,16 @@
   .rung:first-child { margin-top: 4px; }
   .rung .n { color: var(--color-text); }
 
-  /* The one-line summary under a title. This is what makes the optional
-     section skimmable — a title says a topic exists, not whether you
-     already know it. Clamped to two lines so forty cards still scan as a
-     list rather than as a page of prose. */
-  .q-sum { flex: 1 0 100%; font-size: 12.5px; line-height: 1.45; margin: -2px 0 0;
-           color: var(--color-text-secondary); overflow-wrap: anywhere;
-           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-           overflow: hidden; }
+  /* The summary under a title. This is what makes the optional section
+     skimmable — a title says a topic exists, not whether you already know
+     it. NOT line-clamped: it was clamped to two lines and the text was
+     also hard-truncated at 150 characters, so summaries ended mid-clause
+     ("it does badly on …") and taught nothing. ai_sde_summary.py now packs
+     whole sentences under a 340-character cap, which is about four lines,
+     so the length is bounded at the source and the box can simply show
+     all of it. */
+  .q-sum { flex: 1 0 100%; font-size: 12.5px; line-height: 1.5; margin: 1px 0 2px;
+           color: var(--color-text-secondary); overflow-wrap: anywhere; }
   .q-card.open .q-sum { display: none; }   /* the answer is right there now */
 
   .empty { color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; text-align: center; }

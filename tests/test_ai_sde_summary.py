@@ -39,14 +39,31 @@ def test_every_entry_gets_a_summary():
     assert not empty, f"{len(empty)} topics have no summary, e.g. {empty[:3]}"
 
 
-def test_a_summary_is_one_line_and_stays_short():
-    """Forty of these have to scan as a LIST. A summary that runs to a
-    paragraph turns the page back into the thing it is fixing."""
+def test_a_summary_is_one_line_and_stays_bounded():
+    """Forty of these have to scan as a LIST, so the length is capped at
+    the source rather than clamped in CSS — the card shows all of it."""
     for i, e in enumerate(ENTRIES):
         s = S.summarise(e)
         assert "\n" not in s, e["title"]
         assert len(s) <= S.SUMMARY_CAP + 2, (e["title"], len(s))   # +2 for the " …"
         assert s == s.strip()
+
+
+def test_summaries_finish_their_sentence():
+    """Reported as summaries being cut off. At a 150-character hard cap,
+    695 of the 1,120 ended in an ellipsis mid-clause — "it does badly
+    on …" — which teaches nothing and reads as a bug.
+
+    Packing WHOLE sentences under the cap fixes it for all but the
+    handful whose first sentence is longer than the cap on its own."""
+    truncated = [e["title"] for e in ENTRIES if S.summarise(e).endswith("…")]
+    assert len(truncated) <= 15, (
+        f"{len(truncated)} summaries end mid-sentence: {truncated[:5]}")
+    # And the specific entry that was reported.
+    bv = next(e for e in ENTRIES if e["title"].startswith("Bias-Variance"))
+    s = S.summarise(bv)
+    assert not s.endswith("…"), s
+    assert "overfitting" in s, "the summary stops before it reaches the second half"
 
 
 def test_a_summary_does_not_trail_off_into_a_bullet_list():
@@ -171,7 +188,12 @@ def test_the_summaries_stay_out_of_the_list_payload(auth_client):
 def test_the_summaries_payload_is_worth_deferring_but_not_huge(auth_client):
     gz = len(auth_client.get("/api/ai-sde/summaries",
                              headers={"Accept-Encoding": "gzip"}).get_data())
-    assert gz < 90 * 1024, f"summaries {gz/1024:.0f} KB — shorten SUMMARY_CAP"
+    # Raised from 90 KB when SUMMARY_CAP went 150 -> 340 to stop summaries
+    # being cut off mid-sentence. This payload is DEFERRED — it is fetched
+    # after the list has rendered — so it costs nothing that first paint
+    # waits on, which is what makes the trade acceptable. The list itself
+    # is still held under 120 KB by the test above.
+    assert gz < 150 * 1024, f"summaries {gz/1024:.0f} KB — shorten SUMMARY_CAP"
 
 
 def test_the_list_ships_the_split_rule_not_a_second_field(auth_client):
