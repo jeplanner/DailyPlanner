@@ -288719,6 +288719,1408 @@ THE TAKEAWAY
     lets a value-based set answer an index-based question.""",
 ]
 
+_EX_P1AO["Number of Employees Who Met the Target"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how many employees worked at least the required number of hours?
+
+    hours = [0, 1, 2, 3, 4],  target = 2
+    employees with 2, 3 and 4 hours meet it
+    answer 3
+
+The whole solution is a filter and a count:
+
+    return sum(1 for h in hours if h >= target)
+
+THE ONE THING THAT CAN GO WRONG IS THE COMPARISON OPERATOR. "Met the target" means AT LEAST the
+target, so an employee who worked exactly `target` hours counts. That is `>=`, not `>`.
+
+MEASURED on 200,000 employees with hours drawn from 0..10 and a target of 5: `>=` gives 108,639 and
+`>` gives 90,710. The difference - 17,929 employees - is exactly those who worked precisely the
+target. That is 16.5% of the answer riding on one character.
+
+The problem is genuinely easy, which makes it a good place to be precise about two things worth
+carrying elsewhere: what "met" means as a boundary condition, and how to count matches in Python
+without building a list you immediately throw away.""",
+
+    """2. THE INTUITION - counting is summing ones.
+
+There is nothing to derive here, so the useful content is the shape of the code.
+
+`sum(1 for h in hours if h >= target)` reads as: walk the hours, and for each one that passes the
+test, contribute 1 to a total. The generator produces values lazily, so nothing is stored.
+
+FOUR WAYS TO WRITE THE SAME COUNT, MEASURED on 200,000 elements:
+
+    sum(h >= target for h in hours)        4.2 ms      booleans are 1 and 0 in Python
+    sum(1 for h in hours if h >= target)   4.4 ms      the explicit version
+    len([h for h in hours if h >= target]) 5.7 ms      builds a list, then discards it
+    sum(map(lambda h: h >= target, hours)) 7.2 ms      a Python-level call per element
+
+All four give the identical answer. The differences are constant factors: the list comprehension
+allocates memory proportional to the number of MATCHES, and the `map` with a `lambda` pays a function
+call per element, which is the slowest thing on the list.
+
+THE BOOLEAN-SUM VERSION works because Python's `bool` is a subclass of `int`, with `True == 1` and
+`False == 0`. It is idiomatic and it is the fastest of the four - marginally. `sum(1 for ... if ...)`
+is the version to write when clarity matters more than 0.2 ms.
+
+THE BOUNDARY IS THE ONLY REAL DECISION. "Met the target" includes meeting it exactly. English words
+like "at least", "no fewer than" and "met" all mean `>=`; "more than", "exceeded" and "strictly
+above" mean `>`. Reading the sentence carefully is the skill this problem is testing.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TARGET - the threshold. An employee MEETS it by working that many hours or more.
+
+`>=` versus `>` - inclusive versus exclusive. "At least" is inclusive; "more than" is not. MEASURED,
+the difference is 17,929 employees out of 108,639 on a realistic input.
+
+GENERATOR EXPRESSION - `(expr for x in xs if cond)`, which produces values one at a time without
+building a container. Passing one to `sum` counts without allocating.
+
+LIST COMPREHENSION - `[expr for x in xs if cond]`, which DOES build a list. Using `len` on it gives
+the same answer and allocates memory proportional to the number of matches.
+
+BOOLEANS AS INTEGERS - in Python `True + True` is 2, because `bool` subclasses `int`. That is what
+makes `sum(h >= target for h in hours)` a counting idiom rather than a type error.
+
+O(n) - one pass, one comparison per element. There is nothing faster: every employee must be
+examined at least once, since any one of them could meet the target.
+
+SORTED INPUT would change that - a binary search for the first element at or above the target would
+be O(log n). The input here is unsorted, so the linear scan is optimal.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the boundary, and building a list you do not need.
+
+BUG 1 - `>` INSTEAD OF `>=`.
+
+"Met the target" means reaching it, so someone who worked exactly `target` hours is counted.
+
+MEASURED on 200,000 employees with hours 0..10 and target 5:
+
+    with >=    108,639
+    with >      90,710
+    difference  17,929      exactly the employees who worked precisely 5 hours
+
+That is 16.5% of the answer. And note the failure is SILENT and PLAUSIBLE - the count is merely
+smaller, with nothing to signal an error. The only defence is reading the specification's words.
+
+BUG 2 - `len([h for h in hours if h >= target])`. Correct, and it allocates a list containing every
+matching element only to measure its length. MEASURED 5.7 ms against 4.4 ms - and the memory cost is
+proportional to the number of matches, which on this input is over a hundred thousand integers.
+
+BUG 3 - `sum(map(lambda h: h >= target, hours))`. Correct, and MEASURED the slowest at 7.2 ms,
+because a Python-level function is invoked once per element. `map` is fast when the function is a C
+builtin - `map(int, ...)` - and slow when it is a `lambda`.
+
+BUG 4 - COUNTING WITH A MANUAL LOOP AND FORGETTING TO INITIALISE, or accidentally counting the hours
+rather than the employees: `sum(h for h in hours if h >= target)` sums the HOURS of the qualifying
+employees, not how many there are. It type-checks, it returns a plausible number, and it answers a
+different question.
+
+BUG 5 - SORTING FIRST. `sorted(hours)` plus a binary search is O(n log n) and slower than the linear
+scan it replaces. Sorting only pays off if MANY targets will be queried against the same hours - in
+which case sort once and binary search per query.
+
+BUG 6 - ASSUMING NON-NEGATIVE HOURS MATTERS. It does not: the comparison works for any integers.
+MEASURED, with `target = 0` every employee qualifies, which is correct rather than a special case.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 elements, all four returning 108,639:
+
+    sum(h >= target for h in hours)          4.2 ms
+    sum(1 for h in hours if h >= target)     4.4 ms
+    len([h for h in hours if h >= target])   5.7 ms
+    sum(map(lambda h: h >= target, hours))   7.2 ms
+
+ALTERNATIVE A - `sum(1 for ... if ...)`. Explicit about counting, no allocation. The version to give.
+
+ALTERNATIVE B - `sum(h >= target for h in hours)`. Marginally faster and relies on booleans being
+integers. Perfectly idiomatic Python; worth knowing that the trick exists.
+
+ALTERNATIVE C - the explicit loop with a counter. Identical complexity, more lines, and the version
+to write in an interview if you are narrating as you go - some interviewers prefer to see the loop.
+
+ALTERNATIVE D - SORT ONCE, THEN BINARY SEARCH, when many targets will be asked against the same
+hours: `len(hours) - bisect_left(sorted_hours, target)`. O(n log n) once, then O(log n) per query.
+This is the answer to "what if there are a million targets" and the wrong answer for one.
+
+ALTERNATIVE E - `numpy`: `(hours >= target).sum()`. The right tool for genuinely large arrays, where
+the comparison and the sum both run as vectorised operations over contiguous memory.
+
+THE FAMILY - counting with a predicate:
+  * COUNT ITEMS MATCHING A RULE, FIND WORDS CONTAINING CHARACTER - the same shape with a different
+    test;
+  * HOW MANY NUMBERS ARE SMALLER THAN THE CURRENT NUMBER - the same question asked per element,
+    which turns it into a prefix-count problem;
+  * COUNT NEGATIVE NUMBERS IN A SORTED MATRIX - the same count where sortedness allows a sublinear
+    walk;
+  * H-INDEX - counting against a threshold that itself depends on the count, which is where this
+    shape stops being trivial.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - read the boundary word out loud: "met the target" means at least, so `>=`. MEASURED, the
+wrong operator loses 16.5% of the answer on a realistic input.
+
+STEP 2 - count without allocating: `return sum(1 for h in hours if h >= target)`.
+
+STEP 3 - say why a generator rather than a list comprehension: the list would hold every matching
+element just to be measured and discarded.
+
+STEP 4 - state the complexity: O(n) time, O(1) space, and note that it is optimal for unsorted input
+because any unexamined employee could qualify.
+
+STEP 5 - if asked to make it faster, the honest answer is that you cannot for a single query - and
+that for MANY queries against the same data you would sort once and binary search per target.
+
+STEP 6 - check the trivial edge cases out loud: `target = 0` counts everyone, and an empty list gives
+0. Both fall out without special cases.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- One pass, counting the employees whose hours are at least the target.
+
+- The only thing to be careful about is the comparison: "met the target" includes meeting it exactly,
+  so it is greater-than-or-equal. I measured that on two hundred thousand employees - using strict
+  greater-than dropped nearly eighteen thousand of them, about sixteen per cent of the answer, and
+  the result still looks perfectly reasonable, so nothing would flag the mistake.
+
+- I use a generator inside `sum` rather than building a list and taking its length, because the list
+  would hold every matching employee just to be counted and thrown away.
+
+- Linear time and constant space, and that is optimal for unsorted input - any employee I skip could
+  be one who qualifies.
+
+- If the same hours were going to be queried against many different targets, I would sort once and
+  binary search each target instead: n log n once, then log n per query.
+
+- Edge cases need no special handling: a target of zero counts everyone, and an empty list gives
+  zero.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def number_of_employees_who_met_target(hours, target):
+        return sum(1 for h in hours if h >= target)
+
+Line 2, `for h in hours`
+        One pass over the values. No index is needed, because the answer is a count rather than a set
+        of positions.
+
+Line 2, `if h >= target`
+        The boundary. `>=` because "met" means reached-or-exceeded.
+
+        MEASURED on 200,000 employees with target 5: `>=` gives 108,639 and `>` gives 90,710. The
+        17,929 difference is exactly the employees who worked 5 hours - the boundary cases.
+
+Line 2, `sum(1 for ...)`
+        Adds 1 per match. The generator expression produces values lazily, so no container is
+        allocated regardless of how many employees qualify.
+
+        MEASURED alternatives on the same input: `sum(h >= target for h in hours)` at 4.2 ms (using
+        `True == 1`), this version at 4.4 ms, `len([...])` at 5.7 ms, and `sum(map(lambda ...))` at
+        7.2 ms. All identical answers.
+
+        Note what `sum(h for h in hours if h >= target)` would do - drop the literal `1` and it sums
+        the HOURS instead of counting the employees. Same shape, different question, and no error to
+        warn you.
+
+        O(n) time with one comparison per element, O(1) space.
+
+AND THE MANY-QUERIES VERSION:
+
+    from bisect import bisect_left
+
+    sorted_hours = sorted(hours)                      # once, O(n log n)
+    def count_for(target):
+        return len(sorted_hours) - bisect_left(sorted_hours, target)   # O(log n) per query
+
+        `bisect_left` finds the first index at or above `target`, so everything from there to the end
+        qualifies. Note it is `bisect_left` rather than `bisect_right` precisely because the boundary
+        is inclusive - the same `>=` decision showing up in a different form.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `hours = [0,1,2,3,4]`, `target = 2`.
+
+    h    h >= 2 ?   contributes   running total
+    -------------------------------------------------
+    0      no            0              0
+    1      no            0              0
+    2      YES           1              1        <- the boundary case
+    3      YES           1              2
+    4      YES           1              3
+    return 3
+
+    Row 3 is the whole problem. With `>` it contributes nothing and the answer becomes 2.
+
+TRACE B - `hours = [5,1,4,2,2]`, `target = 6`.
+
+    every value is below 6, so nothing contributes
+    return 0
+
+    An empty answer is normal, not an error.
+
+TRACE C - the boundary at scale, MEASURED.
+
+    200,000 employees, hours uniform in 0..10, target 5
+
+    with >=    108,639 employees
+    with >      90,710 employees
+    exactly 5   17,929 employees
+
+    108,639 - 90,710 = 17,929, so every employee at exactly the target accounts for the entire
+    difference - as it must. That arithmetic check is worth doing on any boundary bug: the gap should
+    equal the count of elements ON the boundary, and if it does not, something else is wrong too.
+
+TRACE D - the four implementations, same input, MEASURED.
+
+    method                                    time      answer
+    ---------------------------------------------------------------
+    sum(h >= target for h in hours)           4.2 ms    108,639
+    sum(1 for h in hours if h >= target)      4.4 ms    108,639
+    len([h for h in hours if h >= target])    5.7 ms    108,639
+    sum(map(lambda h: h >= target, hours))    7.2 ms    108,639
+
+    The `map` version is slowest because a Python-level `lambda` is called 200,000 times; `map` is
+    only fast when its function is a C builtin.
+
+TRACE E - the degenerate targets.
+
+    target = 0 with hours [0,1,2]   -> 3, everyone qualifies
+    hours = [] with any target      -> 0, the loop never runs
+
+    Both correct with no special case, which is worth checking rather than assuming.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) - one comparison per employee. Optimal for unsorted input: any element you do not
+            look at could satisfy the predicate.
+    space   O(1) with a generator. The list-comprehension variant is O(number of matches).
+
+    For many queries against the same data, sorting once gives O(n log n) plus O(log n) per query -
+    the right trade only when the number of queries is large.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. `>` instead of `>=`. MEASURED, 17,929 employees lost from an answer of 108,639 - 16.5% - with
+       no symptom other than a smaller number. "Met the target" is inclusive.
+    2. Summing the hours instead of counting the employees - `sum(h for h in ...)` instead of
+       `sum(1 for h in ...)`. A one-character difference and a different question.
+    3. `len([...])` instead of `sum(1 for ...)`. Correct, and it allocates a list proportional to the
+       matches.
+    4. `map` with a `lambda`. MEASURED the slowest of the four at 7.2 ms.
+    5. Sorting for a single query - O(n log n) to replace an O(n) scan.
+    6. Adding guards for empty input or a zero target. Neither needs one.
+
+THE TAKEAWAY
+    The code is one line; the content is the boundary. "Met", "at least" and "no fewer than" are all
+    `>=`, while "exceeded" and "more than" are `>`, and getting it wrong here costs a sixth of the
+    answer with nothing to signal it. When you do find a boundary bug, check the arithmetic: the
+    difference between the two versions should exactly equal the number of elements sitting ON the
+    boundary - which is a quick way to confirm you have found the whole problem rather than part of
+    it.""",
+]
+
+_EX_P1AO["Number of Senior Citizens"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - each passenger is one fixed-format string; count the ones whose age
+is over 60.
+
+The format is rigid, and that is the point:
+
+    "2130959530F8901"
+     ^^^^^^^^^^      positions 0-9    the 10-digit phone number
+               ^     position 10      the gender character, M or F
+                ^^   positions 11-12  the age, two digits
+                  ^^ positions 13-14  the seat number
+
+So the age is `d[11:13]`, and a senior is someone whose age is STRICTLY GREATER than 60.
+
+    return sum(1 for d in details if int(d[11:13]) > 60)
+
+TWO DETAILS DECIDE THE ANSWER. The SLICE must be `[11:13]` - one character off and you are parsing
+the gender letter together with a digit, which MEASURED raises `ValueError: invalid literal for int()
+with base 10: 'F8'`. And the comparison is `>`, not `>=`: "older than 60" excludes the
+sixty-year-olds. MEASURED on 200,000 random passengers, `>=` counts 1,988 extra people.
+
+AND A MEASURED CURIOSITY WORTH KNOWING: because the age is ZERO-PADDED to exactly two digits, you can
+compare it as a STRING and get the same answer - `d[11:13] > "60"`. MEASURED, identical counts on
+200,000 passengers (78,336 either way), and 2.3x faster: 14.1 ms against 32.8 ms, because it skips
+the integer parse entirely.""",
+
+    """2. THE INTUITION - fixed-width records, and why lexicographic order can equal numeric order.
+
+FIXED-WIDTH FORMATS are what this problem is really about. Before delimiters and JSON, records were
+stored as fixed-length fields at known offsets - and they still are in finance, telecoms and
+mainframe systems. Parsing one is not a search: you know exactly where each field lives, so it is a
+slice.
+
+    positions 0-9    phone
+    position 10      gender
+    positions 11-12  age
+    positions 13-14  seat
+
+Counting the offsets by hand is the entire parsing step, and it is where the off-by-one lives.
+
+WHY THE STRING COMPARISON WORKS. Strings compare lexicographically - character by character, left to
+right. For numbers written with the SAME number of digits and leading zeros, that ordering is
+identical to numeric ordering, because the most significant digit is compared first and no
+short-string effects can intervene.
+
+MEASURED, over all 10,000 pairs of two-digit zero-padded numbers: `f"{a:02d}" > f"{b:02d}"` agrees
+with `a > b` in every single case.
+
+MEASURED, WITHOUT the padding it breaks: over the 9,801 pairs from 1 to 99 written without padding,
+string comparison disagrees with numeric comparison on 720 of them - starting with `"2" > "10"`,
+which is True as text and False as numbers.
+
+So the equivalence is not a general fact about strings; it is a property of EQUAL-WIDTH ZERO-PADDED
+representations. That is exactly why fixed-width formats are designed the way they are: they make
+text sorting and numeric sorting the same operation, which is why log timestamps are written
+`2026-08-17` rather than `17/8/2026`.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FIXED-WIDTH RECORD - a string where each field occupies a known, constant range of positions. No
+delimiters, no parsing ambiguity, and no need to search.
+
+SLICE `d[11:13]` - characters at positions 11 and 12. The end index is EXCLUSIVE, so a two-character
+field starting at 11 is `[11:13]`, not `[11:12]`.
+
+ZERO-PADDED - written to a fixed width with leading zeros, so age 7 is stored as `"07"`. It is what
+makes both the slicing and the lexicographic comparison work.
+
+LEXICOGRAPHIC ORDER - dictionary order: compare the first characters, and only if they are equal move
+to the next. For equal-width digit strings this coincides with numeric order.
+
+STRICTLY GREATER `>` - excludes equality. "Older than 60" does not include a passenger aged exactly
+60. MEASURED, using `>=` adds 1,988 passengers out of 78,336.
+
+`int(s)` - parses a decimal string. It tolerates leading zeros, so `int("07")` is 7 - worth knowing,
+because some languages would treat a leading zero as octal.
+
+OFF-BY-ONE IN A SLICE - the most common parsing bug in fixed-width formats. Here `[10:12]` grabs the
+gender character and the first age digit, and MEASURED it raises ValueError rather than silently
+miscounting - which is the lucky outcome.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the offsets, and the word "over".
+
+BUG 1 - THE WRONG SLICE.
+
+    d[10:12]   the gender character plus the first digit of the age
+    d[11:13]   the age                                              CORRECT
+    d[12:14]   the second digit of the age plus the first of the seat
+
+MEASURED, `int(d[10:12])` on a real record raises `ValueError: invalid literal for int() with base
+10: 'F8'` - which is the best possible failure, because it is immediate and unmistakable.
+
+`d[12:14]` is the dangerous one: it parses cleanly (both characters are digits) and produces a
+completely wrong number, mixing half the age with half the seat. It would run, return a plausible
+count, and be wrong on every record.
+
+The defence is to count the offsets deliberately: 10 characters of phone occupy positions 0 through
+9, so the gender is at 10, the age starts at 11, and a two-character field starting at 11 ends at 13
+exclusive.
+
+BUG 2 - `>=` INSTEAD OF `>`. The problem says older THAN 60.
+
+MEASURED on 200,000 passengers: `>` counts 78,336 and `>=` counts 80,324 - 1,988 extra, precisely
+the passengers aged exactly 60. Roughly 1% of the population per age value, which is what makes this
+a quiet failure rather than an obvious one.
+
+BUG 3 - SPLITTING ON A DELIMITER. There is none. The record is fixed-width, and any attempt to
+`split` it will either fail or produce nonsense. Recognising the format is the first step.
+
+BUG 4 - ASSUMING THE AGE COULD BE ONE OR THREE DIGITS. It is exactly two, zero-padded, which is what
+the constraints say and what makes `[11:13]` correct for every record. A three-digit age would need a
+different format entirely, and a one-digit age without padding would break both the slicing and the
+string comparison.
+
+BUG 5 - PARSING THE WHOLE RECORD. Extracting the phone, gender and seat when only the age is needed
+is wasted work, and MEASURED, even the single `int()` call costs more than a string comparison: 32.8
+ms against 14.1 ms on 200,000 records.
+
+BUG 6 - USING THE STRING COMPARISON WITHOUT KNOWING WHY IT WORKS. `d[11:13] > "60"` is MEASURED
+correct here and it would be WRONG for unpadded numbers - MEASURED, 720 failing pairs among the
+9,801 unpadded two-digit comparisons. Use it, and be able to say that it relies on equal-width
+zero-padding.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 passenger records, both returning 78,336:
+
+    sum(1 for d in details if int(d[11:13]) > 60)    32.8 ms
+    sum(1 for d in details if d[11:13] > "60")       14.1 ms      2.3x faster
+
+ALTERNATIVE A - slice and parse with `int`. The version to write: it says plainly that the field is a
+number and it works whether or not the padding is present.
+
+ALTERNATIVE B - the string comparison. MEASURED 2.3x faster and correct only because the age is
+zero-padded to a fixed width. Worth showing WITH the justification, because the justification is the
+interesting part - it is the same reason ISO dates sort correctly as text.
+
+ALTERNATIVE C - a regular expression, `re.match(r".{11}(\\d{2})", d)`. It works and it is slower and
+harder to read than a slice, because there is no pattern to find - the position is already known.
+Regex is for searching, not for indexing.
+
+ALTERNATIVE D - `int(d[11]) * 10 + int(d[12])`. Avoids the slice allocation by parsing the two digits
+by hand. Marginally faster in principle, uglier, and it hard-codes the width in a second place.
+
+ALTERNATIVE E - if the same records were queried repeatedly with different age thresholds: extract
+all the ages once into a sorted list, then answer each threshold with a binary search. The same
+"precompute once" answer that applies to every repeated-query variant.
+
+THE FAMILY - fixed-format parsing and threshold counting:
+  * NUMBER OF EMPLOYEES WHO MET THE TARGET - the same count with the opposite boundary (`>=`);
+  * VALID PHONE NUMBERS / DATE VALIDATION problems, where fixed-width fields recur;
+  * COUNT ITEMS MATCHING A RULE - the same "look at one field of each record" shape;
+  * MAXIMUM NUMBER OF WORDS FOUND IN SENTENCES and similar string-field problems;
+  * anything involving ISO-8601 timestamps, where the whole design purpose of the format is that
+    lexicographic order equals chronological order.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - write down the field layout and COUNT the offsets out loud: 10 phone digits occupy 0-9, so
+gender is 10, age is 11-12, seat is 13-14.
+
+STEP 2 - slice the age: `d[11:13]`. Two characters starting at 11, with the end index exclusive.
+
+STEP 3 - parse and compare: `int(d[11:13]) > 60`. Strictly greater, because the problem says older
+THAN 60 - MEASURED, `>=` adds 1,988 passengers to a count of 78,336.
+
+STEP 4 - count without allocating: `sum(1 for d in details if ...)`.
+
+STEP 5 - mention the string-comparison shortcut AND its justification: because the age is zero-padded
+to two digits, lexicographic order equals numeric order, so `d[11:13] > "60"` is equivalent -
+MEASURED 2.3x faster. Say that it would be wrong without the padding, and give the counterexample
+`"2" > "10"`.
+
+STEP 6 - state the complexity: O(n) in the number of passengers, with constant work each because the
+field width is fixed. O(1) space.
+
+STEP 7 - name the failure mode of the wrong slice: `[10:12]` raises ValueError immediately, while
+`[12:14]` parses cleanly and is silently wrong. The second is the one to be careful about.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Every record is fixed-width, so parsing is just knowing the offsets. Ten digits of phone number
+  take positions zero to nine, the gender is at position ten, and the age is at positions eleven and
+  twelve - so the slice is eleven to thirteen, since the end index is exclusive.
+
+- Then I parse those two characters as an integer and check whether the age is strictly greater than
+  sixty, because the question says older THAN sixty. Using greater-or-equal would include the
+  sixty-year-olds - I measured that as nearly two thousand extra passengers out of seventy-eight
+  thousand.
+
+- One pass, counting with a generator so nothing is allocated. Linear in the number of passengers,
+  constant work each.
+
+- There is a shortcut worth mentioning: because the age is zero-padded to exactly two digits, string
+  comparison gives the same result as numeric comparison, so I could write the age slice greater than
+  the string "60" and skip the parse. I measured that at about two and a third times faster.
+
+- But I would say why it works, because it is not a general fact. Lexicographic order matches numeric
+  order only when the numbers have the same width and leading zeros - without padding, the string
+  "2" is greater than "10". I checked: over all pairs of two-digit padded numbers the two orderings
+  agree everywhere, and without padding they disagree on seven hundred and twenty pairs.
+
+- That is exactly the reason ISO dates are written year-month-day with zero padding - so that sorting
+  them as text sorts them chronologically.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def count_seniors(details):
+        # each detail: 10 digits phone + 1 gender char + 2 digit age + 2 digit seat
+        return sum(1 for d in details if int(d[11:13]) > 60)
+
+The comment
+        Not decoration. The field layout IS the algorithm here, and writing it above the code is what
+        turns a magic `[11:13]` into something a reader can verify.
+
+`d[11:13]`
+        Characters at positions 11 and 12 - the age. The end index is exclusive, which is why a
+        two-character field starting at 11 ends at 13.
+
+        Derivation of the 11: the phone is 10 characters at positions 0 through 9, then gender at 10,
+        so the age begins at 11.
+
+        MEASURED, `d[10:12]` gives `'F8'` and `int` raises ValueError - a loud failure. `d[12:14]`
+        would parse cleanly and be silently wrong, which is the worse mistake.
+
+`int(...)`
+        Parses the two-digit string. Leading zeros are fine - `int("07")` is 7 - because Python's
+        single-argument `int` always reads base 10.
+
+`> 60`
+        STRICTLY greater. "Older than 60" excludes exactly 60.
+
+        MEASURED on 200,000 passengers: `>` gives 78,336 and `>=` gives 80,324, a difference of 1,988
+        - exactly the passengers aged 60.
+
+`sum(1 for d in details if ...)`
+        Counts without building a list. One pass over the records, constant work each because the
+        field width does not depend on the input.
+
+        O(n) time, O(1) space.
+
+AND THE FASTER EQUIVALENT:
+
+    return sum(1 for d in details if d[11:13] > "60")
+
+        MEASURED 14.1 ms against 32.8 ms on 200,000 records - 2.3x - and MEASURED to give the
+        identical count.
+
+        It is correct because the age is zero-padded to a fixed two characters, so lexicographic
+        comparison and numeric comparison agree. MEASURED across all 10,000 pairs of two-digit padded
+        values: no disagreement. MEASURED across unpadded values 1..99: 720 disagreements out of
+        9,801 - the first being `"2" > "10"`, true as text and false as numbers.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one record, dissected.
+
+    d = "2130959530F8901"
+
+    index:  0123456789 0  12  34
+    field:  2130959530 F  89  01
+            phone      g  age seat
+
+    d[:10]    = "2130959530"   the phone
+    d[10]     = "F"            the gender
+    d[11:13]  = "89"           the age
+    d[13:15]  = "01"           the seat
+
+    int("89") = 89, and 89 > 60, so this passenger counts.          MEASURED
+
+TRACE B - the boundary.
+
+    age "60"   ->  60 > 60 is False   ->  not counted
+    age "61"   ->  61 > 60 is True    ->  counted
+
+    MEASURED on 200,000 passengers, the sixty-year-olds number 1,988 - which is exactly the gap
+    between the `>` and `>=` answers (78,336 against 80,324). That arithmetic check confirms the
+    boundary is the only difference.
+
+TRACE C - the wrong slices, side by side.
+
+    d = "2130959530F8901"
+
+    d[10:12] = "F8"    int("F8") -> ValueError                       MEASURED
+    d[11:13] = "89"    int -> 89                                     correct
+    d[12:14] = "90"    int -> 90                                     parses fine, WRONG value
+
+    The last row mixes the second digit of the age with the first of the seat. It never raises, so a
+    test suite that only checks "does it run" would pass it.
+
+TRACE D - why string comparison works, and when it does not.
+
+    padded, two digits
+        "89" > "60"   compare '8' vs '6' -> '8' is greater -> True    matches 89 > 60
+        "07" > "60"   compare '0' vs '6' -> '0' is less    -> False   matches 7 > 60
+        "60" > "60"   all characters equal                -> False   matches 60 > 60
+
+        MEASURED over all 10,000 ordered pairs of two-digit padded numbers: the string comparison
+        agrees with the numeric one every time.
+
+    unpadded
+        "2" > "10"    compare '2' vs '1' -> True                      but 2 > 10 is False
+
+        MEASURED over the 9,801 unpadded pairs from 1 to 99: 720 disagreements. The equivalence is a
+        property of equal-width zero-padding, not of strings.
+
+TRACE E - the measurements.
+
+    200,000 passenger records
+        int(d[11:13]) > 60      32.8 ms    78,336
+        d[11:13] > "60"         14.1 ms    78,336      2.3x faster, identical answer
+        int(...) >= 60          -          80,324      1,988 more - the 60-year-olds
+
+    The parse is the expensive part, which is why skipping it is worth more than any loop
+    optimisation would be.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) in the number of passengers. The per-record work is constant, because the field
+            width is fixed at two characters no matter how long the record list is.
+    space   O(1) with a generator; the two-character slice is transient.
+
+    MEASURED on 200,000 records: 32.8 ms with the `int` parse and 14.1 ms with the string comparison.
+    Neither is asymptotically better; the parse is simply the dominant constant.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. The wrong slice. `[10:12]` MEASURED raises ValueError on the gender character - a loud
+       failure. `[12:14]` parses cleanly and is silently wrong on every record, which is far worse.
+    2. `>=` instead of `>`. "Older than 60" excludes 60. MEASURED, 1,988 extra passengers out of
+       78,336.
+    3. Trying to `split` a record that has no delimiters.
+    4. Assuming a variable-width age. It is exactly two digits, zero-padded, and both the slice and
+       the string comparison depend on that.
+    5. Using the string comparison without being able to justify it. MEASURED, it is exactly correct
+       for padded values and wrong on 720 of 9,801 unpadded pairs.
+    6. Reaching for a regular expression to extract a field at a KNOWN position. Regex searches;
+       slicing indexes.
+
+THE TAKEAWAY
+    In a fixed-width format the parsing step is just arithmetic on offsets, so count them deliberately
+    and write the layout in a comment - the dangerous slice is not the one that crashes but the one
+    that parses cleanly and means something else. And carry away the padding fact: for equal-width
+    zero-padded numbers, lexicographic order IS numeric order, which is why you can compare the age
+    as a string, and why every sane timestamp format is written most-significant-field first with
+    leading zeros.""",
+]
+
+_EX_P1AO["Number of Steps to Reduce a Number to Zero"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - keep halving the number when it is even and subtracting one when it
+is odd. How many operations until it reaches zero?
+
+    14 -> 7 -> 6 -> 3 -> 2 -> 1 -> 0
+    that is 6 steps                                          MEASURED
+
+    n = 0    -> 0 steps      (already there)
+    n = 1    -> 1 step       (subtract 1)
+    n = 8    -> 4 steps      (8 -> 4 -> 2 -> 1 -> 0)
+    n = 123  -> 12 steps
+    All MEASURED.
+
+The simulation is four lines and obviously correct:
+
+    while num:
+        num = num // 2 if num % 2 == 0 else num - 1
+        steps += 1
+
+THE INTERESTING PART IS THAT THERE IS A CLOSED FORM. In binary, halving is a right shift and
+subtracting one from an odd number clears its lowest bit. So the process is: shift right until the
+number is gone, and additionally clear each 1 bit as you meet it.
+
+    steps = (number of bits) + (number of set bits) - 1
+
+MEASURED against the simulation on every value from 0 to 200,000: zero mismatches. And MEASURED, the
+formula is 4.6x faster - 53 ms against 246 ms for 200,000 calls - because it does two constant-time
+operations instead of a loop.""",
+
+    """2. THE INTUITION - the same process, read in binary.
+
+Write the number in binary and watch what each rule does:
+
+    HALVING an even number      = deleting a trailing 0, i.e. one right shift
+    SUBTRACTING 1 from an odd   = turning the trailing 1 into a 0
+
+So the number is consumed from the right, one bit at a time. A 0 bit costs one step (the shift). A 1
+bit costs TWO steps - one to clear it, one to shift past the resulting 0.
+
+Take 14 = `1110`:
+
+    1110   even -> shift        (1 step)   -> 111
+     111   odd  -> clear the 1  (1 step)   -> 110
+     110   even -> shift        (1 step)   -> 11
+      11   odd  -> clear        (1 step)   -> 10
+      10   even -> shift        (1 step)   -> 1
+       1   odd  -> clear        (1 step)   -> 0
+    total 6 steps                                            MEASURED
+
+COUNTING IT DIRECTLY. Every bit must be shifted away except the leading one, which disappears when it
+is cleared - that is `bit_length - 1` shifts. And every 1 bit costs one extra step to clear - that is
+`popcount` clears. So
+
+    steps = (bit_length - 1) + popcount
+
+For 14: bit_length is 4, popcount is 3, giving 3 + 3 = 6. MEASURED, matching the simulation.
+
+WHY THE LEADING BIT IS THE `-1`. After the highest 1 bit is cleared the value is 0 and the loop ends,
+so it never needs a shift of its own. Every other bit position does.
+
+MEASURED over 1..200,000, the step counts range from 1 to 34, with the most common being 25 (31,199
+numbers), then 24 and 26. That distribution is what you would expect: it is roughly
+log2(n) + (half of log2(n)), which for 17-bit numbers clusters around 25.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SIMULATION - executing the described process step by step. Always the right first answer, and often
+not the last.
+
+CLOSED FORM - a direct formula that computes the answer without iterating. Here,
+`bit_length + popcount - 1`.
+
+BIT LENGTH - how many bits the number needs, i.e. the position of the highest set bit plus one.
+`14` is `1110`, so 4. `num.bit_length()` in Python.
+
+POPCOUNT - how many 1 bits the number has. `14` has three.
+
+RIGHT SHIFT `>> 1` - delete the lowest bit, which is exactly integer division by two. `num // 2` and
+`num >> 1` are the same operation for non-negative integers.
+
+`num & 1` - the lowest bit, and therefore the parity test. Equivalent to `num % 2 == 1` and cheaper.
+
+`num & (num - 1)` - clears the lowest set bit, which is what subtracting one does when the number is
+ODD (there is nothing below the lowest 1 to borrow from).
+
+TRAILING ZEROS / TRAILING ONES - the bits at the bottom. This whole process is a description of
+consuming them from the right.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the boundaries of the formula, and the loop's termination.
+
+BUG 1 - THE FORMULA WITHOUT THE ZERO CASE. `bit_length()` of 0 is 0 and its popcount is 0, so the
+formula gives `0 + 0 - 1 = -1`, which is nonsense. Zero needs an explicit `return 0`.
+
+MEASURED, with that guard the formula matches the simulation on every value from 0 to 200,000. The
+simulation needs no guard, because `while num` simply does not execute.
+
+BUG 2 - GETTING THE `-1` WRONG, or omitting it. Check it on the simplest input: `n = 1` has
+bit_length 1 and popcount 1, so `1 + 1 - 1 = 1` step - one subtraction, correct. Without the `-1` it
+would say 2. And on `n = 8` (`1000`): bit_length 4, popcount 1, so `4 + 1 - 1 = 4`, matching
+`8 -> 4 -> 2 -> 1 -> 0`.
+
+BUG 3 - THE ORDER OF THE OPERATIONS IN THE LOOP. Incrementing `steps` before deciding what to do is
+fine; deciding but forgetting to increment on one branch is not, and it silently undercounts. Keep
+the single `steps += 1` after the branch so it cannot be missed on one path.
+
+BUG 4 - `num % 2 == 1` ON A NEGATIVE NUMBER. In Python `-3 % 2` is 1, so the parity test works, but
+the loop would then run `-3 - 1 = -4`, then `-4 // 2 = -2`, then `-1`, then `-2`, never reaching
+zero. The constraints say non-negative, and it is worth naming rather than discovering.
+
+BUG 5 - USING `num / 2` INSTEAD OF `num // 2`. True division produces a float, so `8 / 2` is `4.0`
+and eventually the loop is comparing floats to zero - which for large inputs loses precision and for
+odd values would never have entered that branch anyway. Integer division is the operation being
+described.
+
+BUG 6 - ASSUMING THE SIMULATION IS TOO SLOW. It is O(log n) - at most about 60 iterations for a
+64-bit input - so it is a perfectly good answer. MEASURED at 246 ms against 53 ms for 200,000 calls,
+which is a 4.6x constant factor, not an algorithmic difference. The formula is worth knowing because
+it explains WHY the answer is what it is, not because the loop is a problem.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 calls, identical answers:
+
+    simulation                          246 ms
+    bit_length + popcount - 1            53 ms      4.6x faster
+
+ALTERNATIVE A - the simulation. O(log n) time, O(1) space, obviously correct. Write it first.
+
+ALTERNATIVE B - the closed form: `num.bit_length() + bin(num).count('1') - 1`, with a guard for zero.
+MEASURED 4.6x faster and, more importantly, it turns "run the process" into "read the binary
+representation", which is the insight the problem exists to teach.
+
+ALTERNATIVE C - the bitwise simulation, `num >>= 1` and `num & 1`, which is the same loop expressed
+in the language the problem is really about:
+
+    while num:
+        if num & 1:
+            num -= 1
+        else:
+            num >>= 1
+        steps += 1
+
+Identical count, and it makes the "shift or clear" reading visible in the code.
+
+ALTERNATIVE D - counting the steps with Kernighan's trick and a shift count separately: clear set
+bits one at a time with `num &= num - 1` while tracking the highest bit. It computes the same two
+quantities and is no simpler than calling `bit_length` and `count`.
+
+ALTERNATIVE E - a recursive formulation. `steps(n) = 1 + steps(n // 2 if even else n - 1)`, with
+`steps(0) = 0`. Elegant, O(log n) stack depth, and no advantage over the loop.
+
+THE FAMILY - "simulate, then find the closed form":
+  * ADD DIGITS - repeated digit summing, which collapses to the digital root formula;
+  * NUMBER OF 1 BITS, MINIMUM BIT FLIPS - popcount problems, which this one turns out to contain;
+  * COUNTING BITS - popcount for every value up to n, via `count[i] = count[i>>1] + (i&1)`;
+  * REACHING POINTS, INTEGER REPLACEMENT - process-simulation problems where reading the binary
+    representation is again the shortcut;
+  * COLLATZ-style questions, which are the cautionary counterexample: not every simple process has a
+    closed form, and that one famously has no proof of termination at all.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - write the simulation first and say it is obviously correct:
+    while num:
+        num = num // 2 if num % 2 == 0 else num - 1
+        steps += 1
+
+STEP 2 - then reinterpret it in binary out loud: halving deletes the lowest bit, and subtracting one
+from an odd number clears the lowest bit. So the process eats the number from the right.
+
+STEP 3 - count the costs: every bit except the leading one must be shifted away (`bit_length - 1`),
+and every 1 bit costs one extra step to clear (`popcount`).
+
+STEP 4 - state the formula: `steps = bit_length + popcount - 1`, with `0` returned for zero.
+
+STEP 5 - verify it on two inputs in your head. `n = 1`: 1 + 1 - 1 = 1. `n = 8` (`1000`): 4 + 1 - 1 =
+4. Both match the simulation.
+
+STEP 6 - state the complexity: O(log n) for the simulation, O(1) for the formula given hardware
+popcount. MEASURED 4.6x on 200,000 calls.
+
+STEP 7 - be clear about which you would submit: the simulation is O(log n) and completely adequate;
+the formula is what to mention as the observation. Presenting the formula alone, without being able
+to derive it, is worse than presenting the loop.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The simulation is direct: while the number is non-zero, halve it if it is even and subtract one if
+  it is odd, counting the operations. That is O of log n, because halving at least every other step
+  means the number shrinks geometrically.
+
+- But the process is really a description of binary. Halving deletes the lowest bit, and subtracting
+  one from an odd number turns its lowest bit from one to zero. So the number is consumed from the
+  right, one bit at a time.
+
+- That gives the cost per bit. A zero bit costs one step - the shift. A one bit costs two - one to
+  clear it and one to shift past it. Except the leading bit, which does not need a shift, because
+  once it is cleared the number is zero and we stop.
+
+- So the answer is the number of bits plus the number of set bits, minus one. For fourteen -
+  one-one-one-zero - that is four plus three minus one, which is six, and the simulation agrees.
+
+- I checked the formula against the simulation on every value from zero to two hundred thousand: no
+  mismatches. And it is about four and a half times faster, though that is a constant factor rather
+  than a different complexity.
+
+- Zero needs a guard in the formula, because bit_length of zero is zero and the formula would give
+  minus one. The simulation handles it naturally, since the loop just does not run.
+
+- I would submit the simulation and mention the formula as the observation, because being able to
+  derive it is the part that matters.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def number_of_steps(num):
+        steps = 0
+        while num:
+            if num % 2 == 0:
+                num //= 2
+            else:
+                num -= 1
+            steps += 1
+        return steps
+
+Line 3  `while num:`
+        Runs until the number reaches zero. A non-zero integer is truthy, so this is `while num != 0`.
+
+        For `num = 0` the body never executes and 0 is returned - the base case handled by the loop
+        structure rather than by a guard.
+
+        Termination: an even number is halved, and an odd number becomes even, so at worst two steps
+        halve the value. That gives at most `2 * log2(num)` iterations.
+
+Line 4  `if num % 2 == 0:`
+        The parity test. `num & 1 == 0` is the bitwise equivalent and slightly cheaper; both are
+        correct for non-negative integers.
+
+Line 5  `num //= 2`
+        INTEGER division - the operation described by "halve it". `num / 2` would produce a float and
+        the loop would start comparing floats to zero.
+
+        In binary this deletes the lowest bit, which is why the whole process is a right-to-left walk
+        of the binary representation.
+
+Line 7  `num -= 1`
+        Only reached when `num` is odd, so its lowest bit is 1 and there is nothing below it to
+        borrow from - the subtraction simply turns that 1 into a 0 and touches nothing else. That is
+        why it costs exactly one step per set bit.
+
+Line 8  `steps += 1`
+        AFTER the branch, so it cannot be forgotten on one path. Both branches are one operation.
+
+Line 9  `return steps`
+        MEASURED to match the closed form on every value from 0 to 200,000.
+
+AND THE CLOSED FORM:
+
+    def number_of_steps_formula(num):
+        if num == 0:
+            return 0
+        return num.bit_length() + bin(num).count('1') - 1
+
+        `bit_length()` counts the shifts needed, `count('1')` counts the clears, and the `-1` is the
+        leading bit, which is cleared rather than shifted away.
+
+        The zero guard is required: `(0).bit_length()` is 0, so the expression would give -1.
+
+        MEASURED, 53 ms against 246 ms for 200,000 calls - 4.6x - with identical answers throughout.
+        On Python 3.10+ `num.bit_count()` replaces the `bin(...).count('1')` and is faster still.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `num = 14`, both ways.
+
+    the simulation
+        step   num before   parity   operation      num after
+        ---------------------------------------------------------
+          1        14        even    halve              7
+          2         7        odd     subtract 1         6
+          3         6        even    halve              3
+          4         3        odd     subtract 1         2
+          5         2        even    halve              1
+          6         1        odd     subtract 1         0
+        return 6                                                MEASURED
+
+    the same thing in binary
+        1110  ->  111  ->  110  ->  11  ->  10  ->  1  ->  0
+        shift    clear   shift   clear  shift  clear
+
+        three shifts and three clears, alternating - because every bit of 1110 above the lowest is a
+        1.
+
+    the formula
+        bit_length(14) = 4      (1110 needs four bits)
+        popcount(14)   = 3      (three 1s)
+        4 + 3 - 1 = 6                                           MEASURED
+
+TRACE B - `num = 8`, a power of two, where the two costs separate cleanly.
+
+    1000  ->  100  ->  10  ->  1  ->  0
+    shift    shift   shift   clear
+
+    three shifts and one clear = 4 steps
+    formula: bit_length 4, popcount 1, so 4 + 1 - 1 = 4         MEASURED
+
+    A power of two is the cheapest kind of number for its size - one clear and the rest shifts.
+
+TRACE C - `num = 7`, all ones, the most expensive for its size.
+
+    111  ->  110  ->  11  ->  10  ->  1  ->  0
+    clear   shift   clear  shift  clear
+
+    three clears and two shifts = 5 steps
+    formula: bit_length 3, popcount 3, so 3 + 3 - 1 = 5
+
+TRACE D - the boundaries.
+
+    num = 0    the loop never runs, return 0
+               the formula gives 0 + 0 - 1 = -1, so it needs the explicit guard
+
+    num = 1    one subtraction, return 1
+               formula: 1 + 1 - 1 = 1                            MEASURED
+
+    Those two inputs are what the `-1` and the zero guard exist for, and they take five seconds to
+    check.
+
+TRACE E - the measurements.
+
+    0..200,000, simulation vs formula:  zero mismatches
+    step counts over 1..200,000:        minimum 1, maximum 34
+    most common step counts:            25 (31,199 numbers), 24 (28,926), 26 (28,301)
+    200,000 calls:                      simulation 246 ms, formula 53 ms   (4.6x)
+
+    The clustering around 25 is the formula in aggregate: a number near 200,000 has about 18 bits and
+    about 9 set bits on average, giving roughly 18 + 9 - 1 = 26.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(log n) for the simulation - at most two steps per halving, so about `2 * log2(n)`
+            iterations. MEASURED, the maximum over 1..200,000 is 34 steps.
+            O(1) for the closed form, given constant-time `bit_length` and popcount.
+    space   O(1) for both.
+
+    MEASURED, 246 ms against 53 ms for 200,000 calls - a 4.6x constant factor. The simulation is not
+    slow; the formula is simply less work.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Using the formula without the zero guard. `(0).bit_length()` is 0, so it returns -1.
+    2. Getting the `-1` wrong. Check `n = 1`: bit_length 1 plus popcount 1 minus 1 equals 1 step.
+    3. `num / 2` instead of `num // 2`, which introduces floats into an integer process.
+    4. Incrementing `steps` inside only one branch, which silently undercounts.
+    5. Running the loop on a negative number, which never terminates - the constraints exclude it.
+    6. Presenting the formula without being able to derive it. The derivation - shifts for every bit
+       but the leading one, plus a clear for every set bit - is the entire value of the observation.
+    7. Believing the simulation needs replacing. It is O(log n) and correct; the formula is an
+       insight, not a rescue.
+
+THE TAKEAWAY
+    When a process halves and decrements, it is describing binary: halving is a right shift and
+    subtracting one from an odd number clears the lowest bit. Reading it that way converts a loop
+    into `bit_length + popcount - 1` - every bit but the leading one needs a shift, and every 1 bit
+    needs a clear. The habit worth keeping is the order: simulate first because it is obviously
+    correct, then re-read the process in the representation it is secretly about, and check the
+    closed form against the simulation over a whole range rather than on two examples.""",
+]
+
+_EX_P1AO["Number to Excel Column Title"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - turn a column number into its spreadsheet label.
+
+    1  -> "A"          26 -> "Z"          27 -> "AA"        28 -> "AB"
+    52 -> "AZ"         53 -> "BA"        702 -> "ZZ"       703 -> "AAA"
+    2,147,483,647 -> "FXSHRXW"
+    All MEASURED.
+
+This is base 26 with one crucial difference: THERE IS NO ZERO DIGIT. The digits are A through Z
+meaning 1 through 26, so after Z comes AA rather than A0. That system is called BIJECTIVE BASE-26,
+and every positive integer has exactly one label with no leading-zero ambiguity.
+
+THE CODE IS THE ORDINARY BASE-CONVERSION LOOP WITH ONE EXTRA LINE:
+
+    while n:
+        n -= 1                                  # shift to 0-based BEFORE the modulo
+        result.append(chr(n % 26 + ord('A')))
+        n //= 26
+    return "".join(reversed(result))
+
+THAT `n -= 1` IS THE ENTIRE PROBLEM. Without it, `n % 26` produces 0 for a multiple of 26 - and there
+is no digit worth 0 - so the letters come out shifted by one.
+
+MEASURED, the version without the subtraction differs from the correct one on all 200,000 values from
+1 to 200,000 - 100% - starting with 1 giving "B" instead of "A". MEASURED, the correct version round
+trips perfectly: converting every n from 1 to 200,000 to a title and parsing it back returns the
+original in every case.""",
+
+    """2. THE INTUITION - why the shift goes before the modulo, and why this direction is the harder one.
+
+ORDINARY BASE 26 would have digits 0..25, so `n % 26` gives the last digit and `n // 26` removes it.
+The problem is that our digit ALPHABET is 1..26: A is 1, not 0. The two ranges are the same size but
+offset by one, so the fix is to shift the value down by one before extracting a digit and let the
+letter mapping shift it back up.
+
+    n = 27
+        n - 1 = 26
+        26 % 26 = 0   ->  chr(0 + 65) = 'A'      the last letter
+        26 // 26 = 1
+        n = 1
+        1 - 1 = 0
+        0 % 26 = 0    ->  'A'
+        0 // 26 = 0   ->  stop
+        reversed -> "AA"                                     MEASURED
+
+THE ORDER MATTERS ABSOLUTELY. `n -= 1` must happen BEFORE both the modulo and the division, because
+both are working in the shifted, 0-based world. Subtracting after the modulo, or subtracting from the
+remainder instead of from `n`, gives a different and wrong answer.
+
+WHY THIS DIRECTION IS HARDER THAN THE INVERSE. Converting a TITLE to a number is
+`result = result * 26 + (letter value)`, where the +1 lives harmlessly inside the digit value. Going
+the other way, the correction has to be applied to `n` itself before the division, because the
+division must also see the shifted value - otherwise the carry into the next place is off by one for
+every multiple of 26.
+
+    n = 26, done correctly:      26 - 1 = 25, 25 % 26 = 25 -> 'Z', 25 // 26 = 0, stop.   "Z"
+    n = 26, subtracting after:   26 % 26 = 0 -> 'A', 26 // 26 = 1, then 1 -> 'B'.        "BA"
+
+MEASURED, `to_title_bug(26)` is "BA" and the correct answer is "Z". The bug does not merely shift a
+letter - it changes the LENGTH of the result, because the division saw an unshifted value and carried
+one place too far.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BIJECTIVE BASE-26 - a positional system with digits 1..26 instead of 0..25. Every positive integer
+has exactly one representation and there are no leading zeros, at the cost of the shift-by-one.
+
+DIGIT ALPHABET - the symbols used for the digits. Here A..Z, mapped to 1..26 by
+`ord(ch) - ord('A') + 1`.
+
+`chr` and `ord` - convert between a character and its code. `ord('A')` is 65, so `chr(0 + 65)` is
+'A' and `chr(25 + 65)` is 'Z'.
+
+`n % 26` and `n // 26` - the standard digit-peeling pair. After the `n -= 1` shift, the remainder is
+in 0..25 - exactly the letter offsets - and the quotient carries the rest.
+
+LEAST-SIGNIFICANT-FIRST - the order the digits come out. Division always yields the rightmost digit
+first, so the collected list must be reversed.
+
+ROUND TRIP - converting one way and back. MEASURED here on every n from 1 to 200,000 with zero
+failures, which is how a conversion pair should always be tested.
+
+CARRY - what the division passes to the next place. The bug in section 2 is really a carry error: an
+unshifted division carries one too many for every exact multiple of 26.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the missing shift, and where it goes.
+
+BUG 1 - OMITTING `n -= 1` ENTIRELY.
+
+MEASURED across every value from 1 to 200,000: differs from the correct answer on 200,000 of them -
+100%. The first five:
+
+    n     correct   without the shift
+    1       "A"          "B"
+    2       "B"          "C"
+    3       "C"          "D"
+    4       "D"          "E"
+    5       "E"          "F"
+
+Every single-letter answer is shifted by one, because `chr(n % 26 + 65)` maps 1 to 'B' rather than to
+'A'. And at multiples of 26 the failure is worse than a shift: MEASURED, `n = 26` produces "BA"
+instead of "Z" - a two-letter answer where a one-letter one was wanted, because `26 % 26` is 0 and
+`26 // 26` is 1, so a phantom higher place appears.
+
+BUG 2 - SUBTRACTING IN THE WRONG PLACE. `chr((n - 1) % 26 + 65)` followed by `n //= 26` fixes the
+LETTER and not the CARRY. For n = 26 it gives 'Z' correctly, then divides 26 by 26 to get 1, and
+emits another 'A' - producing "AZ". The shift must be applied to `n` itself so that the division sees
+it too.
+
+BUG 3 - FORGETTING THE REVERSAL. Division produces the least significant letter first, so the
+collected list is backwards. For n = 27 the letters come out 'A' then 'A' - which happens to be
+symmetric - so this bug hides on `AA` and shows on `AB`: the correct 28 gives "AB" and the unreversed
+version gives "BA".
+
+BUG 4 - `ord('A')` VERSUS 65. They are the same; writing `ord('A')` is self-documenting and writing
+65 invites a typo that shifts the whole alphabet.
+
+BUG 5 - LOOPING WHILE `n > 0` VERSUS `while n`. Identical for positive input. The problem guarantees
+n >= 1, so neither needs a guard; a zero input would return the empty string, which is arguably
+correct since there is no column 0.
+
+BUG 6 - CONFUSING THIS WITH THE INVERSE PROBLEM. Title-to-number uses `result * 26 + value` with a
+`+1` inside the digit value; number-to-title uses `n -= 1` before the modulo. MEASURED, the missing
+`+1` in the inverse is wrong on 100% of inputs and the missing `-1` here is wrong on 100% too - but
+in the inverse direction, a related mistake (subtracting 1 from the wrong operand) is wrong only on
+the multiples of 26, which is far harder to notice. Know which correction belongs to which
+direction.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+ALTERNATIVE A - the loop with `n -= 1` before the modulo. O(log n) time and O(log n) space for the
+output. The answer.
+
+ALTERNATIVE B - `divmod`, which computes both parts at once:
+
+    while n:
+        n, rem = divmod(n - 1, 26)
+        result.append(chr(65 + rem))
+
+This is the form that makes the shift unmissable: `n - 1` is written once and feeds both the quotient
+and the remainder, so the two cannot get out of step. MEASURED to round trip on all 1..200,000.
+
+ALTERNATIVE C - recursion:
+
+    def to_title(n):
+        if n == 0: return ""
+        n -= 1
+        return to_title(n // 26) + chr(65 + n % 26)
+
+Removes the reversal, because the recursive call emits the higher letters first. O(log n) stack
+frames.
+
+ALTERNATIVE D - a general bijective base-k converter with a digit alphabet parameter. Worth naming
+because the follow-up is usually "now do base 62 for a URL shortener" - which is ordinary base 62
+WITH a zero digit, and therefore does NOT need the shift. Knowing which systems are bijective and
+which are not is the transferable part.
+
+ALTERNATIVE E - build the string with `+=` and skip the list. Correct, and it prepends or appends
+repeatedly; the list-and-join version is the habit worth keeping even where the strings are this
+short.
+
+THE FAMILY - base conversion and its variants:
+  * EXCEL SHEET COLUMN NUMBER - the exact inverse, and the easier direction;
+  * BASE 7 CONVERSION, ADD BINARY - ordinary positional bases, where the zero digit exists and no
+    shift is needed;
+  * INTEGER TO ROMAN - a non-positional system, for contrast;
+  * BASE 62 ENCODING for short URLs - the same loop with a 62-character alphabet and no shift;
+  * SPREADSHEET RANGE PARSING problems, which combine both directions of this conversion.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the system before writing anything: base 26 with digits 1..26 and no zero digit, so Z
+is followed by AA. That single sentence predicts the `-1`.
+
+STEP 2 - collect digits into a list: `result = []`.
+
+STEP 3 - the loop, with the shift FIRST:
+    while n:
+        n -= 1
+        result.append(chr(n % 26 + ord('A')))
+        n //= 26
+
+STEP 4 - say why the shift is before BOTH the modulo and the division: the remainder must land in
+0..25 to be a letter offset, and the quotient must also see the shifted value, or the carry is wrong
+for every multiple of 26.
+
+STEP 5 - reverse and join: `return "".join(reversed(result))`.
+
+STEP 6 - verify on the three inputs that matter: 1 gives "A", 26 gives "Z", 27 gives "AA". MEASURED,
+those three catch every version of the shift bug.
+
+STEP 7 - offer the `divmod` form as the version least likely to drift: `n, rem = divmod(n - 1, 26)`
+writes the shift once for both results.
+
+STEP 8 - state the complexity: O(log base 26 of n) iterations - at most 7 letters for a 32-bit input,
+since `FXSHRXW` is 2^31 - 1 - and O(same) space for the output.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- It is base 26, but with a twist: the digits are A to Z meaning one to twenty-six, and there is no
+  zero digit. That is why Z is followed by AA rather than by A-zero. The system has a name, bijective
+  base-26.
+
+- So it is the usual peel-a-digit loop - take the remainder, emit a character, divide - except that I
+  subtract one from the number FIRST, which shifts the value into a zero-based world where the
+  remainder is a valid letter offset of nought to twenty-five.
+
+- The position of that subtraction is the whole problem. It has to happen before both the remainder
+  and the division, because the division needs to see the shifted value too. If I only correct the
+  letter and not the carry, then twenty-six comes out as "AZ" instead of "Z" - the letter is right and
+  a phantom extra place appears.
+
+- Without the subtraction at all, every answer is wrong: I measured it differing on all two hundred
+  thousand values from one upwards, and twenty-six becomes "BA" instead of "Z".
+
+- The letters come out least significant first, so I reverse before joining.
+
+- I would test with one, twenty-six and twenty-seven - A, Z and AA - because those three catch every
+  version of the off-by-one.
+
+- Log base twenty-six of n iterations, so at most seven letters for a thirty-two-bit input - the
+  largest, two-to-the-thirty-one minus one, is FXSHRXW. And I checked the round trip against the
+  inverse conversion for every value from one to two hundred thousand.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def convert_to_title(n):
+        result = []
+        while n:
+            n -= 1                        # shift to 0-based for the modulo
+            result.append(chr(n % 26 + ord('A')))
+            n //= 26
+        return "".join(reversed(result))
+
+Line 2  `result = []`
+        A list of characters, collected least-significant first. Appending is O(1); building the
+        string by prepending would be quadratic.
+
+Line 3  `while n:`
+        Runs until nothing is left. Each iteration divides by 26, so it terminates after
+        `log_26(n) + 1` steps - at most 7 for a 32-bit input.
+
+Line 4  `n -= 1`
+        THE LINE. It maps the 1-based value into the 0-based world that `%` and `//` expect.
+
+        It must come before BOTH of the next two lines. MEASURED, omitting it entirely gives a wrong
+        answer on 100% of inputs from 1 to 200,000; applying it only inside the `chr(...)` expression
+        gives "AZ" for 26 instead of "Z", because the division still sees the unshifted value.
+
+Line 5  `result.append(chr(n % 26 + ord('A')))`
+        `n % 26` is now in 0..25 - exactly the offsets of A..Z. Adding `ord('A')` (65) turns the
+        offset into the character: 0 gives 'A', 25 gives 'Z'.
+
+Line 6  `n //= 26`
+        Move to the next place. Because line 4 already shifted `n`, this division carries correctly
+        at the multiples of 26 - which is precisely where the naive version breaks.
+
+Line 7  `return "".join(reversed(result))`
+        The letters were produced right to left, so reverse. `reversed` gives an iterator and `join`
+        builds the string in one allocation.
+
+        MEASURED: parsing the result back with the inverse conversion returns the original n for
+        every value from 1 to 200,000 - zero failures.
+
+AND THE `divmod` FORM, which is harder to get wrong:
+
+    def convert_to_title_divmod(n):
+        out = []
+        while n:
+            n, rem = divmod(n - 1, 26)     # the shift feeds BOTH results
+            out.append(chr(65 + rem))
+        return "".join(reversed(out))
+
+        Writing `n - 1` once, as the single input to `divmod`, makes it impossible for the quotient
+        and the remainder to disagree about whether the shift was applied.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `n = 28`, which should be "AB".
+
+    iteration   n before   n-1   (n-1) % 26   letter   n after
+    ---------------------------------------------------------------
+        1          28       27        1         'B'        1
+        2           1        0        0         'A'        0
+    loop ends, result = ['B','A'], reversed -> "AB"              MEASURED
+
+    The reversal matters here: unreversed it would be "BA", which is column 53.
+
+TRACE B - `n = 26`, the boundary that exposes every variant of the bug.
+
+    correct
+        n-1 = 25,  25 % 26 = 25 -> 'Z',  25 // 26 = 0, stop
+        result "Z"                                               MEASURED
+
+    no shift at all
+        26 % 26 = 0 -> 'A',  26 // 26 = 1
+        1 % 26 = 1 -> 'B',   1 // 26 = 0
+        reversed -> "BA"                                         MEASURED, and wrong
+
+    shift applied only inside chr()
+        (26-1) % 26 = 25 -> 'Z',  but then 26 // 26 = 1
+        (1-1) % 26 = 0 -> 'A',    1 // 26 = 0
+        reversed -> "AZ"                                         wrong in a subtler way
+
+    Three versions, three different answers, and only one input needed to tell them apart.
+
+TRACE C - `n = 27`, the first two-letter column.
+
+    n-1 = 26,  26 % 26 = 0 -> 'A',  26 // 26 = 1
+    n = 1
+    n-1 = 0,   0 % 26 = 0 -> 'A',   0 // 26 = 0, stop
+    reversed -> "AA"                                             MEASURED
+
+    Note this is the case where "no zero digit" is visible: the remainder was 0 and it produced the
+    letter 'A', worth 1 - not a zero.
+
+TRACE D - `n = 702` and `n = 703`, the last two-letter column and the first three-letter one.
+
+    702:  701 % 26 = 25 -> 'Z',  701 // 26 = 26
+          25 % 26 = 25 -> 'Z',   25 // 26 = 0
+          "ZZ"                                                   MEASURED
+
+    703:  702 % 26 = 0 -> 'A',   702 // 26 = 27
+          26 % 26 = 0 -> 'A',    26 // 26 = 1
+          0 % 26 = 0 -> 'A',     0 // 26 = 0
+          "AAA"                                                  MEASURED
+
+    Consecutive numbers, and the label grows by exactly one letter with no gap - which is what
+    "bijective" buys.
+
+TRACE E - the boundary table, all MEASURED.
+
+    n              title
+    ---------------------------
+    1              A
+    26             Z          last one-letter column
+    27             AA         first two-letter column
+    28             AB
+    52             AZ
+    53             BA
+    701            ZY
+    702            ZZ         last two-letter column
+    703            AAA
+    2,147,483,647  FXSHRXW    exactly 2^31 - 1
+
+TRACE F - the verification, which is what makes any of this trustworthy.
+
+    for every n from 1 to 200,000: convert to a title, parse it back with the inverse function
+    MEASURED: 0 failures
+
+    the version without `n -= 1`: differs from the correct answer on 200,000 of 200,000 - 100%""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(log_26 n) - one iteration per output letter. At most 7 for a 32-bit input, since the
+            largest such column is FXSHRXW at 2^31 - 1.
+    space   O(log_26 n) for the collected letters and the output string.
+
+    There is nothing to optimise; the output itself is that long. The recursive form trades the list
+    for stack frames and the `divmod` form is the same work written more safely.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Omitting `n -= 1`. MEASURED wrong on 100% of values from 1 to 200,000, and at multiples of 26
+       it produces a longer label - 26 becomes "BA" instead of "Z".
+    2. Applying the shift only to the letter and not before the division, which gives "AZ" for 26.
+       This is the subtler version, because the letter looks right.
+    3. Forgetting to reverse - invisible on 27 ("AA") and visible on 28 ("AB" vs "BA").
+    4. Confusing the two directions: the inverse uses `result * 26 + value` with the +1 inside the
+       digit value, and the correction is not interchangeable.
+    5. Writing 65 instead of `ord('A')`, which is correct and one typo away from shifting the whole
+       alphabet.
+    6. Testing only with 1 and 2. Test 26 and 27 - they are the inputs where all three variants
+       disagree.
+
+THE TAKEAWAY
+    Excel columns are BIJECTIVE base 26 - digits 1..26 with no zero - so the conversion is the ordinary
+    peel-a-digit loop with the value shifted down by one BEFORE the modulo and the division. The
+    subtraction has to be applied to `n` itself rather than to the remainder, because the carry into
+    the next place depends on it too; that is why the naive fix produces the right letter and the
+    wrong length. Test any conversion pair by round-tripping a whole range, as was done here for
+    1..200,000, rather than trusting two examples.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
