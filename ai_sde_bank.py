@@ -308561,6 +308561,1965 @@ the fact that loss is the ONLY signal is why Wi-Fi feels bad and why BBR, which 
 instead of breaking it, exists at all.""",
 ]
 
+_EX_P1AO["TLS / HTTPS handshake"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you type `https://bank.com`. Before a single byte of your password
+travels, three separate things must be true:
+
+    1. you are talking to the REAL bank.com, not somebody sitting between you and it  (AUTHENTICITY)
+    2. nobody in between can READ what you send                                        (CONFIDENTIALITY)
+    3. nobody in between can CHANGE what you send without being detected               (INTEGRITY)
+
+The TLS handshake establishes all three, in a few round trips, before any HTTP happens. HTTPS is
+literally just HTTP running inside that tunnel.
+
+MEASURED ON THIS MACHINE - real connections to real servers, right now:
+
+    host                  TCP connect   TLS handshake   version    cipher
+    -------------------   -----------   -------------   --------   -----------------------
+    example.com                9.0 ms         36.5 ms   TLSv1.3    TLS_AES_256_GCM_SHA384
+    www.google.com             9.1 ms         52.0 ms   TLSv1.3    TLS_AES_256_GCM_SHA384
+    github.com                28.2 ms         55.9 ms   TLSv1.3    TLS_AES_128_GCM_SHA256
+    www.cloudflare.com        14.5 ms         31.5 ms   TLSv1.3    TLS_AES_256_GCM_SHA384
+
+The TLS handshake cost 2.0x to 5.7x the TCP connection it sits on top of. That is the price of
+security, paid once per connection, and it is why connection reuse, session resumption and HTTP/2
+multiplexing all matter so much for page load time.
+
+And the certificate example.com presented: subject CN `example.com`, issuer `SSL Corporation /
+Cloudflare TLS Issuing ECC CA 3`, valid `Jul 29 2026` to `Oct 27 2026`, with 2 subjectAltName entries
+(`example.com` and `*.example.com`). All of that was read off the live connection.""",
+
+    """2. THE INTUITION - a sealed envelope needs two different kinds of lock, and they have opposite
+strengths.
+
+ASYMMETRIC (public-key) crypto solves the problem of talking to a stranger. Anyone can encrypt to your
+public key; only your private key decrypts. Anyone can verify your signature; only you can produce it.
+This is the only way to bootstrap trust with someone you have never met. It is also extremely slow.
+
+SYMMETRIC crypto - one shared key, both sides use it - is enormously faster, but requires that you
+already share a secret, which is exactly what you do not have.
+
+So TLS does the obvious thing: use the slow one ONCE, to agree on a key for the fast one, and then
+never use the slow one again.
+
+MEASURED ON THIS MACHINE, exactly how lopsided that is:
+
+    RSA-2048 sign     (server side of a handshake)   291.5 us    =  3,431 ops/sec
+    RSA-2048 verify   (client side)                   32.6 us    = 30,674 ops/sec
+    ECDSA P-256 sign                                  34.3 us    = 29,143 ops/sec
+    ECDSA P-256 verify                                91.8 us    = 10,888 ops/sec
+    one ephemeral ECDH key exchange                  202.6 us
+
+    AES-256-GCM, 64 KB block                          18.4 us    =  3,562 MB/s
+    AES-256-GCM, 1 MB block                          760.9 us    =  1,378 MB/s
+
+Put those in the same units and the design justifies itself:
+
+    ONE RSA-2048 signature costs the same CPU as encrypting 0.38 MB with AES-256-GCM
+    ONE ephemeral ECDH exchange costs the same as encrypting 0.27 MB
+
+So a handshake costs about as much as a megabyte of bulk traffic. Do it once per connection and it is
+noise; do it per request and you have built a very expensive website.
+
+A SURPRISE IN THAT TABLE, worth noticing because it contradicts the usual mental model: for RSA,
+verify is 9x CHEAPER than sign. For ECDSA it is the other way round - verify (91.8 us) is 2.7x more
+expensive than sign (34.3 us). The asymmetry runs in opposite directions for the two algorithms, which
+matters because a busy server SIGNS constantly and a browser VERIFIES constantly.""",
+
+    """3. EVERY TERM DEFINED.
+
+TLS (Transport Layer Security). The protocol. SSL is its dead predecessor; the name persists in
+library names (`ssl`, OpenSSL) and in casual speech.
+
+HTTPS. HTTP carried inside a TLS tunnel. There is no separate HTTPS protocol.
+
+HANDSHAKE. The negotiation at the start of the connection: agree on a version and cipher, authenticate
+the server, and derive a shared key.
+
+CIPHER SUITE. The named bundle of algorithms. `TLS_AES_256_GCM_SHA384` means AES-256 in GCM mode for
+bulk encryption and SHA-384 for the key-derivation hash. Older TLS 1.2 names carry more:
+`ECDHE-RSA-AES128-GCM-SHA256` = ECDHE key exchange, RSA authentication, AES-128-GCM bulk, SHA-256.
+Notice TLS 1.3 names are SHORTER - because 1.3 removed the choice of key exchange and authentication
+from the suite name and removed every insecure option.
+
+CERTIFICATE (X.509). A document binding a public key to a name (`example.com`), signed by a
+Certificate Authority. It carries a subject, an issuer, a validity window, and subjectAltNames.
+
+SUBJECT ALTERNATIVE NAME (SAN). The list of hostnames a certificate is valid for. Modern browsers use
+ONLY this, not the common name. Measured: example.com's certificate had 2 SANs, `example.com` and
+`*.example.com`.
+
+CERTIFICATE AUTHORITY (CA). An organisation whose signature your machine trusts. Measured: this
+machine's default trust store holds 121 root CAs, from `/usr/lib/ssl/cert.pem`.
+
+CHAIN OF TRUST. Leaf certificate signed by an intermediate, intermediate signed by a root, root in
+your trust store. The server sends the leaf and intermediates; only the root is pre-trusted.
+
+ROOT / TRUST STORE. The set of CAs your OS or browser trusts a priori. Any one of those 121 can vouch
+for any name on the internet - which is the structural weakness of the whole system.
+
+RSA. Public-key algorithm usable for both signing and encryption. 2048-bit keys are the common
+minimum.
+
+ECDSA / P-256. Elliptic-curve signatures. Smaller keys, and measured 8.5x faster to sign than RSA-2048.
+
+DIFFIE-HELLMAN (DH) / ECDHE. A key AGREEMENT protocol: two parties derive the same shared secret over
+a public channel without ever transmitting it. The `E` is EPHEMERAL - a fresh keypair per connection.
+
+FORWARD SECRECY. The property that stealing the server's long-term private key LATER does not let an
+attacker decrypt traffic captured EARLIER, because the session key came from an ephemeral exchange
+that was thrown away. TLS 1.3 makes this mandatory.
+
+SESSION KEY. The symmetric key derived from the handshake and used for all bulk data.
+
+AEAD (Authenticated Encryption with Associated Data). GCM, ChaCha20-Poly1305. Encrypts AND
+authenticates in one pass, so integrity is not an afterthought.
+
+SNI (Server Name Indication). The hostname sent in the CLIENT HELLO, in the clear, so a server hosting
+many sites on one IP knows which certificate to present. Its plaintext nature is a privacy hole, which
+ECH (Encrypted Client Hello) is intended to close.
+
+0-RTT / EARLY DATA. TLS 1.3's option to send application data in the very first flight on a resumed
+connection. Fast, and REPLAYABLE - so only for idempotent requests.
+
+MITM (man in the middle). Someone relaying your connection while reading it. The certificate check is
+what stops this.
+
+HSTS. A response header telling browsers "always use HTTPS for this domain", which closes the
+downgrade window on the very first request.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "encrypted" and "secure" are not the same thing, and the
+certificate check is the entire difference.
+
+Encryption alone protects you from a passive eavesdropper. It does NOTHING against someone who
+terminates your connection and opens their own to the real server. They would encrypt to you
+perfectly. The only thing that stops it is verifying that the certificate presented (a) is for the
+name you asked for, (b) chains to a CA you trust, and (c) has not expired.
+
+MEASURED, connecting to badssl.com's deliberately broken hosts with the default Python context:
+
+    host                        result     what the verifier said
+    -------------------------   --------   -------------------------------------------------------
+    expired.badssl.com          REJECTED   verify code 10: certificate has expired
+    wrong.host.badssl.com       REJECTED   verify code 62: Hostname mismatch, certificate is not
+                                           valid for 'wrong.host.badssl.com'
+    self-signed.badssl.com      REJECTED   verify code 18: self-signed certificate
+    untrusted-root.badssl.com   REJECTED   verify code 19: self-signed certificate in chain
+    badssl.com                  ACCEPTED   TLSv1.2, ECDHE-RSA-AES128-GCM-SHA256
+
+Four distinct failures, four distinct verify codes, and each is a different attack. Expiry catches a
+stolen-but-old certificate. Hostname mismatch catches an attacker presenting a valid certificate for a
+domain they DO control. Self-signed catches someone who simply made their own. Untrusted root catches
+a whole rogue CA.
+
+THE MISTAKE PEOPLE ACTUALLY MAKE IN CODE is turning these off. `verify=False` in requests,
+`rejectUnauthorized: false` in Node, `-k` in curl, or `ssl._create_unverified_context()`. Every one of
+those converts HTTPS into "encrypted to somebody, no idea who" - which is precisely the property that
+does not matter. If a certificate error is blocking you, the fix is to trust the right CA
+(`ctx.load_verify_locations(...)`), not to stop checking.
+
+THE SECOND TRAP: assuming TLS hides everything. It does not hide:
+
+    - the IP you connected to
+    - the SNI hostname, sent in PLAINTEXT in the first packet so the server can pick a certificate
+    - the size and timing of every message, which leaks a surprising amount
+
+THE THIRD TRAP: 0-RTT early data. TLS 1.3 lets a resumed connection carry application data in the very
+first flight - a genuine round-trip saving. It is also REPLAYABLE: an attacker who captures that
+flight can send it again, and the server cannot tell. That is fine for `GET /logo.png` and disastrous
+for `POST /transfer?amount=1000`. The rule is: 0-RTT for idempotent requests only.
+
+THE FOURTH TRAP: thinking the padlock means the site is trustworthy. It means the CHANNEL is
+authenticated to the name in the address bar. `https://paypa1.com` gets a perfectly valid padlock.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what changed in TLS 1.3, and what sits around it.
+
+TLS 1.2 vs TLS 1.3, which is the comparison interviewers want:
+
+    handshake round trips    1.2: TWO round trips before data.  1.3: ONE. (And 0-RTT for resumption.)
+    cipher suites            1.2: hundreds, including broken ones (RC4, 3DES, CBC padding oracles,
+                             static RSA key exchange). 1.3: FIVE, all AEAD, all forward-secret.
+    forward secrecy          1.2: optional. 1.3: mandatory - static RSA key exchange was deleted.
+    negotiation              1.2: client offers, server picks, then they exchange keys.
+                             1.3: the client GUESSES the key-share in its first message, so the
+                             server can reply with everything at once. That guess is what removes a
+                             round trip.
+    renegotiation            removed in 1.3; it was a source of attacks.
+
+MEASURED: every one of the four live hosts above negotiated TLSv1.3. The only TLS 1.2 connection in
+these measurements was to badssl.com, which deliberately serves older configurations.
+
+THE KEY-EXCHANGE FAMILY:
+    static RSA        client picks the secret, encrypts it to the server's public key. Simple, and NO
+                      FORWARD SECRECY - capture the traffic today, steal the key in five years,
+                      decrypt everything. Removed in TLS 1.3.
+    DHE               ephemeral finite-field Diffie-Hellman. Forward secret, slow.
+    ECDHE             ephemeral elliptic-curve DH. Forward secret and fast. MEASURED 202.6 us per
+                      exchange on this machine. This is what everything uses now.
+    post-quantum      hybrid X25519+Kyber is being deployed now, because "harvest now, decrypt later"
+                      makes forward secrecy insufficient against a future quantum attacker.
+
+THE AUTHENTICATION FAMILY:
+    RSA certificates      still the majority. MEASURED: 291.5 us per signature - the server pays this.
+    ECDSA certificates    8.5x faster to sign, smaller certificates, so less handshake data.
+    Ed25519               newer, faster, increasingly supported.
+    CLIENT certificates   mutual TLS (mTLS): the CLIENT also presents a certificate. The standard for
+                          service-to-service auth inside a mesh, where there are no passwords.
+
+TRUST MODELS BEYOND "121 ROOT CAs":
+    certificate pinning     hard-code the expected certificate or key. Immune to a rogue CA, and a
+                            reliable way to brick your own app when you rotate certificates.
+    Certificate Transparency  every issued certificate is logged publicly, so a domain owner can
+                            detect a CA that issued one behind their back. Now mandatory for browser
+                            trust.
+    CAA records             a DNS record naming which CAs are permitted to issue for your domain.
+    ACME / Let's Encrypt    automated 90-day certificates. Measured: the four live certificates above
+                            had validity windows of about 90 days each.
+
+WHERE ELSE THE SAME HANDSHAKE APPEARS: QUIC embeds TLS 1.3 directly (HTTP/3), and can combine the
+transport and crypto handshakes into one round trip. SSH does the same job with a different trust
+model - trust on first use, plus a local `known_hosts` - which is why SSH shows you a fingerprint
+instead of consulting 121 CAs.""",
+
+    """6. HOW TO CODE IT - and, more usefully, how to MEASURE it, since every number in this entry came
+from about forty lines.
+
+MAKING A VERIFIED CONNECTION:
+
+  1. `ctx = ssl.create_default_context()`. The word DEFAULT is doing real work: it turns on
+     `check_hostname`, sets `verify_mode = CERT_REQUIRED`, loads the system trust store, and disables
+     the old protocol versions. Never build a context from scratch unless you know exactly which of
+     those you are giving up.
+  2. `sock = socket.create_connection((host, 443))`. Plain TCP first - the handshake runs on top.
+  3. `ss = ctx.wrap_socket(sock, server_hostname=host)`. `server_hostname` does TWO things: it sets
+     the SNI extension so the server knows which certificate to send, AND it is the name checked
+     against the certificate. Omit it and hostname verification cannot happen.
+  4. `ss.version()`, `ss.cipher()`, `ss.getpeercert()` tell you what you actually got.
+
+TIMING THE PHASES SEPARATELY - this is the whole trick:
+
+  5. Take a timestamp before `getaddrinfo`, after it, after `create_connection`, and after
+     `wrap_socket`. Those three deltas are DNS, TCP and TLS. Reporting one blended "connection time"
+     hides which of the three is your problem.
+  6. Resolve the name to an IP once and connect to the IP, so the DNS lookup is not silently repeated
+     inside the connect and folded into the TCP number.
+
+READING THE CERTIFICATE:
+
+  7. `cert['subject']` and `cert['issuer']` are nested tuples; flatten with
+     `dict(x[0] for x in cert['subject'])`.
+  8. `cert['notBefore']` / `cert['notAfter']` are the validity window. An expiry-monitoring script is
+     four lines and prevents a genuinely embarrassing outage.
+  9. `[v for k, v in cert['subjectAltName'] if k == 'DNS']` is the list of names it is valid for.
+     This, not the common name, is what browsers check.
+
+PROVING VERIFICATION ACTUALLY WORKS:
+
+ 10. Connect to `expired.badssl.com`, `wrong.host.badssl.com`, `self-signed.badssl.com` and
+     `untrusted-root.badssl.com`, and catch `ssl.SSLCertVerificationError`. Print `e.verify_code` and
+     `e.verify_message`. Four different codes for four different attacks - see section 4.
+ 11. `len(ctx.get_ca_certs())` tells you how many roots you trust. It was 121 here. Sit with that
+     number for a second.
+
+PRICING THE CRYPTO:
+
+ 12. Time `key.sign(...)` and `pub.verify(...)` in a loop for RSA-2048 and ECDSA P-256, then time
+     `AESGCM(key).encrypt(...)` for several block sizes.
+ 13. Divide: `rsa_sign_seconds / aes_seconds_per_MB` gives you "one signature = N megabytes of bulk
+     traffic". 0.38 MB, measured. That single number explains the whole architecture of TLS.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"HTTPS is HTTP inside a TLS tunnel, and the handshake sets up three things before any HTTP happens:
+authenticity, confidentiality and integrity.
+
+The client sends a hello listing the versions and cipher suites it supports, plus SNI - the hostname,
+in the clear, so a server hosting many sites knows which certificate to present. The server replies
+with its chosen cipher and its CERTIFICATE CHAIN. The client verifies that chain: the leaf certificate
+covers the hostname it asked for, each certificate is signed by the next, and the top one is a root CA
+already in its trust store. Then both sides do an ephemeral Diffie-Hellman exchange to derive a shared
+symmetric key, and everything after that is fast symmetric crypto - AES-GCM or ChaCha20-Poly1305,
+which encrypt and authenticate in one pass.
+
+The reason for that split is a large performance gap, and I measured it. An RSA-2048 signature costs
+291 microseconds on this machine, an ephemeral ECDH exchange 203 microseconds, while AES-256-GCM runs
+at about 1.4 gigabytes per second. One RSA signature costs the same CPU as encrypting 0.38 megabytes.
+So you use the expensive asymmetric crypto exactly once, to agree on a key, and never again.
+
+EPHEMERAL is the important word: a fresh keypair per connection, discarded afterwards, which gives
+FORWARD SECRECY - stealing the server's long-term key later does not decrypt traffic captured earlier.
+TLS 1.3 makes that mandatory, cut the handshake from two round trips to one, and reduced the cipher
+suite list from hundreds to five, all AEAD.
+
+I measured real handshakes: 36 to 56 milliseconds, which was 2 to 5.7 times the underlying TCP
+connect. That cost is why connection reuse and HTTP/2 multiplexing matter for page load.
+
+The part I'd emphasise is that ENCRYPTION alone buys you nothing against a man in the middle - they
+would encrypt to you perfectly. The certificate check is the whole defence. I tested it against
+badssl.com: expired, wrong hostname, self-signed and untrusted-root were all rejected with four
+distinct verify codes, and the valid host connected. Which is exactly why `verify=False` or
+`rejectUnauthorized: false` is such a serious thing to write - it leaves you encrypted to somebody,
+with no idea who."
+
+THE ONE SENTENCE TO NOT FUMBLE: asymmetric crypto authenticates and agrees on a key ONCE; symmetric
+crypto carries all the data afterwards - and the certificate check, not the encryption, is what stops
+a man in the middle.""",
+
+    """8. THE CODE LINE BY LINE - the measurement harness, since it is where the substance is.
+
+    ctx = ssl.create_default_context()
+
+The single most important line. It sets `check_hostname = True`, `verify_mode = CERT_REQUIRED`, loads
+the system CA bundle, and disables SSLv2/v3 and TLS 1.0/1.1. Every "TLS bug" tutorial that tells you
+to build a bare `SSLContext()` is telling you to give up one of those silently.
+
+    ips = socket.getaddrinfo(h, 443, socket.AF_INET, socket.SOCK_STREAM)
+    ip = ips[0][4][0]
+
+Resolve first, explicitly, so the DNS time does not get folded into the TCP connect time. The
+structure `ips[0][4][0]` is (family, type, proto, canonname, sockaddr)[4] then the address out of the
+sockaddr tuple - awkward, and worth reading once rather than copying blindly.
+
+    t0 = ...; s = socket.create_connection((ip, 443), timeout=10); t1 = ...
+
+The TCP three-way handshake. Measured 9.0 to 28.2 ms to the four hosts - essentially the network
+round-trip time, since a SYN/SYN-ACK/ACK is one RTT.
+
+    ss = ctx.wrap_socket(s, server_hostname=h); t2 = ...
+
+The TLS handshake, on top of the existing TCP connection. `server_hostname` is doing double duty: SNI
+on the wire, and the name checked against the certificate. Measured 31.5 to 55.9 ms - 2.0x to 5.7x the
+TCP number, because TLS 1.3 needs its own round trip PLUS the certificate verification and the key
+exchange.
+
+    ss.version(), ss.cipher()
+
+What was actually negotiated, as opposed to what you hoped. `cipher()` returns
+`(name, protocol, secret_bits)` - the 256 in `TLS_AES_256_GCM_SHA384` and the third tuple element both
+say 256, and checking that they agree is a cheap sanity test.
+
+    cert = ss.getpeercert()
+    sub = dict(x[0] for x in cert['subject'])
+    san = [v for k, v in cert.get('subjectAltName', ()) if k == 'DNS']
+
+The certificate, parsed. `subject` arrives as a tuple of one-element tuples of pairs, hence the
+`x[0]`. `subjectAltName` is the list browsers actually check - the common name has been deprecated for
+this purpose for years, and a certificate with a matching CN but no matching SAN is rejected.
+
+    except ssl.SSLCertVerificationError as e:
+        print(e.verify_code, e.verify_message)
+
+The verification failure path, with the specific reason. Code 10 = expired, 18 = self-signed, 19 =
+self-signed in chain, 62 = hostname mismatch. Catching the specific exception type rather than bare
+`Exception` is what lets you distinguish "the certificate is bad" from "the network is down" - and
+they call for completely different responses.
+
+    len(ctx.get_ca_certs())
+
+121 roots on this machine. Every one of them can vouch for any name on the internet.
+
+    rk.sign(msg, padding.PKCS1v15(), hashes.SHA256())
+
+The server side of an RSA handshake, timed in a loop. 291.5 us. Compare with
+`AESGCM(key).encrypt(nonce, one_megabyte, None)` at 760.9 us, and the ratio 291.5/760.9 = 0.38 MB is
+the whole design rationale in one division.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - a TLS 1.3 handshake, message by message.
+
+    who       message                          what it carries
+    -------   ------------------------------   ---------------------------------------------------
+    client    ClientHello                      supported versions; cipher suites; SNI = "bank.com"
+                                               IN PLAINTEXT; and a GUESSED ECDHE key share
+    server    ServerHello                      chosen cipher; the server's ECDHE key share
+              {EncryptedExtensions}            from here on, encrypted with a handshake key
+              {Certificate}                    the leaf + intermediates
+              {CertificateVerify}              a SIGNATURE over the handshake so far, proving the
+                                               server holds the private key for that certificate
+              {Finished}                       a MAC over everything, proving nothing was tampered
+    client    (verifies the chain and the signature, derives the same shared secret)
+              {Finished}
+    client    application data                 the HTTP GET, finally
+
+ONE round trip before data. The client's GUESS in message one is the trick: by sending a key share
+before knowing what the server supports, it lets the server complete the exchange in its single reply.
+TLS 1.2 needed a second round trip precisely because the client had to wait to be told which key
+exchange to use.
+
+TRACE B - what the client verifies, in order, for `bank.com`.
+
+    step   check                                              fails if...
+    ----   ------------------------------------------------   -----------------------------------
+    1      does the leaf's subjectAltName cover "bank.com"?    -> verify code 62, hostname mismatch
+    2      is today between notBefore and notAfter?            -> verify code 10, expired
+    3      is the leaf signed by the intermediate it names?    -> chain broken
+    4      is the intermediate signed by a root I trust?       -> verify code 19, untrusted root
+    5      is that root in my 121-entry store?                 -> verify code 18, self-signed
+    6      does CertificateVerify's signature check out
+           against the leaf's public key?                      -> the server does not hold the key
+
+Step 6 is the one people forget exists. Possessing a certificate proves nothing - certificates are
+public. The server must SIGN the live handshake transcript with the matching private key, which is
+what stops an attacker from simply replaying bank.com's certificate.
+
+TRACE C - the four broken hosts, measured.
+
+    host                        outcome    code   message
+    -------------------------   --------   ----   -----------------------------------------------
+    expired.badssl.com          REJECTED     10   certificate has expired
+    wrong.host.badssl.com       REJECTED     62   Hostname mismatch, certificate is not valid for
+                                                  'wrong.host.badssl.com'
+    self-signed.badssl.com      REJECTED     18   self-signed certificate
+    untrusted-root.badssl.com   REJECTED     19   self-signed certificate in certificate chain
+    badssl.com                  ACCEPTED      -   TLSv1.2  ECDHE-RSA-AES128-GCM-SHA256
+
+Four different codes for four different attacks. `verify=False` collapses all five rows into
+"ACCEPTED".
+
+TRACE D - the crypto budget, measured, converted into one currency.
+
+    operation                        time        equivalent in AES-256-GCM bytes
+    ------------------------------   ---------   -------------------------------
+    RSA-2048 sign                    291.5 us    0.38 MB
+    ephemeral ECDH exchange          202.6 us    0.27 MB
+    ECDSA P-256 sign                  34.3 us    0.045 MB
+    RSA-2048 verify                   32.6 us    0.043 MB
+    AES-256-GCM, per MB              760.9 us    1 MB (by definition)
+    RSA-2048 keygen                  218.2 ms    287 MB   (once, at certificate issuance)
+
+Read the last row: generating the key costs as much as encrypting 287 megabytes - and you do it once
+every ninety days. Read the first row: the server's per-handshake signature costs as much as a third
+of a megabyte of traffic - and you do it once per connection. Neither is a problem. Doing either one
+per REQUEST would be.
+
+TRACE E - the certificates actually presented, read live.
+
+    host                 issuer                                       validity window   SANs
+    ------------------   ------------------------------------------   ---------------   ----
+    example.com          SSL Corporation / Cloudflare TLS ECC CA 3    Jul 29 - Oct 27      2
+    www.google.com       Google Trust Services / WE2                  Aug  5 - Oct 28      1
+    github.com           Sectigo / Public Server Authentication E36   Jul  3 - Sep 30      2
+    www.cloudflare.com   Google Trust Services / WE1                  Aug 14 - Nov 12      2
+
+All four windows are about 90 days. That is the modern norm, and it is only workable because issuance
+is automated (ACME). It is also why certificate-expiry outages still happen: a 90-day clock with a
+manual renewal step will eventually be missed.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, in the units that matter:
+
+    TLS 1.3 full handshake        1 round trip + 1 signature + 1 key exchange
+                                  MEASURED 31.5 - 55.9 ms, i.e. 2.0x - 5.7x the TCP connect
+    TLS 1.2 full handshake        2 round trips
+    TLS 1.3 resumption            1 round trip, or 0 with early data (replayable)
+    per-connection CPU, server    one RSA sign (291.5 us) or one ECDSA sign (34.3 us) + one ECDH
+                                  (202.6 us) = roughly 0.65 MB of AES-equivalent work
+    per-byte CPU, both sides      AES-256-GCM at 1,378 - 3,562 MB/s. Effectively free.
+    certificate verification      O(chain length) signature verifications, typically 2-3
+
+That table is the argument for keeping connections alive. If your client opens a new TLS connection
+per request, you pay 30-56 ms and ~0.65 MB of crypto work per request; with keep-alive or HTTP/2
+multiplexing you pay it once for hundreds of requests.
+
+THE MISTAKES:
+
+    - `verify=False` / `rejectUnauthorized: false` / `curl -k` / `_create_unverified_context()`. This
+      keeps the encryption and throws away the only property that stops a man in the middle. Measured:
+      it turns four distinct REJECTED verdicts into ACCEPTED.
+    - Omitting `server_hostname`. No SNI, so the server may send the wrong certificate, AND no
+      hostname check.
+    - Believing the padlock means the site is legitimate. It means the channel is authenticated to the
+      name in the bar. `paypa1.com` gets a padlock.
+    - Thinking TLS hides the destination. The IP is visible and SNI is plaintext. ECH exists to fix
+      the second one and is not yet universal.
+    - Using 0-RTT early data for non-idempotent requests. It is REPLAYABLE by design.
+    - Forgetting forward secrecy when explaining ECDHE. "Ephemeral" is not decoration - it is what
+      makes a future key compromise harmless for past traffic.
+    - Saying TLS 1.3 is "just faster". It is faster (one round trip instead of two) AND it deleted
+      static RSA key exchange, renegotiation, and every non-AEAD cipher. The security change is the
+      bigger one.
+    - Confusing the certificate with proof of possession. The certificate is public; the
+      CertificateVerify signature over the live transcript is what proves the private key is present.
+    - Ignoring expiry monitoring. Every certificate measured here has a ~90-day life.
+
+THE TAKEAWAY. TLS solves a chicken-and-egg problem - how do you agree on a secret with a stranger
+while someone is listening - by spending a few hundred microseconds of very expensive asymmetric
+crypto ONCE, and then running everything else through symmetric crypto that costs essentially nothing.
+The measured numbers make both halves of that sentence concrete: 291.5 us for one signature against
+1,378 MB/s of bulk encryption, and a 36 ms handshake against a 0.05 ms body transfer. And the security
+does not come from the encryption at all - it comes from the certificate check, which is exactly the
+part a single boolean flag can switch off.""",
+]
+
+_EX_P1AO["What happens when you type a URL and press Enter?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the classic warm-up question. It is not a trivia test; it is a
+BREADTH probe. The interviewer wants to find the layer you actually understand, and then dig there.
+
+The six steps, in order:
+
+    1. DNS resolution     turn "example.com" into an IP address
+    2. TCP connection     a three-way handshake to that IP, port 443
+    3. TLS handshake      certificates exchanged, an encrypted channel established
+    4. HTTP request       the browser sends GET /
+    5. Server processing  a load balancer routes to a server, which may hit caches and databases
+    6. Rendering          parse HTML, fetch CSS/JS/images, build the DOM, paint
+
+Almost everybody can recite that list. What separates answers is knowing where the TIME actually goes.
+
+MEASURED ON THIS MACHINE, right now, one real request each - every phase timed separately:
+
+    phase                    example.com              www.google.com           github.com
+    ----------------------   ---------------------    ---------------------    ---------------------
+    1. DNS resolution         33.88 ms  (22.9%)        11.77 ms   (6.1%)        16.73 ms   (3.4%)
+    2. TCP handshake           9.64 ms   (6.5%)         9.03 ms   (4.7%)        26.33 ms   (5.3%)
+    3. TLS handshake          40.64 ms  (27.5%)        60.37 ms  (31.5%)        56.67 ms  (11.5%)
+    4. send the GET            0.08 ms   (0.1%)         0.06 ms   (0.0%)         0.04 ms   (0.0%)
+    5. server thinks (TTFB)   63.56 ms  (43.0%)        84.83 ms  (44.2%)        58.76 ms  (11.9%)
+    6. transfer the body       0.05 ms   (0.0%)        25.82 ms  (13.5%)       334.97 ms  (67.9%)
+    TOTAL                    147.86 ms                191.88 ms                493.48 ms
+    bytes received                869                    86,243                   580,066
+
+Read the "send the GET" row: 0.04-0.08 milliseconds. The actual HTTP request - the part everybody
+thinks of as "loading a web page" - is one twentieth of one percent of the time. Everything else is
+setup and waiting.""",
+
+    """2. THE INTUITION - the work splits into "finding out where to go", "agreeing how to talk", and
+"actually talking", and the first two dominate for small pages.
+
+Phases 1-3 are all pure SETUP. They move no application data at all. For example.com they cost 84.16
+of 147.86 ms - 57% of the entire page load spent before the browser had even asked for anything.
+
+Then look at the shape flip in the last column. For github.com, the same setup cost 99.73 ms but the
+page is 580 KB, so the BODY TRANSFER became 67.9% of the total and setup fell to 20%. Same protocol
+stack, opposite bottleneck, purely because of size.
+
+    small page  -> latency-bound.  The fix is fewer round trips: DNS caching, keep-alive, TLS
+                   resumption, HTTP/2, a CDN closer to the user.
+    large page  -> bandwidth-bound. The fix is fewer bytes: compression, smaller images, code
+                   splitting, caching.
+
+Diagnosing which one you have is exactly the reason you time the phases separately rather than
+reporting one number.
+
+THE SECOND INTUITION - almost every optimisation on the web is a way of DELETING one of those first
+three phases:
+
+    DNS caching (browser, OS, resolver)   deletes phase 1
+    HTTP keep-alive / connection pooling  deletes phases 2 and 3 for subsequent requests
+    TLS session resumption                shrinks phase 3
+    HTTP/2 multiplexing                   deletes phases 1-3 for every additional resource on the
+                                          same origin, because they share one connection
+    a CDN                                 shrinks phases 2, 3 and 5 by moving the server closer -
+                                          every one of them contains at least one round trip
+    HTTP/3 (QUIC)                         merges phases 2 and 3 into one
+
+MEASURED, three consecutive full walks to example.com, showing what does and does not get cheaper:
+
+    attempt   DNS       TCP       TLS       TTFB      TOTAL
+    -------   -------   -------   -------   -------   ---------
+          0   12.49ms   19.09ms   33.25ms   81.66ms   146.61ms
+          1   14.33ms   11.06ms   35.41ms   63.40ms   125.35ms
+          2   16.14ms    8.93ms   37.73ms   66.96ms   129.88ms
+
+Notice the DNS column did NOT get faster - 12.49, 14.33, 16.14. On this machine there is no local
+caching daemon, so every lookup went to the network again. In a browser it would have been ~0 ms after
+the first, because the browser keeps its own DNS cache. That difference - roughly 15 ms per lookup -
+is why the browser bothers.""",
+
+    """3. EVERY TERM DEFINED - one per step, plus the ones interviewers dig into.
+
+URL. Scheme (`https`), host (`example.com`), optional port, path, query, fragment. The FRAGMENT
+(`#section`) is never sent to the server; it is handled entirely in the browser.
+
+DNS (Domain Name System). The distributed database mapping names to IP addresses.
+
+RESOLVER. The DNS server your machine asks (your router, your ISP, or 8.8.8.8 / 1.1.1.1). It does the
+recursive work of asking root, TLD and authoritative servers on your behalf.
+
+A / AAAA RECORD. The IPv4 / IPv6 address for a name. MEASURED: example.com returned 2 A records,
+www.google.com returned 8, github.com returned 1. Multiple records are how you get crude load
+balancing and failover for free.
+
+TTL. How long a DNS answer may be cached. Short TTLs make failover fast and lookups frequent.
+
+THREE-WAY HANDSHAKE. SYN, SYN-ACK, ACK. One full round trip before any data. MEASURED 9.03-26.33 ms,
+which IS the network round-trip time to those hosts.
+
+TLS HANDSHAKE. Certificate verification and key agreement. See the TLS entry. MEASURED 40.64-60.37 ms.
+
+TTFB (time to first byte). From finishing the request to receiving the first response byte. It
+contains one network round trip PLUS all the server's work. MEASURED 58.76-84.83 ms.
+
+LOAD BALANCER. Sits in front of many servers, spreading requests. Adds a hop, and is where TLS is
+often terminated.
+
+REVERSE PROXY. nginx or similar between the load balancer and the application, handling static files,
+compression and buffering.
+
+CDN (content delivery network). Edge servers geographically near users, serving static assets. Its
+value is that it shortens the round trip, which shrinks phases 2, 3 AND 5 simultaneously.
+
+CRITICAL RENDERING PATH. HTML -> DOM, CSS -> CSSOM, the two combined into a render tree, then layout
+then paint.
+
+RENDER-BLOCKING. CSS blocks rendering by default (the browser will not paint unstyled content) and a
+plain `<script>` blocks HTML PARSING, which is why `async` and `defer` exist.
+
+REFLOW / REPAINT. Recomputing geometry versus just redrawing pixels. Reflow is the expensive one.
+
+HTTP KEEP-ALIVE. Reusing one TCP+TLS connection for several requests, deleting phases 2 and 3.
+
+HTTP/2 MULTIPLEXING. Many concurrent requests over ONE connection, ending the old "6 connections per
+origin" limit and the domain-sharding hacks it caused.
+
+HEAD-OF-LINE BLOCKING. In HTTP/1.1, one slow response blocks the connection behind it. HTTP/2 fixed it
+at the HTTP layer; TCP still has it at the transport layer, which is what HTTP/3 over QUIC addresses.
+
+CACHE-CONTROL / ETAG. Headers deciding whether the browser needs to ask at all, and whether the server
+can answer `304 Not Modified` instead of resending the body.
+
+DNS PREFETCH / PRECONNECT. `<link rel="preconnect">` tells the browser to do phases 1-3 for a
+third-party origin BEFORE it discovers it needs them. Worth 50-100 ms, measurably.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - reciting six steps and having no idea which one is slow.
+
+The measured tables make three claims that people routinely get backwards.
+
+CLAIM ONE: the HTTP request itself is free. 0.04 to 0.08 milliseconds to write the GET onto the
+socket. If your mental model is "the browser sends a request and the request takes time", it is wrong;
+what takes time is (a) finding the server, (b) agreeing on encryption, (c) the server thinking, and
+(d) moving the bytes.
+
+CLAIM TWO: for a SMALL page, setup dominates and the page content is irrelevant. example.com's body
+is 869 bytes and took 0.05 ms to transfer. The DNS + TCP + TLS setup took 84.16 ms - 1,683 times
+longer than moving the actual page. Optimising the HTML of a small page is pointless; deleting a round
+trip is everything.
+
+CLAIM THREE: for a LARGE page it inverts completely. github.com's 580,066 bytes took 334.97 ms, 67.9%
+of the total. There, the round-trip optimisations barely matter and compression does.
+
+THE SECOND TRAP - assuming caching helps uniformly. Measured, three consecutive walks: TCP fell from
+19.09 to 8.93 ms (the route warmed up), TLS did NOT improve (33.25 -> 37.73 ms, no session resumption
+in this test), and DNS actively got SLOWER (12.49 -> 16.14 ms), because this machine has no local
+caching daemon and every lookup crossed the network again. "It'll be cached" is a hypothesis, not a
+fact, and different layers cache very differently.
+
+THE THIRD TRAP - forgetting that the six steps are not the whole story for a real page. Step 6 is
+recursive: the HTML references CSS, JS, fonts and images, and every one of those may repeat steps 1-5
+against a different origin. A page pulling from five third-party domains does five DNS lookups, five
+TCP handshakes and five TLS handshakes - and using the measured averages, that is roughly
+5 x (15 + 15 + 45) = 375 ms of pure setup before any of that content starts arriving. This is the
+concrete reason `<link rel="preconnect">` exists and the concrete reason third-party scripts are
+expensive far beyond their file size.
+
+THE FOURTH TRAP - not knowing what happens BEFORE the DNS lookup. In order: the browser checks whether
+the string is even a URL or a search term; it checks HSTS to decide whether to upgrade `http` to
+`https` without asking; it checks its own cache (a fresh `Cache-Control` entry ends the story right
+there with no network at all); then its own DNS cache, then the OS resolver cache, then `/etc/hosts`,
+and only then the network. A question about "what happens when you type a URL" that reaches the
+network in the first sentence has skipped four opportunities to do nothing.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the places an interviewer will dig, and the answer for each.
+
+DIG INTO STEP 1 (DNS):
+    - the hierarchy: root -> TLD (.com) -> authoritative nameserver for the domain
+    - recursive resolver vs iterative queries; who does the walking
+    - the cache chain: browser -> OS -> router -> ISP resolver, each with its own TTL
+    - UDP by default, falling back to TCP for large responses; DoH/DoT for privacy
+    - MEASURED: 11.77 to 33.88 ms per lookup from this machine, and NOT faster on repeat here
+
+DIG INTO STEP 2 (TCP):
+    - SYN / SYN-ACK / ACK is one full round trip before data can flow
+    - TCP vs UDP: reliable and ordered vs fast and connectionless. Web on TCP, video and games on UDP
+    - slow start means the connection does not begin at full speed - see the TCP windows entry, where
+      reaching a 1,024-segment window took 10 round trips
+    - MEASURED: 9.03 to 26.33 ms, essentially the RTT
+
+DIG INTO STEP 3 (TLS):
+    - certificate chain verification, ephemeral key exchange, forward secrecy
+    - TLS 1.3 is one round trip; 1.2 was two
+    - MEASURED: 40.64 to 60.37 ms, 2-5x the TCP connect it sits on
+
+DIG INTO STEP 5 (server side):
+    - load balancer -> reverse proxy -> app server -> cache -> database
+    - TTFB contains one round trip plus all of that. MEASURED 58.76 to 84.83 ms
+    - this is where the query-plan and caching entries live
+
+DIG INTO STEP 6 (browser):
+    - HTML parsed into the DOM, CSS into the CSSOM, combined into a render tree, then layout, paint,
+      composite
+    - CSS is render-blocking; a plain `<script>` is parser-blocking; `defer` and `async` are the fixes
+    - MEASURED here only as the byte transfer (0.05 to 334.97 ms) because this measurement used a
+      socket, not a browser - which is itself worth saying out loud rather than pretending otherwise
+
+THE PROTOCOL FAMILY, and what each generation deleted:
+    HTTP/1.1   one request at a time per connection; browsers opened ~6 connections per origin, so a
+               page from one origin paid phases 2-3 six times
+    HTTP/2     multiplexing over ONE connection, header compression, server push (now deprecated).
+               Deletes phases 1-3 for every additional resource on the same origin
+    HTTP/3     runs on QUIC over UDP: merges the transport and TLS handshakes into one round trip, and
+               removes TCP's head-of-line blocking so one lost packet does not stall other streams
+
+THE OPTIMISATION FAMILY, each mapped to the phase it deletes:
+    browser/OS DNS cache, `dns-prefetch`      phase 1
+    keep-alive, connection pooling            phases 2-3
+    `preconnect`                              phases 1-3, moved earlier in time
+    TLS session resumption, 0-RTT             phase 3
+    CDN                                       phases 2, 3 and 5, by shortening the RTT itself
+    `Cache-Control` / ETag / 304              ALL SIX - the fastest request is the one not made
+    gzip / brotli                             phase 6""",
+
+    """6. HOW TO CODE IT - how to measure the six phases yourself, which is the version of this answer
+nobody else gives.
+
+  1. Time DNS on its own: timestamp, `socket.getaddrinfo(host, 443, AF_INET, SOCK_STREAM)`, timestamp.
+     Also record `len(set(i[4][0] for i in infos))` - the number of distinct A records - because "8 A
+     records for google" is a concrete fact about DNS-level load balancing.
+  2. Connect to the IP, NOT the hostname. `socket.create_connection((ip, 443))`. If you pass the
+     hostname, the resolution happens again inside connect and your TCP number silently includes DNS.
+  3. Time the TLS handshake as its own `wrap_socket` call, with `server_hostname=host` so SNI is sent
+     and the certificate is checked.
+  4. Send the request and timestamp immediately after. Use `Connection: close` so the server ends the
+     body for you, and `Accept-Encoding: identity` so you are measuring bytes rather than the
+     decompressor.
+  5. TTFB is the interesting one: `ss.recv(1)` - read exactly ONE byte - and timestamp. That single
+     byte is the boundary between "the server is thinking" and "the server is sending". Reading 4096
+     bytes instead would blend the two.
+  6. Then loop `recv(65536)` until it returns empty, and timestamp again. That delta is the body
+     transfer.
+  7. Print each phase as both milliseconds AND a percentage of the total. The percentages are what
+     turn six numbers into a diagnosis.
+  8. Run it against a small page and a large one. If both look the same, you have not learned anything
+     yet; the whole point is that example.com and github.com have opposite bottlenecks.
+  9. Run the same walk three times and print the three rows. What gets faster on repeat, and what does
+     not, tells you where caching actually lives - and on this machine DNS did not.
+ 10. Report the response status line and `Server:` header too. `HTTP/1.1 200 OK  server=cloudflare`
+     tells you a CDN answered, which explains a low TTFB without any server-side work.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"I'll walk it end to end and then say where the time actually goes.
+
+Before any network at all, the browser decides whether what I typed is a URL or a search, checks its
+HSTS list to decide whether to upgrade http to https on its own, and checks its own HTTP cache - if
+there's a fresh entry, the whole thing ends there.
+
+Then, DNS RESOLUTION: browser cache, OS cache, /etc/hosts, then the resolver, which walks root -> .com
+-> the authoritative nameserver. Then a TCP CONNECTION - SYN, SYN-ACK, ACK, one full round trip to
+port 443. Then the TLS HANDSHAKE, where the server presents its certificate chain, the browser
+verifies it against its trust store, and both sides derive a session key by ephemeral Diffie-Hellman.
+Then the HTTP REQUEST, a GET with Host and Accept headers. Then SERVER PROCESSING: a load balancer
+routes to an app server, which may hit caches and databases, and returns HTML. Then RENDERING: parse
+HTML into the DOM, CSS into the CSSOM, combine into a render tree, layout, paint - fetching CSS, JS,
+fonts and images as it goes, often from a CDN, and each of those may repeat the whole cycle against
+another origin.
+
+The part I'd add is that I measured it. For example.com: DNS 33.9 ms, TCP 9.6, TLS 40.6, sending the
+GET 0.08, waiting for the server 63.6, and transferring the 869-byte body 0.05. Total 148 ms - and
+57% of it was spent on setup before the browser had asked for anything. Writing the actual HTTP
+request was five hundredths of a millisecond.
+
+And that shape flips with page size. github.com's 580 KB body took 335 ms, which was 68% of a 493 ms
+total, so setup fell to 20%. Small pages are latency-bound and want fewer round trips - DNS caching,
+keep-alive, TLS resumption, HTTP/2, a CDN. Large pages are bandwidth-bound and want fewer bytes -
+compression, code splitting, caching.
+
+Which is really the through-line: almost every web performance technique is a way of deleting one of
+those first three phases, or of avoiding the request entirely."
+
+IF THEY ASK TCP vs UDP: "TCP is reliable and ordered with a handshake - that's the web. UDP is
+connectionless and lossy but has no setup - that's video, games and DNS. HTTP/3 runs on UDP and
+rebuilds reliability in user space, which lets it merge the transport and TLS handshakes and avoid
+TCP's head-of-line blocking."
+
+THE ONE SENTENCE TO NOT FUMBLE: the six steps are DNS, TCP, TLS, request, server, render - and for a
+small page the first three cost more than everything else combined.""",
+
+    """8. THE CODE LINE BY LINE - the measurement harness.
+
+    infos = socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
+
+Phase 1, isolated. `AF_INET` forces IPv4 so the result is comparable across hosts; `SOCK_STREAM` stops
+getaddrinfo returning one entry per socket type and inflating the count. MEASURED 11.77-33.88 ms.
+
+    out['n_ips'] = len(set(i[4][0] for i in infos))
+
+The number of DISTINCT addresses behind the name. Measured 2 for example.com, 8 for www.google.com, 1
+for github.com. Multiple A records are DNS-level load balancing, and worth mentioning because it is
+the cheapest form of it that exists.
+
+    s = socket.create_connection((out['ip'], 443), timeout=15)
+
+Phase 2, connecting to the ADDRESS rather than the name. This is the detail that keeps the phases
+clean - `create_connection((host, 443))` would resolve again and fold DNS into your TCP number.
+
+    ss = ctx.wrap_socket(s, server_hostname=host)
+
+Phase 3. Note that the certificate is checked against `host`, not against the IP - which is why you
+must keep the hostname around after resolving it.
+
+    req = f"GET {path} HTTP/1.1\\r\\nHost: {host}\\r\\n...Connection: close\\r\\n\\r\\n".encode()
+
+The `Host:` header is mandatory in HTTP/1.1 - it is how one IP serves many sites, the same job SNI
+does one layer down. `Connection: close` makes the server close the socket when the body ends, so
+`recv` returning empty is a reliable end-of-body signal without parsing `Content-Length` or chunked
+encoding. `Accept-Encoding: identity` disables compression so the byte count is the real page size.
+
+    ss.sendall(req); t4 = time.perf_counter()
+
+Phase 4, and it measures 0.04-0.08 ms because `sendall` returns as soon as the bytes are in the
+kernel's send buffer. It is not waiting for anything, which is exactly the point.
+
+    first = ss.recv(1); t5 = time.perf_counter()
+
+Phase 5, and the single most important line in the harness. Reading ONE byte gives you a clean TTFB:
+everything before it is round trip plus server work, everything after it is transfer. Read 4,096 bytes
+here and you have blended the two phases and can no longer tell a slow database from a fat page.
+
+    while True:
+        c = ss.recv(65536)
+        if not c: break
+        body += c
+
+Phase 6. Empty return means the server closed, which `Connection: close` guaranteed.
+
+    hdr = body.split(b'\\r\\n\\r\\n', 1)[0].decode('latin1')
+
+Headers and body are separated by a blank line - `\\r\\n\\r\\n`. `latin1` because headers are bytes that
+are not guaranteed to be valid UTF-8, and latin1 maps every byte to a character without ever raising.
+
+    print(f"{label:26s} {1000*o[k]:8.2f} ms   {100*o[k]/tot:5.1f}%")
+
+Both absolute and relative. The milliseconds tell you how bad it is; the percentages tell you what to
+fix. 43.0% in TTFB says "look at the server"; 67.9% in transfer says "look at the payload".""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one full walk to example.com, measured, phase by phase.
+
+    t (ms)   phase                   delta      what was happening
+    ------   ---------------------   --------   ---------------------------------------------------
+      0.00   start                        -     the string "example.com" and nothing else
+     33.88   DNS resolved             33.88ms   asked the resolver; got 2 A records; picked
+                                                104.20.23.154
+     43.52   TCP connected             9.64ms   SYN -> SYN-ACK -> ACK. One round trip.
+     84.16   TLS established          40.64ms   ClientHello, certificate chain verified against the
+                                                trust store, ECDHE key agreed. TLSv1.3,
+                                                TLS_AES_256_GCM_SHA384
+     84.24   request written           0.08ms   38 bytes of GET pushed into the send buffer
+    147.80   first byte arrived       63.56ms   one round trip + all of Cloudflare's work
+    147.86   body complete             0.05ms   869 bytes
+    ------   ---------------------   --------
+    147.86   TOTAL                              server: cloudflare, HTTP/1.1 200 OK
+
+Setup (rows 1-3) = 84.16 ms = 56.9% of the total. Actual page content = 869 bytes in 0.05 ms.
+
+TRACE B - the same six phases for three very different pages, as percentages.
+
+    phase              example.com   www.google.com   github.com
+    ----------------   -----------   --------------   ----------
+    DNS                     22.9%             6.1%         3.4%
+    TCP                      6.5%             4.7%         5.3%
+    TLS                     27.5%            31.5%        11.5%
+    send request             0.1%             0.0%         0.0%
+    server thinks           43.0%            44.2%        11.9%
+    transfer body            0.0%            13.5%        67.9%
+    ----------------   -----------   --------------   ----------
+    total                 147.9ms          191.9ms      493.5ms
+    body size                869 B         86,243 B    580,066 B
+
+Follow the "transfer body" row down: 0.0% -> 13.5% -> 67.9%, tracking body size 869 -> 86 KB -> 580 KB.
+And follow "TLS": 27.5% -> 31.5% -> 11.5%. The TLS cost in MILLISECONDS was similar for all three
+(40.6, 60.4, 56.7) - it only LOOKS small for github because everything else got bigger. Percentages
+without absolutes mislead; that is why the table carries both.
+
+TRACE C - three consecutive walks to the same host, showing what caching does and does not do.
+
+    attempt   DNS       TCP       TLS       TTFB      TOTAL      what changed
+    -------   -------   -------   -------   -------   --------   ------------------------------
+          0   12.49ms   19.09ms   33.25ms   81.66ms   146.61ms   cold
+          1   14.33ms   11.06ms   35.41ms   63.40ms   125.35ms   TCP and TTFB improved
+          2   16.14ms    8.93ms   37.73ms   66.96ms   129.88ms   TCP improved further
+
+    DNS  12.49 -> 14.33 -> 16.14  : got SLOWER. No local caching daemon on this box, so every lookup
+                                    hit the network again, and normal variance did the rest.
+    TCP  19.09 ->  8.93           : 2.1x faster. Route and ARP entries warmed.
+    TLS  33.25 -> 37.73           : no improvement. Session resumption did not engage here; each
+                                    connection did a full handshake.
+    TTFB 81.66 -> 66.96           : 1.2x faster, presumably the CDN's own caches warming.
+
+The honest conclusion is the useful one: caching is not one thing. Four layers cached differently in
+one experiment, and one of them not at all.
+
+TRACE D - what a page with third-party origins costs, using the measured averages
+(DNS ~15 ms, TCP ~15 ms, TLS ~45 ms):
+
+    origins on the page   setup cost before any of their content arrives
+    -------------------   ---------------------------------------------
+    1 (your own)          ~75 ms, paid once
+    3 (+ analytics, fonts) ~225 ms
+    5 (+ ads, chat widget) ~375 ms
+
+None of that is file size. It is pure connection setup, which is why `<link rel="preconnect">` -
+which starts phases 1-3 for an origin before the browser discovers it needs it - can be worth 50-100
+ms per origin, and why "it's only a 4 KB script" is not the right way to price a third-party tag.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, counted in ROUND TRIPS, which is the only unit that matters for page load:
+
+    DNS (uncached)                     1 round trip to the resolver (more if it must recurse)
+    TCP handshake                      1 round trip
+    TLS 1.3 handshake                  1 round trip   (TLS 1.2: 2)
+    HTTP request/response              1 round trip
+    ---------------------------------------------------------------
+    first byte of a cold HTTPS page    4 round trips minimum
+    with HTTP/3 (QUIC)                 3 - transport and TLS merge into one
+    with a warm connection             1 - phases 1-3 are gone
+    with a fresh browser cache         0 - no network at all
+
+    MEASURED, one cold page: 147.86 ms total, of which 84.16 ms (56.9%) was those first three phases.
+    MEASURED, per additional origin: roughly 75 ms of setup before a single byte of its content.
+
+    body transfer                      O(bytes / bandwidth). MEASURED 0.05 ms for 869 B, 334.97 ms for
+                                       580 KB
+    rendering                          O(DOM nodes) for layout, and reflows can cascade
+
+THE MISTAKES:
+
+    - Reciting the six steps with no sense of where time goes. The measured answer - 57% of a small
+      page's load is setup, and writing the request itself is 0.05% - is what makes the answer yours.
+    - Starting at DNS. Before that: is it a URL or a search, HSTS upgrade, the browser's HTTP cache,
+      the browser's DNS cache, the OS cache, /etc/hosts.
+    - Saying "TCP handshake" without saying it costs a full round trip. That is why it matters.
+    - Confusing TTFB with server processing time. TTFB includes a network round trip; a 60 ms TTFB
+      from 30 ms away means the server took about 30 ms.
+    - Assuming caching helps every layer. Measured: TCP got 2.1x faster on repeat, TLS did not improve,
+      and DNS got slower.
+    - Forgetting that step 6 recurses. Each third-party origin repeats steps 1-5, at ~75 ms of setup
+      each, regardless of file size.
+    - Ignoring the render-blocking rules. CSS blocks painting; a plain `<script>` blocks parsing.
+      `async`/`defer` exist for exactly that.
+    - Reporting percentages without absolute times. TLS was 11.5% for github and 27.5% for example.com
+      while costing a similar number of milliseconds in both.
+    - Not knowing what a CDN actually shortens. It does not just serve files faster - it reduces the
+      round-trip time itself, which shrinks the TCP handshake, the TLS handshake and TTFB together.
+
+THE TAKEAWAY. The six steps are easy to memorise and that is precisely why they are worth measuring.
+The measurement changes the answer: on a small page more than half the time is spent before the
+browser asks for anything, the request itself is free, and the body is negligible - so the entire
+optimisation game is DELETING ROUND TRIPS. On a large page the same stack has the opposite bottleneck
+and the game is deleting BYTES. Being able to say which one you are looking at, and produce the phase
+breakdown that proves it, is the difference between having memorised a list and understanding what
+happens.""",
+]
+
+_EX_P1AO["fork(), exec(), and zombie vs orphan processes"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how does a program START another program on Unix? The answer is
+strange enough that it is worth memorising as a shape:
+
+    fork()   DUPLICATE the current process. You now have two nearly identical processes.
+    exec()   REPLACE the current program with a different one, keeping the same process.
+
+You do not "launch a program". You clone yourself, and then the clone becomes the program. That is
+how every shell runs every command you have ever typed.
+
+`fork()` is the one that surprises people: it RETURNS TWICE. Once in the parent, where it returns the
+child's process id, and once in the child, where it returns 0. One call, two returns, two processes
+running the same next line.
+
+MEASURED ON THIS MACHINE:
+
+    os.fork() returned 18078 in the parent (pid 18077)
+    os.fork() returned      0 in the child  (pid 18078, whose ppid is 18077)
+
+And it is far cheaper than "duplicate the process" suggests, because nothing is actually copied:
+
+    parent holding    1 MB : fork()  0.44 ms
+    parent holding   50 MB : fork()  0.76 ms
+    parent holding  200 MB : fork()  2.14 ms
+    parent holding  800 MB : fork()  5.88 ms
+
+Eight hundred times the memory cost thirteen times the fork. The address space is not duplicated - it
+is SHARED, marked read-only, and copied one page at a time only when somebody writes. That is
+COPY-ON-WRITE, and section 2 measures it directly.""",
+
+    """2. THE INTUITION - copy-on-write is a shared document that silently forks the moment either person
+edits it.
+
+Two people open the same document. Neither has a copy; they are both looking at the same one. The
+instant either of them types a character, the system quietly makes them a private copy of just THAT
+PAGE and lets them edit it. If they only ever read, no copy is ever made and there is no cost.
+
+That is exactly what `fork()` does with memory, and it is measurable. Here is a 200 MB parent forking,
+with the child's memory accounting read from `/proc/self/smaps_rollup` at three moments:
+
+    moment                            Shared_Dirty   Private_Dirty
+    ------------------------------   ------------   -------------
+    child right after fork              207,824 kB        1,072 kB
+    child after READING all 200 MB      206,876 kB        2,020 kB
+    child after WRITING all 200 MB        2,076 kB      206,820 kB
+
+Read the two columns as one story. Right after `fork()`, 207,824 kB is SHARED with the parent and only
+1,072 kB is private. Reading all 200 MB moved essentially nothing (+948 kB, which is the Python
+interpreter's own churn). WRITING all 200 MB moved 204,800 kB - exactly 200 MB - from shared to
+private, one page at a time, each transfer triggered by a page fault the process never noticed.
+
+So the cost of `fork()` is not the size of your memory. It is the size of what the child WRITES.
+
+THE PRACTICAL CONSEQUENCE, and it is a large one: this is why a machine-learning worker pool can load
+a 10 GB model in the parent, fork sixteen workers, and not use 160 GB - as long as the workers only
+READ the weights. And it is why the same pool blows up if the workers touch a shared Python object,
+because CPython's reference counting WRITES to the object header on every access, which dirties the
+page and forces a copy. Reading a Python object is a write at the memory level.
+
+THE OTHER HALF - `exec()` - is the opposite operation. `fork()` gives you a second copy of the same
+program; `exec()` throws away the program and keeps the process. Same pid, same open file descriptors,
+entirely new code and memory. Nothing after a successful `execvp` ever runs, because there is no
+"after" - that code no longer exists in this process.""",
+
+    """3. EVERY TERM DEFINED.
+
+PROCESS. A running program with its own address space, file descriptors, and a process id.
+
+PID / PPID. Process id, and parent process id. `os.getpid()` and `os.getppid()`.
+
+fork(). Create a near-identical child process. Returns 0 in the child and the child's pid in the
+parent. The child inherits open file descriptors, the current directory, environment and signal
+dispositions - but gets its own copy-on-write address space.
+
+COPY-ON-WRITE (COW). Parent and child share the same physical pages, marked read-only. The first WRITE
+traps into the kernel, which copies that one page and makes it private. MEASURED above: 204,800 kB
+moved from Shared_Dirty to Private_Dirty by writing, and 0 by reading.
+
+exec() / execvp / execve. Replace the current process image with a new program. SAME pid, same file
+descriptors, new everything else. On success it does not return.
+
+fork+exec. The Unix idiom: fork, and in the child immediately exec the desired program, while the
+parent waits.
+
+posix_spawn(). A single call that does fork+exec more efficiently, often without duplicating the page
+tables at all. MEASURED below at 0.34x the cost of doing it by hand.
+
+wait() / waitpid(). The parent collecting a finished child's exit status. This is called REAPING.
+
+EXIT STATUS. The child's return code, plus how it died. `os.waitstatus_to_exitcode(status)` decodes it.
+
+ZOMBIE (defunct). A process that has EXITED but whose parent has not yet called wait(). The kernel
+keeps the process-table entry alive purely so the exit status can still be read. It has NO memory and
+NO CPU - measured below, `/proc/<pid>/status` has no VmRSS line at all. It cannot be killed, because
+it is already dead.
+
+ORPHAN. A process whose PARENT died first. The kernel re-parents it, and its new parent reaps it
+automatically. Harmless.
+
+REAPER / SUBREAPER. The process that adopts orphans. Classically pid 1 (init/systemd); a container or
+a subreaper-registered process can take the role instead.
+
+REPARENTING. The kernel changing a process's ppid when its parent exits. MEASURED below, happening
+within one 0.3-second sample.
+
+RLIMIT_NPROC. The per-user cap on processes. MEASURED: 31,105 on this machine, and fork() started
+failing with EAGAIN after 9,300 accumulated zombies.
+
+SIGCHLD. The signal a parent receives when a child changes state. Setting it to SIG_IGN tells the
+kernel to reap automatically, which is one way to avoid zombies entirely.
+
+DOUBLE FORK. fork, then fork again in the child and exit the middle process, so the grandchild is
+immediately orphaned and adopted by the reaper. The classic way to launch a daemon without having to
+wait for it.
+
+subprocess.run / Popen. Python's wrapper around fork+exec+wait. `run()` waits for you; `Popen()`
+without `.wait()` or `.communicate()` leaks zombies.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - zombies, which sound harmless and are not.
+
+MEASURED, a child that exits while the parent does not wait:
+
+    child pid 18146 state                     : Z (zombie)
+    its memory (VmRSS in /proc/<pid>/status)  : none - there is no VmRSS line at all
+    after os.kill(pid, SIGKILL)               : still Z (zombie)
+    after the parent calls waitpid()          : GONE, exit code 7
+
+Three facts in four lines. A zombie holds NO memory. `kill -9` does nothing, because you cannot kill
+something that has already exited - the standard confused response to seeing hundreds of `<defunct>`
+entries in `ps`. And the only thing that removes it is the PARENT calling wait().
+
+So what is the actual harm, if it costs no memory and no CPU? It occupies a process-table slot.
+
+MEASURED, forking and never reaping, in a loop:
+
+    RLIMIT_NPROC on this machine   soft 31,105, hard 31,105
+    /proc/sys/kernel/pid_max       4,194,304
+    fork() FAILED after 9,300 un-reaped zombies:  [Errno 11] Resource temporarily unavailable
+    after reaping all 9,300, a fresh fork()    :  succeeds
+
+That is the production outage in the entry's own example, reproduced: a server that spawns a helper
+per request with `Popen` and never calls `wait()` accumulates one zombie per request. Memory looks
+fine. CPU looks fine. Every dashboard is green. And then, after a few thousand requests, `fork()`
+starts returning EAGAIN and NOTHING can start a subprocess any more - and the fix is one line.
+
+Note that fork failed at 9,300, well below the 31,105 limit, because other processes on the machine
+count against the same per-user total. The lesson is that the effective ceiling is lower and less
+predictable than the configured one.
+
+THE SECOND TRAP - assuming orphans are the dangerous case because the name sounds worse. MEASURED, a
+grandchild whose parent exits at t=0.9 s:
+
+    t=0.00s  grandchild 27475  ppid 27474
+    t=0.30s  grandchild 27475  ppid 27474
+    t=0.60s  grandchild 27475  ppid 27474
+    t=0.90s  grandchild 27475  ppid 303      <- re-parented, instantly, in place
+    t=1.20s  grandchild 27475  ppid 303
+
+The kernel changed its ppid at the moment the parent exited. The new parent reaps it automatically.
+Orphans are FINE. Zombies are the leak. (On this machine pid 1 is `systemd`, but the adopting process
+was pid 303, `Relay(304)` - a WSL subreaper. Which is exactly why containers need a proper init as
+pid 1: without one, nothing adopts and reaps orphans inside the container.)
+
+THE THIRD TRAP - `fork()` in a process that has THREADS. MEASURED:
+
+    parent: 2 threads alive, one of them HOLDS a lock, lock.locked() = True
+    child : threading.active_count() = 1              <- the other thread did NOT come across
+    child : lock.locked() = True                      <- but the LOCK did, still held
+    child : lock.acquire(timeout=2.0) -> False after 2.00 s
+
+Only the calling thread survives into the child. Every other thread simply does not exist there. But
+all the MEMORY comes across, including a mutex that is still marked "held" by a thread that no longer
+exists. Nothing will ever release it. The child deadlocks the first time it touches that lock - and
+the lock may be inside a library you did not write, like the allocator or the logging module. This is
+why Python 3.12 warns `DeprecationWarning: This process is multi-threaded, use of fork() may lead to
+deadlocks in the child`, and why `multiprocessing` defaults to `spawn` on macOS and Windows.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - four ways to start a program, and what each costs.
+
+MEASURED, launching `/bin/true` 200 times, three ways:
+
+    raw fork() + execv() + wait()   1.71 ms per launch
+    subprocess.run()                0.75 ms per launch   (0.44x)
+    os.posix_spawn() + wait()       0.59 ms per launch   (0.34x)
+
+The hand-rolled version is the SLOWEST, which surprises people. `fork()` must set up the child's page
+tables even under copy-on-write, and then `exec()` throws all of it away microseconds later - pure
+waste. `posix_spawn()` exists precisely to skip that: on Linux it uses `clone(CLONE_VM|CLONE_VFORK)`
+so the child borrows the parent's address space until the exec. CPython's `subprocess` uses
+`posix_spawn` where it can, which is why `subprocess.run` sits between the two.
+
+THE PROCESS-CREATION FAMILY:
+    fork()          duplicate. The only way to get a copy of your own running state, which is what
+                    makes it right for worker pools sharing pre-loaded data - and wrong when threads
+                    are involved.
+    vfork()         historical: borrow the parent's address space and suspend the parent until exec.
+                    Fast, and full of footguns. Superseded by posix_spawn.
+    posix_spawn()   fork+exec as one call, without the wasted page-table setup. MEASURED 2.9x faster
+                    than doing it by hand.
+    clone()         the Linux syscall underneath all of it, with flags choosing exactly what is
+                    shared. `clone(CLONE_VM|CLONE_FILES|...)` with everything shared is a THREAD. On
+                    Linux, processes and threads are the same primitive with different flags.
+    CreateProcess() Windows has no fork at all - it only spawns. This is the entire reason
+                    `multiprocessing` behaves differently there.
+
+THE PYTHON MULTIPROCESSING START METHODS, which is where this becomes a real decision:
+    fork    fast, and the child inherits everything - including a 10 GB model, for free, via COW.
+            UNSAFE if the parent has threads. Default on Linux (and being reconsidered for exactly
+            that reason).
+    spawn   start a fresh interpreter and re-import your module. Safe, and slow, and it forces you to
+            make everything picklable and to guard top-level code with `if __name__ == "__main__"`.
+            Default on macOS and Windows.
+    forkserver  fork a small, thread-free server process EARLY, and have it fork the workers. Gets
+            fork's speed with spawn's safety, because the forking process never had threads.
+
+AVOIDING ZOMBIES, four ways:
+    1. `subprocess.run()` or `.communicate()` - waits for you. Use this.
+    2. `os.waitpid(pid, os.WNOHANG)` in a loop, to reap without blocking.
+    3. `signal.signal(signal.SIGCHLD, signal.SIG_IGN)` - tells the kernel to reap automatically. You
+       lose the exit status.
+    4. The DOUBLE FORK - fork, fork again, exit the middle process. The grandchild is orphaned
+       immediately and the reaper handles it. This is how daemons detach.
+    In containers: run a real init (`tini`, `dumb-init`, or `docker run --init`) as pid 1, because
+    your application binary as pid 1 will not reap adopted orphans.""",
+
+    """6. HOW TO CODE IT.
+
+THE BASIC fork+exec+wait, which is what a shell does:
+
+  1. `pid = os.fork()`. It returns TWICE. Branch on the return value, immediately, before anything
+     else.
+  2. In the child (`pid == 0`): `os.execvp("echo", ["echo", "hello"])`. Note that argv[0] is the
+     program name by convention, so `"echo"` appears twice.
+  3. Write NOTHING after the exec that you expect to run. If control reaches the next line, the exec
+     FAILED - so `sys.exit(1)` there is not defensive noise, it is the error path.
+  4. In the parent: `finished_pid, status = os.wait()`. This blocks until a child finishes and REAPS
+     it. Skip this and you have made a zombie.
+  5. `os.waitstatus_to_exitcode(status)` turns the raw status into the exit code, or a negative signal
+     number if the child was killed.
+
+MEASURING COPY-ON-WRITE PROPERLY - and the naive version does not work:
+
+  6. Do NOT use VmRSS. RSS counts SHARED pages too, so it barely changes when a page becomes private,
+     and you will conclude copy-on-write does not exist.
+  7. Read `/proc/self/smaps_rollup` and watch `Shared_Dirty` and `Private_Dirty`. That pair is the
+     honest picture: shared falls and private rises by exactly the amount written.
+  8. In the child, sample three times - straight after the fork, after READING every page, and after
+     WRITING every page - and send the numbers back through an `os.pipe()`, since the child cannot
+     return a value.
+  9. Touch one byte per 4,096-byte page. The unit of copy is a page, so writing more per page measures
+     memory bandwidth instead.
+
+CREATING EACH STATE ON PURPOSE, to see them:
+
+ 10. ZOMBIE: fork, `os._exit(0)` in the child, and do NOT wait in the parent. Then read
+     `/proc/<pid>/status` and look at `State:`. It says `Z (zombie)`. Try `os.kill(pid, SIGKILL)` and
+     read it again - still Z.
+ 11. ORPHAN: fork twice. The middle process exits after a short delay; the grandchild prints
+     `os.getppid()` every 0.3 s. Watch the number change the moment the middle process dies.
+ 12. Use `os._exit()` and not `sys.exit()` in a forked child. `sys.exit` raises `SystemExit`, which
+     runs `atexit` handlers and flushes buffers that the PARENT also has - so buffered output gets
+     written twice, once by each process. `os._exit` skips all of it.
+
+THE THREADED-FORK HAZARD, reproduced in ten lines:
+
+ 13. Start a thread that acquires a lock and sleeps.
+ 14. `fork()`. In the child, print `threading.active_count()` - it is 1, not 2.
+ 15. Print `lock.locked()` - it is True, held by a thread that does not exist in this process.
+ 16. `lock.acquire(timeout=2)` returns False, forever. That is the deadlock, on demand.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"`fork()` DUPLICATES the calling process. The child gets a copy of the address space - copy-on-write
+in practice, so nothing is physically copied until one side writes - and the call returns TWICE: 0 in
+the child, the child's pid in the parent. `exec()` REPLACES the current process image with a new
+program, keeping the same pid and the same open file descriptors. Together they explain how a shell
+runs a command: fork, then in the child exec the program, while the parent waits.
+
+I measured the copy-on-write part, because it's the bit people state and don't verify. A 200 MB parent
+forked in 2.1 milliseconds. Right after the fork the child had 207 MB shared and 1 MB private. Reading
+all 200 MB changed essentially nothing. WRITING all 200 MB moved exactly 204,800 kB from shared to
+private. So fork costs you what the child writes, not what the parent holds - and forking an 800 MB
+process took 5.9 ms against 0.44 ms for a 1 MB one, thirteen times the cost for eight hundred times
+the memory.
+
+Then the two states. A ZOMBIE is a process that has EXITED but whose parent hasn't called wait() to
+collect its exit status. The kernel keeps the process-table entry alive precisely so the status can be
+read, so a zombie consumes no memory and no CPU - only a table slot. You cannot kill it; I tried
+SIGKILL on one and it stayed in state Z. You fix the PARENT. An ORPHAN is the opposite: the parent
+died first, so the child is re-parented - I watched a grandchild's ppid change the instant its parent
+exited - and the new parent reaps it automatically. Orphans are harmless; zombies are a leak.
+
+The leak has a real failure mode, and I reproduced it: forking without reaping, fork() started failing
+with EAGAIN after 9,300 zombies, and reaping them all made it work again. That's the production
+outage - a server that Popens a helper per request and never waits looks completely healthy on memory
+and CPU, and then after a few days can't start any subprocess at all.
+
+Two practical points I'd add. First, in a container you want a proper init as pid 1, because otherwise
+nothing adopts and reaps orphans. Second, never fork a process that has threads - only the calling
+thread survives into the child, but all the memory comes across, so a mutex held by a thread that no
+longer exists stays locked forever. I measured that too: the child saw one thread, saw the lock still
+held, and failed to acquire it. That's why multiprocessing defaults to spawn on macOS and Windows."
+
+THE ONE SENTENCE TO NOT FUMBLE: fork duplicates the process and returns twice, exec replaces the
+program and never returns - and a zombie is dead-but-unreaped while an orphan is alive-but-adopted.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    pid = os.fork()
+
+Returns TWICE. Everything below runs in both processes; the return value is the only way to tell which
+one you are. MEASURED: 0.44 ms for a 1 MB parent, 5.88 ms for an 800 MB one.
+
+    if pid == 0:
+        print("child pid", os.getpid(), "parent", os.getppid())
+
+The child. `os.getpid()` here equals the `pid` the PARENT received - measured, 18078 in both places.
+`os.getppid()` is the parent's pid, and it is the value that changes if the parent dies.
+
+        os.execvp("echo", ["echo", "replaced by a new program"])
+
+`execvp`: `v` for vector-of-arguments, `p` for search `$PATH`. The list's first element is argv[0],
+which is why "echo" appears twice - once as the program to find, once as the name it is told it was
+invoked as. On success this call NEVER RETURNS, because the code that would return no longer exists in
+this process. Anything on the next line is the failure path.
+
+    else:
+        finished_pid, status = os.wait()
+
+The parent. `os.wait()` blocks until any child finishes AND reaps it - both halves matter. Blocking is
+the synchronisation; reaping is what prevents the zombie. `os.waitpid(pid, os.WNOHANG)` is the
+non-blocking variant for a server that cannot afford to stop.
+
+        os.waitstatus_to_exitcode(status)
+
+`status` is a packed 16-bit value, not an exit code. This decodes it: a non-negative number is the
+exit code, a negative number is the signal that killed it. Comparing `status == 0` accidentally works
+and is wrong for every other case.
+
+    #   pid = os.fork()
+    #   if pid == 0: sys._exit(0)
+    #   else: time.sleep(60)
+
+The deliberate zombie. MEASURED during that window: `State: Z (zombie)`, no VmRSS line at all, and
+SIGKILL leaves it in Z. (Note: it is `os._exit`, not `sys._exit` - `sys.exit` raises SystemExit, which
+runs atexit handlers and flushes stdio buffers that the parent shares, so buffered text gets printed
+twice, once from each process.)
+
+    #   pid = os.fork()
+    #   if pid == 0: time.sleep(60)
+    #   else: sys.exit(0)
+
+The deliberate orphan. MEASURED: the child's ppid changed from 27474 to 303 within one 0.3-second
+sample of the parent exiting, and the new parent reaps it automatically when it finishes.
+
+    result = subprocess.run(["echo", "hello"], capture_output=True, text=True)
+
+The everyday version. `run()` does fork (or `posix_spawn`), exec, and wait, and returns a
+`CompletedProcess` with `.returncode`, `.stdout`, `.stderr`. MEASURED at 0.75 ms per launch against
+1.71 ms for the hand-rolled fork+exec+wait - the wrapper is 2.3x FASTER than doing it yourself,
+because it avoids building page tables it is about to discard.
+
+    # Popen() without .wait()/.communicate() leaks zombies.
+
+This is the one-line version of the 9,300-zombie measurement. `Popen` starts the process and returns
+immediately; if you never call `.wait()`, `.communicate()` or `.poll()` until it reports done, the
+entry stays in the process table forever.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - copy-on-write, measured from `/proc/self/smaps_rollup`, 200 MB parent.
+
+    moment                           Rss        Shared_Clean  Shared_Dirty  Private_Dirty
+    ------------------------------   --------   ------------  ------------  -------------
+    parent, before fork              215,240 kB        6,288             0        208,896
+    child, right after fork          213,044 kB        4,140       207,824          1,072
+    child, after READING 200 MB      213,292 kB        4,388       206,876          2,020
+    child, after WRITING 200 MB      213,292 kB        4,388         2,076        206,820
+
+Four things to read out of that table.
+
+    1. The parent's 208,896 kB of Private_Dirty became the child's 207,824 kB of SHARED_Dirty the
+       instant fork returned. Nothing was copied; the pages were re-labelled as shared.
+    2. READING all 200 MB moved Private_Dirty by +948 kB - not 200 MB. Reads never copy.
+    3. WRITING all 200 MB moved Private_Dirty by +204,800 kB, which is exactly 200 MB, and dropped
+       Shared_Dirty from 206,876 to 2,076. Every written page became private.
+    4. THE Rss COLUMN DID NOT MOVE (213,292 both times). This is why RSS is the wrong metric for
+       this - it counts shared pages as resident, so it cannot distinguish "sharing 200 MB" from
+       "owning 200 MB", and measuring COW with RSS makes it look like COW does not exist.
+
+TRACE B - fork cost against parent size.
+
+    parent size   fork() time   per page of address space
+    -----------   -----------   -------------------------
+        1 MB         0.44 ms                    1,704 ns
+       50 MB         0.76 ms                       59 ns
+      200 MB         2.14 ms                       42 ns
+      800 MB         5.88 ms                       29 ns
+
+800x the memory, 13x the time - so fork is nearly, but not quite, free of the parent's size. The
+residual cost is building the child's PAGE TABLES, which is proportional to the address space even
+when the pages themselves are shared. And the per-page cost FALLS as the parent grows, because the
+fixed overhead of the syscall is amortised over more pages.
+
+TRACE C - a zombie's life, four observations.
+
+    action                          State       memory
+    -----------------------------   ---------   -------------------------------
+    child calls os._exit(7)         Z (zombie)  no VmRSS line at all
+    parent sends SIGKILL            Z (zombie)  unchanged - already dead
+    parent calls waitpid()          GONE        exit code 7 collected
+    (reading /proc/<pid> after)     GONE        FileNotFoundError
+
+The second row is the one people need. `kill -9` on a `<defunct>` process does nothing, ever. The
+third row is the only thing that works, and only the PARENT can do it.
+
+TRACE D - accumulating zombies until fork() breaks.
+
+    RLIMIT_NPROC (soft/hard)              31,105 / 31,105
+    /proc/sys/kernel/pid_max              4,194,304
+    zombies created before fork() failed  9,300
+    the failure                           OSError [Errno 11] Resource temporarily unavailable
+    after reaping all 9,300               a fresh fork() succeeds
+
+Note 9,300 < 31,105: the limit is per USER, so every other process on the machine was already eating
+into it. The effective ceiling is always lower than the configured one, which is why "we're nowhere
+near the limit" is not a safe thing to assume.
+
+TRACE E - an orphan being re-parented, sampled every 0.3 s.
+
+    t        grandchild   ppid    parent process
+    ------   ----------   -----   --------------------
+    0.00 s        27475   27474   its real parent
+    0.30 s        27475   27474   its real parent
+    0.60 s        27475   27474   its real parent
+    0.90 s        27475     303   Relay(304)            <- the parent exited at this moment
+    1.20 s        27475     303   Relay(304)
+    1.50 s        27475     303   Relay(304)
+
+The kernel re-parented it in place, with no signal, no restart, and no cooperation from the orphan.
+
+TRACE F - forking a threaded process.
+
+    observation                            parent      child
+    ------------------------------------   ---------   ---------------------------
+    threading.active_count()               2           1        <- thread gone
+    lock.locked()                          True        True     <- lock came across
+    lock.acquire(timeout=2.0)              -           False after 2.00 s
+
+The child inherited the LOCK STATE without the thread that could release it. Nothing in the child can
+ever acquire it. Now imagine that lock lives inside `malloc` or the logging module rather than in your
+own code, and you have the reason this is a hard rule and not a style preference.
+
+TRACE G - three ways to launch /bin/true, 200 times each.
+
+    method                        per launch   relative
+    ---------------------------   ----------   --------
+    fork() + execv() + wait()        1.71 ms      1.00x
+    subprocess.run()                 0.75 ms      0.44x
+    os.posix_spawn() + wait()        0.59 ms      0.34x
+
+The hand-rolled version loses because `fork()` builds page tables that `exec()` immediately discards.
+`posix_spawn` skips that step entirely, and `subprocess` uses it where it can.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    fork()                O(size of the address space) for PAGE TABLES only, not for the pages.
+                          MEASURED 0.44 ms at 1 MB, 5.88 ms at 800 MB - 800x memory, 13x time
+    the deferred cost     O(pages the child WRITES). MEASURED: 0 for reads, exactly 200 MB for writes
+    exec()                O(size of the new program) to load and relocate; discards everything else
+    fork+exec by hand     1.71 ms MEASURED - and most of the fork work is wasted
+    posix_spawn           0.59 ms MEASURED, 2.9x faster, because it skips the doomed page tables
+    a zombie              O(1) - one process-table slot, zero memory, zero CPU
+    the zombie limit      MEASURED: fork() failed at 9,300 zombies against an RLIMIT_NPROC of 31,105
+    wait()                O(1) per child
+
+THE MISTAKES:
+
+    - Believing fork() copies memory eagerly. MEASURED: reading 200 MB in the child copied nothing;
+      writing it copied exactly 200 MB.
+    - Measuring copy-on-write with RSS. Shared pages count as resident, so RSS did not move at all
+      across the write. Use Shared_Dirty / Private_Dirty from smaps_rollup.
+    - Expecting code after a successful exec() to run. There is no "after"; that code is gone.
+    - `kill -9` on a zombie. MEASURED: state stays Z. Fix the PARENT.
+    - `Popen` without `.wait()`/`.communicate()`. One zombie per call, invisible on every dashboard,
+      until fork() returns EAGAIN.
+    - Forking a multi-threaded process. Only the calling thread survives; locks held by the others
+      stay held forever. MEASURED: `lock.acquire(timeout=2)` returned False in the child.
+    - `sys.exit()` in a forked child instead of `os._exit()`. It runs atexit handlers and flushes
+      buffers the parent also holds, so output gets duplicated.
+    - Running your application binary as pid 1 in a container. Nothing adopts and reaps orphans. Use
+      `tini`, `dumb-init`, or `docker run --init`.
+    - Assuming pid 1 is always the reaper. MEASURED here: pid 1 is systemd, but the adopting process
+      was pid 303, a WSL subreaper. `PR_SET_CHILD_SUBREAPER` lets any process claim the role.
+    - Hand-rolling fork+exec for performance. MEASURED: it is the slowest of the three options.
+
+THE TAKEAWAY. Unix does not have "start a program" - it has "clone yourself" and "become a different
+program", and every process on your machine got there by doing both. Cloning is cheap because nothing
+is copied until it is written, which is why a worker pool can share a 10 GB model for free and why
+touching one Python object in a worker quietly costs a page. And the two states everyone asks about
+are opposites: an orphan is alive and has been adopted, which is fine; a zombie is dead and has not
+been collected, which is a slow leak that shows up as EAGAIN thousands of requests later, with a
+one-line fix.""",
+]
+
+_EX_P1AO["If deep learning is so powerful, why do gradient-boosted trees still win on tabular data?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - deep learning beats everything at recognising cats, transcribing
+speech and writing text. Then you point it at a spreadsheet of customers and it loses to a technique
+from 2001.
+
+That is not a rumour. It is measurable, and it was measured for this entry rather than quoted.
+
+THE EXPERIMENT: a realistic tabular dataset built from scratch - up to 20,000 rows, 18 columns: age, income
+(log-normal, so it ranges over four orders of magnitude), tenure in months, a CATEGORICAL code 0-9
+that is not ordinal, a binary flag, and 13 pure-noise columns. The label comes from a rule with
+THRESHOLDS and INTERACTIONS - `(age > 45 AND income > 60,000) OR (category == 3 AND tenure < 12) OR
+...` - plus 5% random label flips. That is what business data actually looks like.
+
+Both models written from scratch in numpy: a histogram gradient-boosted tree ensemble (200 trees,
+depth 3) and a multi-layer perceptron (64-64, ReLU, Adam, 300 epochs).
+
+MEASURED, 8,000 rows split 70/30, so 2,400 held-out test rows, positive rate 0.21:
+
+    model                                          accuracy    AUC      train time
+    -------------------------------------------   ---------   ------   ----------
+    predict "no" for everything (the baseline)         ~0.79        -            -
+    gradient-boosted trees, RAW features             0.9333    0.8945      1.09 s
+    MLP, RAW features                                0.4408    0.6872      4.07 s
+    MLP, STANDARDISED features                       0.8433    0.8296      3.93 s
+    gradient-boosted trees, STANDARDISED features    0.9333    0.8945      1.11 s
+
+Three things in that table, and each is a separate lesson.
+
+The trees WON, by 9 accuracy points and 6.5 AUC points. They trained 3.6x FASTER. And the two tree
+rows are IDENTICAL to four decimal places, because standardising the features changed nothing at all
+for them - while for the neural network it was the difference between 0.8433 and 0.4408, and 0.4408
+is worse than the do-nothing baseline of predicting "no" every time. (A separate run with a fixed
+3,000-row test set from the same generator pinned that baseline at exactly 0.7917; it appears in
+section 4.)""",
+
+    """2. THE INTUITION - a decision tree asks the same kind of question the data was generated by, and a
+neural network does not.
+
+The label rule contains `income > 60,000`. A tree's entire vocabulary is "is feature j above threshold
+t?" - so it can express that rule EXACTLY, with one split. A neural network has to build a step
+function out of smooth sigmoids and ReLU ramps, and it can only approximate a sharp edge by using many
+units to make a steep slope. It is doing a much harder job to represent something a tree gets for free.
+
+Now the reverse case, which is the honest half of the answer and the half most people skip. If the
+boundary is NOT axis-aligned - a smooth function of a rotated linear combination of features - then
+the tree has to build a diagonal out of tiny horizontal and vertical steps, and the network just
+learns the projection.
+
+MEASURED, dataset B: 8,000 rows, 8 features, label = `sin(1.5 * X·w) + 0.5*sin(3*x0*x1) > 0` with the
+same 5% label noise. No axis-aligned structure whatsoever:
+
+    model                                    accuracy    AUC
+    -------------------------------------   ---------   ------
+    gradient-boosted trees                     0.5288   0.5423
+    MLP, standardised                          0.6075   0.6376
+
+The trees collapsed to barely-above-chance (the positive rate is 0.51). The network won. Same code,
+same hyperparameters, opposite verdict - because the STRUCTURE of the data changed.
+
+THAT is the real answer to the question, and it is more interesting than "trees are better on tables".
+Trees are better on data whose structure is THRESHOLDS AND INTERACTIONS, and business tables are full
+of thresholds and interactions because that is how humans define things: a customer is "high value"
+above a number, a subscription lapses after a number of days, a risk tier starts at a score. Images
+and audio have no such thresholds - a pixel at 137 is not categorically different from one at 136 -
+which is precisely why trees are useless there and convolutions are not.
+
+THE SECOND INTUITION: the 13 noise columns. A tree simply never splits on them, because they yield no
+gain - feature selection is built into the algorithm. A dense network gives every noise column a
+weight into every hidden unit and has to LEARN to zero them, from data, with a limited budget of it.""",
+
+    """3. EVERY TERM DEFINED.
+
+TABULAR DATA. Rows and columns, mixed types: numbers, categories, booleans, dates. A spreadsheet, a
+database table. Each column means something different and there is no spatial or sequential structure
+BETWEEN columns - shuffling the column order changes nothing about the problem.
+
+UNSTRUCTURED DATA. Images, text, audio. There IS structure between the inputs - adjacent pixels are
+related, adjacent words are related - and that structure is what convolutions and attention exploit.
+
+DECISION TREE. A sequence of "is feature j <= threshold t?" questions ending in a prediction. Its
+decision boundary is made of axis-parallel rectangles, always.
+
+ENSEMBLE. Many models combined.
+
+BAGGING / RANDOM FOREST. Many INDEPENDENT deep trees on bootstrap samples, averaged. Reduces variance.
+
+BOOSTING / GRADIENT BOOSTING. Many SEQUENTIAL shallow trees, where each new tree fits the RESIDUAL
+ERROR of the ensemble so far. Reduces bias. XGBoost, LightGBM and CatBoost are the industrial
+implementations.
+
+WEAK LEARNER. A model barely better than chance - here, a depth-3 tree. Boosting's premise is that
+hundreds of these, each correcting the last, beat one strong model.
+
+LEARNING RATE / SHRINKAGE. In boosting, how much of each new tree to add. 0.1 here. Lower means more
+trees needed and better generalisation.
+
+MLP (multi-layer perceptron). A plain feed-forward neural network: `x -> Linear -> ReLU -> Linear ->
+ReLU -> Linear -> sigmoid`.
+
+STANDARDISATION. Subtracting the mean and dividing by the standard deviation, per column. Essential
+for gradient-based models when columns have wildly different scales - income in the tens of thousands,
+a binary flag in {0,1}. MEASURED to be worth 40 accuracy points to the MLP and exactly zero to the
+trees.
+
+SCALE INVARIANCE. The property that a monotone transformation of a feature does not change the model.
+Trees have it because a split at "income > 60,000" and a split at "standardised income > 1.3" select
+the same rows. Neural networks do not have it at all.
+
+AUC (area under the ROC curve). The probability that a randomly chosen positive is ranked above a
+randomly chosen negative. 0.5 is chance, 1.0 is perfect. Better than accuracy on imbalanced data - the
+21% positive rate here is why both are reported.
+
+CLASS IMBALANCE. Unequal class frequencies. MEASURED: predicting "no" for every row scores 0.7917
+accuracy on this data, which is why an accuracy number without that baseline is meaningless.
+
+INDUCTIVE BIAS. The assumptions a model family makes before seeing any data. Trees assume axis-aligned
+thresholds matter. CNNs assume nearby pixels relate. This is the entire subject of this entry.
+
+NO FREE LUNCH THEOREM. Averaged over ALL possible problems, every algorithm performs identically. Any
+model that is better on one class of problems is worse on another. The tree-vs-network result here is
+this theorem with numbers attached.
+
+FEATURE ENGINEERING. Hand-building informative columns. Trees need less of it (they find thresholds
+themselves); networks on tabular data need a great deal.
+
+INTERPRETABILITY. Being able to say why a prediction happened. A tree ensemble gives feature
+importances and SHAP values that regulators accept; a network gives you gradients.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "just train a bigger network" and "the neural net just needs
+tuning". Both were tested.
+
+MEASURED, five hyperparameter settings each, on the same 8,000-row training set and 3,000-row test set:
+
+    GRADIENT-BOOSTED TREES                          accuracy    AUC
+    --------------------------------------------   ---------   ------
+    50 trees,  depth 3, lr 0.1                        0.9210   0.8829
+    200 trees, depth 3, lr 0.1                        0.9340   0.8825
+    200 trees, depth 5, lr 0.1                        0.9430   0.8908
+    500 trees, depth 3, lr 0.05                       0.9343   0.8814
+    100 trees, depth 2, lr 0.3                        0.9217   0.8930
+                                        SPREAD:   2.2 points   1.2 points
+
+    MLP (all on standardised features)              accuracy    AUC
+    --------------------------------------------   ---------   ------
+    hidden (64,64),   300 epochs, lr 0.001            0.8443   0.8225
+    hidden (16,),     300 epochs, lr 0.001            0.9060   0.8760
+    hidden (256,256), 300 epochs, lr 0.001            0.8560   0.8165
+    hidden (64,64),   300 epochs, lr 0.1              0.8857   0.7431
+    hidden (64,64),    50 epochs, lr 0.001            0.8800   0.8584
+                                        SPREAD:   6.2 points  13.3 points
+
+Every tree configuration - including deliberately silly ones like 100 stumps at a learning rate of
+0.3 - landed between 0.9210 and 0.9430. You cannot really get this wrong. The network's five
+configurations spanned 0.8443 to 0.9060 on accuracy and 0.7431 to 0.8760 on AUC, and NONE of them
+reached the worst tree.
+
+AND THE RESULT THAT CONTRADICTS THE FOLKLORE: the BEST network was the SMALLEST one. A single hidden
+layer of 16 units scored 0.9060/0.8760, beating both the 64-64 (0.8443/0.8225) and the 256-256
+(0.8560/0.8165). "Just make it bigger" made it WORSE, twice. On a small tabular dataset the capacity
+is not the bottleneck; the inductive bias is, and extra capacity is just extra ways to overfit 13
+noise columns.
+
+THE SECOND TRAP - "neural networks win once you have enough data". Partly true, and measurable:
+
+    train rows    GBT acc   GBT AUC   GBT s     MLP acc   MLP AUC   MLP s
+    ----------   --------   -------   ------   --------   -------   ------
+           500     0.9120    0.8762     0.58     0.8173    0.7566     0.32
+         2,000     0.9187    0.8827     0.75     0.8257    0.7947     1.29
+         8,000     0.9340    0.8825     1.23     0.8443    0.8225     5.18
+        20,000     0.9377    0.8902     2.17     0.8647    0.8434    14.68
+
+The gap DOES narrow - 9.5 accuracy points at 500 rows, 7.3 at 20,000 - so the "more data helps the
+network" claim is real. But look at the last column: the network's training time went 0.32 -> 14.68 s,
+a 46x increase, while the trees went 0.58 -> 2.17 s, 3.7x. The network is closing the gap by spending
+exponentially more compute, and at 40x the data it is still behind. Extrapolate honestly: you would
+need an enormous amount more data for the lines to cross, and by then the tree has been in production
+for a year.
+
+THE THIRD TRAP - reporting accuracy without a baseline. The MLP on raw features scored 0.4408. That
+sounds like "not great". It is in fact catastrophic: on the fixed 3,000-row test set used for the
+sweep above, predicting "no" for every single row scores 0.7917 - measured, printed before any model
+ran. The model was worse than a constant. Always print the majority-class baseline first.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what to actually reach for, and when the answer flips.
+
+REACH FOR GRADIENT-BOOSTED TREES WHEN:
+    - the data is tabular with meaningful, heterogeneous columns
+    - the signal involves thresholds, categories and interactions (i.e. almost all business data)
+    - the dataset is thousands to low millions of rows
+    - you need it working today, with little tuning. MEASURED: five arbitrary configurations all
+      within 2.2 accuracy points
+    - you need to explain predictions to a regulator, a doctor or a customer
+    - features are on wild scales or contain irrelevant columns. MEASURED: standardisation changed the
+      tree result by 0.0000, and 13 noise columns were simply never split on
+    The implementations: XGBoost, LightGBM (fastest, histogram-based, the same idea as the code here),
+    CatBoost (best native categorical handling).
+
+REACH FOR NEURAL NETWORKS WHEN:
+    - the data is unstructured: images, text, audio, video
+    - the structure is smooth or rotational rather than axis-aligned. MEASURED on dataset B: 0.6376 vs
+      0.5423 AUC, the network winning clearly
+    - you have very large datasets AND the compute to exploit them
+    - you need to fuse tabular data WITH text or images in one model - a tree cannot consume an
+      embedding sensibly, and this is the genuinely common real-world case for tabular deep learning
+    - you need transfer learning, or online/streaming updates, or a differentiable end-to-end pipeline
+    - the output is not a single number: sequences, images, embeddings
+
+THE TABULAR-DEEP-LEARNING FAMILY, which exists and is worth naming so you do not sound dismissive:
+    TabNet, FT-Transformer, SAINT, NODE, TabPFN. Every few years a paper claims to have beaten
+    gradient boosting on tables; the careful benchmark papers (Grinsztajn et al. 2022, Shwartz-Ziv and
+    Armon 2021) repeatedly find that boosted trees still win on average, and win by MUCH more once you
+    account for tuning budget. TabPFN is the genuinely interesting recent exception, and it works by
+    being pre-trained on synthetic tabular problems - it is transfer learning for tables.
+
+THE MIDDLE GROUND that gets used in practice:
+    - trees for the tabular columns, a network for the text/image columns, and stack or ensemble the
+      two. This is what most real systems with mixed data actually do.
+    - use a network to produce EMBEDDINGS for high-cardinality categoricals, then feed those into a
+      tree.
+    - ensemble a boosted tree with a network; they make different errors, and averaging often beats
+      both.
+
+THE DEEPER LESSON - the NO FREE LUNCH THEOREM. Averaged over all possible problems, every algorithm
+performs equally. A model is only "better" because its INDUCTIVE BIAS matches the structure of your
+data. Convolutions win on images because they assume locality and translation invariance, and images
+have both. Trees win on business tables because they assume axis-aligned thresholds matter, and
+business tables are full of them. The two measurements in this entry - 0.8945 vs 0.8296 on the
+threshold data, 0.5423 vs 0.6376 on the smooth data - are that theorem with numbers on it.""",
+
+    """6. HOW TO CODE IT - how to run this comparison yourself, which is a better answer than quoting a
+benchmark.
+
+BUILD A DATASET THAT IS ACTUALLY TABULAR - most synthetic benchmarks are not:
+
+  1. Give columns different SCALES. `age` in 18-80, `income` log-normal in the tens of thousands. If
+     every column is a standard normal you have quietly removed the thing that breaks neural networks.
+  2. Include a CATEGORICAL code that is not ordinal - `cat` in 0..9 where 3 is special and 4 is not.
+  3. Include NOISE columns. Thirteen of eighteen here. Real tables are mostly irrelevant columns.
+  4. Generate the label from THRESHOLDS AND INTERACTIONS:
+     `(age > 45) & (income > 60000) | (cat == 3) & (tenure < 12) | ...`
+  5. Flip 5% of labels. Without noise, both models saturate and the comparison says nothing.
+  6. Build a SECOND dataset with a smooth, rotated boundary - `sin(1.5 * X @ w) > 0`. If you only test
+     one structure you will draw a conclusion about models when the finding is about DATA.
+
+THE GRADIENT-BOOSTED TREES, histogram-style, which is what LightGBM does:
+
+  7. PRE-BIN every feature into 32 quantile bins once, up front. After that a split search is a
+     `np.bincount`, not a sort - this is the trick that makes boosting fast.
+  8. Initialise the prediction to the log-odds of the base rate.
+  9. Each round: compute the gradient `p - y` for the logistic loss, fit a depth-3 tree to it, and add
+     `learning_rate * tree` to the running prediction.
+ 10. To find a split: `np.bincount(bins, weights=g)` and `np.bincount(bins)` give the per-bin gradient
+     sums and counts; `np.cumsum` turns them into left/right sums for every candidate threshold at
+     once. The gain is `L^2/(nL+lambda) + R^2/(nR+lambda) - base`.
+ 11. Enforce a minimum count per side (10 here) or you will split on single noisy rows.
+
+THE MLP:
+
+ 12. He initialisation - `normal(0, sqrt(2/fan_in))` - because ReLU halves the variance at each layer.
+ 13. Adam, with bias correction. Plain SGD on unstandardised tabular data will not converge at all.
+ 14. STANDARDISE using the TRAINING mean and standard deviation, and apply the same numbers to the
+     test set. Computing them on the full dataset is leakage.
+
+MEASURE HONESTLY - this is the part that separates a real comparison from a rigged one:
+
+ 15. Print the MAJORITY-CLASS BASELINE first. 0.7917 here. A model below it is worse than a constant.
+ 16. Report accuracy AND AUC. Accuracy hides everything on imbalanced data.
+ 17. Report TRAINING TIME. It is half the practical argument, and it is free to record.
+ 18. Run BOTH models on raw AND standardised features. The 4x4 table is where the scale-invariance
+     result appears, and it appears as an exact tie for the trees.
+ 19. Sweep the training set size (500 / 2,000 / 8,000 / 20,000) with a FIXED test set, so the numbers
+     are comparable across rows.
+ 20. Sweep five hyperparameter settings per model and report the SPREAD. That spread is the "needs
+     less tuning" claim, quantified: 2.2 points versus 6.2.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Deep learning shines on UNSTRUCTURED data - images, text, audio - where it learns features
+automatically from huge datasets, and where the structure between inputs (adjacent pixels, adjacent
+words) is exactly what convolutions and attention exploit.
+
+Most business data is TABULAR: rows and columns of mixed types, often only thousands of rows, where
+the signal is thresholds and interactions - 'high value above this income', 'churn risk under this
+tenure'. That structure is precisely what a decision tree expresses natively. One split IS a
+threshold. A neural network has to approximate a sharp edge out of smooth activations, which is a much
+harder job for the same information.
+
+I ran the comparison rather than quoting it. On a realistic tabular dataset - mixed scales, a
+categorical code, thirteen noise columns, threshold-and-interaction labels - gradient-boosted trees
+scored 0.9333 accuracy and 0.8945 AUC in 1.09 seconds. An MLP scored 0.8433 and 0.8296 in 3.93
+seconds, and that was WITH standardised features. Without standardisation the network scored 0.4408 -
+worse than predicting 'no' for every row, which scores 0.7917. The trees scored identically to four
+decimal places with and without standardisation, because they are scale-invariant: a split is a
+split.
+
+Three practical advantages fall out of that. Trees needed no preprocessing. They trained 3.6x faster.
+And they needed no tuning - I tried five configurations and they all landed within 2.2 accuracy
+points, while the network's five spanned 6.2 points on accuracy and 13.3 on AUC. Interestingly the
+BEST network was the smallest one, a single layer of 16 units; making it bigger made it worse twice
+over, because on small tabular data the bottleneck is inductive bias, not capacity.
+
+The honest other side: I also built a dataset whose boundary is a smooth function of a rotated linear
+combination - no axis-aligned structure at all. There the trees collapsed to 0.5423 AUC, barely above
+chance, and the network won at 0.6376. So the finding isn't 'trees beat networks'. It's that trees
+match the structure of business data and networks match the structure of perceptual data.
+
+Which is the No Free Lunch theorem in practice: no single model is best for every problem, and a
+model is only better because its inductive bias matches your data. Match the tool to the data."
+
+THE ONE SENTENCE TO NOT FUMBLE: trees win on tables because tabular signal is axis-aligned thresholds
+and interactions, which a split expresses exactly - and they lose the moment the boundary is smooth
+and rotated, which is exactly the case measured.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    y = ((age>45)&(income>60000)) | ((cat==3)&(tenure<12)) | ((flag==1)&(income<20000)&(age<30))
+
+The label generator, and it is the most important line in the experiment. Every clause is a THRESHOLD
+combined with an AND - which is literally the shape of a path down a decision tree. `(age>45) &
+(income>60000)` is a depth-2 tree. If you generate labels from `X @ w > 0` instead, you have built a
+dataset that favours linear models and you will conclude something different.
+
+    y = np.where(flip, 1-y, y)          # 5% label noise
+
+Without noise both models reach ~1.0 and the comparison is meaningless. Real data has irreducible
+error and the whole question is which model handles it more gracefully.
+
+    edges = [np.quantile(X[:,j], np.linspace(0,1,self.bins+1)[1:-1]) for j in range(X.shape[1])]
+    B[:,j] = np.searchsorted(edges[j], X[:,j])
+
+Histogram binning, done ONCE. After this, every feature is an integer 0-31 and a split search costs a
+`bincount` rather than a sort. This is LightGBM's core trick, and it is why boosting is fast on
+millions of rows. Note that QUANTILE bins adapt to each column's distribution - which is another
+reason the trees do not care about income's log-normal scale.
+
+    sg = np.bincount(bj, weights=g[idx], minlength=self.bins)
+    sc = np.bincount(bj, minlength=self.bins).astype(float)
+    cg = np.cumsum(sg); cc = np.cumsum(sc)
+
+Per-bin gradient sums and counts, then cumulative sums. `cg[:-1]` is now "the gradient sum if I split
+after bin k" for EVERY k at once - all 31 candidate thresholds evaluated in vectorised numpy instead
+of a Python loop.
+
+    gain = np.where(ok, L**2/(Lc+1.0) + R**2/(Rc+1.0) - base, -1)
+
+The split-gain formula. Squared gradient sum over count is the reduction in loss from giving each side
+its own constant; the `+1.0` is L2 regularisation, which keeps a leaf built from three rows from
+producing a huge value. `ok` masks out splits that would leave fewer than 10 rows on a side.
+
+    p = 1/(1+np.exp(-F)); g = p-y
+
+The gradient of logistic loss with respect to the raw score, and it is beautifully simple: predicted
+probability minus label. Each new tree is fitted to THIS - the ensemble's current error - which is the
+whole idea of boosting.
+
+    F += self.lr * self._apply(B, t)
+
+Shrinkage. Adding only 10% of each tree means no single tree can dominate, and it is the single most
+effective regulariser in boosting.
+
+    self.W = [self.r.normal(0, np.sqrt(2/sizes[i]), ...) for i in ...]
+
+He initialisation for the MLP. The `2/fan_in` is specifically for ReLU, which zeroes half its inputs
+and so halves the variance at each layer.
+
+    mu, sd = Xtr.mean(0), Xtr.std(0)+1e-9
+    Xtrs, Xtes = (Xtr-mu)/sd, (Xte-mu)/sd
+
+Statistics from the TRAINING set only, applied to both. Using the full dataset's mean here is leakage
+- small here, fatal in a time-series problem. And this two-line block is worth 0.8433-0.4408 = 40.25
+accuracy points to the network and exactly 0.0000 to the trees.
+
+    o = np.argsort(p); r = np.empty(len(p)); r[o] = np.arange(1,len(p)+1)
+    return (r[y==1].sum() - n1*(n1+1)/2) / (n1*n0)
+
+AUC via the rank formula (the Mann-Whitney U identity) rather than by building an ROC curve: sum the
+ranks of the positives, subtract the minimum possible, divide by the maximum possible. O(n log n) and
+five lines.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the headline comparison. Model scores from the 8,000-row run (2,400 test rows); the
+baseline column uses the 0.7917 majority-class score measured on the fixed 3,000-row test set drawn
+from the same generator, so the "vs baseline" figures are approximate by a fraction of a point.
+
+    model                                    accuracy    AUC     train    vs baseline
+    -------------------------------------   ---------   ------   ------   -----------
+    baseline: always predict "no"              0.7917        -        -             -
+    GBT, raw features                          0.9333   0.8945   1.09 s      +14.2 pts
+    GBT, standardised features                 0.9333   0.8945   1.11 s      +14.2 pts
+    MLP, standardised features                 0.8433   0.8296   3.93 s       +5.2 pts
+    MLP, raw features                          0.4408   0.6872   4.07 s      -35.1 pts
+
+Read the two GBT rows first: 0.9333 and 0.9333, 0.8945 and 0.8945. Not "similar" - IDENTICAL. A tree
+split partitions rows by rank, and standardising is a monotone transformation, so it selects exactly
+the same rows at exactly the same places. Scale invariance is not an approximation for trees, it is
+exact.
+
+Then the two MLP rows: 0.8433 against 0.4408. The same architecture, the same epochs, the same seed.
+The only difference is dividing each column by its standard deviation. Income spans four orders of
+magnitude, so its gradients dominate every weight update and the network spends its capacity on one
+column.
+
+TRACE B - hyperparameter spread, five settings each.
+
+    GBT                          acc      MLP                            acc
+    -------------------------   ------   ---------------------------   ------
+    50 trees,  d3, lr 0.1       0.9210   (64,64),  300 ep, lr 0.001     0.8443
+    200 trees, d3, lr 0.1       0.9340   (16,),    300 ep, lr 0.001     0.9060   <- BEST, and SMALLEST
+    200 trees, d5, lr 0.1       0.9430   (256,256),300 ep, lr 0.001     0.8560
+    500 trees, d3, lr 0.05      0.9343   (64,64),  300 ep, lr 0.1       0.8857
+    100 trees, d2, lr 0.3       0.9217   (64,64),   50 ep, lr 0.001     0.8800
+    -------------------------   ------   ---------------------------   ------
+    min / max / spread    0.9210-0.9430 / 2.2 pts    0.8443-0.9060 / 6.2 pts
+    AUC spread                     1.2 pts                                13.3 pts
+
+The GBT column's WORST setting (0.9210, from 100 depth-2 stumps at a learning rate of 0.3 - a
+deliberately poor choice) still beats the MLP column's BEST (0.9060). And the MLP row to stare at is
+the second one: 16 hidden units in ONE layer outperformed 256-256 by 5 accuracy points. More capacity
+made it worse.
+
+TRACE C - training-set size sweep, fixed 3,000-row test set.
+
+    train rows   GBT acc   MLP acc   gap      GBT time   MLP time   MLP time growth
+    ----------   -------   -------   ------   --------   --------   ---------------
+           500    0.9120    0.8173   9.5pts     0.58 s     0.32 s              1.0x
+         2,000    0.9187    0.8257   9.3pts     0.75 s     1.29 s              4.0x
+         8,000    0.9340    0.8443   9.0pts     1.23 s     5.18 s             16.2x
+        20,000    0.9377    0.8647   7.3pts     2.17 s    14.68 s             45.9x
+
+Two trends, in opposite directions. The GAP narrows: 9.5 -> 7.3 points, so more data genuinely does
+help the network more than it helps the trees. And the COST explodes: the MLP's training time grew
+45.9x for 40x the data while the trees grew 3.7x, and the MLP was already SLOWER than the trees from
+2,000 rows onward. At 40x the data the network is still 7.3 points behind.
+
+TRACE D - the honest counterexample, dataset B: smooth rotated boundary,
+`sin(1.5 * X·w) + 0.5*sin(3*x0*x1) > 0`, 8 features, no noise columns, positive rate 0.51.
+
+    model                        accuracy    AUC      verdict
+    -------------------------   ---------   ------   -----------------------------
+    chance (positive rate)         0.5100        -    -
+    GBT, raw                       0.5288   0.5423    barely above chance
+    GBT, standardised              0.5288   0.5423    identical again, still bad
+    MLP, raw                       0.5863   0.6109    better
+    MLP, standardised              0.6075   0.6376    best
+
+The trees are still perfectly scale-invariant (0.5288 twice) - and it does not help them at all,
+because the problem is not scale, it is that a diagonal boundary has to be built out of axis-aligned
+steps and a depth-3 tree only has three of them. The network's advantage here is 9.5 AUC points, which
+is very close to the trees' 6.5-point advantage on dataset A, in the other direction.
+
+Two datasets, two opposite winners, one algorithm pair. That symmetry IS the answer to the question.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, for n rows, d features, T trees of depth k, and a network with P parameters over E epochs:
+
+    histogram GBT training      O(T * k * d * bins) after an O(n d) binning pass - notably, the split
+                                search does not depend on n once binned. MEASURED 1.09 s for
+                                200 x depth 3 on 8,000 x 18
+    GBT prediction              O(T * k) - a few hundred comparisons. Milliseconds, single-threaded
+    MLP training                O(E * n * P). MEASURED 3.93 s, and growing 45.9x when data grew 40x
+    MLP prediction              O(P) - two matrix multiplies
+    GBT preprocessing           NONE. MEASURED: standardisation changed the result by exactly 0.0000
+    MLP preprocessing           MANDATORY. MEASURED: worth 40.25 accuracy points
+    GBT tuning budget           MEASURED spread over five arbitrary settings: 2.2 accuracy points
+    MLP tuning budget           MEASURED spread over five settings: 6.2 accuracy points, 13.3 AUC
+
+THE MISTAKES:
+
+    - Reporting accuracy with no baseline. 0.4408 sounds mediocre; the majority-class baseline was
+      0.7917, so the model was far worse than a constant.
+    - Feeding raw, unscaled features to a neural network. MEASURED: 0.8433 -> 0.4408.
+    - "Just make the network bigger." MEASURED: a single hidden layer of 16 units scored 0.9060,
+      64-64 scored 0.8443, and 256-256 scored 0.8560. The smallest network won. Capacity was not the
+      bottleneck; inductive bias was.
+    - Concluding "trees beat neural networks". They beat them on THIS structure. On the smooth rotated
+      boundary the trees scored 0.5423 AUC against the network's 0.6376.
+    - Benchmarking on a dataset where every column is a standard normal. You have removed scale
+      differences, categoricals and noise columns - the three things that make tabular data tabular.
+    - Ignoring training time and tuning effort. They are most of the practical argument: 3.6x faster
+      AND a 2.2-point spread instead of 6.2.
+    - Standardising using statistics from the whole dataset. Leakage. Fit on train, apply to test.
+    - Dismissing tabular deep learning entirely. It is the right answer when you must fuse a table
+      with text or images in one model, and TabPFN is a genuinely interesting recent development.
+    - Forgetting interpretability. SHAP values on a boosted tree are accepted in credit and clinical
+      settings; a gradient saliency map on an MLP generally is not.
+
+THE TAKEAWAY. This is the No Free Lunch theorem with numbers on it. A model is not better in the
+abstract - it is better when its INDUCTIVE BIAS matches the structure of your data. Business tables
+are built from thresholds, categories and interactions, which is exactly what a split expresses, so
+boosted trees win by 6.5 AUC points while training 3.6x faster, needing no preprocessing, and being
+almost impossible to misconfigure. Change the structure to a smooth rotated boundary and the same two
+models swap places by 9.5 AUC points. Match the tool to the data, and be able to say WHICH property of
+the data you matched.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
