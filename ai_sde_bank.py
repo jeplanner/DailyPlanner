@@ -261508,6 +261508,1077 @@ selection deterministic and auditable and give the LLM the item generation, expl
 free-text grading; and note honestly that the choice of scheduling policy is the one thing here
 a simulation could not settle - that needs real students.""",
 ]
+_EX_P1AO["RoPE scaling and extending context length"] = [
+    """1. THE GOAL - a model trained on 2,048 tokens, made to work on 32,000.
+
+Attention has no notion of order. Without position information "the dog bit the man" and "the
+man bit the dog" are the same set of tokens. ROTARY POSITION EMBEDDING (RoPE) supplies it by
+ROTATING each query and key vector by an angle proportional to its position.
+
+The elegant consequence: when a query at position m meets a key at position n, the rotations
+partially cancel and what survives depends only on m - n. POSITION BECOMES RELATIVE FOR FREE.
+
+MEASURED, the attention contribution between two positions:
+
+  m      n     m-n    score
+  10     5      5    0.734499
+  100    95     5    0.734499
+  1000   995    5    0.734499
+  3000   2995   5    0.734499
+
+Identical to six decimal places. The model learns "five tokens back", not "position 1000".
+
+SO WHY CANNOT IT JUST KEEP GOING? The formula is defined for any distance. Measured, the score
+at distance 8,192 on a model trained to 2,048 is 0.078562 - a perfectly ordinary number, no
+overflow, no discontinuity. THE MATHS DOES NOT BREAK. What breaks is that the model has never
+seen that combination of rotation angles and has no idea what it means.""",
+
+    """2. THE INTUITION - each dimension pair is a clock running at a different speed.
+
+RoPE assigns each pair of dimensions its own frequency, from fast to very slow.
+
+MEASURED, for a 64-dimensional head with the standard base of 10,000:
+
+  dim pair    theta        wavelength (tokens)    full rotations in 4,096 tokens
+  ------------------------------------------------------------------------------
+       0      1.00e+00              6.3                      651.90
+       4      3.16e-01             19.9                      206.15
+       8      1.00e-01             62.8                       65.19
+      16      1.00e-02            628.3                        6.52
+      24      1.00e-03          6,283.2                        0.65
+      31      1.33e-04         47,117.2                        0.09
+
+THE LOW DIMENSIONS ARE A FAST CLOCK - a full rotation every 6.3 tokens - so they encode fine
+local order: is this word before or after that one. THE HIGH DIMENSIONS ARE A SLOW CLOCK, one
+rotation every 47,000 tokens, so within any real sequence they barely move and encode coarse
+"roughly where in the document".
+
+Together they are a positional odometer: the fast wheels distinguish neighbours, the slow
+wheels distinguish chapters.
+
+AND HERE IS WHY EXTENSION IS DELICATE. The slow dimensions never complete a rotation during
+training - dim 31 gets through 8.7% of one turn in 4,096 tokens - so the model has only ever
+seen a narrow arc of their possible values. Push the sequence longer and those dimensions
+enter angles that never occurred in training. THE FAST DIMENSIONS ARE FINE; THE SLOW ONES ARE
+EXTRAPOLATING.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POSITIONAL ENCODING - anything that tells attention where a token sits. Absolute (add a
+position vector), relative (bias by distance), or rotary.
+
+RoPE - Rotary Position Embedding. Rotates queries and keys by an angle proportional to
+position, so their dot product depends on the DIFFERENCE of positions.
+
+THETA / FREQUENCY - the rotation rate for one dimension pair, base^(-2i/d).
+
+BASE - the constant setting how fast frequencies decay across dimensions. 10,000 is standard,
+and raising it is one of the extension methods.
+
+WAVELENGTH - how many tokens for one full rotation of a dimension pair. Measured, 6.3 to
+47,117 across a 64-dim head.
+
+EXTRAPOLATION - running at positions beyond training. Fails, and section 4 says how.
+
+POSITION INTERPOLATION (PI) - divide every position by a scale factor, so position 8,000
+becomes 2,000. Everything stays inside the trained range, and the cost is resolution.
+
+NTK-AWARE SCALING - raise the BASE instead, which slows the slow dimensions while barely
+touching the fast ones. Preserves local resolution better than PI.
+
+YaRN - a refinement that interpolates the slow dimensions, extrapolates the fast ones, and
+adjusts attention temperature. The strongest of the training-free methods.
+
+CONTINUED PRETRAINING - fine-tuning on long sequences after rescaling. What all the serious
+long-context models actually do.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - position interpolation destroys the resolution it
+depends on.
+
+PI is the simplest fix: to go from 2,048 to 8,192, divide every position by 4. Now the model
+only ever sees angles it saw in training. Nothing extrapolates.
+
+The price is that adjacent tokens are now four times closer together in angle - and the
+measurement shows how fast that becomes fatal.
+
+MEASURED, the attention-score GAP between distance 1 and distance 2, as the scale factor rises:
+
+  scale   score at dist 1   score at dist 2      gap      % of original gap
+  ------------------------------------------------------------------------------
+     1        0.966151          0.884496      0.081655           100.0%
+     2        0.991193          0.966151      0.025042            30.7%
+     4        0.997776          0.991193      0.006583             8.1%
+     8        0.999443          0.997776      0.001667             2.0%
+    16        0.999861          0.999443      0.000418             0.5%
+    32        0.999965          0.999861      0.000105             0.1%
+
+AT 4x, TWO ADJACENT TOKENS ARE 8.1% AS DISTINGUISHABLE AS THEY WERE. At 32x, 0.1%. The model
+can still tell a chapter from a chapter and can barely tell one word from the next - which is
+exactly backwards from what language needs.
+
+THIS IS WHY PI ALONE PRODUCES A MODEL THAT PASSES A NEEDLE-IN-A-HAYSTACK TEST AND WRITES
+BADLY. Retrieving one fact from far away needs coarse position; producing fluent text needs
+fine local order.
+
+NTK-AWARE SCALING ATTACKS THE SAME PROBLEM FROM THE OTHER END. Measured, extending 2,048 to
+8,192:
+
+  distance   unchanged    PI (linear)    NTK (higher base)
+       1      0.966151      0.997776         0.969555
+       8      0.700435      0.884496         0.736189
+     512      0.185369      0.283853         0.391352
+
+At distance 1 the NTK value (0.969555) is almost unchanged from the original (0.966151) while
+PI has flattened it to 0.997776. NTK barely touches the fast local dimensions and slows only
+the slow ones, which is why it preserves local behaviour - and it is still not free, which is
+why the serious answer is to fine-tune afterwards.""",
+
+    """5. THE METHODS, IN INCREASING COST ORDER.
+
+DO NOTHING. Run past the trained length and accept the degradation. Measured, the score
+function is smooth and finite out to 16,384 - it does not error, it just produces angles the
+model has never interpreted. Quality falls off, sometimes gradually and sometimes off a cliff.
+
+POSITION INTERPOLATION (PI). Divide positions by the scale factor. Training-free, one line.
+Measured cost: adjacent-token resolution down to 8.1% of original at 4x.
+
+NTK-AWARE SCALING. Raise the base instead of scaling positions. Measured, it keeps distance-1
+scores at 0.969555 against the original 0.966151, where PI moves them to 0.997776. Also
+training-free, and strictly better than PI at the same extension in the local range.
+
+YaRN. Treat dimensions differently by wavelength: interpolate the slow ones (which would
+otherwise extrapolate into unseen angles) and leave the fast ones alone (which are fine
+because they complete many rotations even in short training sequences). Plus an attention
+temperature correction. The best training-free option and the one worth naming in an
+interview.
+
+CONTINUED PRETRAINING AFTER RESCALING. Apply PI or NTK, then fine-tune on long documents for a
+small number of steps. THIS IS WHAT EVERY PRODUCTION LONG-CONTEXT MODEL DOES. The rescaling
+puts the angles in a sane range and the fine-tuning teaches the model what the new geometry
+means. It costs GPU time and it is the only method that reliably works at large factors.
+
+AND THE ONE THAT IS NOT A ROPE METHOD AT ALL: DON'T. Retrieval over a 32k document usually
+beats stuffing it into a 32k window - it is cheaper, faster, and the model attends to five
+relevant chunks instead of 32,000 tokens of mostly noise. Check whether you need long context
+before paying for it.""",
+
+    """6. HOW TO EXTEND A CONTEXT WINDOW - numbered steps.
+
+STEP 1. ASK WHETHER YOU NEED TO. Retrieval over the document is usually better and always
+cheaper. Long context is for tasks that genuinely need global structure - whole-codebase
+reasoning, long-document summarisation - not for "we have a lot of text".
+
+STEP 2. COST THE ATTENTION. Attention is quadratic in sequence length, so 4x the context is
+16x the attention compute, and the KV cache grows linearly - which is usually the binding
+constraint on how many concurrent requests fit.
+
+STEP 3. PICK THE SCALE FACTOR from the target length, and be aware of what it costs. Measured,
+adjacent-token resolution falls to 8.1% at 4x and 0.5% at 16x under PI.
+
+STEP 4. USE YaRN OR NTK RATHER THAN PLAIN PI if you are not going to fine-tune. Measured, NTK
+preserves distance-1 scores almost exactly where PI flattens them.
+
+STEP 5. FINE-TUNE AFTER RESCALING for anything beyond about 4x. A few hundred steps on long
+documents is usually enough and it is the difference between a model that works and one that
+retrieves.
+
+STEP 6. EVALUATE ON MORE THAN NEEDLE-IN-A-HAYSTACK. That test measures coarse retrieval, which
+is exactly what survives PI. Also measure perplexity across the whole window, and a task
+requiring fine local order - code completion, or summarisation graded for coherence.
+
+STEP 7. CHECK THE MIDDLE. Long-context models characteristically degrade in the middle of the
+window rather than at the end. Plot accuracy against the position of the required information.
+
+STEP 8. VERIFY THE INFERENCE STACK APPLIES THE SAME SCALING as training. A mismatch between
+the config's rope_scaling and what the serving code does produces a model that is subtly
+wrong everywhere with no error.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine every word carries a set of clock hands - some sweeping round every six words, some
+every twenty, some so slowly they take fifty thousand words to complete a turn. To work out
+how far apart two words are, you compare their hands. The fast hands tell you whether they are
+neighbours; the slow hands tell you whether they are in the same chapter.
+
+The lovely part is that comparing the hands only ever reveals the DIFFERENCE between two
+positions. Measured, two words five apart give exactly the same reading whether they are at the
+start of the document or three thousand words in.
+
+The trouble comes when the document is longer than any the model was trained on. The fast hands
+are fine - they have gone round hundreds of times and every position they can show has been
+seen. The slow hands have not. Measured, the slowest hand gets through nine percent of a single
+turn in four thousand words, so past that it is pointing somewhere the model has simply never
+encountered. Nothing breaks mathematically; the reading is a perfectly ordinary number. The
+model just does not know what it means.
+
+The obvious fix is to slow all the clocks down proportionally, so a document four times longer
+produces the same hand positions as before. It works, and it costs the thing that mattered most.
+
+Measured: with the clocks slowed four-fold, two adjacent words now give readings 8% as different
+as they used to be. Slow them thirty-two-fold and it is 0.1%. The model can still tell chapter
+from chapter and has nearly lost the ability to tell one word from the next - which is why a
+model extended this way passes a test that asks it to find one buried fact and writes noticeably
+worse prose.
+
+The better fix slows only the slow hands and leaves the fast ones alone, since the fast ones
+were never the problem. And the fix that actually works is to slow the clocks and then let the
+model practise reading them again.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def rope_frequencies(dim, base=10000.0, scale=1.0, ntk_factor=1.0):
+      base = base * ntk_factor                       # NTK-aware: change the BASE
+      return [ (base ** (-2*i/dim)) / scale          # PI: divide the POSITION
+               for i in range(dim // 2) ]
+
+  def apply_rope(x, pos, freqs):
+      out = []
+      for i, theta in enumerate(freqs):
+          angle = pos * theta
+          a, b = x[2*i], x[2*i+1]
+          out += [ a*cos(angle) - b*sin(angle),
+                   a*sin(angle) + b*cos(angle) ]     # a 2-D rotation
+      return out
+
+LINE BY LINE.
+
+  base ** (-2*i/dim)
+The frequency ladder. i=0 gives base^0 = 1.0 (one radian per token, a 6.3-token wavelength) and
+i=dim/2-1 gives base^-1 ≈ 0.0001 (a 47,000-token wavelength). MEASURED ACROSS A 64-DIM HEAD,
+that is the 6.3-to-47,117 spread in section 2.
+
+  / scale
+POSITION INTERPOLATION, in one division. Dividing the frequency is identical to dividing the
+position - both mean a token at 8,000 produces the angles a token at 2,000 used to. It is one
+character of code and it is the method whose cost section 4 measures.
+
+  base = base * ntk_factor
+NTK-AWARE SCALING, and note it is a DIFFERENT KNOB. Raising the base makes the frequency decay
+steeper, so the already-slow high dimensions slow further while the fast low dimensions barely
+move - because base^0 is 1.0 regardless of the base. THAT ASYMMETRY IS THE ENTIRE POINT, and it
+is why NTK preserves local resolution where PI does not.
+
+  a*cos(angle) - b*sin(angle) ; a*sin(angle) + b*cos(angle)
+A standard 2-D rotation applied to each consecutive PAIR of dimensions. No parameters are
+learned here - RoPE has no trainable weights at all, which is why rescaling it is possible
+without retraining in the first place.
+
+  angle = pos * theta
+The angle grows LINEARLY with position and is never wrapped. At position 32,000 with theta=1.0
+this is 32,000 radians - about 5,000 full turns. That is fine numerically; the issue is
+purely which arcs the model has been trained to interpret.
+
+  WHAT IS MISSING: YaRN, which would apply `scale` only to the dimensions whose wavelength
+exceeds the training length, and leave the fast dimensions untouched - a per-dimension decision
+rather than one global factor.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the relative property, verified.
+Score between positions m and n, averaged over 32 dimension pairs:
+
+  (10, 5)      m-n = 5    0.734499
+  (100, 95)    m-n = 5    0.734499
+  (1000, 995)  m-n = 5    0.734499
+  (3000, 2995) m-n = 5    0.734499
+
+Four positions spanning three orders of magnitude, one number. The rotations cancel exactly and
+only the difference survives - which is why RoPE gives relative position without any relative
+position table.
+
+TRACE B - what extrapolation actually looks like. Model trained to 2,048:
+
+  distance      score      trained?
+       1      0.966151       yes
+     128      0.283853       yes
+    2048     -0.039701       yes
+    2049     -0.074621       NO
+    4096      0.003497       NO
+    8192      0.078562       NO
+   16384     -0.286502       NO
+
+Nothing about 2,049 is numerically special - the function is continuous across the boundary.
+BUT NOTICE THE VALUES WANDER: 0.0035 at 4,096, then 0.0786 at 8,192, then -0.2865 at 16,384.
+Beyond the training length the score stops decaying monotonically with distance and starts
+oscillating, because the slow dimensions have entered arcs they never occupied. A token 16,000
+away can score MORE strongly than one 4,000 away.
+
+TRACE C - the resolution cost of PI, the number that decides everything.
+
+  scale 1:  gap between distance 1 and 2 = 0.081655   (100.0%)
+  scale 4:                                 0.006583   (  8.1%)
+  scale 32:                                0.000105   (  0.1%)
+
+At 4x, the model must distinguish adjacent tokens using a signal one-twelfth the size it was
+trained on. This is not a rounding issue - it is below the noise floor of the attention
+softmax.
+
+TRACE D - NTK against PI, at the same 4x extension.
+
+  distance    original    PI          NTK
+       1      0.966151    0.997776    0.969555
+       8      0.700435    0.884496    0.736189
+     512      0.185369    0.283853    0.391352
+
+READ THE DISTANCE-1 ROW. NTK's 0.969555 is within 0.004 of the original 0.966151; PI's 0.997776
+is 0.032 away and pressed hard against the 1.0 ceiling. NTK bought its extension almost
+entirely from the slow dimensions, which is exactly where the extension was needed.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. RoPE itself is free - no parameters, one rotation per dimension pair, applied to
+queries and keys only. The costs are all downstream of the longer context it enables:
+ATTENTION IS QUADRATIC, so 4x the window is 16x the attention compute; the KV CACHE IS LINEAR
+in length and is usually what limits how many concurrent requests a GPU can hold; and continued
+pretraining after rescaling is a real fine-tuning run. Training-free methods cost nothing at
+all, which is exactly why they are attempted first and why their quality cost has to be
+measured rather than assumed.
+
+THE #1 MISTAKE: evaluating an extended model only on needle-in-a-haystack. That test measures
+coarse retrieval, which is precisely what survives position interpolation. Measured, PI leaves
+adjacent-token resolution at 8.1% of original at 4x - so the model can find a buried fact and
+has lost the fine local ordering that fluent generation depends on.
+
+THE #2 MISTAKE: assuming the maths breaks past the training length. It does not - measured,
+0.078562 at distance 8,192, a perfectly ordinary number. The failure is that the model has never
+interpreted those angles, and the symptom is scores that oscillate with distance instead of
+decaying.
+
+THE #3 MISTAKE: plain PI at a large factor with no fine-tuning. Measured, 0.5% resolution at
+16x.
+
+THE #4 MISTAKE: using PI when NTK or YaRN is available for the same zero cost.
+
+THE #5 MISTAKE: a mismatch between the training-time rope_scaling config and what the serving
+stack applies. Silently wrong everywhere.
+
+THE #6 MISTAKE: extending the window instead of retrieving. Cheaper, faster, and usually better.
+
+THE #7 MISTAKE: not measuring accuracy against POSITION within the window - long-context models
+characteristically fail in the middle.
+
+THE TAKEAWAY: RoPE rotates queries and keys by an angle proportional to position so their dot
+product depends only on the DIFFERENCE - measured identical to six decimals for the same
+distance at positions 10 and 3,000 - with each dimension pair running at its own speed, from a
+6.3-token wavelength to a 47,000-token one; extension fails not because the maths breaks (the
+score at distance 8,192 is an unremarkable 0.078562) but because the SLOW dimensions never
+completed a rotation in training and are extrapolating into unseen arcs, which is why the score
+starts oscillating with distance instead of decaying; position interpolation avoids that by
+squashing every position into the trained range and pays for it in local resolution - measured,
+the attention gap between adjacent tokens falls to 8.1% of its original size at 4x and 0.1% at
+32x - so NTK-aware scaling, which slows only the slow dimensions and leaves distance-1 scores
+essentially unchanged, is strictly better for free, and anything beyond about 4x wants continued
+pretraining rather than a rescaling alone.""",
+]
+
+_EX_P1AO["Speculative decoding (faster LLM generation)"] = [
+    """1. THE GOAL - generate several tokens for the price of one forward pass.
+
+Autoregressive generation is sequential by definition: token 51 needs token 50. Each token is
+one full pass through the model, and a large model's pass is dominated not by arithmetic but by
+READING ITS OWN WEIGHTS OUT OF MEMORY. Whether you push one token through or twenty, the same
+weights are read.
+
+SPECULATIVE DECODING exploits exactly that. A small fast DRAFT model proposes the next k
+tokens. The large TARGET model then checks all k IN A SINGLE PASS, because verifying a sequence
+you already have is parallel even though generating it was not. Every token the target agrees
+with is kept.
+
+CRUCIALLY IT IS NOT AN APPROXIMATION. The acceptance test is constructed so the accepted tokens
+are distributed exactly as the target model alone would have produced them. Same output
+distribution, fewer target passes.
+
+MEASURED, expected tokens produced per target-model pass:
+
+  accept rate    k=1     k=2     k=4     k=8     k=16
+  ------------------------------------------------------
+     0.50        1.50    1.75    1.94    2.00    2.00
+     0.70        1.70    2.19    2.77    3.20    3.33
+     0.90        1.90    2.71    4.10    6.13    8.33
+
+At a 90% acceptance rate and 8 speculative tokens, one target pass yields 6.13 tokens.""",
+
+    """2. THE INTUITION - the acceptance rate governs everything, and it compounds badly.
+
+If the draft model's token is accepted with probability alpha, then the chance that all k are
+accepted is alpha^k. The expected number kept per round is a geometric sum:
+
+  E[tokens] = (1 - alpha^(k+1)) / (1 - alpha)
+
+READ WHAT THAT MEANS FROM THE TABLE. At alpha = 0.5, going from k=8 to k=16 buys NOTHING - 2.00
+against 2.00 - because the chance of getting past the eighth token is already negligible. At
+alpha = 0.9 the same change takes you from 6.13 to 8.33.
+
+THE CEILING IS 1/(1-alpha), and it is reached quickly:
+
+  alpha 0.5 -> ceiling  2.0 tokens per pass
+  alpha 0.7 -> ceiling  3.3
+  alpha 0.9 -> ceiling 10.0
+  alpha 0.95 -> ceiling 20.0
+
+A DOUBLING OF THE ACCEPTANCE RATE FROM 0.45 TO 0.9 IS ROUGHLY A FIVEFOLD CHANGE IN THE CEILING.
+Everything about tuning this technique is really about raising alpha - a better draft model,
+a draft trained on the target's outputs, or drafting only where the target is predictable.
+
+AND SPECULATING TOO FAR IS ACTIVELY WASTEFUL, because every proposed token costs draft compute
+whether or not it survives. Section 4 is where that bites.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DRAFT MODEL - the small fast model proposing tokens. Typically 10-50x smaller than the target.
+
+TARGET MODEL - the large model whose output distribution must be preserved exactly.
+
+GAMMA / k - how many tokens the draft proposes per round. The main tuning parameter.
+
+ACCEPTANCE RATE (alpha) - the probability a proposed token survives verification. A property of
+how well the draft matches the target ON YOUR TRAFFIC, not a published number.
+
+VERIFICATION - one target forward pass over the prompt plus all k drafted tokens, producing the
+target's distribution at every one of those positions at once.
+
+REJECTION SAMPLING - the acceptance rule. Accept the draft token with probability min(1, p_target
+/ p_draft); on rejection, sample from the adjusted residual distribution. THIS IS WHAT MAKES THE
+OUTPUT EXACT.
+
+BONUS TOKEN - when all k are accepted, the target's own prediction at the last position is free,
+so a successful round yields k+1 tokens. That is why the formula has (k+1) in it.
+
+MEMORY BOUND - the regime where a forward pass costs weight-reading, not arithmetic. Why
+verifying k tokens costs about the same as verifying one.
+
+MEDUSA / EAGLE / LOOKAHEAD - self-speculation: extra heads on the target model predict several
+tokens ahead, removing the separate draft model entirely.
+
+N-GRAM DRAFTING - propose tokens by copying from the prompt. Free, and excellent for
+summarisation or code editing where the output repeats the input.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the draft model is not free, and the optimum moves.
+
+Every drafted token costs a draft forward pass, accepted or not. So the real speedup is expected
+tokens divided by total cost, not expected tokens alone.
+
+MEASURED, with the draft costing 5% of a target pass per token, sweeping k for each acceptance
+rate and keeping the best:
+
+  accept   optimal k   tokens/step   cost/step   SPEEDUP
+  --------------------------------------------------------
+    0.50        4          1.94        1.20       1.61x
+    0.70        6          3.06        1.30       2.35x
+    0.80        8          4.33        1.40       3.09x
+    0.90       12          7.46        1.60       4.66x
+
+THE OPTIMAL k RISES WITH THE ACCEPTANCE RATE. This is the opposite of most people's instinct - a
+WEAK draft model should propose FEWER tokens, because its later proposals are almost certainly
+rejected and you paid for them anyway.
+
+AND HERE IS WHERE IT STOPS WORKING ALTOGETHER. Sweeping the draft's relative cost:
+
+  accept   draft cost   best k   speedup
+  --------------------------------------------
+    0.30       0.05        2      1.26x
+    0.30       0.20        1      1.08x
+    0.30       0.50        1      0.87x     <- SLOWER than not doing it
+    0.50       0.50        1      1.00x     <- exactly break-even
+    0.70       0.50        1      1.13x
+    0.90       0.50        3      1.38x
+
+A DRAFT MODEL COSTING HALF THE TARGET IS WORTHLESS AT EVERY ACCEPTANCE RATE TESTED, and at a
+30% acceptance rate it is a 13% SLOWDOWN. The technique needs a draft that is genuinely cheap
+AND genuinely aligned, and a draft that is merely cheap is not enough.
+
+THE OTHER HALF OF THE TRAP, AND IT IS THE ONE THAT DECIDES DEPLOYMENTS: SPECULATIVE DECODING
+SPENDS EXTRA FLOPS TO BUY LOWER LATENCY. On a server already running large batches, the GPU has
+no spare capacity, the extra draft and verification work displaces real work, and THROUGHPUT
+GOES DOWN. It is a single-stream latency optimisation, not a throughput one.""",
+
+    """5. THE VARIANTS, AND WHEN EACH IS RIGHT.
+
+A SEPARATE SMALL DRAFT MODEL. The original form. Needs a small model from the same family and
+tokeniser - a 1B drafting for a 70B. Works well, and requires you to serve and update two
+models.
+
+DRAFT MODEL FINE-TUNED ON THE TARGET'S OUTPUTS. The single most effective improvement, because
+it directly raises alpha - and alpha's ceiling is 1/(1-alpha), so moving 0.6 to 0.8 takes the
+ceiling from 2.5 to 5.0. Distil the target into the draft on your own traffic.
+
+N-GRAM / PROMPT-LOOKUP DRAFTING. Propose the continuation by matching the recent tokens against
+the PROMPT and copying what followed there. Costs essentially nothing - no second model at all -
+and the acceptance rate is very high on tasks where the output quotes the input: summarisation,
+translation with terminology, code editing where most of the file is unchanged. NEGLIGIBLE
+BENEFIT ON FREE-FORM GENERATION.
+
+MEDUSA / EAGLE (self-speculation). Attach extra prediction heads to the target model so it
+proposes its own next few tokens. No separate model to serve, and drafting is nearly free
+because the heads reuse the target's own hidden state. This is where the field has largely
+moved.
+
+TREE-BASED / MULTI-CANDIDATE SPECULATION. Instead of one linear guess of k tokens, propose a
+TREE of alternatives and verify them all in the same pass. Raises the effective acceptance rate
+because a rejection at position 2 can fall through to a sibling rather than discarding
+everything after it.
+
+AND THE ALTERNATIVE THAT IS NOT SPECULATION AT ALL: if you need THROUGHPUT rather than latency,
+increase the batch size. Larger batches amortise the same weight reads across more sequences and
+are strictly better on a busy server, where speculative decoding is a net loss.""",
+
+    """6. HOW TO DECIDE - numbered steps.
+
+STEP 1. ASK WHETHER YOU NEED LATENCY OR THROUGHPUT. If the server is saturated, stop here -
+speculative decoding will make throughput worse. It pays for interactive single-stream
+generation with spare GPU capacity.
+
+STEP 2. MEASURE YOUR ACCEPTANCE RATE ON YOUR OWN TRAFFIC. It is not a published constant; it
+depends on the draft, the target, the domain and the sampling temperature. Everything below
+depends on this number.
+
+STEP 3. COMPUTE THE CEILING, 1/(1-alpha). If alpha is 0.5 the best you can ever get is 2.0
+tokens per pass before draft costs. That tells you immediately whether the engineering is worth
+it.
+
+STEP 4. MEASURE THE DRAFT'S RELATIVE COST. Measured, at 0.5 it is worthless at every acceptance
+rate; at 0.05 it delivers 1.6x to 4.7x.
+
+STEP 5. SWEEP k AND KEEP THE BEST. Measured, the optimum is 4 at alpha=0.5 and 12 at alpha=0.9.
+Do not copy a k from a paper whose acceptance rate was different from yours.
+
+STEP 6. TRY N-GRAM DRAFTING FIRST IF YOUR OUTPUT QUOTES YOUR INPUT. It costs nothing, needs no
+second model, and on summarisation or code editing it often beats a real draft model.
+
+STEP 7. IF YOU KEEP A DRAFT MODEL, FINE-TUNE IT ON TARGET OUTPUTS. It attacks alpha, and alpha
+is the term with the leverage.
+
+STEP 8. VERIFY THE OUTPUT DISTRIBUTION IS UNCHANGED. Correctly implemented, speculative decoding
+is exact; a subtly wrong rejection rule produces plausible text with a shifted distribution and
+no error anywhere. Compare token distributions against the target alone at temperature 1.
+
+STEP 9. WATCH THE VARIANCE, not just the mean. Per-token latency becomes bursty - several tokens
+arrive at once, then a pause - which changes how streaming output feels even when the average
+improves.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A senior editor writes very good prose, one word at a time, and each word takes a long while -
+not because the thinking is hard but because before writing anything at all she has to page
+through an enormous reference library. Whether she is producing one word or twenty, she reads
+the same shelves.
+
+So a junior writer sits beside her. The junior is fast and reasonably good, and guesses the next
+eight words. The senior then reads all eight AT ONCE - which costs her one trip to the library
+rather than eight - and marks the point where she would have written something different.
+Everything before that point stands, exactly as if she had written it herself.
+
+That last part matters: this is not an approximation. The rule for accepting the junior's words
+is arranged so the finished text is indistinguishable from what the senior would have produced
+alone.
+
+How much this helps depends almost entirely on how often the junior guesses right. Measured, if
+the junior is right 90% of the time, eight guesses yield about six usable words per library trip.
+If she is right half the time, eight guesses yield two - and asking for sixteen instead of eight
+yields exactly the same two, because nobody ever gets past the eighth word anyway.
+
+Two things spoil it.
+
+The junior is not free. Every guess costs something even when it is thrown away. Measured, if
+the junior costs half what the senior does, the whole arrangement is worthless at every skill
+level tested - and if she is also only right 30% of the time, the pair is 13% SLOWER than the
+senior working alone.
+
+And it only helps when the senior is otherwise idle. If she already has ten manuscripts on the
+go, her time is fully used, and adding a junior who generates work to be checked means less
+gets finished, not more. This is a trick for making ONE document appear faster, not for getting
+through more documents.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def speculative_step(prefix, draft, target, k):
+      # 1. draft proposes k tokens, one cheap pass each
+      proposed, q = [], []
+      ctx = prefix
+      for _ in range(k):
+          dist = draft(ctx)
+          t = sample(dist)
+          proposed.append(t); q.append(dist[t]); ctx = ctx + [t]
+
+      # 2. ONE target pass scores every proposed position at once
+      p = target(prefix, proposed)          # p[i] = target's prob of proposed[i]
+
+      # 3. accept or reject, in order
+      out = []
+      for i, t in enumerate(proposed):
+          if random() < min(1.0, p[i][t] / q[i]):
+              out.append(t)
+          else:
+              out.append(sample(normalise(max(0, p[i] - q[i]))))   # the residual
+              return out                     # everything after i is discarded
+      out.append(sample(p[k]))               # the BONUS token
+      return out
+
+LINE BY LINE.
+
+  for _ in range(k): dist = draft(ctx)
+The draft runs SEQUENTIALLY - it cannot parallelise its own generation any more than the target
+could. Its passes are cheap, but there are k of them, and that is the cost that makes large k
+counterproductive at low acceptance rates.
+
+  p = target(prefix, proposed)
+THE WHOLE TRICK, IN ONE LINE. One pass gives the target's distribution at every proposed
+position, because the tokens already exist and attention can see them all. Generating them would
+have needed k passes; checking them needs one.
+
+  min(1.0, p[i][t] / q[i])
+THE ACCEPTANCE RULE. If the target likes this token at least as much as the draft did, accept it
+outright. If less, accept it in proportion. This is what preserves the distribution exactly - it
+is standard rejection sampling, not a heuristic threshold.
+
+  sample(normalise(max(0, p[i] - q[i])))
+THE RESIDUAL DISTRIBUTION, and the part implementations get wrong. On rejection you must NOT
+simply sample from the target - that would over-represent tokens the draft also liked. Sampling
+from the clipped difference is what makes the overall distribution come out exactly right.
+
+  return out    (inside the loop)
+Everything after the first rejection is thrown away, including tokens that would have been
+accepted. THIS IS WHY THE EXPECTED YIELD IS GEOMETRIC IN alpha rather than linear.
+
+  out.append(sample(p[k]))
+THE BONUS TOKEN. If all k survive, the target's own prediction at the final position came free in
+the same pass - so a fully accepted round yields k+1 tokens, which is where the (k+1) exponent in
+the formula comes from.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the yield formula, and why large k stops helping.
+E[tokens] = (1 - alpha^(k+1)) / (1 - alpha).
+
+  alpha = 0.5, k = 8:   (1 - 0.5^9)/0.5   = (1 - 0.00195)/0.5  = 2.00
+  alpha = 0.5, k = 16:  (1 - 0.5^17)/0.5  = (1 - 0.0000076)/0.5 = 2.00
+  alpha = 0.9, k = 8:   (1 - 0.9^9)/0.1   = (1 - 0.387)/0.1     = 6.13
+  alpha = 0.9, k = 16:  (1 - 0.9^17)/0.1  = (1 - 0.167)/0.1     = 8.33
+
+At alpha=0.5 the ninth token survives with probability 0.5^9 = 0.002, so doubling k changes the
+third decimal place. At alpha=0.9 it is 0.387, so there is real value left to collect. THE
+CEILING IS 1/(1-alpha) AND HOW FAST YOU APPROACH IT IS alpha^k.
+
+TRACE B - the optimum with draft cost included, at 5% per drafted token.
+Speedup = E[tokens] / (1 + k*0.05).
+
+  alpha=0.7, k=4:  2.77 / 1.20 = 2.31x
+  alpha=0.7, k=6:  3.06 / 1.30 = 2.35x   <- best
+  alpha=0.7, k=8:  3.20 / 1.40 = 2.29x
+  alpha=0.7, k=12: 3.31 / 1.60 = 2.07x
+
+The curve peaks and falls. Past k=6 the extra tokens are worth less than the draft passes that
+produce them - and at k=12 you have given back 12% of the gain.
+
+TRACE C - when it is a net loss.
+
+  alpha=0.30, draft cost 0.50, best k=1: speedup 0.87x
+  alpha=0.50, draft cost 0.50, best k=1: speedup 1.00x
+
+At 0.87x the technique is a 13% SLOWDOWN, and the optimiser has already chosen the smallest
+possible k - there is no setting that rescues it. At exactly 1.00x it is elaborate machinery for
+no change at all. A DRAFT MODEL AT HALF THE TARGET'S COST NEEDS AN ACCEPTANCE RATE ABOVE ROUGHLY
+0.5 JUST TO BREAK EVEN.
+
+TRACE D - the throughput caveat, which no formula above captures. All of these numbers count
+target PASSES, which is the right currency when the GPU is idle between them. On a saturated
+server the draft passes and the wider verification pass consume capacity that would otherwise be
+serving another request, so tokens-per-second across all users falls even as tokens-per-second
+for one user rises.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Per round: k draft passes plus one target pass over k+1 positions. The target pass
+costs slightly more than a single-token pass - the attention is over a few more positions - but
+in the memory-bound regime that difference is small, which is the whole premise. Memory: both
+models resident, plus KV cache for both. Engineering: two models to serve, version and keep in
+sync, or extra heads to train for self-speculation. AND THE FLOP COST IS STRICTLY HIGHER than
+plain decoding - you compute tokens you throw away - which is why it is a latency technique.
+
+THE #1 MISTAKE: deploying it on a throughput-bound server. It spends extra FLOPs to shorten one
+stream, so on a saturated GPU aggregate throughput falls. Increase batch size instead.
+
+THE #2 MISTAKE: copying k from a paper. Measured, the optimum is 4 at alpha=0.5 and 12 at
+alpha=0.9 - it depends on YOUR acceptance rate, which depends on your traffic.
+
+THE #3 MISTAKE: assuming a bigger k is better. Measured, at alpha=0.5, k=16 yields exactly the
+same 2.00 tokens as k=8 while costing twice the draft compute.
+
+THE #4 MISTAKE: a draft model that is not cheap enough. Measured, at half the target's cost it
+is worthless at every acceptance rate tested and a 13% slowdown at alpha=0.3.
+
+THE #5 MISTAKE: sampling from the target on rejection instead of from the clipped residual. The
+output stays fluent and the distribution is silently wrong.
+
+THE #6 MISTAKE: not measuring alpha on real traffic before building any of it. The ceiling is
+1/(1-alpha) and it tells you in one division whether the project is worth starting.
+
+THE #7 MISTAKE: ignoring n-gram drafting on tasks whose output quotes the input, where it costs
+nothing and often wins.
+
+THE TAKEAWAY: speculative decoding works because a forward pass is memory-bound - reading the
+weights dominates - so verifying k already-written tokens costs about the same as generating
+one, which lets a cheap draft model propose and the expensive target model check in bulk, with
+a rejection-sampling rule that keeps the output distribution EXACTLY the target's; the entire
+economics is the acceptance rate, whose ceiling is 1/(1-alpha) and which is approached at
+alpha^k, so at alpha=0.5 raising k from 8 to 16 yields the identical 2.00 tokens for twice the
+draft cost while at alpha=0.9 it takes you from 6.13 to 8.33 - which is why the optimal k RISES
+with acceptance rate rather than falling; and it is a LATENCY technique that spends extra FLOPs,
+measured as a 0.87x slowdown when the draft costs half the target at a 30% acceptance rate, and
+a net throughput loss on any server that is already busy.""",
+]
+
+_EX_P1AO["LLD: Design Snake and Ladder (and what it really tests)"] = [
+    """1. THE GOAL - a trivial game, asked because the design is not trivial.
+
+Snake and Ladder has no interesting algorithm. Roll a die, move, and if you land on a snake or a
+ladder go where it points. A child can play it. That is exactly why it is asked: THERE IS
+NOTHING TO HIDE BEHIND. The interviewer is watching what you do when the problem gives you no
+cleverness to demonstrate.
+
+Three things are being tested, and none of them is the game.
+
+CAN YOU SEPARATE DATA FROM LOGIC? The board is data - a mapping from square to square. Anyone
+who writes `if square == 16: return 6` for each snake has failed the question, and the rest of
+the interview will be spent watching them add rules to that.
+
+CAN YOU FIND THE UNDERSPECIFIED RULES? Nobody told you what happens when a roll overshoots 100.
+Measured, that single unstated rule changes the mean game length by 10%.
+
+DO YOU CHECK YOUR OWN DESIGN FOR CORRECTNESS? A board is a directed graph, and a badly chosen
+one can be UNWINNABLE. Measured, a plausible board exists from which square 100 can never be
+reached, and no amount of playing reveals it - the game simply never ends.""",
+
+    """2. THE INTUITION - the board is a graph, and every "rule" is a small extension to a loop.
+
+Model it as: a position, a die, a lookup that may teleport you, and a loop over players. Once it
+is shaped that way, everything a reviewer can ask for is a tiny change.
+
+  variant asked for                        what it costs
+  ---------------------------------------------------------------------
+  a different board layout                 nothing - it is a dictionary
+  three players instead of two             nothing - loop over players
+  rolling a 6 gives another turn           one line in the turn loop
+  overshooting wins instead of bouncing    one line
+  two dice instead of one                  one line
+  a square that skips your next turn       one new cell TYPE
+
+Every one of those is cheap IF the board is a lookup and the turn is a loop, and expensive if
+the snakes are hard-coded conditionals. THE INTERVIEW IS USUALLY DECIDED IN THE FIRST FIVE
+MINUTES by which of those two you wrote.
+
+AND THE GRAPH FRAMING PAYS IMMEDIATELY. Once you say "the board is a directed graph where most
+squares point to themselves", the questions that follow are natural: is the target reachable,
+are there cycles, can a square be a snake head and a ladder foot at once. Those are the
+follow-ups, and they are only askable if you set the model up that way.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BOARD - the mapping from a landed-on square to where you actually end up. Squares with no snake
+or ladder map to themselves.
+
+SNAKE / LADDER - an entry in that mapping. Structurally identical; only the direction differs,
+which is a hint that they should be ONE data structure and not two.
+
+CELL / SQUARE - a numbered position, 1 to 100, plus a virtual 0 for "not yet started".
+
+TURN - one player's roll and move.
+
+EXACT LANDING - the rule that you must roll precisely the number needed to reach 100. The
+alternative is that overshooting wins, or that you bounce back.
+
+BOUNCE - overshoot and move backwards by the excess. A third possible rule, and nobody will tell
+you which is wanted.
+
+REACHABILITY - whether square 100 can be reached from square 0 by any sequence of legal moves.
+A graph property of the board, and a real design bug when it fails.
+
+FIRST-PLAYER ADVANTAGE - the head start from moving first. Measured in section 4.
+
+STRATEGY PATTERN - the shape that lets the dice, the win condition or a cell's behaviour be
+swapped without touching the game loop.
+
+STATE MACHINE - the game as WAITING / IN_PROGRESS / FINISHED, which is what makes "can a player
+join mid-game" answerable.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the rules nobody stated, and the board nobody checked.
+
+FIRST: THE OVERSHOOT RULE IS NOT A DETAIL. Measured over 4,000 two-player games:
+
+  must land exactly on 100:   mean 51.5 turns, median 45, max 232, p99 141
+  overshooting wins:          mean 46.9 turns, median 41, max 195, p99 131
+
+A 10% CHANGE IN MEAN GAME LENGTH AND 10 TURNS OFF THE p99, from one unstated rule. If this were
+a real product with a session-length target, that is the difference between hitting it and not -
+and the specification did not mention it.
+
+SECOND: THE GAME IS NOT FAIR, AND NOBODY EVER CHECKS. Measured over 6,000 games:
+
+  2 players:  P1 50.75%   P2 49.25%
+  3 players:  P1 34.07%   P2 33.32%   P3 32.62%
+  4 players:  P1 26.48%   P2 25.07%   P3 25.45%   P4 23.00%
+
+At four players the first mover wins 26.48% and the last 23.00% - A 3.5 POINT SPREAD on a game
+of pure chance. Being asked "is it fair?" and being able to answer with a number is the kind of
+thing that separates candidates.
+
+THIRD, AND THE ONE THAT IS A GENUINE BUG: A BOARD CAN BE UNWINNABLE. The board is a directed
+graph; 100 must be reachable from 0. Measured:
+
+  standard board                                   100 reachable: True   (82 of 101 squares reachable)
+  add a 2-cycle 50 -> 10, 10 -> 50                 100 reachable: True
+  snakes on every square 94-99 back to 1           100 reachable: True
+  the same, with the 80 -> 100 ladder removed      100 reachable: FALSE
+
+NOTE THE 2-CYCLE DID NOT BREAK IT, and that is the instructive part - you can roll straight past
+both squares without landing on either, so a cycle in the board is not a trap. What breaks it is
+blocking every square from which 100 can be reached: with 94 through 99 all snakes and no ladder
+into 100, the only way to land on 100 is from 94-99, and you can never stand there. AND THE
+"OVERSHOOT WINS" RULE DOES NOT RESCUE IT either - measured False under both rules.
+
+Also worth noticing: on the standard board only 82 of 101 squares are ever reachable. The other
+19 are snake and ladder heads you land on and immediately leave.""",
+
+    """5. THE DESIGN, BUILT UP IN LAYERS.
+
+LAYER 0 - THE DATA. A dict from square to destination. Snakes and ladders are the same type of
+entry. Validate on construction: every key and value in 1..100, no entry pointing at itself, no
+square that is both a snake head and a ladder foot, 100 never a snake head, and - the one people
+miss - 100 REACHABLE FROM 0.
+
+LAYER 1 - THE ENTITIES. Player (id, position), Board (the mapping plus validation), Dice
+(roll()), Game (players, board, dice, state, current turn).
+
+LAYER 2 - THE TURN LOOP. Roll, compute the tentative square, apply the overshoot rule, look up
+the destination, check for a win. Note the ORDER: overshoot first, then the snake lookup, because
+otherwise you can be teleported off a square you were never allowed to reach.
+
+LAYER 3 - THE SWAPPABLE PARTS, which is where the design earns its marks.
+  Dice as an interface, so a six-sided die, two dice, or a fixed sequence for TESTS are all the
+  same to the game. A deterministic dice implementation is what makes the game unit-testable at
+  all.
+  A win condition as a strategy, so exact-landing, overshoot-wins and bounce are three
+  implementations rather than three branches.
+  A cell as a type rather than an integer, so "skip a turn" or "roll again" become new cell
+  classes instead of new special cases in the loop.
+
+LAYER 4 - THE STATE MACHINE. WAITING / IN_PROGRESS / FINISHED, with transitions. This is what
+lets you answer "can someone join after it starts", "what if a player disconnects", "can the game
+be saved and resumed".
+
+LAYER 5 - THE FOLLOW-UPS THEY WILL ASK: multiple concurrent games (the Game object holds all
+state, so a map of game id to Game is the whole answer), persistence (the state is a position per
+player plus whose turn it is - tiny), and an undo (record the rolls, replay from the start).""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. ASK THE UNSTATED RULES BEFORE WRITING ANYTHING. What happens on an overshoot? Does a 6
+give another turn? Can two players occupy one square? Measured, the overshoot rule alone moves
+mean game length by 10%. Asking is the first thing being marked.
+
+STEP 2. SAY "THE BOARD IS A MAP FROM SQUARE TO SQUARE, AND SNAKES AND LADDERS ARE THE SAME
+THING". This is the single most important sentence in the answer.
+
+STEP 3. LIST THE ENTITIES: Player, Board, Dice, Game. Keep them small.
+
+STEP 4. WRITE THE TURN LOOP, and get the ORDER right - overshoot handling before the snake
+lookup.
+
+STEP 5. MAKE THE DICE AN INTERFACE, and say why: it is how you test a game built on randomness.
+Interviewers notice whether testability came up unprompted.
+
+STEP 6. VALIDATE THE BOARD IN THE CONSTRUCTOR, and include the reachability check. Measured, a
+plausible board exists where 100 cannot be reached under either overshoot rule, and no amount of
+play reveals it.
+
+STEP 7. OFFER THE FAIRNESS NUMBER if the conversation allows. Measured, 26.48% against 23.00% at
+four players. It demonstrates you can reason about a design empirically rather than only
+structurally.
+
+STEP 8. ONLY THEN GENERALISE: the state machine, multiple games, persistence, new cell types.
+Reaching for patterns before the core model is clean is the common failure.
+
+STEP 9. DO NOT OVER-ENGINEER. This problem invites a factory, an observer and a visitor from
+candidates trying to show pattern knowledge. One interface for the dice and one for the win
+condition is proportionate; five patterns on a hundred-square board is a different kind of red
+flag.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are asked to build a board game so simple that its rules fit on the box lid. There is no
+algorithm to discover. Which means everything the interviewer learns about you comes from how
+you set it up.
+
+The first fork appears within a minute. You can write down, one by one, "if you land on sixteen
+you go to six, if you land on forty-seven you go to twenty-six" - nineteen of those. Or you can
+say: the board is a list of where each square sends you, and most squares send you to
+themselves. The first version works and cannot be changed; every new rule adds another branch to
+an already long list. The second version can be handed a different board, or three players, or
+two dice, without touching the part that plays the game.
+
+The second thing being watched is whether you notice what you were not told. Nobody said what
+happens if you are on ninety-seven and roll a five. Must you land exactly? Do you win anyway? Do
+you bounce back? Measured over four thousand games, "must land exactly" makes the average game
+51.5 turns and "overshoot wins" makes it 46.9 - a tenth of the game's length hanging on a rule
+that was never mentioned.
+
+And the third is whether you check your own work. Measured, this game is not quite fair: with
+four players the one who goes first wins 26.5% of the time and the one who goes last 23.0%. Pure
+chance, and a three-and-a-half point gap.
+
+More seriously, a board can be broken in a way playing will never reveal. If every square in the
+nineties sends you back to the start and no ladder reaches the end, then the final square cannot
+be reached at all - measured, unreachable - and the game simply goes on forever with nobody
+winning. Checking for that is not a clever trick; it is asking whether you can get from the start
+to the finish, which is a question about the board and not about the game.
+
+One thing that surprised me when I checked it: a board where two squares send you back and forth
+to each other is NOT broken. You can roll straight past both without ever landing on either.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  class Board:
+      def __init__(self, jumps: dict[int, int], size: int = 100):
+          self.size, self.jumps = size, jumps
+          self._validate()
+
+      def _validate(self):
+          for src, dst in self.jumps.items():
+              assert 1 <= src <= self.size and 1 <= dst <= self.size
+              assert src != dst
+              assert dst not in self.jumps, f"{src} jumps to {dst}, which also jumps"
+          assert self.size not in self.jumps, "the winning square cannot be a snake"
+          assert self._reachable(), "the winning square cannot be reached"
+
+      def _reachable(self):
+          seen, stack = {0}, [0]
+          while stack:
+              cur = stack.pop()
+              for d in range(1, 7):
+                  nxt = self.destination(cur + d)
+                  if nxt is not None and nxt not in seen:
+                      seen.add(nxt); stack.append(nxt)
+          return self.size in seen
+
+      def destination(self, square):
+          if square > self.size:
+              return None                       # exact-landing rule; a strategy in real code
+          return self.jumps.get(square, square)
+
+LINE BY LINE.
+
+  self.jumps: dict[int, int]
+ONE STRUCTURE FOR SNAKES AND LADDERS. A snake is an entry where dst < src and a ladder one where
+dst > src, and nothing in the code needs to care which. Two separate dicts is the first sign
+somebody modelled the theme rather than the mechanic.
+
+  assert dst not in self.jumps
+The chained-jump check: a ladder that delivers you onto a snake head. Not illegal in every
+ruleset, but it MUST be a decision rather than an accident - the alternative is to apply jumps
+repeatedly, which needs its own cycle guard.
+
+  assert self.size not in self.jumps
+100 as a snake head means the game can never be won. A one-line special case of the deeper check
+below.
+
+  assert self._reachable()
+THE CHECK ALMOST NOBODY WRITES, and the one that turns this from a toy into a design answer.
+Measured, a board with snakes on 94-99 and no ladder into 100 fails it - and it fails silently at
+runtime as a game that never ends.
+
+  for d in range(1, 7): nxt = self.destination(cur + d)
+The reachability search treats the board as a directed graph with an edge for each die face.
+Breadth or depth does not matter; it is a plain visited-set traversal, and it terminates because
+there are only 101 squares. Measured on the standard board it finds 82 reachable squares - the
+other 19 are jump heads you can never remain on.
+
+  if square > self.size: return None
+The overshoot rule, currently hard-coded. IN THE REAL ANSWER THIS IS A STRATEGY OBJECT, because
+measured, changing it moves mean game length by 10% and it is the rule most likely to be revised
+mid-interview.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the unstated rule, 4,000 two-player games each way.
+
+  exact landing required:  mean 51.5  median 45  min 13  max 232  p99 141
+  overshooting wins:       mean 46.9  median 41  min 13  max 195  p99 131
+
+Same board, same dice, same players. The mean moves 10% and the p99 by 10 turns. Note the MIN is
+13 in both - the shortest possible game uses the ladders and is unaffected by the end rule - and
+the MAX moves 232 to 195, because the exact-landing rule creates long tails where a player sits
+in the high nineties failing to roll the exact number.
+
+TRACE B - first-player advantage, 6,000 games per configuration.
+
+  2 players:  50.75 / 49.25            fair = 50.00, spread 1.50 points
+  3 players:  34.07 / 33.32 / 32.62    fair = 33.33, spread 1.45 points
+  4 players:  26.48 / 25.07 / 25.45 / 23.00   fair = 25.00, spread 3.48 points
+
+The advantage is real and grows with player count. Note the 4-player row is not monotonic - P3
+(25.45%) beat P2 (25.07%) - which at 6,000 games is within sampling noise, and saying so is
+better than inventing a story about it.
+
+TRACE C - reachability, four boards.
+
+  standard board                              reachable: True    82 of 101 squares
+  plus a 2-cycle 50 <-> 10                    reachable: True    82 squares
+  snakes on 94-99 -> 1                        reachable: True    79 squares
+  the same, minus the 80 -> 100 ladder        reachable: FALSE   79 squares
+
+THE THIRD ROW IS THE INTERESTING ONE. Blocking 94 through 99 is not enough, because the ladder at
+80 delivers you straight to 100. Remove that one ladder and the board dies. A single deleted
+entry turns a playable board into an infinite loop, and only the graph check catches it.
+
+The 2-cycle result is the honest surprise: I expected it to break the board and it does not,
+because landing on 50 or 10 is optional - you can roll past both. A CYCLE IS NOT A TRAP UNLESS
+YOU CANNOT AVOID ENTERING IT.
+
+TRACE D - the 19 unreachable squares on the standard board. Those are the jump heads: 1, 4, 9,
+16, 21, 28, 36, 47, 49, 51, 56, 62, 64, 71, 80, 87, 93, 95, 98. You can land on them momentarily
+but you can never END a turn there, so as game states they do not exist.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Everything here is trivial: a turn is a dictionary lookup, O(1); the whole game state
+is one integer per player plus whose turn it is, so persisting or resuming a game is a few dozen
+bytes; the board validation including the reachability check is a traversal of 101 nodes with 6
+edges each, which is 606 steps once at construction. NOTHING IN THIS PROBLEM HAS A PERFORMANCE
+DIMENSION, which is precisely why the interview is about structure.
+
+THE #1 MISTAKE: hard-coding the snakes and ladders as conditionals. Every subsequent request -
+a different board, three players, a new cell type - becomes a rewrite, and the interviewer will
+make those requests deliberately.
+
+THE #2 MISTAKE: not asking the unstated rules. Measured, the overshoot rule alone changes mean
+game length by 10% and the p99 by 10 turns.
+
+THE #3 MISTAKE: no board validation, and in particular no reachability check. Measured, a
+plausible board exists where 100 is unreachable under BOTH overshoot rules, and the symptom is a
+game that never ends rather than an error.
+
+THE #4 MISTAKE: applying the jump before the overshoot rule, so a player can be teleported off a
+square the rules never let them reach.
+
+THE #5 MISTAKE: a concrete random dice with no interface, making the whole game untestable.
+
+THE #6 MISTAKE: separate Snake and Ladder classes. They are one mapping with a sign.
+
+THE #7 MISTAKE: over-engineering - a factory, an observer and a visitor on a hundred-square
+board reads as pattern-matching rather than judgement.
+
+THE TAKEAWAY: Snake and Ladder is asked precisely because it has no algorithm, so the whole
+answer is whether you model the board as DATA - one map from square to square, where a snake and
+a ladder differ only in sign - which makes every follow-up a one-line change instead of a
+rewrite; the second thing being marked is whether you ask about the rules nobody stated, and the
+overshoot rule alone moved mean game length 51.5 to 46.9 turns and the p99 by ten; and the third
+is whether you validate your own design, because the board is a DIRECTED GRAPH and a plausible
+one can make square 100 unreachable - measured False with snakes on 94-99 and the 80-to-100
+ladder removed, failing under both overshoot rules and presenting as a game that never ends,
+while a board containing a 2-cycle turns out to be perfectly fine because you can roll straight
+past it.""",
+]
+
 
 
 
