@@ -316492,6 +316492,2118 @@ utilisation. Measured on one machine with one knob: 4,842x throughput for 20.6x 
 were correct, and only one of them was what the caller needed.""",
 ]
 
+_EX_P1AO["Why do we need consensus algorithms (Raft/Paxos) instead of a naive majority vote?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - five servers must agree on one thing: who is the leader, or what
+value was committed. Surely you just ask everyone and go with the majority?
+
+Counting votes is the EASY part. What makes consensus hard is that in a real network:
+
+    - messages are delayed, reordered, duplicated and lost
+    - nodes crash and restart, having forgotten (or half-remembered) what they were doing
+    - the network PARTITIONS, so the cluster splits into groups that cannot talk to each other and
+      cannot tell the difference between "the other half is dead" and "I am cut off"
+
+That last one is the killer. If both halves think they can proceed, you get SPLIT-BRAIN: two leaders,
+two different values committed, and no way to reconcile them afterwards.
+
+MEASURED ON THIS MACHINE - 200,000 random partitions of a 5-node cluster, under three different
+"enough nodes agreed" rules:
+
+    rule                                          runs where BOTH sides committed
+    -------------------------------------------   -------------------------------
+    "a couple of nodes agreed" (>= 2)                        100,016 = 50.01%
+    "half is enough" (>= n/2)                                      0 =  0.00%
+    strict majority (>= n//2 + 1)                                  0 =  0.00%
+
+But "half is enough" only looks safe because 5 is odd. On EVEN cluster sizes:
+
+    nodes   "half is enough" split-brain   strict majority split-brain
+    -----   ---------------------------   ---------------------------
+        3                         0.00%                         0.00%
+        4                        33.51%                         0.00%
+        5                         0.00%                         0.00%
+        6                        19.98%                         0.00%
+        7                         0.00%                         0.00%
+        8                        14.46%                         0.00%
+
+And even a strict majority is NOT SUFFICIENT on its own, which is the part people miss entirely -
+section 4 measures a stale leader committing a conflicting value with a full majority behind it.""",
+
+    """2. THE INTUITION - a majority works because two majorities cannot avoid each other.
+
+Take any two groups of 3 from a cluster of 5. They MUST share at least one node, because 3 + 3 = 6 > 5
+and there are only 5 nodes to go round. That shared node is the whole mechanism: it was present for
+both decisions, so it can refuse the second one.
+
+MEASURED, checked exhaustively rather than argued:
+
+    nodes   majority   any two majorities overlap?   tolerates failures   subsets checked
+    -----   --------   ---------------------------   ------------------   ---------------
+        3          2                          True                    1                 9
+        4          3                          True                    1                16
+        5          3                          True                    2               100
+        6          4                          True                    2               225
+        7          4                          True                    3             1,225
+        8          5                          True                    3             3,136
+        9          5                          True                    4            15,876
+
+Every pair of majorities overlaps, for every cluster size, checked by enumeration. The reason is one
+line of arithmetic: `2 * (n//2 + 1) > n`.
+
+TWO THINGS FALL OUT OF THAT TABLE that are worth saying out loud.
+
+FIRST, the rule must be MORE THAN HALF, not AT LEAST HALF. On 4 nodes, two groups of 2 do not overlap -
+a 2/2 partition gives both halves "half", and both proceed. That is the 33.51% measured above. The
+strict inequality is doing real work.
+
+SECOND, EVEN CLUSTER SIZES BUY YOU NOTHING. 4 nodes tolerates 1 failure, exactly like 3. 6 tolerates 2,
+exactly like 5. 8 tolerates 3, exactly like 7. You have paid for an extra machine and bought only a
+larger quorum to coordinate with, which makes writes slower. This is why every production Raft cluster
+you will ever see has 3, 5 or 7 nodes.
+
+THE SECOND INTUITION - agreeing on a VALUE is not enough; you must agree on the ORDER of values.
+
+MEASURED: take three operations - `set 5`, `add 3`, `mul 2` - and apply them in all six possible
+orders:
+
+    5    <- add 3 then mul 2 then set 5
+    8    <- mul 2 then set 5 then add 3
+    10   <- add 3 then set 5 then mul 2
+    13   <- set 5 then mul 2 then add 3
+    16   <- set 5 then add 3 then mul 2
+
+Five different final states from the same three operations. So "every replica received every
+operation" is not a useful guarantee at all. They must APPLY them in the same order - and providing
+that order is what a replicated LOG is for, and why Raft funnels every write through one leader.""",
+
+    """3. EVERY TERM DEFINED.
+
+CONSENSUS. Getting a set of nodes to agree on a value, such that the agreement is final and every node
+learns the same value.
+
+QUORUM. A subset large enough to decide - a strict majority, `n//2 + 1`. Its defining property is that
+any two quorums intersect.
+
+SPLIT-BRAIN. Two disjoint groups each believing they are in charge, each accepting writes. The failure
+consensus exists to prevent.
+
+NETWORK PARTITION. The network splitting so some nodes cannot reach others. Note that from inside, a
+partition is INDISTINGUISHABLE from the other nodes having crashed - which is why you cannot solve
+this by "checking whether they are alive".
+
+TERM / EPOCH / BALLOT NUMBER. A monotonically increasing integer attached to every leadership period.
+Followers remember the highest term they have seen and REJECT anything from a lower one. This is
+FENCING, and section 4 measures what happens without it.
+
+FENCING. Using a monotonic number to make a stale leader's messages ineffective. The same idea appears
+as a fencing token in distributed locks.
+
+LEADER / PROPOSER. The node that sequences operations. Raft calls it the leader; Paxos calls the role
+the proposer.
+
+FOLLOWER / ACCEPTOR / LEARNER. The other roles.
+
+REPLICATED LOG. An ordered sequence of operations, identical on every node. The core Raft abstraction.
+
+STATE MACHINE REPLICATION. Same initial state + same operations + same ORDER = same final state. The
+reason the log must be ordered. MEASURED above: 5 different results from 6 orderings of 3 operations.
+
+COMMITTED. An entry is committed once it is durably stored on a quorum. After that, it can never be
+lost or changed - that is the safety guarantee.
+
+LOG MATCHING. Raft's invariant: if two logs contain an entry with the same index AND term, they are
+identical up to that point.
+
+ELECTION TIMEOUT. How long a follower waits without hearing from a leader before standing for
+election. RANDOMISED per node, specifically so two followers do not stand simultaneously and split the
+vote - which is jitter, exactly as in the backoff entry.
+
+HEARTBEAT. The leader's periodic empty message that stops followers from starting elections.
+
+SAFETY vs LIVENESS. SAFETY: nothing bad ever happens (never two different committed values at the same
+index). LIVENESS: something good eventually happens (a leader is eventually elected and progress
+resumes). Consensus protocols guarantee safety ALWAYS and liveness only under favourable conditions.
+
+FLP IMPOSSIBILITY. In a fully asynchronous system with even one faulty process, no deterministic
+protocol can guarantee BOTH safety and liveness. Raft and Paxos respond by never sacrificing safety and
+using randomised timeouts to make liveness overwhelmingly likely in practice. Naming this is what
+shows you understand why "just write your own" is a bad idea.
+
+BYZANTINE FAULTS. Nodes that LIE rather than merely crash. Raft and Paxos do not handle these; PBFT
+and blockchain protocols do, at much higher cost.
+
+WITNESS / ARBITER. A tie-breaking node that votes but stores no data - a way to get an odd cluster size
+cheaply.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "a majority is enough". It is not. A STALE LEADER can hold a
+full majority and commit a conflicting value.
+
+The scenario is ordinary and happens constantly in real clusters:
+
+    1. Node 0 is the leader. The network partitions, putting node 0 in the minority.
+    2. Node 0 does not know it is partitioned. From inside, "cut off" and "everyone else died" look
+       identical.
+    3. The majority side notices the missing heartbeats, elects a new leader, and commits value B.
+    4. The partition heals. Node 0 - which still believes it is the leader - tries to commit value A.
+
+MEASURED, 200,000 runs of exactly that:
+
+    design                                two conflicting commits   log CONFLICT (same index,
+                                                                     different value)
+    -----------------------------------   -----------------------   -------------------------
+    quorum only, no terms                                 100.00%                     100.00%
+    quorum + monotonic TERMS (Raft)                         0.00%                       0.00%
+
+One hundred percent. Every single run. The old leader assembles a majority - the network is healed, so
+it can reach everyone - and commits A at the same log position where B already lives. The quorum
+overlap property did not help, because the overlapping node had no reason to refuse: it saw a
+well-formed request from a node it believes is the leader.
+
+WHAT FIXES IT is the TERM. Every leadership period gets a monotonically increasing number. Followers
+persist the highest term they have seen. When the stale leader arrives with term 1 and the follower has
+seen term 2, the follower rejects it - and, in Raft, tells it "your term is old", at which point the
+stale leader steps down. The overlapping node now HAS a reason to refuse, and the majority property
+finally does the job you assumed it was doing.
+
+THE SECOND TRAP - assuming a single leader is a performance optimisation rather than a correctness
+requirement. MEASURED, every write reaching a majority, with messages reordered in flight:
+
+    concurrent writers   two nodes hold some pair of entries in OPPOSITE order
+    ------------------   ---------------------------------------------------
+                     1                                                 0.00%
+                     2                                                99.98%
+                     3                                               100.00%
+                     5                                               100.00%
+
+With one writer, every node sees the same sequence, so the logs are prefixes of one another and can be
+reconciled. With two, the same two entries land in opposite orders on different nodes essentially
+always - and combined with the state-machine result from section 2, that means different final states.
+The single leader is what imposes a total order; it is not there to reduce contention.
+
+THE THIRD TRAP - thinking the hard part is the happy path. Leader election with everyone up is
+straightforward. The protocol's complexity lives entirely in the cases where a node crashes MID-DECISION
+and restarts with a partial log, or where two elections overlap, or where a leader is deposed after
+replicating to some but not all followers. That is why the answer to "why not write your own?" is: the
+happy path is easy and the twenty failure interleavings are not, and Raft and Paxos have machine-checked
+proofs that they handle all of them.
+
+THE FOURTH TRAP - forgetting FLP. In a fully asynchronous system with one faulty process, no
+deterministic algorithm guarantees both safety and liveness. Raft's answer is to never compromise
+safety and to make liveness probabilistic through RANDOMISED election timeouts - which is the same
+jitter trick as in the backoff entry, applied so two followers rarely stand at the same instant.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what else exists, and when you genuinely do not need consensus.
+
+THE CONSENSUS FAMILY:
+    PAXOS               the original (Lamport, 1989). Provably correct, famously hard to understand and
+                        to implement correctly. MULTI-PAXOS extends it to a log.
+    RAFT                designed for UNDERSTANDABILITY, and that was the explicit research goal. Strong
+                        leader, terms, a replicated log, and membership changes as log entries. What
+                        etcd, Consul, CockroachDB, TiKV and MongoDB's replica sets use.
+    ZAB                 ZooKeeper's protocol. Very similar in shape to Raft.
+    VIEWSTAMPED REPLICATION   predates both, essentially the same ideas.
+    EPAXOS / FLEXIBLE PAXOS   leaderless or relaxed-quorum variants that trade complexity for latency.
+
+THE OFF-THE-SHELF ANSWER, which is the correct one in an interview and at work: do not implement it.
+Use etcd, ZooKeeper or Consul, or a database that embeds one of them. The measured 100% failure rate in
+section 4 came from a design that looks entirely reasonable on a whiteboard.
+
+WHEN YOU DO NOT NEED CONSENSUS - and this is the more useful half of the answer, because consensus is
+expensive:
+    - if the operation is COMMUTATIVE or IDEMPOTENT, order does not matter and you can use CRDTs and
+      let replicas converge without agreeing on anything. A counter that only increments, a
+      last-write-wins register, an add-only set.
+    - if you can tolerate temporary disagreement, use eventual consistency with a conflict-resolution
+      rule - Dynamo-style quorums, vector clocks, last-write-wins. See the tombstone entry, where
+      exactly this machinery is why deletes need a marker.
+    - if there is only one writer by construction - a single-partition owner, a lease-holder - you
+      need consensus only to decide WHO that is, not for every write. This is the most common real
+      design: use consensus sparingly, for metadata and leadership, and keep it off the data path.
+    - if the data is immutable, there is nothing to disagree about.
+
+WHAT CONSENSUS COSTS, which is why you keep it off the hot path:
+    - every commit needs a ROUND TRIP TO A QUORUM. On a single-region cluster that is a millisecond;
+      across regions it is the inter-region latency, on every write.
+    - write throughput is bounded by the LEADER, so it does not scale horizontally. You scale by
+      sharding into many Raft groups, each with its own leader.
+    - availability is bounded by the quorum: a 3-node cluster survives 1 failure, and the FOURTH node
+      buys nothing (measured in section 2).
+    - during an election - typically a randomised 150-300 ms in Raft - writes stop entirely.
+
+THE RELATED MECHANISMS worth naming: two-phase commit (which BLOCKS if the coordinator dies, and is why
+Paxos exists), leases and fencing tokens (the same monotonic-number idea in a single-lock setting), and
+Byzantine protocols like PBFT for when nodes may lie rather than merely crash.""",
+
+    """6. HOW TO CODE IT - not the protocol, but the experiments that show why the protocol is shaped the
+way it is.
+
+PROVING THE QUORUM OVERLAP PROPERTY:
+
+  1. For each cluster size n, enumerate ALL subsets of size `n//2 + 1` with `itertools.combinations`.
+  2. Check every PAIR of them for a non-empty intersection. For n=9 that is 15,876 pairs and it runs
+     instantly.
+  3. Print the failure tolerance `n - majority` alongside. Seeing 3 and 4 both tolerate 1 failure is
+     what makes "always use an odd number" stop being folklore.
+
+MEASURING SPLIT-BRAIN:
+
+  4. Model a partition as a random split of the nodes into two groups. Not a fixed 50/50 split - a
+     RANDOM one, because real partitions are asymmetric.
+  5. Define `can_commit(group)` per rule, and count runs where BOTH sides can commit. That is
+     split-brain, and it is one boolean AND.
+  6. Sweep the cluster size and include EVEN sizes. The 4-node "half is enough" result at 33.51% is
+     the whole argument for the strict inequality, and it is invisible if you only test 3 and 5.
+
+MEASURING THE STALE-LEADER PROBLEM - the important one:
+
+  7. Give each node a `term` and a `log`.
+  8. Partition the old leader into the minority; raise the term on the majority side; commit B there.
+  9. Heal the partition and have the old leader try to append A at its OLD term.
+ 10. The fencing check is ONE line: `if term[node] > old_term: reject`. Run with and without it.
+ 11. Define CONFLICT precisely: two nodes holding DIFFERENT values at the same log INDEX. A node
+     merely having FEWER entries is normal lag, not a conflict - and my first version conflated the
+     two and reported "100% divergent" for the correct design as well, which would have been a
+     meaningless result.
+
+MEASURING WHY YOU NEED A SINGLE LEADER:
+
+ 12. Have `w` writers each send to a random majority, and allow messages from DIFFERENT writers to be
+     reordered in flight.
+ 13. Measure ORDER divergence properly: for every pair of nodes, take the entries they have in COMMON
+     and check whether any pair appears in opposite relative order. Measuring "are the logs equal" is
+     wrong - they will differ simply because different nodes received different subsets.
+ 14. Sweep the writer count. Getting exactly 0.00% at one writer and 99.98% at two is the result.
+
+MEASURING WHY ORDER MATTERS:
+
+ 15. Take three non-commuting operations and apply them in all `3! = 6` orders with
+     `itertools.permutations`. Print the distinct results. Five out of six, from three operations.
+     That is the shortest possible argument for a replicated LOG rather than a replicated VALUE.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A naive vote breaks under distributed-system realities: messages are delayed, reordered, duplicated or
+lost; nodes crash and restart; and network PARTITIONS can split the cluster so that two halves each
+think they can proceed - SPLIT-BRAIN - and accept conflicting writes.
+
+Consensus solves agreement SAFELY, with three ingredients.
+
+First, a QUORUM - a strict majority - so that any two decisions overlap on at least one node. I checked
+that exhaustively: for every cluster size from 3 to 9, every pair of majorities intersects, because
+2*(n//2+1) > n. And the strictness matters: I simulated 200,000 random partitions and 'at least half is
+enough' produced split-brain in 33.51% of runs on a 4-node cluster, while a strict majority produced
+0.00% at every size. That table also shows why you always use an odd number - 4 nodes tolerates exactly
+one failure, the same as 3.
+
+Second, monotonic TERMS or epochs, to fence out stale leaders. This is the part people skip and it is
+the part that shows a majority is not sufficient on its own. I simulated the standard scenario: the
+leader is partitioned out, the majority side elects a new leader at a higher term and commits value B,
+then the partition heals and the old leader - which never learned it was deposed - tries to commit A.
+With a quorum but no terms, BOTH values committed at the same log position in 100.00% of 200,000 runs.
+With terms, 0.00%, because followers remember the highest term they have seen and reject anything
+older.
+
+Third, a REPLICATED LOG with a single leader, so every node applies the same operations in the same
+ORDER. Agreeing on each value individually is not enough: three operations - set 5, add 3, mul 2 -
+applied in the six possible orders give five different final states. And with more than one concurrent
+writer, two nodes held some pair of entries in opposite order in 99.98% of runs even though every write
+reached a majority. The single leader is what imposes a total order; it is a correctness requirement,
+not a performance choice.
+
+The hard part isn't counting votes - it's guaranteeing SAFETY (never two different committed values)
+AND LIVENESS under arbitrary crashes and interleavings. FLP says you cannot have both guaranteed in a
+fully asynchronous system, so Raft never compromises safety and makes liveness probabilistic using
+randomised election timeouts. That subtlety is why you use a proven protocol - etcd, ZooKeeper, Consul
+- rather than writing your own. The design I measured at a 100% failure rate looks perfectly reasonable
+on a whiteboard."
+
+THE ONE SENTENCE TO NOT FUMBLE: a majority gives you overlap, terms give you fencing, and a leader's
+log gives you order - and you need all three, because a majority alone still lets a stale leader commit
+a conflicting value.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    for a in itertools.combinations(nodes, maj):
+        for b in itertools.combinations(nodes, maj):
+            if not (set(a) & set(b)): ok = False
+
+The overlap property, proved by enumeration rather than argued. For n=9 this is 15,876 pairs and it
+finishes instantly. Doing it this way rather than quoting `2*(n//2+1) > n` catches the case people get
+wrong: change `maj` to `n//2` (at least half) and the assertion FAILS at n=4, which is the 33.51%
+measured in the simulation.
+
+    k = r.randint(1, n-1)
+    nodes = list(range(n)); r.shuffle(nodes)
+    A, B = set(nodes[:k]), set(nodes[k:])
+
+A RANDOM partition, not a fixed one. Real partitions are asymmetric - one node isolated, or a rack
+segment, or an availability zone. Fixing the split at 50/50 would only test the one case people already
+think about.
+
+    if rule=='naive-half':  return len(group) >= n/2
+    if rule=='quorum':      return len(group) >= n//2 + 1
+
+The two rules, one character apart in intent and enormously different in consequence. `>= n/2` on 4
+nodes admits a group of 2, and so does the other side. `>= n//2 + 1` requires 3, and both sides cannot
+have 3 out of 4.
+
+    return a and b     # BOTH sides committed => split brain
+
+The measurement, in one boolean. Split-brain is not "a side made a mistake" - each side followed the
+rule correctly. It is that BOTH did.
+
+THE STALE-LEADER SIMULATION:
+
+    term = [1]*N
+
+Per-node persisted term. "Persisted" is the operative word in a real implementation: a node that
+forgets its term on restart can vote twice in one term, which breaks safety. This is why Raft requires
+`currentTerm` and `votedFor` on stable storage before responding.
+
+    new_term = old_term + 1
+    for n in majority: term[n] = new_term
+
+The election. Only the majority side learns the new term; the old leader still believes it is term 1,
+and there is nothing it could have done to find out.
+
+    accepted = [n for n in nodes if not (use_terms and term[n] > old_term)]
+
+THE FENCING CHECK, and it is one line. Without `use_terms` the list is every node, so the stale leader
+gets a full majority. With it, the majority-side nodes refuse, leaving it with only its minority - which
+is not a quorum. That single comparison is the difference between 100.00% and 0.00%.
+
+    def conflict(logs):
+        for i in range(max(len(l) for l in logs)):
+            vals = {l[i] for l in logs if len(l) > i}
+            if len(vals) > 1: return True
+
+The correct definition of the failure, and getting this right mattered. A CONFLICT is two nodes holding
+different values AT THE SAME INDEX. A node simply having fewer entries is ordinary replication lag. My
+first version compared whole logs for equality and reported "100% divergent" for the CORRECT design as
+well, which would have made the result meaningless.
+
+    for a in range(N):
+        for b in range(a+1, N):
+            common = set(pos[a]) & set(pos[b])
+            for x, y in itertools.combinations(sorted(common), 2):
+                if (pos[a][x] < pos[a][y]) != (pos[b][x] < pos[b][y]): return True
+
+ORDER divergence, done properly: restrict to the entries two nodes have IN COMMON, and check whether
+any pair appears in opposite relative order. Comparing the logs directly would flag normal lag; this
+flags only genuine disagreement about sequence.
+
+    for p in itertools.permutations(ops):
+        x = 0
+        for o, a in p: x = a if o=='set' else (x+a if o=='add' else x*a)
+
+Six orderings, five distinct results. Three lines, and it is the entire justification for replicating a
+LOG instead of a VALUE.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the split-brain scenario, step by step, 5 nodes.
+
+    t   event                                        node 0-1 (minority)   node 2-4 (majority)
+    --  ------------------------------------------   -------------------   -------------------
+    1   node 0 is leader, term 1                     leader=0, term 1      leader=0, term 1
+    2   PARTITION: {0,1} | {2,3,4}                   cannot reach 2,3,4    cannot reach 0,1
+    3   node 0 sees no acks. It does NOT know why.   still believes it     heartbeats stop
+        "Are they dead, or am I cut off?"            is leader
+    4   majority times out, elects node 2, term 2    (unaware)             leader=2, term 2
+    5   node 2 commits B to {2,3,4} - a quorum       (unaware)             log = [(2,'B')]
+    6   PARTITION HEALS
+    7a  WITHOUT TERMS: node 0 appends A. Nodes 2,3,4
+        have no reason to refuse. 5 acks - a quorum. log = [(1,'A')]       log = [(2,'B'),(1,'A')]
+        -> two different values committed, and the logs CONFLICT.
+    7b  WITH TERMS: node 0 appends A at term 1.
+        Nodes 2,3,4 have term 2 > 1 and REJECT.      (only 0,1 accept -    log = [(2,'B')]
+        Node 0 gets 2 acks - not a quorum.            not a quorum)
+        -> node 0 learns term 2 exists and steps down.
+
+Step 3 is the one worth dwelling on. Node 0 is not malfunctioning and has not made an error. It cannot
+distinguish a partition from the rest of the cluster dying, and no amount of checking will tell it -
+that is a fundamental property of an asynchronous network, not an implementation gap.
+
+TRACE B - the two designs, measured over 200,000 runs.
+
+    design                                two conflicting commits   log conflict at the same index
+    -----------------------------------   -----------------------   -----------------------------
+    quorum only, no terms                                 100.00%                         100.00%
+    quorum + monotonic TERMS                                0.00%                           0.00%
+
+Not "usually fine" or "rarely fails". Every single run, versus none.
+
+TRACE C - split-brain by rule and cluster size, 100,000 random partitions each.
+
+    nodes   "at least half"   strict majority   failure tolerance   is even worth it?
+    -----   ---------------   ---------------   -----------------   -----------------
+        3             0.00%             0.00%                   1   -
+        4            33.51%             0.00%                   1   NO - same as 3
+        5             0.00%             0.00%                   2   -
+        6            19.98%             0.00%                   2   NO - same as 5
+        7             0.00%             0.00%                   3   -
+        8            14.46%             0.00%                   3   NO - same as 7
+
+Two results in one table. The "at least half" column is safe on odd sizes BY ACCIDENT - there is no
+way to split an odd number into two equal halves - and catastrophic on even ones. And the last two
+columns are the reason clusters are always 3, 5 or 7.
+
+TRACE D - order divergence with multiple writers, 20,000 runs each.
+
+    concurrent writers   nodes disagree about the ORDER of some pair
+    ------------------   -------------------------------------------
+                     1                                        0.00%
+                     2                                       99.98%
+                     3                                      100.00%
+                     5                                      100.00%
+
+Every write reached a majority in all four rows. Delivery was never the problem. The jump from 0.00% to
+99.98% between one writer and two is the entire case for a single leader.
+
+TRACE E - why order matters, three operations starting from 0.
+
+    order                                result
+    ----------------------------------   ------
+    add 3 then mul 2 then set 5               5
+    mul 2 then set 5 then add 3               8
+    add 3 then set 5 then mul 2              10
+    set 5 then mul 2 then add 3              13
+    set 5 then add 3 then mul 2              16
+
+Five distinct end states from six orderings of three operations. Now imagine a million operations and
+two replicas that received all of them in slightly different orders. There is no way to reconcile that
+afterwards, which is why the ordering must be agreed BEFORE the operations are applied.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, for a cluster of n nodes:
+
+    quorum size                  n//2 + 1
+    failures tolerated           n - (n//2 + 1), i.e. floor((n-1)/2). MEASURED: 3 and 4 both tolerate
+                                 1; 5 and 6 both tolerate 2; 7 and 8 both tolerate 3.
+    messages per commit          O(n) - the leader sends to all followers and waits for a quorum
+    latency per commit           ONE round trip to the fastest majority. Within a region, ~1 ms;
+                                 across regions, the inter-region RTT, on every write.
+    write throughput             bounded by the single LEADER. Does not scale horizontally; you scale
+                                 by sharding into many Raft groups.
+    read latency                 a quorum read is another round trip; a lease read is local but relies
+                                 on clock assumptions.
+    unavailability on failover   one randomised election timeout, typically 150-300 ms in Raft, during
+                                 which writes stop entirely.
+    safety                       guaranteed ALWAYS, under any interleaving of crashes and partitions.
+    liveness                     NOT guaranteed (FLP); made overwhelmingly likely by randomised
+                                 timeouts.
+
+THE MISTAKES:
+
+    - "Just take a majority vote." MEASURED: a stale leader with a quorum committed a conflicting value
+      in 100.00% of runs. You also need terms.
+    - "At least half" instead of "more than half". MEASURED 33.51% split-brain on 4 nodes.
+    - Even-numbered clusters. MEASURED: 4 tolerates the same 1 failure as 3, and costs a machine and a
+      bigger quorum.
+    - Thinking a partition is detectable from inside. It is indistinguishable from the other side
+      having crashed. That is the whole difficulty.
+    - Agreeing on VALUES rather than on an ORDER. MEASURED: 5 different results from 6 orderings of 3
+      operations, and 99.98% order divergence with 2 writers.
+    - Treating the single leader as a performance choice. It is what provides the total order.
+    - Not persisting `currentTerm` and `votedFor`. A node that forgets on restart can vote twice in one
+      term, and safety is gone.
+    - Forgetting randomised election timeouts. Identical timeouts mean simultaneous candidates and
+      split votes - the same synchronisation problem as in the backoff entry, with the same fix.
+    - Putting consensus on the hot path for everything. Use it for leadership and metadata; keep the
+      data path on a single owner, or use CRDTs where operations commute.
+    - Writing your own. The failing design measured here is one anybody would sketch on a whiteboard,
+      and it fails 100% of the time.
+
+THE TAKEAWAY. Counting votes is not the hard part. A majority buys you OVERLAP - any two decisions
+share a node - and that is necessary and nowhere near sufficient, because the overlapping node needs a
+REASON to refuse, which is what a monotonic term provides. On top of that, agreement on individual
+values is useless without agreement on their ORDER, which is what a single leader's replicated log is
+for. The measured numbers are stark: 33.51% split-brain from using "half" instead of "more than half",
+100.00% conflicting commits from omitting terms, and 99.98% order divergence from allowing two
+concurrent writers. Each of those designs looks reasonable until you run it, which is precisely why you
+use Raft or Paxos rather than inventing one.""",
+]
+
+_EX_P1AO["Why do we need idempotent consumers with at-least-once delivery, and how do you make one?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the broker sends you a message. You charge the customer's card. You
+send back an acknowledgement. The acknowledgement is lost.
+
+The broker never heard from you. From its side, that is indistinguishable from "the consumer died
+before processing it". If it assumes you processed it, it risks LOSING messages. So it does the only
+safe thing: it sends it again.
+
+That is AT-LEAST-ONCE delivery, and it is what essentially every real message system gives you, because
+guaranteeing exactly-once DELIVERY across an unreliable network is impossible - there is always a
+last message, and it can always be the one that is lost.
+
+So the same message legitimately arrives more than once, and the consumer cannot tell a genuine first
+delivery from a redelivery. If processing has SIDE EFFECTS, that is a double charge.
+
+MEASURED ON THIS MACHINE - 200,000 orders through a simulated broker where 2% of acks are lost and 1%
+of the time the consumer crashes after doing the work but before finishing:
+
+    consumer design                deliveries   redeliveries   orders charged >1   extra charges   never charged
+    ---------------------------   ----------   ------------   -----------------   -------------   -------------
+    no dedup at all                  206,077          6,077               5,907           6,077               0
+    dedup, side effect first         206,049          6,049               1,991           2,006               0
+    dedup, record the key first      206,037          6,037                   0               0           1,992
+    dedup IN THE SAME TRANSACTION    206,049          6,049                   0               0               0
+
+Four designs. Only the last one is correct - and the third one, which looks like a fix and produces
+ZERO double charges, is the worst of the three failures, because instead of charging twice it silently
+charges NEVER.""",
+
+    """2. THE INTUITION - the ack is a message too, and messages get lost.
+
+Draw the timeline and the problem is unavoidable:
+
+    broker ----message----> consumer
+                            consumer does the work
+    broker <-----ack------- consumer          <- if THIS is lost, the broker must resend
+
+You cannot fix this by making the ack more reliable, because the ack's ack can also be lost, and so on
+forever. This is the TWO GENERALS problem, and it has no solution. The only choice is which risk you
+take:
+
+    ack BEFORE processing  -> at-MOST-once. A crash after the ack loses the message entirely.
+    ack AFTER processing   -> at-LEAST-once. A lost ack causes a redelivery.
+
+Every serious system chooses at-least-once, because a duplicate is recoverable and a lost order is not.
+
+THE FIX is not to eliminate duplicates - you cannot - but to make processing them HARMLESS. A consumer
+is IDEMPOTENT if processing the same message twice leaves the same end state as processing it once.
+
+THE SUBTLETY THAT THE MEASUREMENT EXPOSES: the obvious implementation - "keep a set of message ids I
+have already handled" - is not enough on its own, because there are now TWO writes (the side effect and
+the dedup record) and a crash can land between them. Which one you do first decides which way you
+fail:
+
+    SIDE EFFECT FIRST, then record the key
+        crash in between -> the money moved, the key was never recorded, the redelivery charges again.
+        MEASURED: 2,006 extra charges.
+
+    RECORD THE KEY FIRST, then the side effect
+        crash in between -> the key says "done", the money never moved, and the redelivery SKIPS it.
+        MEASURED: 1,992 orders never charged at all.
+
+Look at those two numbers. They are nearly identical, because they are the same crash window in
+opposite directions. And the second failure is worse: a double charge produces an angry customer who
+tells you, while a silently dropped payment produces a discrepancy nobody notices for a month.
+
+THE ONLY CORRECT ANSWER is to make the dedup record and the side effect COMMIT TOGETHER - one
+transaction, one atomic write. Then there is no window. MEASURED: 0 and 0.""",
+
+    """3. EVERY TERM DEFINED.
+
+AT-MOST-ONCE. Ack before processing. Never duplicates; can lose messages.
+
+AT-LEAST-ONCE. Ack after processing. Never loses; can duplicate. The default in Kafka, SQS, RabbitMQ,
+Pub/Sub and essentially everything else.
+
+EXACTLY-ONCE DELIVERY. Impossible across an unreliable network. Anyone selling it is selling something
+else.
+
+EXACTLY-ONCE PROCESSING / EFFECTIVELY-ONCE. Achievable: at-least-once delivery PLUS an idempotent
+consumer. This distinction is the crux of the whole question.
+
+IDEMPOTENT. `f(f(x)) = f(x)`. Applying the operation twice gives the same result as once.
+
+    IDEMPOTENT:      `set status = 'shipped'`, `UPSERT`, `DELETE WHERE id = 5`, `PUT /resource/7`
+    NOT IDEMPOTENT:  `balance = balance + 10`, `INSERT`, `send_email()`, `POST /charge`
+
+DEDUPLICATION KEY / IDEMPOTENCY KEY. A stable identifier for the unit of work, used to recognise a
+repeat. It must be assigned by the PRODUCER, not generated by the consumer at processing time - a
+consumer-generated id is different on every delivery and deduplicates nothing.
+
+VISIBILITY TIMEOUT / ACK DEADLINE. How long the broker waits for an ack before redelivering. Too short
+and you get redeliveries of messages still being processed - which is the most common cause of
+duplicates in practice, and it is a configuration bug rather than a network one.
+
+REDELIVERY. The broker sending a message again because it saw no ack.
+
+POISON MESSAGE. One that fails every time. Without a retry limit it is redelivered forever.
+
+DEAD-LETTER QUEUE (DLQ). Where a message goes after N failed attempts, so it stops blocking the queue
+and can be inspected.
+
+ATOMICITY. The dedup record and the side effect committing together or not at all. The single most
+important requirement here, and the one the measurement is built around.
+
+DUAL-WRITE PROBLEM. Writing to two systems (your database and a message broker, or a database and a
+cache) with no transaction spanning them. There is always a crash window between the two writes.
+
+TRANSACTIONAL OUTBOX. The standard fix for the dual-write problem: write the message into an `outbox`
+TABLE in the SAME transaction as your business data, and have a separate process publish from that
+table. Now there is only one write.
+
+CDC (change data capture). Reading the database's write-ahead log to publish those outbox rows.
+
+OPTIMISTIC CONCURRENCY / CONDITIONAL WRITE. `UPDATE ... WHERE version = 7` or DynamoDB's
+`ConditionExpression`. A replay fails the condition and becomes a no-op, which is idempotency by
+construction rather than by bookkeeping.
+
+CONSUMER GROUP / OFFSET COMMIT. In Kafka, the "ack" is committing an offset - and committing it before
+processing is at-most-once, after is at-least-once. Same trade, different vocabulary.
+
+SENT-LOG. For effects you cannot deduplicate at the far end - emails, SMS, webhooks - a table keyed by
+message id recording that you already sent it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we added a dedup table, we're fine". Which order did you
+write it in?
+
+The dedup set alone reduces the problem and does not remove it, and the measurement shows exactly what
+survives:
+
+    design                          extra charges   never charged   what the residual failure IS
+    ----------------------------   -------------   -------------   ----------------------------------
+    no dedup at all                        6,077               0   every lost ack is a double charge
+    dedup, side effect first               2,006               0   a crash between the two writes
+    dedup, record the key first                0           1,992   a crash between the two writes
+    dedup in the same transaction              0               0   there is no window
+
+Notice how the failure rate changed BUT DID NOT GO TO ZERO: 6,077 to 2,006. If you deploy the
+side-effect-first version, your double-charge rate falls by two thirds and you conclude the fix worked.
+
+AND NOW THE REALLY DANGEROUS PART - how each residual failure scales:
+
+    p(ack lost)   p(crash)   naive extra   effect-first extra   record-first LOST   atomic
+    -----------   --------   -----------   ------------------   -----------------   ------
+          0.001      0.001           107                   57                  57        0
+          0.010      0.001           591                   57                  57        0
+          0.020      0.010         1,587                  533                 527        0
+          0.050      0.020         3,684                1,057               1,028        0
+          0.100      0.050         8,452                2,688               2,527        0
+
+Read the second and third columns as functions of different variables. The NAIVE column tracks the
+ACK-LOSS rate: 107 -> 591 when ack loss goes from 0.1% to 1%, while the crash rate is unchanged. The
+EFFECT-FIRST column does not move at all across that same change (57 -> 57) - it tracks the CRASH
+rate.
+
+That is why this bug survives testing. Lost acks are common enough to reproduce; a crash landing in the
+few microseconds between two database writes is not. You will never see it in staging. You will see it
+as a handful of duplicate charges a month, in production, at scale, with no reproduction steps.
+
+THE SECOND TRAP - preferring "record the key first" because it produces zero duplicates. MEASURED: it
+produces zero duplicates and 1,992 orders that were NEVER PROCESSED. The dedup table says done and
+nothing happened. A duplicate charge generates a support ticket; a silently skipped payment generates a
+reconciliation discrepancy that surfaces weeks later, if at all. Zero on the metric you are watching is
+not the same as correct.
+
+THE THIRD TRAP - assuming the atomicity requirement is satisfiable everywhere. It is when the dedup
+record and the side effect are in the SAME database. It is not when the side effect is external:
+charging a card, sending an email, calling a third-party API. For those:
+
+    - use the PROVIDER'S idempotency key. Stripe, for one, accepts an `Idempotency-Key` header and
+      deduplicates on their side - which moves the atomicity requirement to someone who has solved it.
+    - or keep a SENT-LOG and accept a narrower window, and monitor it.
+    - or make the effect naturally idempotent: `PUT` rather than `POST`, `set status` rather than
+      `increment`.
+
+THE FOURTH TRAP - the most common actual cause of duplicates in production, which is not the network at
+all: a VISIBILITY TIMEOUT shorter than your processing time. The broker redelivers while you are still
+working on it, and now two workers are processing the same message concurrently - which also breaks the
+"check then write" dedup pattern unless the check-and-write is atomic. Measure your p99 processing time
+and set the timeout well above it.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - four ways to be idempotent, in order of how much you should
+prefer them.
+
+1. MAKE THE OPERATION NATURALLY IDEMPOTENT - by far the best, because there is no bookkeeping to get
+   wrong:
+       `UPDATE orders SET status='shipped' WHERE id=?`        instead of appending a status event
+       `INSERT ... ON CONFLICT DO NOTHING` / `UPSERT`         instead of `INSERT`
+       `PUT /resource/7` with the full desired state          instead of `POST /resource`
+       `SET key = value` in a cache                            instead of `INCR`
+       storing an absolute balance                             instead of a delta
+   If you can design the message to carry the desired STATE rather than a DELTA, duplicates become
+   free. This is the same reasoning as CRDTs.
+
+2. CONDITIONAL WRITES / OPTIMISTIC CONCURRENCY - idempotency without a separate dedup table:
+       `UPDATE orders SET status='paid', version=version+1 WHERE id=? AND version=?`
+       DynamoDB `ConditionExpression: attribute_not_exists(processed_id)`
+   A replay fails the condition and is a no-op. The dedup information is the row itself, so there is no
+   second write and therefore no window.
+
+3. A DEDUP KEY IN THE SAME TRANSACTION - the general fallback:
+       BEGIN;
+         INSERT INTO processed_messages(msg_id) VALUES (?);   -- fails on a duplicate key
+         UPDATE orders SET status='paid' WHERE id=?;
+       COMMIT;
+   The unique constraint does the deduplication and the transaction does the atomicity. MEASURED: 0
+   duplicates, 0 losses. Note the dedup table needs a TTL or a partition-and-drop strategy, or it grows
+   forever - see the tombstone entry for the same problem in a different setting.
+
+4. A SENT-LOG FOR EXTERNAL EFFECTS - emails, SMS, webhooks, third-party APIs, where you cannot span a
+   transaction. Record the intent transactionally, perform the effect, record completion; accept and
+   MONITOR the narrow window. Or push the problem to a provider that accepts an idempotency key.
+
+WHAT ABOUT KAFKA'S "EXACTLY-ONCE SEMANTICS"? Worth being precise about, because it sounds like it
+contradicts everything above. Kafka EOS gives you exactly-once for the read-process-WRITE-BACK-TO-KAFKA
+pattern, using idempotent producers (sequence numbers per partition) and transactions spanning the
+consume-offset commit and the produce. It does NOT give you exactly-once when your side effect is
+OUTSIDE Kafka - charging a card, sending an email. For that you are back to an idempotent consumer.
+So: exactly-once within one transactional system, at-least-once plus idempotency at every boundary.
+
+THE RELATED PATTERNS:
+    TRANSACTIONAL OUTBOX   solves the mirror-image problem - publishing a message and updating your
+                           database atomically. Write the message to an outbox TABLE in the same
+                           transaction; a relay publishes it. One write, no window.
+    SAGA                   a long-running workflow of idempotent steps with compensating actions,
+                           because you cannot hold a transaction across services.
+    IDEMPOTENCY KEYS IN APIs  the same idea one layer up, and why Stripe and every serious payments API
+                           accepts one.
+    DEDUPLICATION WINDOWS  SQS FIFO deduplicates for 5 minutes; Kafka's idempotent producer for the
+                           lifetime of the producer session. Useful, bounded, and NOT a substitute for
+                           an idempotent consumer.""",
+
+    """6. HOW TO CODE IT.
+
+THE CONSUMER, correctly:
+
+  1. Read the message and extract its ID - assigned by the PRODUCER, stable across redeliveries. A
+     consumer-generated UUID is different every time and deduplicates nothing.
+  2. Open ONE transaction.
+  3. `INSERT INTO processed_messages(msg_id, processed_at) VALUES (?, now())`. Let the UNIQUE
+     CONSTRAINT be your check - do not `SELECT` first and then `INSERT`, because two concurrent
+     redeliveries can both pass the SELECT. The insert either succeeds or raises a duplicate-key error,
+     atomically.
+  4. On a duplicate-key error: roll back, ACK the message, return. It was already done.
+  5. Otherwise perform the side effect IN THE SAME TRANSACTION.
+  6. COMMIT.
+  7. ACK the broker. If this ack is lost, the redelivery hits step 4 and is a no-op - which is exactly
+     the behaviour you wanted.
+  8. Give `processed_messages` a TTL or time-partition it and drop old partitions. Otherwise it grows
+     without bound and eventually becomes the slowest part of the consumer.
+
+WHAT NOT TO WRITE, and both of these are what the measurement is about:
+
+  9. `do_side_effect(); mark_processed(id)` as two separate commits. MEASURED: 2,006 double charges.
+ 10. `mark_processed(id); do_side_effect()` as two separate commits. MEASURED: 1,992 orders never
+     processed - and ZERO duplicates, so the metric you are watching says you fixed it.
+
+MEASURING IT, which is how you convince a sceptical reviewer:
+
+ 11. Model the broker honestly: deliver, run the consumer, and then ack with probability
+     `1 - p_ack_lost`. If unacked, redeliver, up to a limit.
+ 12. Model the crash as happening AFTER the side effect and BEFORE completion - that is the window
+     that matters, and modelling a crash before the side effect would show nothing, because nothing
+     happened.
+ 13. Implement all FOUR designs against the identical broker, with the same seed. The comparison is
+     only meaningful if the delivery pattern is the same.
+ 14. Count THREE things, not one: orders charged more than once, TOTAL extra charges, and orders never
+     charged at all. Counting only duplicates makes the record-first design look perfect.
+ 15. Sweep the ack-loss rate and the crash rate INDEPENDENTLY. That sweep is what shows the naive
+     design tracking one variable and the effect-first design tracking the other - and therefore why
+     the second bug is the one that survives testing.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Most real message systems give AT-LEAST-ONCE delivery, not exactly-once, because guaranteeing a
+message is delivered exactly one time across an unreliable network is effectively impossible. The
+broker sends a message, the consumer processes it, but the ACK back to the broker can be lost - a
+network blip, or the consumer crashing after processing but before acking. The broker, seeing no ack,
+MUST redeliver, because otherwise it risks losing messages. So the same message can legitimately arrive
+more than once, and the consumer cannot tell a genuine first delivery from a redelivery.
+
+If processing has SIDE EFFECTS - charge a card, increment a counter, send an email - naive
+at-least-once means double charges, inflated counts and duplicate emails. I simulated 200,000 orders
+with 2% lost acks: a consumer with no deduplication produced 6,077 extra charges.
+
+The fix is to make the consumer IDEMPOTENT: processing the same message twice yields the same end state
+as processing it once. Four techniques, in the order I'd prefer them.
+
+First, design operations to be NATURALLY idempotent - 'set status = shipped' rather than 'increment',
+UPSERT rather than INSERT, PUT rather than POST. No bookkeeping to get wrong.
+
+Second, CONDITIONAL WRITES - `UPDATE ... WHERE version = ?` - so a replay fails the condition and is a
+no-op.
+
+Third, a DEDUP KEY: record each processed message id and skip if already seen.
+
+Fourth, for external effects you cannot deduplicate - emails - keep a sent-log keyed by message id.
+
+The subtlety, and the thing I'd emphasise, is ATOMICITY: the dedup record and the side effect must
+commit TOGETHER, or you have just moved the gap. I measured both wrong orderings. Doing the side effect
+first and then recording the key still produced 2,006 double charges, because a crash lands between the
+two writes - the money moved and the key did not. Recording the key first produced ZERO duplicates and
+1,992 orders that were NEVER CHARGED, because the key says done and the money never moved. That second
+one is worse, because it is invisible - a duplicate charge generates a support ticket and a skipped
+payment generates a discrepancy nobody notices.
+
+Doing both in one transaction gave 0 and 0.
+
+I'd also note why this bug survives testing: the naive design's failure rate tracks the ACK-LOSS rate,
+which is common and easy to reproduce, while the effect-first design's failure rate tracks the CRASH
+rate - a crash landing in the microseconds between two writes. In my sweep, raising ack loss from 0.1%
+to 1% took the naive count from 107 to 591 and left the effect-first count at 57 both times.
+
+This is why 'exactly-once PROCESSING' is achievable - at-least-once delivery plus an idempotent
+consumer - even though 'exactly-once DELIVERY' is not."
+
+THE ONE SENTENCE TO NOT FUMBLE: duplicates are unavoidable, so make them harmless - and the dedup
+record must commit in the SAME transaction as the side effect, or you have merely chosen which way to
+fail.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE CORRECT CONSUMER:
+
+    BEGIN;
+      INSERT INTO processed_messages(msg_id) VALUES (?);
+      UPDATE orders SET status='paid' WHERE id=?;
+    COMMIT;
+
+Four lines, and every one of them matters.
+
+    `BEGIN` / `COMMIT`   the atomicity. Without these you have two writes and a window between them,
+                         which is precisely the 2,006 and 1,992 measured above.
+    `INSERT` first       and let the UNIQUE CONSTRAINT raise on a duplicate. Do NOT write
+                         `SELECT ... IF NOT EXISTS THEN INSERT` - two concurrent redeliveries (which
+                         happen when the visibility timeout is too short) can both pass the SELECT.
+                         The insert is the check.
+    the side effect      inside the same transaction, so it lands or does not land together with the
+                         key.
+
+    except UniqueViolation:
+        conn.rollback(); ack(); return
+
+The duplicate path. ACK IT - this is the bit people get wrong. The message really was processed, so
+telling the broker "done" is correct. Not acking means it is redelivered forever and eventually
+dead-letters a message that was handled perfectly.
+
+THE SIMULATION:
+
+    while not acked and attempts < max_redeliver:
+        attempts += 1
+        crash = r.random() < p_crash_after_effect
+        ...
+        acked = r.random() >= p_ack_lost
+
+The broker loop. Note there are TWO independent failure sources, and that separation is what makes the
+sweep in section 4 informative: `p_ack_lost` drives redelivery, and `p_crash_after_effect` drives the
+window between two writes.
+
+    if mode == 'dedup-effect-first':
+        if msg in seen: acked = ...; continue
+        charged[msg] = charged.get(msg,0)+1     # side effect
+        if crash: continue                       # crash BEFORE recording the key
+        seen.add(msg)
+
+The first wrong design. The `if crash: continue` sits BETWEEN the two writes, which is the entire bug
+expressed in one line. On the redelivery, `msg in seen` is False - the key was never written - so it
+charges again.
+
+    if mode == 'dedup-record-first':
+        if msg in seen: acked = ...; continue
+        seen.add(msg)                            # record FIRST
+        if crash: continue                       # crash BEFORE the side effect
+        charged[msg] = charged.get(msg,0)+1
+
+The second wrong design, and the same `if crash: continue` in the other position. Now the redelivery
+finds the key and SKIPS. Zero duplicates, and the work never happened.
+
+    if mode == 'atomic':
+        if msg in seen: acked = ...; continue
+        if crash: continue                       # the transaction never commits: NOTHING happened
+        charged[msg] = charged.get(msg,0)+1; seen.add(msg)   # ONE transaction
+
+The correct design. The crash is now BEFORE both writes rather than between them, which is what a
+transaction guarantees - the crash leaves no partial state, the message is unacked, and the redelivery
+processes it cleanly for the first time.
+
+    over = sum(v-1 for v in charged.values() if v>1)
+    never = n - len(charged)
+
+The two failure metrics, and you need BOTH. `over` counts extra charges; `never` counts work that
+vanished. Reporting only `over` makes the record-first design look like a complete fix, which is
+exactly the trap the entry is about.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one message, one lost ack, no deduplication.
+
+    step   what happens                                   card charged   broker state
+    ----   -------------------------------------------   ------------   -------------------
+    1      broker delivers msg #42                                  -   unacked
+    2      consumer charges the card                             1x     unacked
+    3      consumer sends the ack                                1x     ack IN FLIGHT
+    4      the ack is LOST                                       1x     still unacked
+    5      broker's visibility timeout expires                   1x     unacked
+    6      broker REDELIVERS msg #42                             1x     unacked
+    7      consumer charges the card AGAIN                       2x     unacked
+    8      the ack arrives                                       2x     acked
+
+Nothing malfunctioned. The broker behaved correctly - it had no evidence the message was processed. The
+consumer behaved correctly for its code. The customer was charged twice.
+
+TRACE B - the same message with a dedup key, EFFECT FIRST, and a crash in the window.
+
+    step   what happens                                   charged   `seen` set   on redelivery
+    ----   -------------------------------------------   -------   ----------   -------------
+    1      deliver msg #42                                      -   {}
+    2      charge the card                                     1x   {}
+    3      *** CRASH ***                                       1x   {}           <- the window
+    4      broker redelivers                                   1x   {}
+    5      `if msg in seen` -> False                           1x   {}           charges again
+    6      charge the card                                     2x   {}
+    7      seen.add(42)                                        2x   {42}
+    8      ack                                                 2x   {42}
+
+Step 3 is one instruction wide and it costs a double charge. MEASURED: 2,006 of these in 200,000
+orders.
+
+TRACE C - the same, RECORD FIRST.
+
+    step   what happens                                   charged   `seen` set   on redelivery
+    ----   -------------------------------------------   -------   ----------   -------------
+    1      deliver msg #42                                      -   {}
+    2      seen.add(42)                                         -   {42}
+    3      *** CRASH ***                                        -   {42}         <- the window
+    4      broker redelivers                                    -   {42}
+    5      `if msg in seen` -> True                             -   {42}         SKIPS
+    6      ack                                                  -   {42}
+
+The order is marked processed and the card was never charged. Zero duplicates, and one lost payment.
+MEASURED: 1,992 of these.
+
+TRACE D - the four designs, measured over 200,000 orders.
+
+    design                          extra charges   never charged   total wrong outcomes
+    ----------------------------   -------------   -------------   --------------------
+    no dedup at all                        6,077               0                  6,077
+    dedup, effect first                    2,006               0                  2,006
+    dedup, record first                        0           1,992                  1,992
+    dedup in ONE transaction                   0               0                      0
+
+The middle two rows are the same crash window pointing in opposite directions, which is why their
+counts are so close (2,006 and 1,992). Neither ordering is better; only ELIMINATING the window is.
+
+TRACE E - how each residual failure scales, which is why one of them survives testing.
+
+    p(ack lost)   p(crash)   naive   effect-first   record-first   atomic   what each tracks
+    -----------   --------   -----   ------------   ------------   ------   -----------------------
+          0.001      0.001     107             57             57        0
+          0.010      0.001     591             57             57        0   naive x5.5, others FLAT
+          0.020      0.010   1,587            533            527        0   both rates rose
+          0.050      0.020   3,684          1,057          1,028        0
+          0.100      0.050   8,452          2,688          2,527        0
+
+Rows 1 and 2 are the important pair. The ack-loss rate went up 10x and the crash rate did not move. The
+naive column went 107 -> 591. The effect-first and record-first columns went 57 -> 57, unchanged.
+
+That is a complete explanation of why the second bug reaches production: your load test hammers the
+network and reproduces the naive failure immediately, and does not reproduce the crash-window failure
+at all. It only appears at real volume, over weeks, as a small unexplained rate of duplicates - or, in
+the record-first case, as a small unexplained rate of nothing.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY AND COST:
+
+    dedup lookup                 O(1) with a primary key or a unique index
+    extra storage                one row per processed message, until it is expired. This is a real
+                                 operational cost: at 10,000 messages/second, a 7-day retention is
+                                 6 billion rows.
+    extra write per message      one INSERT, inside the transaction you were opening anyway
+    transaction scope            slightly longer, so slightly more lock contention
+    duplicate rate              MEASURED 6,077 per 200,000 (3.0%) with no deduplication, at a 2%
+                                 ack-loss rate
+    residual with a non-atomic  MEASURED 2,006 double charges (effect first) or 1,992 lost orders
+    dedup                        (record first)
+    residual with an atomic     0 and 0
+    dedup
+
+    the naive failure rate scales with the ACK-LOSS rate; the non-atomic-dedup failure rate scales
+    with the CRASH rate. MEASURED: 107 -> 591 versus 57 -> 57 for a 10x change in ack loss.
+
+THE MISTAKES:
+
+    - Believing exactly-once delivery exists. It does not; the ack can always be the lost message.
+      Exactly-once PROCESSING does, and it is at-least-once plus idempotency.
+    - A dedup table written in a SEPARATE transaction from the side effect. MEASURED: 2,006 duplicates
+      or 1,992 losses, depending on the order.
+    - Preferring "record the key first" because it shows zero duplicates. MEASURED: it shows zero
+      duplicates and loses 1,992 orders silently. Watch both metrics.
+    - `SELECT` then `INSERT` instead of relying on a unique constraint. Two concurrent redeliveries can
+      both pass the SELECT.
+    - Not acking a detected duplicate. It was processed; say so, or the broker redelivers forever and
+      eventually dead-letters a message that was handled correctly.
+    - A consumer-generated dedup id. It differs on every delivery and deduplicates nothing. The
+      PRODUCER assigns it.
+    - A visibility timeout shorter than your p99 processing time. This is the most common real cause of
+      duplicates, and it also causes CONCURRENT processing of the same message.
+    - A dedup table with no TTL. It grows forever and becomes the slowest part of the consumer.
+    - Assuming Kafka's exactly-once semantics covers your side effects. It covers read-process-write
+      WITHIN Kafka. A card charge is outside it.
+    - Forgetting the mirror-image problem. Publishing a message and updating your database is the same
+      dual-write gap in reverse; the fix is a transactional outbox.
+
+THE TAKEAWAY. The ack is a message, and messages get lost, so the broker must resend and duplicates are
+a fact rather than a bug. That converts the problem from "prevent duplicates" - impossible - into "make
+duplicates harmless", which is achievable. The trap is that the obvious solution introduces a SECOND
+WRITE, and the crash window between two writes is where the residual failures live: 2,006 double
+charges one way round, 1,992 silently dropped orders the other, and 0 when they commit together. Prefer
+operations that are naturally idempotent, use conditional writes where you can, and when you do need a
+dedup key, put it in the SAME transaction as the effect - because otherwise you have not fixed the bug,
+you have only chosen which direction it fails in.""",
+]
+
+_EX_P1AO["Why do you need both liveness and readiness probes, and what breaks if you conflate them?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two probes, two questions, two completely different remedies.
+
+    LIVENESS   "Is this process broken beyond self-recovery?"   -> REMEDY: RESTART the container.
+    READINESS  "Can this instance serve requests RIGHT NOW?"    -> REMEDY: REMOVE it from the load
+                                                                   balancer, and do NOT restart it.
+
+The distinction is not pedantry. A process can be perfectly healthy and temporarily unable to serve -
+it is warming a cache, loading a 4 GB model, running migrations, or a downstream dependency it needs is
+briefly unavailable. Restarting it is the worst possible response, because there is nothing to fix and
+you have just thrown away 90 seconds of warm-up.
+
+MEASURED ON THIS MACHINE - 10 pods at 100 rps each, demand 700 rps, a dependency down for a 30-SECOND
+BLIP from t=60 to t=90, a rolling deploy at t=200, and a 90-second cold start:
+
+    design                              failed requests   restarts   seconds below demand
+    ---------------------------------   ---------------   --------   --------------------
+    correct: cheap local liveness                41,000          0                    170
+    dependency wired into LIVENESS               90,000         10                    240
+    ...and no startup probe                     238,000        220                    340
+    readiness = "the process is alive"           72,800          0                    230
+    liveness too aggressive                     106,500         16                    325
+
+A 30-second dependency blip cost 41,000 failed requests with correct probes. Wiring that same
+dependency check into the LIVENESS probe turned it into 90,000 failures and 10 pod restarts - and
+without a startup probe as well, the fleet entered a crash loop and NEVER RECOVERED, at 238,000 failed
+requests and 220 restarts.
+
+The dependency was down for thirty seconds. The outage lasted the rest of the simulation.""",
+
+    """2. THE INTUITION - restart is the remedy for a BROKEN thing; rotation-removal is the remedy for a
+BUSY or WARMING thing. Applying the wrong remedy is what breaks.
+
+Think of a call centre. If an agent's phone is physically dead, you replace the phone - a restart. If
+an agent is on their induction course and cannot yet take calls, you route calls to someone else and
+wait - a rotation removal. Firing the trainee and hiring a new one every time they are not yet ready is
+how you never get a trained agent.
+
+THAT IS THE CRASH LOOP, and the measurement shows it exactly. Here is the serving capacity over time,
+in 20-second buckets, for three designs:
+
+    t=                    0    20    40    60    80   100   120   140   160   180   200 ...
+    correct:            700   700   700     0   350   700   700   700   700   700   700 ...
+    dep in liveness:    700   700   700     0     0     0     0     0   700   700   700 ...
+    + no startup probe: 700   700   700     0     0     0     0     0     0     0     0 ...
+
+The correct row loses capacity for exactly the blip and recovers immediately at t=100. The
+"dependency in liveness" row loses capacity for the blip AND for the 90-second cold start of the ten
+pods it just killed - a 30-second blip became a 100-second outage. And the third row never comes back
+at all: the liveness probe fires DURING the warm-up (no startup probe), so every pod is killed
+mid-boot, forever.
+
+THE SECOND INTUITION - a self-inflicted thundering herd. When the dependency recovers, every pod is
+cold-starting at the same moment, and cold-starting pods hammer the dependency with connection
+attempts, cache fills and migrations. You have taken a service that was recovering and hit it with your
+entire fleet's boot sequence simultaneously. That is the same synchronisation problem as in the backoff
+entry, manufactured by your own health checks.
+
+THE THIRD INTUITION - the mirror mistake. If READINESS only checks that the process is up, the load
+balancer sends traffic to pods that cannot serve it. MEASURED, the rolling deploy at t=200:
+
+    t=                    200   220   240   260   280   300   320   340   360   380
+    correct:              700   700   700   600   550   550   550   550   550   550
+    readiness=alive:      700   630   560   490   420   385   385   385   385   385
+
+Watch the second row decline as each replaced pod is put back into rotation while still warming: 700,
+630, 560, 490, 420, 385. Every pod that comes back is taking a share of traffic it cannot serve, so
+each rollout step makes things WORSE. Total: 72,800 failed requests against 41,000, and every one of
+them is a real user error during a routine deploy.""",
+
+    """3. EVERY TERM DEFINED.
+
+LIVENESS PROBE. "Is this process wedged?" On repeated failure the orchestrator KILLS AND RESTARTS the
+container. Should be a cheap, LOCAL check.
+
+READINESS PROBE. "Can this instance serve right now?" On failure the orchestrator removes the pod from
+the SERVICE ENDPOINTS - it stops receiving traffic - and does not restart it. Allowed to flap.
+
+STARTUP PROBE. A third probe for slow-booting applications: while it is failing, the liveness probe is
+SUSPENDED. This is what stops a 90-second model load being killed by a liveness check with a 30-second
+budget. MEASURED: omitting it turned a recoverable 10-restart incident into a 220-restart permanent
+crash loop.
+
+ENDPOINTS / SERVICE. The list of pod IPs the load balancer will send traffic to. Readiness controls
+membership of this list; liveness does not.
+
+CRASH LOOP / CrashLoopBackOff. A container repeatedly restarting. Kubernetes backs off exponentially,
+which slows the loop and does not fix its cause.
+
+COLD START / WARM-UP. The time between process start and being able to serve: JIT warm-up, cache fill,
+connection pool establishment, model weight loading. 90 seconds in the measurement, which is
+conservative for a real model server.
+
+`initialDelaySeconds`, `periodSeconds`, `timeoutSeconds`, `failureThreshold`. The four knobs. The
+effective time-to-restart is roughly `initialDelay + period x failureThreshold`, and getting this
+shorter than your worst-case boot is the crash-loop bug.
+
+CASCADING FAILURE. One component's failure causing others to fail. Wiring a dependency into liveness
+builds a cascade deliberately: their blip becomes your restart.
+
+THUNDERING HERD. Many clients doing the same thing simultaneously. Here it is a fleet of pods all
+cold-starting at the same instant against a dependency that was just recovering.
+
+GRACEFUL SHUTDOWN / `preStop`. On termination, first fail readiness, wait for the load balancer to
+notice, drain in-flight requests, then exit. Skipping this drops connections on every deploy.
+
+DEPENDENCY CHECK. Testing whether a downstream service is reachable. Belongs in READINESS, and in
+practice usually only for HARD dependencies - see section 5.
+
+HARD vs SOFT DEPENDENCY. Hard: you cannot serve any request without it (your primary database). Soft:
+some requests degrade (a recommendations service). Only hard dependencies belong in readiness at all.
+
+DEEP vs SHALLOW HEALTH CHECK. Deep checks touch dependencies; shallow ones do not. Liveness should
+always be shallow.
+
+PROBE AMPLIFICATION. N pods x (1 / periodSeconds) checks per second hitting a dependency. Ten pods
+probing every 5 seconds is 2 requests/second of pure health-check load - and a thousand pods is 200,
+which is a real load source that appears in no capacity plan.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - putting a dependency check in the LIVENESS probe. It looks
+thorough. It builds a cascade.
+
+The reasoning that leads to it is entirely sensible: "a pod that cannot reach the database is not
+healthy, so liveness should fail." The flaw is in what the orchestrator DOES about it - it restarts the
+container. And restarting does not fix a database outage. It converts somebody else's brief problem
+into your fleet being destroyed.
+
+MEASURED, the same 30-second dependency blip:
+
+    design                              failed requests   restarts   seconds below demand
+    ---------------------------------   ---------------   --------   --------------------
+    correct: cheap local liveness                41,000          0                    170
+    dependency wired into LIVENESS               90,000         10                    240
+
+Ten pods restarted - the entire fleet - for a problem that lasted 30 seconds and required no action at
+all. Failures went up 2.2x, and the recovery took 90 seconds of cold start AFTER the dependency came
+back.
+
+AND NOW THE COMPOUND FAILURE, which is what actually happens in production because slow-starting apps
+are exactly the ones with dependencies:
+
+    ...and no startup probe                     238,000        220                    340
+
+Two hundred and twenty restarts, and the fleet never recovers. The mechanism is a loop: liveness fails
+(dependency down) -> restart -> the pod is now cold-starting -> liveness ALSO fails during the cold
+start, because there is no startup probe to suspend it -> restart -> forever. Even after the dependency
+recovers, no pod ever survives long enough to finish booting. MEASURED: 0 requests served for the last
+280 seconds of the run.
+
+THE SECOND TRAP - the mirror image. Readiness that only checks the process is alive:
+
+    readiness = "the process is alive"           72,800          0                    230
+
+No restarts, nothing crash-looping, and 1.8x the failed requests, because the load balancer routes to
+pods that cannot serve. And the serving trace shows it getting progressively WORSE through the rolling
+deploy - 700, 630, 560, 490, 420, 385 - as each newly replaced pod joins the rotation and starts
+dropping its share.
+
+This is the failure that people ship, because it produces no alarming Kubernetes events. Nothing
+restarts. There is no CrashLoopBackOff. There is just a spike of 5xx on every single deploy, which
+teams learn to expect and stop investigating.
+
+THE THIRD TRAP - a liveness probe that is too aggressive: a short timeout, or one that does real work,
+so it fails when the pod is merely BUSY.
+
+    liveness too aggressive                     106,500         16                    325
+
+Sixteen restarts caused by load, not by breakage - and each restart removes 100 rps of capacity for 90
+seconds, which increases the load on the survivors, which makes THEM fail their probes. That is a
+capacity death spiral, and it fires exactly when you can least afford it: during your traffic peak.
+
+THE FOURTH TRAP - forgetting probe amplification. A readiness probe that queries the database, on 500
+pods, every 5 seconds, is 100 queries per second of pure health-check traffic against the thing that is
+already struggling.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what each probe should actually contain.
+
+THE LIVENESS PROBE - CHEAP, LOCAL, and almost always trivially true:
+    - `GET /healthz` returning 200 from a handler that does nothing but return 200.
+    - It should fail ONLY for conditions a restart actually fixes: a deadlocked event loop, an
+      unrecoverable internal state, a thread pool that is permanently wedged.
+    - It should NEVER call an external dependency. That is the entire content of this entry.
+    - A useful stronger version: have the probe check that the main work loop has ticked recently -
+      "the event loop has processed something in the last 30 seconds". That detects a genuine
+      deadlock and touches nothing external.
+    - Generous timeouts and failureThreshold. A liveness probe that fires under load is worse than one
+      that never fires - MEASURED at 16 restarts and 106,500 failures.
+
+THE READINESS PROBE - reflects the FULL ability to serve, and is allowed to flap:
+    - warm-up complete: model loaded, caches primed, connection pool established, migrations done.
+    - HARD dependencies reachable. Only hard ones - a recommendation service being down should degrade
+      the response, not remove the pod.
+    - a shutdown flag, so `preStop` can fail readiness first and drain gracefully.
+    - it may return 503 as often as it likes. Flapping readiness is normal; flapping liveness is a
+      crash loop.
+
+THE STARTUP PROBE - for anything with a slow boot:
+    - while it is failing, liveness is SUSPENDED. `failureThreshold x periodSeconds` should exceed
+      your WORST-CASE boot time, not the typical one.
+    - MEASURED, omitting it: 220 restarts and a fleet that never comes up.
+
+THE SUBTLETY ABOUT DEPENDENCIES IN READINESS, which is worth raising because the naive rule has its own
+failure mode: if EVERY pod checks the same shared database in its readiness probe and that database
+blips, EVERY pod leaves the rotation at once and you have a total outage rather than a degraded one. So
+the mature pattern is:
+    - hard dependency, and you truly cannot serve anything -> readiness fails, and accept that a
+      shared-dependency outage is a total outage anyway.
+    - otherwise -> stay ready, serve what you can, return errors for the affected routes, and let the
+      circuit breaker and the alert handle it. A pod serving 60% of its routes beats a pod serving
+      none.
+    - never make readiness depend on a SOFT dependency.
+
+THE FAMILY OF RELATED MECHANISMS:
+    CIRCUIT BREAKER      the in-process version: stop calling a failing dependency and fail fast.
+                         Complements readiness, and does not remove the pod.
+    HEALTH CHECK vs PROBE   a load balancer's health check is the same idea outside Kubernetes; ALB
+                         target-group checks are readiness, and an EC2 status check is closer to
+                         liveness.
+    `terminationGracePeriodSeconds` + `preStop`   the shutdown counterpart: fail readiness, sleep long
+                         enough for the endpoints update to propagate, then drain.
+    PodDisruptionBudget  stops a rollout or a node drain from taking too many pods at once - the
+                         capacity guarantee that probes alone cannot give you.
+    MAX SURGE / MAX UNAVAILABLE   rollout parameters. With a 90-second warm-up, a surge that replaces
+                         pods faster than they can warm produces exactly the declining-capacity
+                         pattern measured in section 2.""",
+
+    """6. HOW TO CODE IT.
+
+THE PROBES:
+
+  1. LIVENESS - the handler is one line: `return 200`. Resist every temptation to add more. If you
+     want it to mean something, have it check a heartbeat timestamp updated by your main loop, and
+     nothing else.
+  2. READINESS - a handler that returns 503 until: warm-up finished, hard dependencies reachable, and
+     the shutdown flag is unset. Cache the dependency check for a few seconds so N pods x 1/period do
+     not become a load source on the dependency.
+  3. STARTUP - the same endpoint as readiness is usually fine, with a generous
+     `failureThreshold x periodSeconds` covering your WORST-CASE boot.
+  4. Set liveness `failureThreshold` and `timeoutSeconds` generously. The effective time-to-restart is
+     `initialDelay + period x failureThreshold`; make sure that exceeds any pause your process can
+     legitimately take, including a long GC or a slow disk.
+  5. In `preStop`: set the shutdown flag so readiness starts failing, then sleep several seconds so the
+     endpoints update propagates to every load balancer, THEN let the process drain and exit. Without
+     that sleep you drop in-flight connections on every deploy, because endpoint propagation is not
+     instantaneous.
+
+MEASURING IT - the simulation is worth building because it makes the argument arithmetic:
+
+  6. Model each pod with a `ready_at` timestamp. A pod is WARMING while `t < ready_at`.
+  7. Model the probe loop on its own schedule: every `PROBE` seconds, evaluate liveness per design, and
+     restart after `FAILS` consecutive failures by setting `ready_at = t + WARMUP`.
+  8. THE KEY MODELLING DECISION: separate what the PROBE SAYS from what the pod CAN ACTUALLY DO. In
+     the code, `in_lb` comes from the readiness rule and `CAN_SERVE` comes from physical reality
+     (`not warming and dependency up`). The gap between those two is precisely what a wrong readiness
+     probe costs you - requests routed to a pod that cannot serve them.
+  9. Include BOTH an incident (a dependency blip) and a ROUTINE EVENT (a rolling deploy). The
+     dependency-in-liveness bug shows up in the first; the readiness-is-just-alive bug shows up only in
+     the second, and a simulation with only an incident would conclude the second design is fine.
+ 10. Make the deploy ROLLING - one pod every 20 seconds - not all at once. With a simultaneous
+     replacement both designs go to zero and the difference vanishes; with a rolling one you see the
+     declining 700, 630, 560, 490, 420 pattern that is the actual production symptom.
+ 11. Report THREE numbers: failed requests, restarts, and seconds below demand. Restarts alone miss
+     the readiness bug (it causes zero); failures alone miss which design will recover.
+ 12. Print the capacity timeline in buckets. The three rows in section 2 communicate more than any
+     summary statistic, because the SHAPE - recovers / recovers late / never recovers - is the finding.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"They answer fundamentally different questions, and the orchestrator's RESPONSE to each is different -
+which is where the damage comes from.
+
+LIVENESS asks 'is this process broken beyond self-recovery?' - a deadlock, an unrecoverable hang, a
+corrupted internal state. The response to a failed liveness check is to RESTART the container, because
+the only fix for a wedged process is to kill and replace it.
+
+READINESS asks 'can this instance serve requests RIGHT NOW?' - which can be temporarily 'no' for
+perfectly healthy reasons: it is still warming a cache, loading a model, running migrations, or a
+downstream dependency it needs is briefly unavailable. The response is to REMOVE the pod from the load
+balancer rotation WITHOUT restarting it, because there is nothing to fix - it just needs a moment, and
+traffic should go to other ready pods meanwhile.
+
+Now the failure modes from conflating them, and I simulated all of these.
+
+If you wire a readiness-type condition into the LIVENESS probe - liveness fails when a dependency is
+down - then a transient dependency outage makes the orchestrator RESTART all your pods. I modelled a
+30-SECOND dependency blip against ten pods with a 90-second cold start. With correct probes: 41,000
+failed requests, zero restarts, and full recovery the moment the dependency came back. With the
+dependency in liveness: 90,000 failures and 10 restarts - the whole fleet - because the 30-second blip
+became a 100-second outage. And if the app also lacks a STARTUP probe, it is far worse: liveness fires
+during the cold start too, so every pod is killed mid-boot, forever. That run had 220 restarts and
+238,000 failures, and served zero requests for the last 280 seconds. A brief blip became a permanent
+crash loop. It also hammers the recovering dependency with a fleet of cold-starting pods - a
+self-inflicted thundering herd.
+
+If you use a liveness-type check for READINESS - readiness only checks the process is up, not that
+warm-up finished - the load balancer sends traffic to a pod before it can serve. I measured 72,800
+failed requests against 41,000, and the serving capacity DECLINED through the rolling deploy - 700,
+630, 560, 490, 420, 385 - because each newly replaced pod joined the rotation and started dropping its
+share. That is the one people ship, because it produces no restarts and no alarming events, just 5xx
+on every deploy.
+
+And a liveness probe that is too aggressive - short timeout, or checking heavy dependencies - restarts
+pods that are merely under load, reducing capacity exactly when you need it. I measured 16 restarts and
+106,500 failures from that alone.
+
+So the correct design: liveness is a CHEAP, LOCAL check that only fails when the process is genuinely
+unrecoverable, and never calls an external dependency. Readiness reflects the FULL ability to serve,
+including warm-up and hard dependencies, and is allowed to flap. Slow-starting apps add a STARTUP probe
+so liveness does not fire during a long boot.
+
+The principle: restart is the remedy for a broken process, and rotation-removal is the remedy for a
+temporarily-unable one - and treating those two remedies as interchangeable is what breaks."
+
+THE ONE SENTENCE TO NOT FUMBLE: liveness triggers a RESTART and readiness triggers a ROTATION REMOVAL,
+so anything a restart cannot fix - a warm-up, a dependency blip, a busy moment - must never be in the
+liveness probe.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE PROBES THEMSELVES:
+
+    @app.get("/healthz")          # LIVENESS
+    def healthz(): return "", 200
+
+That is the whole handler, and its emptiness is the design. It answers exactly one question: is this
+process still executing Python? Anything you add here is something a restart will be asked to fix.
+
+    @app.get("/ready")            # READINESS
+    def ready():
+        if shutting_down:            return "", 503
+        if not model_loaded:         return "", 503
+        if not db_reachable_cached(): return "", 503
+        return "", 200
+
+Three conditions, and each maps to a real reason to stop receiving traffic while remaining alive.
+`db_reachable_cached` is cached for a few seconds deliberately: N pods times one check per period is a
+load source on the dependency, and 500 pods probing every 5 seconds is 100 queries/second against
+something already struggling.
+
+    livenessProbe:  { periodSeconds: 10, failureThreshold: 6, timeoutSeconds: 5 }
+    startupProbe:   { periodSeconds: 10, failureThreshold: 30 }
+
+The liveness settings give `10 x 6 = 60` seconds of tolerance before a restart - generous on purpose.
+The startup probe gives `10 x 30 = 300` seconds of boot before liveness is even armed, which must
+exceed your WORST-CASE start, not your median.
+
+THE SIMULATION:
+
+    pods = [{'ready_at': 0, 'lf': 0} for _ in range(POD)]
+
+`ready_at` is when the pod finishes warming; `lf` counts consecutive liveness failures. A restart is
+just `ready_at = t + WARMUP`, which is the right model - a restart does not fix anything, it costs you
+a warm-up.
+
+    if design == 'dep-in-liveness':
+        live_ok = True if warm else dep_up
+
+The bug, in one line: liveness returns the DEPENDENCY's status. (This version still has a startup
+probe, hence `True if warm`.) Compare it with the correct version, which is `live_ok = True`, full
+stop.
+
+    elif design == 'dep-in-liveness-no-startup':
+        live_ok = dep_up and not warm
+
+The compound bug: liveness checks the dependency AND fires during warm-up. This is the row that never
+recovers, and it is realistic - the apps with slow boots are exactly the ones with heavy dependencies.
+
+    if not live_ok:
+        p['lf'] += 1
+        if p['lf'] >= FAILS: p['ready_at'] = t + WARMUP; restarts += 1
+
+The `failureThreshold`. Note that a restart makes the pod WARM again, which - in the no-startup-probe
+design - immediately re-fails liveness. That is the crash loop, and it emerges from the model rather
+than being programmed in.
+
+    in_lb = [p for p in pods if (True if design=='readiness-is-just-alive'
+                                 else ((t >= p['ready_at']) and dep_up))]
+
+Readiness decides LOAD BALANCER MEMBERSHIP. `True` for the broken design - it is always in rotation.
+
+    CAN_SERVE = (t >= p['ready_at']) and dep_up
+    if CAN_SERVE: good += min(share, RPS_PER_POD)
+
+THE MOST IMPORTANT LINES in the simulation. `in_lb` is what the PROBE thinks; `CAN_SERVE` is physical
+reality. A pod can be in the load balancer and unable to serve, and the requests routed to it simply
+fail. Modelling those as the same thing would make the readiness bug invisible - which is exactly the
+mistake the entry is about, reproduced in the measurement code.
+
+    if t >= DEPLOY and (t-DEPLOY) % 20 == 0 and (t-DEPLOY)//20 < POD:
+        pods[(t-DEPLOY)//20]['ready_at'] = t + WARMUP
+
+A ROLLING deploy - one pod every 20 seconds. My first version replaced every pod at once, and both the
+correct and the broken readiness designs went to zero capacity together, hiding the difference
+entirely. Rolling is both more realistic and the only version where the bug is visible.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the dependency blip, second by second, "dependency in liveness".
+
+    t     dependency   liveness   consecutive fails   action                 capacity
+    ---   ----------   --------   -----------------   --------------------   --------
+     55   UP           pass                       0   -                       700 rps
+     60   DOWN         FAIL                       1   -                         0 rps
+     65   DOWN         FAIL                       2   -                         0
+     70   DOWN         FAIL                       3   RESTART ALL 10 PODS       0
+     75   DOWN         (warming)                  -   -                         0
+     90   UP           (warming)                  -   dependency recovered!     0   <- but no pod
+    ...                                                                             can serve
+    160  UP            pass                       0   warm-up complete        700 rps
+
+The dependency was down for 30 seconds and the outage lasted 100. Between t=90 and t=160 the
+dependency was perfectly healthy and the service was completely down - entirely because of the health
+check.
+
+Now the same trace WITHOUT a startup probe:
+
+     70   DOWN         FAIL x3        RESTART, ready_at = 160
+     75   (warming)    FAIL           <- liveness fires DURING the warm-up
+     90   UP, warming  FAIL x3        RESTART again, ready_at = 180
+    110   warming      FAIL x3        RESTART again
+    ...   forever
+
+Twenty-two restarts per pod over the run. The pod is killed at t+15 every time and needs t+90 to be
+ready. It can never win.
+
+TRACE B - the five designs, measured.
+
+    design                              failed requests   restarts   seconds below demand   recovers?
+    ---------------------------------   ---------------   --------   --------------------   ---------
+    correct: cheap local liveness                41,000          0                    170   yes, at once
+    dependency wired into LIVENESS               90,000         10                    240   yes, +90s
+    ...and no startup probe                     238,000        220                    340   NEVER
+    readiness = "the process is alive"           72,800          0                    230   yes
+    liveness too aggressive                     106,500         16                    325   degraded
+
+Note that the READINESS bug produced ZERO restarts. Nothing in your Kubernetes events, no
+CrashLoopBackOff, no alert - and 1.8x the failed requests. It is the quietest of the four failures and
+therefore the most likely to be in production right now.
+
+TRACE C - serving capacity over time, 20-second buckets. The blip is t=60-90 and the rolling deploy
+starts at t=200.
+
+    t=                       0    20    40    60    80   100   120   140   160   180
+    correct:               700   700   700     0   350   700   700   700   700   700
+    dep in liveness:       700   700   700     0     0     0     0     0   700   700
+    + no startup probe:    700   700   700     0     0     0     0     0     0     0
+    readiness=alive:       700   700   700     0   350   700   700   700   700   700
+    aggressive liveness:   700   700   700     0   350   600   425   450   500   425
+
+    t=                     200   220   240   260   280   300   320   340   360   380
+    correct:               700   700   700   600   550   550   550   550   550   550
+    dep in liveness:       700   700   700   600   550   550   550   550   550   550
+    + no startup probe:      0     0     0     0     0     0     0     0     0     0
+    readiness=alive:       630   560   490   420   385   385   385   385   385   385
+    aggressive liveness:   450   450   275   350   350   350   350   450   450   350
+
+Two separate stories in one table.
+
+    THE FIRST HALF (the incident) separates the LIVENESS designs. `correct` and `readiness=alive` are
+    identical here - the readiness bug is invisible during a dependency blip, because during a blip no
+    pod can serve anyway.
+
+    THE SECOND HALF (the routine deploy) separates the READINESS designs. `correct` and
+    `dep in liveness` are identical here, and `readiness=alive` declines steadily - 630, 560, 490, 420,
+    385 - as each replaced pod rejoins the rotation while still warming.
+
+Which is the reason a simulation needs both events: each bug is invisible in the other's scenario, and
+testing only one would have cleared a broken design.
+
+TRACE D - the aggressive-liveness spiral, visible in the row above: 600, 425, 450, 500, 425 after the
+blip. It never returns to 700 for the rest of the run. Each load-induced restart removes 100 rps for 90
+seconds, which raises the load on the survivors, which makes THEM more likely to fail their probes. 16
+restarts, none of which fixed anything, and 106,500 failed requests.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE MECHANICS, in the terms that decide the configuration:
+
+    time to restart          initialDelaySeconds + periodSeconds x failureThreshold. If this is less
+                             than your worst-case boot and you have no startup probe, you have a crash
+                             loop by construction.
+    time to leave rotation   readiness period x failureThreshold, PLUS endpoint propagation delay -
+                             which is why `preStop` must fail readiness and then SLEEP before draining.
+    probe load               pods x (1 / periodSeconds) requests per second against whatever the probe
+                             touches. 500 pods at a 5-second period is 100 rps of pure health checks.
+    cost of one restart      one full cold start of lost capacity. MEASURED at 90 seconds x 100 rps.
+    cost of one wrong        one pod's share of traffic failing for the whole warm-up.
+    readiness
+
+    MEASURED, a 30-second dependency blip against 10 pods:
+        correct probes                     41,000 failed,   0 restarts, recovers immediately
+        dependency in liveness             90,000 failed,  10 restarts, recovers 90 s late
+        + no startup probe                238,000 failed, 220 restarts, NEVER recovers
+        readiness = process alive          72,800 failed,   0 restarts
+        liveness too aggressive           106,500 failed,  16 restarts, permanently degraded
+
+THE MISTAKES:
+
+    - A dependency check in the LIVENESS probe. MEASURED 2.2x the failures and 10 restarts from a
+      30-second blip, because restarting does not fix somebody else's outage.
+    - No STARTUP probe on a slow-booting app. MEASURED 220 restarts and permanent unavailability. This
+      is the compound of the previous mistake and is the realistic case, since slow-booting apps are
+      the ones with heavy dependencies.
+    - Readiness that only checks the process is alive. MEASURED 1.8x the failures, zero restarts, and
+      no alarming events - the quietest and most commonly shipped bug of the four.
+    - Liveness with a short timeout or real work in it. MEASURED 16 load-induced restarts and a
+      capacity spiral that never recovered.
+    - Forgetting that readiness is ALLOWED to flap and liveness is not. Flapping readiness is normal
+      operation; flapping liveness is a crash loop.
+    - Making readiness depend on a SOFT dependency. A pod serving 60% of its routes beats a pod
+      serving none.
+    - Making EVERY pod's readiness depend on the SAME shared database. When it blips, the entire fleet
+      leaves the rotation simultaneously and a degraded outage becomes a total one.
+    - Uncached dependency checks in probes. Fleet size times probe frequency is a real load source
+      against the thing already struggling.
+    - No `preStop` sleep. Endpoint propagation is not instantaneous, so you drop in-flight requests on
+      every deploy.
+    - Testing probes with only one scenario. MEASURED: the liveness bug is invisible during a deploy
+      and the readiness bug is invisible during a dependency blip.
+
+THE TAKEAWAY. The two probes are not two levels of thoroughness; they are two different QUESTIONS with
+two different REMEDIES, and the remedy is what does the damage. Restart is correct for a wedged process
+and catastrophic for a warming one or for somebody else's outage - measured, a 30-second dependency
+blip became a 100-second outage and, with no startup probe, a permanent one. Rotation removal is
+correct for a temporarily-unable pod and useless for a wedged one. So keep liveness cheap, local and
+almost always true; put warm-up and hard dependencies in readiness and let it flap; and add a startup
+probe to anything that takes longer to boot than your liveness budget allows.""",
+]
+
+_EX_P1AO["Why does Adam need bias correction, and what goes wrong without it?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - Adam keeps two running averages of your gradients, and it starts
+both of them at ZERO. Zero is not a neutral starting point; it is a wrong answer that the averages then
+have to climb out of.
+
+    m = b1*m + (1-b1)*g       the first moment - an estimate of the MEAN gradient.       b1 = 0.9
+    v = b2*v + (1-b2)*g*g     the second moment - an estimate of the mean SQUARED gradient. b2 = 0.999
+
+After the very first step, with `m` and `v` starting at zero:
+
+    m = 0.1 * g       one TENTH of the gradient, when the best estimate of the mean so far is just g
+    v = 0.001 * g^2   one THOUSANDTH of the true magnitude, because b2 is so close to 1
+
+Both estimates are biased toward zero, and `v` far worse than `m` because `(1 - b2)` is a thousand
+times smaller than `(1 - b1)`.
+
+BIAS CORRECTION divides each by `(1 - b^t)`, which cancels that bias exactly.
+
+MEASURED ON THIS MACHINE - a CONSTANT gradient of 2, so the correct normalised step `m/sqrt(v)` should
+be exactly 1.0 at every step:
+
+    t    raw m     m_hat     raw v      v_hat    raw step   corrected step   raw is too big by
+    --  -------   -------   --------   ------   ---------   --------------   -----------------
+     1   0.2000    2.0000   0.004000   4.0000      3.1623           1.0000               3.16x
+     2   0.3800    2.0000   0.007996   4.0000      4.2496           1.0000               4.25x
+     5   0.8190    2.0000   0.019960   4.0000      5.7971           1.0000               5.80x
+    12   1.4351    2.0000   0.047737   4.0000      6.5685           1.0000               6.57x
+
+The `m_hat` and `v_hat` columns are 2.0000 and 4.0000 at EVERY step - exactly the true mean gradient
+and the true mean squared gradient. That is what "unbiased" means, and it is not an approximation; the
+correction cancels the bias precisely.""",
+
+    """2. THE INTUITION - an exponential moving average that starts at zero is averaging in a value you
+made up.
+
+`m = 0.9*m + 0.1*g` is a weighted average of the gradient history. On step 1, the history is one
+observation, so the average of it should be `g`. Instead you get `0.1*g`, because the formula quietly
+averaged in the initial zero with 90% weight. The estimate is not noisy - it is systematically ten
+times too small, and there is a closed form for exactly how much.
+
+Expand it. With a constant gradient g:
+
+    m_1 = (1-b1) g
+    m_2 = (1-b1) g + b1 (1-b1) g              = (1 - b1^2) g
+    m_t = (1 - b1^t) g
+
+So `E[m_t] = (1 - b1^t) * (the true first moment)`, and dividing by `(1 - b1^t)` recovers it exactly.
+Same derivation for `v` with `b2`. That is the whole of bias correction: two scalar powers per step.
+
+WHY IT SELF-CANCELS OVER TIME: `b1^t -> 0`, so the correction factor `(1 - b1^t) -> 1` and the division
+smoothly becomes a no-op. At t=1 it multiplies `m` by 10; by t=100 the factor is 1.0000.
+
+NOW THE PART THAT CORRECTS THE FOLKLORE, and it took a measurement to find. The usual telling is "the
+tiny `v` makes `sqrt(v)` tiny, so the first step blows up by about 30x". MEASURED, with NEITHER
+correction applied:
+
+    b2        raw v at t=1   sqrt(raw v)   v_hat   sqrt(v_hat)   first step too large by
+    -------   ------------   -----------   -----   -----------   -----------------------
+    0.9000        0.400000      0.632456   4.0000        2.0000                   0.32x
+    0.9900        0.040000      0.200000   4.0000        2.0000                   1.00x
+    0.9990        0.004000      0.063246   4.0000        2.0000                   3.16x
+    0.9999        0.000400      0.020000   4.0000        2.0000                  10.00x
+
+At the standard `b2 = 0.999` the raw first step is 3.16x too large, not 30x. The reason is that BOTH
+moments are biased downward, and the two biases PARTIALLY CANCEL: `m` is 10x too small and `sqrt(v)` is
+31.6x too small, so the ratio is off by 31.6/10 = 3.16.
+
+The 30x figure is what you get if you correct `m` and forget `v` - which is a real and common bug.
+MEASURED, all four combinations at a constant gradient:
+
+    t   no correction   correct m only   correct v only   both (correct)
+    --  -------------   --------------   --------------   --------------
+     1        3.1623          31.6228           0.1000           1.0000
+     4        5.4416          15.8233           0.3439           1.0000
+     8        6.3787          11.1999           0.5695           1.0000
+
+Correcting `m` alone makes it TEN TIMES WORSE than doing nothing. The two corrections are a matched
+pair, and half of the fix is worse than none of it.""",
+
+    """3. EVERY TERM DEFINED.
+
+ADAM (adaptive moment estimation). An optimiser that keeps per-parameter running averages of the
+gradient and of the squared gradient, and steps by `lr * m_hat / (sqrt(v_hat) + eps)`.
+
+FIRST MOMENT (m). An exponential moving average of the gradient - an estimate of its MEAN. Gives Adam
+its momentum-like behaviour.
+
+SECOND MOMENT (v). An exponential moving average of the SQUARED gradient - an estimate of its
+UNCENTERED VARIANCE. Note "uncentered": it is `E[g^2]`, not `E[(g - E[g])^2]`.
+
+EXPONENTIAL MOVING AVERAGE (EMA). `x = b*x + (1-b)*new`. Recent values dominate; older ones decay
+geometrically. Its effective window is roughly `1/(1-b)` steps - so `b2 = 0.999` averages over about
+one thousand steps, which is exactly why its initialisation transient lasts so long.
+
+b1, b2 (BETA-1, BETA-2). The decay rates. Defaults 0.9 and 0.999.
+
+EPSILON. A small constant in the denominator to avoid dividing by zero. Typically 1e-8.
+
+BIAS. Here it means SYSTEMATIC error, not statistical bias in the machine-learning sense. `E[m_t]` is
+`(1 - b1^t)` times the truth - reliably too small, not noisily wrong.
+
+BIAS CORRECTION. `m_hat = m / (1 - b1^t)` and `v_hat = v / (1 - b2^t)`. Exact, cheap - two scalar
+powers - and self-cancelling as t grows.
+
+t (THE TIMESTEP). The global step count, starting at 1. A common implementation bug is starting at 0,
+which makes `1 - b^0 = 0` and produces a division by zero or an infinite step on the first update.
+
+EFFECTIVE STEP SIZE. `lr * m_hat / (sqrt(v_hat) + eps)`. For a CONSTANT gradient this is exactly `lr`,
+regardless of the gradient's magnitude - Adam is scale-invariant in the gradient. That property is what
+bias correction preserves at t=1.
+
+WARMUP. Ramping the learning rate up over the first few hundred steps. Serves a related purpose - it
+also tames the early transient - but for a different reason: it addresses the high VARIANCE of `v` when
+it has seen few samples, which correction does not fix. This is why transformers use warmup even though
+Adam already has bias correction.
+
+RADAM (rectified Adam). Explicitly rectifies the variance of the adaptive term in early steps -
+essentially warmup with a principled derivation.
+
+ADAMW. Changes how WEIGHT DECAY interacts with the adaptive step (decoupled decay). Unrelated to bias
+correction, and frequently conflated with it.
+
+STATIONARY GRADIENTS. The assumption under which the bias-correction derivation is exact. Real
+gradients are not stationary, so the correction is exact in expectation for a fixed distribution and
+approximate in practice - which is worth saying rather than claiming more than it delivers.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "it only matters for the first few steps". At the default
+`b2 = 0.999` that is measurably false.
+
+MEASURED, the raw step's overshoot over a full run with a constant gradient:
+
+    t       raw step / corrected step
+    -----   -------------------------
+        1                      3.162x
+        5                      5.797x
+       20                      6.241x
+       50                      4.504x
+      100                      3.241x
+      200                      2.348x
+      500                      1.594x
+    1,000                      1.258x
+    2,000                      1.075x
+    4,000                      1.009x
+
+    peak overshoot: 6.57x at step t = 12
+
+It PEAKS at t=12 and takes THOUSANDS of steps to converge back to 1.0. It is still 26% off at step
+1,000. The reason is `b2 = 0.999`: the EMA's effective window is about 1,000 steps, so its
+initialisation transient lasts about that long. "The first few steps" describes `b1`, whose transient
+is over by step 50; it does not describe `b2`.
+
+AND THE OVERSHOOT SCALES WITH b2, which is the practically important consequence:
+
+    b2         peak overshoot   at step t
+    --------   --------------   ---------
+    0.9              1.00x         356
+    0.99             2.13x          13
+    0.999            6.57x          12
+    0.9999          20.72x          12
+
+THE SECOND TRAP, and this is the argument I would actually lead with, because it survives measurement:
+WITHOUT CORRECTION, YOUR LEARNING RATE SILENTLY DEPENDS ON b2.
+
+The uncorrected first step is `(1-b1)/sqrt(1-b2)` times the correct one:
+
+    b2          effective first-step multiplier
+    ---------   -------------------------------
+    0.90000                              0.32x
+    0.99000                              1.00x
+    0.99900                              3.16x
+    0.99990                             10.00x
+    0.99999                             31.62x
+
+With bias correction, the first step is `lr`, always, whatever `b2` is. Without it, the SAME `lr` means
+a hundred-fold different thing depending on a hyperparameter you thought was about smoothing. Change
+`b2` from 0.999 to 0.9999 to smooth a noisy problem and you have silently tripled your early learning
+rate. That is a reproducibility and tunability argument, and it does not depend on any claim about
+convergence speed.
+
+THE THIRD TRAP - and this one contradicts the entry's own folklore, so it is worth stating plainly.
+"Without correction, training is slower or unstable" is NOT what I measured. On a 20-dimensional
+least-squares problem across 30 seeds and four learning rates:
+
+    lr      final loss WITH correction   final loss WITHOUT   diverged without
+    -----   --------------------------   ------------------   ----------------
+     0.01                      0.01661              0.00911             0 / 30
+     0.10                      0.00911              0.00911             0 / 30
+     0.50                      0.00911              0.00911             0 / 30
+     1.00                      0.00911              0.00911             0 / 30
+
+The UNCORRECTED version converged as well or BETTER, and never diverged - because on a well-behaved
+convex problem, an early overshoot is simply a larger effective learning rate, which is free speed. I
+also tried a condition number of 1,000 and noisy gradients and could not construct a convex case where
+the missing correction hurt.
+
+So the honest claim is NOT "correction makes Adam converge faster". It is that correction makes the
+step size be WHAT YOU ASKED FOR: predictable, independent of `b2`, and correct from step 1. On a
+non-convex loss landscape an unrequested 6.57x step early in training can land you somewhere you did
+not intend, and you have no way to reason about it because `lr` no longer means what it says.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - other ways to handle the same transient, and what they fix
+that correction does not.
+
+THE PROBLEM HAS TWO PARTS, and this is the distinction that organises everything below:
+
+    THE BIAS       `v` is systematically too small early on. Exactly computable, exactly removable.
+                   BIAS CORRECTION fixes this completely.
+    THE VARIANCE   `v` has seen very few samples early on, so it is a NOISY estimate whatever you
+                   scale it by. Correction does nothing about this, because rescaling a noisy estimate
+                   leaves it noisy.
+
+THE ALTERNATIVES:
+
+    WARMUP                  ramp `lr` from ~0 over the first few hundred or thousand steps. Addresses
+                            the VARIANCE part: while `v` is unreliable, take small steps regardless.
+                            This is why transformers use warmup even though Adam already has bias
+                            correction - they are fixing different halves of the problem, and the
+                            people who say warmup makes correction redundant have conflated them.
+    RADAM                   derives the variance of the adaptive term and rectifies it, turning off
+                            the adaptive behaviour until `v` is trustworthy. Essentially a principled
+                            warmup, and its paper's argument is exactly the variance/bias split above.
+    INITIALISE v FROM THE   set `v = g_1^2` on the first step instead of 0. Removes the bias at t=1
+    FIRST GRADIENT          without the ongoing correction, and is what some hand-rolled optimisers do.
+                            Less principled, and it does not fix subsequent steps.
+    A LARGER (1-b2)         `b2 = 0.99` instead of 0.999 shrinks the transient enormously - MEASURED,
+                            peak overshoot 2.13x rather than 6.57x - at the cost of a noisier `v`.
+    GRADIENT CLIPPING       bounds the damage from any oversized step, including this one. A blunt but
+                            effective safety net.
+
+THE OPTIMISER FAMILY, so the moments are in context:
+    SGD                     `w -= lr * g`. No state, no transient, no bias.
+    MOMENTUM                keeps `m` only. Has the SAME zero-initialisation bias, and classical
+                            momentum conventionally does NOT correct for it - which is worth noticing,
+                            because the bias is much milder at `b = 0.9` (a 10x under-estimate that is
+                            gone within ~50 steps) and it is not being used in a DENOMINATOR.
+    RMSPROP                 keeps `v` only. Has the severe `v` bias and no correction, which is part of
+                            why it is more sensitive to its early steps than Adam.
+    ADAM                    both moments, both corrected.
+    ADAMW                   Adam with decoupled weight decay. Orthogonal to this entry, and constantly
+                            confused with it.
+    LION, ADAFACTOR, SHAMPOO   later optimisers with different state; Adafactor in particular drops the
+                            full second moment to save memory, which matters at LLM scale.
+
+THE PATTERN WORTH GENERALISING: any exponential moving average initialised at zero is biased toward
+zero for roughly `1/(1-b)` steps. It appears in momentum, in RMSProp, in BatchNorm's running
+statistics (where the same correction is why `momentum` and the number of warm-up batches matter), and
+in every EMA-smoothed metric on your monitoring dashboard - which is why a freshly-deployed dashboard
+shows suspiciously low values for the first few minutes.""",
+
+    """6. HOW TO CODE IT.
+
+THE OPTIMISER:
+
+  1. Initialise `m = 0`, `v = 0` per parameter, and a scalar step counter `t = 0`.
+  2. Each step: `t += 1` FIRST. Incrementing at the end gives you `t = 0` on the first update, and
+     `1 - b^0 = 0`, which is a division by zero.
+  3. `m = b1*m + (1-b1)*g` and `v = b2*v + (1-b2)*g*g`.
+  4. `m_hat = m / (1 - b1**t)` and `v_hat = v / (1 - b2**t)`. Two scalar powers, shared across every
+     parameter - the cost is genuinely negligible.
+  5. `w -= lr * m_hat / (sqrt(v_hat) + eps)`.
+  6. `t` is GLOBAL, not per-parameter. A common bug in hand-rolled implementations is keeping a
+     per-tensor counter, which then differs across parameters that are updated at different frequencies.
+  7. Note that `eps` goes OUTSIDE the square root in the standard formulation - `sqrt(v_hat) + eps`, not
+     `sqrt(v_hat + eps)`. They differ meaningfully when `v_hat` is tiny, which is exactly the regime
+     this entry is about.
+
+MEASURING IT - and the design of the experiment is what makes the result legible:
+
+  8. USE A CONSTANT GRADIENT. With `g = 2` at every step, the true first moment is 2, the true second
+     moment is 4, and the correct normalised step `m/sqrt(v)` is exactly 1.0 forever. Any deviation
+     from 1.0000 is purely the artefact you are measuring. A random gradient would bury the effect in
+     noise.
+  9. Print `m`, `m_hat`, `v`, `v_hat` side by side. Seeing `m_hat = 2.0000` and `v_hat = 4.0000` at
+     EVERY t is the clearest possible demonstration that the correction is exact rather than
+     approximate.
+ 10. Print the RATIO `raw_step / corrected_step`. That single column is the whole story, and its shape -
+     rising to a peak at t=12, then decaying over thousands of steps - is the finding.
+ 11. RUN ALL FOUR COMBINATIONS: neither correction, m only, v only, both. This is what reveals that the
+     famous "30x" belongs to the m-only bug, and that correcting m alone is worse than doing nothing.
+ 12. SWEEP b2. The dependence of the early step on b2 - 0.32x at 0.9, 31.62x at 0.99999 - is the
+     argument that survives, because it is about what your hyperparameter MEANS.
+ 13. THEN ACTUALLY OPTIMISE SOMETHING, across several seeds and several learning rates, and report what
+     you find even if it is not what you expected. I could not make the uncorrected version lose on a
+     convex problem, and saying so is more useful than repeating a claim the measurement did not
+     support.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Adam maintains two exponential moving averages: `m`, the first moment - an estimate of the mean of the
+gradients - and `v`, the second moment, an estimate of the uncentered variance. Both are INITIALISED TO
+ZERO. The updates are `m = b1*m + (1-b1)*g` and `v = b2*v + (1-b2)*g^2`, with b1 around 0.9 and b2
+around 0.999.
+
+Because they start at zero, these estimates are BIASED TOWARD ZERO in the early steps, and severely so
+for `v` because b2 is so close to 1. After the first step, `m = 0.1*g` - a tenth of the actual gradient,
+even though the best estimate of the mean so far is just `g`. For `v` it is `0.001*g^2`, a thousandth of
+the true magnitude.
+
+Bias correction fixes this exactly. You can derive that the expected value of the raw `m_t` is
+`(1 - b1^t)` times the true first moment, so dividing by `(1 - b1^t)` cancels the bias precisely. At
+t=1 that factor is 0.1, so the division multiplies `m` by 10 and recovers the right magnitude. As t
+grows, `b1^t -> 0`, the factor goes to 1, and it smoothly becomes a no-op.
+
+I measured all of this with a constant gradient of 2, where the correct normalised step is exactly 1.0.
+The corrected `m_hat` was 2.0000 and `v_hat` was 4.0000 at every single step - exactly the true moments.
+
+Two things I'd correct in the usual telling. First, the common claim is that the first step is about
+30x too large. With NEITHER correction it is 3.16x, because both moments are biased downward and the
+biases partially cancel - `m` is 10x small and `sqrt(v)` is 31.6x small, so the ratio is off by 3.16.
+The 30x figure is what you get if you correct `m` and forget `v`, which is a real bug, and correcting
+`m` alone is ten times worse than doing nothing.
+
+Second, 'it only matters for the first few steps' is wrong at b2=0.999. The overshoot PEAKS at 6.57x
+around step 12 and is still 26% off at step 1,000, because the EMA's effective window is about 1/(1-b2)
+= 1,000 steps.
+
+And the argument I'd actually lead with: without correction, your learning rate silently depends on b2.
+The uncorrected first step is `(1-b1)/sqrt(1-b2)` times the correct one, which is 0.32x at b2=0.9 and
+31.6x at b2=0.99999. Change b2 to smooth a noisy problem and you have silently changed your effective
+early learning rate a hundredfold. With correction, the first step is `lr`, always.
+
+I should be honest about what I could NOT show: on a convex least-squares problem, across 30 seeds and
+four learning rates, the uncorrected version converged just as well or better and never diverged,
+because an early overshoot is just a larger effective learning rate. So the case for correction is not
+'it converges faster' - it is that the step is what you asked for, from step 1, independent of b2, which
+matters on a non-convex landscape where an unrequested 6.57x step can land you somewhere you cannot
+reason about. The correction costs two scalar powers per step."
+
+THE ONE SENTENCE TO NOT FUMBLE: both moments start at zero and are therefore systematically too small,
+`(1 - b^t)` cancels that exactly, and correcting only one of the two is worse than correcting neither.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    m = b1*m + (1-b1)*g
+    v = b2*v + (1-b2)*g*g
+
+The two EMAs, with `m = v = 0` initially. Read `(1-b1)` and `(1-b2)` as "how much weight the NEW
+observation gets": 10% and 0.1%. The remaining 90% and 99.9% weight goes to the history - and on step
+1 the entire history is the zero you initialised with. That is the bug, and it is in the
+initialisation, not in the formula.
+
+    mh = m / (1 - b1**t)
+    vh = v / (1 - b2**t)
+
+The correction. `1 - 0.9**1 = 0.1` so `mh = m/0.1 = 10*m`, recovering the factor of 10 that the EMA
+removed. `1 - 0.999**1 = 0.001` so `vh = 1000*v`. Two scalar powers, computed once per step for the
+whole model.
+
+    t += 1      # BEFORE the update, not after
+
+If `t` is 0 on the first update, `1 - b**0 = 0` and you divide by zero. Some implementations dodge this
+with a guard; incrementing first is cleaner and is what PyTorch does.
+
+    step = lr * mh / (np.sqrt(vh) + eps)
+
+Note `sqrt(vh) + eps`, not `sqrt(vh + eps)`. When `vh` is tiny - the exact regime this entry concerns -
+those differ substantially, and the standard formulation is the first.
+
+Also note what this expression does with a CONSTANT gradient: `mh = g` and `vh = g^2`, so the step is
+`lr * g / |g| = lr`, regardless of the gradient's SIZE. Adam is scale-invariant in the gradient, and
+bias correction is what makes that true from step 1 rather than from step 1,000.
+
+THE MEASUREMENT HARNESS:
+
+    m = v = 0.0; g = 2.0
+
+A CONSTANT gradient, and this is the key design decision. It makes the true first moment exactly 2, the
+true second moment exactly 4, and the correct normalised step exactly 1.0 at every step. Every
+deviation from 1.0000 in the output is therefore the artefact, with no noise to argue about.
+
+    raw = m/(np.sqrt(v)+eps)
+    cor = mh/(np.sqrt(vh)+eps)
+    print(raw/cor)
+
+The single most informative column. It is the multiplier your step is off by, and its trajectory -
+3.16x, rising to 6.57x at t=12, then decaying over thousands of steps - is the entire finding.
+
+    for bb in (0.9, 0.99, 0.999, 0.9999):
+        val = (1-b1)/np.sqrt(1-bb)
+
+The b2 sweep, closed-form. `(1-b1)` is `m`'s attenuation and `sqrt(1-b2)` is `sqrt(v)`'s, so their
+ratio is the uncorrected first step relative to the correct one. Getting 1.00x at exactly b2 = 0.99 is
+a nice check on the algebra: `(1-0.9)/sqrt(1-0.99) = 0.1/0.1 = 1`.
+
+    mh = (m/(1-b1**t), v/(1-b2**t)) if correct else (m, v)
+
+The optimisation experiment, with the ONLY difference between the two runs being this line. Same data,
+same seed, same learning rate, same everything else - which is what makes the finding that the
+uncorrected version converged fine actually mean something.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - constant gradient g = 2, so the truth is `m = 2`, `v = 4`, step = 1.0.
+
+    t    raw m    m_hat     raw v     v_hat   raw step   corrected   overshoot
+    --  ------   ------   -------   -------   --------   ---------   ---------
+     1  0.2000   2.0000   0.00400    4.0000     3.1623      1.0000       3.16x
+     2  0.3800   2.0000   0.00800    4.0000     4.2496      1.0000       4.25x
+     3  0.5420   2.0000   0.01199    4.0000     4.9502      1.0000       4.95x
+     4  0.6878   2.0000   0.01598    4.0000     5.4416      1.0000       5.44x
+     5  0.8190   2.0000   0.01996    4.0000     5.7971      1.0000       5.80x
+     8  1.1391   2.0000   0.03189    4.0000     6.3787      1.0000       6.38x
+    12  1.4351   2.0000   0.04774    4.0000     6.5685      1.0000       6.57x
+
+Three columns to read.
+
+    `raw m` CLIMBS from 0.2 toward 2 - `m` recovers within a few dozen steps because `(1-b1)=0.1`.
+    `raw v` climbs from 0.004 toward 4 - a THOUSAND times further to go, because `(1-b2)=0.001`.
+    `m_hat` and `v_hat` are 2.0000 and 4.0000 at EVERY row. Exact, not approximate.
+
+And the overshoot GROWS from t=1 to t=12 rather than shrinking, because `m` recovers faster than `v`
+does, so the ratio `m/sqrt(v)` gets worse before it gets better.
+
+TRACE B - the four combinations, which is where the "30x" belongs.
+
+    t   no correction   correct m only   correct v only   both (correct)
+    --  -------------   --------------   --------------   --------------
+     1        3.1623          31.6228           0.1000           1.0000
+     2        4.2496          22.3663           0.1900           1.0000
+     4        5.4416          15.8233           0.3439           1.0000
+     8        6.3787          11.1999           0.5695           1.0000
+
+    NEITHER:  3.16x too large. The two biases partially cancel - m is 10x small, sqrt(v) is 31.6x
+              small, and 31.6/10 = 3.16.
+    m ONLY:   31.6x too large. You removed the cancelling half and left the severe half.
+    v ONLY:   0.10x - ten times too SMALL, which stalls early training instead of destabilising it.
+    BOTH:     1.0000, exactly, from step 1.
+
+The `m only` column is ten times worse than doing nothing. Half a fix is not half as good here.
+
+TRACE C - how long the transient actually lasts, constant gradient.
+
+    t        overshoot   comment
+    ------   ---------   -----------------------------------------------
+         1      3.162x
+         5      5.797x   still rising
+        12      6.570x   PEAK
+        20      6.241x
+        50      4.504x   `m`'s transient is long over; this is all `v`
+       100      3.241x
+       500      1.594x
+     1,000      1.258x   still 26% off
+     2,000      1.075x
+     4,000      1.009x
+
+`1/(1-b2)` is 1,000, which is the EMA's effective window, and the transient tracks it. "The first few
+steps" is a description of `b1`, not of `b2`.
+
+TRACE D - and the same peak, per b2.
+
+    b2         peak overshoot   at t
+    --------   --------------   ----
+    0.9                 1.00x    356
+    0.99                2.13x     13
+    0.999               6.57x     12
+    0.9999             20.72x     12
+
+The b2 you choose to smooth a noisy problem is also the b2 that decides how badly an uncorrected Adam
+overshoots. That coupling is the reason correction is not optional even though the failures are hard to
+provoke.
+
+TRACE E - the honest negative. 20-dimensional least squares, 30 seeds per cell.
+
+    learning rate   median final loss WITH   median final loss WITHOUT   runs diverged without
+    -------------   ----------------------   -------------------------   ---------------------
+             0.01                  0.01661                     0.00911                  0 / 30
+             0.10                  0.00911                     0.00911                  0 / 30
+             0.50                  0.00911                     0.00911                  0 / 30
+             1.00                  0.00911                     0.00911                  0 / 30
+
+The uncorrected version was never worse and at lr=0.01 was BETTER, because the 3-6x overshoot acted as
+a larger effective learning rate on a problem that could use one. I also tried a condition number of
+1,000 and noisy gradients and got the same verdict. So the entry does not claim correction speeds up
+convergence - it claims correction makes `lr` MEAN `lr`, which is a different and defensible thing.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COST AND EFFECT:
+
+    computational cost      two scalar powers per step, shared across the whole model. Not per
+                            parameter. Genuinely free.
+    memory cost             none - it reuses `m` and `v`
+    correctness             EXACT under stationary gradients. MEASURED: `m_hat = 2.0000` and
+                            `v_hat = 4.0000` at every step against true moments of 2 and 4.
+    when it matters         O(1/(1-b2)) steps. MEASURED: peak 6.57x at t=12, still 1.258x at t=1,000,
+                            1.009x at t=4,000 for b2 = 0.999.
+    magnitude, uncorrected  3.16x at t=1 with NEITHER correction; 31.6x with `m` corrected and `v`
+                            not; 0.10x with `v` corrected and `m` not.
+    dependence on b2        the uncorrected first step is `(1-b1)/sqrt(1-b2)` - MEASURED 0.32x at
+                            b2=0.9 and 31.62x at b2=0.99999, a 100x spread in what `lr` means.
+    effect on convergence   MEASURED: none, on convex problems, across 30 seeds and 4 learning rates.
+                            The case is predictability, not speed.
+
+THE MISTAKES:
+
+    - Correcting `m` and forgetting `v`. MEASURED 31.6x too large at t=1 - ten times worse than
+      correcting neither, because you removed the cancelling half of the bias.
+    - Quoting "the first step is 30x too large" for the no-correction case. It is 3.16x; the 30x
+      belongs to the m-only bug.
+    - "It only matters for the first few steps." MEASURED still 26% off at step 1,000, because
+      `1/(1-b2)` is 1,000.
+    - Starting `t` at 0. `1 - b**0 = 0` and the first step is a division by zero.
+    - A per-parameter step counter instead of a global one.
+    - `sqrt(v_hat + eps)` instead of `sqrt(v_hat) + eps`. They differ exactly where `v_hat` is small,
+      which is the regime in question.
+    - Believing warmup makes bias correction redundant. They fix DIFFERENT halves: correction removes
+      the systematic BIAS in `v`, warmup handles its high VARIANCE when it has seen few samples.
+      Rescaling a noisy estimate leaves it noisy, which is why transformers use both.
+    - Confusing bias correction with AdamW. AdamW is about decoupled weight decay and is unrelated.
+    - Claiming without correction training is unstable, without checking. I could not reproduce that
+      on any convex problem I tried, and the entry says so.
+    - Forgetting the pattern generalises. Any zero-initialised EMA is biased for about `1/(1-b)`
+      steps - momentum, RMSProp, BatchNorm running statistics, and every EMA-smoothed metric on a
+      freshly-deployed dashboard.
+
+THE TAKEAWAY. Bias correction is not a heuristic or a safety margin - it is the exact algebraic
+cancellation of an error you introduced by initialising a moving average at zero, and `E[m_t] =
+(1-b1^t) * m_true` is the whole derivation. What makes it worth understanding rather than memorising is
+what the measurements show around it: the two biases partially cancel, so correcting only one is worse
+than correcting neither (31.6x against 3.16x); the transient lasts about `1/(1-b2)` steps, so a
+thousand, not a handful; and its real cost is that without it your learning rate silently means
+something different for every value of b2, spanning a hundredfold. It buys predictability rather than
+speed - and on a non-convex landscape, a step size that means what it says is worth more than a step
+that happens to be larger.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
