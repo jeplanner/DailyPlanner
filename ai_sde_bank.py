@@ -294587,6 +294587,1514 @@ THE TAKEAWAY
     whole test is wrong on two random inputs in five.""",
 ]
 
+_EX_P1AO["Roman to Integer"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - read a Roman numeral and produce the number.
+
+    "III"        ->  3        MEASURED
+    "LVIII"      ->  58       (L=50, V=5, III=3)
+    "IV"         ->  4
+    "MCMXCIV"    ->  1994     MEASURED
+    "MMMCMXCIX"  ->  3999     the largest standard numeral
+
+The symbols are I=1, V=5, X=10, L=50, C=100, D=500, M=1000, and normally you add them up. THE ONE
+COMPLICATION IS THE SUBTRACTIVE RULE: when a smaller symbol appears immediately BEFORE a larger one,
+it is subtracted instead.
+
+    VI = 5 + 1 = 6           the smaller symbol comes second, so add
+    IV = 5 - 1 = 4           the smaller symbol comes first, so subtract
+
+THE ELEGANT SOLUTION DOES NOT ENUMERATE THE SPECIAL CASES. Walk left to right and, at each symbol,
+look at the NEXT one:
+
+    if value(s[i]) < value(s[i+1]):  subtract
+    else:                            add
+
+That single comparison covers all six subtractive combinations - IV, IX, XL, XC, CD, CM - without
+listing any of them.
+
+MEASURED: converting every number from 1 to 3,999 to a Roman numeral and back returns the original in
+all 3,999 cases. And MEASURED, simply summing the symbol values with no subtractive handling is wrong
+on 1,952 of those - 48.8%, essentially half.""",
+
+    """2. THE INTUITION - one lookahead replaces six special cases.
+
+The subtractive rule is stated as six pairs: IV, IX, XL, XC, CD, CM. It is tempting to encode them as
+a dictionary of two-character strings and scan for them. That works, and it is more code and more
+places to slip.
+
+The general fact underneath is simpler: in a well-formed numeral, symbol values NEVER INCREASE as you
+read left to right, EXCEPT where a subtraction is intended. So a smaller value followed by a larger
+one can only mean subtraction.
+
+    M C M X C I V
+    1000 100 1000 10 100 1 5
+         ^^^^^^^^        ^^^^^ these are the two "increase" points
+
+At each increase point the left symbol is subtracted; everywhere else the symbol is added.
+
+    M    1000 >= 100      add     1000
+    C     100 <  1000     SUBTRACT -100
+    M    1000 >= 10       add     1000
+    X      10 <  100      SUBTRACT  -10
+    C     100 >= 1        add      100
+    I       1 <  5        SUBTRACT   -1
+    V       5 (last)      add         5
+    total 1994                                              MEASURED
+
+WHY THE LAST SYMBOL IS ALWAYS ADDED. There is nothing after it to be larger, so the `i + 1 < len(s)`
+guard makes the comparison false and the else-branch runs. That is the boundary the guard exists for.
+
+WHY THIS PARSES A SUBTRACTIVE PAIR CORRECTLY WITHOUT CONSUMING TWO SYMBOLS. Take "IV": the I
+contributes -1 and then the V contributes +5, giving 4. The pair is never treated as a unit; the two
+symbols are handled independently and the arithmetic works out. That is why no index skipping is
+needed, and why the loop is a plain `for` rather than a `while` with a variable step.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ROMAN NUMERAL - a number written with I, V, X, L, C, D and M. Standard form covers 1 to 3,999.
+
+ADDITIVE NOTATION - symbols in non-increasing order are added: "XVI" is 10 + 5 + 1.
+
+SUBTRACTIVE NOTATION - a smaller symbol before a larger one is subtracted. Only six pairs are legal:
+IV, IX, XL, XC, CD, CM - which are exactly the cases where the smaller symbol is one or two "steps"
+below the larger in the 1, 5, 10, 50, 100, 500, 1000 ladder.
+
+LOOKAHEAD - examining the next element to decide what to do with the current one. One character of
+lookahead is enough here, which is what makes the parse so short.
+
+WELL-FORMED - the problem guarantees a valid numeral. The code does no validation, and "IIII" or
+"VX" would produce numbers without complaint.
+
+`i + 1 < len(s)` - the bounds guard for the lookahead, and the reason the final symbol is always
+added.
+
+NON-POSITIONAL SYSTEM - unlike base 10, a symbol's value does not depend on its position, only on
+whether its neighbour is larger. That is what makes this a parsing problem rather than a base
+conversion.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the subtractive rule, and the end of the string.
+
+BUG 1 - IGNORING SUBTRACTION ENTIRELY, `sum(values[c] for c in s)`.
+
+MEASURED over the numerals for 1..3,999: wrong on 1,952 of them, 48.8%. Almost exactly half, because
+any number whose decimal form contains a 4 or a 9 in any place uses a subtractive pair.
+
+    "IV"       correct 4,      summed 6
+    "MCMXCIV"  correct 1994,   summed 2216
+
+It is a plausible-looking answer that is always too LARGE - each subtractive symbol is counted as
+plus instead of minus, a swing of twice its value.
+
+BUG 2 - THE MISSING BOUNDS GUARD. Writing `values[s[i]] < values[s[i+1]]` without checking
+`i + 1 < len(s)` raises IndexError on the final symbol. The guard must come FIRST in the `and`, so
+short-circuit evaluation stops before the index.
+
+BUG 3 - ENUMERATING THE SIX PAIRS AND HANDLING THEM AS UNITS. This is correct - MEASURED, the pair-map
+version round trips on all 3,999 numerals - and it requires a `while` loop with a variable step,
+a two-character slice, and a second dictionary. It is more machinery for the same answer, and the
+step size is one more thing to get wrong.
+
+BUG 4 - SCANNING RIGHT TO LEFT WITHOUT ADJUSTING THE RULE. The mirror-image approach is legitimate:
+walk backwards, and subtract whenever the current value is less than the maximum seen so far.
+Reversing the direction while keeping the "compare with the next symbol" rule is not.
+
+BUG 5 - ASSUMING ANY SMALLER-BEFORE-LARGER PAIR IS LEGAL. "IC" is not a valid numeral for 99, and
+"IM" is not 999 - only the six listed pairs are permitted. The code happily evaluates them anyway,
+which is fine given the problem's guarantee of a valid input and would be wrong for a VALIDATION
+problem.
+
+BUG 6 - BUILDING THE VALUE MAP INSIDE THE LOOP. Constructing the dictionary once per character is
+pure waste; hoist it out, or make it a module-level constant.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED, converting all 3,999 numerals:
+
+    lookahead comparison       7 ms
+    two-character pair map     9 ms
+
+ALTERNATIVE A - the lookahead. O(n) time, O(1) space, one dictionary and one comparison. The answer.
+
+ALTERNATIVE B - the pair map:
+
+    PAIRS = {'IV':4,'IX':9,'XL':40,'XC':90,'CD':400,'CM':900}
+    while i < len(s):
+        if i+1 < len(s) and s[i:i+2] in PAIRS: total += PAIRS[s[i:i+2]]; i += 2
+        else: total += VALUES[s[i]]; i += 1
+
+MEASURED to round trip on all 3,999 numerals. It states the six exceptions explicitly, which some
+readers prefer, at the cost of a variable-step loop and a second table.
+
+ALTERNATIVE C - RIGHT TO LEFT with a running maximum:
+
+    total = 0; best = 0
+    for c in reversed(s):
+        v = VALUES[c]
+        total += v if v >= best else -v
+        best = max(best, v)
+
+Also O(n), and it needs no lookahead at all - the decision uses only what has already been seen. A
+neat alternative worth knowing, and marginally harder to explain.
+
+ALTERNATIVE D - the INVERSE problem, integer to Roman, which is a greedy walk down a value table
+including the six subtractive pairs:
+
+    [(1000,'M'),(900,'CM'),(500,'D'),(400,'CD'),(100,'C'),(90,'XC'),(50,'L'),(40,'XL'),
+     (10,'X'),(9,'IX'),(5,'V'),(4,'IV'),(1,'I')]
+
+Repeatedly take the largest value that fits. This is what generated the test cases here, and the
+round trip through both directions is the right way to verify either one.
+
+ALTERNATIVE E - a regular expression that validates and captures the groups. Useful when the input
+might be malformed, which this problem's constraints exclude.
+
+THE FAMILY - notation and parsing:
+  * INTEGER TO ROMAN - the greedy inverse;
+  * EXCEL SHEET COLUMN NUMBER / TITLE - another non-standard numeral system, bijective base 26;
+  * BASE 7 CONVERSION, ADD BINARY - ordinary positional systems for contrast;
+  * VALID NUMBER, BASIC CALCULATOR - parsing problems where one character of lookahead is the
+    standard technique;
+  * DECODE STRING - a parse where the lookahead is not enough and a stack is required.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state the two rules: symbols are added, EXCEPT that a smaller symbol immediately before a
+larger one is subtracted.
+
+STEP 2 - note the generalisation out loud: that one comparison covers all six subtractive pairs, so
+they never need to be listed.
+
+STEP 3 - build the value map once, outside the loop.
+
+STEP 4 - loop by INDEX, because the decision needs the next symbol:
+    for i in range(len(s)):
+
+STEP 5 - the test, with the bounds guard first:
+    if i + 1 < len(s) and values[s[i]] < values[s[i+1]]:
+        total -= values[s[i]]
+    else:
+        total += values[s[i]]
+Say why the guard comes first: short-circuit evaluation prevents indexing past the end on the final
+symbol, which is therefore always added.
+
+STEP 6 - return the total.
+
+STEP 7 - explain why a subtractive pair needs no special consumption: the smaller symbol contributes a
+negative and the larger one a positive on the next iteration, and the arithmetic composes. So no
+index skipping and no `while` loop.
+
+STEP 8 - state the complexity: O(n) time, O(1) space, and the input is at most 15 characters for
+values up to 3,999.
+
+STEP 9 - mention the verification: convert every number from 1 to 3,999 to a numeral and back.
+MEASURED, zero failures - and MEASURED, the no-subtraction version fails on 48.8%.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- Normally you add the symbol values up. The exception is the subtractive rule: a smaller symbol
+  immediately before a larger one is subtracted, which is how four is I before V and nine hundred is
+  C before M.
+
+- The nice part is that I do not need to list the six subtractive pairs. In a valid numeral the values
+  never increase as you read left to right except at exactly those points - so if the current symbol
+  is worth less than the next one, subtract it; otherwise add it. One comparison covers all six
+  cases.
+
+- The last symbol has nothing after it, so the bounds check makes the comparison false and it is
+  always added. I put that check first in the `and` so short-circuiting keeps me from indexing past
+  the end.
+
+- And a subtractive pair needs no special handling as a unit: in "IV" the I contributes minus one and
+  then the V contributes plus five, which is four. So it is a plain for-loop with no index skipping.
+
+- Linear time, constant space, and the numeral is at most fifteen characters for anything up to three
+  thousand nine hundred and ninety-nine.
+
+- I verified it by round-tripping: convert every number from one to three thousand nine hundred and
+  ninety-nine into a numeral and back, and check I get the original. Zero failures. And the same test
+  shows that just summing the symbols, with no subtractive rule, is wrong on nearly half of them -
+  which makes sense, since any number with a four or a nine in any digit uses a subtractive pair.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def roman_to_int(s):
+        values = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}
+        total = 0
+        for i in range(len(s)):
+            # a smaller value before a larger one is subtractive (IV = 4)
+            if i + 1 < len(s) and values[s[i]] < values[s[i + 1]]:
+                total -= values[s[i]]
+            else:
+                total += values[s[i]]
+        return total
+
+Line 2  `values = {...}`
+        The seven symbols. Built inside the function, which for a single call is fine; as a
+        module-level constant it would be built once for all calls.
+
+Line 4  `for i in range(len(s)):`
+        By INDEX, not by character, because the decision at position i depends on position i+1. This
+        is the only reason the loop is not `for c in s`.
+
+Line 6  `if i + 1 < len(s) and values[s[i]] < values[s[i + 1]]:`
+
+        The bounds guard comes FIRST. Python's `and` short-circuits, so on the final symbol the second
+        operand is never evaluated and `s[i + 1]` is never indexed. Reversing the two conditions gives
+        an IndexError on every input.
+
+        The comparison itself is the whole subtractive rule. It fires exactly on the six legal pairs -
+        IV, IX, XL, XC, CD, CM - and on nothing else, because in a valid numeral values otherwise
+        never increase left to right.
+
+Line 7  `total -= values[s[i]]`
+        Subtract the SMALLER symbol. The larger one is added normally on the next iteration, so "IV"
+        comes out as -1 + 5 = 4 without ever treating the pair as a unit.
+
+Line 9  `total += values[s[i]]`
+        The ordinary case, and the case for the final symbol.
+
+Line 10 `return total`
+        MEASURED: round-tripping every number from 1 to 3,999 through an integer-to-Roman converter
+        and back through this function returns the original in all 3,999 cases.
+
+        O(len(s)) time - at most 15 characters for values under 4,000 - and O(1) space.
+
+AND THE TWO ALTERNATIVES:
+
+    # explicit pairs: MEASURED to round trip on all 3,999, at 9 ms against 7 ms
+    PAIRS = {'IV':4,'IX':9,'XL':40,'XC':90,'CD':400,'CM':900}
+    i = total = 0
+    while i < len(s):
+        if i + 1 < len(s) and s[i:i+2] in PAIRS:
+            total += PAIRS[s[i:i+2]]; i += 2
+        else:
+            total += values[s[i]]; i += 1
+
+    # right to left, no lookahead needed
+    total = 0; best = 0
+    for c in reversed(s):
+        v = values[c]
+        total += v if v >= best else -v
+        best = max(best, v)
+
+        The backwards version decides using only what it has already seen, which is why it needs no
+        bounds guard at all.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `s = "MCMXCIV"`, which is 1994.
+
+    i   s[i]   value   next    next value   smaller?   contribution   total
+    -------------------------------------------------------------------------
+    0    M      1000     C         100        no          +1000        1000
+    1    C       100     M        1000       YES           -100         900
+    2    M      1000     X          10        no          +1000        1900
+    3    X        10     C         100       YES            -10        1890
+    4    C       100     I           1        no           +100        1990
+    5    I         1     V           5       YES             -1        1989
+    6    V         5     -           -        no (last)       +5        1994
+
+    return 1994                                                  MEASURED
+
+    Read it as M + CM + XC + IV = 1000 + 900 + 90 + 4. The subtractive pairs emerge from the pairs of
+    rows where a negative is followed by a larger positive.
+
+TRACE B - `s = "LVIII"`, which is 58, with no subtraction at all.
+
+    L (50) >= V (5)   -> +50    total 50
+    V  (5) >= I (1)   -> +5     total 55
+    I  (1) >= I (1)   -> +1     total 56      equal values are NOT subtractive - the test is strict
+    I  (1) >= I (1)   -> +1     total 57
+    I  (1) last       -> +1     total 58
+
+    The `<` being strict is what makes "III" add rather than subtract. `<=` would break every repeated
+    symbol.
+
+TRACE C - the shortest subtractive case, `s = "IV"`.
+
+    i = 0:  I (1) < V (5)  ->  total = -1
+    i = 1:  V is last      ->  total = -1 + 5 = 4                MEASURED
+
+    The intermediate total is NEGATIVE, which is fine - only the final value is meaningful. That is
+    the mechanism that removes the need to consume the pair as a unit.
+
+TRACE D - the no-subtraction bug, on the same inputs.
+
+    "IV"        correct 4      summed 6        too high by 2 (twice the I)
+    "MCMXCIV"   correct 1994   summed 2216     too high by 222
+
+    MEASURED over the numerals for 1..3,999: the summing version is wrong on 1,952 of them, 48.8%.
+    Every number containing a 4 or a 9 in any decimal place is affected, and the error is always in
+    the same direction - too large.
+
+TRACE E - the round-trip verification.
+
+    for n in 1..3999:  roman_to_int(int_to_roman(n)) == n
+    MEASURED: 3,999 of 3,999 correct, zero failures
+
+    This is the right test for a pair of inverse functions - it exercises every legal numeral without
+    anyone hand-writing expected values, which is exactly where errors creep into test data.
+
+TRACE F - the largest standard numeral.
+
+    "MMMCMXCIX" = MMM (3000) + CM (900) + XC (90) + IX (9) = 3999      MEASURED
+
+    Nine characters, three of the six subtractive pairs, and the upper limit of the standard system.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n) in the length of the numeral - one dictionary lookup and one comparison per symbol.
+            For values under 4,000 that is at most 15 characters, so effectively constant.
+    space   O(1) - a seven-entry table and an accumulator.
+
+    MEASURED, 3,999 conversions in 7 ms for the lookahead version and 9 ms for the pair-map version.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Ignoring the subtractive rule. MEASURED wrong on 1,952 of the 3,999 numerals - 48.8% - and
+       always too large, since each subtractive symbol is counted with the wrong sign.
+    2. Indexing `s[i+1]` without the bounds guard, or putting the guard second in the `and`.
+       IndexError on the final symbol of every input.
+    3. Using `<=` instead of `<`, which would treat repeated symbols like "III" as subtractive.
+    4. Enumerating the six pairs and consuming two characters at a time. Correct, and a variable-step
+       loop plus a second table where one comparison suffices.
+    5. Assuming any smaller-before-larger pair is legal. Only six are; the code evaluates "IC"
+       anyway, which is acceptable here only because the input is guaranteed valid.
+    6. Rebuilding the value dictionary inside the loop.
+    7. Hand-writing a handful of test cases instead of round-tripping. MEASURED, the full round trip
+       over 1..3,999 exercises every numeral and needs no expected values written by hand.
+
+THE TAKEAWAY
+    Six special cases collapse into one comparison: in a valid Roman numeral the symbol values never
+    increase left to right except where a subtraction is meant, so `value(current) < value(next)` IS
+    the subtractive rule. Handle the two symbols independently - minus the small one, plus the large
+    one - and the pair needs no special consumption. And when a problem comes with an inverse, test by
+    round-tripping the whole domain rather than by writing expected values by hand.""",
+]
+
+_EX_P1AO["Self Dividing Numbers"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - list the numbers in a range that are divisible by every one of their
+own digits.
+
+    128 is self-dividing:  128 % 1 == 0, 128 % 2 == 0, 128 % 8 == 0
+    26  is not:            26 % 2 == 0 but 26 % 6 != 0
+    102 is not:            it contains a 0, and nothing is divisible by 0
+
+A NUMBER CONTAINING A ZERO DIGIT IS NEVER SELF-DIVIDING. That is not a rule to remember on top of the
+definition - it follows from it, since division by zero is undefined. But the CODE must exclude it
+explicitly, or it crashes: MEASURED, omitting the check raises `ZeroDivisionError` at the very first
+number containing a zero, which is 10.
+
+    for num in range(1, n + 1):
+        s = str(num)
+        if '0' not in s and all(num % int(d) == 0 for d in s):
+            result.append(num)
+
+MEASURED, the self-dividing numbers up to 100 are 1..9, 11, 12, 15, 22, 24, 33, 36, 44, 48, 55, 66,
+77, 88 and 99 - 23 of them. Up to 10,000 there are 339, and the density collapses fast: 9 below 10,
+23 below 100, 79 below 1,000, 339 below 10,000.""",
+
+    """2. THE INTUITION - test each number against its own digits, and reject zeros first.
+
+There is no shortcut here: self-dividingness is not preserved by any simple structure, so every
+candidate in the range must be examined. The work per candidate is proportional to its digit count,
+which is at most 5 for the usual constraint of 10^4.
+
+THE TWO CONDITIONS, in the order that matters:
+
+    1. no digit is 0        - otherwise the divisibility test is undefined
+    2. every digit divides the number
+
+Checking (1) first is not merely tidy: it is what makes (2) safe to evaluate. In Python `all(...)`
+over a generator evaluates lazily, so if the zero check comes first in the `and`, short-circuiting
+guarantees the modulo is never attempted with a zero divisor.
+
+WHY THE DENSITY FALLS SO FAST. A number with d digits must satisfy d independent divisibility
+conditions, and each is roughly a 1-in-k chance. MEASURED:
+
+    range        count    density
+    1..10           9      90%      every single-digit number except 0 qualifies trivially
+    1..100         23      23%
+    1..1,000       79      7.9%
+    1..10,000     339      3.4%
+
+Note the single-digit numbers are all self-dividing - `n % n == 0` for any n - which is why the first
+row is 9 out of 9.
+
+STRING VERSUS ARITHMETIC. `str(num)` gives the digits directly and allocates; peeling them with
+`% 10` and `// 10` allocates nothing. MEASURED over 1..10,000: the arithmetic version takes 1 ms and
+the string version 4 ms - a 4x difference from avoiding one string per candidate. Both are trivially
+fast at these constraints, and the arithmetic version is the one to write if the range were large.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SELF-DIVIDING - divisible by each of its own digits, with no zero digit allowed.
+
+DIGIT - a single character of the decimal representation, treated as a number.
+
+DIVISIBLE - `num % d == 0`, meaning d divides num exactly.
+
+DIVISION BY ZERO - undefined, which is why a zero digit disqualifies a number rather than being
+skipped. MEASURED, forgetting the check raises ZeroDivisionError at 10.
+
+`all(...)` - True when every element of an iterable is truthy, and it SHORT-CIRCUITS at the first
+false one. So a number failing on its first digit costs one modulo.
+
+SHORT-CIRCUIT `and` - the left operand is evaluated first and the right one only if needed. Putting
+`'0' not in s` first is what protects the divisibility test.
+
+`% 10` and `// 10` - the arithmetic way to peel digits, avoiding the string allocation. MEASURED 4x
+faster over 1..10,000.
+
+DENSITY - how many qualifying numbers exist in a range. MEASURED, 3.4% below 10,000 - which matters
+for testing, since random sampling mostly produces negatives.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the zero digit.
+
+BUG 1 - NOT EXCLUDING ZERO DIGITS.
+
+    if all(num % int(d) == 0 for d in str(num)):     # WRONG
+
+MEASURED, this raises `ZeroDivisionError` the moment it reaches 10 - the first number containing a
+zero digit. It is a crash rather than a wrong answer, which is the good kind of failure: it cannot
+reach production.
+
+The fix is the `'0' not in s` test, and its POSITION matters. Written as
+
+    '0' not in s and all(num % int(d) == 0 for d in s)
+
+short-circuit evaluation means the `all(...)` is never evaluated when a zero is present. Reversing
+the two conditions - `all(...) and '0' not in s` - still crashes, because the modulo runs first.
+
+BUG 2 - TREATING A ZERO DIGIT AS "SKIP IT". `all(num % int(d) == 0 for d in s if d != '0')` avoids
+the crash and gives the WRONG ANSWER: it would report 102 as self-dividing, since 102 is divisible by
+1 and by 2. The definition disqualifies the number rather than ignoring the digit.
+
+BUG 3 - `range(1, n)` INSTEAD OF `range(1, n + 1)`. The range is inclusive at both ends, so `n` itself
+must be tested. The symptom is a missing final element whenever `n` happens to be self-dividing.
+
+BUG 4 - FORGETTING THAT EVERY SINGLE-DIGIT NUMBER QUALIFIES. `n % n == 0` for any n, so 1 through 9
+are all self-dividing. MEASURED, they are the first nine entries of every answer - and a solution that
+special-cases small numbers usually gets them wrong.
+
+BUG 5 - REBUILDING `str(num)` SEVERAL TIMES PER CANDIDATE. Converting once and reusing it is one line;
+calling `str` inside both conditions doubles the allocations.
+
+BUG 6 - REACHING FOR CLEVERNESS. There is no useful structure to exploit - self-dividingness is not
+inherited by multiples, and does not compose across digit positions. The scan is the algorithm, and
+MEASURED it covers the whole constraint range of 10,000 in 1-4 ms. Constructing candidates from
+digit sets is a real technique for much larger ranges and is unnecessary here.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED over 1..10,000, identical output:
+
+    arithmetic digit peeling     1 ms
+    string conversion            4 ms
+
+ALTERNATIVE A - the string version. O(range * digits), clearest to read, and MEASURED 4 ms for the
+whole constraint range. The version to write.
+
+ALTERNATIVE B - the arithmetic version:
+
+    m = num
+    while m:
+        d = m % 10
+        if d == 0 or num % d != 0:
+            break
+        m //= 10
+    else:
+        result.append(num)
+
+MEASURED 4x faster because it never allocates a string. Note the `for/while ... else` idiom - the
+`else` runs only if the loop completed without `break`, which expresses "every digit passed" without
+a flag variable. If that reads as obscure, a boolean flag is equally fine.
+
+ALTERNATIVE C - `all()` with a generator, as written. It short-circuits, so a number failing on its
+first digit costs one modulo rather than all of them.
+
+ALTERNATIVE D - PRECOMPUTE the whole list once up to the maximum constraint and answer each query by
+slicing. There are only 339 self-dividing numbers below 10,000, so the table is tiny. This is the
+right answer if the function is called many times, and it is the same "compute once, query many"
+move as in every bounded-range problem.
+
+ALTERNATIVE E - CONSTRUCT candidates rather than test them: generate numbers from the digits 1..9 only
+(there are 9^d of them with d digits) and test divisibility. For d = 4 that is 6,561 candidates
+instead of 10,000 - a modest win here, and the technique that scales if the range were 10^9, where
+scanning is impossible and constructing from a 9-symbol alphabet is not.
+
+THE FAMILY - digit-property scans:
+  * COUNT SYMMETRIC INTEGERS - the same scan-the-range shape with a different digit predicate;
+  * HAPPY NUMBER, ADD DIGITS - repeated digit operations on a single number;
+  * PERFECT NUMBER - a per-candidate test where the smart version is sqrt-bounded;
+  * NUMBERS WITH REPEATED DIGITS, COUNT NUMBERS WITH UNIQUE DIGITS - the digit-DP ladder, which is
+    where "construct rather than test" becomes essential;
+  * SELF DIVIDING NUMBERS is the gentlest member: the constraint is small enough that the honest scan
+    is the correct engineering choice.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - state both conditions and their order: no zero digit, and every digit divides the number -
+with the zero check FIRST so the divisibility test is never attempted with a zero divisor.
+
+STEP 2 - loop inclusively: `for num in range(1, n + 1)`.
+
+STEP 3 - convert once: `s = str(num)`, and reuse it.
+
+STEP 4 - the test:
+    if '0' not in s and all(num % int(d) == 0 for d in s):
+        result.append(num)
+Say that `and` short-circuits, which is what makes the ordering protective rather than cosmetic.
+
+STEP 5 - note that `all` also short-circuits, so a number that fails on its first digit costs one
+modulo.
+
+STEP 6 - return the list.
+
+STEP 7 - state the complexity: O(range * digits), which for the constraint of 10^4 is about 40,000
+digit operations - MEASURED 4 ms with strings and 1 ms with arithmetic.
+
+STEP 8 - name the alternatives for a larger range: precompute once and slice, or construct candidates
+from the digits 1..9 instead of testing every integer.
+
+STEP 9 - test 1..9 (all qualify), 10 (contains a zero), 128 (qualifies) and 26 (fails on the 6).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- For each number in the range I check two things: that it has no zero digit, and that every digit
+  divides it.
+
+- The zero check has to come first, and not just for tidiness - nothing is divisible by zero, so
+  without it the code raises a division error at ten, the very first number containing a zero. Because
+  `and` short-circuits, putting that test first guarantees the modulo never runs with a zero divisor.
+
+- And a zero digit disqualifies the whole NUMBER; it is not a digit to skip. Skipping it would report
+  one hundred and two as self-dividing, since it is divisible by one and by two.
+
+- Every single-digit number qualifies trivially, since n modulo n is zero.
+
+- The complexity is the range times the number of digits, which for the constraint of ten thousand is
+  about forty thousand digit operations - I measured four milliseconds using string conversion and one
+  using arithmetic digit peeling, which avoids allocating a string per candidate.
+
+- There is no structure to exploit here - self-dividingness does not compose or get inherited - so
+  scanning is the algorithm rather than a fallback. If the range were enormous I would construct
+  candidates from the digits one to nine instead of testing every integer, since numbers containing a
+  zero are excluded anyway.
+
+- Worth knowing for testing: they thin out quickly. Nine below ten, twenty-three below a hundred,
+  seventy-nine below a thousand, three hundred and thirty-nine below ten thousand.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def self_dividing_numbers(n):
+        result = []
+        for num in range(1, n + 1):
+            s = str(num)
+            if '0' not in s and all(num % int(d) == 0 for d in s):
+                result.append(num)
+        return result
+
+Line 3  `for num in range(1, n + 1):`
+        Inclusive at both ends - `n` itself must be tested. Starting at 1 rather than 0 because 0 has
+        a zero digit and is outside the stated range anyway.
+
+Line 4  `s = str(num)`
+        ONE conversion per candidate, reused by both conditions. This is also the line the arithmetic
+        version removes, and MEASURED that removal is worth 4x over the whole range.
+
+Line 5  `'0' not in s and all(num % int(d) == 0 for d in s)`
+
+        `'0' not in s` - a single C-level scan of a short string. It comes FIRST because `and`
+        short-circuits: when a zero is present, the `all(...)` on the right is never evaluated, so
+        `num % 0` is never attempted.
+
+        MEASURED, dropping this check raises ZeroDivisionError at num = 10 - the first number
+        containing a zero digit.
+
+        Note what it does NOT mean: it is not "skip the zero digits". A zero digit disqualifies the
+        number, so `... for d in s if d != '0'` would be a different and wrong rule, accepting 102.
+
+        `all(num % int(d) == 0 for d in s)` - every digit must divide the number. `all` short-circuits
+        at the first failure, so 26 costs two modulos rather than continuing.
+
+        `int(d)` converts one character to a digit. For a single-digit number this is `num % num`,
+        which is 0 - so 1 through 9 all qualify.
+
+Line 6  `result.append(num)`
+
+Line 7  `return result`
+        MEASURED: 23 numbers up to 100, 339 up to 10,000, in 4 ms for the full constraint range.
+
+AND THE ALLOCATION-FREE VERSION:
+
+    def self_dividing_arith(n):
+        result = []
+        for num in range(1, n + 1):
+            m, ok = num, True
+            while m:
+                d = m % 10
+                if d == 0 or num % d != 0:
+                    ok = False
+                    break
+                m //= 10
+            if ok:
+                result.append(num)
+        return result
+
+        The `d == 0` test sits inside the same condition as the divisibility check, so the zero is
+        caught before it is ever used as a divisor - the same protective ordering as the string
+        version's `and`.
+
+        MEASURED, 1 ms against 4 ms over 1..10,000, and identical output.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `num = 128`.
+
+    s = "128", and '0' is not in it, so continue
+
+    d    int(d)   128 % d   zero ?
+    ------------------------------------
+    '1'     1        0        pass
+    '2'     2        0        pass
+    '8'     8        0        pass
+    all(...) is True  ->  128 is self-dividing
+
+TRACE B - `num = 26`.
+
+    s = "26", no zero digit
+
+    d    int(d)   26 % d
+    ---------------------------
+    '2'     2        0     pass
+    '6'     6        2     FAIL  ->  `all` short-circuits and returns False
+
+    Two modulos, and the second one settles it. The short-circuit means a number failing early costs
+    almost nothing.
+
+TRACE C - `num = 102`, the zero case.
+
+    s = "102", and '0' IS in it
+    the left operand of the `and` is False, so the right side is never evaluated
+    102 is rejected without a single modulo being attempted
+
+    Without the check: `102 % 1` is 0, `102 % 0` raises ZeroDivisionError. MEASURED, that happens
+    first at num = 10.
+
+    And with the "skip zeros" misreading: `102 % 1 == 0` and `102 % 2 == 0`, so it would wrongly be
+    accepted.
+
+TRACE D - the single-digit numbers.
+
+    num = 7:  s = "7", no zero, and 7 % 7 == 0  ->  self-dividing
+
+    Every one of 1..9 passes for the same reason. MEASURED, they are the first nine entries of the
+    answer for any n >= 9.
+
+TRACE E - the density, MEASURED.
+
+    range          count
+    ------------------------
+    1..10             9
+    1..100           23
+    1..1,000         79
+    1..10,000       339
+
+    The first 20 entries: 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15, 22, 24, 33, 36, 44, 48, 55, 66.
+
+    Notice how many are repdigits or near-repdigits - a number like 66 satisfies both conditions with
+    one distinct digit, which is why they are over-represented as the numbers get longer.
+
+TRACE F - the two implementations.
+
+    1..10,000
+        string version      4 ms      allocates one string per candidate
+        arithmetic version  1 ms      allocates nothing
+        identical output                                              MEASURED
+
+    40,000-ish digit operations either way; the entire difference is 10,000 string allocations.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(n * d) where d is the number of digits - at most 5 for the constraint of 10^4, so about
+            40,000 digit operations in total. MEASURED, 4 ms with strings and 1 ms with arithmetic.
+    space   O(number of results) for the output - MEASURED 339 entries up to 10,000. O(1) working
+            space beyond the per-candidate string.
+
+    There is no sublinear approach: self-dividingness has no structure to exploit, so every candidate
+    must be examined. Constructing candidates from the digits 1..9 reduces the count from 10^d to
+    9^d, which matters only for a much larger range.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Omitting the zero-digit check. MEASURED, ZeroDivisionError at num = 10 - a crash, which at
+       least cannot ship.
+    2. Putting the zero check AFTER the divisibility test, which still crashes because `and`
+       evaluates left to right.
+    3. Skipping zero digits instead of rejecting the number. It avoids the crash and accepts 102,
+       which is wrong.
+    4. `range(1, n)` instead of `range(1, n + 1)`, dropping `n` itself.
+    5. Calling `str(num)` more than once per candidate.
+    6. Looking for a mathematical shortcut. There is none worth having at this range, and MEASURED the
+       honest scan covers the entire constraint space in a few milliseconds.
+
+THE TAKEAWAY
+    The definition contains its own guard: nothing is divisible by zero, so a zero digit disqualifies
+    the number - and the code must say that BEFORE the divisibility test, because `and` short-circuits
+    left to right and a zero divisor is a crash rather than a wrong answer. Beyond that this is an
+    honest scan, which is the correct engineering choice when the constraint is 10^4: know that
+    constructing candidates from a 9-digit alphabet is the technique that scales, and know that you
+    do not need it here.""",
+]
+
+_EX_P1AO["Separate the Digits in an Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - replace each number in the array with its individual digits, keeping
+everything in order.
+
+    [13, 25, 83, 77]  ->  [1, 3, 2, 5, 8, 3, 7, 7]        MEASURED
+    [7, 1, 3, 9]      ->  [7, 1, 3, 9]                    MEASURED - single digits are unchanged
+
+Each number is expanded IN PLACE in the sequence: 13 becomes 1 then 3, and the next number's digits
+follow immediately.
+
+THE SOLUTION IS FLATTEN-WHILE-CONVERTING:
+
+    for n in nums:
+        result.extend(int(d) for d in str(n))
+
+`str(n)` gives the digits in written order - most significant first - which is exactly the order the
+problem wants, and `int(d)` turns each character back into a number. `extend` appends all of them.
+
+THE ARITHMETIC ALTERNATIVE HAS A CATCH WORTH KNOWING. Peeling digits with `% 10` produces them
+BACKWARDS - units first - so each number's digits must be reversed before being appended:
+
+    digs = []
+    while n:
+        digs.append(n % 10)
+        n //= 10
+    result.extend(reversed(digs))
+
+MEASURED, the two versions agree on 20,000 random arrays. And MEASURED on 200,000 numbers expanding
+to 1,777,665 digits: the arithmetic version takes 151 ms and the string version 237 ms - so here the
+allocation-free version is the faster one, 1.6x.""",
+
+    """2. THE INTUITION - the output is longer than the input, and the order within each number matters.
+
+TWO THINGS DECIDE THIS PROBLEM.
+
+FIRST, THE ORDER WITHIN EACH NUMBER. The digits must come out most-significant first, exactly as the
+number is written. `str(n)` gives that for free. The arithmetic peel gives the opposite, which is why
+it needs the reversal - and forgetting it produces `[3, 1, 5, 2, ...]` for `[13, 25, ...]`, a
+plausible-looking array of the right length with every number's digits flipped.
+
+SECOND, THE OUTPUT SIZE. Each number contributes as many elements as it has digits, so the result
+grows. MEASURED, 200,000 numbers drawn up to 10^9 expand to 1,777,665 digits - about 8.9x the input.
+The honest complexity is therefore O(total digits), not O(n), and saying "O(n)" hides the factor
+entirely.
+
+WHY `extend` AND NOT REPEATED `append`. `extend` consumes an entire iterable in one C-level call,
+where a per-digit `append` pays an interpreter round trip each time. It is the same block-building
+idiom as in Decompress Run-Length Encoded List.
+
+WHY THE STRING VERSION LOSES HERE. Unlike most string-versus-arithmetic comparisons in these
+problems, MEASURED the arithmetic version wins - 151 ms against 237 ms. The reason is that `str(n)`
+allocates a fresh string for every one of the 200,000 numbers, and then `int(d)` allocates and parses
+per character; the arithmetic version does integer operations only. When the per-item work is small
+and the item count is large, allocation dominates.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FLATTEN - turn a nested structure into a single flat sequence. Here each number is conceptually a
+list of digits and the output is those lists concatenated.
+
+MOST-SIGNIFICANT FIRST - the order the number is written. 13 becomes 1 then 3, not 3 then 1.
+
+`str(n)` - the decimal text, already in written order.
+
+`% 10` and `// 10` - the arithmetic digit peel, which yields digits LEAST-significant first and
+therefore needs a reversal per number.
+
+`list.extend(iterable)` - appends every element of an iterable in one operation. `append` adds one
+element; `extend` adds many.
+
+OUTPUT-SENSITIVE COMPLEXITY - a running time stated in terms of the size of the answer. MEASURED, the
+output here is 8.9x the input for numbers up to 10^9.
+
+GENERATOR EXPRESSION inside `extend` - `int(d) for d in str(n)` produces the digits lazily, so no
+intermediate list per number is built.
+
+LEADING ZEROS - do not exist in an integer, so no number contributes a leading 0. A value like 100
+contributes 1, 0, 0 - the zeros are real digits, just not leading ones.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - digit order, and the complexity claim.
+
+BUG 1 - THE ARITHMETIC PEEL WITHOUT THE REVERSAL.
+
+    while n:
+        result.append(n % 10)      # WRONG - digits come out backwards
+        n //= 10
+
+For `[13, 25]` this produces `[3, 1, 5, 2]` instead of `[1, 3, 2, 5]`. The array is the right LENGTH
+and every digit is present, so the shape of the output gives no hint that anything is wrong - only
+the values do, and only if you look at a multi-digit number.
+
+Single-digit inputs are unaffected, so a test of `[7, 1, 3, 9]` passes either way. MEASURED, that
+input returns `[7, 1, 3, 9]` from both versions.
+
+BUG 2 - REVERSING THE WHOLE OUTPUT INSTEAD OF EACH NUMBER. Reversing at the end fixes the digit order
+within each number and destroys the order OF the numbers. The reversal is per-number, inside the
+loop.
+
+BUG 3 - CLAIMING O(n). MEASURED, 200,000 input numbers produce 1,777,665 output elements - 8.9x. With
+larger values the ratio grows: 10-digit numbers would give 10x. The complexity is O(total digits) and
+the space is the same, and stating "O(n)" for n the input length is the mistake this problem is best
+at exposing.
+
+BUG 4 - BUILDING A LIST PER NUMBER AND CONCATENATING WITH `+`. `result = result + digits` copies the
+whole result each time, which is quadratic in the number of items. `extend` mutates in place and is
+amortised O(added).
+
+BUG 5 - FORGETTING THAT ZEROS INSIDE A NUMBER ARE DIGITS. 100 contributes 1, 0, 0 - three elements.
+Only LEADING zeros do not exist, and integers never have those.
+
+BUG 6 - HANDLING THE VALUE 0 CARELESSLY IN THE ARITHMETIC VERSION. `while n:` never runs for n = 0, so
+zero would contribute NOTHING rather than a single 0 digit. The string version has no such problem -
+`str(0)` is `"0"`. The problem's constraints promise positive integers, so it does not arise; the
+arithmetic version needs a guard the moment they change.""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 numbers expanding to 1,777,665 digits, identical output:
+
+    arithmetic peel with a per-number reversal    151 ms
+    str/int conversion                            237 ms      1.6x slower
+
+ALTERNATIVE A - the string version. Clearest, and the digit order is correct by construction because
+`str` is already most-significant first. The version to write.
+
+ALTERNATIVE B - the arithmetic version. MEASURED 1.6x faster because it never allocates a string, and
+it carries the reversal hazard. Worth writing when the input is large or the language makes strings
+expensive.
+
+ALTERNATIVE C - a nested comprehension:
+
+    return [int(d) for n in nums for d in str(n)]
+
+The same work in one expression, and the two `for` clauses read in the order you would nest them.
+Slightly faster than the explicit `extend` loop in Python because there is no method call per number.
+
+ALTERNATIVE D - `itertools.chain.from_iterable(str(n) for n in nums)` followed by an `int` map. The
+lazy formulation, which matters if the output is huge and consumed one element at a time rather than
+materialised.
+
+ALTERNATIVE E - precompute the digit lists for small numbers. Pointless here, and the shape of the
+answer if the same values recurred many times.
+
+THE FAMILY - expansion and flattening:
+  * DECOMPRESS RUN-LENGTH ENCODED LIST - the same "output dwarfs the input" lesson, with runs instead
+    of digits;
+  * PLUS ONE, ADD TO ARRAY-FORM - numbers already stored as digit arrays, the opposite direction;
+  * FLATTEN NESTED LIST ITERATOR - flattening when the nesting is arbitrary rather than exactly two
+    levels;
+  * ADD DIGITS, SELF DIVIDING NUMBERS - the same digit machinery applied to a question rather than a
+    transformation;
+  * CONVERT 1D ARRAY INTO 2D ARRAY - the inverse shape, grouping a flat sequence rather than
+    expanding one.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - say the ordering requirement first: digits come out most-significant first, in the order the
+number is written, and the numbers stay in their original sequence.
+
+STEP 2 - `result = []`.
+
+STEP 3 - for each number, expand it:
+    result.extend(int(d) for d in str(n))
+`str(n)` is already in written order, which is why this version has no reversal.
+
+STEP 4 - use `extend` rather than a per-digit `append`, and never `result = result + ...`, which
+copies everything each time.
+
+STEP 5 - state the complexity as O(TOTAL DIGITS) for both time and space, not O(n). MEASURED, 200,000
+numbers expand to 1,777,665 digits - 8.9x.
+
+STEP 6 - offer the arithmetic version and name its catch: `% 10` yields digits backwards, so each
+number's digits must be reversed before appending. MEASURED it is 1.6x faster and it is the one that
+can silently produce flipped digits.
+
+STEP 7 - name the edge cases: single-digit numbers are unchanged, internal zeros are real digits, and
+the arithmetic version needs a guard if 0 were a possible input.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- For each number I append its digits in written order, most significant first, and the numbers keep
+  their original sequence.
+
+- Converting to a string gives me the digits in exactly the right order, so I map each character back
+  to an integer and extend the result with them. Using extend rather than appending one at a time
+  keeps the work in C, and I would never build the result with plus-equals on a new list, which copies
+  everything each time.
+
+- The complexity is the TOTAL number of digits, not the number of inputs - I measured two hundred
+  thousand numbers expanding to about one and three-quarter million digits, nearly nine times the
+  input. Saying O of n would hide that factor entirely.
+
+- The arithmetic alternative peels digits with mod ten and divide by ten, which avoids allocating a
+  string per number - I measured it about one and a half times faster. But it produces the digits
+  BACKWARDS, so each number's digits have to be reversed before they go into the result. Forgetting
+  that gives an array of exactly the right length with every number's digits flipped, and single-digit
+  inputs pass either way, so a quick test would not catch it.
+
+- Two small details: zeros inside a number are real digits - a hundred contributes one, zero, zero -
+  and the arithmetic version's while-loop would contribute nothing at all for an input of zero, so it
+  needs a guard if zero were allowed. The constraints say positive.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def separate_digits(nums):
+        result = []
+        for n in nums:
+            result.extend(int(d) for d in str(n))   # split each number into digits
+        return result
+
+Line 2  `result = []`
+        The flat output. It will be longer than `nums` - MEASURED, 8.9x for numbers up to 10^9.
+
+Line 3  `for n in nums:`
+        The numbers keep their original order; only their contents are expanded.
+
+Line 4  `result.extend(int(d) for d in str(n))`
+
+        `str(n)` - the decimal text, MOST-SIGNIFICANT FIRST. That is the whole reason this version
+        needs no reversal, and it is the difference from the arithmetic approach.
+
+        `int(d)` - one character to one digit. The output must be integers, not characters; returning
+        the characters would type-check in Python and fail any comparison against the expected list.
+
+        `(... for d in ...)` - a generator, so no intermediate list is built per number.
+
+        `extend` - appends every produced element in one C-level operation. A `for d: result.append(...)`
+        loop does the same work with an interpreter round trip per digit, and
+        `result = result + [...]` copies the entire result each time, which is quadratic in the
+        number of inputs.
+
+Line 5  `return result`
+        Length equal to the total digit count across all inputs.
+
+MEASURED, this agrees with the arithmetic version on 20,000 random arrays, at 237 ms against 151 ms on
+200,000 numbers.
+
+AND THE ARITHMETIC VERSION, which is faster and carries the ordering hazard:
+
+    def separate_digits_arith(nums):
+        result = []
+        for n in nums:
+            digs = []
+            while n:
+                digs.append(n % 10)      # units digit first - BACKWARDS
+                n //= 10
+            result.extend(reversed(digs))   # so reverse before appending
+        return result
+
+        The `reversed(digs)` is not optional: `% 10` yields the least significant digit first. Without
+        it, `[13, 25]` produces `[3, 1, 5, 2]`.
+
+        `while n:` does not execute for n = 0, so a zero input would contribute nothing. The
+        constraints promise positive integers; the string version has no such gap, since `str(0)` is
+        `"0"`.
+
+AND THE ONE-LINE FORM:
+
+    return [int(d) for n in nums for d in str(n)]
+
+        The two `for` clauses read in the same order as nested loops - outer over numbers, inner over
+        their digits.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [13, 25, 83, 77]`.
+
+    n     str(n)   digits appended   result so far
+    ------------------------------------------------------------
+    13     "13"      1, 3            [1,3]
+    25     "25"      2, 5            [1,3,2,5]
+    83     "83"      8, 3            [1,3,2,5,8,3]
+    77     "77"      7, 7            [1,3,2,5,8,3,7,7]
+
+    return [1,3,2,5,8,3,7,7]                                    MEASURED
+
+    Four inputs, eight outputs. The numbers stay in order and each expands in place.
+
+TRACE B - `nums = [7, 1, 3, 9]`, all single digits.
+
+    every `str(n)` is one character, so each contributes one element
+    return [7,1,3,9]                                            MEASURED
+
+    Identical to the input - and identical under the reversal bug too, which is why this test case
+    proves nothing about digit order.
+
+TRACE C - the arithmetic peel on 13, showing why the reversal is needed.
+
+    n = 13
+        13 % 10 = 3   digs = [3]     n = 1
+         1 % 10 = 1   digs = [3,1]   n = 0
+    digs is [3, 1] - BACKWARDS
+    reversed(digs) gives 1, 3 - correct
+
+    Without the reversal, `[13, 25]` produces `[3, 1, 5, 2]`: the right length, every digit present,
+    every number flipped.
+
+TRACE D - a number containing an internal zero.
+
+    n = 100
+        str(100) = "100"
+        contributes 1, 0, 0 - three elements
+
+    The zeros are genuine digits. Only LEADING zeros do not exist in an integer, and no integer has
+    those.
+
+TRACE E - the arithmetic version's gap at zero.
+
+    n = 0:  `while n:` is false immediately, digs stays empty, nothing is appended
+            the string version gives [0]
+
+    MEASURED behaviour difference on an input the constraints exclude - and exactly the kind of gap
+    that appears when a "faster" version is copied into a context with different guarantees.
+
+TRACE F - the scale, MEASURED.
+
+    200,000 numbers drawn up to 10^9
+        output length             1,777,665 digits      about 8.9x the input
+        string version            237 ms
+        arithmetic version        151 ms                1.6x faster
+
+    Two things to read off. The output-to-input ratio is the reason the complexity must be stated in
+    digits. And the arithmetic version wins here - unusually - because 200,000 string allocations cost
+    more than the integer arithmetic they replace.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    time    O(total digits across all inputs). Every output element is produced with constant work.
+    space   O(total digits) for the result, which IS the answer. Working space is O(digits of one
+            number) for the arithmetic version and O(1) for the string one.
+
+    MEASURED, 200,000 inputs producing 1,777,665 outputs - 8.9x - in 151 ms (arithmetic) or 237 ms
+    (string).
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. In the arithmetic version, forgetting to reverse each number's digits. `% 10` yields them
+       backwards, and the result has the right length with every multi-digit number flipped -
+       invisible on a single-digit test.
+    2. Reversing the whole output instead of each number, which also reverses the order OF the
+       numbers.
+    3. Stating the complexity as O(n) in the number of inputs. MEASURED, the output is 8.9x larger.
+    4. `result = result + digits`, which copies the whole result per number and is quadratic.
+    5. Returning characters instead of integers - `str(n)` yields characters and `int(d)` is what
+       turns them back.
+    6. Forgetting that internal zeros are real digits, so 100 contributes three elements.
+    7. Copying the arithmetic version into a context where 0 is a valid input, where its `while n:`
+       loop contributes nothing at all.
+
+THE TAKEAWAY
+    Expanding each element into several is a flatten, and the two things it turns on are ORDER and
+    SIZE. `str(n)` hands you the digits already most-significant-first, which is why the string version
+    has no reversal to forget; the arithmetic peel is faster and yields them backwards, so each
+    number's digits must be reversed before they go into the result. And when the output can be many
+    times the input, say the complexity in terms of the output - MEASURED here it is nearly nine times
+    larger, and "O(n)" would hide all of it.""",
+]
+
+_EX_P1AO["Set Mismatch"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an array should contain 1 through n exactly once each, but one value
+got copied over another. Find the duplicated value and the missing one.
+
+    [1, 2, 2, 4]   ->  duplicate 2, missing 3     MEASURED
+    [1, 1]         ->  duplicate 1, missing 2     MEASURED
+
+Exactly one value appears twice and exactly one is absent - the two are linked, because the array
+still has n slots.
+
+THE STRAIGHTFORWARD SOLUTION uses a set: walk the array, and the first value already in the set is the
+duplicate; then scan 1..n for the value the set never saw.
+
+    seen = set()
+    for x in nums:
+        if x in seen: duplicate = x
+        seen.add(x)
+    missing = next(v for v in range(1, n+1) if v not in seen)
+
+THERE IS ALSO A CONSTANT-SPACE SOLUTION BUILT ON TWO EQUATIONS. Compare the array's sum and
+sum-of-squares against what they should be:
+
+    sum(nums)    - (1+2+...+n)          = duplicate - missing
+    sum(x*x)     - (1^2+2^2+...+n^2)    = duplicate^2 - missing^2 = (dup - miss)(dup + miss)
+
+Dividing the second by the first gives `dup + miss`, and with `dup - miss` already known, both values
+follow.
+
+MEASURED, the set version, the counter version and the algebraic version all agree on 20,000 random
+cases. And MEASURED on 200,000 elements the algebraic version is BOTH faster and smaller: 18 ms
+against 39 ms, and it uses no auxiliary memory where the set costs about 8.4 MB.""",
+
+    """2. THE INTUITION - two unknowns need two equations.
+
+There are two things to find - the duplicate d and the missing m - so one equation is not enough.
+
+EQUATION 1, FROM THE SUM. The array should sum to `S = n(n+1)/2`. Replacing m with d changes the
+total by exactly `d - m`:
+
+    sum(nums) - S = d - m
+
+EQUATION 2, FROM THE SUM OF SQUARES. The same substitution changes the sum of squares by
+`d^2 - m^2`:
+
+    sum(x^2) - S2 = d^2 - m^2 = (d - m)(d + m)
+
+Divide equation 2 by equation 1 - legal because `d != m`, so `d - m` is never zero - and you get
+`d + m`. Now:
+
+    d = ((d+m) + (d-m)) / 2      because (d+m) + (d-m) = 2d
+    m = ((d+m) - (d-m)) / 2      because (d+m) - (d-m) = 2m
+
+Two passes over the array, a handful of arithmetic, and no extra memory. MEASURED, this agrees with
+the set version on all 20,000 random cases.
+
+WHY THE SET VERSION IS STILL THE ONE TO WRITE FIRST. It is obviously correct and needs no algebra. The
+algebraic one is the answer to "now do it in O(1) space", and it is worth being able to derive rather
+than recall - the derivation is four lines and the formula alone is unmemorable.
+
+WHY THE CLEVER VERSION IS ALSO FASTER HERE. Usually the O(1)-space trick costs time. MEASURED it does
+not: 18 ms against 39 ms on 200,000 elements, because `sum` runs in C while building a 200,000-element
+set means 200,000 hash insertions and about 8.4 MB of allocation. Both the memory AND the time favour
+the arithmetic.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DUPLICATE - the value that appears twice.
+
+MISSING - the value from 1..n that appears zero times. There is exactly one of each, and they are
+different values.
+
+TRIANGULAR NUMBER - `1 + 2 + ... + n = n(n+1)/2`. The expected sum.
+
+SUM OF SQUARES - `1^2 + 2^2 + ... + n^2 = n(n+1)(2n+1)/6`. The expected second moment, and the second
+equation.
+
+MOMENT - a sum of powers of the values. Using two different powers is what makes two unknowns
+solvable; this is the same idea as using mean and variance to pin down two parameters.
+
+DIFFERENCE OF SQUARES - `d^2 - m^2 = (d-m)(d+m)`. The factorisation that turns the second equation
+into something dividable by the first.
+
+O(1) EXTRA SPACE - no auxiliary structure. The algebraic version qualifies; the set version does not.
+
+OVERFLOW - the sum of squares grows fast. MEASURED at n = 200,000 it is 2,666,686,666,700,000, which
+overflows a 32-bit integer and fits comfortably in a 64-bit one. In Python integers are unbounded;
+in Java this must be a `long`.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the second equation, and the arithmetic that supports it.
+
+BUG 1 - TRYING TO SOLVE IT WITH THE SUM ALONE. `sum(nums) - S` gives `d - m`, one number for two
+unknowns. It is not solvable without a second, independent equation - and reaching for XOR instead
+does not help directly either, because `xor(nums) ^ xor(1..n)` gives `d ^ m`, which identifies the
+BITS where they differ but not which value is which. (The XOR route can be completed by splitting on
+one differing bit, which is the Single Number III technique - correct, and considerably more work
+than the sum-of-squares route.)
+
+BUG 2 - ASSUMING THE INTEGER DIVISIONS MIGHT NOT BE EXACT. All three are, by construction, and it is
+worth being able to say why rather than hoping. `sq // diff` is exact because `sq` equals
+`diff * (d + m)`. And the final two are exact because `(d+m) + (d-m)` is `2d` and `(d+m) - (d-m)` is
+`2m` - both twice an integer. MEASURED, the algebraic version returns exactly the same pair as the set
+version on all 20,000 random cases.
+
+BUG 3 - OVERFLOW IN A FIXED-WIDTH LANGUAGE. MEASURED, the sum of squares for n = 200,000 is about
+2.67 x 10^15 - fine in a 64-bit integer, and 1,242,000x past the 32-bit limit. In Java this is a
+`long`, and using `int` gives a silently wrong answer. Python has no such issue, which is exactly why
+it is worth saying out loud.
+
+BUG 4 - IN THE SET VERSION, LOOKING FOR THE MISSING VALUE IN THE ARRAY RATHER THAN IN THE RANGE. The
+missing value is not in `nums` at all, so it must be found by scanning 1..n and testing membership -
+which is why the set is needed for the second half as well as the first.
+
+BUG 5 - ASSUMING THE DUPLICATE IS THE FIRST REPEAT ENCOUNTERED IN INDEX ORDER. It is, and only because
+there is exactly ONE duplicated value. With two duplicates the "first repeat" is not well defined and
+the whole approach changes.
+
+BUG 6 - RETURNING THE PAIR IN THE WRONG ORDER. The problem asks for [duplicate, missing]. Both are
+integers in the same range, so a reversed answer looks entirely plausible.
+
+BUG 7 - USING `nums.count(x)` TO FIND THE DUPLICATE. That is an O(n) scan per element, so O(n^2)
+overall. A single pass with a set, a Counter, or the arithmetic identity all do it in O(n).""",
+
+    """5. THE ALTERNATIVES, AND THE FAMILY THIS BELONGS TO.
+
+MEASURED on 200,000 elements, identical answers:
+
+    algebraic (sum and sum of squares)     18 ms      O(1) extra space
+    set-based                              39 ms      about 8.4 MB for the set
+
+ALTERNATIVE A - the set version. O(n) time, O(n) space, obviously correct. Write it first.
+
+ALTERNATIVE B - a `Counter`: the duplicate is the value with count 2, the missing one the value in
+1..n with count 0. MEASURED to agree on all 20,000 random cases, and it generalises immediately if
+the problem allowed more than one duplicate.
+
+ALTERNATIVE C - the algebraic version. O(n) time, O(1) space, MEASURED both faster and smaller here.
+Its cost is that it needs a derivation you can defend and, in a fixed-width language, 64-bit
+arithmetic.
+
+ALTERNATIVE D - IN-PLACE NEGATIVE MARKING, the same technique as Find All Numbers Disappeared in an
+Array: for each value v, negate the entry at index |v| - 1; the position that is already negative
+identifies the duplicate, and the position still positive at the end identifies the missing value.
+O(1) extra space, O(n) time, and it DESTROYS the input - which is the trade to state.
+
+ALTERNATIVE E - CYCLIC SORT: repeatedly swap each value to index v-1. Afterwards the index where
+`nums[i] != i+1` gives both answers at once - `nums[i]` is the duplicate and `i+1` is the missing
+value. Also O(1) space, also destructive, and it is the technique that generalises to the whole
+family.
+
+ALTERNATIVE F - XOR plus a bit split (the Single Number III technique). Correct, O(1) space, and more
+intricate than the sum-of-squares route for the same result.
+
+THE FAMILY - values-are-1..n problems:
+  * FIND ALL NUMBERS DISAPPEARED IN AN ARRAY - the same marking trick, reporting all missing values;
+  * FIND ALL DUPLICATES IN AN ARRAY - the same marking, reporting the repeats;
+  * FIND THE DUPLICATE NUMBER - the version that forbids modifying the array, solved with Floyd cycle
+    detection;
+  * MISSING NUMBER - one unknown, so the sum alone suffices;
+  * FIRST MISSING POSITIVE - the hard version with arbitrary values, solved by cyclic sort.""",
+
+    """6. HOW TO CODE IT - numbered steps.
+
+STEP 1 - write the set version first and say it is obviously correct: the first value already seen is
+the duplicate, and the value from 1..n never seen is the missing one.
+
+STEP 2 - state its cost honestly: O(n) time and O(n) space.
+
+STEP 3 - if asked for O(1) space, DERIVE the two equations rather than reciting them:
+    sum(nums) - n(n+1)/2                = d - m
+    sum(x^2)  - n(n+1)(2n+1)/6          = d^2 - m^2 = (d-m)(d+m)
+
+STEP 4 - divide the second by the first to get `d + m`. Say why that division is safe: `d != m`, so
+`d - m` is never zero.
+
+STEP 5 - recover both: `d = ((d+m) + (d-m)) / 2` and `m = ((d+m) - (d-m)) / 2`. Both divisions are
+exact, because those numerators are `2d` and `2m`.
+
+STEP 6 - name the overflow risk in a fixed-width language: MEASURED, the sum of squares at n = 200,000
+is 2.67 x 10^15, so 64-bit arithmetic is required.
+
+STEP 7 - return `[duplicate, missing]` in that order.
+
+STEP 8 - mention the in-place marking and cyclic-sort alternatives, and that both destroy the input -
+which is the real trade for O(1) space, more so than the algebra.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud.
+
+- The straightforward version is a set: walk the array, and the first value I have already seen is the
+  duplicate; then scan one to n and the value the set never saw is the missing one. That is linear
+  time and linear space.
+
+- If constant space is wanted, there are two unknowns, so I need two equations. The array's SUM
+  differs from the expected sum by exactly duplicate minus missing, because one value replaced the
+  other. And the array's SUM OF SQUARES differs by duplicate squared minus missing squared, which
+  factors as duplicate minus missing, times duplicate plus missing.
+
+- So dividing the second difference by the first gives me duplicate plus missing - and that division
+  is safe because the two values are different, so their difference is never zero. With the sum and
+  the difference I recover both numbers.
+
+- Two passes, a handful of arithmetic, no extra memory. And unusually, the clever version is also the
+  fast one here - I measured eighteen milliseconds against thirty-nine for the set on two hundred
+  thousand elements, because summing runs in C while building the set means two hundred thousand hash
+  insertions and about eight megabytes.
+
+- One thing to flag in a fixed-width language: the sum of squares gets large. At n equals two hundred
+  thousand it is about two and a half quadrillion - fine in a sixty-four-bit integer and far past a
+  thirty-two-bit one.
+
+- The other constant-space options are in-place marking or cyclic sort, and both destroy the caller's
+  array, which is a bigger trade than the algebra.""",
+
+    """8. THE CODE, LINE BY LINE.
+
+    def find_error_nums(nums):
+        n = len(nums)
+        seen = set()
+        duplicate = -1
+        for x in nums:
+            if x in seen:
+                duplicate = x                # this value appears twice
+            seen.add(x)
+        missing = -1
+        for v in range(1, n + 1):
+            if v not in seen:
+                missing = v                  # this value never appears
+                break
+        return [duplicate, missing]
+
+Line 2  `n = len(nums)`
+        The array has n slots and should hold 1..n, so the length IS the range - that correspondence
+        is what makes the second loop's bounds correct.
+
+Line 5  `for x in nums:`
+        One pass. O(1) membership per element because `seen` is a set.
+
+Line 6  `if x in seen:`
+        Already present, so `x` is the duplicate. There is exactly one duplicated value, so this fires
+        exactly once - which is why a single variable suffices rather than a list.
+
+Line 8  `seen.add(x)`
+        After the test, so the FIRST occurrence does not count as a repeat of itself.
+
+Line 10 `for v in range(1, n + 1):`
+        The missing value is not in `nums` at all, so it must be found by scanning the RANGE and
+        testing membership. `n + 1` because the range is inclusive of n.
+
+Line 12 `break`
+        There is exactly one missing value, so the search can stop.
+
+Line 13 `return [duplicate, missing]`
+        In that order. Both are integers in 1..n, so a reversed answer is entirely plausible-looking.
+
+        O(n) time and O(n) space - MEASURED 39 ms and about 8.4 MB on 200,000 elements.
+
+AND THE CONSTANT-SPACE VERSION:
+
+    def find_error_nums_math(nums):
+        n = len(nums)
+        s  = sum(nums)
+        s2 = sum(x * x for x in nums)
+        S  = n * (n + 1) // 2                # expected sum
+        S2 = n * (n + 1) * (2 * n + 1) // 6  # expected sum of squares
+        diff = s - S                         # d - m
+        sq   = s2 - S2                       # d^2 - m^2 = (d - m)(d + m)
+        total = sq // diff                   # d + m   (exact: sq is a multiple of diff)
+        return [(total + diff) // 2, (total - diff) // 2]
+
+        `sq // diff` is exact because `sq` equals `diff * (d + m)` by construction, and `diff` is
+        non-zero because the duplicate and the missing value are different.
+
+        The final two divisions are exact because `(d+m) + (d-m)` is `2d` and `(d+m) - (d-m)` is
+        `2m` - both are twice an integer by construction. MEASURED, this returns the identical answer
+        to the set version on all 20,000 random cases.
+
+        MEASURED, 18 ms against 39 ms on 200,000 elements, with no auxiliary memory - so here the
+        O(1)-space version is also the faster one.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `nums = [1, 2, 2, 4]`, the set version. n = 4.
+
+    x    x in seen ?   duplicate   seen after
+    ---------------------------------------------
+    1        no           -1        {1}
+    2        no           -1        {1,2}
+    2        YES           2        {1,2}
+    4        no            2        {1,2,4}
+
+    then scan 1..4:
+        1 in seen, 2 in seen, 3 NOT in seen -> missing = 3, break
+
+    return [2, 3]                                                MEASURED
+
+TRACE B - the same input through the algebra.
+
+    n = 4
+    s  = 1 + 2 + 2 + 4 = 9
+    S  = 4 * 5 // 2 = 10
+    diff = 9 - 10 = -1                    so d - m = -1, i.e. the duplicate is SMALLER
+
+    s2 = 1 + 4 + 4 + 16 = 25
+    S2 = 4 * 5 * 9 // 6 = 30
+    sq = 25 - 30 = -5                     so d^2 - m^2 = -5
+
+    total = sq // diff = -5 // -1 = 5     so d + m = 5
+
+    d = (5 + (-1)) // 2 = 2
+    m = (5 - (-1)) // 2 = 3
+
+    return [2, 3]                                                MEASURED
+
+    Note `diff` is negative here and everything still works - the algebra never assumed the duplicate
+    was the larger value.
+
+TRACE C - the smallest possible input, `nums = [1, 1]`, n = 2.
+
+    set version:  the second 1 is already seen -> duplicate 1; scanning 1..2, the value 2 is absent
+                  -> missing 2
+    algebra:      s = 2, S = 3, diff = -1
+                  s2 = 2, S2 = 5, sq = -3
+                  total = -3 // -1 = 3
+                  d = (total + diff)//2 = (3 + (-1))//2 = 1
+                  m = (total - diff)//2 = (3 - (-1))//2 = 2
+
+    return [1, 2] from both                                      MEASURED
+
+TRACE D - why the division `sq // diff` is exact.
+
+    sq   = d^2 - m^2 = (d - m)(d + m)
+    diff = d - m
+
+    so sq is diff multiplied by an integer, and the division has no remainder by construction - not by
+    luck. And diff is never 0, because the duplicate and the missing value are distinct by definition.
+
+TRACE E - why the final two divisions are exact.
+
+    total + diff = (d + m) + (d - m) = 2d
+    total - diff = (d + m) - (d - m) = 2m
+
+    Both are exactly twice an integer, so halving them can never leave a remainder. No parity
+    case-analysis is needed - the identity does it.
+
+    MEASURED, the algebraic version returns integers matching the set version on all 20,000 random
+    cases.
+
+TRACE F - the measurements.
+
+    20,000 random cases: set, Counter and algebraic versions all agree
+
+    200,000 elements
+        set version        39 ms,  about 8.4 MB for the set
+        algebraic version  18 ms,  no extra memory
+
+    the sum of squares at n = 200,000 is 2,666,686,666,700,000
+        past the 32-bit maximum of 2,147,483,647 by a factor of about 1.2 million
+        comfortably inside the 64-bit range""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY
+    set        O(n) time, O(n) space. MEASURED 39 ms and roughly 8.4 MB at 200,000 elements.
+    algebraic  O(n) time, O(1) space. MEASURED 18 ms and no allocation.
+    marking / cyclic sort  O(n) time, O(1) extra space, and they destroy the input.
+
+    Every approach must read the whole array, so O(n) time is optimal; the only axis with room to move
+    is space, and the algebraic version wins it without sacrificing the input.
+
+THE MISTAKES, RANKED BY HOW OFTEN THEY ARE MADE
+    1. Trying to solve two unknowns with the sum alone. It gives `d - m` and no more; a second
+       independent equation is required.
+    2. Overflow in a fixed-width language. MEASURED, the sum of squares at n = 200,000 is 2.67 x 10^15
+       - `long` in Java, and a silent wrong answer with `int`.
+    3. Adding to the set BEFORE testing membership, which makes every element look like a duplicate of
+       itself.
+    4. Searching for the missing value inside `nums` rather than by scanning 1..n. It is not there.
+    5. Returning the pair in the wrong order - both are plausible integers, so nothing looks wrong.
+    6. `nums.count(x)` per element, which is O(n^2).
+    7. Presenting the algebraic formula without deriving it. The derivation is four lines and the
+       formula alone is unmemorable.
+
+THE TAKEAWAY
+    Two unknowns need two equations, and the natural pair here is the SUM and the SUM OF SQUARES -
+    because the second factors as `(d-m)(d+m)`, dividing it by the first hands you `d+m` directly.
+    That "use a second moment" move is the general technique whenever a small fixed number of unknowns
+    is hidden in an aggregate. Write the set version first because it is obviously correct, and reach
+    for the algebra when space matters - here, MEASURED, it happened to be faster as well.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
