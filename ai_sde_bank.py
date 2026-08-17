@@ -260452,6 +260452,1063 @@ general, and the free options (a better base model, hybrid BM25, a glossary expa
 be exhausted first, because the real cost is not the training run but re-embedding the entire
 corpus and keeping model and index versions locked together forever.""",
 ]
+_EX_P1AO["Mixture-of-Experts (MoE) models"] = [
+    """1. THE GOAL - more parameters without more compute per token.
+
+A dense transformer runs every token through every parameter. Making the model bigger makes
+every token more expensive, and that is the wall.
+
+A MIXTURE-OF-EXPERTS layer replaces the single feed-forward block with N of them - the
+EXPERTS - plus a small ROUTER that picks a few for each token. With 64 experts and top-2
+routing, the layer holds 64 experts' worth of parameters and each token pays for 2.
+
+MEASURED, on a llama-shaped block (d_model 4096, d_ff 14336):
+
+  experts   top-k   total params   ACTIVE params   ratio
+  -----------------------------------------------------------
+       1      1         0.2B            0.2B        1x
+       8      2         1.4B            0.4B        4x
+      16      2         2.8B            0.4B        8x
+      64      2        11.3B            0.4B       32x
+     128      4        22.5B            0.7B       32x
+
+THIRTY-TWO TIMES THE PARAMETERS FOR THE SAME COMPUTE. That is the entire pitch, and it works
+because capacity and compute stop being the same thing.
+
+The catch is that the router has to send tokens somewhere, and left alone it does not spread
+them evenly - which is section 2 - and you still have to hold every expert in memory, which is
+section 4.""",
+
+    """2. THE INTUITION - the router has a feedback loop, and it runs away.
+
+An expert that receives more tokens gets more gradient, so it gets better, so the router
+scores it higher, so it receives more tokens. Nothing in the training objective opposes this.
+
+MEASURED, 16 experts, top-2 routing, with that feedback modelled directly and NO
+load-balancing term:
+
+  step   busiest expert   top-4 share   quietest   CV of load
+  ----------------------------------------------------------------
+     0        8.7%            32.6%        3.6%       0.240
+     2        9.0%            33.5%        4.1%       0.252
+     4        9.3%            34.2%        3.0%       0.298
+     8        9.5%            36.7%        3.0%       0.364
+    12       11.1%            40.5%        1.9%       0.457
+    18       12.5%            44.2%        1.1%       0.564
+    24       14.5%            51.1%        0.6%       0.744
+
+Perfect balance would be 6.2% each and a top-4 share of 25%. By step 24, FOUR OF SIXTEEN
+EXPERTS ARE TAKING HALF THE TRAFFIC and the quietest is down to 0.6% - a sixth of where it
+started - and the trend is still accelerating.
+
+THIS IS THE FAILURE THAT DEFINES MoE ENGINEERING. Idle experts are parameters you paid for
+and cannot use; overloaded experts are a throughput bottleneck because the whole batch waits
+for the busiest device.
+
+THE FIX IS AN AUXILIARY LOSS that penalises uneven load. Measured, the identical dynamic with
+one added:
+
+  step 0: top-4 share 32.6%, CV 0.240
+  step 8: top-4 share 27.0%, CV 0.060
+  step 24: top-4 share 26.9%, CV 0.061
+
+It converges to near-perfect balance and STAYS there. The auxiliary loss is not a refinement;
+without it the architecture degrades into a smaller dense model with wasted weights.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EXPERT - one feed-forward network inside an MoE layer. Structurally identical to the FFN it
+replaced; there are just many of them.
+
+ROUTER / GATE - a small linear layer scoring each expert for each token. Top-k are chosen and
+their outputs are combined, weighted by the router's softmax.
+
+TOP-K - how many experts each token uses. 1 (Switch Transformer) or 2 (most others).
+
+SPARSE ACTIVATION - the property that only k of N experts run per token.
+
+TOTAL vs ACTIVE PARAMETERS - what the model contains vs what any one token touches. A
+"Mixtral 8x7B" has 47B total and about 13B active, and BOTH numbers matter - active predicts
+speed, total predicts the GPU bill.
+
+LOAD BALANCING / AUXILIARY LOSS - an extra loss term pushing the router toward even usage.
+Usually a small coefficient like 0.01.
+
+EXPERT CAPACITY - the maximum tokens one expert will process in a batch.
+
+CAPACITY FACTOR - capacity as a multiple of the even share. 1.25 means each expert accepts 25%
+more than its fair share before overflowing.
+
+TOKEN DROPPING - what happens past capacity: the token skips the FFN and passes through on the
+residual connection only. Silently.
+
+EXPERT PARALLELISM - putting different experts on different GPUs, which is what makes load
+imbalance a latency problem rather than just an efficiency one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two, and both are about the gap between the brochure
+and the bill.
+
+FIRST: TOKENS GET SILENTLY DROPPED. Expert capacity is finite, so when routing is uneven the
+overflow is discarded - the token skips the FFN entirely and only the residual carries it
+forward. No error, no warning, and a quality loss that shows up as inexplicable degradation.
+
+MEASURED, 8 experts, top-2, 4,096 tokens, at several routing skews and capacity factors:
+
+  routing skew   busiest    cf=1.0   cf=1.25   cf=1.5   cf=2.0   cf=4.0
+  ---------------------------------------------------------------------------
+       0.0        13.1%      1.15%    0.00%    0.00%    0.00%    0.00%
+       0.3        28.6%     27.21%   17.85%   11.60%    3.56%    0.00%
+       0.6        46.3%     46.53%   39.38%   33.13%   21.33%    0.00%
+       1.0        62.3%     61.55%   55.30%   49.05%   37.33%   12.33%
+
+WITH BALANCED ROUTING, A CAPACITY FACTOR OF 1.25 DROPS NOTHING. With one expert taking 46% of
+traffic, cf=1.5 still drops a THIRD OF ALL TOKENS. The capacity factor is buying insurance
+against imbalance with memory, and the correct response to heavy dropping is to fix the
+balance, not to keep raising the factor.
+
+SECOND: YOU PAY MEMORY FOR EVERY EXPERT AND COMPUTE FOR TWO.
+
+  model              params   active/token   weights in fp16
+  ---------------------------------------------------------------
+  dense 8B              8B          8B            16 GB
+  MoE 8x8B top-2       64B         16B           128 GB
+  MoE 64x8B top-2     512B         16B         1,024 GB
+
+The 64-expert model runs at the speed of a 16B model and needs A TERABYTE of accelerator
+memory to hold. MoE optimises throughput-per-FLOP and makes the hardware requirement worse,
+which is why it is a serving-at-scale architecture rather than a run-it-locally one.""",
+
+    """5. THE VARIANTS, AND WHAT EACH TRADES.
+
+DENSE. Every parameter for every token. Simple, predictable, no routing, no dropping, no
+balance problem. Still the right answer when memory is the constraint or the deployment is
+small.
+
+TOP-1 ROUTING (Switch Transformer). Each token uses one expert. Cheapest possible routing,
+simplest communication pattern, and it made MoE practical at scale. Slightly worse quality
+than top-2 for the same active parameters because there is no mixing of two views.
+
+TOP-2 ROUTING (Mixtral, GShard). The common default. Combining two experts gives the layer a
+smoother output and better gradients to the router, at twice the FFN compute.
+
+SHARED EXPERT (DeepSeek-style). One expert every token always uses, plus routed ones. The
+shared expert absorbs the general-purpose transformation so the routed ones can specialise,
+which measurably improves the specialisation the architecture is supposed to deliver.
+
+FINE-GRAINED EXPERTS. Many smaller experts instead of a few large ones - 64 experts of a
+quarter the size rather than 16 full-size. More combinations available at the same active
+parameter count, better specialisation, harder to balance.
+
+EXPERT CHOICE ROUTING. Invert the assignment: instead of each token picking experts, each
+EXPERT picks its top tokens. Load balance becomes exact by construction - no auxiliary loss,
+no dropping - at the cost that a token may get zero experts or many. An elegant trade and it
+removes the entire problem in section 2.
+
+NO-AUX-LOSS BALANCING. Adjust a per-expert bias based on observed load rather than adding a
+loss term. Same effect on balance without the auxiliary gradient competing with the language
+modelling objective.""",
+
+    """6. HOW TO REASON ABOUT ONE - numbered steps.
+
+STEP 1. QUOTE BOTH PARAMETER COUNTS, ALWAYS. "47B total, 13B active" says everything; either
+number alone is marketing. Active predicts latency and throughput; total predicts the memory
+bill.
+
+STEP 2. SIZE THE MEMORY FIRST. Measured, a 64x8B model is a terabyte in fp16 before KV cache.
+If it does not fit, nothing else matters.
+
+STEP 3. CHECK THE LOAD BALANCE during training - log the coefficient of variation of expert
+load, not just the loss. Measured, it drifts from 0.24 to 0.74 in 24 steps without an
+auxiliary term, and the loss curve looks fine throughout.
+
+STEP 4. SET THE AUXILIARY LOSS COEFFICIENT SMALL - around 0.01 - and verify it is working by
+the load statistics, not by faith. Too large and it fights the language modelling objective.
+
+STEP 5. CHOOSE THE CAPACITY FACTOR FROM THE MEASURED IMBALANCE. Measured, balanced routing
+drops nothing at 1.25; a 46%-skewed router still drops 33% at 1.5. Fix balance first, then set
+capacity.
+
+STEP 6. LOG THE DROP RATE IN TRAINING AND IN SERVING. It is silent, and it is one of the few
+quality bugs that produces no trace at all.
+
+STEP 7. FOR INFERENCE, THINK ABOUT BATCHING. With expert parallelism the batch waits for the
+busiest expert, so imbalance is a p99 latency problem. Small batches are worst: a batch of one
+token uses 2 of 64 experts and leaves the rest of the hardware idle.
+
+STEP 8. DO NOT EXPECT INTERPRETABLE SPECIALISATION. Experts do not reliably become "the maths
+expert" or "the French expert" - the specialisation observed in practice is mostly syntactic
+and shallow, and designs assuming otherwise disappoint.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A hospital could employ one enormous doctor who knows everything and sees every patient. Every
+patient gets the full breadth of that knowledge, and every consultation takes as long as it
+takes to consult all of it.
+
+Or the hospital employs sixty-four specialists and a receptionist who reads each case and sends
+it to the two most relevant. The hospital now holds thirty-two times the total expertise, and
+each patient's visit costs two consultations. That is the whole idea and it genuinely works.
+
+Three things go wrong.
+
+THE RECEPTIONIST DEVELOPS FAVOURITES. She sends a few extra cases to one specialist, who gets
+more practice, gets better, and so deserves even more cases. Measured over twenty-four rounds,
+four of sixteen specialists went from handling a third of the work to handling half, and the
+quietest went from 3.6% of cases to 0.6%. Nobody decided this and nothing flagged it - the
+hospital is simply paying for twelve specialists who barely see patients. The cure is a rule
+that explicitly penalises uneven workloads; with one in place the same simulation settled at
+almost perfectly even and stayed there.
+
+EACH SPECIALIST HAS A DAILY LIMIT. When the receptionist sends more than that, the extra
+patients are not queued or redirected - they walk through the building and out the other side
+without being seen. Measured, when one specialist was taking 46% of referrals, a third of ALL
+patients went unseen even with a 50% overtime allowance. And nothing in the system reports it.
+
+AND THE BUILDING HAS TO BE BIG ENOUGH FOR ALL SIXTY-FOUR. You only ever consult two, but every
+one of them needs an office, permanently. Measured, the sixty-four-specialist hospital works at
+the speed of a two-specialist one and needs a terabyte of building.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def moe_layer(x, experts, router, k=2, capacity_factor=1.25):
+      scores  = router(x)                        # [tokens, n_experts]
+      weights = softmax(scores)
+      topk_w, topk_i = top_k(weights, k)         # which experts, and how much
+      topk_w = topk_w / topk_w.sum(-1, keepdim=True)   # renormalise over the k kept
+
+      capacity = int(capacity_factor * tokens * k / n_experts)
+      out = zeros_like(x)
+      for e in range(n_experts):
+          idx = tokens_routed_to(e, topk_i)[:capacity]      # OVERFLOW IS DISCARDED
+          out[idx] += weight_for(e, idx) * experts[e](x[idx])
+
+      # the load-balancing auxiliary loss
+      frac_tokens = histogram(topk_i) / (tokens * k)        # actual load
+      frac_prob   = weights.mean(0)                          # router's intent
+      aux = n_experts * sum(frac_tokens * frac_prob)
+      return out, aux
+
+LINE BY LINE.
+
+  topk_w = topk_w / topk_w.sum(...)
+Renormalising over only the k KEPT experts. Without it the outputs are scaled by however much
+probability mass the top-k happened to hold, which varies per token - a confident routing
+decision would produce a larger activation than an uncertain one, for no reason.
+
+  capacity = int(capacity_factor * tokens * k / n_experts)
+The even share times the factor. NOTE THIS IS PER BATCH, so capacity depends on batch size -
+the same model drops different tokens at different batch sizes, which is a genuinely confusing
+source of non-determinism.
+
+  idx = tokens_routed_to(e, topk_i)[:capacity]
+THE SILENT DROP, in one slice. Everything past `capacity` is discarded and those tokens get
+nothing from this layer - they continue on the residual stream alone. There is no error and no
+counter unless you add one. Measured, this discarded 33% of all tokens at capacity_factor 1.5
+when one expert held 46% of the routing.
+
+  frac_tokens * frac_prob
+THE AUXILIARY LOSS, and the reason it is written this way is worth understanding. `frac_tokens`
+comes from a top-k selection and is not differentiable. `frac_prob` is the router's softmax
+output and is. Multiplying them gives a gradient that pushes DOWN the probability assigned to
+experts that are already overloaded - a differentiable proxy for a non-differentiable quantity.
+Minimising the product is minimised when both are uniform.
+
+  return out, aux
+The aux loss is returned SEPARATELY and added to the main loss with a small coefficient,
+typically 0.01. Too large and it dominates; too small and section 2 happens.
+
+  WHAT IS NOT SHOWN: the all-to-all communication. With experts on different GPUs, tokens must
+be shipped to their expert's device and the results shipped back, twice per MoE layer. That
+communication, not the FFN maths, is usually the bottleneck.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - the parameter arithmetic, for one block at d_model 4096, d_ff 14336.
+One FFN is gate + up + down = 3 * 4096 * 14336 = 176M parameters.
+
+  8 experts:   8 * 176M = 1.4B total,  2 * 176M = 0.4B active   -> 4x
+  64 experts: 64 * 176M = 11.3B total, 2 * 176M = 0.4B active   -> 32x
+  128 experts top-4: 22.5B total, 0.7B active                   -> 32x
+
+Note the last two rows have the SAME ratio. Doubling experts and doubling k cancel exactly -
+the ratio is N/k, so buying more experts only helps if k stays fixed.
+
+TRACE B - the collapse, and the fix, side by side at step 24 of 25.
+
+  without auxiliary loss:  busiest 14.5%, top-4 share 51.1%, quietest 0.6%, CV 0.744
+  with auxiliary loss:     busiest  6.8%, top-4 share 26.9%, quietest 5.6%, CV 0.061
+  perfect balance:         busiest  6.2%, top-4 share 25.0%, quietest 6.2%, CV 0.000
+
+The balanced run is within 0.6 points of perfect on every measure. The unbalanced one is at
+twice the ideal top-4 share and still diverging - no expert had gone fully idle by step 24, but
+the quietest was at a tenth of its fair share and falling monotonically.
+
+TRACE C - dropping, and why the capacity factor is the wrong lever.
+8 experts, 4,096 tokens, top-2 = 8,192 assignments, even share 1,024 per expert.
+
+  at cf=1.25, capacity = 1,280 per expert
+  balanced routing (busiest 13.1%): busiest expert gets ~1,073 < 1,280  -> 0.00% dropped
+  skewed routing (busiest 46.3%):   busiest expert gets ~3,793 >> 1,280 -> 39.38% dropped
+
+RAISING cf TO 4.0 FIXES THE SKEWED CASE (0.00%) AND COSTS 4x THE ACTIVATION MEMORY IN EVERY
+EXPERT BUFFER, INCLUDING THE BALANCED CASE WHERE IT WAS ALREADY ZERO AT 1.25. The capacity
+factor is insurance; balance is the cure.
+
+TRACE D - the memory bill, fp16, weights only.
+  dense 8B     -> 16 GB   fits on one 24 GB card
+  MoE 8x8B     -> 128 GB  needs 2 x 80 GB
+  MoE 64x8B    -> 1 TB    needs 13 x 80 GB, to run at the speed of a 16B model""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Compute per token is k experts instead of 1 - so a top-2 MoE costs about twice a
+dense FFN of the same expert size, and a fraction of a dense model with the same TOTAL
+parameters. Memory is every expert, always resident: measured, 128 GB for 8x8B and 1 TB for
+64x8B in fp16. Communication is the hidden one - with expert parallelism every MoE layer does
+two all-to-all exchanges, and that is frequently the real bottleneck rather than the maths.
+Serving small batches is inefficient by construction: one token activates 2 of 64 experts and
+leaves the rest of the hardware idle.
+
+THE #1 MISTAKE: no load-balancing term, or one that is present but never verified. Measured,
+the top-4 share of traffic went 32.6% to 51.1% over 24 steps with the loss curve looking
+entirely normal throughout. Log the coefficient of variation of expert load.
+
+THE #2 MISTAKE: raising the capacity factor instead of fixing the imbalance. Measured, cf=1.25
+drops nothing when routing is balanced and cf=1.5 still drops 33% when it is not.
+
+THE #3 MISTAKE: not logging the token drop rate. It is silent - dropped tokens skip the layer
+on the residual and nothing errors.
+
+THE #4 MISTAKE: quoting one parameter count. Active predicts speed, total predicts the GPU
+bill, and they differ by 32x.
+
+THE #5 MISTAKE: expecting to run one locally because "only 13B is active". You must hold all
+of it.
+
+THE #6 MISTAKE: buying more experts while also raising k. The ratio is N/k and they cancel.
+
+THE #7 MISTAKE: designing around interpretable expert specialisation, which does not reliably
+appear.
+
+THE TAKEAWAY: MoE breaks the link between capacity and compute by giving each layer many
+feed-forward experts and routing each token to k of them - measured, 32x the parameters for the
+same active compute at 64 experts top-2 - but the router has a runaway feedback loop, because
+an expert that gets more tokens trains more and is then scored higher, and measured over 24
+steps that took four of sixteen experts from a third of the traffic to half while the quietest
+fell to 0.6%, with the loss curve showing nothing; an auxiliary load-balancing loss converges
+the same run to within 0.6 points of perfect and holds it, and it is load-bearing rather than
+optional; and the two costs that surprise people are silent token dropping past expert capacity
+- measured 33% of all tokens discarded at a capacity factor of 1.5 under a skewed router - and
+memory, since you pay compute for 2 experts and RAM for all 64, which is a terabyte in fp16 to
+run at the speed of a 16B dense model.""",
+]
+
+_EX_P1AO["Design an AI coding assistant (Copilot-style)"] = [
+    """1. THE GOAL - finish the line the developer is typing, before they finish typing it.
+
+Inline code completion is a latency product with a model inside it. The model matters less
+than three constraints that have nothing to do with model quality:
+
+  WHICH CODE goes in the prompt, when the repository does not fit
+  HOW FAST the suggestion arrives, when it must beat the next keystroke
+  WHETHER IT WAS ANY GOOD, when acceptance does not mean correct
+
+Start with the context problem, because it is the one people underestimate. MEASURED,
+approximate lines of code that fit in a context window at roughly 12 tokens per line:
+
+  context window    ~lines    files of 200 lines    % of a 500-file repo
+  ---------------------------------------------------------------------------
+       4,000          333            1                    0.2%
+      16,000        1,333            6                    1.2%
+     128,000       10,666           53                   10.6%
+   1,000,000       83,333          416                   83.2%
+
+EVEN A MILLION-TOKEN WINDOW HOLDS ABOUT A SIXTH OF A MODEST REPOSITORY, and you would be
+paying for those tokens on every keystroke-triggered completion. Bigger windows do not remove
+the selection problem; they make it more expensive to get wrong.""",
+
+    """2. THE INTUITION - WHICH files you send matters enormously more than HOW MANY.
+
+MEASURED, over 4,000 simulated completions in a 400-file repository where each completion
+needs three symbols drawn from the current file and its imports:
+
+  strategy                  files sent   % of needed symbols present
+  ------------------------------------------------------------------
+  open file only                1.0              19.7%
+  open file + imports           5.0             100.0%
+  open file + 10 recent files  11.0              21.8%
+  whole repo                  400.0             100.0%
+
+READ THE SECOND AND THIRD ROWS AGAINST EACH OTHER. Sending five WELL-CHOSEN files covers every
+symbol the completion needs. Sending eleven files chosen by recency covers 21.8% - barely
+better than sending one.
+
+TWICE THE CONTEXT, A FIFTH OF THE COVERAGE. Context selection is not a budget problem to be
+solved by a bigger window; it is a graph problem, and the graph is the import graph.
+
+THAT IS WHY REAL ASSISTANTS DO STATIC ANALYSIS rather than embedding search alone. The
+symbols a completion needs are overwhelmingly the ones the file already imports, the type
+definitions of things in scope, and the signatures of functions being called - all of which a
+language server knows exactly and a retriever only guesses at.
+
+Embedding retrieval earns its place for the other case: "how do we usually do X in this
+codebase", where the relevant file is not imported and nothing links it structurally.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+COMPLETION / GHOST TEXT - the grey suggestion appearing inline as you type. Accepted with Tab.
+
+PREFIX and SUFFIX - the code before and after the cursor. Both matter, which is why the next
+term exists.
+
+FIM - Fill In the Middle. A training format where the model sees prefix AND suffix and
+generates what goes between. A model trained only left-to-right cannot use the code below the
+cursor, and in an editor there is almost always code below the cursor.
+
+CONTEXT WINDOW - how many tokens the model can read. Section 1.
+
+REPO MAP / STATIC CONTEXT - a summary of the codebase's structure - file tree, signatures,
+types - assembled from a language server rather than retrieved by similarity.
+
+ACCEPTANCE RATE - fraction of shown suggestions the developer accepts. The industry headline
+metric, and section 4 is about why it is not enough.
+
+RETENTION / SURVIVAL RATE - fraction of accepted characters still present in the file some
+minutes later. The metric that actually correlates with value.
+
+DEBOUNCE - waiting a short while after the last keystroke before requesting, so you do not
+issue a request per character.
+
+SPECULATIVE / PREFIX CACHING - reusing the model's computed state for a prompt prefix that has
+not changed. The main cost lever.
+
+TELEMETRY - the accept/reject/edit signal, which is also the training data for the next model.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - acceptance rate rewards plausible-looking wrong code.
+
+A developer sees a suggestion for a fraction of a second and decides. They cannot run it, and
+plausible-wrong code is visually indistinguishable from plausible-right code.
+
+MEASURED, simulating acceptance where correct suggestions are accepted 85% of the time and
+plausible-but-wrong ones 35% of the time:
+
+  model quality (P correct)   accept rate   survives 10 min   net useful
+  ----------------------------------------------------------------------------
+          0.30                   49.8%          29.1%           58.4%
+          0.50                   59.9%          44.9%           75.0%
+          0.70                   70.0%          61.0%           87.1%
+          0.90                   80.3%          77.4%           96.4%
+
+A MODEL THAT IS RIGHT 30% OF THE TIME STILL POSTS A 49.8% ACCEPTANCE RATE. Acceptance is
+compressed relative to quality - a 3x range in real quality (0.30 to 0.90) becomes a 1.6x
+range in acceptance (49.8% to 80.3%) - because wrong suggestions get accepted too.
+
+AND ONLY 58.4% OF WHAT WAS ACCEPTED SURVIVES at the low-quality end, against 96.4% at the high
+end. The survival rate separates the models cleanly where acceptance does not.
+
+THE PRACTICAL CONSEQUENCE: measure RETENTION, not acceptance. Instrument accepted suggestions
+and check whether the characters are still there ten minutes later, and whether the file
+compiles. It is more work to build and it is the only metric that moves when the product
+actually improves.
+
+THE SECOND HALF OF THIS TRAP: an accepted-then-deleted suggestion is not neutral. The developer
+read it, considered it, accepted it, discovered it was wrong, and undid it. That interaction
+cost more time than showing nothing would have.""",
+
+    """5. THE SYSTEM, BUILT UP IN LAYERS.
+
+LAYER 0 - THE EDITOR INTEGRATION, AND IT IS MOST OF THE PRODUCT. Debounce keystrokes, cancel
+in-flight requests when the user types again, never show a suggestion that has been overtaken,
+and make dismissal free. A mediocre model in a well-behaved editor beats a good model that
+interrupts.
+
+LAYER 1 - CONTEXT ASSEMBLY, from the language server first: the current file around the cursor,
+the imports, type definitions in scope, signatures of called functions. Measured, this reaches
+100% symbol coverage at five files.
+
+LAYER 2 - RETRIEVED CONTEXT, for what structure cannot supply: similar code elsewhere in the
+repo, recently edited files, the diff of the current branch. This is where embeddings belong,
+and it is a supplement rather than the foundation.
+
+LAYER 3 - FIM PROMPTING. Send prefix and suffix. A completion generated without the code below
+the cursor will happily redeclare a variable that already exists three lines down.
+
+LAYER 4 - SIZE THE OUTPUT TO THE LATENCY BUDGET. Measured, at 200 tokens/second:
+
+  one identifier      3 tokens     15 ms    inline
+  rest of the line   12 tokens     60 ms    inline
+  a whole statement  25 tokens    125 ms    inline
+  a small function  120 tokens    600 ms    too slow for inline
+  a whole file      800 tokens  4,000 ms    a panel, not ghost text
+
+Inline ghost text has roughly a 300ms budget. Anything longer belongs in a side panel where the
+user has already accepted that they are waiting.
+
+LAYER 5 - CACHING. Prefix caching across keystrokes, because the prompt changes by one
+character while the first several thousand tokens do not.
+
+LAYER 6 - TELEMETRY: shown, accepted, and still-present-later, joined back to the context
+strategy that produced them.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. SEPARATE THE TWO PRODUCTS. Inline completion (sub-300ms, small output, always on) and
+chat or agentic editing (seconds, large output, explicitly invoked) are different systems with
+different constraints. Say which you are designing.
+
+STEP 2. ADDRESS CONTEXT FIRST AND WITH NUMBERS. Measured, a 128k window holds 10.6% of a
+500-file repo. The design question is selection, not capacity.
+
+STEP 3. PROPOSE STATIC ANALYSIS BEFORE EMBEDDINGS. Measured, open file + imports reached 100%
+symbol coverage with 5 files, while 11 recency-chosen files reached 21.8%. This is the answer
+that distinguishes someone who has thought about it.
+
+STEP 4. RAISE FIM UNPROMPTED. There is always code below the cursor.
+
+STEP 5. STATE THE LATENCY BUDGET and derive the output length from it, rather than the other
+way round.
+
+STEP 6. NAME THE METRIC PROBLEM. Measured, a 30%-correct model posts a 49.8% acceptance rate.
+Propose retention and compile-success, and explain why acceptance alone rewards plausible-wrong
+output.
+
+STEP 7. COST. Measured, 800 completions/day at 8k context is 6.4M input tokens per developer
+per day - about $19 at $3 per million, before any caching. The input context dominates
+completely; the output is a handful of tokens. Prefix caching and a tight context strategy are
+the cost levers, not a smaller model.
+
+STEP 8. PRIVACY AND LICENSING: does code leave the machine, is it retained, is there a filter
+for suggestions matching public code verbatim? This is a real requirement in every enterprise
+deal.
+
+STEP 9. THE FEEDBACK LOOP: accepted suggestions are training data, and they are biased toward
+what the current model already produces.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a colleague reading over your shoulder who finishes your sentences. For this to be
+useful rather than infuriating, three things have to be true.
+
+THEY HAVE TO KNOW WHAT YOU ARE WORKING ON. They cannot read the entire codebase before every
+suggestion - measured, even an extremely capacious reader gets through about a sixth of a
+modest project, and you would be making them re-read it every time you press a key.
+
+So they read selectively, and WHICH pages they pick turns out to matter far more than how
+many. Measured, someone who reads the page you are on plus the five pages it explicitly refers
+to knows every name you are about to use. Someone who reads eleven pages picked by "what did
+you have open recently" knows about a fifth of them. Twice as much reading, a fifth as useful.
+
+THEY HAVE TO BE FAST. If they finish your sentence after you have already typed it, they are
+noise. Measured, finishing the rest of a line takes about a sixteenth of a second at a
+realistic speed, and writing a whole function takes over half a second - which is too slow to
+appear as you type, and belongs somewhere you have already agreed to wait.
+
+AND HERE IS THE ONE THAT DECIDES WHETHER THE PRODUCT IS ANY GOOD. Measuring how often you take
+their suggestion tells you much less than it appears to. Wrong-but-plausible code looks exactly
+like right code in the second you spend deciding. Measured, a colleague who is right only 30%
+of the time still gets their suggestions taken half the time - and of what you took, over 40%
+was deleted again within ten minutes.
+
+That deletion is not free. You read it, thought about it, accepted it, discovered it was wrong,
+and undid it. Four steps, all slower than if they had said nothing. The number worth tracking
+is not what you accept - it is what is still there an hour later.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  async def on_keystroke(doc, cursor):
+      await debounce(150)                            # 1. do not fire per character
+      if cancelled(): return
+      ctx = build_context(doc, cursor)               # 2. selection, not capacity
+      prompt = fim(prefix=ctx.prefix, suffix=ctx.suffix, extra=ctx.files)
+      out = await model.complete(prompt, max_tokens=32, stop=["\\n\\n"])
+      if cursor_moved_since(): return                # 3. never show a stale suggestion
+      show_ghost_text(out)
+
+  def build_context(doc, cursor):
+      files  = [doc]                                 # the file being edited
+      files += imports_of(doc)                       # from the LANGUAGE SERVER
+      files += type_defs_in_scope(doc, cursor)
+      files += retrieved_similar(doc, cursor, k=3)   # embeddings, as a supplement
+      return trim_to_budget(files, budget=6000, keep_nearest_to_cursor=True)
+
+LINE BY LINE.
+
+  await debounce(150)
+Without this you issue a request per character - 10x the cost for suggestions nobody will see,
+because the next keystroke invalidates them.
+
+  if cancelled(): return  ...  if cursor_moved_since(): return
+CHECKED TWICE, before and after the model call. A suggestion computed for a cursor position the
+user has left is worse than no suggestion: it flickers, and it may be syntactically wrong for
+where the cursor now is.
+
+  fim(prefix=..., suffix=...)
+Both sides of the cursor. A model given only the prefix cannot know that the variable it is
+about to declare is declared four lines below, and it will declare it again.
+
+  max_tokens=32, stop=["\\n\\n"]
+THE LATENCY BUDGET, EXPRESSED AS A GENERATION LIMIT. Measured, 25 tokens is about 125ms at 200
+tokens/second - inside the ~300ms inline budget. The stop sequence ends the suggestion at a
+blank line rather than letting it run on into code the developer never asked for.
+
+  files += imports_of(doc)
+FROM THE LANGUAGE SERVER, not from a similarity search. Measured, this is what takes symbol
+coverage from 19.7% to 100.0%. It is exact where retrieval is probabilistic, and the editor
+already has it.
+
+  files += retrieved_similar(..., k=3)
+Embeddings as a SUPPLEMENT, for conventions and patterns that are not structurally linked.
+Three files, not thirty - measured, adding poorly-chosen files buys almost nothing.
+
+  trim_to_budget(..., keep_nearest_to_cursor=True)
+When trimming, drop the code furthest from the cursor first. Relevance falls off sharply with
+distance, and the lines immediately around the cursor are worth more than anything else in the
+prompt.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - context selection, 4,000 simulated completions over 400 files.
+
+  open file only:          1.0 files sent,  19.7% of needed symbols present
+  open file + imports:     5.0 files sent, 100.0%
+  open file + 10 recent:  11.0 files sent,  21.8%
+  whole repo:            400.0 files sent, 100.0%
+
+The needed symbols come from the current file and its imports by construction, so "open file +
+imports" hitting 100% is expected - the informative comparison is the third row against the
+second. ELEVEN RECENCY-CHOSEN FILES REACHED 21.8% WHILE FIVE STRUCTURE-CHOSEN FILES REACHED
+100%. More context is not better context.
+
+TRACE B - the latency ladder at 200 tokens/second.
+
+  3 tokens (an identifier)      15 ms
+  12 tokens (rest of the line)  60 ms
+  25 tokens (a statement)      125 ms
+  120 tokens (a function)      600 ms
+  800 tokens (a file)        4,000 ms
+
+Against a ~300ms inline budget, the line is between 25 and 120 tokens. AT 50 TOKENS/SECOND -
+a bigger model - even 25 tokens takes 500ms and inline completion stops being viable at all.
+That is the real argument for a small specialised completion model rather than the best
+available one.
+
+TRACE C - acceptance against quality, and why the metric misleads.
+
+  quality 0.30 -> accept 49.8%, survive 29.1%, so 58.4% of accepted survived
+  quality 0.90 -> accept 80.3%, survive 77.4%, so 96.4% of accepted survived
+
+Quality tripled; acceptance rose by a factor of 1.6. The survival-of-accepted column moved from
+58.4% to 96.4% and separates the two cleanly. IF YOU SHIP A CHANGE THAT RAISES ACCEPTANCE FROM
+50% TO 60%, THE MEASUREMENT CANNOT TELL YOU WHETHER QUALITY IMPROVED OR THE SUGGESTIONS MERELY
+BECAME MORE PLAUSIBLE-LOOKING.
+
+TRACE D - cost per developer per day, input tokens only, at $3 per million.
+
+  200 completions x 2,000 tokens  =   0.4M   $1.20
+  800 completions x 8,000 tokens  =   6.4M  $19.20
+  2,000 completions x 8,000 tokens=  16.0M  $48.00
+
+Output is a few dozen tokens and rounds to nothing. THE ENTIRE BILL IS CONTEXT, which is why
+halving the context is worth more than halving the model.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. Measured, input tokens dominate absolutely: 800 completions per developer per day at
+8k context is 6.4M input tokens, about $19 at $3/M, while the output is a few dozen tokens and
+rounds to zero. Prefix caching is the main lever, because between keystrokes the first several
+thousand tokens are identical. Latency is the other budget: ~300ms for inline, which caps
+generation at roughly 25-60 tokens and effectively rules out the largest models for this
+surface. Serving is bursty and cancellation-heavy - most requests are abandoned before
+completion, which is a load-shedding design problem of its own.
+
+THE #1 MISTAKE: measuring acceptance rate. Measured, a 30%-correct model posts 49.8%
+acceptance, and only 58.4% of what was accepted survived ten minutes. Instrument retention and
+compile-success.
+
+THE #2 MISTAKE: assuming a bigger context window solves context. Measured, a 1M window holds
+83% of a 500-file repo and you would pay for it on every keystroke; five well-chosen files
+reached 100% symbol coverage.
+
+THE #3 MISTAKE: choosing files by recency or embedding similarity alone. Measured, 11 recent
+files gave 21.8% coverage against 5 imported files at 100%.
+
+THE #4 MISTAKE: prefix-only prompting. There is always code below the cursor and the model will
+contradict it.
+
+THE #5 MISTAKE: no debounce and no cancellation, so you pay for suggestions nobody sees and
+flicker stale ones into the editor.
+
+THE #6 MISTAKE: generating too much for the surface. 120 tokens is 600ms and does not belong in
+ghost text.
+
+THE #7 MISTAKE: training on accepted completions without correcting for the loop - they are
+biased toward what the current model already produces.
+
+THE TAKEAWAY: an inline coding assistant is a latency and context-selection product with a
+model inside it - the repository never fits (a 128k window holds 10.6% of a 500-file repo and
+you pay for it on every keystroke), and WHICH files you send dominates how many, measured as
+five import-derived files reaching 100% symbol coverage against eleven recency-chosen files
+reaching 21.8%, which is why the language server matters more than the retriever; the ~300ms
+inline budget caps generation at roughly 25 tokens, so anything longer belongs in a panel; and
+the metric everyone reports is the one that misleads, because plausible-wrong code is visually
+identical to correct code in the moment - measured, a model right 30% of the time still posts a
+49.8% acceptance rate, and only 58.4% of those accepted suggestions were still present ten
+minutes later.""",
+]
+
+_EX_P1AO["Design an AI tutor"] = [
+    """1. THE GOAL - decide what this student should study next, and know when they have learned it.
+
+A tutor is not a chatbot with a syllabus. It has to answer two questions continuously:
+
+  DOES THIS STUDENT KNOW THIS YET?   an inference problem from noisy evidence
+  WHAT SHOULD THEY DO NEXT?          a scheduling problem over everything they part-know
+
+Both are harder than they look because the evidence is bad. A correct answer might be a lucky
+guess. A wrong answer might be a slip by someone who knows it perfectly well. And knowledge
+DECAYS, so "knew it last week" and "knows it now" are different claims.
+
+THE STANDARD MODEL IS BAYESIAN KNOWLEDGE TRACING. Four numbers: the chance they knew it before
+starting, the chance they learn it from an attempt, the chance they guess right without knowing,
+and the chance they slip and get it wrong while knowing. Update a probability after each answer.
+
+MEASURED, with a 25% guess rate (four-option multiple choice) and a 10% slip rate, tracking
+P(mastered) after a run of correct answers:
+
+  1 correct  0.666      4 correct  0.994
+  2 correct  0.896      5 correct  0.998
+  3 correct  0.973      6 correct  1.000
+
+THREE CORRECT ANSWERS TO REACH 0.973. One correct answer barely moves the estimate, and that is
+the guess rate doing its work.""",
+
+    """2. THE INTUITION - the question FORMAT changes how much a right answer tells you.
+
+Every correct answer is evidence, and the strength of that evidence depends entirely on how
+easy it was to produce without understanding.
+
+MEASURED, a student who knows NOTHING and is answering four-option multiple-choice questions
+purely at random, scored as "mastered" if the tracker's estimate exceeds 0.85:
+
+   3 questions:  1.62% of pure guessers are declared mastered
+   5 questions:  3.36%
+  10 questions:  4.48%
+  20 questions:  4.72%
+
+Around one in twenty-one pure guessers is certified as having mastered the skill, and MORE
+QUESTIONS DOES NOT FIX IT - the rate flattens at 4.7% rather than falling, because the tracker's
+learning term keeps nudging the estimate up as attempts accumulate.
+
+Now the same experiment with FREE-TEXT answers, where the guess rate is near zero:
+
+   3 questions:  2.10%
+   5 questions:  2.08%
+  10 questions:  2.00%
+
+The rate is halved and, more importantly, it is FLAT - it does not creep upward with more
+questions, because a lucky run is genuinely rare when there is nothing to guess from.
+
+THE DESIGN CONSEQUENCE: the assessment format is not a UI decision, it is the measurement
+instrument. Multiple choice is cheap to author and cheap to grade and it buys you a permanently
+noisier signal about every student.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+KNOWLEDGE COMPONENT / SKILL - the smallest thing you track mastery of. "Solving a linear
+equation with one variable", not "algebra". Getting this granularity right is most of the
+design.
+
+BAYESIAN KNOWLEDGE TRACING (BKT) - the four-parameter model above. Interpretable, cheap, and
+the sensible default.
+
+P(INIT) - probability the student already knew it before starting.
+P(LEARN) - probability they acquire it from one attempt.
+P(GUESS) - probability of a correct answer without knowing. Set by the question format.
+P(SLIP) - probability of a wrong answer despite knowing. Set by fatigue and interface.
+
+ITEM RESPONSE THEORY (IRT) - models each QUESTION's difficulty and discrimination as well as
+the student's ability. Better calibrated, needs far more data per question.
+
+DEEP KNOWLEDGE TRACING - an RNN over the answer history. Somewhat more accurate, and it cannot
+tell you WHY it thinks the student is stuck, which is what a teacher needs.
+
+SPACING EFFECT - the same number of reviews spread out produces more durable memory than
+massed together.
+
+RETRIEVAL PRACTICE - being asked to produce an answer strengthens memory far more than
+re-reading it. Why a tutor should test rather than explain.
+
+ZONE OF PROXIMAL DEVELOPMENT - the band of difficulty that is hard enough to be worth doing and
+easy enough to be possible. Roughly a 70-85% success rate.
+
+PREREQUISITE GRAPH - which skills must be learned before which. What stops the tutor
+recommending something the student cannot yet attempt.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the tutor optimises what it can measure.
+
+Everything in this system pushes toward the measurable, and the measurable is not the goal.
+
+FIRST: MASTERY IS A CLAIM ABOUT THE FUTURE, and the tutor only observes the present. A student
+who answers three questions correctly today may retain nothing in a month. MEASURED, on a
+simulated forgetting curve where memory strength grows with each successful review:
+
+  schedule   reviews   last review on day   recall at day 60   final strength
+  ------------------------------------------------------------------------------
+  massed        5              4                 0.634              122.9
+  spaced        5             25                 0.896              320.1
+
+IDENTICAL EFFORT - five reviews either way - and 0.634 against 0.896 two months later. The only
+difference is when they happened. A tutor that measures mastery at the end of a session and
+stops is measuring the thing that decays.
+
+SECOND: A HIGH SUCCESS RATE IS A DESIGN FAILURE. Keeping the student at 95% correct feels good,
+produces excellent engagement metrics, and teaches slowly - they are practising what they
+already know. The target is roughly 70-85%, which feels harder than most product managers are
+comfortable with.
+
+THIRD, AND THE HONEST LIMIT OF THIS ANALYSIS: I could not settle the SCHEDULING policy by
+simulation. I compared random, round-robin and several "review what is closest to being
+forgotten" rules, and the results were dominated by artefacts of my forgetting model - the
+aggressive policy reviews items when recall is near zero, so the attempt usually fails, so
+nothing strengthens. That is a real effect in the model and I do not trust it as a claim about
+teaching. WHAT THE MEASUREMENTS DO SUPPORT is the spacing effect on a single item, and the
+guess-rate result above; the choice of scheduling policy needs an experiment with real
+students, not a simulation.""",
+
+    """5. THE SYSTEM, BUILT UP IN LAYERS.
+
+LAYER 0 - THE SKILL MAP. A list of knowledge components and a prerequisite graph between them.
+This is curriculum work, not engineering, and everything else is built on it. Too coarse
+("fractions") and mastery means nothing; too fine and you never collect enough evidence per
+skill.
+
+LAYER 1 - AN ITEM BANK, with several questions per skill at varying difficulty, and metadata
+recording the format - because format sets the guess rate, which sets how much each answer is
+worth.
+
+LAYER 2 - THE MASTERY TRACKER. BKT per skill. Cheap, interpretable, and it produces a number a
+teacher can be shown and can argue with.
+
+LAYER 3 - THE SELECTOR. Given mastery estimates and the prerequisite graph: pick something whose
+prerequisites are met, that is not yet mastered, and that is due for review. Target a 70-85%
+success rate.
+
+LAYER 4 - WHERE THE LLM ACTUALLY BELONGS, and it is not in layers 2 or 3. Use it to generate
+practice items at a target difficulty, to explain a wrong answer in terms of what the student
+actually did, to answer a follow-up question, and to grade free-text responses so you can escape
+the multiple-choice guess rate. THE PEDAGOGY SHOULD BE DETERMINISTIC AND AUDITABLE; the language
+is where the model earns its place.
+
+LAYER 5 - THE SAFETY LAYER, which is not optional for a product used by children: content
+filtering, no unbounded open chat, and a teacher or parent view showing exactly what was asked
+and answered.
+
+LAYER 6 - LONG-HORIZON MEASUREMENT. Retention tests weeks later, and transfer tests on problems
+phrased differently from the practice items. Both will look worse than session-end accuracy and
+both are closer to the truth.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - numbered steps.
+
+STEP 1. ASK WHO AND WHAT. A seven-year-old learning multiplication and an adult learning SQL
+need different granularity, different safety and different assessment. And ask what success
+means: exam scores, retention, or engagement - they conflict.
+
+STEP 2. DEFINE THE SKILL GRANULARITY and the prerequisite graph. Say plainly that this is
+curriculum work and it determines whether anything downstream is meaningful.
+
+STEP 3. PROPOSE BKT, WITH ITS FOUR PARAMETERS NAMED. It is interpretable, it is defensible to a
+teacher, and it is a stronger answer than "we fine-tune a model on the interaction logs".
+
+STEP 4. RAISE THE GUESS RATE UNPROMPTED. Measured, 4.72% of pure guessers are certified as
+mastered on four-option questions, and more questions does not fix it - the rate flattens. Free
+text halves it and stops it creeping.
+
+STEP 5. RAISE FORGETTING. Measured, five reviews massed gave 0.634 recall at day 60 and five
+reviews spaced gave 0.896. Mastery must be re-tested, not recorded once.
+
+STEP 6. TARGET 70-85% SUCCESS, and say why a 95% success rate is a failure mode rather than a
+good result.
+
+STEP 7. PUT THE LLM IN ITS PROPER PLACE: item generation, explanation, free-text grading.
+Keep mastery estimation and selection deterministic so the system can be inspected and
+corrected.
+
+STEP 8. SAFETY AND OVERSIGHT for a child-facing product: filtering, bounded interaction, and a
+full transcript for the adult.
+
+STEP 9. EVALUATION: retention after weeks and transfer to differently-phrased problems, not
+session-end accuracy. And say that scheduling policy needs a real experiment - a simulation will
+not settle it.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A good tutor is constantly doing two things: working out what you actually understand, and
+deciding what to give you next. Both are harder than they sound because the evidence is poor.
+
+You answer a question correctly. What does that prove? If it was multiple choice with four
+options, you might have guessed - one time in four, with no understanding at all. Measured, if
+you guess your way through a four-option quiz, about one student in twenty-one gets certified
+as having mastered the topic. And giving more questions does not fix it: the rate stops falling
+and settles at about one in twenty-one, because the system also assumes you might be learning
+along the way. Make them write the answer out instead and the rate halves and stops creeping.
+
+That is why the tutor needs several correct answers before it believes you. Measured, three in a
+row takes its confidence to 97%; one in a row only reaches 67%.
+
+The second problem is that knowing something is not permanent. Two students do exactly five
+practice sessions. One does all five in a single week; the other spreads the same five over
+three and a half weeks. Two months later, measured, the first remembers 63% and the second 90%.
+Identical effort, identical number of questions - the only difference is the gaps between them.
+Anything that ticks a box marked "mastered" and never comes back is measuring something that is
+already leaking away.
+
+And the last one is counter-intuitive. A tutor that keeps you succeeding almost every time
+feels wonderful and teaches you slowly, because you are rehearsing what you already know.
+Struggling somewhat - getting roughly three or four out of five - is where the learning is. That
+is an uncomfortable thing to build, because every engagement metric you have will prefer the
+version that makes people feel clever.
+
+One honest admission. I tried to work out by simulation which rule for choosing the next topic
+works best, and could not - my model of forgetting was crude enough that the answer came out
+depending on its own assumptions rather than on anything real. That question needs actual
+students.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+  def bkt_update(p_know, correct, p_learn=0.15, p_guess=0.25, p_slip=0.10):
+      if correct:
+          num = p_know * (1 - p_slip)
+          den = num + (1 - p_know) * p_guess
+      else:
+          num = p_know * p_slip
+          den = num + (1 - p_know) * (1 - p_guess)
+      p_post = num / den                       # Bayes: given the answer
+      return p_post + (1 - p_post) * p_learn   # they may have learned from the attempt
+
+  def next_item(student, skills, graph, now):
+      ready = [s for s in skills if all(student.mastery[p] > 0.9 for p in graph.prereqs(s))]
+      due   = [s for s in ready if predicted_recall(student, s, now) < 0.9]
+      return pick_item(due or ready, target_success=0.8)
+
+LINE BY LINE.
+
+  num = p_know * (1 - p_slip)
+The probability of BOTH knowing it AND not slipping - the only way a knower answers correctly.
+
+  den = num + (1 - p_know) * p_guess
+Plus the other route to a correct answer: not knowing, and guessing. THE RATIO OF THESE TWO
+TERMS IS THE ENTIRE EVIDENTIAL VALUE OF A CORRECT ANSWER. At p_guess=0.25 the guessing route is
+substantial, which is why one correct answer only reaches 0.666. At p_guess=0.02 it nearly
+vanishes and a single correct answer is worth much more.
+
+  return p_post + (1 - p_post) * p_learn
+The learning step, applied AFTER the Bayesian update. It says an attempt may have taught them
+something regardless of the outcome. Note it only ever increases the estimate - which is why,
+measured, a pure guesser's certification rate flattens at 4.72% instead of falling toward zero
+as questions accumulate. THIS TERM IS WHY MORE QUESTIONS DOES NOT RESCUE A NOISY FORMAT.
+
+  all(student.mastery[p] > 0.9 for p in graph.prereqs(s))
+The prerequisite gate. Without it the tutor will cheerfully serve quadratic equations to someone
+who cannot yet solve linear ones, and the resulting failures teach nothing and are read by the
+tracker as evidence of not knowing quadratics.
+
+  predicted_recall(student, s, now) < 0.9
+REVIEW BEFORE IT IS FORGOTTEN, NOT AFTER. Waiting until recall is near zero means the attempt
+usually fails, and a failed retrieval strengthens memory far less than a successful effortful
+one. 0.9 is the conventional target.
+
+  target_success=0.8
+The difficulty selector, in one parameter. Everything above about 0.9 is rehearsal; much below
+0.6 is demoralising and unproductive.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+TRACE A - one correct answer, computed fully. Start at p_know = 0.3, guess 0.25, slip 0.10.
+
+  knowing-and-not-slipping:  0.3 * 0.90 = 0.270
+  not-knowing-and-guessing:  0.7 * 0.25 = 0.175
+  posterior:                 0.270 / (0.270 + 0.175) = 0.607
+  after the learning term:   0.607 + 0.393 * 0.15   = 0.666
+
+Measured: 0.666. NOTICE THAT THE GUESSING ROUTE (0.175) IS NEARLY AS LARGE AS THE KNOWING ROUTE
+(0.270). That is what a 25% guess rate does to the evidence, and it is why one correct answer
+cannot be enough.
+
+Continuing: 0.666 -> 0.896 -> 0.973 -> 0.994 -> 0.998. Three correct answers to pass 0.95, four
+to pass 0.99.
+
+TRACE B - the pure guesser, at scale. 20,000 simulated students who know nothing, answering
+four-option questions at random, certified if the estimate exceeds 0.85:
+
+   3 questions   1.62%
+   5 questions   3.36%
+  10 questions   4.48%
+  20 questions   4.72%
+
+THE RATE RISES AND THEN FLATTENS. It does not fall with more evidence, because the p_learn term
+adds probability on every attempt regardless of the answer. With free text (guess 0.02) the same
+sweep gives 2.10%, 2.08%, 2.00% - lower, and FLAT rather than creeping.
+
+TRACE C - spacing, on one item, same five reviews.
+
+  massed on days 0,1,2,3,4:    recall at day 60 = 0.634, final strength 122.9
+  spaced on days 0,1,4,11,25:  recall at day 60 = 0.896, final strength 320.1
+
+The spaced schedule's last review is on day 25 against day 4, so it is 35 days from its last
+review rather than 56 - part of the gap is simply recency. But the STRENGTH figures separate
+them independently: 320.1 against 122.9, because each successful recall after a longer gap
+strengthens more. Same effort, 2.6x the durability.
+
+TRACE D - what I could NOT establish. Comparing scheduling policies over 40 skills and 480
+reviews gave results that inverted depending on the forgetting model's parameters, with the most
+aggressive "review what is nearly forgotten" policy performing worst because its attempts
+usually failed. That is a property of my simulation, not a finding about tutoring, and it is
+recorded here as a caution rather than a result.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS. BKT is four numbers and an arithmetic update per answer - free. The item bank is the
+expensive part: several questions per skill across difficulties, authored or generated and
+then reviewed, and an LLM generating them still needs human checking before children see them.
+Free-text grading costs a model call per answer instead of a string comparison, and measured, it
+halves the false-mastery rate and stops it creeping - which makes it one of the better-value
+model calls in the system. Long-horizon evaluation costs calendar time: retention at four weeks
+cannot be measured in less than four weeks.
+
+THE #1 MISTAKE: certifying mastery from a short run of multiple-choice answers. Measured, 4.72%
+of pure guessers are certified, and adding questions does not help because the learning term
+keeps pushing the estimate up.
+
+THE #2 MISTAKE: recording mastery once and never re-testing. Measured, 0.634 recall at day 60
+for a massed schedule against 0.896 for a spaced one with identical effort.
+
+THE #3 MISTAKE: optimising for a high success rate. Above ~90% the student is rehearsing what
+they know, and every engagement metric will prefer it.
+
+THE #4 MISTAKE: putting the LLM in charge of mastery estimation and selection. Keep those
+deterministic and inspectable; use the model for items, explanations and grading.
+
+THE #5 MISTAKE: no prerequisite gate, so failures on advanced material are recorded as evidence
+about the advanced skill rather than the missing foundation.
+
+THE #6 MISTAKE: reviewing only when recall has already collapsed. A failed retrieval strengthens
+much less than a successful effortful one.
+
+THE #7 MISTAKE: evaluating on session-end accuracy, which is the one number guaranteed to look
+good.
+
+THE TAKEAWAY: an AI tutor is two inference problems - what does this student know, and what
+should they do next - and the evidence for both is noisy in ways the format controls: measured,
+a single correct four-option answer moves the mastery estimate only to 0.666 and three are
+needed to pass 0.97, while 4.72% of students who know NOTHING are certified as mastered and more
+questions does not fix it, though free-text answers halve that and stop it creeping; mastery
+also decays, measured as 0.634 against 0.896 recall two months later for the same five reviews
+massed or spaced, so mastery must be re-tested rather than recorded; keep the tracking and the
+selection deterministic and auditable and give the LLM the item generation, explanation and
+free-text grading; and note honestly that the choice of scheduling policy is the one thing here
+a simulation could not settle - that needs real students.""",
+]
+
 
 
 
