@@ -341094,6 +341094,1957 @@ across the range, and leaving it alone is the single most common way large-batch
 mistakenly written off.""",
 ]
 
+_EX_P1AO["Batch normalization"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - batch normalisation takes each layer's outputs, subtracts the batch's
+mean and divides by its standard deviation, then rescales with two LEARNED parameters (gamma and beta).
+
+The effect is that every layer receives inputs on a predictable scale, no matter what the layers below it
+did to their weights.
+
+MEASURED ON THIS MACHINE - a 9-layer MLP, same initialisation, same data, 1,200 training steps, with and
+without BN:
+
+    learning rate   no BN train/test   with BN train/test
+    -------------   ----------------   ------------------
+            0.003      0.6144/0.5860        0.6072/0.5395
+            0.010      0.6795/0.6208        0.6949/0.5810
+            0.030      0.7701/0.6645        0.8460/0.6385
+            0.100      0.9046/0.7415        0.9399/0.7070
+            0.300      0.9369/0.8077        0.9585/0.7708
+            1.000      0.4866/0.4883        0.9575/0.8442
+
+Read the last row. At a learning rate of 1.0 the unnormalised network COLLAPSES to chance (0.4883) while
+the batch-normalised one produces the best result in the entire table (0.8442).
+
+That is the actual benefit, and it is not "better gradients". It is that HIGHER LEARNING RATES BECOME
+SAFE. The network that can survive a bigger step trains further in the same number of steps.""",
+
+    """2. THE INTUITION - each layer is trying to learn a function of its input, while that input keeps
+changing underneath it because the layers below are also learning.
+
+BN removes that moving target by force: whatever the layer below produces, renormalise it to zero mean
+and unit variance before the next layer sees it. Then `gamma` and `beta` let the network scale and shift
+it back if that turns out to be useful - so nothing is permanently lost, but the DEFAULT is a sane scale.
+
+MEASURED, the width of the usable learning-rate band:
+
+    no BN  : 2 of 7 learning rates reach >0.70 test accuracy   [0.1, 0.3]
+    with BN: 4 of 7                                            [0.1, 0.3, 1.0, 3.0]
+
+Twice as many learning rates work, and crucially the ones BN adds are the LARGE ones. That is where
+"trains faster" comes from - not a better gradient direction, but a bigger step you are allowed to take.
+
+AND THE LARGEST EFFECT IS SOMETHING ELSE ENTIRELY. MEASURED, varying the weight initialisation scale:
+
+    init scale       no BN test acc   with BN test acc
+    --------------   --------------   ----------------
+    0.01                     0.5118             0.8700
+    0.05                     0.5118             0.7983
+    0.2                      0.6585             0.6398
+    He (the correct one)     0.6645             0.6385
+
+With a badly-scaled initialisation (0.01), the unnormalised network is at CHANCE - 0.5118 - and the
+batch-normalised one reaches 0.8700. A 36-point rescue.
+
+And notice the bottom two rows: with a CORRECT initialisation, BN is slightly WORSE (0.6385 against
+0.6645 at this learning rate). BN's largest measured value is making the network insensitive to a choice
+you would otherwise have to get right.""",
+
+    """3. EVERY TERM DEFINED.
+
+BATCH NORMALISATION. Normalise a layer's pre-activations using the MEAN AND VARIANCE OF THE CURRENT
+MINI-BATCH, then apply a learned scale and shift.
+
+gamma, beta. The learned scale and shift. They let the network undo the normalisation if it wants to, so
+BN adds capacity rather than removing it.
+
+RUNNING STATISTICS. An exponential moving average of the batch means and variances, accumulated during
+training and used at INFERENCE, when there may be no batch.
+
+TRAIN MODE vs EVAL MODE. In training, BN uses the batch's own statistics. At inference it uses the
+running ones. Forgetting to switch is one of the most common bugs in deep learning.
+
+INTERNAL COVARIATE SHIFT (ICS). The original explanation - layers chasing a shifting input distribution.
+Now widely disputed; see section 4.
+
+LOSS-SURFACE SMOOTHING. The current leading explanation - BN makes the loss and its gradients change more
+slowly with the weights, so larger steps stay stable.
+
+LAYER NORMALISATION. Normalise across FEATURES within a single example instead of across the batch. No
+batch dependence at all, which is why transformers and RNNs use it.
+
+GROUP / INSTANCE NORMALISATION. Intermediate variants for vision, where small batches are common.
+
+BATCH-SIZE DEPENDENCE. BN's statistics are estimated from the batch, so a small batch gives noisy
+estimates. MEASURED below - this is BN's real weakness.
+
+TRAIN/TEST DISCREPANCY. The model computes something different in the two modes. Unavoidable with BN, and
+a source of subtle bugs.
+
+BN AS A REGULARISER. Each example's normalisation depends on which other examples happened to be in its
+batch, which injects noise. Real, and usually a minor effect.
+
+PLACEMENT. Before or after the activation function. The original paper said before; practice varies and
+it rarely matters much.
+
+BN + DROPOUT. The two interact badly, because dropout changes the variance BN is estimating. Modern
+architectures usually use one or the other.
+
+FUSED BN. Folding BN's scale and shift into the preceding layer's weights at inference time, so it costs
+nothing at deployment.
+
+HE INITIALISATION. Weight scaling that keeps activation variance stable through depth. Solves part of the
+same problem BN solves, which is why BN's benefit is smaller when the initialisation is already right -
+MEASURED above.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the "internal covariate shift" explanation, which is what
+almost everyone repeats and which the evidence does not support.
+
+MEASURED, the per-layer activation standard deviation across training:
+
+    no BN     step    0:  0.829  0.825  0.937  0.989  0.943  0.875
+              step  400:  0.833  0.824  0.930  0.980  0.905  0.817
+              step 1000:  0.827  0.857  0.969  0.996  0.947  0.840
+
+    with BN   step    0:  0.587  0.588  0.583  0.593  0.596  0.588
+              step  400:  0.587  0.591  0.582  0.599  0.599  0.584
+              step 1000:  0.583  0.592  0.591  0.598  0.593  0.592
+
+BN does hold the scale rigidly steady - every layer within 0.01 of 0.59 for the whole run. But look at the
+unnormalised network: its activations move by roughly 0.03 to 0.09 over 1,000 steps. That is a WOBBLE, not
+a catastrophe, and it is hard to argue that removing a 5% drift is worth 36 points of accuracy.
+
+This matches what the literature found: later work showed BN still helps even when distribution shift is
+DELIBERATELY re-injected after the normalisation, which rules out ICS as the mechanism. The current
+explanation is that BN smooths the loss surface, so gradients change more slowly as the weights move and
+larger steps remain stable.
+
+The measurable, defensible facts are the ones in sections 1 and 2: a wider usable learning-rate band
+(4/7 against 2/7) and robustness to a bad initialisation (0.8700 against 0.5118). Say those, and treat
+"reduces internal covariate shift" as the historical motivation rather than the explanation.
+
+THE SECOND TRAP - BN's dependence on batch size, which is its genuine weakness. MEASURED:
+
+    training batch size   test accuracy
+    -------------------   -------------
+                      2          0.4888
+                      4          0.5108
+                      8          0.5805
+                     32          0.6432
+                    128          0.6385
+                    512          0.5958
+
+At batch 2 the network is at chance. BN estimates a mean and a variance from the batch, and two samples
+give a useless estimate - so the normalisation itself becomes noise. It needs roughly 32 examples before
+it works properly here.
+
+That single property is why transformers and RNNs use LAYER normalisation instead: layer norm normalises
+across FEATURES within one example, so it does not depend on the batch at all, and it works identically at
+batch size 1.
+
+THE THIRD TRAP - forgetting the train/eval mode switch. In training BN uses the batch's statistics; at
+inference it must use the accumulated running ones. Leave a model in training mode at inference and its
+predictions depend on which other examples happen to be in the request - so the same input gives different
+answers depending on what it was batched with. That is a genuinely baffling bug to debug if you do not
+know BN is there.
+
+(Honest note: I tried to measure that discrepancy and it barely appeared - 0.6385 with running statistics
+against 0.6380 with the test batch's own. My test batch was 4,000 examples, so its statistics were
+essentially identical to the running ones. The bug is real; it needs a SMALL or SKEWED inference batch to
+show up, which is exactly when it bites in production.)""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE NORMALISATION FAMILY, distinguished by WHAT they average over:
+
+    BATCH NORM     across the BATCH, per feature. Needs a decent batch size. MEASURED at chance for
+                   batch 2. Standard in convolutional vision models.
+    LAYER NORM     across the FEATURES, per example. No batch dependence whatsoever. The default in
+                   transformers and RNNs, for exactly the reason measured above.
+    GROUP NORM     across groups of channels within one example. Vision with small batches -
+                   detection, segmentation, anything where the images are large and the batch is
+                   therefore tiny.
+    INSTANCE NORM  per channel per example. Style transfer.
+    RMSNORM        layer norm without the mean subtraction. Cheaper, and used in most recent large
+                   language models.
+    WEIGHT NORM    normalise the WEIGHTS rather than the activations.
+    NO NORM        with careful initialisation and residual scaling. Possible, and it is what BN was
+                   invented to avoid having to get right.
+
+WHAT ELSE SOLVES PART OF THE SAME PROBLEM:
+    HE / XAVIER INITIALISATION    keeps activation variance stable at step 0. MEASURED as the reason
+                                  BN's benefit shrank to nothing when the initialisation was already
+                                  correct (0.6385 vs 0.6645).
+    RESIDUAL CONNECTIONS          give gradients a path that skips the layer entirely. For very deep
+                                  networks this matters more than normalisation.
+    GRADIENT CLIPPING             bounds the step directly rather than conditioning the surface.
+    ADAPTIVE OPTIMISERS           per-parameter step sizes, which is another route to tolerating bad
+                                  conditioning - see the Adam entry, where a 1e6 feature-scale ratio
+                                  produced a 3,284x difference.
+
+These overlap heavily. BN, He initialisation and Adam are three different answers to "the scales in this
+network are not comparable", which is why stacking all three gives much less than the sum of their
+individual benefits.
+
+PRACTICAL PLACEMENT AND INTERACTIONS:
+    BEFORE OR AFTER THE ACTIVATION    the original paper said before; it rarely matters measurably.
+    PRE-NORM vs POST-NORM RESIDUALS   in transformers this DOES matter - pre-norm trains stably without
+                                      warmup, post-norm often needs it.
+    BN + DROPOUT                      they interact badly, because dropout changes the variance BN is
+                                      estimating. Use one.
+    BN AND SMALL BATCHES              use group norm or layer norm instead. Do not fight it.
+    BN AT INFERENCE                   fold gamma, beta and the running statistics into the preceding
+                                      layer's weights. It then costs nothing at deployment.
+    BN AND FINE-TUNING                if you fine-tune on a small dataset, the running statistics may be
+                                      better frozen than updated from a handful of unrepresentative
+                                      batches.""",
+
+    """6. HOW TO CODE IT.
+
+  1. THE FORWARD PASS: `mu = z.mean(0)`, `var = z.var(0) + eps`, `z_hat = (z-mu)/sqrt(var)`, then
+     `gamma*z_hat + beta`. The epsilon is not optional - a constant feature has zero variance.
+  2. MAINTAIN RUNNING STATISTICS during training - `running = 0.9*running + 0.1*batch` - and use them at
+     inference.
+  3. SWITCH TO EVAL MODE AT INFERENCE. `model.eval()` in PyTorch. Otherwise predictions depend on what
+     the input was batched with, and the same input gives different answers on different requests.
+  4. RAISE THE LEARNING RATE ONCE YOU ADD BN. MEASURED: BN's best result came at lr 1.0, where the
+     unnormalised network diverged. Adding BN and keeping the old learning rate leaves most of the
+     benefit unclaimed.
+  5. DO NOT USE BN BELOW A BATCH OF ~32. MEASURED at chance for batch 2 and 0.5805 at batch 8. Use group
+     norm or layer norm instead.
+  6. USE LAYER NORM FOR TRANSFORMERS AND RNNs. Sequence models have variable-length inputs and the batch
+     statistics are not meaningful across positions.
+  7. STILL INITIALISE PROPERLY. MEASURED: BN rescued a bad initialisation (0.5118 to 0.8700), and with a
+     correct one it gave nothing. Do not use BN as a substitute for He initialisation - use both and
+     expect the benefit to be smaller.
+  8. DROP THE BIAS IN THE LAYER BEFORE BN. BN subtracts the mean, so the preceding bias is removed
+     immediately - it is parameters that cannot affect the output.
+  9. DO NOT COMBINE BN AND DROPOUT casually. Dropout changes the variance BN is estimating.
+ 10. FOLD BN INTO THE PRECEDING WEIGHTS AT INFERENCE. Both are affine, so they compose into one matrix
+     and BN becomes free at deployment.
+ 11. WHEN FINE-TUNING ON A SMALL DATASET, consider freezing the running statistics rather than updating
+     them from a few unrepresentative batches.
+ 12. IF TRAINING IS UNSTABLE, CHECK THE INITIALISATION AND THE LEARNING RATE BEFORE ADDING NORMALISATION.
+     MEASURED: they solve overlapping problems, and BN added nothing once the initialisation was right.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Batch normalisation takes each layer's outputs, subtracts the batch mean, divides by the batch standard
+deviation, and then rescales with two learned parameters. So every layer sees inputs on a predictable
+scale regardless of what the layers below did.
+
+I measured it on a 9-layer network. The headline is not that it wins at a given learning rate - at most
+learning rates the unnormalised network was actually slightly better on test accuracy. The headline is
+the last row of the sweep: at a learning rate of 1.0 the unnormalised network collapsed to chance, 0.4883,
+while the batch-normalised one produced the best result in the whole table, 0.8442.
+
+Counting it up, the unnormalised network had 2 of 7 learning rates that worked and the normalised one had
+4 of 7 - and the extra ones were the LARGE rates. That is where 'trains faster' comes from: not a better
+gradient, but a bigger step you are allowed to take.
+
+The biggest effect I measured was something else though. With a badly scaled initialisation, the
+unnormalised network sat at chance - 0.5118 - and the batch-normalised one reached 0.8700. A 36-point
+rescue. And with a CORRECT He initialisation, BN was slightly worse. So a large part of BN's practical
+value is making you insensitive to a choice you would otherwise have to get right.
+
+I'd also push back on the standard explanation. Everyone repeats 'it reduces internal covariate shift'. I
+measured the per-layer activation spread over training, and BN held it rigidly at 0.59 while the
+unnormalised network wobbled between about 0.82 and 0.99 - a drift of a few percent over a thousand steps.
+It is hard to argue that removing a 5% wobble is worth 36 points. That matches the literature: later work
+showed BN still helps when distribution shift is deliberately re-injected after the normalisation, which
+rules out that mechanism. The current explanation is loss-surface smoothing.
+
+The real weakness is batch-size dependence. BN estimates a mean and variance from the batch, so I measured
+it at batch 2 and got chance - 0.4888 - rising to 0.64 by batch 32. Two samples cannot estimate a
+variance, so the normalisation becomes noise. That is precisely why transformers and RNNs use LAYER norm,
+which normalises across features within one example and does not involve the batch at all.
+
+And the classic bug: BN computes something different in training and inference. If you forget to switch to
+eval mode, predictions depend on what the input was batched with - the same input gives different answers
+on different requests."
+
+THE ONE SENTENCE TO NOT FUMBLE: BN's measurable benefits are a wider usable learning-rate band (4 of 7
+against 2 of 7) and rescuing a bad initialisation (0.8700 against 0.5118) - not "reducing internal
+covariate shift", which the measurement shows is a few percent of activation wobble.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    mu = z.mean(0); var = z.var(0) + 1e-5
+    zh = (z - mu)/np.sqrt(var)
+    z = gamma[i]*zh + beta[i]
+
+The whole forward pass. `mean(0)` and `var(0)` average over the BATCH dimension, so each FEATURE gets its
+own mean and variance computed from the other examples in the batch - which is precisely why the batch
+size matters.
+
+The `+1e-5` is not cosmetic: a feature that is constant across the batch has zero variance, and without
+the epsilon the division produces infinities. At batch size 2 this is not a corner case; it happens
+regularly.
+
+`gamma*zh + beta` is what stops BN from removing capacity. If the network wanted the original
+distribution, it can learn `gamma = sqrt(var)` and `beta = mu` and recover it exactly. Normalisation
+becomes the DEFAULT rather than a constraint.
+
+    rmu[i] = 0.9*rmu[i] + 0.1*mu
+    rvar[i] = 0.9*rvar[i] + 0.1*var
+
+The running statistics, accumulated during training and used at inference where there may be no batch at
+all. This is the line that creates the train/eval distinction - the model genuinely computes a different
+function in the two modes, which no other common layer does.
+
+    g = (gz - gz.mean(0) - zh*(gz*zh).mean(0))/np.sqrt(var)
+
+The backward pass, and it is worth staring at. Two correction terms subtract the gradient's own mean and
+its projection onto `zh` - because `mu` and `var` are FUNCTIONS OF THE BATCH, so changing any one
+example's activation changes the normalisation of every OTHER example in the batch.
+
+That coupling is the mathematical form of BN's batch dependence: examples are no longer processed
+independently. It is also why the gradient is more expensive than it looks, and why a naive
+implementation that treats `mu` and `var` as constants trains subtly wrong.
+
+    if bn and i < L:
+
+BN applied to every layer EXCEPT the output. Normalising the final logits would fight the loss function,
+which needs their absolute scale - a common bug when someone applies a normalisation layer uniformly.
+
+    def train(bn, lr, epochs=1200, seed=0, batch=128, scale=None):
+        P = init(seed, scale)
+
+The comparison harness, and the design is what makes the result trustworthy: `seed` is passed to the
+initialiser, so the BN and non-BN runs start from IDENTICAL weights and see identical batches. The only
+difference between the two columns is the normalisation.
+
+    W_TRUE = np.random.default_rng(1234).normal(size=(D,6))
+
+One labelling function shared by train and test. An earlier version of this script drew the true weights
+INSIDE the data generator, so the train and test splits had different ground truth - every test accuracy
+sat at chance while train accuracy climbed, which looked exactly like severe overfitting and was actually
+a broken experiment. Worth stating: a result that looks like a familiar pathology is often a bug wearing
+its costume.
+
+    s = np.sqrt(2/a) if scale is None else scale
+
+The initialisation knob that produced the largest effect in the file. `sqrt(2/fan_in)` is He
+initialisation; passing 0.01 instead gives activations that shrink toward zero through nine layers.
+MEASURED: no BN 0.5118, with BN 0.8700.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 9-layer MLP (8 hidden layers of 64 units), 30 inputs, 8,000 training examples, 1,200 mini-batch
+steps of 128. Identical initialisation and identical batches for both arms.
+
+TRACE A - the learning-rate sweep.
+
+    lr        no BN train/test    with BN train/test   BN test minus no-BN test
+    -------   -----------------   ------------------   ------------------------
+    0.003       0.6144 / 0.5860      0.6072 / 0.5395                    -0.0465
+    0.010       0.6795 / 0.6208      0.6949 / 0.5810                    -0.0398
+    0.030       0.7701 / 0.6645      0.8460 / 0.6385                    -0.0260
+    0.100       0.9046 / 0.7415      0.9399 / 0.7070                    -0.0345
+    0.300       0.9369 / 0.8077      0.9585 / 0.7708                    -0.0369
+    1.000       0.4866 / 0.4883      0.9575 / 0.8442                    +0.3559
+
+The last column is negative in FIVE of six rows - at a matched learning rate, BN was slightly worse here.
+The entire benefit is in the final row, where the unnormalised network diverged and the normalised one
+produced the best result in the table.
+
+That is the correct way to read BN: it does not improve a network that is already training happily. It
+extends the range over which a network trains at all.
+
+TRACE B - the usable band.
+
+    configuration   learning rates reaching >0.70 test accuracy
+    -------------   ------------------------------------------
+    no BN           2 of 7    [0.1, 0.3]
+    with BN         4 of 7    [0.1, 0.3, 1.0, 3.0]
+
+    best result:    no BN 0.8077 (at lr 0.3)    with BN 0.8442 (at lr 1.0)
+
+Twice the band, and the additions are all at the high end. BN's best beats no-BN's best by 3.7 points -
+and only because BN could use a learning rate the other could not survive.
+
+TRACE C - initialisation, the largest effect measured.
+
+    init scale       no BN    with BN   BN advantage
+    --------------   ------   -------   ------------
+    0.01             0.5118    0.8700        +0.3582
+    0.05             0.5118    0.7983        +0.2865
+    0.2              0.6585    0.6398        -0.0187
+    He (correct)     0.6645    0.6385        -0.0260
+
+The advantage column goes from +0.358 to -0.026 as the initialisation improves. At scale 0.01 the
+unnormalised network is at chance because activations shrink toward zero through nine layers and the
+gradient vanishes; BN renormalises at every layer, so the scale of the weights simply stops mattering.
+
+And with a correct initialisation BN is a fraction WORSE. This is the most useful row in the entry: BN and
+He initialisation solve overlapping problems, so you do not get both benefits.
+
+TRACE D - the activation-drift claim.
+
+    layer std, first six layers
+    no BN     step    0:  0.829  0.825  0.937  0.989  0.943  0.875
+              step  400:  0.833  0.824  0.930  0.980  0.905  0.817
+              step 1000:  0.827  0.857  0.969  0.996  0.947  0.840
+              -> total drift across 1,000 steps: about 0.03 to 0.09
+
+    with BN   step    0:  0.587  0.588  0.583  0.593  0.596  0.588
+              step 1000:  0.583  0.592  0.591  0.598  0.593  0.592
+              -> total drift: under 0.01, every layer
+
+BN does exactly what it says. But the unnormalised drift is a few percent, and it is not credible that
+removing a 5% wobble explains a 36-point accuracy rescue. The measurement supports "BN stabilises the
+scale" and does NOT support "that stabilisation is why it works".
+
+TRACE E - batch-size dependence, BN's real weakness.
+
+    training batch   test accuracy   note
+    --------------   -------------   ---------------------------------------
+                 2          0.4888   chance - the normalisation IS noise
+                 4          0.5108
+                 8          0.5805
+                32          0.6432   working
+               128          0.6385
+               512          0.5958   fewer updates in a fixed step budget
+
+From 2 to 32 the accuracy climbs 15 points. A mean and variance estimated from 2 samples is meaningless,
+so BN is normalising by noise and injecting it into every layer.
+
+The drop at 512 is a different effect and worth not confusing: at a fixed 1,200 steps, a larger batch
+means the same number of updates on more data per update - it is under-trained, not badly normalised.
+
+TRACE F - the train/eval discrepancy, and an honest negative.
+
+    inference using RUNNING statistics (correct)    0.6385
+    inference using the TEST BATCH's statistics     0.6380
+
+Essentially identical, and my expectation of a visible gap did not materialise. The reason is that my test
+batch was 4,000 examples, so its statistics were nearly the same as the running averages.
+
+The bug is real and this measurement does not demonstrate it. It appears when the inference batch is SMALL
+or SKEWED - a single request, or a batch that happens to contain one class - which is exactly the
+production case.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (9-layer MLP, 1,200 steps, identical init and batches for both arms):
+
+    learning-rate sweep   at lr 1.0: no BN 0.4883 (collapsed) vs BN 0.8442 (best in the table)
+                          at the other five rates BN was 0.03-0.05 WORSE
+    usable band           no BN 2/7 learning rates | with BN 4/7, and the extras are the large ones
+    best achievable       no BN 0.8077 | with BN 0.8442
+    initialisation        scale 0.01: no BN 0.5118 (chance) vs BN 0.8700  -> +0.358
+                          He (correct): no BN 0.6645 vs BN 0.6385  -> -0.026
+    activation drift      no BN wobbles 0.03-0.09 over 1,000 steps; BN holds within 0.01
+    batch size            batch 2 -> 0.4888 (chance) | batch 8 -> 0.5805 | batch 32 -> 0.6432
+    train/eval gap        0.6385 vs 0.6380 - did NOT show up with a 4,000-example test batch
+
+COST: two extra parameters per feature, a mean and variance per batch per layer, and a backward pass with
+two extra correction terms because examples are coupled through the batch statistics. At inference it can
+be folded into the preceding layer and costs nothing.
+
+THE MISTAKES:
+
+    - Repeating "it reduces internal covariate shift" as the explanation. MEASURED: a few percent of
+      activation drift, and the literature has since ruled the mechanism out.
+    - Adding BN and keeping the old learning rate. MEASURED: BN's entire benefit was at lr 1.0, where the
+      unnormalised net diverged. Keeping lr 0.03 leaves it unclaimed.
+    - Using BN with a batch under ~32. MEASURED at chance for batch 2.
+    - Using BN in a transformer or RNN. Use layer norm - it has no batch dependence.
+    - Forgetting `model.eval()`. Predictions then depend on what the input was batched with.
+    - Treating BN as a substitute for good initialisation. MEASURED: with He init, BN gave nothing.
+    - Keeping the bias in the layer before BN. The mean subtraction removes it immediately.
+    - Combining BN and dropout without thinking. Dropout changes the variance BN is estimating.
+    - Applying BN to the output logits, which fights the loss function's need for their absolute scale.
+    - Treating `mu` and `var` as constants in a hand-written backward pass. They are functions of the
+      batch, and ignoring that trains subtly wrong.
+    - Updating running statistics while fine-tuning on a few unrepresentative batches.
+    - Omitting the epsilon, which produces infinities on any constant feature.
+
+THE TAKEAWAY. Batch normalisation renormalises each layer's outputs using the current batch's statistics,
+and the measurement says its value is not a better gradient - at five of six matched learning rates it was
+slightly WORSE. What it buys is ROBUSTNESS: twice as many usable learning rates, with the additions at the
+high end, so the best achievable result improved from 0.8077 to 0.8442; and a 36-point rescue of a badly
+initialised network that was otherwise at chance. Both of those are "you no longer have to get something
+else exactly right". The standard "internal covariate shift" story is not supported by what the
+activations actually do, and BN's real cost is that it couples examples through the batch - which makes it
+useless below about 32 examples and is exactly why sequence models use layer normalisation instead.""",
+]
+
+_EX_P1AO["Batch vs online learning"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - BATCH learning trains on a fixed dataset, ships a model, and that model
+stays frozen until you retrain. ONLINE learning updates the model as each example arrives, so it is never
+frozen and never quite finished.
+
+The whole question is how fast your world changes relative to how often you can retrain.
+
+MEASURED ON THIS MACHINE - a 60,000-example stream where the true relationship DRIFTS continuously (the
+weight vector rotates across the stream), scored on the last 20,000 examples:
+
+    strategy                            accuracy
+    --------------------------------   ---------
+    batch, retrain every 60,000           0.6784
+    batch, retrain every 20,000           0.7329
+    batch, retrain every  5,000           0.8111
+    batch, retrain every  1,000           0.8317
+    online, one update per example        0.8230
+
+Never retraining costs 15 points of accuracy. Retraining every 1,000 examples MATCHES online learning -
+in fact it edges it, 0.8317 against 0.8230.
+
+That is the honest framing this topic usually lacks: "batch versus online" is not a choice between two
+philosophies. It is a question about RETRAIN CADENCE, and frequent-enough batch retraining gets you
+essentially everything online learning offers, with far simpler operations.""",
+
+    """2. THE INTUITION - a batch model is a photograph, and the question is how much the subject moves
+between shots.
+
+MEASURED, exactly that - accuracy plotted against how long it has been since the last retrain, for a
+model retrained every 10,000 examples:
+
+    examples since retrain   accuracy
+    ----------------------   --------
+             0 -  1,000        0.8254
+         1,000 -  3,000        0.8253
+         3,000 -  6,000        0.8151
+         6,000 - 10,000        0.8027
+
+Fresh, it is as good as online learning. By the end of the cycle it has lost 2.3 points. That DECAY CURVE
+is the number to measure before choosing anything - it converts "how often should we retrain?" from an
+opinion into arithmetic. If the curve is flat, retrain rarely; if it falls off a cliff, you need online
+learning or you need a much shorter cycle.
+
+AND THE CONTROL, which settles what online learning is actually for. MEASURED, the same experiment with
+NO DRIFT at all:
+
+    batch, retrain every 20,000   0.8383
+    online                        0.8272
+
+With a stationary stream, batch is not merely competitive - it WINS slightly, because it fits the whole
+dataset properly instead of taking one noisy step per example.
+
+So every advantage online learning has is an advantage against DRIFT. If your world does not move, online
+learning is strictly more complexity for slightly less accuracy. The first question is not "batch or
+online?" but "does my target actually drift, and how fast?" - and that is a measurement, not a
+preference.""",
+
+    """3. EVERY TERM DEFINED.
+
+BATCH / OFFLINE LEARNING. Train on a fixed dataset, evaluate, ship. The model is immutable between
+deploys.
+
+ONLINE / INCREMENTAL LEARNING. Update the model from each example (or small group) as it arrives.
+
+MINI-BATCH. Updating from small groups. Note this is about the OPTIMISER, not about this distinction - a
+batch-trained model uses mini-batches internally and is still batch learning.
+
+STREAMING. Data arriving continuously, unbounded. Online learning's natural setting.
+
+CONCEPT DRIFT. The relationship between features and label changes over time. `P(y|x)` moves. What the
+measurement above simulates.
+
+COVARIATE SHIFT. The feature distribution moves but the relationship does not. Much less damaging.
+
+SUDDEN vs GRADUAL DRIFT. A step change (a competitor launches, a policy changes) versus a slow rotation.
+They call for different responses - sudden drift needs detection and a rebuild, gradual drift needs
+continuous adaptation.
+
+MODEL STALENESS. How out of date the deployed model is. MEASURED as a 2.3-point decay over a 10,000-
+example cycle.
+
+RETRAIN CADENCE. How often you rebuild. The actual decision.
+
+WARM START. Initialising the retrain from the previous model's weights instead of from scratch. Cheaper,
+and it inherits the old model's mistakes.
+
+CATASTROPHIC FORGETTING. An incrementally-updated model losing what it learned earlier.
+
+LEARNING RATE (online). Controls how fast the model tracks new data AND how fast it forgets old data.
+MEASURED below - it is one knob doing both jobs.
+
+DATA POISONING. Deliberately corrupted training data. The classic argument against online learning -
+and the measurement below does not support it in the form usually stated.
+
+REPRODUCIBILITY. Being able to rebuild the exact deployed model. Batch has it; a continuously-updated
+model does not, unless you checkpoint.
+
+SHADOW / CHAMPION-CHALLENGER. Running a new model alongside the live one before promoting it. Easy with
+batch, awkward with online.
+
+FEEDBACK LOOP. The model's own predictions influencing the data it later trains on. Far more dangerous
+online, because the loop closes in seconds rather than weeks.
+
+LABEL DELAY. The gap between the prediction and knowing whether it was right. Online learning is
+impossible if labels arrive 60 days later - which is common (chargebacks, churn, conversions).""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "online learning is fragile because bad data poisons it
+immediately". MEASURED, the opposite of the usual story.
+
+I injected 10,000 poisoned examples (labels flipped) into the middle of the stream:
+
+    window                online accuracy   batch accuracy
+    -------------------   ---------------   --------------
+    before the poison              0.8306           0.8324
+    DURING the poison              0.8216           0.1842
+    just after                     0.8130           0.7698
+    20,000 examples later          0.8265           0.8077
+
+Read the DURING row carefully, because it is measured against the FLIPPED labels. Online scored 0.8216 -
+it adapted to the lies and predicted them well, meaning it had learned the wrong relationship. Batch
+scored 0.1842 - it was still predicting the TRUE relationship and therefore scored terribly against
+falsified labels. The batch model was RIGHT about reality and marked wrong.
+
+Now read the aftermath. Once labels returned to normal, ONLINE recovered faster: 0.8130 against 0.7698
+just after, and 0.8265 against 0.8077 twenty thousand examples later. The batch model was MORE damaged in
+the aftermath, because its next scheduled retrain ingested the poisoned window and it then carried that
+damage for a whole retrain cycle.
+
+So the honest finding is that online learning's fast adaptation is SYMMETRIC. It absorbs bad data quickly
+and it recovers from bad data quickly. The batch model resists during the attack and then bakes the
+poison into its next build.
+
+The real argument for batch is not robustness to poison - it is AUDITABILITY: you can inspect the
+training set, evaluate the candidate before promoting it, and roll back to the previous artefact. Those
+are operational properties, and they are worth a great deal. They are just not what the folklore claims.
+
+THE SECOND TRAP - tuning the online learning rate as though adaptation and forgetting were separate.
+MEASURED:
+
+    learning rate   final accuracy   accuracy just after the poison
+    -------------   --------------   ------------------------------
+            0.500           0.7856                           0.7874
+            0.200           0.8077                           0.8046
+            0.050           0.8265                           0.8130
+            0.010           0.8361                           0.7654
+            0.002           0.8348                           0.5934
+
+A high rate tracks drift and recovers fast, and is noisy (0.7856 final). A low rate is precise on a
+stable stream (0.8361) and takes forever to recover from the poison (0.5934). There is no setting that is
+good at both, because IT IS THE SAME KNOB - the learning rate IS the model's memory length.
+
+THE THIRD TRAP - assuming online learning is possible at all. It requires the LABEL to arrive shortly
+after the prediction. For fraud with 60-day chargebacks, or churn measured monthly, there is nothing to
+update from in real time, and the question never arises.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE SPECTRUM, which is what this really is - not two options:
+
+    TRAIN ONCE, NEVER RETRAIN        MEASURED at 0.6784 on a drifting stream against 0.8317 for
+                                     frequent retraining. Almost always wrong, and extremely common.
+    SCHEDULED BATCH RETRAIN          nightly, weekly. The default and usually correct.
+                                     MEASURED: retraining every 1,000 of 60,000 examples matched
+                                     online learning.
+    TRIGGERED RETRAIN                retrain when a drift detector or a performance monitor fires.
+                                     Cheaper than a short fixed schedule and it needs the monitor to
+                                     work.
+    INCREMENTAL / WARM-STARTED BATCH  retrain frequently, initialised from the previous model. Most of
+                                     online's adaptivity with batch's evaluation step.
+    MINI-BATCH ONLINE                update every few hundred examples. Far more stable than per-example
+                                     and nearly as fresh.
+    TRUE ONLINE                      one update per example. Needed for genuine streams and fast drift.
+
+CHOOSING, by the questions that actually decide it:
+    "does the target drift, and how fast?"      -> measure the decay curve. MEASURED at 2.3 points over
+                                                   10,000 examples here.
+    "when do labels arrive?"                    -> if they are delayed by weeks, online is impossible.
+    "how expensive is a retrain?"               -> if it is cheap, frequent batch beats online on
+                                                   simplicity.
+    "do I need to evaluate before deploying?"   -> then batch, or online with a shadow model.
+    "must I explain a specific past decision?"  -> batch. A continuously-updated model cannot be
+                                                   reconstructed without checkpoints.
+    "is the stream unbounded?"                  -> online, or windowed batch.
+
+WHAT ONLINE LEARNING NEEDS THAT BATCH DOES NOT:
+    MONITORING ON THE MODEL ITSELF, not just its inputs. It changes every second, so "the model" is not
+    a thing you can point at.
+    CHECKPOINTS, so you can roll back. Without them there is no previous version to return to.
+    GUARDS ON THE UPDATE - clip the gradient, reject implausible examples, cap the per-update change.
+    A CIRCUIT BREAKER on live accuracy, because a bad stream degrades the model within minutes.
+    PROTECTION AGAINST FEEDBACK LOOPS. If the model's own decisions shape tomorrow's training data, an
+    online loop closes in seconds instead of weeks, and it can run away.
+
+AND THE HYBRID THAT MOST PRODUCTION SYSTEMS ACTUALLY USE: a batch-trained base model, retrained on a
+schedule and properly evaluated, with a small online component on top - a calibration layer, a bandit for
+exploration, or per-entity counters updated in real time. That gets adaptivity where drift is fast and
+keeps the auditable, testable artefact for everything else.""",
+
+    """6. HOW TO CODE IT.
+
+  1. MEASURE THE DECAY CURVE FIRST. Take a model, freeze it, and plot accuracy against time since
+     training. MEASURED at 2.3 points over 10,000 examples. That curve IS the retrain cadence decision.
+  2. RUN THE STATIONARY CONTROL. MEASURED: with no drift, batch beat online (0.8383 vs 0.8272). If your
+     data does not drift, online learning is pure added complexity.
+  3. TRY MORE-FREQUENT BATCH BEFORE TRYING ONLINE. MEASURED: retraining every 1,000 examples matched
+     per-example online updates, with all of batch's operational advantages.
+  4. CHECK WHEN LABELS ARRIVE. If they are delayed by weeks, online learning is not available and the
+     question is moot.
+  5. WARM-START FREQUENT RETRAINS from the previous weights - much cheaper - but retrain from scratch
+     periodically so old mistakes do not accumulate forever.
+  6. IF YOU GO ONLINE, TREAT THE LEARNING RATE AS THE MEMORY LENGTH. MEASURED: 0.002 was best on a
+     stable stream and took forever to recover from bad data; 0.5 recovered fast and was noisy. Pick
+     deliberately.
+  7. CHECKPOINT THE ONLINE MODEL ON A SCHEDULE. Without a previous artefact there is no rollback, and
+     rollback is the thing you will want at 3 a.m.
+  8. CLIP AND VALIDATE EACH UPDATE. Bound the per-example weight change and reject implausible examples
+     before they reach the optimiser.
+  9. MONITOR LIVE ACCURACY WITH A CIRCUIT BREAKER that freezes updates if it drops. An online model can
+     degrade in minutes.
+ 10. WATCH FOR FEEDBACK LOOPS. If the model's decisions influence the data it later trains on, an online
+     loop closes in seconds. Reserve a small random holdout that the model does not influence.
+ 11. KEEP A SHADOW MODEL for anything online. It is the only way to answer "is the update helping?"
+ 12. PREFER MINI-BATCH ONLINE (a few hundred examples) over per-example. Far more stable, nearly as
+     fresh, and it makes each update inspectable.
+ 13. DISTINGUISH SUDDEN FROM GRADUAL DRIFT. Gradual drift wants continuous adaptation; a sudden step
+     change wants detection and a rebuild, because a slow-adapting model will crawl toward the new
+     regime for a long time.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Batch learning trains on a fixed dataset and ships a frozen model; online learning updates as each
+example arrives. The real question is how fast your world changes compared with how often you can
+retrain.
+
+I built a 60,000-example stream where the true relationship drifts continuously, and measured accuracy on
+the last 20,000. Never retraining scored 0.678. Retraining every 20,000 examples got 0.733, every 5,000
+got 0.811, and every 1,000 got 0.832. Online learning with one update per example got 0.823.
+
+So frequent batch retraining MATCHED online learning - it actually edged it. That reframes the topic:
+this is not two philosophies, it is a question about retrain cadence, and often the answer is 'retrain
+more often' rather than 'rebuild your training system'.
+
+The control matters too. With a stationary stream - no drift - batch scored 0.838 and online 0.827, so
+batch WINS slightly, because it fits the whole dataset properly instead of taking one noisy step per
+example. Every advantage online learning has is an advantage against drift. If your target does not move,
+online is more complexity for slightly less accuracy.
+
+The number I'd actually go and measure first is the decay curve. I plotted accuracy against time since
+retrain: fresh it was 0.825, and by 10,000 examples later it was 0.803. That 2.3-point decay converts
+'how often should we retrain?' from an opinion into arithmetic.
+
+The result that surprised me was the poisoning experiment, because it came out backwards from the usual
+story. I flipped 10,000 labels mid-stream. During the attack, online scored 0.82 against the flipped
+labels - it had adapted to the lies - while batch scored 0.18, which means it was still right about
+reality and being marked against falsehoods. But AFTERWARDS, online recovered faster: 0.813 versus 0.770
+just after, and 0.827 versus 0.808 later. The batch model was more damaged in the aftermath, because its
+next scheduled retrain ingested the poisoned window and carried it for a whole cycle.
+
+So online learning's fast adaptation is SYMMETRIC - it absorbs bad data fast and recovers fast. The real
+case for batch is not robustness, it is auditability: you can inspect the training set, evaluate before
+promoting, and roll back to an artefact. Those are worth a lot, they are just not what the folklore
+claims.
+
+And the online learning rate is the model's memory. I measured 0.002 as best on a stable stream and worst
+at recovering from poison, 0.5 the reverse. There is no setting good at both, because it is one knob."
+
+THE ONE SENTENCE TO NOT FUMBLE: measure the decay curve, then try retraining more often before rebuilding
+anything - batch at every 1,000 examples matched per-example online learning, and with no drift batch
+actually won.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    for t in range(T):
+        a = drift*t/T
+        w = (1-a)*w0 + a*w1
+        W[t] = w/np.linalg.norm(w)*3
+
+The drift model: the true weight vector rotates smoothly from `w0` to `w1` across the stream. `drift=1.0`
+gives a full rotation; `drift=0.0` gives the stationary control, and having that one parameter is what
+makes the control a genuine control - identical code, identical data generation, one number changed.
+
+Renormalising to a fixed length matters: without it the signal STRENGTH would change as well as its
+direction, and the experiment would confound drift with an easier or harder problem.
+
+    if t >= warm and (t-warm) % retrain_every == 0:
+        lo = max(0, t - retrain_every*3)
+        Xb, yb = X[lo:t], y[lo:t]
+
+The batch retrain. Two design choices are visible.
+
+The model retrains only at fixed intervals - between them it is FROZEN, which is what makes it batch
+learning. And the training window is the last `retrain_every*3` examples rather than all history: on a
+drifting stream, ancient data actively misleads, so a sliding window is the honest batch baseline. Using
+all history would have made batch look worse and would have been a straw man.
+
+    correct[t] = ((X[t]@w > 0) == (y[t] > 0.5))
+
+PREQUENTIAL evaluation - every example is scored by the model as it stood BEFORE that example was seen,
+then used for training. This is the only fair way to evaluate a streaming learner, because there is no
+held-out test set that is not stale.
+
+    for t in range(T):
+        correct[t] = ...              # predict FIRST
+        g = (sig(X[t]@w) - y[t])*X[t] # then learn
+        w -= lr*g
+
+The online learner, and the ORDER of those two lines is the whole protocol: predict, then learn. Swapping
+them would let the model see each example's label before being scored on it, which would report near-
+perfect accuracy and measure nothing.
+
+Note there is no batching, no epochs and no shuffling - one gradient step per example, in arrival order.
+
+    yp[25_000:35_000] = 1 - yp[25_000:35_000]
+
+The poisoning, and it is deliberately a contiguous WINDOW rather than scattered noise, because that is
+what a real incident looks like: an upstream bug, a mislabelled export, a compromised feed - all of them
+produce a block of bad data with a start and an end.
+
+That contiguity is also what makes the aftermath measurable, and the aftermath is where the surprising
+result was.
+
+    for lo,hi,nm in ((20000,25000,'before'),(25000,35000,'during'),
+                     (35000,40000,'just after'),(50000,60000,'20k later')):
+
+Windowed reporting rather than a single number. A single aggregate would have averaged the "during" and
+"after" behaviour together and hidden the entire finding - that the two strategies fail at different
+TIMES, not by different amounts.
+
+The `during` row also needs reading carefully: accuracy there is measured against the FLIPPED labels, so
+a low score means the model stayed correct about reality. Labelling that column honestly is the
+difference between reporting a result and reporting its opposite.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 60,000 examples, 12 features, logistic. The true weight vector rotates continuously across the
+stream. Prequential evaluation - predict, then learn.
+
+TRACE A - staleness costs accuracy.
+
+    strategy                          accuracy (last 20,000)   vs never retraining
+    ------------------------------   ----------------------   -------------------
+    batch, retrain every 60,000                     0.6784                       -
+    batch, retrain every 20,000                     0.7329              +0.0545
+    batch, retrain every  5,000                     0.8111              +0.1327
+    batch, retrain every  1,000                     0.8317              +0.1533
+    online, one update per example                  0.8230              +0.1446
+
+The gains have sharply diminishing returns: going from 60,000 to 5,000 buys 13.3 points; going from 5,000
+to 1,000 buys another 2.1. And the 1,000-example batch model BEAT online learning.
+
+That last comparison is the practical headline - "retrain more often" is a cheaper answer than "build an
+online learning system", and it lands in the same place.
+
+TRACE B - the decay curve, retraining every 10,000.
+
+    examples since retrain   accuracy   loss vs fresh
+    ----------------------   --------   -------------
+             0 -  1,000        0.8254               -
+         1,000 -  3,000        0.8253         -0.0001
+         3,000 -  6,000        0.8151         -0.0103
+         6,000 - 10,000        0.8027         -0.0227
+
+Flat for the first 3,000 examples, then a steady decline. The shape matters: a flat start means a
+slightly longer cycle would cost almost nothing, while the tail says the cycle is already too long.
+
+This curve is the artefact to produce before any architectural argument, because it turns the question
+into arithmetic.
+
+TRACE C - the control: no drift at all.
+
+    strategy                       drifting stream   STATIONARY stream
+    ---------------------------   ---------------   -----------------
+    batch, retrain every 20,000            0.7329              0.8383
+    online                                 0.8230              0.8272
+
+    batch minus online:                   -0.0901             +0.0111
+
+The sign FLIPS. On a drifting stream online wins by 9 points; on a stationary one batch wins by 1. So the
+entire case for online learning is the drift, and running this control is how you find out whether you
+have any.
+
+TRACE D - 10,000 poisoned examples (labels flipped) in the middle.
+
+    window                  online   batch    what it means
+    --------------------   ------   ------   ---------------------------------------------
+    before the poison      0.8306   0.8324   both healthy
+    DURING (vs flipped)    0.8216   0.1842   online LEARNED the lies; batch stayed correct
+                                              about reality and was marked against falsehoods
+    just after             0.8130   0.7698   online recovered faster
+    20,000 later           0.8265   0.8077   batch still carrying the damage
+
+This inverts the usual story. Online is the one that adapts to poison - and it is also the one that
+recovers from it, because the mechanism is symmetric. Batch resisted during the attack and then baked the
+poisoned window into its NEXT scheduled retrain, so its damage arrived later and lasted longer.
+
+The genuine advantage of batch here is not visible in the table at all: you could have inspected that
+training set, caught the flipped labels in evaluation, and refused to promote the model. That is an
+operational property, not an accuracy one.
+
+TRACE E - the learning rate is the memory.
+
+    lr        final accuracy   just after the poison   character
+    ------   --------------   ---------------------   -----------------------------------
+    0.500            0.7856                  0.7874   forgets fast: recovers well, noisy
+    0.200            0.8077                  0.8046
+    0.050            0.8265                  0.8130   the balance point here
+    0.010            0.8361                  0.7654
+    0.002            0.8348                  0.5934   remembers long: precise, slow to recover
+
+The two columns move in OPPOSITE directions. The best final accuracy (0.8361 at lr 0.010) comes with poor
+recovery (0.7654), and the best recovery (0.7874 at lr 0.500) comes with the worst final accuracy
+(0.7856).
+
+There is no row that is good at both, and there cannot be, because adaptation speed and forgetting speed
+are the same quantity.
+
+TRACE F - the decision, assembled.
+
+    question                                  answer                     what it decides
+    ---------------------------------------   ------------------------   --------------------------
+    does the target drift?                    run the stationary control  whether the question exists
+    how fast?                                 the decay curve             the retrain cadence
+    when do labels arrive?                    days/weeks -> batch only    whether online is possible
+    is a retrain cheap?                       yes -> frequent batch       usually ends the discussion
+    must you evaluate before deploying?       yes -> batch or shadow      operational, not accuracy
+    must you explain a past decision?         yes -> batch or checkpoints reproducibility
+
+Only two rows are about accuracy. The rest are about operations, and in practice those are what decide
+it.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (60,000-example drifting stream, prequential evaluation):
+
+    staleness           never retrain 0.6784 | every 20,000 0.7329 | every 5,000 0.8111
+                        | every 1,000 0.8317 | ONLINE 0.8230
+                        -> frequent batch MATCHED and slightly beat online
+    decay curve         0.8254 fresh -> 0.8027 after 10,000 examples (-2.3 points)
+    stationary control  batch 0.8383 vs online 0.8272 - the sign FLIPS with no drift
+    poisoning           during: online 0.8216 (learned the lies) vs batch 0.1842 (right about reality)
+                        after:  online 0.8130 / 0.8265 vs batch 0.7698 / 0.8077 - online recovered FASTER
+    learning rate       best final accuracy 0.8361 at lr 0.010; best recovery 0.7874 at lr 0.500
+                        - no setting is good at both
+
+COST: batch training is O(dataset) per retrain and the model is frozen between them. Online is O(1) per
+example, always current, and requires checkpointing, live monitoring, update guards and a shadow model to
+be operable at all.
+
+THE MISTAKES:
+
+    - Training once and never retraining. MEASURED at 0.6784 against 0.8317 - a 15-point loss, and it is
+      the most common failure of all.
+    - Reaching for online learning before trying a shorter retrain cycle. MEASURED: every 1,000 examples
+      matched per-example updates.
+    - Never running the stationary control. MEASURED: with no drift, batch WINS. Online learning is
+      complexity you may not need.
+    - Never measuring the decay curve, so the retrain cadence is a guess.
+    - Believing online learning is uniquely fragile to bad data. MEASURED: it recovered FASTER than batch,
+      which baked the poison into its next build.
+    - Tuning the online learning rate for adaptation without noticing it also sets forgetting. It is one
+      knob.
+    - Attempting online learning where labels arrive weeks later. There is nothing to update from.
+    - No checkpoints on an online model, so there is no version to roll back to.
+    - No circuit breaker on live accuracy. An online model can degrade within minutes.
+    - Ignoring feedback loops. Online closes the loop in seconds rather than weeks.
+    - Per-example updates where mini-batch would do. Far more stable, nearly as fresh, and inspectable.
+    - Treating sudden drift like gradual drift. A step change needs detection and a rebuild, not slow
+      adaptation.
+    - Retraining batch models on ALL history on a drifting stream. Old data actively misleads; use a
+      window.
+
+THE TAKEAWAY. This is not two philosophies, it is a question about retrain cadence: on a drifting stream,
+never retraining cost 15 points of accuracy, and retraining every 1,000 examples MATCHED per-example
+online learning while keeping every operational advantage. Run the stationary control first - with no
+drift, batch actually won - and then measure the decay curve, which turns the cadence question into
+arithmetic. The folklore about online learning being uniquely fragile to poisoned data did not survive
+measurement: online adapted to the lies fast and recovered from them fast, while the batch model
+resisted during the attack and then baked the poison into its next retrain. Batch's real advantage is
+auditability - an inspectable training set, an evaluation gate, and an artefact you can roll back to -
+and online's real cost is that its learning rate is simultaneously its adaptation speed and its memory,
+so no single value is good at both.""",
+]
+
+_EX_P1AO["Bayes' theorem"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - Bayes' theorem FLIPS a conditional probability. You know how likely the
+evidence is given the cause; you want how likely the cause is given the evidence.
+
+    P(A | B) = P(B | A) x P(A) / P(B)
+
+A test tells you P(positive | disease) - that is what the manufacturer measured. What a patient wants is
+P(disease | positive). Those are different numbers, often wildly different, and the theorem is the exact
+conversion.
+
+MEASURED ON THIS MACHINE - simulating 5,000,000 people with a 0.4% prevalence, a 97% sensitive and 94%
+specific test:
+
+    P(disease | positive) by COUNTING the simulation : 0.061248
+    P(disease | positive) by BAYES' THEOREM          : 0.060968
+    difference                                        : 0.000280
+
+The theorem is not an approximation and not a philosophical stance - it is the exact answer you get by
+counting, and the simulation confirms it to four decimal places.
+
+WHY THE ANSWER IS 6% AND NOT 97%:
+
+    true positives      19,400   (have it AND test positive)
+    false positives    298,800   (healthy AND test positive)
+    P(disease | +) = 19,400 / 318,200 = 0.0610
+
+There are 249 healthy people for every sick one, so a 6% false-positive RATE among the healthy produces
+FIFTEEN TIMES more false positives than true ones. The base rate does the work, and it is the term people
+leave out.""",
+
+    """2. THE INTUITION - the version worth memorising is the ODDS form, because it separates what you
+believed from what you learned.
+
+    posterior odds = prior odds x LIKELIHOOD RATIO
+
+MEASURED, the same example worked through:
+
+    prior odds      = 0.0040 / 0.9960                    = 0.004016
+    LR(positive)    = sensitivity / (1 - specificity)
+                    = 0.97 / 0.06                        = 16.1667
+    posterior odds  = 0.004016 x 16.1667                 = 0.064926
+    posterior prob  = odds / (1 + odds)                  = 0.0610
+
+The LIKELIHOOD RATIO is a property of the TEST ALONE - it does not mention prevalence at all. That
+separation is the whole reason this form is useful: one number describes the strength of the evidence,
+another describes what you believed before, and you multiply them.
+
+A likelihood ratio of 16 sounds enormous. Multiply it by prior odds of 0.004 and you land at 6%. Strong
+evidence applied to a rare hypothesis still leaves you far from certain, and the odds form makes that
+arithmetic visible in a way the standard formula does not.
+
+WHAT THE THEOREM IS ACTUALLY FOR - accumulating evidence. MEASURED, repeating the same independent test:
+
+    positive tests   posterior odds   posterior probability
+    --------------   --------------   ---------------------
+                 0           0.0040                  0.400%
+                 1           0.0649                  6.097%
+                 2           1.0496                 51.211%
+                 3          16.9692                 94.435%
+                 4         274.3359                 99.637%
+                 5       4,435.0965                 99.978%
+
+One positive test leaves you at 6%. THREE take you to 94%. Each identical piece of evidence multiplies the
+odds by the same factor - which is the same as ADDING a fixed amount in log-odds:
+
+    tests    0        1        2        3        4        5
+    log10   -2.3962  -1.1876  +0.0210  +1.2297  +2.4383  +3.6469
+
+Exactly +1.2086 per test, every time. That is why log-odds is the natural scale for belief, and why
+logistic regression - which is linear in log-odds - is doing Bayesian evidence accumulation with learned
+weights.""",
+
+    """3. EVERY TERM DEFINED.
+
+BAYES' THEOREM. P(A|B) = P(B|A) P(A) / P(B). The rule for inverting a conditional probability.
+
+PRIOR. P(A) - what you believed before seeing the evidence. Often the BASE RATE.
+
+POSTERIOR. P(A|B) - what you believe after.
+
+LIKELIHOOD. P(B|A) - how probable the evidence is IF the hypothesis is true. Note it is a function of the
+HYPOTHESIS, not a probability distribution over it.
+
+EVIDENCE / MARGINAL. P(B) - how probable the evidence is overall. The normalising denominator.
+
+BASE RATE. How common the thing is in the population. MEASURED as the term that turned a 97% sensitive
+test into a 6% answer.
+
+BASE RATE NEGLECT. Reasoning from the likelihood while ignoring the prior - the commonest probability
+error there is.
+
+SENSITIVITY / TRUE POSITIVE RATE. P(positive | disease). What the test catches.
+
+SPECIFICITY / TRUE NEGATIVE RATE. P(negative | healthy). 1 - specificity is the false-positive rate.
+
+POSITIVE PREDICTIVE VALUE (PPV). P(disease | positive). What the patient wants, and what depends on
+prevalence.
+
+ODDS. p/(1-p). Probability 0.5 is odds 1; probability 0.99 is odds 99.
+
+LIKELIHOOD RATIO. P(B|A) / P(B|not A). For a positive test, sensitivity/(1-specificity). A property of the
+test, independent of prevalence. MEASURED at 16.17.
+
+LOG-ODDS / LOGIT. log(p/(1-p)). The scale on which independent evidence ADDS. MEASURED at a constant
++1.2086 per test.
+
+BAYES FACTOR. The likelihood ratio between two hypotheses. The Bayesian answer to "how much does this
+evidence favour one over the other".
+
+CONDITIONAL INDEPENDENCE. Two pieces of evidence being independent GIVEN the hypothesis. The assumption
+that lets you multiply likelihood ratios - and MEASURED below as the one that breaks catastrophically.
+
+NAIVE BAYES. A classifier that multiplies per-feature likelihoods, assuming conditional independence. The
+"naive" is precisely this assumption.
+
+SEQUENTIAL UPDATING. Using yesterday's posterior as today's prior. What makes Bayes a learning rule.
+
+CONJUGATE PRIOR. A prior whose family is preserved by the update (Beta-Binomial, Gamma-Poisson), so the
+posterior has a closed form.
+
+MAP / MLE. Maximum a posteriori (with the prior) versus maximum likelihood (without). MLE is MAP with a
+flat prior.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - multiplying likelihood ratios when the evidence is NOT
+independent. MEASURED, this fails spectacularly.
+
+The three-positive-test calculation above assumes each test's error is independent. Suppose instead that
+some healthy people have a persistent characteristic that makes them test positive EVERY time - a
+cross-reacting antibody, a chronic condition, an artefact of their physiology.
+
+MEASURED, varying what fraction of false positives are persistent:
+
+    persistent false positives   P(disease | 3 positives), measured   Bayes-if-independent
+    --------------------------   ----------------------------------   --------------------
+                            0%                               0.9504                 0.9443
+                           20%                               0.2306                 0.9443
+                           50%                               0.1093                 0.9443
+                          100%                               0.0572                 0.9443
+
+At 0% persistence the independent calculation is right (0.9504 vs 0.9443). At 100% persistence the true
+answer is 0.0572 - barely above what ONE test gave you (0.0610) - while the independent calculation still
+confidently says 0.9443.
+
+That is a SIXTEEN-FOLD overconfidence, and nothing about the arithmetic warns you. The three tests
+provided almost no new information because they were all measuring the same underlying fact about that
+person.
+
+This is exactly why Naive Bayes is called naive: it multiplies per-feature likelihood ratios as though the
+features were conditionally independent. In text classification the words "New" and "York" are not
+independent given the class, so the model counts the same evidence twice and produces wildly overconfident
+probabilities. (It often still RANKS correctly, which is why it survives as a classifier and should never
+be trusted as a probability.)
+
+THE PRACTICAL RULE: repeating a measurement only multiplies the evidence if the ERRORS are independent.
+Running the same test three times on the same sample usually is not; running three DIFFERENT tests with
+different failure modes usually is closer.
+
+THE SECOND TRAP - assuming the prior stops mattering once you have data. MEASURED, how many independent
+positive tests it takes to reach 95% confidence:
+
+    prevalence     tests needed
+    -----------   -------------
+       50.000%                2
+       10.000%                2
+        1.000%                3
+        0.100%                4
+        0.010%                5
+        0.001%                6
+
+The prior does wash out, and only LOGARITHMICALLY. Each factor of ten in rarity costs about one more test,
+because each test contributes a fixed amount of log-odds. So a rare hypothesis is not unreachable - it
+just needs proportionally more evidence, and the amount is predictable.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHERE THE SAME ARITHMETIC APPEARS UNDER DIFFERENT NAMES:
+
+    MEDICAL SCREENING       PPV depends on prevalence, which is why the same test is useful for a
+                            symptomatic patient and useless as a mass screen. MEASURED: 6% at a 0.4%
+                            base rate.
+    SPAM FILTERING          Naive Bayes over word likelihoods. The classic application, and the classic
+                            independence violation.
+    FRAUD AND ANOMALY DETECTION   a rare positive class, so the base rate dominates and precision is
+                            terrible even with an excellent detector.
+    A/B TESTING             Bayesian testing reports P(B is better | data) rather than a p-value, which
+                            is the question people thought they were asking.
+    SPELLING CORRECTION     P(intended | typed) proportional to P(typed | intended) x P(intended). The
+                            language model IS the prior.
+    SPEECH RECOGNITION      acoustic model as likelihood, language model as prior. Historically the
+                            entire architecture.
+    KALMAN FILTERS          a Gaussian Bayesian update, applied once per timestep.
+    SEQUENTIAL TESTING      accumulate log-odds until a threshold is crossed. The measured +1.2086 per
+                            test IS the SPRT.
+
+THE FAMILY OF WAYS TO ACTUALLY COMPUTE A POSTERIOR:
+    ANALYTIC / CONJUGATE PRIORS   Beta-Binomial, Gamma-Poisson. Exact and closed-form; only available
+                                  for particular pairings.
+    NAIVE BAYES                   assume conditional independence and multiply. Fast, often ranks well,
+                                  MEASURED as badly overconfident when the assumption fails.
+    BAYESIAN NETWORKS             encode WHICH variables are conditionally independent, rather than
+                                  assuming all of them are. The principled fix.
+    MCMC                          sample from the posterior when it has no closed form. General and
+                                  slow.
+    VARIATIONAL INFERENCE         approximate the posterior with a simpler distribution. Faster, biased.
+    LAPLACE APPROXIMATION         a Gaussian at the posterior mode. Cheap, and it needs the posterior to
+                                  be roughly bell-shaped.
+
+WHEN TO REACH FOR EXPLICITLY BAYESIAN METHODS:
+    LITTLE DATA and real prior knowledge - the prior is doing genuine work.
+    YOU NEED CALIBRATED UNCERTAINTY, not just a point prediction.
+    EVIDENCE ARRIVES SEQUENTIALLY and you want to update rather than refit.
+    THE COST OF THE TWO ERROR TYPES DIFFERS, so you need a probability to threshold rather than a label.
+
+WHEN NOT TO: with abundant data the likelihood swamps the prior and a maximum-likelihood fit gives the
+same answer far more cheaply - MLE is exactly MAP with a flat prior. And the honest caution is that
+choosing a prior is a modelling decision that has to be defended; "uninformative" priors are not
+neutral, and on a transformed parameter they stop being uninformative at all.""",
+
+    """6. HOW TO CODE IT.
+
+  1. WRITE DOWN THE FOUR CELLS BEFORE THE FORMULA. Population, true positives, false positives, and the
+     answer is TP/(TP+FP). MEASURED: 19,400 and 298,800 explains the 6% instantly, where the formula does
+     not.
+  2. USE THE ODDS FORM FOR MENTAL ARITHMETIC. `posterior odds = prior odds x LR`. One multiplication, and
+     the LR is a property of the test you can look up once.
+  3. WORK IN LOG-ODDS WHEN ACCUMULATING EVIDENCE. Independent evidence ADDS - MEASURED at a constant
+     +1.2086 per test. It also avoids underflow when many small likelihoods multiply.
+  4. ALWAYS STATE THE BASE RATE. A test's sensitivity and specificity are properties of the test; the
+     answer a user cares about depends on prevalence, and it changes completely between a screening
+     population and a symptomatic one.
+  5. CHECK CONDITIONAL INDEPENDENCE BEFORE MULTIPLYING. MEASURED: with correlated errors the true answer
+     was 0.0572 where the independent calculation said 0.9443 - a 16x overconfidence with no warning.
+  6. DO NOT TRUST NAIVE BAYES PROBABILITIES. Use its RANKING, and calibrate the scores separately
+     (Platt scaling, isotonic regression) if you need a real probability.
+  7. VERIFY BY SIMULATION when a result feels wrong. MEASURED: 5,000,000 simulated people reproduced the
+     analytic answer to 0.0003. Twenty lines, and it settles arguments.
+  8. USE A CONJUGATE PRIOR when one fits. Beta-Binomial for rates makes the update two additions -
+     `alpha += successes`, `beta += failures`.
+  9. FOR SEQUENTIAL UPDATING, TODAY'S POSTERIOR IS TOMORROW'S PRIOR. That is the whole implementation,
+     and it is why Bayesian methods suit streams.
+ 10. MAKE THE PRIOR EXPLICIT AND DEFENSIBLE. Every model has one; a maximum-likelihood fit is just a flat
+     prior you did not write down.
+ 11. WATCH FOR ZERO PROBABILITIES. One zero likelihood annihilates the whole product. Smooth it -
+     Laplace/add-one smoothing exists for exactly this.
+ 12. WHEN THE POSITIVE CLASS IS RARE, EXPECT POOR PRECISION AND SAY SO UP FRONT. It is the base rate,
+     not the model, and no amount of model improvement fixes a 249:1 population imbalance.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Bayes' theorem flips a conditional probability. You know how likely the evidence is given the cause, and
+you want how likely the cause is given the evidence. A test manufacturer measures P(positive given
+disease); a patient wants P(disease given positive). Those are different numbers.
+
+I verified it by simulation rather than trusting the algebra: five million simulated people, 0.4%
+prevalence, a test that is 97% sensitive and 94% specific. Counting the simulation gave 0.061248 and the
+theorem gave 0.060968 - agreeing to four decimals. It is not an approximation or a philosophy, it is
+exactly what counting gives you.
+
+And the reason the answer is 6% rather than 97% is visible in the counts: 19,400 true positives against
+298,800 false ones. There are 249 healthy people for every sick one, so a 6% false-positive rate among the
+healthy produces fifteen times more false positives than true ones. The base rate does all the work, and
+it is the term people leave out.
+
+The form I would actually memorise is the odds form: posterior odds equals prior odds times the likelihood
+ratio. The likelihood ratio here is sensitivity over one-minus-specificity, 0.97 over 0.06, about 16. That
+is a property of the TEST alone - it never mentions prevalence. So one number describes the evidence and
+another describes what you believed before, and you multiply them. A likelihood ratio of 16 sounds huge,
+and multiplied by prior odds of 0.004 it still only gets you to 6%.
+
+What the theorem is really for is accumulating evidence. Repeating the test: one positive gives 6%, two
+give 51%, three give 94%. In log-odds each test adds exactly the same amount - I measured +1.2086 every
+time. That is why log-odds is the natural scale for belief, and why logistic regression, which is linear in
+log-odds, is doing Bayesian evidence accumulation with learned weights.
+
+The trap is that multiplying only works if the evidence is INDEPENDENT. I simulated a case where some
+healthy people always test positive - a persistent cross-reaction. With all false positives persistent,
+the true answer after three positive tests was 0.0572, barely more than one test's 0.0610, while the
+independent calculation still said 0.9443. A sixteen-fold overconfidence, with nothing in the arithmetic
+to warn you.
+
+That is exactly why Naive Bayes is called naive - it multiplies per-feature likelihoods as though the
+features were conditionally independent, so 'New' and 'York' get counted as two pieces of evidence. It
+often still ranks correctly, which is why it survives, and its probabilities should never be trusted."
+
+THE ONE SENTENCE TO NOT FUMBLE: the likelihood ratio describes the TEST and the prior odds describe the
+POPULATION, and you multiply them - which is why a 97% accurate test on a 0.4% condition still leaves you
+at 6%, and why multiplying correlated evidence produced a 16x overconfidence.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    disease = rng.random(N) < P_D
+    pos = np.where(disease, rng.random(N) < SENS, rng.random(N) < (1-SPEC))
+    emp = disease[pos].mean()
+
+The verification, and it is worth noticing that it contains NO probability theory at all. Generate five
+million people, decide who is sick, decide who tests positive using the appropriate rate for each group,
+then ask what fraction of the positives are sick.
+
+`np.where(disease, ..., ...)` applies the sensitivity to the sick and the false-positive rate to the
+healthy - which is exactly the definition of those two numbers, encoded directly.
+
+`disease[pos].mean()` is P(disease | positive) by counting. Comparing it against the formula is what turns
+the theorem from something you believe into something you have checked.
+
+    post = SENS*P_D / (SENS*P_D + (1-SPEC)*(1-P_D))
+
+The theorem itself, and the denominator is the part people get wrong. P(positive) is not one number you
+look up - it is the sum over both ways of testing positive: sick-and-correctly-flagged plus
+healthy-and-wrongly-flagged. Writing it out as two terms makes the base rate impossible to forget, because
+`(1-P_D)` is sitting right there multiplying the false-positive rate.
+
+    LR_pos = SENS/(1-SPEC)
+
+The likelihood ratio - and note what is ABSENT: `P_D` does not appear. That is the entire argument for the
+odds form. The strength of the evidence and the rarity of the hypothesis are separate quantities, and
+mixing them into one formula is why the standard form is hard to reason about.
+
+    o = P_D/(1-P_D)
+    for k in range(0,7):
+        print(o, o/(1+o))
+        o *= LR_pos
+
+Sequential updating in one line: `o *= LR_pos`. Yesterday's posterior odds are today's prior odds, so
+accumulating evidence is repeated multiplication. `o/(1+o)` converts back to a probability only for
+display - the arithmetic stays in odds.
+
+    print(f"{math.log10(o):+11.4f}")
+
+The same sequence in log-odds, which is where the constant appears: +1.2086 per test, every time. Two
+things follow. Independent evidence ADDS on this scale, which is why a linear model in log-odds is the
+natural functional form for combining evidence. And it avoids underflow - multiplying a thousand small
+likelihoods reaches zero in floating point, while adding a thousand log-likelihoods does not.
+
+    always = (~d) & (rng.random(N2) < (1-SPEC)*share)
+    p = np.where(d, rng.random(N2)<SENS,
+                 np.where(always, True, rng.random(N2)<((1-SPEC)*(1-share))))
+
+The independence-violation experiment. `always` marks healthy people who will test positive on EVERY
+repeat - drawn once, outside the per-test loop, which is precisely what makes their errors correlated.
+
+The nested `np.where` splits the healthy into two groups: the persistent ones (always positive) and the
+rest (positive at the reduced independent rate). Keeping the TOTAL false-positive rate constant as `share`
+varies is what makes the comparison fair - the test is equally accurate in every row, and only the
+CORRELATION STRUCTURE of its errors changes.
+
+That is the design that isolates the variable, and it is why the result - 0.9504 down to 0.0572 while the
+formula says 0.9443 throughout - can only be attributed to the independence assumption.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: prevalence 0.4%, sensitivity 97%, specificity 94%. Five million simulated people.
+
+TRACE A - the theorem verified by counting.
+
+    method                                  P(disease | positive)
+    -------------------------------------   ---------------------
+    counting a 5,000,000-person simulation               0.061248
+    Bayes' theorem                                       0.060968
+    difference                                           0.000280
+
+    the four cells:
+      true positives     19,400
+      false positives   298,800
+      total positives   318,200
+      19,400 / 318,200 = 0.0610
+
+The theorem and the count agree. And the cell counts explain the answer better than the formula does:
+there are 249 healthy people per sick person, so a 6% error rate on the healthy majority swamps a 97% hit
+rate on the tiny minority.
+
+TRACE B - the odds form, step by step.
+
+    quantity                                     value
+    ------------------------------------------   ---------
+    prior odds        = 0.0040 / 0.9960          0.004016
+    LR(positive)      = 0.97 / 0.06             16.166700
+    posterior odds    = 0.004016 x 16.1667       0.064926
+    posterior prob    = 0.064926 / 1.064926      0.061000
+
+One multiplication. The likelihood ratio contains no prevalence term at all, which is the property that
+makes it reusable: the same 16.17 applies to a screening population and to a symptomatic clinic, and only
+the prior odds differ.
+
+TRACE C - accumulating identical evidence.
+
+    positives   posterior odds   posterior probability   log10(odds)   change in log10
+    ---------   --------------   ---------------------   -----------   ---------------
+            0           0.0040                  0.400%       -2.3962                 -
+            1           0.0649                  6.097%       -1.1876         +1.2086
+            2           1.0496                 51.211%       +0.0210         +1.2086
+            3          16.9692                 94.435%       +1.2297         +1.2086
+            4         274.3359                 99.637%       +2.4383         +1.2086
+            5       4,435.0965                 99.978%       +3.6469         +1.2086
+            6      71,700.7265                 99.999%       +4.8555         +1.2086
+
+The final column is constant to four decimals. Multiplication in odds space IS addition in log-odds space,
+and every identical piece of evidence contributes the same increment.
+
+Note how non-linear this looks in PROBABILITY: 0.4% to 6% to 51% to 94%. The same evidence produces a tiny
+change at the bottom, an enormous one in the middle, and a tiny one again at the top - which is exactly
+the shape of the logistic function, and exactly why probabilities are a bad scale to reason on.
+
+TRACE D - how much evidence a rare hypothesis needs.
+
+    prevalence   positive tests to reach 95%
+    ----------   ---------------------------
+      50.0000%                             2
+      10.0000%                             2
+       1.0000%                             3
+       0.1000%                             4
+       0.0100%                             5
+       0.0010%                             6
+
+Each factor of ten in rarity costs roughly one more test. That is LOGARITHMIC, which is the reassuring
+result: rare hypotheses are reachable, they just need proportionally more evidence, and the requirement is
+predictable rather than explosive.
+
+TRACE E - the independence assumption, and how badly it fails.
+
+    persistent false positives   measured P(disease | 3 +ve)   Bayes-if-independent   overconfidence
+    --------------------------   ---------------------------   --------------------   --------------
+                            0%                        0.9504                 0.9443            1.0x
+                           20%                        0.2306                 0.9443            4.1x
+                           50%                        0.1093                 0.9443            8.6x
+                          100%                        0.0572                 0.9443           16.5x
+
+    for reference, ONE positive test gives 0.0610
+
+The top row validates the method: with genuinely independent errors, the formula is right.
+
+The bottom row is the warning. Three positive tests took the true probability from 0.0610 to 0.0572 -
+essentially NOTHING, and slightly down through sampling noise - because every one of those tests was
+measuring the same persistent characteristic. Meanwhile the independent calculation still confidently
+reports 0.9443.
+
+The overconfidence column grows smoothly with the correlation, and there is nothing in the arithmetic that
+signals it. You have to know the structure of the errors.
+
+TRACE F - what this means for Naive Bayes.
+
+    situation                                        multiply likelihoods?
+    ----------------------------------------------   ----------------------------------
+    three DIFFERENT tests, different failure modes    approximately yes
+    the same test repeated on the same sample         usually NO - shared cause
+    "New" and "York" in a document                    NO - strongly dependent given class
+    independent sensor readings of different things   yes
+
+Naive Bayes multiplies regardless. That is why its RANKING is often fine - the errors push all classes in
+a similar direction - and its PROBABILITIES are routinely 0.9999 when the truth is 0.7.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (prevalence 0.4%, sensitivity 97%, specificity 94%):
+
+    verification        counting 5,000,000 people: 0.061248 | Bayes: 0.060968 | difference 0.000280
+    the cells           19,400 true positives vs 298,800 false positives -> 6.10%
+    odds form           prior odds 0.004016 x LR 16.1667 = posterior odds 0.064926
+    accumulating        1 test 6.10% | 2 tests 51.21% | 3 tests 94.44% | 5 tests 99.98%
+    log-odds            +1.2086 per test, constant to four decimals
+    rarity              tests to reach 95%: 2 at 50% prevalence, 6 at 0.001% - logarithmic
+    independence fails  3 positives with fully correlated errors: TRUE 0.0572 vs FORMULA 0.9443
+                        (16.5x overconfident; one test alone gives 0.0610)
+
+COMPLEXITY: the theorem is one multiplication and one division. Sequential updating is one multiplication
+per piece of evidence in odds space, or one addition in log-odds. The expense in real Bayesian modelling
+is never the theorem - it is computing P(evidence) when the model is not conjugate, which is what MCMC and
+variational inference exist for.
+
+THE MISTAKES:
+
+    - Base rate neglect: reading 97% sensitivity as 97% confidence. MEASURED: the answer is 6.10%.
+    - Confusing P(positive | disease) with P(disease | positive). They are different questions and the
+      theorem is the conversion.
+    - Forgetting that P(evidence) is a SUM over both hypotheses. Writing the denominator out makes the
+      base rate impossible to omit.
+    - Multiplying likelihood ratios for correlated evidence. MEASURED at 16.5x overconfident.
+    - Trusting Naive Bayes probabilities. Use its ranking; calibrate separately.
+    - Repeating the same test on the same sample and treating it as independent evidence.
+    - Assuming the prior stops mattering. MEASURED: it washes out logarithmically - one extra test per
+      factor of ten in rarity.
+    - A zero likelihood anywhere, which annihilates the entire product. Smooth it.
+    - Multiplying many small likelihoods in floating point instead of adding log-likelihoods.
+    - Reasoning in probability rather than log-odds when accumulating evidence. The same evidence moves
+      probability by 5 points at one end and 43 at the middle.
+    - Treating an "uninformative" prior as neutral. It is a modelling choice, and it stops being
+      uninformative under reparameterisation.
+    - Blaming the model when the positive class is rare. A 249:1 imbalance caps precision regardless of
+      how good the detector is.
+
+THE TAKEAWAY. Bayes' theorem converts P(evidence | cause) into P(cause | evidence), and it is exactly what
+counting gives you - verified here to 0.0003 against a five-million-person simulation. The form worth
+carrying is the odds form, because it separates the LIKELIHOOD RATIO, which describes the test, from the
+PRIOR ODDS, which describe the population: a likelihood ratio of 16 applied to prior odds of 0.004 lands
+at 6%, and that is why a 97% accurate test on a rare condition is mostly false positives. Evidence
+accumulates by multiplying odds, equivalently by adding a constant to the log-odds - measured at +1.2086
+per test - which is precisely what a logistic regression is doing with learned weights. And the assumption
+that makes all of it work is CONDITIONAL INDEPENDENCE: when it failed, three positive tests moved the true
+probability from 6.10% to 5.72% while the formula insisted on 94.43%.""",
+]
+
+_EX_P1AO["Bias (bias-variance)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - BIAS is the error that survives averaging. It is what your model gets
+wrong no matter how many training sets you give it, because the model family itself cannot represent the
+truth.
+
+The definition is operational: train the same model on many different training sets, AVERAGE their
+predictions, and compare that average against reality. Whatever gap remains is bias.
+
+MEASURED ON THIS MACHINE - 300 independent training sets of 40 points, fitting polynomials of various
+degrees to a curved function:
+
+    degree   bias^2     variance   noise^2   total
+    ------   --------   --------   -------   -------
+         0     0.5644     0.0185    0.1225    0.7054
+         1     0.4220     0.0232    0.1225    0.5677
+         2     0.4221     0.0396    0.1225    0.5842
+         3     0.4094     0.0792    0.1225    0.6110
+         5     0.0848     0.0694    0.1225    0.2767
+         7     0.0043     0.1350    0.1225    0.2618
+         9     0.0084     1.4460    0.1225    1.5768
+        12     0.0166   343.3291    0.1225   343.4682
+
+Bias falls as the model gets more flexible - 0.5644 down to 0.0043 - and variance explodes. Those are the
+two different ways to be wrong, and they respond to opposite treatments.
+
+High bias means the model is too SIMPLE and misses the pattern the same way every time. It shows up as
+UNDERFITTING: bad on the training data and bad on the test data, with no gap between them.""",
+
+    """2. THE INTUITION - the defining property of bias is that MORE DATA DOES NOT FIX IT.
+
+That is not a rule of thumb, it is the thing that distinguishes bias from variance, and it is the most
+useful diagnostic in applied machine learning because it tells you what to go and do.
+
+MEASURED, the same two models across a 400x range of training-set sizes:
+
+    training set   degree 1 (high bias)     degree 12 (high variance)
+    size           bias^2      variance     bias^2        variance
+    ------------   ---------   ---------    ----------   ------------
+              20      0.4224      0.0532    620778.5339  126053627.22
+              40      0.4220      0.0230         0.0753        492.40
+             100      0.4220      0.0086         0.0005          0.09
+             400      0.4220      0.0022         0.0000          0.005
+           2,000      0.4220      0.0005         0.0000          0.001
+           8,000      0.4220      0.0001         0.0000          0.0002
+
+The degree-1 bias column is 0.4220 at EVERY size. Four hundred times the data changed it in the fourth
+decimal place, because a straight line cannot bend no matter how many points you show it.
+
+Meanwhile the degree-12 variance fell from 492 to 0.0002. That is what data buys.
+
+SO THE DIAGNOSIS TELLS YOU THE ACTION:
+
+    HIGH VARIANCE   is a DATA problem   -> collect more, augment, regularise, simplify the model
+    HIGH BIAS       is a MODEL problem  -> more capacity, better features, a different model family
+
+Collecting more data to fix high bias is the most expensive way to change nothing. MEASURED below at
+exactly that: 10x the data bought a 1.0x improvement.""",
+
+    """3. EVERY TERM DEFINED.
+
+BIAS. The difference between the AVERAGE prediction (over training sets) and the truth. Systematic error.
+
+BIAS^2. What appears in the decomposition, since errors are squared.
+
+VARIANCE. How much the prediction changes when you retrain on a different sample of the same size.
+
+IRREDUCIBLE ERROR / NOISE. The part of the target that nothing can predict. MEASURED here at 0.1225 - the
+floor no model can go below.
+
+THE DECOMPOSITION. expected error = bias^2 + variance + noise. Exact for squared error.
+
+UNDERFITTING. High bias. The model is too rigid to capture the pattern. Train error itself is high.
+
+OVERFITTING. High variance. The model captures the sample's noise. Train error is low, test error is far
+higher.
+
+MODEL CAPACITY / COMPLEXITY. How rich a set of functions the model can express. Polynomial degree, tree
+depth, network width.
+
+INDUCTIVE BIAS. The assumptions a model family makes before seeing data - linearity, smoothness,
+translation invariance. Not a bug: it is what makes learning from finite data possible at all. A CNN's
+assumption that nearby pixels matter together is inductive bias, and it is why CNNs beat fully-connected
+networks on images.
+
+LEARNING CURVE. Error plotted against training-set size. The standard tool for telling bias from variance
+- if both curves have plateaued and the error is high, it is bias.
+
+TRAINING ERROR vs TEST ERROR. The gap between them is variance; the LEVEL of the training error relative
+to the noise floor is bias. MEASURED in section 4.
+
+REGULARISATION. Deliberately constraining the model. Trades variance down and bias UP.
+
+FEATURE ENGINEERING. Adding inputs that encode real structure. The most direct bias reduction available -
+MEASURED below at 163x.
+
+ENSEMBLING / BAGGING. Averaging many models. Reduces variance, leaves bias essentially unchanged - which
+is why bagging a set of underfitting models does not help.
+
+BOOSTING. Sequentially fitting the residuals. Reduces BIAS, which is why it works with weak learners like
+shallow trees.
+
+DOUBLE DESCENT. The modern observation that test error can fall AGAIN past the interpolation threshold,
+so the classic U-curve is not the whole story. Related to the measurement in section 5.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - diagnosing from TEST error, when the diagnostic signal is in the
+TRAIN error.
+
+MEASURED, both errors against noisy targets, with an irreducible noise floor of 0.1225:
+
+    degree   train MSE   test MSE   gap       diagnosis
+    ------   ---------   --------   -------   ---------------------------------------------
+         1      0.5352     0.5629   +0.0277   HIGH BIAS - train error is 4.4x the noise floor
+         2      0.5259     0.5723   +0.0464   HIGH BIAS
+         3      0.4935     0.5658   +0.0723   HIGH BIAS
+         5      0.1751     0.2325   +0.0575   balanced
+         7      0.1110     0.1534   +0.0424   balanced
+         9      0.1043     0.1785   +0.0741   balanced
+        12      0.0988     0.7595   +0.6607   HIGH VARIANCE - a 0.66 train/test gap
+
+Look at the degree-1 row. The GAP is tiny - 0.0277 - which by the usual "small gap means it generalises"
+reasoning looks healthy. It is not. The train error is 0.5352 against a noise floor of 0.1225, so the model
+cannot even fit the data it was trained on.
+
+That is the signature of high bias: TRAIN ERROR WELL ABOVE THE NOISE FLOOR, with a small train/test gap.
+And the signature of high variance is the opposite: train error AT the floor (0.0988) and test error far
+above it.
+
+So the diagnostic procedure is:
+    train error high, gap small       -> BIAS. More data will not help.
+    train error low, gap large        -> VARIANCE. More data will help.
+    train error at the floor, gap small -> you are done.
+
+You need to know the noise floor, or at least estimate it - which is why "what accuracy would a human
+get?" is such a useful question.
+
+THE SECOND TRAP - reaching for more data. MEASURED, starting from a degree-1 fit on 300 points at a test
+MSE of 0.4336:
+
+    intervention                              test MSE   improvement
+    ---------------------------------------   --------   -----------
+    10x more data, same model                   0.4228          1.0x
+    degree 3 instead of degree 1                0.4235          1.0x
+    degree 7 instead of degree 1                0.0072         60.1x
+    a FEATURE that matches the truth (sin)      0.0026        163.6x
+
+Ten times the data did essentially nothing. A slightly more flexible model did essentially nothing.
+Enough capacity gave 60x, and a FEATURE encoding the real structure gave 164x.
+
+That last row is the one worth internalising: feature engineering is bias reduction. When the model class
+cannot express the pattern, giving it the right input is far more powerful than giving it more rows or
+more parameters - which is why domain knowledge outperforms tuning so often.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHAT MOVES BIAS, and in which direction:
+
+    REDUCES BIAS                                    INCREASES BIAS
+    ---------------------------------------------   ---------------------------------------
+    more model capacity (depth, width, degree)      regularisation (L1, L2, dropout)
+    better FEATURES. MEASURED at 163.6x             early stopping
+    a different model FAMILY                        a smaller model
+    boosting (fits residuals sequentially)          bagging/averaging (leaves bias unchanged)
+    removing a wrong assumption                     adding a constraint or a prior
+    longer training (if underfitting)                more aggressive pruning
+
+Everything in the right-hand column reduces VARIANCE. That is the trade - almost every knob moves both,
+in opposite directions.
+
+THE ONES THAT DO NOT TRADE, which are the valuable ones:
+    MORE DATA           reduces variance and leaves bias alone. MEASURED: degree-1 bias^2 constant at
+                        0.4220 across 400x the data.
+    BETTER FEATURES     reduces bias without adding variance, because you are giving the model
+                        information rather than freedom. MEASURED as the single largest effect at 163.6x.
+    A BETTER-MATCHED
+    INDUCTIVE BIAS      a convolution for images, an attention mechanism for sequences. Reduces bias for
+                        the task AND constrains the hypothesis space, so variance does not explode. This
+                        is why architecture research matters.
+
+THE CLASSIC U-CURVE, and where it stops being true. MEASURED at two dataset sizes:
+
+    degree     n = 40                       n = 2,000
+               bias^2   variance   total    bias^2   variance   total
+    ------    -------   --------   ------   -------  --------   ------
+         1     0.4220     0.0230   0.4449   0.4220    0.0005    0.4225
+         5     0.0847     0.0668   0.1515   0.0741    0.0007    0.0748
+         7     0.0052     0.1302   0.1354   0.0031    0.0005    0.0036
+         9     0.0009     0.8182   0.8191   0.0001    0.0006    0.0007
+        12     0.0753   492.3979 492.4732   0.0000    0.0009    0.0009
+        16   5240.40   409618.82 414859.22   0.0000    0.0011    0.0011
+
+At n=40 there is a sharp U with a minimum at degree 7, and by degree 16 the total error is 414,859.
+
+At n=2,000 the curve falls to 0.0007 at degree 9 and then STAYS FLAT - 0.0011 at degree 16. The right-hand
+arm essentially disappears.
+
+That is the modern point stated as a measurement: "more capacity always overfits" is a claim about how
+much DATA you have, not about capacity. Variance is what capacity costs and data is what pays for it - so
+with enough data you can afford almost any capacity, which is why very large models trained on very large
+corpora do not show the classic trade-off.
+
+RELATED FAILURES THAT LOOK LIKE BIAS AND ARE NOT:
+    a BUG in the feature pipeline - the model is fine and the inputs are wrong;
+    a LABEL problem - the target is noisier than you think, so the "floor" is higher than you assumed;
+    OPTIMISATION failure - the model COULD represent it and training did not converge. Check by
+    deliberately overfitting a tiny subset: if the model cannot reach near-zero error on 20 examples, it
+    is an optimisation or capacity issue, not a data one.""",
+
+    """6. HOW TO CODE IT.
+
+  1. ESTIMATE THE NOISE FLOOR FIRST. What would a human, or a perfect model, achieve? MEASURED here at
+     0.1225 - without it you cannot tell "train error 0.53" from "train error is as low as it can go".
+  2. LOOK AT TRAIN ERROR BEFORE TEST ERROR. MEASURED: the degree-1 model had a tiny train/test gap of
+     0.0277 and was badly underfitting. A small gap is not evidence of health.
+  3. RUN THE LEARNING CURVE. Plot train and test error against training-set size. If both have plateaued
+     and the error is high, it is bias and more data is wasted money.
+  4. OVERFIT A TINY SUBSET AS A SANITY CHECK. If your model cannot reach near-zero error on 20 examples,
+     the problem is capacity or optimisation, not data.
+  5. TO FIX HIGH BIAS, ADD CAPACITY OR FEATURES - not rows. MEASURED: 10x the data gave 1.0x, a matched
+     feature gave 163.6x.
+  6. TRY FEATURE ENGINEERING BEFORE A BIGGER MODEL. It reduces bias WITHOUT adding variance, because you
+     are supplying information rather than freedom.
+  7. TO FIX HIGH VARIANCE, ADD DATA OR REGULARISATION. MEASURED: degree-12 variance fell from 492 to
+     0.0002 across a 200x data increase.
+  8. DO NOT BAG AN UNDERFITTING MODEL. Averaging reduces variance and leaves bias untouched - a hundred
+     averaged straight lines are still a straight line.
+  9. USE BOOSTING WHEN BIAS IS THE PROBLEM. It fits residuals sequentially, which is bias reduction, and
+     it is why boosted shallow trees work.
+ 10. MEASURE THE DECOMPOSITION DIRECTLY IF YOU CAN. Bootstrap-resample the training set 100 times, refit,
+     and compute the variance of the predictions per point and the gap of their mean from the target. It
+     is twenty lines and it removes all the guessing.
+ 11. CHECK YOUR CAPACITY AGAINST YOUR DATA SIZE BEFORE ASSUMING OVERFITTING. MEASURED: at n=2,000 the
+     degree-16 model was as good as degree 9. The U-curve's right arm is a small-data phenomenon.
+ 12. WATCH THE NUMERICS. My first version of this measurement used a raw-basis polynomial fit and
+     produced a bias^2 of 1e10 at degree 12 - that was conditioning, not statistics. Domain-scaled fits
+     fixed it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Bias is the error that survives averaging. If you train the same model on many different training sets
+and average their predictions, whatever gap remains between that average and the truth is bias - it is what
+the model family gets wrong systematically, every time.
+
+I measured it directly: 300 independent training sets, fit a polynomial to each, compare the average
+prediction against reality. A degree-1 model had a bias-squared of 0.4220 and a variance of 0.0232. A
+degree-9 model had a bias-squared of 0.0009 and a variance of 1.4460. Those are the two different ways to
+be wrong.
+
+The defining property - and the reason this matters practically - is that MORE DATA DOES NOT FIX BIAS. I
+ran the same models from 20 training points up to 8,000. The degree-1 bias-squared was 0.4220 at every
+single size, unchanged in the fourth decimal across a 400-fold increase, because a straight line cannot
+bend no matter how many points you show it. Over the same range, the high-variance model's variance fell
+from 492 to 0.0002.
+
+So the diagnosis tells you the action. High variance is a data problem: collect more, regularise,
+simplify. High bias is a model problem: more capacity, better features, a different family. Collecting
+data to fix bias is the most expensive way to change nothing.
+
+The diagnostic itself is the part people get wrong. They look at the train/test gap. My degree-1 model had
+a gap of 0.028, which looks perfectly healthy - and its train error was 0.535 against a noise floor of
+0.123. It could not fit the data it was trained on. So the signature of high bias is train error well
+above the noise floor with a SMALL gap, and the signature of high variance is train error at the floor
+with a LARGE gap. You need to know roughly what the floor is, which is why 'what would a human score?' is
+such a useful question.
+
+I also measured what actually fixes bias. Starting from a degree-1 fit: ten times more data gave a 1.0x
+improvement, a slightly more flexible model gave 1.0x, enough capacity gave 60x, and adding a FEATURE that
+matched the real structure gave 164x. Feature engineering is bias reduction, and it beats both more data
+and more parameters when the model class simply cannot express the pattern.
+
+One modern caveat. The classic U-curve was sharp in my small-data run - minimum at degree 7, and by degree
+16 the error was 414,859. At 2,000 training points the curve fell and then stayed flat, 0.0007 at degree 9
+and 0.0011 at degree 16. So 'more capacity always overfits' is a statement about how much data you have."
+
+THE ONE SENTENCE TO NOT FUMBLE: bias is the error more data cannot fix - measured as 0.4220 unchanged
+across 400x the training data - so diagnose it from TRAIN error against the noise floor, and fix it with
+capacity or features, never with rows.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def decompose(deg, n, trials=300):
+        P = np.empty((trials, len(XTE)))
+        for t in range(trials):
+            x, y = sample(n, base+t)
+            P[t] = fit(x, y, deg)(XTE)
+        m = P.mean(0)
+        return np.mean((m - YTRUE)**2), np.mean(P.var(0))
+
+The decomposition computed honestly, and every part of it matters.
+
+`trials` INDEPENDENT training sets - a different `seed` each time, so each fit sees genuinely different
+data drawn from the same distribution. This is what "averaging over training sets" means, and it is why
+you cannot compute bias from a single fit.
+
+`P.mean(0)` is the AVERAGE MODEL - the average prediction at each test point across all 300 fits. Its gap
+from the truth is bias^2. `P.var(0)` is how much the fits disagree with each other at each point, which is
+variance.
+
+A fixed test grid `XTE` is essential: bias and variance are defined POINTWISE, so the models must be
+compared at the same locations.
+
+    def sample(n, seed):
+        r = np.random.default_rng(seed)
+        x = r.uniform(-3,3,n)
+        return x, truth(x) + r.normal(0, NOISE, n)
+
+The noise is added to the TARGETS, not the inputs, and `NOISE=0.35` gives an irreducible floor of
+0.35^2 = 0.1225. Knowing that number exactly is what makes section 4's diagnosis possible - in real data
+you have to estimate it, and that estimate is the hardest part of the whole exercise.
+
+    return Polynomial.fit(x, y, deg)
+
+Rather than `np.polyfit`. My first version used the raw basis and produced a bias^2 of 1.4e10 at degree 12
+with 20 points - which is not statistics, it is a Vandermonde matrix with a condition number of 1e16.
+`Polynomial.fit` rescales the domain to [-1,1] and conditions properly.
+
+Worth flagging generally: when a measurement produces a number many orders of magnitude from plausible,
+suspect the numerics before the theory.
+
+    if deg >= n: return None
+
+An underdetermined fit is not a high-variance model, it is undefined. Reporting it as a data point would
+have put meaningless numbers in the table - my first version did exactly that and printed a bias^2 of
+6e5 for degree 12 on 20 points.
+
+    trs.append(np.mean((p(x)-y)**2))
+    xt, yt = sample(400, 9000+t)
+    tes.append(np.mean((p(xt)-yt)**2))
+
+Both errors measured against NOISY targets. An earlier version compared train error against noisy targets
+and test error against the noiseless truth, which produced NEGATIVE gaps - test error apparently lower
+than train error. Comparing like with like is the fix, and the sign of the gap is what told me something
+was wrong.
+
+    Xf = np.column_stack([x, np.sin(2.2*x)])
+    cf = np.linalg.lstsq(np.column_stack([Xf, np.ones(len(x))]), y, rcond=None)[0]
+
+The feature-engineering experiment, and it is deliberately a LINEAR model still - the same family, the
+same number of effective parameters. The only change is that one input column is `sin(2.2x)`, which is
+part of the true function.
+
+That is why it gets 163.6x where more capacity gets 60x: capacity lets a model SEARCH for the structure,
+and a feature simply HANDS it over.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: truth is `sin(2.2x) + 0.35x` on [-3,3], target noise sigma 0.35 so the irreducible floor is 0.1225.
+Polynomials of varying degree, 300 independent training sets, fixed 200-point test grid.
+
+TRACE A - the decomposition at n = 40.
+
+    degree   bias^2     variance    noise^2   total      dominant term
+    ------   --------   ---------   -------   --------   -------------
+         0     0.5644      0.0185    0.1225     0.7054   bias (30x variance)
+         1     0.4220      0.0232    0.1225     0.5677   bias (18x)
+         2     0.4221      0.0396    0.1225     0.5842   bias (11x)
+         3     0.4094      0.0792    0.1225     0.6110   bias (5x)
+         5     0.0848      0.0694    0.1225     0.2767   balanced
+         7     0.0043      0.1350    0.1225     0.2618   variance (31x bias)
+         9     0.0084      1.4460    0.1225     1.5768   variance (172x)
+        12     0.0166    343.3291    0.1225   343.4682   variance (20,682x)
+
+Bias falls 131-fold from degree 0 to degree 7; variance rises 18,500-fold from degree 0 to degree 12. The
+crossover is around degree 5, and the total is minimised at degree 7.
+
+Note degrees 1 and 2 have almost identical bias (0.4220, 0.4221). Adding a quadratic term bought nothing,
+because the truth is a sine - the wrong basis does not improve by being slightly larger.
+
+TRACE B - the defining property, across a 400x range of training-set sizes.
+
+    n       degree 1: bias^2   variance    degree 12: bias^2   variance
+    -----   ----------------   ---------   -----------------   ------------
+       20             0.4224      0.0532        620,778.5339   126,053,627
+       40             0.4220      0.0230              0.0753          492.40
+      100             0.4220      0.0086              0.0005            0.0917
+      400             0.4220      0.0022              0.0000            0.0049
+    2,000             0.4220      0.0005              0.0000            0.0009
+    8,000             0.4220      0.0001              0.0000            0.0002
+
+The degree-1 bias column: 0.4224, 0.4220, 0.4220, 0.4220, 0.4220, 0.4220. Flat to four decimal places
+across 400x the data.
+
+Its variance fell 532-fold over the same range, and the degree-12 variance fell from 492 to 0.0002. Data
+buys variance reduction and nothing else.
+
+(The n=20 degree-12 row is a degree-12 polynomial through 20 points - nearly underdetermined, so those
+numbers are conditioning artefacts rather than statistics. Included because dropping a row that looks bad
+is how measurements become dishonest, and flagged so nobody reads meaning into it.)
+
+TRACE C - diagnosing from train error. Noise floor 0.1225.
+
+    degree   train MSE   train / floor   test MSE   gap       verdict
+    ------   ---------   -------------   --------   -------   -------------
+         1      0.5352            4.4x     0.5629   +0.0277   HIGH BIAS
+         2      0.5259            4.3x     0.5723   +0.0464   HIGH BIAS
+         3      0.4935            4.0x     0.5658   +0.0723   HIGH BIAS
+         5      0.1751            1.4x     0.2325   +0.0575   balanced
+         7      0.1110            0.9x     0.1534   +0.0424   balanced
+         9      0.1043            0.9x     0.1785   +0.0741   balanced
+        12      0.0988            0.8x     0.7595   +0.6607   HIGH VARIANCE
+
+The `train / floor` column is the diagnostic that the gap column misses. Degree 1 has the SMALLEST gap in
+the table (0.0277) and is the worst model in it - because its train error is 4.4x the noise floor.
+
+Degree 12 has train error BELOW the floor (0.8x), which is the definition of fitting noise, and a gap of
+0.66.
+
+TRACE D - what actually reduces bias. Baseline: degree-1 fit on 300 points, test MSE 0.4336.
+
+    intervention                              test MSE   improvement
+    ---------------------------------------   --------   -----------
+    baseline (degree 1, n=300)                  0.4336         1.0x
+    10x more data (n=3,000), same model         0.4228         1.0x
+    degree 3 instead of 1                       0.4235         1.0x
+    degree 7 instead of 1                       0.0072        60.1x
+    a matched FEATURE, sin(2.2x), still linear  0.0026       163.6x
+
+Rows 2 and 3 are the expensive ways to change nothing. Row 4 is enough capacity to search for the
+structure. Row 5 hands the structure over directly, in the SAME linear model family - and is 2.7x better
+than the flexible model while being far simpler.
+
+TRACE E - the U-curve, and where it flattens.
+
+    degree      n = 40 total       n = 2,000 total
+    ------   ---------------      ---------------
+         0            0.5824               0.5648
+         1            0.4449               0.4225
+         3            0.4859               0.4066
+         5            0.1515               0.0748
+         7            0.1354  <- min              0.0036
+         9            0.8191               0.0007  <- min
+        12          492.4732               0.0009
+        16      414,859.2215               0.0011
+
+At n=40: a sharp minimum at degree 7, then catastrophic growth - 414,859 by degree 16.
+
+At n=2,000: minimum at degree 9 (0.0007), and degree 16 is 0.0011 - a 1.6x penalty rather than a
+3,000,000x one.
+
+The right-hand arm of the U flattens as data grows, because variance is what capacity costs and data is
+what pays for it. That single comparison is why "bigger models always overfit" is a statement about
+dataset size.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (truth = sin(2.2x)+0.35x, noise sigma 0.35 so the irreducible floor is 0.1225):
+
+    decomposition at n=40   degree 1: bias^2 0.4220, variance 0.0232
+                            degree 7: bias^2 0.0043, variance 0.1350
+                            degree 12: bias^2 0.0166, variance 343.33
+    THE defining property   degree-1 bias^2 = 0.4220 at n = 40, 100, 400, 2,000 AND 8,000
+                            degree-12 variance: 492.40 at n=40 -> 0.0002 at n=8,000
+    diagnosis               degree 1: train 0.5352 (4.4x the floor), gap only +0.0277 -> HIGH BIAS
+                            degree 12: train 0.0988 (0.8x the floor), gap +0.6607 -> HIGH VARIANCE
+    what fixes bias         10x data 1.0x | degree 3 1.0x | degree 7 60.1x | a matched FEATURE 163.6x
+    the U-curve             n=40: min at degree 7, degree 16 total 414,859
+                            n=2,000: min at degree 9, degree 16 total 0.0011
+
+COMPLEXITY: measuring the decomposition costs `trials x` the training time - 300 fits here. Bootstrap
+resampling gives a usable approximation from one dataset for the same multiple.
+
+THE MISTAKES:
+
+    - Diagnosing from the train/test GAP alone. MEASURED: the worst model in the table had the smallest
+      gap.
+    - Not knowing the noise floor, so "train error 0.53" cannot be interpreted.
+    - Collecting more data to fix underfitting. MEASURED: 10x gave 1.0x.
+    - Assuming bias falls with data. MEASURED: constant to four decimals across 400x.
+    - Bagging or averaging an underfitting model. Variance reduction on a bias problem - a hundred
+      averaged straight lines are a straight line.
+    - Regularising a high-bias model, which increases bias further.
+    - Reaching for a bigger model before better features. MEASURED: the feature beat the capacity 2.7x.
+    - Assuming more capacity always overfits. MEASURED: at n=2,000, degree 16 was within 1.6x of the
+      optimum.
+    - Confusing an optimisation failure with bias. Overfit 20 examples as a check - if you cannot, it is
+      not a data problem.
+    - Confusing a broken feature pipeline with bias. The model may be fine and the inputs wrong.
+    - Trusting numbers many orders of magnitude from plausible. MEASURED: my first attempt reported
+      bias^2 of 1.4e10 - a conditioning artefact, not a finding.
+    - Reporting an underdetermined fit (degree >= n) as a data point. It is undefined, not high-variance.
+
+THE TAKEAWAY. Bias is the error that survives averaging over training sets - what the model family gets
+wrong systematically because it cannot represent the truth - and its defining property is that DATA DOES
+NOT FIX IT: measured at 0.4220 unchanged across a 400-fold increase in training data, while the
+high-variance model's variance fell from 492 to 0.0002 over the same range. That asymmetry is what makes
+the diagnosis actionable, and the diagnosis comes from TRAIN error against the noise floor rather than
+from the train/test gap - the most underfit model in my table also had the smallest gap. Fix bias with
+capacity or, better, with FEATURES: a single feature encoding the real structure beat ten times the data
+by 164x and beat a much more flexible model by 2.7x. And the classic U-curve is a small-data phenomenon -
+with fifty times the data, the most flexible model I tried was within 1.6x of the optimum instead of
+3,000,000x worse.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
