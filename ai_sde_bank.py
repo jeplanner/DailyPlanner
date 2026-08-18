@@ -335145,6 +335145,1937 @@ with a FAST hash, compare in constant time, scope them, expire them, and prefix 
 the one you leak.""",
 ]
 
+_EX_P1AO["Activation function"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an activation function is the little BEND put after each layer. It is
+what stops a deep network from collapsing into a single straight line.
+
+Without it, stacking layers buys you literally nothing, and that is provable rather than rhetorical. A
+linear layer is a matrix multiply, and multiplying matrices gives you... another matrix.
+
+MEASURED ON THIS MACHINE - a 4-layer network, 8 -> 32 -> 32 -> 16 -> 1, with NO activation:
+
+    the equivalent single matrix W1 @ W2 @ W3 @ W4 has shape (8, 1)
+    max |deep(x) - single(x)| over 5,000 inputs : 3.553e-15
+    (float64 machine epsilon: 2.220e-16)
+
+    parameters in the deep version  : 1,808
+    parameters actually expressible :     8
+
+The 4-layer network and the 1-layer network are the SAME FUNCTION to within floating-point rounding. You
+are storing 1,808 numbers to describe an 8-dimensional linear map. All that depth, all that compute, and
+the model can only draw a straight line.
+
+The activation function is the one ingredient that makes depth mean anything.""",
+
+    """2. THE INTUITION - a linear model can only split the world with a straight cut. Some problems cannot
+be split that way at all.
+
+XOR is the classic: y = 1 when exactly ONE of two conditions holds. No straight line separates those
+four quadrants, and no stack of straight lines does either, because the stack IS a straight line.
+
+MEASURED - the SAME 2-32-32-1 architecture with the SAME initialisation, changing only the activation,
+on 6,000 train and 6,000 test examples:
+
+    activation   train acc   test acc
+    ----------   ---------   --------
+    none            0.6098     0.6018
+    sigmoid         0.9762     0.9745
+    tanh            0.9973     0.9962
+    relu            0.9987     0.9982
+    leaky relu      0.9987     0.9982
+
+And "none" at 0.61 is not undertrained - it is at its CEILING. I brute-forced the best possible linear
+classifier on this data over every direction and threshold:
+
+    best accuracy achievable by ANY linear model : 0.6327
+
+The activation-free network reached 0.6098 against a linear ceiling of 0.6327. It is not failing to
+learn; it has learned nearly the best straight line there is, and the best straight line is worthless
+here.
+
+WHAT THE BEND ACTUALLY BUYS - a ReLU network is PIECEWISE linear: each unit is on or off, and each
+distinct on/off pattern defines a region where the network is exactly affine. MEASURED, counting distinct
+patterns over 200,000 random inputs in 2-D:
+
+    hidden units    distinct activation patterns    2^n
+    ------------    ----------------------------    ---------
+               2                               4    4
+               4                              11    16
+               8                              33    256
+              16                             128    65,536
+              32                             457    4.29e9
+              64                           1,681    huge
+
+So 64 units carve the input space into 1,681 regions, each with its own linear function. That is where
+the "curves" come from - not smooth curves, but a fine enough piecewise-linear approximation to look
+like one. Note it grows far below 2^n, because the regions are cut by hyperplanes and most sign
+combinations are geometrically impossible.""",
+
+    """3. EVERY TERM DEFINED.
+
+ACTIVATION FUNCTION. A non-linear function applied element-wise to a layer's output.
+
+NON-LINEARITY. Any function that is not of the form `ax + b`. The property that matters; the specific
+shape matters much less.
+
+LINEAR / AFFINE. `Wx + b`. Composing affine maps gives an affine map - MEASURED above to 3.553e-15.
+
+ReLU. `max(0, z)`. Cheap, derivative exactly 1 or exactly 0, the default since roughly 2012.
+
+LEAKY ReLU. `z if z > 0 else 0.01z`. A small slope on the negative side so a dead unit can recover.
+
+DYING ReLU. A unit whose input is negative for every example. Its gradient is exactly 0 forever, so it
+never updates again - permanently dead weight.
+
+SIGMOID. `1/(1+exp(-z))`, output in (0,1). MEASURED max derivative 0.25 - which is exactly the vanishing
+gradient problem.
+
+TANH. Output in (-1,1), zero-centred. MEASURED max derivative 1.0, so much better behaved than sigmoid
+in depth.
+
+GELU. `z * Phi(z)`, a smooth ReLU used in transformers. MEASURED derivative at z = -2 is -0.086 - it is
+NON-MONOTONIC near zero, which ReLU is not.
+
+SiLU / SWISH. `z * sigmoid(z)`. Very similar to GELU. MEASURED f(-2) = -0.238.
+
+SOFTMAX. Not really an activation - it normalises a whole vector into a probability distribution, at the
+OUTPUT layer.
+
+SATURATION. Where a function flattens out and its derivative approaches zero. Sigmoid saturates at both
+ends; ReLU only on the left.
+
+VANISHING GRADIENT. Gradients shrinking toward zero as they propagate backward, so early layers stop
+learning. MEASURED below at 9.4e-13 across 20 sigmoid layers.
+
+EXPLODING GRADIENT. The reverse - gradients growing without bound.
+
+PIECEWISE LINEAR. Composed of straight segments. What a ReLU network is, exactly. MEASURED at 1,681
+regions for 64 units.
+
+UNIVERSAL APPROXIMATION THEOREM. A single hidden layer with a non-linearity, given enough units, can
+approximate any continuous function. It says nothing about how many units, or whether training will find
+them.
+
+ELEMENT-WISE. Applied independently to each number, so no information mixes between units. The MIXING is
+done by the matrix multiply; the activation only bends.
+
+HE / XAVIER INITIALISATION. Weight scales chosen to keep activations and gradients at a usable magnitude
+through depth. Paired with the activation - He for ReLU, Xavier for tanh.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "deep networks learn hierarchical features". Only if there is
+a non-linearity between the layers. Without one, MEASURED, twenty layers are one layer with extra steps.
+
+The subtler version of the same mistake: putting a linear layer immediately after another linear layer
+somewhere inside a network. Those two collapse into one, so you have paid for parameters and compute and
+bought no expressiveness. It happens most often in hand-written blocks where someone forgot the
+activation between a projection and the next matmul.
+
+THE SECOND TRAP - using sigmoid in hidden layers. MEASURED, mean gradient magnitude propagating back
+through 20 layers of 64 units:
+
+    activation   layer 20    layer 15    layer 10    layer 5     layer 1     ratio L1/L20
+    ----------   ---------   ---------   ---------   ---------   ---------   ------------
+    sigmoid      6.968e-06   3.580e-09   2.984e-12   2.239e-15   6.563e-18       9.419e-13
+    tanh         2.939e-05   1.667e-05   1.494e-05   1.091e-05   6.367e-06       2.166e-01
+    relu         1.764e-05   3.912e-05   5.283e-05   8.143e-05   7.211e-05       4.087e+00
+
+Sigmoid's gradient at layer 1 is a TRILLION times smaller than at layer 20. The first layers receive
+effectively nothing and never learn. And the cause is visible in the function itself - MEASURED, the
+maximum derivative of sigmoid is 0.25, so every layer multiplies the gradient by at most a quarter, and
+0.25^20 is about 1e-12.
+
+Tanh's maximum derivative is 1.0, so it degrades to 0.22 rather than 1e-12. ReLU's derivative is exactly
+1 where the unit is on, so gradients pass through UNCHANGED - which is the whole reason ReLU unlocked
+deep networks.
+
+THE THIRD TRAP - the dying ReLU. Its derivative is exactly 0 for negative inputs, so a unit whose input
+is always negative gets zero gradient forever and is permanently dead. Too high a learning rate can kill
+a large fraction of a layer in one step. Leaky ReLU's 0.01 slope exists purely to keep a trickle of
+gradient flowing so the unit can come back.
+
+THE FOURTH TRAP - reaching for an exotic activation to fix a training problem. The evidence in the table
+above is that the choice between tanh, ReLU, leaky, GELU and SiLU moves test accuracy by fractions of a
+percent, while the choice between "some non-linearity" and "none" is the difference between 0.9982 and
+0.6018. Get the initialisation, the learning rate and the normalisation right first.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE FUNCTIONS AND THEIR DERIVATIVES, which is what training actually sees. MEASURED at
+z = -4, -2, -0.5, 0, 0.5, 2, 4:
+
+    relu     f    0.000   0.000   0.000   0.000   0.500   2.000   4.000
+             f'   0.000   0.000   0.000   0.000   1.000   1.000   1.000
+    leaky    f   -0.040  -0.020  -0.005   0.000   0.500   2.000   4.000
+             f'   0.010   0.010   0.010   0.010   1.000   1.000   1.000
+    tanh     f   -0.999  -0.964  -0.462   0.000   0.462   0.964   0.999
+             f'   0.001   0.071   0.786   1.000   0.786   0.071   0.001
+    sigmoid  f    0.018   0.119   0.378   0.500   0.622   0.881   0.982
+             f'   0.018   0.105   0.235   0.250   0.235   0.105   0.018
+    gelu     f   -0.000  -0.045  -0.154   0.000   0.346   1.955   4.000
+             f'  -0.000  -0.086   0.133   0.500   0.867   1.086   1.000
+    silu     f   -0.072  -0.238  -0.189   0.000   0.311   1.762   3.928
+             f'  -0.053  -0.091   0.260   0.500   0.740   1.091   1.053
+
+Read the derivative rows. Sigmoid never exceeds 0.25 anywhere - a hard ceiling that compounds with
+depth. Tanh reaches 1.0 but only in a narrow band around zero; at z = 4 it is 0.001. ReLU is exactly 1 or
+exactly 0, with no in-between and no decay.
+
+GELU and SiLU are the interesting modern ones: their derivatives go slightly NEGATIVE around z = -2, and
+they EXCEED 1 around z = 2 (1.086 and 1.091). They are smooth, non-monotonic near the origin, and that
+smoothness is thought to help optimisation in very deep transformers - though the measured differences in
+final quality are small.
+
+CHOOSING, in practice:
+    HIDDEN LAYERS, DEFAULT      ReLU. Cheapest to compute, gradient exactly 1 when on.
+    IF UNITS ARE DYING          leaky ReLU or GELU. A non-zero negative slope lets them recover.
+    TRANSFORMERS                GELU or SiLU/SwiGLU. What the literature converged on.
+    RNNs                        tanh, because bounded outputs stop the recurrent state exploding.
+    BINARY OUTPUT               sigmoid, at the OUTPUT layer.
+    MULTI-CLASS OUTPUT          softmax, at the OUTPUT layer.
+    REGRESSION OUTPUT           none. A bounded activation would cap the range you can predict.
+    HIDDEN LAYERS               NEVER sigmoid. MEASURED at 1e-12 gradient decay over 20 layers.
+
+WHAT ELSE CHANGED WHEN ReLU DID. The move from sigmoid to ReLU did not happen alone - He
+initialisation, batch/layer normalisation and residual connections all attack the same problem from
+different angles. Residual connections in particular give the gradient a path that skips the
+non-linearity entirely, which is why 100-layer networks train at all. The activation is one part of a
+system, and choosing it in isolation is how people end up with an exotic function and a network that
+still will not train.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE ReLU UNLESS YOU HAVE A REASON. `np.maximum(z, 0)`. Cheap, and its gradient is exactly 1 when
+     on, which is the property that matters.
+  2. NEVER USE SIGMOID IN A HIDDEN LAYER. MEASURED: 20 layers of sigmoid shrink the gradient by a factor
+     of 1e-12. It is fine at a binary OUTPUT.
+  3. PAIR THE ACTIVATION WITH THE INITIALISATION. He (`sqrt(2/fan_in)`) for ReLU, Xavier
+     (`sqrt(1/fan_in)`) for tanh. Getting this wrong looks like the activation's fault.
+  4. CHECK FOR DEAD UNITS: the fraction of hidden units that output zero for EVERY example in a batch.
+     If it is large, lower the learning rate or switch to leaky ReLU.
+  5. PUT NO ACTIVATION ON A REGRESSION OUTPUT. A bounded function caps what you can predict.
+  6. NEVER STACK TWO LINEAR LAYERS with nothing between them. MEASURED: they collapse to one, exactly,
+     and you have paid for parameters that cannot express anything new.
+  7. THE DERIVATIVE OF ReLU IS `(z > 0)`. Note it is the derivative with respect to the PRE-activation
+     z, and it is undefined at exactly 0 - every framework picks 0, and it never matters in practice.
+  8. WATCH THE GRADIENT MAGNITUDE PER LAYER during training. A clean geometric decay toward the input
+     is the vanishing-gradient signature and it is visible in one plot.
+  9. DIAGNOSE BEFORE SUBSTITUTING. MEASURED: switching among tanh/ReLU/leaky/GELU moved test accuracy
+     by fractions of a percent. If your model is not training, the activation is rarely the cause.
+ 10. FOR VERY DEEP NETWORKS, USE RESIDUAL CONNECTIONS. They give gradients a path that bypasses the
+     non-linearity entirely, and they matter more than which activation you chose.
+ 11. APPLY IT ELEMENT-WISE. All the mixing between units happens in the matrix multiply; the activation
+     only bends each number on its own.
+ 12. IN A CUSTOM LAYER, CACHE THE MASK. For ReLU you need `(z > 0)` in the backward pass - store it in
+     the forward pass rather than recomputing.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"An activation function is the bend applied after each layer, and without it depth is worthless - which
+is provable, not rhetorical.
+
+A linear layer is a matrix multiply, and multiplying matrices gives you another matrix. I built a
+four-layer network with no activation - 8 to 32 to 32 to 16 to 1 - and compared it against the single
+matrix W1@W2@W3@W4. The largest disagreement over 5,000 inputs was 3.5e-15, which is floating-point
+rounding. So 1,808 parameters were describing an 8-dimensional linear map. All the depth, all the
+compute, and it can only draw a straight line.
+
+To show what that costs, I trained the same 2-32-32-1 architecture on XOR, changing only the activation.
+With no activation: 0.60 test accuracy. With sigmoid 0.97, tanh 0.996, ReLU 0.998. And the
+activation-free version is not undertrained - I brute-forced the best possible linear classifier on that
+data and it was 0.633, so the network had essentially reached the linear ceiling. It is expressively
+incapable, not badly optimised.
+
+What the bend buys is piecewise linearity. Each ReLU unit is on or off, and each on/off pattern defines a
+region where the network is exactly affine. I counted them: 64 hidden units carved a 2-D input space into
+1,681 distinct regions. That is where the 'curves' come from - a fine enough piecewise-linear
+approximation to look smooth.
+
+The part I would emphasise for practice is WHICH non-linearity, because the failure is specific. Sigmoid's
+maximum derivative is 0.25, so every layer multiplies the gradient by at most a quarter. I measured
+gradients propagating back through twenty layers: sigmoid's gradient at layer 1 was 9.4e-13 times its
+value at layer 20 - a trillionfold decay, so the early layers receive nothing. Tanh, whose maximum
+derivative is 1.0, decayed only to 0.22. ReLU's derivative is exactly 1 when the unit is on, so gradients
+passed through unchanged - actually growing slightly, by 4x. That single property is why ReLU unlocked
+deep networks.
+
+The trap on the other side is the dying ReLU: its derivative is exactly zero for negative inputs, so a
+unit that is always negative gets zero gradient forever. Leaky ReLU's 0.01 slope exists purely to keep a
+trickle flowing.
+
+And the honest calibration: switching between tanh, ReLU, leaky and GELU moved my test accuracy by
+fractions of a percent, while having a non-linearity at all was the difference between 0.998 and 0.60.
+If a model will not train, the activation is rarely the cause - look at initialisation, learning rate and
+normalisation first."
+
+THE ONE SENTENCE TO NOT FUMBLE: without an activation the whole network multiplies out to a single
+matrix - measured identical to 3.5e-15 - so the non-linearity is not a refinement, it is the only reason
+depth exists.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    deep   = ((((X @ W1) @ W2) @ W3) @ W4)
+    Weq    = W1 @ W2 @ W3 @ W4
+    single = X @ Weq
+
+The collapse, in three lines. `deep` applies four layers in sequence; `Weq` multiplies the four weight
+matrices FIRST and applies one. Matrix multiplication is associative, so these are the same computation -
+and `np.abs(deep-single).max()` returning 3.553e-15 is the empirical confirmation.
+
+The shapes make the loss concrete: `W1 @ W2 @ W3 @ W4` has shape (8, 1), so however many parameters the
+layers hold, only 8 numbers are expressible. This is the entry in three lines of numpy, and it is worth
+running once yourself.
+
+    def f(z):
+        if acts=='none':    return z, np.ones_like(z)
+        if acts=='relu':    return np.maximum(z,0), (z>0).astype(float)
+        if acts=='tanh':    t=np.tanh(z); return t, 1-t*t
+        if acts=='sigmoid': s=1/(1+np.exp(-z)); return s, s*(1-s)
+        if acts=='leaky':   return np.where(z>0,z,0.01*z), np.where(z>0,1.0,0.01)
+
+Each branch returns the VALUE and the DERIVATIVE together, because backpropagation needs both and the
+derivative is usually cheaper to compute from the value than from scratch. `1 - t*t` reuses `tanh(z)`;
+`s*(1-s)` reuses the sigmoid. The `'none'` branch returning `ones_like` is what makes it a genuine
+control - identical code path, derivative 1 everywhere.
+
+    g2 = (g3@W3.T)*d2
+    g1 = (g2@W2.T)*d1
+
+Backpropagation, and the `* d` is the whole story of vanishing gradients. At each layer the incoming
+gradient is MULTIPLIED by the activation's derivative. If that derivative is at most 0.25, twenty layers
+multiply by at most 0.25^20 ~ 1e-12. If it is exactly 1, nothing shrinks. The table in section 4 is this
+one line, executed twenty times.
+
+    pat = (X1@W1+b1 > 0)
+    npat = len({p.tobytes() for p in pat})
+
+Counting the linear regions. Each row of `pat` is the on/off pattern of every hidden unit for one input;
+`tobytes()` makes it hashable so a set counts distinct patterns. MEASURED 1,681 for 64 units.
+
+This is a direct measurement of expressiveness - how many different affine functions the network can be,
+depending on where you are in input space.
+
+    scale = np.sqrt(2/64) if act=='relu' else np.sqrt(1/64)
+
+He initialisation for ReLU, Xavier otherwise, and it matters for the fairness of the vanishing-gradient
+comparison. ReLU zeroes half its inputs, so its weights need to be larger by `sqrt(2)` to keep the
+variance of activations stable through depth. Using the same scale for both would have confounded "the
+activation is bad" with "the initialisation was wrong for it".
+
+    best = 0
+    for th in np.linspace(0, np.pi, 721):
+        w = np.array([np.cos(th), np.sin(th)])
+        for b in np.linspace(-2, 2, 201):
+            best = max(best, max(a, 1-a))
+
+The linear ceiling, by brute force over every direction and threshold. MEASURED 0.6327 - which is what
+turns "the network with no activation got 0.61" from a training failure into a proof of expressive
+limitation. Establishing the ceiling is what makes the comparison mean something.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the collapse.
+
+    network                                    equivalent form   parameters
+    ----------------------------------------   ---------------   ----------
+    8 -> 32 -> 32 -> 16 -> 1, NO activation    one (8,1) matrix       1,808
+    the function it can actually express       8 numbers                  8
+
+    max |deep(x) - single(x)| over 5,000 inputs : 3.553e-15
+    float64 machine epsilon                     : 2.220e-16
+
+Sixteen machine epsilons apart - the difference is the order of the multiplications, nothing more.
+
+TRACE B - XOR, same architecture and initialisation, only the activation differs.
+
+    activation   train acc   test acc   verdict
+    ----------   ---------   --------   -----------------------------------------
+    none            0.6098     0.6018   at the linear ceiling
+    sigmoid         0.9762     0.9745   works, and is the weakest of the four
+    tanh            0.9973     0.9962
+    relu            0.9987     0.9982
+    leaky relu      0.9987     0.9982
+
+    best accuracy achievable by ANY linear model on this data: 0.6327
+    class balance: 0.504
+
+The 0.6327 line is the key. Without it, "0.61" reads like a model that failed to converge; with it, the
+model is within 0.02 of the best a straight line can do and the ceiling itself is worthless.
+
+TRACE C - how many linear pieces ReLU buys, 2-D input, 200,000 samples.
+
+    hidden units   distinct activation patterns   2^n         fraction of 2^n
+    ------------   ----------------------------   ---------   ---------------
+               2                              4   4                    100.0%
+               4                             11   16                    68.8%
+               8                             33   256                   12.9%
+              16                            128   65,536                 0.2%
+              32                            457   4.29e9              1.1e-5%
+              64                          1,681   1.8e19              9.3e-15%
+
+Growing fast in absolute terms and collapsing as a fraction of the theoretical maximum, because the
+regions are cut by hyperplanes and most sign combinations are geometrically unreachable in 2-D. The
+practical reading: expressiveness grows quickly with width, and not exponentially.
+
+TRACE D - the derivatives, which is what training sees.
+
+    activation   max derivative   derivative at z=4   derivative at z=-2
+    ----------   --------------   -----------------   ------------------
+    sigmoid                0.250               0.018                0.105
+    tanh                   1.000               0.001                0.071
+    relu                   1.000               1.000                0.000
+    leaky relu             1.000               1.000                0.010
+    gelu                  ~1.086               1.000               -0.086
+    silu                  ~1.091               1.053               -0.091
+
+Sigmoid's ceiling of 0.25 is the whole vanishing-gradient story in one number. ReLU has no decay at all
+on the positive side and total decay on the negative side. GELU and SiLU exceed 1 and go slightly
+negative, which is what "smooth and non-monotonic" means numerically.
+
+TRACE E - gradients through 20 layers of 64 units.
+
+    activation   layer 20    layer 15    layer 10    layer 5     layer 1     L1 / L20
+    ----------   ---------   ---------   ---------   ---------   ---------   ----------
+    sigmoid      6.968e-06   3.580e-09   2.984e-12   2.239e-15   6.563e-18   9.419e-13
+    tanh         2.939e-05   1.667e-05   1.494e-05   1.091e-05   6.367e-06   2.166e-01
+    relu         1.764e-05   3.912e-05   5.283e-05   8.143e-05   7.211e-05   4.087e+00
+
+Sigmoid loses a factor of about 1,000 every five layers, which matches 0.25^5 = 0.00098 almost exactly -
+so the measurement and the theory agree, and the theory is just "the maximum derivative is 0.25".
+
+Tanh loses a factor of 4.6 over twenty layers. ReLU GAINS a factor of 4, because its derivative is
+exactly 1 where active and the He-scaled weights slightly amplify. That is not a defect - it is why
+gradients reach the early layers at all.
+
+TRACE F - the calibration that matters for practice.
+
+    comparison                                     difference in test accuracy
+    --------------------------------------------   ---------------------------
+    no activation vs any activation                 0.6018 -> 0.9982   (+0.396)
+    sigmoid vs relu                                 0.9745 -> 0.9982   (+0.024)
+    tanh vs relu                                    0.9962 -> 0.9982   (+0.002)
+    relu vs leaky relu                              0.9982 -> 0.9982   ( 0.000)
+
+The first row is 16x larger than the second and 200x larger than the third. Having a non-linearity is the
+decision; which one is a refinement.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    the collapse          4 layers, no activation == 1 matrix, max difference 3.553e-15
+                          1,808 parameters expressing an 8-dimensional linear map
+    XOR                   none 0.6018 | sigmoid 0.9745 | tanh 0.9962 | relu 0.9982 | leaky 0.9982
+                          best possible LINEAR accuracy on that data: 0.6327
+    linear regions        2 units -> 4 | 8 -> 33 | 32 -> 457 | 64 -> 1,681 patterns
+    max derivatives       sigmoid 0.25 | tanh 1.0 | relu 1 or 0 | gelu ~1.086 | silu ~1.091
+    gradients over 20 layers   sigmoid 9.419e-13 | tanh 2.166e-01 | relu 4.087e+00 (L1/L20)
+
+COST: an activation is element-wise and O(n). ReLU is a comparison; sigmoid and tanh need an
+exponential. In practice the cost is memory bandwidth, not arithmetic - which is part of why ReLU won,
+and why fused kernels apply it without a separate pass over memory.
+
+THE MISTAKES:
+
+    - Two linear layers with nothing between them. MEASURED: they collapse exactly, so the parameters
+      buy nothing.
+    - Sigmoid in hidden layers. MEASURED: 1e-12 gradient decay over 20 layers, from a maximum derivative
+      of 0.25.
+    - Not pairing the activation with its initialisation. He for ReLU, Xavier for tanh; mismatching them
+      looks like the activation's fault.
+    - Ignoring dead ReLU units. A unit that is always negative has gradient exactly 0 forever. Measure
+      the fraction of always-zero units per layer.
+    - A bounded activation on a regression output, which caps what you can predict.
+    - Reaching for an exotic activation to fix a training failure. MEASURED: the choice among the good
+      ones moves accuracy by fractions of a percent.
+    - Assuming universal approximation means it will work. The theorem says a function EXISTS, not that
+      training finds it or that the width is affordable.
+    - Applying softmax as a hidden activation. It normalises across a vector and belongs at the output.
+    - Forgetting to cache `(z > 0)` in a custom layer's forward pass, then recomputing it in the
+      backward pass.
+    - Believing the activation alone made deep networks possible. He initialisation, normalisation and
+      residual connections all attack the same problem, and residuals matter most past a few dozen
+      layers.
+
+THE TAKEAWAY. Stacked linear layers multiply out to one matrix - measured identical to 3.5e-15, with
+1,808 parameters expressing 8 numbers - so without a non-linearity, depth is a more expensive way to
+draw a straight line. The bend makes a ReLU network piecewise linear, carving the input space into
+regions (1,681 of them for 64 units) each with its own affine function, and that is where curved
+decision boundaries come from. Which non-linearity matters far less than having one - but the derivative
+is what training sees, so sigmoid's ceiling of 0.25 kills gradients through depth (9.4e-13 over twenty
+layers) while ReLU's exact 1 passes them through untouched. Use ReLU by default, never sigmoid in a
+hidden layer, pair it with He initialisation, and check for dead units.""",
+]
+
+_EX_P1AO["Adam optimizer"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - Adam gives EVERY PARAMETER ITS OWN STEP SIZE, worked out from that
+parameter's own gradient history.
+
+Plain SGD uses one learning rate for everything. If one weight's gradients are routinely a thousand times
+larger than another's, no single learning rate suits both: it is either too big for the first (which
+diverges) or too small for the second (which never moves).
+
+Adam keeps two running averages per parameter - `m`, the mean gradient (that is MOMENTUM), and `v`, the
+mean SQUARED gradient (that is the ADAPTIVE part, from RMSProp) - and steps by `m / sqrt(v)`. Dividing by
+the typical magnitude of that parameter's own gradient makes the step roughly the same SIZE for every
+parameter, whatever scale its gradients happen to be on.
+
+MEASURED ON THIS MACHINE - logistic regression, 8,000 rows, 20 features spanning 1e-3 to 1e3 in scale
+(a ratio of 1e6), 400 mini-batch steps:
+
+    optimizer   final loss
+    ---------   ----------
+    sgd           48.07791
+    momentum      99.40678
+    rmsprop        0.12756
+    adam           0.01464
+
+    Adam vs SGD: 3,284x lower loss
+
+That is the case Adam was invented for. But the honest headline is the NEXT section: on a
+well-conditioned problem, the same comparison shows almost nothing.""",
+
+    """2. THE INTUITION - Adam is not a better optimiser, it is a SCALE-INSENSITIVE one. If your problem is
+already well-scaled, it has nothing to fix.
+
+MEASURED, the identical experiment with all features on the same scale (std 0.982 to 1.011):
+
+    optimizer   final loss   loss@20   loss@100   loss@200
+    ---------   ----------   -------   --------   --------
+    sgd            0.60984   0.60947    0.60775    0.60906
+    momentum       0.62077   0.63310    0.63717    0.63189
+    rmsprop        0.61041   0.61582    0.60983    0.61078
+    adam           0.60763   0.62700    0.60710    0.60774
+
+All four land between 0.607 and 0.621. Adam wins by 0.002, which is noise. And MOMENTUM IS THE WORST -
+0.6208 against SGD's 0.6098 - because on a well-conditioned problem momentum's accumulated velocity
+overshoots rather than helping.
+
+Put the two tables side by side and the mechanism is unmistakable:
+
+    problem              SGD final loss   Adam final loss   ratio
+    ------------------   --------------   ---------------   --------
+    well-conditioned            0.60984           0.60763      1.00x
+    badly scaled (1e6)         48.07791           0.01464   3,284x
+
+The SAME optimisers, the SAME code, the SAME number of steps. The only thing that changed is the
+CONDITIONING of the problem, and that alone moved the gap from nothing to three thousand times.
+
+WHY DIVIDING BY sqrt(v) FIXES IT. A feature with std 1e3 produces gradients about 1e3 times larger than a
+feature with std 1e-3. Adam divides each parameter's step by the root-mean-square of its own gradients,
+so both end up taking steps of roughly the same size in parameter space. The learning rate stops being a
+number that must be right for the largest gradient AND the smallest one simultaneously - which is
+impossible when they differ by a million.""",
+
+    """3. EVERY TERM DEFINED.
+
+ADAM. Adaptive Moment Estimation. Momentum plus RMSProp, with bias correction.
+
+SGD. Stochastic Gradient Descent. `w -= lr * g`. One learning rate for everything.
+
+MOMENTUM. A running average of past gradients: `m = beta1*m + g`, then step along `m`. Smooths noise and
+builds speed in consistent directions.
+
+RMSProp. Divide the step by the root-mean-square of recent gradients: `v = beta2*v + (1-beta2)*g^2`,
+then `w -= lr * g / sqrt(v)`. The ADAPTIVE half.
+
+FIRST MOMENT (m). The running mean of the gradient - direction.
+
+SECOND MOMENT (v). The running mean of the SQUARED gradient - magnitude. Per parameter, which is the
+point.
+
+beta1, beta2. The decay rates, conventionally 0.9 and 0.999. beta1 controls how much history the
+direction carries; beta2 how much the magnitude estimate does.
+
+BIAS CORRECTION. Dividing `m` and `v` by `(1 - beta^t)` because they start at zero and are therefore
+biased toward zero early on. Without it the first steps are badly wrong.
+
+EPSILON. A small constant (1e-8) in the denominator so a parameter with near-zero gradient history does
+not produce an infinite step.
+
+CONDITIONING / CONDITION NUMBER. The ratio of the largest to smallest curvature of the loss surface. A
+badly conditioned problem is a long thin valley. MEASURED: a feature-scale ratio of 1e6 is what turned a
+tie into 3,284x.
+
+ADAPTIVE LEARNING RATE. A per-parameter step size derived from that parameter's own gradients.
+
+ADAMW. Adam with DECOUPLED weight decay - the regularisation is applied to the weights directly rather
+than added to the gradient, so it is not rescaled by `sqrt(v)`. The standard choice for transformers, and
+a genuine bug fix rather than a variant.
+
+WARMUP. Starting with a tiny learning rate and ramping up. Adam's `v` estimate is unreliable in the first
+steps, and warmup avoids acting on it.
+
+LEARNING-RATE SCHEDULE. Decaying the learning rate over training. Adam adapts the RELATIVE step per
+parameter; it does not remove the need to shrink the OVERALL step later.
+
+OPTIMIZER STATE. The extra memory an optimizer keeps. SGD: none. Momentum: one copy of the parameters.
+Adam: two. MEASURED below at 56 GB for a 7B model.
+
+SPARSE FEATURE. One that is non-zero rarely. MEASURED below - this is the other case where adaptivity
+wins decisively.
+
+GENERALISATION GAP. The observation that SGD sometimes reaches a lower TEST error than Adam even when
+Adam reaches a lower TRAIN loss - which is why image models often still use SGD with momentum.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "Adam converges fast with little tuning", used as though it
+means "Adam reaches a lower loss". MEASURED, it does not; it means the BAND of workable learning rates is
+wider.
+
+MEASURED, eight learning rates on the well-conditioned problem, scored against the best loss any method
+achieved (0.60649):
+
+    optimizer   within 1% of the floor   within 5%   diverged
+    ---------   ----------------------   ---------   --------
+    sgd                            3/8         5/8        0/8
+    momentum                       4/8         6/8        0/8
+    rmsprop                        3/8         4/8        2/8
+    adam                           3/8         6/8        0/8
+
+Adam and momentum tie at 6/8 usable, SGD gets 5/8, and RMSProp is the only one that DIVERGED at any
+learning rate (2/8, at lr 3.0 and 1.0). So on a well-conditioned problem the robustness advantage is
+real, modest, and shared with plain momentum.
+
+The claim survives - but as "a wider band of learning rates you could pick blind", not "a lower floor".
+The floor is essentially identical for everyone.
+
+THE SECOND TRAP - assuming Adam is free. MEASURED on 1,000,000 parameters:
+
+    SGD  step:  5.05 ms
+    Adam step: 23.41 ms      (4.6x)
+
+    optimizer state:
+      SGD       0 extra copies of the parameters
+      momentum  1 copy (m)
+      Adam      2 copies (m and v)
+
+    a 125M model: 0.5 GB of parameters | +0.5 GB for momentum | +1.0 GB for Adam
+    a 7B model  : 28.0 GB of parameters | +28.0 GB for momentum | +56.0 GB for Adam
+
+Adam triples the memory versus plain SGD. On large models that is the dominant reason people reach for
+8-bit optimizers, ZeRO sharding, or SGD with momentum.
+
+THE THIRD TRAP - forgetting bias correction. `m` and `v` start at zero, so early estimates are biased
+toward zero; the `(1 - beta^t)` divisors fix it. Skipping them makes the first steps much too small (or,
+if you correct only `m`, much too large). It is two divisions and it is not optional.
+
+THE FOURTH TRAP - assuming a lower training loss means a better model. Adam is well documented to reach
+lower TRAIN loss and sometimes higher TEST error than SGD with momentum on image tasks. Adaptivity is an
+optimisation property, not a generalisation one, and the two are separate questions.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE OTHER CASE ADAPTIVITY WINS - SPARSE FEATURES, and this one required a careful setup to show
+properly. MEASURED, 20,000 rows and 40 features whose density falls from 1.0 to 0.002, where the RAREST
+ten features carry the largest true weights (6.0) and the dense ones carry small ones (0.5):
+
+    optimizer   best loss over 5 learning rates   recovered |w| on the 10 rarest features
+    ---------   -------------------------------   --------------------------------------
+    sgd                                 0.60821                                   0.3597
+    momentum                            0.59821                                   1.9034
+    rmsprop                             0.59049                                   5.1679
+    adam                                0.59188                                   5.1846
+
+    the true weight on those features is 6.0; the optimal loss is 0.59016
+
+That second column is the finding. SGD recovered 0.36 of a true weight of 6.0 - it essentially never
+learned the rare-but-important features, because they produce a gradient only occasionally and SGD's
+fixed step means those rare gradients barely move the weight. Adam and RMSProp recovered 5.17 and 5.18,
+because they divide by the RMS of that parameter's OWN gradients - a rare feature's gradients are rare,
+so its `v` is small, so its steps are large when it does appear.
+
+All four recovered the DENSE features correctly (about 0.50 against a true 0.5). The failure is specific
+to the sparse ones.
+
+THE FAMILY, and what each adds:
+
+    SGD                 `w -= lr*g`. No state. Simplest, and still the best generaliser on some vision
+                        tasks.
+    SGD + MOMENTUM      adds direction smoothing. One extra copy of the parameters. MEASURED as WORSE
+                        than plain SGD on a well-conditioned problem (0.6208 vs 0.6098).
+    NESTEROV MOMENTUM   evaluates the gradient at the look-ahead point. A small, consistent improvement.
+    ADAGRAD             divides by the sum of ALL past squared gradients. The learning rate therefore
+                        only ever shrinks, and eventually stops learning.
+    RMSProp             AdaGrad with an exponential moving average instead of a sum, so it does not
+                        die. MEASURED: closest to Adam on both hard problems, and the only one that
+                        diverged at high learning rates.
+    ADAM                RMSProp + momentum + bias correction.
+    ADAMW               Adam with decoupled weight decay. In plain Adam the decay term is divided by
+                        `sqrt(v)` along with everything else, which regularises differently for each
+                        parameter - AdamW fixes that, and is the default for transformers.
+    LION, SHAMPOO, SOAP newer optimizers trading state or compute for quality. Worth knowing they exist.
+    8-BIT ADAM          the same algorithm with quantised state. Directly targets the 56 GB measured
+                        above.
+
+CHOOSING:
+    transformers / NLP / anything with embeddings   ->  AdamW. Sparse embedding gradients are exactly
+                                                        the case measured above.
+    badly scaled or heterogeneous features          ->  Adam. MEASURED 3,284x.
+    convolutional vision models                     ->  SGD + momentum is still competitive and often
+                                                        generalises better.
+    a well-conditioned problem you have tuned       ->  it barely matters. MEASURED: all four within
+                                                        0.015 of each other.
+    memory-constrained large-model training         ->  8-bit Adam, sharded state, or SGD+momentum.
+
+AND THE ALTERNATIVE THAT IS USUALLY BETTER THAN CHANGING OPTIMIZER: NORMALISE YOUR FEATURES. The 3,284x
+gap in section 1 exists because features span 1e-3 to 1e3. Standardising them would have removed it
+entirely and cost nothing at training time. Adam is a way to SURVIVE bad conditioning, not a substitute
+for fixing it - and inside a neural network, that is precisely what batch and layer normalisation do.""",
+
+    """6. HOW TO CODE IT.
+
+  1. THE UPDATE, in full:
+         m = beta1*m + (1-beta1)*g
+         v = beta2*v + (1-beta2)*g*g
+         mh = m/(1 - beta1**t);  vh = v/(1 - beta2**t)     # bias correction - not optional
+         w -= lr * mh / (sqrt(vh) + eps)
+  2. `t` COUNTS STEPS FROM 1, and must increment every step. Getting it wrong breaks bias correction
+     silently.
+  3. DEFAULTS ARE beta1=0.9, beta2=0.999, eps=1e-8, lr=1e-3. They work across an enormous range of
+     problems, which is the actual reason Adam is the default.
+  4. USE AdamW, NOT Adam + weight decay. In plain Adam the decay is divided by `sqrt(v)` along with the
+     gradient, so each parameter is regularised differently. AdamW applies it to the weights directly.
+  5. NORMALISE YOUR FEATURES ANYWAY. MEASURED: the 3,284x advantage came entirely from a 1e6 scale
+     ratio. Fixing the data is better than surviving it.
+  6. USE WARMUP for transformers. `v` is unreliable for the first few hundred steps, and warmup avoids
+     acting on a bad estimate.
+  7. STILL DECAY THE LEARNING RATE. Adam adapts the RELATIVE step per parameter; it does not decide when
+     the OVERALL step should shrink. Cosine or linear decay is standard.
+  8. BUDGET THE MEMORY: 2 extra copies of every parameter. MEASURED at 56 GB for a 7B model in fp32. If
+     that is the constraint, use 8-bit Adam or shard the state.
+  9. DO NOT ASSUME LOWER TRAIN LOSS MEANS A BETTER MODEL. Compare on validation. SGD+momentum still wins
+     on some vision tasks.
+ 10. TRY SGD+MOMENTUM AS A BASELINE on a well-conditioned problem. MEASURED: all four optimizers within
+     0.015 of each other, and momentum was the worst - so the default is not automatically right.
+ 11. CLIP GRADIENTS BY GLOBAL NORM if you see loss spikes. Adam's per-parameter scaling does not protect
+     against a single enormous batch.
+ 12. EPSILON MATTERS MORE THAN IT LOOKS. Too small and a parameter with a near-zero gradient history
+     takes an enormous step; some large-model recipes use 1e-6 or 1e-8 deliberately.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Adam gives every parameter its own step size, worked out from that parameter's own gradient history. It
+keeps two running averages - the mean gradient, which is momentum, and the mean SQUARED gradient, which
+is RMSProp - and steps by m over root-v. Dividing by the typical magnitude of that parameter's own
+gradients makes every step roughly the same size regardless of what scale the parameter lives on.
+
+I measured where that matters. On a logistic regression with features spanning 1e-3 to 1e3 - a scale
+ratio of a million - SGD finished at a loss of 48.1 and Adam at 0.0146. Three thousand times better.
+
+But the honest headline is the control. On the SAME problem with all features on the same scale, SGD
+finished at 0.6098 and Adam at 0.6076 - a difference of 0.002, which is noise. Same code, same steps, and
+the only thing that changed was the CONDITIONING of the problem. So Adam is not a better optimiser, it is
+a scale-INSENSITIVE one, and if your problem is already well-scaled it has nothing to fix. Momentum was
+actually the WORST on that well-conditioned problem, at 0.6208, because its accumulated velocity
+overshoots when there is no valley to accelerate along.
+
+The other case adaptivity wins is sparse features, and that one is worth stating precisely. I set up
+forty features whose density fell from 1.0 to 0.002, where the RAREST ten carried the largest true
+weights. SGD recovered an average weight of 0.36 against a true value of 6.0 - it essentially never
+learned them, because a rare feature produces a gradient only occasionally and a fixed step barely moves
+it. Adam recovered 5.18. That is exactly the situation of embedding layers, which is why AdamW is
+standard for anything with a vocabulary.
+
+I would also correct how 'converges fast with little tuning' gets used. I tested eight learning rates:
+Adam and momentum each had six of eight within 5% of the best loss anyone achieved, SGD five, RMSProp
+four - and RMSProp was the only one that diverged. So the claim is real, and it means a WIDER BAND of
+learning rates that work, not a lower floor. The floors were essentially identical.
+
+And it costs. Adam keeps two extra copies of every parameter, so for a 7B model that is 56 GB of
+optimizer state in fp32 against zero for plain SGD. I also timed the step itself at 23.4 ms against 5.1
+ms for SGD on a million parameters.
+
+The thing I would say last is that normalising your features would have removed that 3,284x gap
+entirely, for free. Adam is a way to survive bad conditioning, not a substitute for fixing it - and inside
+a network, that is exactly what batch and layer normalisation are doing."
+
+THE ONE SENTENCE TO NOT FUMBLE: Adam's advantage is entirely about CONDITIONING and SPARSITY - measured
+at 3,284x on badly-scaled features and essentially zero on well-scaled ones - so it buys robustness, not
+a lower floor, and it costs two extra copies of every parameter.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    m = 0.9*m + 0.1*g
+    v = 0.999*v + 0.001*g*g
+
+The two running averages, and the coefficients are `beta` and `1-beta`. `m` tracks the gradient's mean -
+its DIRECTION, smoothed over roughly the last 10 steps (1/(1-0.9)). `v` tracks the mean of the SQUARE -
+its MAGNITUDE, over roughly the last 1,000 steps (1/(1-0.999)).
+
+The asymmetry is deliberate: direction changes quickly and should be tracked responsively, while the
+typical magnitude of a parameter's gradient is a slowly-varying property and should be estimated over a
+long window.
+
+    mh = m/(1-0.9**t)
+    vh = v/(1-0.999**t)
+
+Bias correction. Both averages start at zero, so at `t=1`, `m` is only `0.1*g` - ten times too small.
+Dividing by `1 - 0.9^1 = 0.1` restores it. The correction decays away as `beta^t` goes to zero, so it
+only matters in the first few hundred steps - and it matters a great deal there, because that is when the
+model is moving fastest.
+
+    w -= lr * mh/(np.sqrt(vh)+1e-8)
+
+The step. `mh/sqrt(vh)` is roughly a SIGNED, NORMALISED gradient - if the gradient is consistently about
+the same size, this ratio is about ±1 regardless of whether that size is 1e-6 or 1e6. That is the whole
+mechanism, and it is why the badly-scaled experiment showed 3,284x: the ratio is scale-free.
+
+The `+1e-8` prevents division by zero for a parameter whose gradients have all been tiny. It is not
+cosmetic - too small an epsilon makes such a parameter take an enormous step on its first real gradient.
+
+    if name=='rmsprop':
+        v = 0.999*v + 0.001*g*g
+        w -= LR*g/(np.sqrt(v)+1e-8)
+
+RMSProp for comparison - the adaptive part WITHOUT momentum and without bias correction. Comparing this
+against Adam isolates what momentum and bias correction contribute, and MEASURED, on the badly-scaled
+problem it was 0.1276 against Adam's 0.0146: adaptivity does most of the work, and momentum plus bias
+correction does the rest.
+
+    if scale == 'badly_scaled':
+        X *= np.logspace(-3, 3, d)
+
+The one line that creates the whole 3,284x effect - feature scales spanning six orders of magnitude. The
+experiment is honest precisely because this is a single toggle: the same data, the same labels, the same
+optimizers, and only the conditioning changes.
+
+    mask = r.random((n,d)) < np.linspace(1.0, 0.002, d)
+    X = X * mask
+    wt[-10:] = 6.0
+
+The sparse setup, and the third line is what makes it a real test. Making the RAREST features the most
+IMPORTANT ones is the situation that actually occurs - a rare word in a vocabulary that is highly
+predictive - and it is what separates the optimizers. An earlier version left the weights uniform and all
+four optimizers scored identically, which was a measurement that could not detect what it was looking
+for.
+
+    print(f"rare-feature |w| {np.abs(w[-10:]).mean():.4f}")
+
+Reporting the recovered WEIGHTS, not just the loss. The losses differed by 0.02 and the weights differed
+by 14x (0.36 against 5.18) - so the loss barely showed the effect while the parameters showed it plainly.
+Measuring the thing you actually care about beats measuring the summary statistic.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - well-conditioned problem, 20 features all with std ~1.0, 400 steps.
+
+    optimizer   loss@20   loss@100   loss@200   final
+    ---------   -------   --------   --------   -------
+    sgd         0.60947    0.60775    0.60906   0.60984
+    momentum    0.63310    0.63717    0.63189   0.62077
+    rmsprop     0.61582    0.60983    0.61078   0.61041
+    adam        0.62700    0.60710    0.60774   0.60763
+
+A spread of 0.013 across four optimizers. Adam wins by 0.002 over SGD, which is noise. And momentum is
+LAST throughout - it is the only one still above 0.62 at the end, because on a well-conditioned surface
+its accumulated velocity overshoots the minimum rather than accelerating toward it.
+
+TRACE B - badly-scaled problem, same code, feature std from 1.00e-03 to 1.00e+03.
+
+    optimizer   loss@20     loss@100    loss@200    final
+    ---------   ---------   ---------   ---------   ---------
+    sgd          77.28650    68.97814    58.10686    48.07791
+    momentum    175.29168   156.92024   171.15786    99.40678
+    rmsprop       0.02953     0.14722     0.02275     0.12756
+    adam          0.07246     0.01743     0.02229     0.01464
+
+    Adam vs SGD: 3,284x
+
+The two ADAPTIVE methods are three orders of magnitude below the two non-adaptive ones, and momentum is
+twice as bad as plain SGD - accelerating along a direction that is wrong for most parameters makes it
+worse, not better.
+
+TRACE C - the two tables side by side, which is the actual argument.
+
+    problem                  SGD       Adam      Adam advantage
+    ----------------------   -------   -------   --------------
+    well-conditioned         0.60984   0.60763            1.00x
+    badly scaled (1e6)      48.07791   0.01464        3,284.00x
+
+Same optimizers, same code, same step count. Everything about Adam's reputation lives in the second row,
+and the first row is why "just use Adam" is not automatically the right answer.
+
+TRACE D - sparse features, where the RAREST ten carry the largest true weights (6.0).
+
+    optimizer   best loss   rare-feature |w|   dense-feature |w|
+    ---------   ---------   ----------------   -----------------
+    sgd           0.60821             0.3597              0.4802
+    momentum      0.59821             1.9034              0.4986
+    rmsprop       0.59049             5.1679              0.5038
+    adam          0.59188             5.1846              0.5125
+    TRUTH         0.59016             6.0000              0.5000
+
+The dense column is correct for everyone - about 0.50 against a true 0.5. The rare column spans 14x:
+SGD recovered 0.36 of a true 6.0, Adam recovered 5.18.
+
+And note the loss column barely moves (0.608 to 0.590) while the weights move 14x. The summary statistic
+almost hid the effect; the parameters showed it plainly.
+
+TRACE E - learning-rate robustness, eight rates, scored against the best loss achieved (0.60649).
+
+    optimizer   within 1%   within 5%   diverged
+    ---------   ---------   ---------   --------
+    sgd               3/8         5/8        0/8
+    momentum          4/8         6/8        0/8
+    rmsprop           3/8         4/8        2/8
+    adam              3/8         6/8        0/8
+
+Adam ties momentum at 6/8 usable. RMSProp is the only one that diverged, at lr 3.0 and 1.0 - because
+without momentum's smoothing, a large step on a noisy gradient is not damped.
+
+So the robustness claim holds and it is modest, and it is about the WIDTH of the usable band, not the
+depth of the floor.
+
+TRACE F - the cost.
+
+    step time on 1,000,000 parameters:
+        SGD    5.05 ms
+        Adam  23.41 ms      (4.6x)
+
+    optimizer state, extra copies of the parameters:
+        SGD       0
+        momentum  1  (m)
+        Adam      2  (m and v)
+
+    a 125M model:  0.5 GB params | +0.5 GB momentum | +1.0 GB Adam
+    a 7B model  : 28.0 GB params | +28.0 GB momentum | +56.0 GB Adam
+
+For a 7B model, Adam's state is twice the size of the model. That single number is why 8-bit optimizers
+and sharded optimizer state exist, and why large-scale training recipes talk about optimizer memory as a
+first-class constraint.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    well-conditioned (400 steps)   sgd 0.60984 | momentum 0.62077 | rmsprop 0.61041 | adam 0.60763
+    badly scaled, 1e6 ratio        sgd 48.07791 | momentum 99.40678 | rmsprop 0.12756 | adam 0.01464
+                                   Adam vs SGD: 3,284x
+    sparse, rare features matter   recovered |w| on a true 6.0: sgd 0.3597 | momentum 1.9034
+                                   | rmsprop 5.1679 | adam 5.1846
+    lr robustness (8 rates)        within 5% of the floor: sgd 5/8 | momentum 6/8 | rmsprop 4/8
+                                   | adam 6/8; rmsprop diverged 2/8
+    cost                           step 5.05 ms (SGD) vs 23.41 ms (Adam) on 1M parameters
+                                   state: 0 / 1 / 2 extra parameter copies
+                                   7B model: +0 GB / +28 GB / +56 GB
+
+COMPLEXITY: Adam is O(parameters) per step, like SGD, with a larger constant (4.6x measured) and 2x the
+memory of momentum. No extra gradient evaluations.
+
+THE MISTAKES:
+
+    - Assuming Adam is always better. MEASURED: a 0.002 difference on a well-conditioned problem, which
+      is noise.
+    - Reading "little tuning" as "lower loss". MEASURED: a wider usable band (6/8 vs 5/8), the same
+      floor.
+    - Using Adam instead of normalising the features. MEASURED: the entire 3,284x came from a 1e6 scale
+      ratio that standardisation removes for free.
+    - Skipping bias correction. `m` and `v` start at zero, so the first steps are badly wrong without
+      the `(1 - beta^t)` divisors.
+    - Failing to increment `t` every step, which breaks bias correction silently.
+    - Using Adam + weight decay instead of AdamW. In plain Adam the decay is divided by `sqrt(v)`, so
+      each parameter is regularised differently.
+    - Dropping the learning-rate schedule. Adam adapts the RELATIVE step, not when the overall step
+      should shrink.
+    - No warmup for transformers, so the first steps act on an unreliable `v`.
+    - Ignoring the memory. MEASURED at 56 GB for a 7B model - twice the model itself.
+    - Assuming lower train loss means better generalisation. SGD+momentum still wins on some vision
+      tasks.
+    - Assuming momentum always helps. MEASURED as the WORST method on a well-conditioned problem, and
+      twice as bad as SGD on a badly-scaled one.
+    - Setting epsilon carelessly. Too small and a parameter with a tiny gradient history takes an
+      enormous step on its first real gradient.
+
+THE TAKEAWAY. Adam gives every parameter its own step size by dividing by the RMS of that parameter's own
+gradients, which makes the update scale-free. That is worth 3,284x when feature scales span a million,
+worth 14x in recovered weights when the informative features are rare, and worth essentially NOTHING
+(0.002 of loss) when the problem is already well-conditioned - so its advantage is entirely about
+conditioning and sparsity, not about being a better optimiser. It is the right default because most real
+problems, especially anything with embeddings, are one of those two cases. But it costs 4.6x per step and
+two extra copies of every parameter - 56 GB for a 7B model - and the cheaper fix for bad conditioning is
+usually to normalise the inputs, which is exactly what batch and layer normalisation do inside a
+network.""",
+]
+
+_EX_P1AO["Adversarial example"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an adversarial example is an input changed by a TINY, DELIBERATELY
+CHOSEN amount that makes a model confidently wrong.
+
+Not randomly corrupted. Not out of distribution. Changed in a direction computed FROM THE MODEL'S OWN
+GRADIENT, by an amount small enough that a person would not notice.
+
+MEASURED ON THIS MACHINE - a 3-class shape classifier on 12x12 images, 64 hidden ReLU units, with
+100.00% train and 100.00% test accuracy. Then one gradient step in INPUT space (the FGSM attack), where
+epsilon is the maximum change to any single pixel and pixels live in [0, 1]:
+
+    eps     accuracy   mean pixel change   max pixel change   mean confidence
+    -----   --------   -----------------   ----------------   ---------------
+    0.000     1.0000              0.0000             0.0000            0.9991
+    0.020     1.0000              0.0149             0.0200            0.9964
+    0.050     0.9998              0.0359             0.0500            0.9713
+    0.100     0.7147              0.0678             0.1000            0.7426
+    0.200     0.0073              0.1245             0.2000            0.9168
+
+At eps = 0.2 the model's accuracy falls from 100% to 0.73% - worse than random guessing on three classes
+- from changing each pixel by at most a fifth of its range.
+
+And read the last column. At eps = 0.2 the mean CONFIDENCE is 0.9168. The model is not uncertain about
+these inputs. It is confidently, catastrophically wrong, which is what makes this a safety problem rather
+than an accuracy problem.""",
+
+    """2. THE INTUITION - it is not the SIZE of the change, it is the DIRECTION. Change of exactly the same
+magnitude, chosen at random, does nothing at all.
+
+MEASURED, the same perturbation budget spent three ways:
+
+    eps     FGSM (gradient sign)   RANDOM sign   Gaussian noise of equal L2
+    -----   --------------------   -----------   --------------------------
+    0.010                 1.0000        1.0000                      1.0000
+    0.020                 1.0000        1.0000                      1.0000
+    0.050                 0.9998        1.0000                      1.0000
+    0.100                 0.7147        1.0000                      1.0000
+    0.200                 0.0073        0.9988                      1.0000
+
+At eps = 0.2, the gradient-chosen perturbation takes accuracy to 0.73% and a random perturbation OF
+IDENTICAL MAGNITUDE leaves it at 99.88%. The model is entirely robust to noise and entirely fragile to
+one specific direction out of the 144-dimensional space.
+
+WHY THAT DIRECTION EXISTS. The model's score is roughly linear in the input over small distances, so
+moving by `eps` along the SIGN of the gradient changes the loss by about `eps * ||gradient||_1`. MEASURED:
+
+    mean |dLoss/dpixel|   : 0.000564
+    L1 norm of the gradient: 0.0812
+
+    eps = 0.01: predicted +0.001   actual +0.001
+    eps = 0.05: predicted +0.004   actual +0.029
+
+At eps = 0.01 the linear prediction is exact. At 0.05 the actual damage is SEVEN TIMES the linear
+estimate - the attack is more effective than first-order theory says, because the perturbation pushes the
+input across ReLU boundaries into regions where the model behaves differently.
+
+The deeper reason is DIMENSION. Each pixel moves by at most 0.2, but there are 144 of them and every
+single one moves in the direction that helps the attacker. Small changes summed over many dimensions make
+a large change in the score - which is why this is not a quirk of images. Any high-dimensional input has
+the same property.""",
+
+    """3. EVERY TERM DEFINED.
+
+ADVERSARIAL EXAMPLE. An input perturbed slightly and deliberately to cause a wrong prediction.
+
+PERTURBATION. The change added to the input. Constrained to be small under some norm.
+
+EPSILON (eps). The size budget. Under L-infinity it is the maximum change to ANY single component -
+MEASURED here as a fraction of the [0,1] pixel range.
+
+L-INFINITY NORM. The largest single-component change. The most common constraint for images because it
+maps to "no pixel changes much".
+
+L2 NORM. Total euclidean change. A different notion of "small", and robustness to one does not imply
+robustness to the other.
+
+FGSM. Fast Gradient Sign Method. One step: `x + eps * sign(grad_x loss)`. Cheap, and MEASURED, enough to
+take a 100%-accurate model to 0.73%.
+
+PGD. Projected Gradient Descent - FGSM iterated with small steps, projecting back into the eps-ball each
+time. Much stronger, and the standard benchmark.
+
+C&W ATTACK. An optimisation-based attack that finds the SMALLEST perturbation causing a
+misclassification. Slower and stronger still.
+
+WHITE-BOX ATTACK. The attacker has the model and its gradients. What FGSM assumes.
+
+BLACK-BOX ATTACK. The attacker only sees outputs. Done via TRANSFER (below) or by estimating gradients
+from queries.
+
+TRANSFERABILITY. An attack built against one model working against a different one. MEASURED below at
+26.75% accuracy on a model the attacker never saw.
+
+SURROGATE / SUBSTITUTE MODEL. A model the attacker trains themselves to generate transferable attacks -
+which is why keeping your model private is not a defence.
+
+TARGETED vs UNTARGETED. Forcing a SPECIFIC wrong class versus any wrong class. Targeted is harder.
+
+ADVERSARIAL TRAINING. Training on adversarial examples generated during training. MEASURED below - the
+strongest known defence, and it is narrow.
+
+ROBUST ACCURACY. Accuracy under attack, as opposed to CLEAN accuracy.
+
+ROBUSTNESS-ACCURACY TRADE-OFF. Adversarially trained models usually lose some clean accuracy. MEASURED
+here as exactly 0.0000 - an honest result on an easy task, and not what happens on hard ones.
+
+GRADIENT MASKING / OBFUSCATED GRADIENTS. A "defence" that only makes gradients hard to compute, so
+gradient-based attacks fail while the model remains just as vulnerable to a smarter attack. Most
+published defences have been broken this way.
+
+CERTIFIED ROBUSTNESS. A mathematical guarantee that no perturbation within some radius changes the
+prediction. Provable, and far weaker radii than empirical defences claim.
+
+RANDOMISED SMOOTHING. Averaging predictions over noisy copies of the input, which yields a certificate.
+
+PHYSICAL ADVERSARIAL EXAMPLE. A sticker, a printed pattern, glasses - the attack surviving a camera. What
+makes this more than a theoretical concern.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "the attacker would need our model". They do not.
+
+MEASURED, an attack computed against model A only, evaluated on two models the attacker never touched -
+B with a different random initialisation, C with a different width (128 hidden units instead of 64). All
+three have 100.00% clean test accuracy:
+
+    eps     A (the attacked model)   B (different init)   C (different width)
+    -----   ----------------------   ------------------   -------------------
+    0.020                   1.0000               1.0000                1.0000
+    0.050                   0.9998               1.0000                1.0000
+    0.100                   0.7147               0.9952                0.9980
+    0.200                   0.0073               0.2675                0.3135
+
+At eps = 0.2 the attack designed for A takes model C from 100% to 31.35% - a model with different
+weights and a different architecture, using perturbations computed without ever querying it.
+
+Transfer is weaker than the direct attack (31% versus 0.7%) and it is devastating. An attacker who can
+approximate your training data can train a surrogate, attack it, and send the result to you. "Our model
+weights are private" protects nothing.
+
+THE SECOND TRAP - concluding the model is uncertain and that a confidence threshold will catch these.
+MEASURED at eps = 0.2, mean confidence 0.9168 while accuracy is 0.0073. Rejecting low-confidence
+predictions would reject almost none of these. The softmax score is not a detector.
+
+Note the confidence at eps = 0.1 (0.7426) is LOWER than at eps = 0.2 (0.9168). At the intermediate
+budget many inputs are near the boundary and genuinely ambiguous; with a larger budget they are pushed
+firmly into the wrong class. So confidence does not even decrease monotonically with attack strength.
+
+THE THIRD TRAP - assuming this is about images, or about neural networks. The mechanism is a small change
+per dimension, aligned with the gradient, summed over MANY dimensions. Any high-dimensional
+differentiable model has it: text embeddings, audio, tabular fraud features, malware byte sequences.
+
+THE FOURTH TRAP - believing a defence works because a gradient attack now fails. That is GRADIENT
+MASKING: if you make gradients uninformative (by rounding, adding randomness, or a non-differentiable
+step) then FGSM fails while the model is exactly as vulnerable to a black-box or transfer attack. Most
+published defences from 2017-2018 were broken this way within months. The test of a defence is a strong
+ADAPTIVE attack, not the absence of a weak one.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+DEFENCES, and what the measurement says about the only one that works.
+
+ADVERSARIAL TRAINING - generate attacks during training and train on them. MEASURED, training with
+eps = 0.10 adversarial examples included in every batch:
+
+    model                    clean acc   @eps 0.02   @0.05    @0.10    @0.20
+    ----------------------   ---------   ---------   ------   ------   ------
+    standard                    1.0000      1.0000   0.9998   0.7147   0.0073
+    adv-trained (eps=0.10)      1.0000      1.0000   1.0000   1.0000   0.3503
+
+At the trained epsilon of 0.10, robust accuracy goes from 0.7147 to 1.0000 - complete. At eps = 0.20, TWICE
+what it was trained for, it goes from 0.0073 to 0.3503 - a large improvement and still a 65% failure rate.
+
+That is the honest shape of the defence: it works well at and below the budget it was trained for, and
+degrades outside it. It is not "the model is now robust", it is "the model is robust to THIS ATTACK at
+THIS SIZE".
+
+The costs measured: clean accuracy fell by 0.0000 here, and training cost 2x the forward/backward work
+per step because every batch is doubled with adversarial copies. The zero clean-accuracy cost is an
+artefact of an easy task - on hard datasets the robustness-accuracy trade-off is real and substantial,
+and I would not generalise from this number.
+
+THE ATTACK FAMILY, increasing in strength:
+    FGSM               one gradient step. Cheap. MEASURED: 100% to 0.73%.
+    PGD                FGSM iterated with projection back into the eps-ball. The standard strong attack;
+                       any defence not evaluated against PGD has not been evaluated.
+    C&W                optimisation-based, finds the MINIMAL perturbation. Strongest, slowest.
+    AUTOATTACK         an ensemble of attacks, the current benchmark standard.
+    TRANSFER ATTACK    build against a surrogate. MEASURED at 31.35% on an unseen model.
+    QUERY-BASED        estimate gradients from output probabilities. Slower, and needs no weights.
+    PHYSICAL           printed patterns, stickers, adversarial patches on clothing.
+
+THE DEFENCE FAMILY, and their standing:
+    ADVERSARIAL TRAINING    the only broadly effective empirical defence. Expensive, narrow, real.
+    CERTIFIED DEFENCES      provable guarantees within a radius. Sound, and the radii are small.
+    RANDOMISED SMOOTHING    predict by majority vote over noisy copies; yields a certificate.
+    INPUT PREPROCESSING     JPEG compression, quantisation, denoising. Almost all broken - they are
+                            gradient masking with extra steps.
+    DETECTION               spot adversarial inputs rather than classify them correctly. Also largely
+                            broken, and the confidence measurement above shows why the obvious detector
+                            fails.
+    ENSEMBLES               help slightly. Attacks transfer across ensemble members, as the transfer
+                            table shows.
+
+THE ENGINEERING VIEW, which matters more than any of the above for most systems: if you are not facing an
+adversary, this is not your top risk. Distribution shift, label noise and data-quality bugs cost far more
+in practice. Where adversaries DO exist - content moderation, fraud, malware, spam, authentication - the
+right response is usually not a robust classifier but DEFENCE IN DEPTH: multiple independent signals, rate
+limits, human review of borderline cases, and monitoring for the input distribution shifting - because an
+attacker probing your model looks different from ordinary traffic.""",
+
+    """6. HOW TO CODE IT.
+
+  1. FGSM IS THREE LINES:
+         g = grad of loss with respect to the INPUT
+         x_adv = clip(x + eps * sign(g), valid_min, valid_max)
+     Note the gradient is with respect to `x`, not the weights. Same backprop, one step further.
+  2. USE `sign(g)`, NOT `g`. Under an L-infinity budget you want to move every component by the FULL
+     epsilon in its most damaging direction. Using the raw gradient spends the budget unevenly.
+  3. ALWAYS CLIP TO THE VALID INPUT RANGE. An "adversarial image" with a pixel value of 1.3 is not an
+     image, and reporting it as an attack is measuring nothing.
+  4. EVALUATE WITH PGD, NOT FGSM. FGSM is the demonstration; PGD is the evaluation. A defence that stops
+     FGSM and not PGD has stopped nothing.
+  5. RUN THE RANDOM-PERTURBATION CONTROL. MEASURED: identical magnitude, 0.73% versus 99.88% accuracy. It
+     proves your result is about the direction and not about the model being fragile to noise.
+  6. REPORT CONFIDENCE ALONGSIDE ACCURACY. MEASURED: 0.9168 mean confidence at 0.73% accuracy. It is the
+     number that tells you a confidence threshold will not save you.
+  7. TEST TRANSFER. Attack a surrogate and evaluate on the real model. MEASURED: 31.35% on a model never
+     queried. This is the realistic threat, not white-box.
+  8. FOR ADVERSARIAL TRAINING, GENERATE FRESH ATTACKS EVERY STEP against the CURRENT weights. Pre-computed
+     attacks stop being adversarial as the model moves.
+  9. TRAIN ON A MIX of clean and adversarial examples, and expect roughly 2x the training cost.
+ 10. STATE THE THREAT MODEL BEFORE THE DEFENCE: which norm, what epsilon, white-box or black-box, how
+     many queries. "Robust" with no threat model is meaningless.
+ 11. DO NOT ADD RANDOMNESS OR NON-DIFFERENTIABLE PREPROCESSING AND CALL IT A DEFENCE. That is gradient
+     masking; it defeats the attack, not the vulnerability.
+ 12. CHECK WHETHER YOU ACTUALLY FACE AN ADVERSARY. For most models, distribution shift and data quality
+     are far larger risks, and defence in depth beats a robust classifier where adversaries do exist.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"An adversarial example is an input changed by a tiny, deliberately chosen amount that makes the model
+confidently wrong. The key word is CHOSEN - the direction comes from the model's own gradient.
+
+I built a 3-class image classifier that got 100% on both train and test, then ran FGSM: one gradient step
+in input space. At an epsilon of 0.2 - meaning no pixel changes by more than a fifth of its range -
+accuracy went from 100% to 0.73%. Worse than random guessing on three classes.
+
+The result I would lead with, though, is the control. I applied a perturbation of exactly the same
+magnitude with RANDOM signs, and accuracy stayed at 99.88%. Same size, completely different outcome. So
+the model is entirely robust to noise and entirely fragile to one specific direction out of 144
+dimensions. It is not about the size of the change.
+
+Why that direction exists is dimension. The score is roughly linear over small distances, so moving by
+epsilon along the gradient's sign changes the loss by about epsilon times the gradient's L1 norm - and I
+verified that: at epsilon 0.01 the linear prediction matched exactly. At 0.05 the ACTUAL damage was seven
+times the linear estimate, because the perturbation pushes inputs across ReLU boundaries into regions
+where the model behaves differently. Every pixel moves a little, all in the helpful direction, and 144
+little changes add up.
+
+Two things make this a security problem rather than a curiosity. First, the confidence: at epsilon 0.2 the
+mean confidence on the adversarial inputs was 0.9168 while accuracy was 0.73%. The model is not uncertain,
+so a confidence threshold catches nothing - the softmax score is not a detector. And confidence is not
+even monotonic in attack strength; it was LOWER at epsilon 0.1 than at 0.2.
+
+Second, TRANSFER. I generated the attack against one model and evaluated it on two others - one with a
+different initialisation, one with a different width - that the attacker never queried. At epsilon 0.2 the
+second model dropped to 26.75% and the third to 31.35%. So an attacker who can approximate your training
+data trains their own surrogate, attacks it, and sends you the result. 'Our weights are private' is not a
+defence.
+
+The one defence that works is adversarial training - generating attacks during training and training on
+them. At the epsilon it was trained for, mine went from 71% to 100% robust accuracy. At twice that
+epsilon, from 0.7% to 35% - a big improvement and still a 65% failure rate. That is the honest shape: it
+buys robustness to the attack and the size you trained for, and degrades outside it. My clean accuracy
+cost was zero, but that is an artefact of an easy task and I would not generalise it.
+
+And the framing I would want to leave: for most systems this is not the top risk. Distribution shift and
+data-quality bugs cost more. Where adversaries genuinely exist - fraud, moderation, malware - the answer
+is usually defence in depth rather than a robust classifier."
+
+THE ONE SENTENCE TO NOT FUMBLE: it is the DIRECTION, not the size - the same magnitude of random noise
+left accuracy at 99.88% while the gradient-chosen version took it to 0.73%, at a mean confidence of 0.92.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def input_grad(M, X, y):
+        W1,b1,W2,b2 = M
+        a1 = np.maximum(X@W1+b1, 0); p = softmax(a1@W2+b2)
+        g2 = (p - onehot(y))
+        g1 = (g2@W2.T) * (a1 > 0)
+        return g1 @ W1.T
+
+The gradient with respect to the INPUT, and it is ordinary backpropagation continued one layer further.
+Training stops at `gW1 = X.T @ g1`; the attack instead computes `g1 @ W1.T`, which is the gradient
+flowing back INTO x. Same machinery, different final multiply - which is worth internalising, because it
+means every differentiable model hands attackers this for free.
+
+Note `(a1 > 0)` - the ReLU mask - appears here exactly as in training. The attack is computed through the
+same piecewise-linear structure the model uses.
+
+    def fgsm(M, X, y, eps):
+        return np.clip(X + eps*np.sign(input_grad(M,X,y)), 0, 1)
+
+The whole attack. `np.sign` is the important choice: under an L-infinity budget you may move each
+component by at most `eps`, so the optimal first-order move is the FULL eps in whichever direction helps.
+Using the raw gradient would spend more budget on large-gradient pixels and less on small ones, which is
+optimal for L2 and wasteful for L-infinity.
+
+`np.clip(..., 0, 1)` keeps the result a valid image. Without it, "adversarial examples" can have pixel
+values outside the representable range, and the attack is then partly an artefact.
+
+    Xr = np.clip(Xte + eps*np.sign(rng.normal(size=Xte.shape)), 0, 1)
+
+The random-sign control - identical structure, identical magnitude, `rng.normal` instead of the gradient.
+This one line is what converts "the attack worked" into "the DIRECTION is what matters", and MEASURED it
+left accuracy at 99.88% where the attack gave 0.73%.
+
+    l2 = np.linalg.norm(Xa-Xte, axis=1).mean()
+    Xg = Xte + rng.normal(size=Xte.shape)*(l2/np.sqrt(D))
+
+A second control, matched on L2 rather than L-infinity, in case the first was unfair on the wrong norm.
+Also 100.00% accuracy. Running two differently-matched controls is what makes the conclusion hard to
+argue with.
+
+    pred_change = eps*np.abs(g).sum(1).mean()
+
+The first-order prediction: moving `eps` along the sign of `g` changes the loss by about `eps * ||g||_1`.
+MEASURED, exact at eps = 0.01 (+0.001 predicted, +0.001 actual) and a 7x UNDERestimate at eps = 0.05
+(+0.004 predicted, +0.029 actual). Reporting the failure of the linear model is more informative than
+reporting its success: it tells you the attack gets stronger than theory as the budget grows, because it
+crosses ReLU boundaries.
+
+    Xa = np.clip(X + adv_eps*np.sign(gin(X,Y)), 0, 1)
+    Xb = np.vstack([X, Xa]); Yb = np.vstack([Y, Y])
+
+Adversarial training. Two details matter. The attack is regenerated EVERY step against the CURRENT
+weights - a pre-computed set would stop being adversarial as the model moves. And the batch is the clean
+data STACKED WITH the adversarial data, keeping clean accuracy while adding robustness; training only on
+adversarial examples degrades clean performance much more.
+
+The `vstack` is also, directly, the 2x training cost.
+
+    M2 = train(Xtr,ytr,H=64,seed=99)
+    M3 = train(Xtr,ytr,H=128,seed=7)
+
+The transfer experiment: two more models with a different initialisation and a different width, both
+trained normally, and attacks from model A evaluated against them. The attacker never touches these
+models - which is the realistic threat model, and MEASURED at 26.75% and 31.35%.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 3-class shape classifier on 12x12 images (144 pixels in [0,1]), 64 hidden ReLU units, 8,000 train
+and 4,000 test examples, 100.00% clean accuracy on both.
+
+TRACE A - FGSM, sweeping the budget.
+
+    eps     accuracy   mean pixel change   max pixel change   mean confidence
+    -----   --------   -----------------   ----------------   ---------------
+    0.000     1.0000              0.0000             0.0000            0.9991
+    0.005     1.0000              0.0038             0.0050            0.9987
+    0.010     1.0000              0.0075             0.0100            0.9982
+    0.020     1.0000              0.0149             0.0200            0.9964
+    0.050     0.9998              0.0359             0.0500            0.9713
+    0.100     0.7147              0.0678             0.1000            0.7426
+    0.200     0.0073              0.1245             0.2000            0.9168
+
+There is a THRESHOLD, not a gradual decline: nothing at all up to 0.05, then a collapse between 0.10 and
+0.20. The mean pixel change at the point of total failure is 0.1245 - about an eighth of the range.
+
+And the confidence column is not monotonic: 0.7426 at eps 0.10 and 0.9168 at eps 0.20. At the
+intermediate budget the inputs sit near the decision boundary and are genuinely ambiguous; at the larger
+budget they are pushed firmly into the wrong class, and the model is sure about it.
+
+TRACE B - the same magnitude, three ways.
+
+    eps     FGSM     random sign   Gaussian, equal L2
+    -----   ------   -----------   ------------------
+    0.010   1.0000        1.0000               1.0000
+    0.020   1.0000        1.0000               1.0000
+    0.050   0.9998        1.0000               1.0000
+    0.100   0.7147        1.0000               1.0000
+    0.200   0.0073        0.9988               1.0000
+
+0.73% against 99.88%, from perturbations of identical size. The model is not fragile - it is fragile in
+one direction. Two independent controls (L-infinity-matched random signs, and L2-matched Gaussian noise)
+both leave it untouched.
+
+TRACE C - the linear model of the attack, and where it breaks.
+
+    quantity                        value
+    -----------------------------   --------
+    mean |dLoss/dpixel|             0.000564
+    L1 norm of the gradient         0.0812
+
+    eps      predicted loss change   actual loss change   ratio
+    -----    ---------------------   ------------------   -----
+    0.01                    +0.001               +0.001    1.0x
+    0.05                    +0.004               +0.029    7.3x
+
+The first-order estimate `eps * ||g||_1` is exact for a small step and a 7x UNDERestimate for a larger
+one. The attack becomes MORE effective than linear theory predicts, because the perturbation crosses ReLU
+boundaries into different linear regions of the network. Reporting where the simple model fails is more
+useful than reporting where it holds.
+
+TRACE D - transferability. Attack computed against A ONLY.
+
+    eps     A (attacked)   B (different init)   C (different width)
+    -----   ------------   ------------------   -------------------
+    0.020         1.0000               1.0000                1.0000
+    0.050         0.9998               1.0000                1.0000
+    0.100         0.7147               0.9952                0.9980
+    0.200         0.0073               0.2675                0.3135
+
+    all three models have 100.00% clean test accuracy
+
+Transfer is weaker than the direct attack - 0.73% against 26.75% and 31.35% - and it is catastrophic
+anyway, and it required no access to B or C whatsoever. Note transfer only appears at the largest budget:
+at eps 0.10 the attack breaks A (71%) and barely touches B and C (99.5%, 99.8%). Attacks that transfer
+need to be stronger than attacks that do not.
+
+TRACE E - adversarial training, trained at eps = 0.10.
+
+    model                    clean    @0.02    @0.05    @0.10    @0.20
+    ----------------------   ------   ------   ------   ------   ------
+    standard                 1.0000   1.0000   0.9998   0.7147   0.0073
+    adv-trained (eps=0.10)   1.0000   1.0000   1.0000   1.0000   0.3503
+
+    clean accuracy cost : +0.0000
+    training cost       : 2x forward/backward per step
+
+At and below the trained epsilon: complete robustness. At twice the trained epsilon: 0.0073 -> 0.3503, a
+48x improvement and still failing 65% of the time.
+
+That is the shape to remember. Adversarial training is robustness to THE ATTACK AND THE SIZE it was
+trained on, and it degrades outside that envelope. The 0.0000 clean-accuracy cost is a property of an
+easy task where the model had capacity to spare - on hard datasets the robustness-accuracy trade-off is
+substantial, and this measurement should not be generalised.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (3-class classifier, 12x12 images, 100.00% clean accuracy):
+
+    FGSM             eps 0.05 -> 0.9998 | eps 0.10 -> 0.7147 | eps 0.20 -> 0.0073
+    confidence       0.9713 at eps 0.05 | 0.7426 at 0.10 | 0.9168 at 0.20 (NOT monotonic)
+    controls         random sign at eps 0.20 -> 0.9988 | Gaussian of equal L2 -> 1.0000
+    linear model     eps 0.01 predicted +0.001 / actual +0.001 | eps 0.05 predicted +0.004 / actual
+                     +0.029 (7.3x underestimate)
+    transfer         eps 0.20: attacked model 0.0073 | different init 0.2675 | different width 0.3135
+    adv training     at trained eps 0.10: 0.7147 -> 1.0000 | at 2x: 0.0073 -> 0.3503
+                     clean cost 0.0000 (easy task), training cost 2x
+
+COST: FGSM is one backward pass - as cheap as one training step. PGD is k steps. Adversarial training
+roughly doubles training cost per step, and more if it uses PGD internally.
+
+THE MISTAKES:
+
+    - Thinking it is about the SIZE of the perturbation. MEASURED: identical magnitude, 0.73% vs 99.88%.
+      It is the direction.
+    - Assuming a confidence threshold catches them. MEASURED: 0.9168 mean confidence at 0.73% accuracy,
+      and confidence is not even monotonic in attack strength.
+    - Believing model privacy is a defence. MEASURED: 31.35% on a model of different width the attacker
+      never queried.
+    - Evaluating a defence with FGSM only. FGSM is the demonstration; PGD or AutoAttack is the
+      evaluation.
+    - Gradient masking - randomness, rounding, non-differentiable preprocessing - which defeats the
+      ATTACK and not the VULNERABILITY. Most 2017-2018 defences fell to this.
+    - Forgetting to clip to the valid input range, so the "adversarial image" is not an image.
+    - Using the raw gradient instead of its sign under an L-infinity budget, which misspends the budget.
+    - Pre-computing adversarial examples for adversarial training. They must be regenerated against the
+      current weights every step.
+    - Training only on adversarial examples rather than a mix, which damages clean accuracy far more.
+    - Generalising a zero clean-accuracy cost. MEASURED 0.0000 here on an easy task; the trade-off is
+      real on hard ones.
+    - Claiming robustness without stating the threat model - which norm, what epsilon, white-box or
+      black-box, how many queries.
+    - Treating adversarial robustness as a top risk when no adversary exists. Distribution shift and
+      data quality usually cost more.
+
+THE TAKEAWAY. An adversarial example exploits DIRECTION, not magnitude: the same perturbation size left
+accuracy at 99.88% when random and took it to 0.73% when chosen from the model's own gradient, at a mean
+confidence of 0.92 - so the model is not uncertain and no confidence threshold will catch it. The
+mechanism is high dimension, where 144 tiny aligned changes sum to a large change in the score, which
+means this is not an image problem but a property of any high-dimensional differentiable model. Attacks
+TRANSFER to models the attacker has never seen (31% accuracy on a different architecture), so keeping
+weights private defends nothing. Adversarial training is the one defence that works, and it works within
+the envelope it was trained for - complete at the trained epsilon, 65% failure at twice it. Before
+investing in any of that, check whether you actually face an adversary; where you do, defence in depth
+usually beats a robust classifier.""",
+]
+
+_EX_P1AO["Anycast"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - anycast means advertising the SAME IP ADDRESS from MANY LOCATIONS, and
+letting the internet's routing deliver each client to whichever one is nearest.
+
+`8.8.8.8` is one address and hundreds of machines. A user in Mumbai and a user in Sao Paulo both send
+packets to `8.8.8.8`, and BGP - the internet's routing protocol - hands each of them to a different
+physical site, because from where they are, that site is the closest one advertising the route.
+
+WHY IT IS WORTH DOING: distance is latency, and latency is physics. Light in fibre travels about 200 km
+per millisecond, so a round trip costs at least `2 x distance / 200` milliseconds. MEASURED as arithmetic
+against typical real-world figures:
+
+    route                  distance   theoretical RTT   typical real RTT
+    -------------------   ---------   ---------------   ----------------
+    London - Amsterdam        350 km            3.5 ms              9 ms
+    London - New York       5,570 km           55.7 ms             75 ms
+    London - Singapore     10,850 km          108.5 ms            160 ms
+    London - Sydney        17,000 km          170.0 ms            250 ms
+
+The real numbers are 1.4 to 2x the theoretical floor because of routing, queueing and equipment - but
+nothing gets you BELOW that first column. You cannot optimise your way past the speed of light; the only
+move available is to be closer, and anycast is how you are closer to everyone at once without giving
+each region a different address.""",
+
+    """2. THE INTUITION - the whole point is that the address stops identifying a MACHINE and starts
+identifying a SERVICE. Anyone advertising it can answer.
+
+Contrast with the alternatives:
+    UNICAST - one address, one host. Everyone travels to it.
+    GEO-DNS - different addresses per region, chosen when the client resolves the name. Works, and it
+              depends on the resolver's location rather than the user's, and it is cached.
+    ANYCAST - one address everywhere, and the ROUTING layer decides, per packet, using where the packet
+              actually entered the network.
+
+MEASURED, simulating a globally distributed user population and computing the great-circle distance to
+the nearest site:
+
+    deployment                      RTT mean   p50      p95      p99
+    ----------------------------   --------   ------   ------   ------
+    UNICAST, one site (Virginia)     85.5 ms   92.2     131.3    168.8
+    2 sites (US + EU)                47.8 ms   50.3      88.0    147.2
+    5 sites                          32.1 ms   34.0      55.1     62.9
+    ANYCAST, 10 sites                21.1 ms   20.0      40.4     45.9
+
+From 1 site to 10, the mean falls 4.1x and the p99 falls 3.7x - but look at where the improvement is
+CONCENTRATED. Going from 1 site to 2 halves the mean (85.5 to 47.8) and barely helps the p99 (168.8 to
+147.2), because the user furthest from both sites is still very far. It takes 5 and then 10 sites before
+the TAIL collapses.
+
+That is the practical shape: the first couple of sites fix the average, and it is the later sites that fix
+the users who were worst off. Which is exactly the argument for a CDN having hundreds of points of
+presence rather than a handful of big ones.""",
+
+    """3. EVERY TERM DEFINED.
+
+ANYCAST. One IP address (or prefix) advertised from multiple locations; routing delivers each client to
+one of them.
+
+UNICAST. One address, one host. The normal case.
+
+MULTICAST. One address, delivered to MANY recipients simultaneously. A different thing entirely, and
+easily confused by name.
+
+BGP. Border Gateway Protocol - how networks tell each other which prefixes they can reach. The mechanism
+that makes anycast work, and the reason you cannot control it precisely.
+
+PREFIX / ROUTE ADVERTISEMENT. Announcing "I can reach 8.8.8.0/24" to your neighbours.
+
+AS / AUTONOMOUS SYSTEM. A network under one administrative control, with its own AS number.
+
+AS-PATH LENGTH. How many networks a route traverses. BGP's primary tie-breaker - and it is a count of
+NETWORKS, not of kilometres or milliseconds.
+
+TOPOLOGICALLY NEAREST. Nearest by AS-path, which is what BGP optimises. NOT the same as nearest
+geographically or fastest.
+
+PoP / POINT OF PRESENCE. One physical site advertising the anycast prefix.
+
+CATCHMENT. The set of users a given PoP receives. Determined by internet topology, not by your capacity
+plan. MEASURED below as a 14.8x imbalance.
+
+ROUTE WITHDRAWAL. Stopping the advertisement, so traffic reroutes elsewhere. The failover mechanism, and
+it is automatic.
+
+CONVERGENCE. How long the internet takes to agree on new routes after a change. Seconds to minutes.
+
+ROUTE FLAP. A route changing repeatedly. The thing that breaks long-lived connections.
+
+GEO-DNS / GSLB. Choosing a different IP per region at DNS resolution time. The main alternative, working
+at a different layer.
+
+DDoS SCRUBBING. Absorbing and filtering an attack. MEASURED below - anycast splits an attack structurally.
+
+STATELESS vs STATEFUL PROTOCOL. UDP DNS carries no connection state, so a reroute costs nothing. TCP
+carries state on ONE machine, so a reroute kills the connection.
+
+TCP RST. The reset a machine sends when it receives packets for a connection it has no record of - what
+a mid-connection reroute produces.
+
+CONNECTION-ORIENTED EDGE TERMINATION. Terminating TCP at the PoP and using a separate connection to the
+origin, so a reroute only breaks the short edge leg.
+
+QUIC CONNECTION ID. QUIC identifies connections by an ID rather than by the IP 4-tuple, so it survives
+address changes - a genuine mitigation for the anycast/TCP problem.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - anycast plus long-lived TCP.
+
+A TCP connection is STATE ON ONE MACHINE. If BGP reroutes mid-flow, the next packets arrive at a
+DIFFERENT site, which has never heard of that connection and answers with a RST.
+
+MEASURED as probability, assuming route changes arrive as a Poisson process:
+
+    route changes/hour   connection length   P(broken mid-connection)
+    ------------------   -----------------   ------------------------
+                   0.5                 1 s                    0.014%
+                   0.5                30 s                    0.416%
+                   0.5               300 s                    4.081%
+                   2.0                30 s                    1.653%
+                   2.0               300 s                   15.352%
+                   6.0               300 s                   39.347%
+
+And converted into how many users that is:
+
+    10,000 new connections/s lasting  30 s -> 300,000 live connections, 4,959 broken per route change
+    10,000 new connections/s lasting 300 s -> 3,000,000 live connections, 460,555 broken per route change
+
+A five-minute websocket on a route that changes twice an hour has a 15% chance of being killed. For a
+one-second HTTP request at the same flap rate, it is 0.014%.
+
+THAT is why DNS is anycast's flagship application: a DNS query over UDP is ONE round trip with no
+connection state, so a route change between one query and the next costs literally nothing.
+
+THE SECOND TRAP - assuming "nearest" means "fastest". BGP picks the topologically nearest site by AS-PATH
+LENGTH, which counts NETWORKS, not kilometres or milliseconds. A route with a shorter AS-path can be
+physically longer, or congested, or take a peculiar detour. Anycast gets you CLOSE, reliably; it does not
+get you OPTIMAL, and you cannot see or override its choices from your side.
+
+THE THIRD TRAP - expecting even load. BGP knows nothing about your capacity. MEASURED, the share of a
+simulated world population routed to each of 10 PoPs:
+
+    lon 5.3% | nyc 10.1% | sfo 6.0% | sin 2.8% | syd 1.8% | gru 8.3%
+    fra 20.4% | nrt 12.6% | bom 26.0% | jnb 6.7%
+
+    ratio busiest/quietest: 14.8x
+
+ANYCAST IS NOT A LOAD BALANCER. It is a LOCATION SELECTOR, and the split it produces is whatever the
+population map and the internet's topology happen to give you. Your Mumbai PoP gets a quarter of the world
+whether or not you built it for that.
+
+THE FOURTH TRAP - forgetting there is no load feedback. If a PoP is overloaded, BGP keeps sending it its
+share. The only lever is to WITHDRAW the route, which shifts ALL of that PoP's traffic elsewhere - a
+coarse, all-or-nothing control, and the nearest neighbour then absorbs it.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHY ANYCAST IS THE DEFENCE OF CHOICE AGAINST DDoS - the arithmetic is structural rather than a capacity
+purchase. MEASURED against a 2,000 Gbps attack:
+
+    sites   capacity/site   total capacity   attack per site   outcome
+    -----   -------------   --------------   ---------------   ---------
+        1        500 Gbps        500 Gbps        2,000 Gbps    SATURATED
+        1      2,000 Gbps      2,000 Gbps        2,000 Gbps    SATURATED
+       10        500 Gbps      5,000 Gbps          200 Gbps    SURVIVES
+       50        500 Gbps     25,000 Gbps           40 Gbps    SURVIVES
+      200        500 Gbps    100,000 Gbps           10 Gbps    SURVIVES
+
+The second row is the point: buying a single site with capacity EQUAL to the attack still saturates,
+because all of it arrives in one place with no margin. Ten sites at a quarter of that capacity each
+survive comfortably.
+
+And the attacker cannot choose which site to hit. BGP decides, based on where the attacking hosts are, so
+a globally distributed botnet is automatically distributed across your PoPs. That is a property of the
+addressing, not something you configured.
+
+WHY DNS SPECIFICALLY. A DNS query over UDP is one round trip and carries no state:
+
+    protocol            round trips   at 30 ms RTT   at 150 ms RTT
+    -----------------   -----------   ------------   -------------
+    DNS over UDP                  1          30 ms          150 ms
+    DNS over TCP                  2          60 ms          300 ms
+    HTTP over TCP                 2          60 ms          300 ms
+    HTTPS (TLS 1.3)               3          90 ms          450 ms
+    HTTPS (TLS 1.2)               4         120 ms          600 ms
+
+Anycast shrinks the RTT itself, so the saving MULTIPLIES through every round trip: cutting 150 ms to 30 ms
+saves 360 ms on a TLS 1.3 page load, not 120 ms. That interaction between anycast and connection-setup
+round trips is the real reason CDNs put their edge close to users.
+
+THE ALTERNATIVES:
+    GEO-DNS / GSLB         different IPs per region, chosen at resolution time. You get explicit
+                           control, load awareness and health-based steering. And it depends on the
+                           RESOLVER's location rather than the user's (a user on 8.8.8.8 may resolve
+                           from far away), it is cached for the TTL, and failover waits for that TTL to
+                           expire.
+    HTTP REDIRECT          send the client to a regional hostname. Costs an extra round trip and is
+                           fully under your control.
+    CLIENT-SIDE SELECTION  the app measures several endpoints and picks. Most accurate, needs a client
+                           you control.
+    ANYCAST                no client involvement, instant failover by route withdrawal, per-packet, and
+                           no control over the choices.
+
+MOST LARGE SYSTEMS USE BOTH: anycast for the DNS layer and for DDoS absorption, and geo-DNS or a load
+balancer behind it for capacity-aware steering. They operate at different layers and compensate for each
+other's blind spots - anycast has no load awareness, geo-DNS has no per-packet freshness.
+
+MITIGATIONS FOR THE TCP PROBLEM:
+    stable BGP policy, so routes rarely change;
+    terminating TCP at the edge, so a reroute breaks only the short edge leg;
+    QUIC, which identifies connections by a connection ID rather than the IP 4-tuple and therefore
+    survives the path changing - the most complete fix, and one reason QUIC matters for CDNs.""",
+
+    """6. HOW TO CODE IT.
+
+  1. YOU DO NOT "CODE" ANYCAST - you get an AS number and address space, advertise the same prefix from
+     multiple sites via BGP, and the internet does the rest. In practice most people rent it: a CDN, a
+     managed DNS provider, or a cloud global load balancer.
+  2. USE IT FOR STATELESS, SHORT EXCHANGES FIRST. DNS over UDP is the ideal case - MEASURED at a 0.014%
+     break rate for a one-second exchange against 15.4% for a five-minute one.
+  3. FOR TCP, TERMINATE AT THE EDGE. Let the PoP own the client connection and use a separate connection
+     to the origin, so a reroute breaks only the edge leg.
+  4. PREFER QUIC FOR LONG-LIVED CONNECTIONS. Its connection ID survives a path change, which is exactly
+     the failure mode measured above.
+  5. KEEP BGP POLICY STABLE. Every route change is a chance to break live connections. MEASURED: at
+     10,000 connections/s lasting 30 s, one route change breaks about 4,959 of them.
+  6. MONITOR PER-POP TRAFFIC SHARE, and expect it to be uneven. MEASURED at 14.8x between the busiest and
+     quietest site. Capacity-plan per PoP against measured catchment, not against an equal split.
+  7. HAVE A DRAIN PROCEDURE: withdraw the route to take a PoP out. It is all-or-nothing, and the traffic
+     lands on the topological neighbour - make sure that neighbour has headroom.
+  8. MEASURE FROM WHERE YOUR USERS ARE (RUM, or probes in real networks). "Topologically nearest" is not
+     "fastest", and only client-side measurement tells you which PoP a given population actually reaches
+     and how long it takes.
+  9. COMBINE WITH GEO-DNS for capacity-aware steering. Anycast has no load feedback; DNS-layer steering
+     does.
+ 10. TEST FAILOVER BY WITHDRAWING A ROUTE IN PRODUCTION, on a schedule. Automatic failover that has never
+     been exercised is a hypothesis.
+ 11. FOR DDoS, MORE SITES BEAT BIGGER SITES. MEASURED: one 2,000 Gbps site saturates under a 2,000 Gbps
+     attack, and ten 500 Gbps sites do not.
+ 12. DO NOT USE ANYCAST TO BALANCE LOAD. It selects a LOCATION. Balance within the PoP with a real load
+     balancer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Anycast means advertising the same IP address from many locations and letting BGP deliver each client to
+whichever one is nearest. 8.8.8.8 is one address and hundreds of machines - a user in Mumbai and one in
+Sao Paulo both send packets there and reach completely different sites.
+
+The reason it is worth doing is that distance is latency and latency is physics. Light in fibre goes about
+200 kilometres per millisecond, so London to Singapore is 10,850 km and therefore at least 108 ms round
+trip; in practice about 160. You cannot engineer below that floor, so the only move is to be closer.
+
+I simulated a globally distributed user population against different deployments. One site in Virginia
+gives a mean RTT of 85.5 ms and a p99 of 168.8. Ten sites gives a mean of 21.1 and a p99 of 45.9. But the
+interesting part is WHERE the improvement lands: going from one site to two halves the mean, 85.5 to 47.8,
+and barely moves the p99, 168.8 to 147.2 - because the user furthest from both is still far away. It takes
+five and then ten sites before the tail collapses. That is the argument for a CDN having hundreds of PoPs
+rather than a few big ones: the first sites fix the average, the later ones fix the users who were worst
+off.
+
+The second big reason is DDoS. The arithmetic is structural: against a 2,000 Gbps attack, a single site
+with 2,000 Gbps of capacity still saturates, because it all arrives in one place. Ten sites at 500 Gbps
+each see 200 Gbps apiece and are fine. And the attacker cannot choose which site to hit - BGP decides,
+based on where the attacking hosts are.
+
+The catch is TCP, and it is a real one. A TCP connection is state on ONE machine, so if BGP reroutes
+mid-flow the packets arrive somewhere that has never heard of that connection and it gets reset. I worked
+out the probabilities: at two route changes an hour, a one-second HTTP request has a 0.014% chance of
+being killed and a five-minute websocket has 15.4%. At ten thousand connections a second lasting thirty
+seconds, a single route change breaks about five thousand of them.
+
+Which is exactly why DNS is the flagship application - a UDP query is one round trip with no state, so a
+route change between queries costs nothing. For long-lived connections you terminate TCP at the edge, or
+use QUIC, whose connection ID survives the path changing.
+
+Two things I would be careful to say it does NOT give you. Nearest is not fastest: BGP picks by AS-path
+length, which counts networks, not kilometres or milliseconds. And it is NOT a load balancer - it has no
+idea whether a PoP is overloaded. In my simulation the busiest PoP took 26% of traffic and the quietest
+1.8%, a 14.8x imbalance driven entirely by where people live. Your capacity plan has to follow the
+measured catchment, not an equal split."
+
+THE ONE SENTENCE TO NOT FUMBLE: anycast is a LOCATION selector, not a load balancer - it buys you
+proximity (mean RTT 85.5 ms to 21.1 ms) and structural DDoS dilution for free, and it gives you no load
+awareness, no control over BGP's choices, and a real hazard for long-lived TCP.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    C_FIBRE_KM_MS = 200.0
+    def rtt_km(km): return 2*km/C_FIBRE_KM_MS
+
+The physical floor. Light in glass travels at about two-thirds of c, so roughly 200 km per millisecond,
+and a ROUND trip is twice the distance. Every latency number in this entry is downstream of these two
+lines - which is the right way round, because the floor is the thing anycast is buying back and it does
+not depend on any technology choice.
+
+    def gc(a, b):
+        la1,lo1 = map(math.radians, a); la2,lo2 = map(math.radians, b)
+        return 6371*math.acos(min(1, sin(la1)*sin(la2) + cos(la1)*cos(la2)*cos(lo2-lo1)))
+
+Great-circle distance. The `min(1, ...)` guards against floating-point error pushing the argument of
+`acos` slightly above 1 for two nearly-identical points, which would raise a domain error - a small
+numerical detail that would otherwise crash on the users nearest a PoP.
+
+    CENTRES = [((40,-95),0.16), ((51,10),0.14), ((28,77),0.20), ((35,110),0.18), ...]
+    users += [(la+rng.normal(0,8), lo+rng.normal(0,12)) for _ in range(n)]
+
+The user population, weighted roughly by where people actually live, scattered around regional centres.
+This matters more than it looks: a UNIFORM distribution over the globe would put most users in oceans and
+would make the PoP imbalance look far smaller than it is. The 26% share for Mumbai in section 4 is a
+direct consequence of weighting South Asia at 0.20.
+
+    d = np.array([min(gc(u, p) for p in popset.values()) for u in users])
+
+The anycast model in one line: each user goes to the NEAREST site. That is an idealisation - BGP picks by
+AS-path, not by geography - and the entry says so explicitly. What the simulation measures is the BEST
+CASE for anycast, which is the right thing to measure when the argument is "is proximity worth it".
+
+    counts = np.bincount(d10, minlength=len(POPS))
+    share = 100*counts/counts.sum()
+
+The catchment measurement - just counting how many users are nearest to each PoP. MEASURED at 26.0% for
+Mumbai and 1.8% for Sydney, a 14.8x ratio. Nothing about this is configurable; it falls out of the
+population map.
+
+    p = 1 - math.exp(-(flap_per_hour/3600)*conn_s)
+
+The probability that a route change lands inside a connection's lifetime, modelling flaps as a Poisson
+process. `flap_per_hour/3600` is the rate per second; multiplying by the connection length gives the
+expected number of flaps during it; `1 - e^-lambda` is the probability of at least one.
+
+This is a model, not a measurement, and stating that is part of using it honestly - the useful output is
+the SHAPE: linear in the flap rate, and linear in connection length for small values, which is why the
+one-second case is 0.014% and the five-minute case is 15.4%.
+
+    per_site = ATTACK/sites
+    print('SURVIVES' if per_site < cap else 'SATURATED')
+
+The DDoS arithmetic, and the row worth reading twice is `1 site x 2000 Gbps` against a 2,000 Gbps attack:
+total capacity EQUALS the attack and it still saturates, because there is no headroom and everything
+arrives in one place. Ten sites at a quarter of the capacity each survive. More sites beat bigger sites,
+and the division happens automatically because the attackers are themselves distributed.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the physical floor.
+
+    route                 distance    theoretical RTT   typical real RTT   real / floor
+    -------------------   ---------   ---------------   ----------------   ------------
+    London - Amsterdam       350 km            3.5 ms              9 ms           2.6x
+    London - New York      5,570 km           55.7 ms             75 ms           1.3x
+    London - Singapore    10,850 km          108.5 ms            160 ms           1.5x
+    London - Sydney       17,000 km          170.0 ms            250 ms           1.5x
+    Sydney - New York     16,000 km          160.0 ms            230 ms           1.4x
+
+Real latency runs 1.3 to 2.6x the theoretical minimum. The short hop has the worst ratio, because
+fixed per-hop equipment costs dominate when the propagation time is small - which is another way of
+saying that on short paths the remaining latency is NOT physics and can be engineered away, while on long
+paths it mostly is physics and cannot.
+
+TRACE B - what adding sites is worth.
+
+    deployment                   mean     p50      p95      p99     mean vs 1 site   p99 vs 1 site
+    --------------------------   ------   ------   ------   -----   --------------   -------------
+    UNICAST, 1 site (Virginia)   85.5     92.2     131.3    168.8            1.00x           1.00x
+    2 sites (US + EU)            47.8     50.3      88.0    147.2            1.79x           1.15x
+    5 sites                      32.1     34.0      55.1     62.9            2.66x           2.68x
+    ANYCAST, 10 sites            21.1     20.0      40.4     45.9            4.05x           3.68x
+
+The two right-hand columns tell different stories, and the difference is the useful finding. Two sites
+give 1.79x on the mean and only 1.15x on the p99 - the average user is much better off and the WORST user
+is barely helped. By 10 sites the two columns converge (4.05x and 3.68x).
+
+So: the first sites buy you the average, the later sites buy you the tail. If your SLO is written on p99 -
+as argued elsewhere in this bank it should be - then a two-site deployment has bought you far less than
+the mean suggests.
+
+TRACE C - why DNS is the canonical case.
+
+    protocol            round trips   at 30 ms RTT   at 150 ms RTT   saving from anycast
+    -----------------   -----------   ------------   -------------   -------------------
+    DNS over UDP                  1          30 ms          150 ms               120 ms
+    DNS over TCP                  2          60 ms          300 ms               240 ms
+    HTTP over TCP                 2          60 ms          300 ms               240 ms
+    HTTPS (TLS 1.3)               3          90 ms          450 ms               360 ms
+    HTTPS (TLS 1.2)               4         120 ms          600 ms               480 ms
+
+Because anycast reduces the RTT itself, the saving MULTIPLIES by the number of round trips. Cutting 150 ms
+to 30 ms is worth 120 ms to a DNS query and 360 ms to a TLS 1.3 page load.
+
+TRACE D - DDoS absorption, 2,000 Gbps attack.
+
+    sites   capacity each   total       per site      outcome
+    -----   -------------   ---------   -----------   ---------
+        1        500 Gbps     500        2,000 Gbps   SATURATED
+        1      2,000 Gbps   2,000        2,000 Gbps   SATURATED
+       10        500 Gbps   5,000          200 Gbps   SURVIVES
+       50        500 Gbps  25,000           40 Gbps   SURVIVES
+      200        500 Gbps 100,000           10 Gbps   SURVIVES
+
+Rows 1 and 2 are the lesson: quadrupling a single site's capacity to exactly match the attack still
+saturates it, because there is no margin and it all lands in one place. Row 3, at 2.5x the total capacity
+spread over ten sites, is comfortable. Distribution beats magnitude.
+
+TRACE E - the TCP hazard.
+
+    flaps/hour   connection length   P(broken)
+    ----------   -----------------   ---------
+           0.5                 1 s      0.014%
+           0.5                30 s      0.416%
+           0.5               300 s      4.081%
+           2.0                30 s      1.653%
+           2.0               300 s     15.352%
+           6.0               300 s     39.347%
+
+    at 10,000 new connections/s:
+        lasting  30 s ->   300,000 live ->   4,959 broken per route change
+        lasting 300 s -> 3,000,000 live -> 460,555 broken per route change
+
+Three orders of magnitude between a one-second request (0.014%) and a five-minute websocket (15.4%) at
+the same flap rate. The variable that matters is CONNECTION LENGTH, which is why the same anycast
+deployment is perfect for DNS and hazardous for streaming.
+
+TRACE F - catchment, 10 PoPs, population-weighted users.
+
+    PoP   share    PoP   share
+    ---   ------   ---   ------
+    lon     5.3%   gru     8.3%
+    nyc    10.1%   fra    20.4%
+    sfo     6.0%   nrt    12.6%
+    sin     2.8%   bom    26.0%   <- busiest
+    syd     1.8%   jnb     6.7%   <- quietest is syd at 1.8%
+
+    ratio busiest / quietest: 14.8x
+
+Mumbai takes more than a quarter of the world's traffic and Sydney under two percent, and no configuration
+you write changes that - it follows from where people live and how the internet is wired. Anycast is a
+LOCATION selector; the load split is a side effect, and capacity planning has to follow the measured
+catchment rather than an assumed equal share.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    physics                 ~200 km/ms in fibre; RTT floor = 2 x distance / 200
+                            London-Singapore 108.5 ms floor, ~160 ms real
+    proximity               1 site: mean 85.5 ms, p99 168.8 | 2 sites: 47.8 / 147.2
+                            5 sites: 32.1 / 62.9 | 10 sites: 21.1 / 45.9
+                            mean improves 4.05x, p99 improves 3.68x - and the p99 only moves
+                            after the third or fourth site
+    round-trip multiplier   cutting 150 ms to 30 ms saves 120 ms on DNS and 360 ms on a TLS 1.3 load
+    DDoS                    2,000 Gbps attack: one 2,000 Gbps site SATURATES; ten 500 Gbps sites see
+                            200 Gbps each and survive
+    TCP hazard              at 2 flaps/hour: 0.014% for 1 s, 1.653% for 30 s, 15.352% for 300 s
+                            10,000 conns/s at 30 s -> 4,959 broken per route change
+    load imbalance          busiest PoP 26.0%, quietest 1.8% -> 14.8x
+
+COMPLEXITY: operationally anycast is BGP configuration plus the same service deployed in many places. It
+costs nothing per request - the routing decision is the internet's, not yours - and it costs a great deal
+in what you cannot control.
+
+THE MISTAKES:
+
+    - Using anycast for long-lived TCP without mitigation. MEASURED 15.4% break rate for a five-minute
+      connection at two route changes an hour.
+    - Confusing anycast with multicast. One recipient versus many.
+    - Assuming "nearest" means "fastest". BGP picks by AS-path length - a count of networks, not
+      kilometres or milliseconds.
+    - Treating it as a load balancer. MEASURED 14.8x imbalance driven entirely by where people live.
+    - Capacity-planning for an equal split across PoPs.
+    - Having no drain procedure, or a drain that dumps a quarter of world traffic onto an unprepared
+      neighbour.
+    - Expecting load feedback. BGP does not know a PoP is overloaded; the only lever is withdrawing the
+      route, which is all-or-nothing.
+    - Never testing failover. Automatic route withdrawal that has never been exercised is a hypothesis.
+    - Buying one bigger site for DDoS instead of more sites. MEASURED: capacity equal to the attack
+      still saturates.
+    - Measuring only from your own monitoring rather than from real user networks. Only client-side
+      measurement reveals which PoP a population actually reaches.
+    - Assuming two sites fix your tail. MEASURED: 1.79x on the mean and 1.15x on the p99.
+    - Forgetting geo-DNS as a complement. Anycast has no load awareness; DNS-layer steering does, and
+      most large systems run both.
+
+THE TAKEAWAY. Anycast makes an IP address name a SERVICE rather than a MACHINE, so the routing layer
+delivers every user to a nearby copy - which buys back the one cost you cannot engineer away, distance.
+Measured, going from one site to ten took the mean RTT from 85.5 ms to 21.1 ms, and the tail only started
+improving after several sites, which is why CDNs have hundreds of PoPs. It also dilutes a DDoS
+structurally: ten 500 Gbps sites survive an attack that saturates a single 2,000 Gbps one, and the
+attacker cannot choose where their traffic lands. What you give up is control - BGP's "nearest" is by
+AS-path and not by latency, there is no load feedback, and the split it produced here was 14.8x uneven.
+And a TCP connection is state on one machine, so route changes kill long-lived connections at a rate that
+is negligible for a DNS query and 15% for a five-minute websocket.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
