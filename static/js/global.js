@@ -42,6 +42,26 @@
     // .light, html.dark would be cleared but the OS-pref dark block
     // would still inject dark tokens, producing white text on a white
     // surface.
+    //
+    // WHY THE NO-PREFERENCE BRANCH ALSO SETS .dark:
+    // design-system.css defines the dark TOKENS twice, identically - once
+    // under `html.dark` and once under
+    //   @media (prefers-color-scheme: dark) { :root:not(.light) { ... } }
+    // so on a system-dark phone with no stored preference the tokens
+    // switched (--color-text became #f1f5f9) while html.dark was NEVER SET.
+    // Individual pages hardcode light panels - #f6fefa, #fdf2f8, #eef2ff -
+    // and revert them only under `html.dark`. The result was near-white
+    // text on a near-white panel: the text was simply invisible. It hit
+    // ~35 templates (/sql's Result block, its trap and portability notes,
+    // its tags, and the same pattern on /todo, /inbox, /portfolio, ...).
+    // Setting the class when the OS says dark makes every one of those
+    // per-page rules fire. It is idempotent - html.dark carries the same
+    // token values the media query already applied.
+    function osPrefersDark() {
+        return !!(window.matchMedia &&
+                  window.matchMedia("(prefers-color-scheme: dark)").matches);
+    }
+
     function applyTheme() {
         const root = document.documentElement;
         const stored = localStorage.getItem("dp-theme");
@@ -52,9 +72,21 @@
             root.classList.add("light");
             root.classList.remove("dark");
         } else {
-            root.classList.remove("dark");
             root.classList.remove("light");
+            root.classList.toggle("dark", osPrefersDark());
         }
+    }
+
+    // Follow the OS if the user has expressed no preference, so switching
+    // the phone to dark at sunset does not leave half the page unreadable
+    // until the next reload.
+    if (window.matchMedia) {
+        const mq = window.matchMedia("(prefers-color-scheme: dark)");
+        const onChange = function () {
+            if (!localStorage.getItem("dp-theme")) applyTheme();
+        };
+        if (mq.addEventListener) mq.addEventListener("change", onChange);
+        else if (mq.addListener) mq.addListener(onChange);
     }
 
     window.toggleDarkMode = function () {

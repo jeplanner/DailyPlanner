@@ -19,6 +19,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/prep-scheduler.js') }}"></script>
 <style>
   body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);
@@ -80,10 +81,41 @@
   .fld{margin-top:12px;overflow-wrap:anywhere}
   .lbl{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
        color:var(--color-text-secondary);margin-bottom:4px}
-  .fld p{margin:0;font-size:14px;line-height:1.55}
+  .fld p{margin:0;font-size:15px;line-height:1.65}
   pre{margin:0;background:var(--color-bg);border:1px solid var(--color-border);
-      border-radius:10px;padding:11px;overflow-x:auto;font-size:12.5px;line-height:1.5;
+      border-radius:10px;padding:11px;overflow-x:auto;font-size:13px;line-height:1.55;
       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  /* ── DEEP DIVE ───────────────────────────────────────────────────────
+     These used to be ten raw <pre> blocks, all expanded, in 12.5px
+     monospace with no wrapping. A ten-section dive runs to several
+     thousand words of PROSE, so monospace bought nothing and cost the
+     line-breaking: every paragraph became one long line you scrolled
+     sideways to read. Now each section is a <details> whose first line
+     ("1. THE GOAL IN PLAIN ENGLISH") becomes the summary, so collapsed
+     they read as a table of contents; the body is pre-wrap in the page
+     font at 14px, with its own horizontal scroller because the ASCII
+     tables inside contain rules that pre-wrap cannot break. */
+  .dd{margin-bottom:6px;background:#f5f7ff;border-left:3px solid var(--color-primary);
+      border-radius:8px;overflow:hidden}
+  .dd > summary{display:flex;gap:9px;align-items:center;padding:9px 11px;cursor:pointer;
+       list-style:none;font-size:13px;font-weight:800;line-height:1.4;min-height:40px}
+  .dd > summary::-webkit-details-marker{display:none}
+  .dd > summary .caret{margin-left:auto;flex:none;font-size:11px;
+       color:var(--color-text-secondary);transition:transform .12s ease}
+  .dd[open] > summary .caret{transform:rotate(90deg)}
+  .dd .n{flex:none;width:20px;height:20px;border-radius:50%;background:var(--color-primary);
+      color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;
+      justify-content:center}
+  .dd .ddttl{min-width:0;overflow-wrap:anywhere}
+  .dd .body{white-space:pre-wrap;font-size:14px;line-height:1.7;min-width:0;
+      overflow-x:auto;-webkit-overflow-scrolling:touch;padding:0 11px 11px 40px;display:block}
+  .dd-hint{font-size:11.5px;font-weight:600;color:var(--color-text-secondary);
+      margin:0 0 6px}
+  html.dark .dd{background:#141a2e;border-left-color:#818cf8}
+  @media (prefers-color-scheme: dark){
+    :root:not(.light) .dd{background:#141a2e;border-left-color:#818cf8}
+  }
 
   /* ── PREDICT THE OUTPUT ─────────────────────────────────────────────
      Hidden until committed to. Recognition is the weak skill; this page
@@ -111,6 +143,10 @@
     /* Four fixed tracks do not fit at 360px; wrap them instead. */
     .q-head .q-chips{display:flex;flex-wrap:wrap}
     .q-head .q-chips .slot:empty{display:none}
+    /* 40px of left indent on a 360px screen leaves ~300px for prose. Drop
+       the indent on a phone and keep the numbered summary as the marker. */
+    .dd .body{padding:0 11px 11px 11px}
+    .wrap{padding:12px 12px 72px}
   }
   .empty{padding:26px 12px;text-align:center;color:var(--color-text-secondary);font-size:14px}
 </style>
@@ -242,6 +278,19 @@
       .replace(/"/g, "&quot;");
   }
 
+  // A dive section starts with its own heading line ("3. EVERY TERM
+  // DEFINED"). Lift that out as the <summary> so the collapsed list reads
+  // as a table of contents; fall back to a truncated flattening for any
+  // section that was not written that way.
+  function ddSplit(text) {
+    var nl = text.indexOf("\n");
+    var head = nl === -1 ? text : text.slice(0, nl);
+    if (nl !== -1 && head.trim().length <= 95)
+      return { title: head.trim(), body: text.slice(nl + 1).replace(/^\n+/, "") };
+    var flat = text.replace(/\s+/g, " ").trim();
+    return { title: flat.length > 80 ? flat.slice(0, 78) + "…" : flat, body: text };
+  }
+
   function field(label, value, mono) {
     if (!value || !String(value).trim()) return "";
     return '<div class="fld"><div class="lbl">' + esc(label) + '</div>' +
@@ -296,8 +345,15 @@
 
     if (d.examples && d.examples.length) {
       h += '<div class="fld"><div class="lbl">Deep dive — ' + d.examples.length +
-           ' sections</div>';
-      d.examples.forEach(function (sec) { h += '<pre>' + esc(sec) + '</pre>'; });
+           ' sections</div><p class="dd-hint">Tap a section to open it.</p>';
+      d.examples.forEach(function (sec, i) {
+        var s = ddSplit(sec);
+        h += '<details class="dd"><summary>' +
+               '<span class="n">' + (i + 1) + '</span>' +
+               '<span class="ddttl">' + esc(s.title) + '</span>' +
+               '<span class="caret">▸</span>' +
+             '</summary><div class="body">' + esc(s.body) + '</div></details>';
+      });
       h += '</div>';
     }
     return h;

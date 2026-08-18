@@ -20,6 +20,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/prep-scheduler.js') }}"></script>
 <style>
   body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);
@@ -84,7 +85,7 @@
   .fld{margin-top:12px;overflow-wrap:anywhere}
   .lbl{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
        color:var(--color-text-secondary);margin-bottom:4px}
-  .fld p{margin:0;font-size:14px;line-height:1.55;white-space:pre-wrap}
+  .fld p{margin:0;font-size:15px;line-height:1.65;white-space:pre-wrap}
   pre{margin:0;background:var(--color-bg);border:1px solid var(--color-border);
       border-radius:10px;padding:11px;overflow-x:auto;font-size:12.5px;line-height:1.5;
       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -109,6 +110,24 @@
   html.dark .tag{background:#1e1b4b;border-color:#3730a3;color:#c7d2fe}
   .empty{padding:26px 12px;text-align:center;color:var(--color-text-secondary);font-size:14px}
 
+  /* ── DARK MODE ON A PHONE ────────────────────────────────────────────
+     design-system.css switches to dark TOKENS through
+       @media (prefers-color-scheme: dark) { :root:not(.light) { ... } }
+     which does NOT require html.dark. Every hardcoded light panel on this
+     page was only reverted under `html.dark`, a class nothing sets unless
+     the user has explicitly chosen dark in settings. So on a phone in
+     system dark mode --color-text became #f1f5f9 and these backgrounds
+     stayed near-white: white text on white, i.e. the result block, the
+     trap, the portability note and the tags were INVISIBLE.
+     Every html.dark rule above is mirrored here. */
+  @media (prefers-color-scheme: dark){
+    :root:not(.light) .verified{color:#6ee7b7;background:#052e26;border-color:#065f46}
+    :root:not(.light) .fld.result pre{background:#08211a}
+    :root:not(.light) .fld.trap{background:#2a0f1d}
+    :root:not(.light) .fld.port{background:#1e1b3a}
+    :root:not(.light) .tag{background:#1e1b4b;border-color:#3730a3;color:#c7d2fe}
+  }
+
   @media (max-width:640px){
     .wrap{padding:12px 11px 64px}
     h1{font-size:19px}
@@ -117,7 +136,10 @@
     /* Five fixed tracks do not fit at 360px; wrap them instead. */
     .q-head .q-chips{display:flex;flex-wrap:wrap}
     .q-head .q-chips .slot:empty{display:none}
-    pre{font-size:11.5px;-webkit-overflow-scrolling:touch}
+    /* 11.5px was unreadable on a phone. The blocks already scroll
+       horizontally, so a larger font costs nothing but a wider scroll. */
+    pre{font-size:12.5px;-webkit-overflow-scrolling:touch}
+    .fld p{font-size:14.5px;line-height:1.65}
   }
 </style>
 </head>
