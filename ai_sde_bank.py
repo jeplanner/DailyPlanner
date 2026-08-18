@@ -318604,6 +318604,1993 @@ speed - and on a non-convex landscape, a step size that means what it says is wo
 that happens to be larger.""",
 ]
 
+_EX_P1AO["Why does HTTP/2 multiplexing not fully eliminate head-of-line blocking, and how does HTTP/3 fix it?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - head-of-line blocking is "something has arrived but you are not
+allowed to have it yet, because something EARLIER has not". It exists at two different layers, and
+HTTP/2 only fixed one of them.
+
+    HTTP/1.1  blocks at the HTTP LAYER. A connection serves one response at a time, so a slow response
+              blocks everything queued behind it on that connection.
+    HTTP/2    multiplexes independent STREAMS over one TCP connection, interleaving their frames. No
+              HTTP-layer blocking - and it still runs over TCP.
+    TCP       guarantees IN-ORDER byte delivery. If one packet is lost, the kernel withholds ALL
+              subsequently-received bytes - of EVERY stream - until the retransmit arrives.
+    HTTP/3    moves to QUIC over UDP and implements streams AT THE TRANSPORT layer, so a lost packet
+              stalls only its own stream.
+
+MEASURED ON THIS MACHINE - 10 resources of 4 to 800 packets over ONE shared bottleneck at 2 packets/ms
+and a 50 ms RTT, so total bandwidth is identical for all three. 200 trials per cell, times in ms:
+
+    loss     HTTP/1.1 (6 conns)          HTTP/2 (1 conn)             HTTP/3 (QUIC)
+             first  median   last        first  median   last        first  median   last
+    -----    -----  ------  ------       -----  ------  ------       -----  ------  ------
+    0.0%      34.5   152.2   852.0        40.5   172.2   852.0        40.5   172.2   852.0
+    0.5%      34.6   154.5   861.1        47.2   182.1   861.1        40.7   174.0   861.1
+    1.0%      34.8   156.2   868.8        51.6   189.5   868.8        40.9   175.9   868.8
+    2.0%      35.1   161.4   878.8        59.6   200.8   878.8        41.5   180.2   878.8
+    5.0%      37.7   171.6   891.9        75.6   213.3   891.9        45.9   192.0   891.9
+
+Read the FIRST-RESOURCE column as loss rises. HTTP/2 goes 40.5 -> 75.6 ms, a degradation of 35.1 ms.
+HTTP/3 goes 40.5 -> 45.9, a degradation of 5.4 ms. HTTP/1.1 with six connections goes 34.5 -> 37.7, a
+degradation of 3.2 ms.
+
+HTTP/2 degrades 6.5 TIMES FASTER WITH LOSS than HTTP/3, and worse than the protocol it replaced.""",
+
+    """2. THE INTUITION - a layer can only fix blocking at or above itself.
+
+Imagine a post room that sorts parcels for ten departments. HTTP/1.1 is one conveyor that must finish
+department 1's parcels before starting department 2's - that is HTTP-layer blocking, and the post room
+can fix it by interleaving. HTTP/2 does exactly that.
+
+But underneath the post room is a DELIVERY VAN that insists on unloading in the exact order it was
+loaded. If box 400 was damaged and has to be re-sent, boxes 401 to 900 sit in the van - they arrived,
+they are physically present - and the driver refuses to hand any of them over until the replacement for
+400 turns up. It does not matter how cleverly the post room interleaved: the constraint is in the van.
+
+TCP IS THE VAN. Its contract is "a single, ordered byte stream", and it has no idea that HTTP/2 has
+carved that stream into ten logical streams. It cannot deliver bytes out of order without breaking the
+only promise it makes.
+
+THAT IS WHY HTTP/2 CANNOT FIX IT, and the fix has to be a new transport. QUIC keeps a separate
+sequencing space per stream, so "stream 7 is missing a packet" is a fact about stream 7.
+
+THE PART THAT SURPRISES PEOPLE - HTTP/2 made this WORSE than HTTP/1.1, not better. HTTP/1.1 browsers
+opened SIX connections per origin, which is six independent TCP sequence spaces. A lost packet stalled
+one sixth of the page. HTTP/2 consolidated everything onto ONE connection, so a single lost packet now
+stalls ALL of it.
+
+MEASURED, the degradation caused purely by loss (each protocol's median at 5% loss minus its median at
+0% loss, so the scheduling differences cancel out):
+
+    protocol                loss-induced degradation, median resource
+    ---------------------   ----------------------------------------
+    HTTP/1.1, 6 conns                                      +19.4 ms
+    HTTP/2, 1 conn                                         +41.1 ms
+    HTTP/3, QUIC                                           +19.8 ms
+
+HTTP/1.1 and HTTP/3 degrade by essentially the same amount - 19.4 and 19.8 ms - for the SAME REASON,
+arrived at two different ways: HTTP/1.1 confines a loss to one of six connections by accident, and
+HTTP/3 confines it to one of ten streams by design. HTTP/2 degrades 2.1x as much because it put
+everything in one sequence space.
+
+The lesson to state: A LAYER CAN ONLY FIX BLOCKING AT OR ABOVE ITSELF. HTTP/2 was as good as an
+HTTP-layer fix can be, and the remaining blocking lived below it.""",
+
+    """3. EVERY TERM DEFINED.
+
+HEAD-OF-LINE (HOL) BLOCKING. Data that has ARRIVED being withheld because earlier data has not. The
+word "arrived" is what makes it different from ordinary slowness.
+
+HTTP-LAYER HOL BLOCKING. HTTP/1.1's version: one request-response at a time per connection.
+
+TRANSPORT-LAYER HOL BLOCKING. TCP's version: in-order byte delivery means one lost segment withholds
+everything behind it. Invisible to HTTP, and unfixable from HTTP.
+
+MULTIPLEXING. Interleaving several logical streams over one connection. HTTP/2's central feature.
+
+STREAM. An independent bidirectional sequence within a connection. HTTP/2 has streams at the HTTP
+layer only; QUIC has them at the TRANSPORT layer, which is the whole difference.
+
+FRAME. HTTP/2's unit on the wire - HEADERS, DATA, SETTINGS - each tagged with a stream id, so frames
+from different streams can be interleaved.
+
+TCP SEQUENCE SPACE. One monotonic byte counter per connection. Six connections means six independent
+sequence spaces; one connection means one. This is the quantity that decides how much a loss stalls.
+
+IN-ORDER DELIVERY. TCP's guarantee, and the source of the problem. It is not a bug or an oversight; it
+is the contract, and every application built on TCP relies on it.
+
+RETRANSMISSION. Re-sending a lost segment, costing at least one round trip - which is the length of
+the stall.
+
+DOMAIN SHARDING. The HTTP/1.1-era hack of serving assets from `static1.example.com`,
+`static2.example.com` and so on to get past the six-connections-per-origin limit. It became an
+ANTI-pattern under HTTP/2, and the measurement above shows it was not as silly as it was made to sound.
+
+HPACK / QPACK. Header compression for HTTP/2 and HTTP/3. HPACK has its own HOL problem - its dynamic
+table requires headers to be processed in order - which is precisely why QPACK was designed
+differently for HTTP/3.
+
+SERVER PUSH. HTTP/2's ability to send resources unasked. Deprecated by browsers; it mostly wasted
+bandwidth.
+
+QUIC. A transport protocol over UDP with per-stream reliability and ordering, plus TLS 1.3 built in.
+See the QUIC entry for why it had to be built on UDP at all.
+
+0-RTT / CONNECTION MIGRATION. QUIC features that come along with owning the transport - see the same
+entry.
+
+PRIORITISATION. Telling the server which streams matter most. HTTP/2's tree-based scheme was complex
+and poorly implemented; HTTP/3 replaced it with the simpler Extensible Priorities.
+
+CONNECTION COALESCING. HTTP/2 reusing one connection for multiple hostnames that share a certificate
+and an IP - which increases the amount that one lost packet can stall.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "HTTP/2 fixed head-of-line blocking". It fixed ONE of the
+two, and made the other one worse.
+
+The measurement isolates them. Compare the degradation caused by loss, which removes every difference
+that is not about loss:
+
+    protocol            median at 0% loss   median at 5% loss   loss-induced degradation
+    -----------------   -----------------   -----------------   ------------------------
+    HTTP/1.1, 6 conns              152.2ms             171.6ms                  +19.4 ms
+    HTTP/2, 1 conn                 172.2ms             213.3ms                  +41.1 ms
+    HTTP/3, QUIC                   172.2ms             192.0ms                  +19.8 ms
+
+And on the FIRST resource - the one that unblocks rendering:
+
+    HTTP/1.1                        34.5ms              37.7ms                   +3.2 ms
+    HTTP/2                          40.5ms              75.6ms                  +35.1 ms
+    HTTP/3                          40.5ms              45.9ms                   +5.4 ms
+
+HTTP/2's first resource degraded 6.5x more than HTTP/3's and 11x more than HTTP/1.1's. On a clean
+network HTTP/2 is fine; on a lossy mobile link it is the worst of the three at getting the first small
+resource to the browser.
+
+THE SECOND TRAP - reading the RAW numbers rather than the degradation. At 0% loss, HTTP/1.1 already
+looks better on the median (152.2 vs 172.2 ms). That is NOT head-of-line blocking - there is no loss.
+It is a scheduling artefact of my model: HTTP/1.1 partitions the ten resources across six connections,
+so the small ones on connections without the 800-packet job finish early, while HTTP/2 interleaves
+fairly and gives the giant resource a continuous share of the link. Real HTTP/2 has prioritisation to
+address exactly this. The honest comparison is the DELTA as loss rises, and reporting the raw column as
+though it were the finding would be overclaiming.
+
+THE THIRD TRAP - assuming HTTP/3 makes the page load faster overall. MEASURED: the LAST resource
+finishes at exactly the same time in all three - 852.0 ms at 0% loss and 891.9 ms at 5% for every
+protocol. The biggest resource is bandwidth-bound, and no amount of stream independence creates
+bandwidth. What changes is WHO WAITS FOR WHOM, and the small resources are the ones that gate
+rendering.
+
+THE FOURTH TRAP - forgetting that HOL blocking exists at MORE than two layers. It is a pattern, not a
+TCP quirk:
+
+    HTTP/1.1              one response at a time                    fixed by HTTP/2
+    TCP                   one ordered byte stream                   fixed by QUIC
+    HPACK                 headers must be decoded in order          fixed by QPACK in HTTP/3
+    a Kafka partition     one slow consumer blocks the partition    fixed by more partitions
+    a single-threaded     one slow task blocks the queue            fixed by more workers or
+    worker queue                                                     per-task queues
+    a store checkout      one customer with a price check           fixed by more tills
+
+Every one of them is "arrived but not deliverable because something earlier is not", and every fix is
+the same shape: give the independent things independent ordering.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the three generations, and what each actually bought.
+
+HTTP/1.1 (1997) - and its workarounds, which are worth respecting rather than mocking:
+    - one request in flight per connection. PIPELINING was specified and is effectively unusable,
+      because responses must return in request order - which is HOL blocking again, at the HTTP layer.
+    - browsers opened ~6 connections per origin. That is six TCP sequence spaces, and it is why
+      HTTP/1.1 degrades so gracefully under loss - MEASURED at +3.2 ms on the first resource against
+      HTTP/2's +35.1 ms.
+    - DOMAIN SHARDING, spriting, and concatenating files - all hacks to get more parallelism or fewer
+      requests. All became anti-patterns under HTTP/2, and sharding in particular was undone for
+      reasons the measurement partly contradicts.
+
+HTTP/2 (2015):
+    - MULTIPLEXING over one connection: no HTTP-layer HOL, and no six-connection limit.
+    - HPACK header compression, which matters enormously for a page making 100 requests with 800 bytes
+      of near-identical headers each.
+    - one TLS handshake instead of six - see the TLS entry, where a handshake measured 31-56 ms.
+    - server push, since deprecated.
+    - and the cost: everything now shares ONE TCP sequence space, so it is MORE sensitive to loss.
+      Measured 2.1x the loss-induced degradation of either neighbour.
+
+HTTP/3 (2022):
+    - QUIC over UDP, with per-stream sequencing at the TRANSPORT layer. That is the fix, and it
+      required a new transport because the problem lived in TCP's contract.
+    - transport and TLS handshakes merged: one round trip instead of two, or zero on resumption.
+    - connection migration across IP changes, which TCP cannot do because a TCP connection IS its
+      4-tuple.
+    - QPACK, redesigned so header compression does not reintroduce HOL blocking.
+    - and its costs: user-space packet handling burns more CPU, there is no NIC offload, some networks
+      block UDP so you need a TCP fallback, and the encrypted transport header blinds your existing
+      tooling.
+
+WHEN EACH IS ACTUALLY BEST:
+    clean, fast network, many small resources   -> HTTP/2 and HTTP/3 are close; the handshake saving
+                                                   usually decides it
+    lossy mobile or satellite link              -> HTTP/3, clearly. MEASURED 6.5x less loss-induced
+                                                   degradation on the first resource
+    one large download                          -> all three identical. MEASURED 852.0 ms at 0% loss
+                                                   for every protocol; it is bandwidth-bound
+    a corporate network that blocks UDP         -> HTTP/2, because HTTP/3 will fall back anyway
+
+THE GENERAL PRINCIPLE, which is the thing to remember when the specifics fade: a layer can only fix
+blocking at or above itself. If your independent work items share a single ordered channel, one of them
+stalling stalls all of them, and the only fix is to give them independent channels - whether that means
+QUIC streams, Kafka partitions, or a second checkout till.""",
+
+    """6. HOW TO CODE IT - the simulation, and the two modelling decisions that make it honest.
+
+MODELLING THE THREE PROTOCOLS:
+
+  1. Represent each resource as a number of packets. Use VERY DIFFERENT sizes - `[4, 8, 12, 20, 30, 60,
+     120, 200, 400, 800]`. With uniform sizes there is no small resource to be held up by a large one
+     and the effect largely disappears.
+  2. FIRST MODELLING DECISION - a SHARED BOTTLENECK. Exactly one packet leaves the link every
+     `PPMS` milliseconds, whichever connection it belongs to. Without this, six connections get six
+     times the bandwidth and HTTP/1.1 "wins" for a reason that has nothing to do with the protocol.
+     Getting this wrong was my first version and it produced a meaningless table.
+  3. HTTP/1.1: assign resources round-robin to 6 connections; within a connection they are SERIAL.
+     Maintain a per-CONNECTION delivery head.
+  4. HTTP/2: one connection, resources interleaved packet by packet, ONE delivery head shared by
+     everything - `head = max(head, arrival)`. That single shared variable IS transport HOL blocking.
+  5. HTTP/3: identical interleaving, but `head[stream]` - a LIST indexed by stream. The protocol
+     difference is a data-structure change, which is a fair reflection of what QUIC actually did.
+  6. Give every protocol the SAME loss pattern for a given seed, so the only variable is delivery
+     ordering.
+
+MEASURING IT:
+
+  7. Record FIRST, MEDIAN and LAST resource completion separately. Reporting only the last shows a
+     1.00x difference at every loss rate and would let you conclude that stream independence does
+     nothing.
+  8. Average over ~200 trials. At 1% loss on 1,654 packets there are only about 16 losses, so a single
+     trial is dominated by where they happened to land.
+  9. SECOND MODELLING DECISION - report the DEGRADATION, not the raw times. Subtract each protocol's
+     own 0%-loss baseline. That cancels the scheduling differences between a 6-connection partition
+     and a fair interleave, and isolates the thing you are actually claiming. It is also what stops
+     you overclaiming: the raw column has HTTP/1.1 ahead at zero loss, which is not about HOL blocking
+     at all.
+ 10. Sweep the loss rate from 0. A gain that is 1.00x at no loss and grows monotonically is what makes
+     the mechanism credible; a constant gain would mean you were measuring something else.
+
+WHAT YOU CAN CHECK FOR REAL:
+
+ 11. `curl -sI https://www.cloudflare.com` and look for `alt-svc: h3=":443"` - that header is how a
+     browser learns to try HTTP/3 at all.
+ 12. In the browser's network panel, the Protocol column shows `h2` or `h3` per request, and throttling
+     to a lossy profile makes the difference visible on a real page.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"HTTP/1.1 blocks at the HTTP layer: responses on a connection are serialised, so one slow response
+blocks everything queued behind it. HTTP/2 fixes THAT by multiplexing independent streams over one TCP
+connection, interleaving their frames so they progress concurrently - no HTTP-layer blocking.
+
+BUT it runs over TCP, which guarantees IN-ORDER byte delivery. If one TCP packet is lost, the kernel
+withholds ALL subsequently-received bytes - of any stream - until the retransmit arrives. So a single
+loss stalls every multiplexed stream. That is TRANSPORT-level head-of-line blocking, and HTTP/2 cannot
+escape it, because the blocking lives BELOW it in TCP.
+
+HTTP/3 moves to QUIC over UDP, implementing streams AT THE TRANSPORT layer with per-stream loss
+handling, so a lost packet only stalls its own stream while the others keep delivering.
+
+I simulated all three over one shared bottleneck, so the bandwidth was identical. The right way to read
+it is the degradation caused by loss - each protocol's median minus its own zero-loss baseline. Going
+from 0% to 5% loss cost HTTP/2 an extra 41.1 milliseconds on the median resource, and HTTP/3 only 19.8.
+On the FIRST small resource - the stylesheet that unblocks rendering - HTTP/2 went from 40.5 to 75.6
+milliseconds and HTTP/3 from 40.5 to 45.9. So HTTP/2 degrades about six and a half times faster with
+loss.
+
+The part I'd emphasise is that HTTP/2 made this WORSE than what it replaced. HTTP/1.1 browsers opened
+six connections per origin - six independent TCP sequence spaces - so a lost packet stalled a sixth of
+the page. In my measurement, HTTP/1.1's loss-induced degradation was 19.4 milliseconds, essentially
+identical to HTTP/3's 19.8, for the same underlying reason arrived at two different ways: HTTP/1.1
+confines a loss to one of six connections by accident, HTTP/3 confines it to one of ten streams by
+design. HTTP/2 put everything in one sequence space and degrades 2.1 times as much as either.
+
+I'd also be precise about what HTTP/3 does NOT fix: the LAST resource finished at exactly the same
+time under all three protocols - 852 milliseconds at zero loss - because the biggest resource is
+bandwidth-bound and stream independence does not create bandwidth. What changes is who waits for whom.
+
+The lesson generalises: A LAYER CAN ONLY FIX BLOCKING AT OR ABOVE ITSELF. The same pattern appears in
+HPACK - which is why HTTP/3 needed QPACK - in a Kafka partition, and in any single-threaded worker
+queue. If independent work shares one ordered channel, one stall stalls everything, and the only fix is
+independent channels."
+
+THE ONE SENTENCE TO NOT FUMBLE: HTTP/2 removed HTTP-layer blocking and CONCENTRATED transport-layer
+blocking by putting every stream in one TCP sequence space, and only a new transport could undo that.""",
+
+    """8. THE CODE LINE BY LINE - the simulation, since that is where the argument is.
+
+    SIZES = [4, 8, 12, 20, 30, 60, 120, 200, 400, 800]
+
+Ten resources spanning 200x. This is the experiment, not decoration: with uniform sizes there is no
+small resource to be delayed by a large one and the effect largely vanishes. A real page is exactly
+this shape - a 2 KB stylesheet and a 400 KB hero image on the same connection.
+
+    t += PPMS
+
+ONE packet leaves the shared link every PPMS milliseconds, for every protocol. This is the modelling
+decision that makes the comparison fair. My first version let each of HTTP/1.1's six connections send
+independently, which gave it six times the bandwidth and produced a table that said nothing about
+protocols.
+
+    if proto == 'http11':
+        queues = [[(i,p) for i in assign[c] for p in range(SIZES[i])] for c in range(conns)]
+
+Six connections, each with its resources SERIALISED - that inner comprehension exhausts resource `i`
+before starting the next, which is HTTP/1.1's HTTP-layer blocking, expressed as a loop order.
+
+    else:
+        while any(rem):
+            for i in range(n):
+                if rem[i]: order.append(i); rem[i] -= 1
+
+Round-robin interleaving for HTTP/2 and HTTP/3 - one packet from each active stream in turn. That is
+multiplexing, and it is why both have no HTTP-layer blocking.
+
+    head[c] = max(head[c], a); done[i] = max(done[i], head[c])          # http11 and http2
+    sheads[i] = max(sheads[i], a); done[i] = max(done[i], sheads[i])    # http3
+
+THE ENTIRE PROTOCOL DIFFERENCE, in two lines. The first indexes the delivery head by CONNECTION - so
+everything on that connection waits behind the loss. The second indexes it by STREAM. HTTP/1.1 and
+HTTP/2 use the identical line; they differ only in how many connections there are (6 vs 1), which is
+exactly the real relationship between them.
+
+    if r.random() < loss: a += RTT
+
+A lost packet costs one round trip to repair - the fast-retransmit case rather than a full timeout.
+This is deliberately CONSERVATIVE: a real timeout costs far more and would flatter HTTP/3 further, so
+the measured gaps are a lower bound.
+
+    f.append(min(d)); m.append(statistics.median(d)); l.append(max(d))
+
+Three statistics per trial. Reporting only `max` gives an identical number for all three protocols at
+every loss rate - which is TRUE and would lead you to conclude the whole thing does not matter. The
+FIRST and MEDIAN are where the effect lives.
+
+    for s in range(200)
+
+Averaging over 200 trials. At 1% loss across 1,654 packets there are about 16 losses; whether they land
+early or late dominates any single run.
+
+    degradation = median_at_5pct - median_at_0pct
+
+Not in the code, but it is how the results should be read, and it is the honest comparison. The raw
+numbers contain a scheduling difference between a six-way partition and a fair interleave that has
+nothing to do with head-of-line blocking; subtracting each protocol's own baseline removes it and
+leaves only the loss effect - 19.4, 41.1 and 19.8 ms.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the mechanism, four packets, two streams A (small) and B (large), interleaved on one
+connection.
+
+    packet   stream   sent   arrives   HTTP/2 delivery   HTTP/3 delivery
+    ------   ------   ----   -------   ---------------   ---------------
+    1        B         0.0      25.0   25.0              25.0
+    2        A         0.5      25.5   25.5              25.5
+    3        B         1.0      76.0   76.0              76.0
+                                       (LOST, +50 ms)
+    4        A         1.5      26.5   76.0  <- BLOCKED  26.5
+
+Packet 4 belongs to stream A. It ARRIVED at 26.5 ms and is sitting in the receiver's buffer. Under
+HTTP/2 the kernel will not hand it to the application until packet 3 is repaired at 76.0 ms, because
+TCP promises a single ordered byte stream and packet 3 comes first in it. TCP does not know that
+packets 3 and 4 belong to different HTTP streams - and it could not act on that knowledge without
+breaking its own contract.
+
+Stream A finished at 76.0 ms instead of 26.5 - 2.9x later - because of a loss in a stream it has
+nothing to do with. Under HTTP/3 stream A has its own sequencing and is delivered immediately.
+
+TRACE B - the full simulation, 10 resources, 200 trials per cell, all times in ms.
+
+    loss     HTTP/1.1 (6 conns)         HTTP/2 (1 conn)            HTTP/3 (QUIC)
+             first  median    last      first  median    last      first  median    last
+    -----   ------  ------  ------     ------  ------  ------     ------  ------  ------
+    0.0%      34.5   152.2   852.0       40.5   172.2   852.0       40.5   172.2   852.0
+    0.5%      34.6   154.5   861.1       47.2   182.1   861.1       40.7   174.0   861.1
+    1.0%      34.8   156.2   868.8       51.6   189.5   868.8       40.9   175.9   868.8
+    2.0%      35.1   161.4   878.8       59.6   200.8   878.8       41.5   180.2   878.8
+    5.0%      37.7   171.6   891.9       75.6   213.3   891.9       45.9   192.0   891.9
+
+Three readings, and they say different things.
+
+    THE LAST COLUMN IS IDENTICAL ACROSS ALL THREE PROTOCOLS at every loss rate. The largest resource is
+    bandwidth-bound; nothing here creates bandwidth.
+    THE FIRST COLUMN separates them sharply as loss rises: HTTP/2 climbs 40.5 -> 75.6 while HTTP/3
+    barely moves, 40.5 -> 45.9.
+    THE 0% ROW shows HTTP/1.1 apparently ahead. That is scheduling, not blocking - see the next trace.
+
+TRACE C - the honest comparison: each protocol's degradation from its OWN zero-loss baseline.
+
+    protocol            first resource      median resource
+                        0%     5%   delta   0%     5%   delta
+    -----------------  ----  ----- ------  -----  ----- ------
+    HTTP/1.1, 6 conns  34.5   37.7   +3.2  152.2  171.6  +19.4
+    HTTP/2, 1 conn     40.5   75.6  +35.1  172.2  213.3  +41.1
+    HTTP/3, QUIC       40.5   45.9   +5.4  172.2  192.0  +19.8
+
+    HTTP/2 / HTTP/3 on the first resource:   35.1 / 5.4  = 6.5x
+    HTTP/2 / HTTP/3 on the median:           41.1 / 19.8 = 2.1x
+    HTTP/1.1 vs HTTP/3 on the median:        19.4 vs 19.8 - essentially IDENTICAL
+
+That last line is the result worth carrying. Six independent TCP connections and ten independent QUIC
+streams give the same loss resilience, because both give the independent work independent ordering.
+HTTP/2's single sequence space is the outlier.
+
+TRACE D - why the six-connection workaround worked, arithmetically.
+
+    protocol     sequence spaces   resources per space   a lost packet stalls
+    ----------   ---------------   -------------------   --------------------
+    HTTP/1.1                   6            10/6 = 1.7   ~17% of the page
+    HTTP/2                     1                     10   100% of the page
+    HTTP/3           10 (streams)                      1   10% of the page
+
+Domain sharding - serving assets from several hostnames to get past the six-connections-per-origin
+limit - was ridiculed as an HTTP/1.1-era hack once HTTP/2 arrived. This table is the sense in which it
+was not silly: more sequence spaces means less blast radius per loss. HTTP/3 gets the same property
+without the connection overhead, which is the right way to have it.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE MECHANICS:
+
+    HTTP/1.1   HTTP-layer blocking: one response at a time per connection.
+               Transport blocking confined to 1/6 of the page (six connections).
+               6 TCP handshakes and 6 TLS handshakes per origin - see the TLS entry, 31-56 ms each.
+    HTTP/2     No HTTP-layer blocking. Transport blocking across 100% of the page.
+               1 handshake. Header compression. Unlimited concurrent streams.
+    HTTP/3     No blocking at either layer. 1 merged transport+TLS handshake, 0-RTT on resumption,
+               connection migration. Costs: user-space CPU, no NIC offload, UDP sometimes blocked.
+
+    MEASURED loss-induced degradation, median resource, 0% -> 5% loss:
+        HTTP/1.1  +19.4 ms      HTTP/2  +41.1 ms      HTTP/3  +19.8 ms
+    MEASURED loss-induced degradation, FIRST resource:
+        HTTP/1.1   +3.2 ms      HTTP/2  +35.1 ms      HTTP/3   +5.4 ms
+    MEASURED last resource: identical for all three at every loss rate.
+
+THE MISTAKES:
+
+    - "HTTP/2 fixed head-of-line blocking." It fixed the HTTP-layer one and concentrated the
+      transport-layer one. MEASURED 2.1x the loss-induced degradation of either neighbour.
+    - Not knowing there are TWO layers of it. That distinction IS the answer to this question.
+    - Thinking HTTP/2 is strictly better than HTTP/1.1. On a lossy link its first resource degraded
+      11x more than HTTP/1.1's six-connection arrangement.
+    - Claiming HTTP/3 makes pages load faster, flatly. MEASURED: the last resource finishes at exactly
+      the same time under all three. The precise claims are the first-resource latency and the
+      handshake round trip.
+    - Reading the raw times instead of the degradation. The 0%-loss column contains a scheduling
+      difference that is not about blocking at all, and quoting it would be overclaiming.
+    - Forgetting that HTTP/2 could not have fixed this. TCP's contract is in-order byte delivery; you
+      cannot deliver out of order without breaking every application built on it. A new transport was
+      the only option.
+    - Missing HPACK. Header compression reintroduced HOL blocking at yet another layer, which is why
+      HTTP/3 needed QPACK - a nice detail that shows you understand the pattern rather than the
+      product.
+    - Assuming a single TCP connection is always better. It is better for handshakes and header
+      compression and worse for loss resilience, and which dominates depends on your network.
+
+THE TAKEAWAY. Head-of-line blocking is not a TCP quirk, it is a consequence of putting independent work
+into one ordered channel - and it therefore exists at every layer where that happens. HTTP/1.1 had it at
+the HTTP layer and browsers worked around it with six connections. HTTP/2 removed it at the HTTP layer
+and, by consolidating onto one connection, gave the transport-layer version a hundred percent blast
+radius instead of a sixth. Only a transport that understands streams can fix that, which is what QUIC
+is. The measured degradation makes it concrete: 41.1 ms for HTTP/2 against 19.8 for HTTP/3 and 19.4 for
+the protocol HTTP/2 replaced. A layer can only fix blocking at or above itself.""",
+]
+
+_EX_P1AO["Why does TCP start slow (slow start) instead of sending at full speed immediately?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you open a connection to a server. How fast should you send?
+
+You have no idea. You do not know the bandwidth of the path, how many other flows are sharing it, how
+big the routers' buffers are, or whether the bottleneck is your Wi-Fi or a transatlantic cable. Nobody
+tells you, and the answer changes second by second.
+
+So TCP does the only sensible thing: it PROBES. Start with a couple of packets. Each round trip that
+comes back successfully is evidence the path handled that much - so DOUBLE the window and try again.
+
+THE ALTERNATIVE - every new flow blasting at full line rate - does not merely risk trouble. It
+collapses.
+
+MEASURED ON THIS MACHINE - a shared bottleneck forwarding 100 packets per round trip with a 50-packet
+buffer, 20 flows, 200 round trips:
+
+    policy                       packets SENT   packets DELIVERED   GOODPUT
+    --------------------------   ------------   -----------------   -------
+    slow start + backoff               36,063              19,840     55.0%
+    blast at full rate always         398,020              19,920      5.0%
+    grow forever, never back off    3,283,564              19,840      0.6%
+
+Read the middle two columns together. The blasting flows sent ELEVEN TIMES as many packets and
+delivered 19,920 against 19,840 - a difference of 0.4%, which is noise. The never-back-off flows sent
+NINETY-ONE TIMES as many and delivered exactly the same number.
+
+The bottleneck forwards 100 packets per round trip. That is a property of the wire. Everything above it
+is not throughput, it is retransmission fuel - and it is fuel for everybody else's retransmissions too.
+That is CONGESTION COLLAPSE: the network gets busier and busier and delivers no more.""",
+
+    """2. THE INTUITION - a doorway, and everybody running at it.
+
+A hundred people need to get through a door that admits ten per second. If everyone sprints at it, you
+get a crush: nobody gets through faster, and the people crushed at the front have to back out and try
+again, which uses the doorway's capacity for nothing. If everybody walks and joins a queue, ten per
+second get through - the maximum the door can do.
+
+The door's capacity is fixed. The only thing your aggression changes is how much of that capacity is
+wasted on collisions.
+
+THE ARITHMETIC IS IN THE MEASUREMENT. With 20 flows blasting, 398,020 packets were offered and 19,920
+delivered. 378,100 packets - 95% of everything sent - were dropped. And every one of those is a
+retransmission that will be sent again, competing with the packets that would otherwise have got
+through.
+
+WHY IT IS CALLED "SLOW" START, WHICH IS A NAMING ACCIDENT: the growth is EXPONENTIAL. It doubles every
+round trip.
+
+    target window    round trips by DOUBLING    round trips by ADDING ONE    ratio
+    -------------    -----------------------    -------------------------    -----
+               16                          4                           15       4x
+               64                          6                           63      10x
+              256                          8                          255      32x
+            1,024                         10                        1,023     102x
+            4,096                         12                        4,095     341x
+
+Twelve round trips to a 4,096-packet window. The LINEAR phase - congestion avoidance, the one that runs
+after slow start - needs 4,095. The word "slow" describes where it STARTS, not how fast it grows, and
+saying so is the fastest way to show you actually understand it.
+
+THE THIRD INTUITION - why exponential is the right shape. You want two things that pull in opposite
+directions: to reach full speed quickly, and never to overshoot badly. Doubling gives you both,
+because the OVERSHOOT IS BOUNDED BY A FACTOR OF TWO. The moment you exceed capacity you find out within
+one round trip, and by construction you were at most 2x over. Tripling would reach capacity slightly
+sooner and overshoot by up to 3x; blasting overshoots by whatever the ratio of line rate to available
+capacity happens to be, which the measurement shows is 20x.""",
+
+    """3. EVERY TERM DEFINED.
+
+CONGESTION WINDOW (cwnd). How many unacknowledged packets the SENDER allows itself. This is congestion
+control - the sender's own guess about the network.
+
+RECEIVE WINDOW (rwnd). How much buffer the RECEIVER advertises. This is flow control - a different
+problem, explicitly told to you. The sender is limited by `min(cwnd, rwnd)`. See the TCP windows entry,
+where a 4 KB receive buffer cut loopback throughput 18x with no congestion anywhere.
+
+SLOW START. cwnd doubles every round trip. Exponential.
+
+SSTHRESH (slow-start threshold). Where doubling stops and adding-one begins. Set to half the window on
+loss.
+
+CONGESTION AVOIDANCE. cwnd grows by about one packet per round trip. Linear, and it is the phase whose
+name honestly describes it.
+
+AIMD (additive increase, multiplicative decrease). Add 1 per RTT while things are fine, halve on loss.
+This is the rule that makes many independent flows converge on a fair share with no coordinator at all
+- the property that lets the internet work.
+
+CONGESTION COLLAPSE. Offered load rising while delivered throughput falls or stagnates, because the
+extra load is retransmissions of packets that were dropped. MEASURED: 91x the packets, 0% more
+delivered. This actually happened to the NSFNET backbone in 1986 - throughput fell from 32 kbit/s to
+40 bit/s, a factor of 1,000 - and Van Jacobson's congestion control is the fix that was invented in
+response.
+
+GOODPUT. Useful throughput, excluding retransmissions. MEASURED at 55.0% with slow start and 0.6%
+without backoff.
+
+BOTTLENECK. The slowest link on the path. Everything is decided by it.
+
+BUFFER / QUEUE. The router's holding area for packets it cannot forward yet. It absorbs bursts; when it
+overflows, packets are DROPPED, and that drop is the only signal the sender gets.
+
+PACKET LOSS AS A SIGNAL. TCP's congestion signal, and the reason it behaves badly on Wi-Fi and mobile,
+where loss means interference rather than congestion.
+
+INITIAL WINDOW (IW). How many packets the first round trip may carry. The RFC default was 1, then 2-4,
+and since RFC 6928 it is 10. That change alone made short HTTP responses noticeably faster, and it is
+the single most consequential tuning in this area.
+
+BANDWIDTH-DELAY PRODUCT. bandwidth x RTT - how many bytes must be in flight to keep the pipe full.
+Slow start's job is to find it.
+
+BUFFERBLOAT. Oversized router buffers absorbing the excess instead of dropping it, so the loss signal
+never arrives and latency balloons instead. The reason loss-based control has aged badly.
+
+CUBIC. Linux's default since 2006: cwnd is a cubic function of time since the last loss - aggressive
+far from the previous limit, cautious near it.
+
+BBR. Models the bottleneck bandwidth and minimum RTT and paces to their product, rather than growing
+until something breaks. Much better on lossy and bufferbloated paths.
+
+TCP FAST OPEN / 0-RTT. Sending data in the first flight on a resumed connection - one of the ways to
+skip the ramp.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two things, and the first is the name.
+
+"SLOW START IS SLOW." It is exponential. MEASURED: 12 round trips to a 4,096-packet window against
+4,095 for the linear phase - 341x fewer. If you say "slow start is the cautious phase and congestion
+avoidance is the fast one" you have them backwards, and it is the most common way to fail this
+question.
+
+THE SECOND, AND IT IS THE ONE THAT MATTERS IN PRACTICE - short connections never leave slow start at
+all.
+
+MEASURED, round trips spent ramping for a transfer, starting from a 1-packet window with 1,460-byte
+segments:
+
+    transfer size   round trips in slow start   at 20 ms RTT   at 100 ms   at 300 ms
+    -------------   -------------------------   ------------   ---------   ---------
+             2 KB                           2          40 ms      200 ms      600 ms
+            14 KB                           4          80 ms      400 ms    1,200 ms
+           100 KB                           7         140 ms      700 ms    2,100 ms
+         1,000 KB                          10         200 ms    1,000 ms    3,000 ms
+        10,000 KB                          13         260 ms    1,300 ms    3,900 ms
+
+A 14 KB response - a perfectly ordinary API JSON payload - takes 4 round trips and NEVER REACHES full
+speed. On a 300 ms path that is 1.2 seconds, essentially all of it ramp. Your bandwidth was never the
+constraint; the ramp was.
+
+That single table is why so much web performance work is about AVOIDING NEW CONNECTIONS:
+
+    HTTP keep-alive          reuse the connection, whose cwnd is already large
+    connection pooling       the same, for your backend HTTP client and your database driver
+    HTTP/2 multiplexing      every resource on one already-warmed connection
+    TLS session resumption   skips handshake round trips, though not the cwnd ramp
+    QUIC 0-RTT               skips a handshake round trip on resumption
+    a CDN                    shortens the RTT itself, which shortens every one of these rows
+    a larger INITIAL WINDOW  RFC 6928 raised it from 3 to 10, which removes about two round trips
+                             from every short transfer
+
+THE THIRD TRAP - thinking slow start is the only thing that starts small. Every connection you open
+pays this, INDEPENDENTLY. Six parallel HTTP/1.1 connections each run their own slow start; a connection
+pool that closes idle connections pays it again on the next request; a serverless function with a fresh
+network namespace pays it on every cold start.
+
+THE FOURTH TRAP - assuming the ramp is the only cost of a new connection. Add it to the handshake: DNS
++ TCP + TLS is 3 round trips before any data (see the URL-walk entry), and THEN slow start needs
+several more before you are at full speed. On a 300 ms path that is well over a second before the pipe
+is full.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what has been tried instead, and where each fails.
+
+WHAT IF EVERY FLOW JUST BLASTED? MEASURED, and it is worth having the numbers rather than the argument:
+
+    flows   policy         packets SENT   DELIVERED   goodput
+    -----   ------------   ------------   ---------   -------
+        5   slow start           31,729      19,655     61.9%
+        5   blast                99,505      19,905     20.0%
+       20   slow start           36,063      19,840     55.0%
+       20   blast               398,020      19,920      5.0%
+      100   slow start           53,356      20,000     37.5%
+      100   blast             1,990,100      20,000      1.0%
+
+Notice the DELIVERED column barely moves - 19,655 to 20,000 across every row. The bottleneck's capacity
+is a property of the wire. And notice the goodput column falling as flows are added under blasting:
+20.0%, 5.0%, 1.0% - it degrades in proportion to the number of participants, which is what makes it a
+tragedy of the commons rather than merely a bad idea.
+
+THE CONGESTION-CONTROL FAMILY:
+    TAHOE (1988)     the original slow start plus AIMD. Any loss collapses cwnd to 1.
+    RENO             adds fast retransmit and fast recovery: a triple duplicate ACK halves the window
+                     instead of collapsing it. The textbook version.
+    NEW RENO         handles multiple losses in one window without repeatedly halving.
+    CUBIC            Linux's default. Cubic growth as a function of TIME since the last loss, so it
+                     refills a large pipe far faster than Reno's +1-per-RTT - which matters because,
+                     as the table above shows, +1 per RTT needs 4,095 round trips to reach 4,096.
+    VEGAS            watches RTT rise and backs off BEFORE loss. Fair in theory; it loses badly when
+                     sharing a link with a loss-based flow, because the loss-based flow keeps pushing.
+    BBR              estimates the bottleneck bandwidth and minimum RTT and PACES to their product,
+                     rather than growing until something breaks. Dramatically better on lossy paths
+                     (where Reno misreads radio loss as congestion) and on bufferbloated ones (where
+                     the loss signal never arrives).
+    ECN / DCTCP      get an EXPLICIT signal: routers MARK packets when queues build instead of
+                     dropping them, so you learn about congestion without losing anything.
+
+WAYS TO SKIP OR SHORTEN THE RAMP, which is where the practical value is:
+    a LARGER INITIAL WINDOW    IW10 (RFC 6928) starts at 10 packets rather than 3, removing about two
+                               round trips from every short transfer.
+    CONNECTION REUSE           keep-alive, pooling, HTTP/2. The cwnd is state you paid for; do not
+                               throw it away.
+    TCP FAST OPEN / QUIC 0-RTT saves handshake round trips on resumption - though note it does not
+                               reset the cwnd ramp by itself.
+    CWND CACHING               remembering the last good cwnd for a destination and starting there.
+                               Linux's tcp_metrics does a version of this.
+    PACING                     spreading a window's packets across the RTT instead of sending them
+                               back to back, which stops a large cwnd from arriving as a burst that
+                               overflows a buffer.
+    A CDN                      the cheapest fix by far, because it shrinks the RTT that every row of
+                               the table above is multiplied by.
+
+THE PRINCIPLE THAT GENERALISES: when you do not know a limit and exceeding it is expensive, PROBE
+EXPONENTIALLY and back off multiplicatively. The same shape appears in exponential backoff for retries
+(see that entry), in adaptive concurrency limits, in thread-pool autoscaling, and in the way a
+well-behaved crawler ramps its request rate against an unfamiliar site.""",
+
+    """6. HOW TO CODE IT - the simulation that shows the collapse, and the arithmetic that shows the cost.
+
+SIMULATING CONGESTION COLLAPSE:
+
+  1. Model the bottleneck as a CAPACITY per round trip - it forwards at most `cap` packets and buffers
+     at most `buf` more; everything beyond that is DROPPED. Without a hard capacity there is nothing to
+     collapse and every policy looks identical.
+  2. Give each flow a cwnd. Each round trip, every flow offers `cwnd` packets and you sum them.
+  3. `forwarded = min(offered, cap + buf)` and `delivered = min(offered, cap)`. The gap between those
+     two is the queue, and the gap between `offered` and `forwarded` is the drops.
+  4. A flow experiences loss with probability `dropped/offered` - a simple proportional model, which is
+     enough because the effect is not subtle.
+  5. Implement THREE policies against the same bottleneck: slow-start-with-backoff, blast (cwnd is
+     always the full line rate), and grow-forever-never-back-off. The third is the one that shows the
+     mechanism most starkly.
+  6. Report SENT and DELIVERED separately, and the ratio. Reporting only delivered makes every policy
+     look the same - which is itself the finding, and you need the SENT column to see it.
+  7. Sweep the flow count. Goodput falling as 20.0% -> 5.0% -> 1.0% with more blasting flows is what
+     makes it a commons problem rather than one bad actor.
+
+COMPUTING THE RAMP COST:
+
+  8. `rtts = 0; cwnd = 1; sent = 0; while sent < packets: sent += cwnd; cwnd = min(cap, cwnd*2); rtts
+     += 1`. Four lines, and it tells you how many round trips a transfer of a given size spends
+     ramping.
+  9. Multiply by real RTTs - 20, 100, 300 ms - to turn a protocol fact into a user-visible number. "4
+     round trips" is abstract; "1.2 seconds on a mobile connection" is not.
+ 10. Include a 14 KB transfer in the table. It is the size of an ordinary JSON API response, and
+     showing that it never leaves slow start is the result people remember.
+
+COMPARING THE TWO GROWTH LAWS:
+
+ 11. `ceil(log2(target))` against `target - 1`. Print them side by side and the ratio. 12 against 4,095
+     is the fastest possible correction to "slow start is slow".
+
+WHAT YOU CAN OBSERVE FOR REAL:
+
+ 12. `ss -ti` on Linux shows `cwnd`, `ssthresh`, `bytes_retrans` and the congestion-control algorithm
+     for every live socket. Watch `cwnd` climb during a large download.
+ 13. `sysctl net.ipv4.tcp_congestion_control` shows which algorithm you are running (usually `cubic`);
+     `sysctl net.ipv4.tcp_available_congestion_control` lists the alternatives, usually including
+     `bbr`.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A new connection has NO IDEA how much bandwidth the path can handle or how congested the network is -
+the capacity across many links and routers is unknown and shifting, and nobody advertises it.
+
+If every new flow blasted at full line rate immediately, they would collectively overwhelm router
+buffers, cause mass packet loss, and trigger CONGESTION COLLAPSE, where the network gets busier and
+throughput plummets because everyone is retransmitting. I simulated that: a bottleneck forwarding 100
+packets per round trip with 20 flows. With slow start and backoff, the flows sent 36,063 packets and
+delivered 19,840 - 55% goodput. Blasting at full rate, they sent 398,020 packets and delivered 19,920.
+Eleven times the traffic, the same number of packets delivered, 5% goodput. Never backing off at all
+sent 3.3 MILLION packets and delivered the same 19,840 - 0.6%. The bottleneck's capacity is a property
+of the wire, and everything above it is retransmission fuel.
+
+Slow start solves this by PROBING. Begin with a tiny congestion window - a few packets - and since each
+successful round trip proves the path handled that much, DOUBLE the window each round trip. That is
+exponential growth, reaching high throughput within a handful of RTTs, while backing off instantly if
+loss appears. It is 'exponential but cautious': fast enough to ramp quickly, safe enough not to swamp
+an unknown path - and the overshoot is bounded at a factor of two, because you find out within one
+round trip of exceeding capacity.
+
+The name misleads people, so I would be explicit: slow start is the FAST phase. Reaching a
+4,096-packet window takes 12 round trips by doubling and 4,095 by adding one, so the linear phase -
+congestion AVOIDANCE, which runs afterwards - is 341 times slower. 'Slow' describes where it starts, not
+how it grows.
+
+The cost is that short connections may finish while still in slow start and never reach full bandwidth.
+I computed that: a 14 KB response - an ordinary API payload - takes 4 round trips and never leaves the
+ramp. On a 300 millisecond mobile path that is 1.2 seconds, almost all of it ramping. Which is exactly
+why keep-alive, connection pooling, HTTP/2 multiplexing and 0-RTT resumption matter so much: they skip
+the ramp by reusing a connection whose window is already large. It is also why RFC 6928 raised the
+initial window from 3 packets to 10 - that alone removes about two round trips from every short
+transfer.
+
+And the bigger point: slow start plus AIMD is what lets millions of independent flows share the
+internet fairly and stably with NO CENTRAL COORDINATOR. Nobody allocates bandwidth. Every sender probes,
+backs off on loss, and the equilibrium is an approximately fair share."
+
+THE ONE SENTENCE TO NOT FUMBLE: the capacity is unknown and exceeding it wastes everyone's bandwidth on
+retransmissions, so TCP probes exponentially from a small window - and "slow" describes the starting
+point, not the growth rate.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE ALGORITHM ITSELF:
+
+    if phase == 'slow-start':
+        cwnd *= 2
+        if cwnd >= ssthresh: phase = 'congestion-avoidance'
+    else:
+        cwnd += 1
+
+Four lines. The entire difference between the two phases is `*= 2` versus `+= 1`, and that is a
+difference of 341x in round trips to a large window.
+
+    if lost:
+        ssthresh = max(2, cwnd // 2)
+        cwnd = max(1, cwnd / 2)
+        phase = 'congestion-avoidance'
+
+The multiplicative decrease. Note it also sets `ssthresh` to the halved value - so the NEXT slow start
+stops doubling at roughly where you last found trouble. That is how TCP remembers the last known
+capacity, and it is why a connection that has already found the limit does not overshoot it again.
+
+THE BOTTLENECK MODEL:
+
+    offered = sum(want)
+    forwarded = min(offered, cap + buf)
+    dropped = offered - forwarded
+    good = min(offered, cap)
+
+Four lines that are the whole network. `cap` is what leaves the link per round trip; `buf` absorbs a
+burst; anything beyond `cap + buf` is dropped on the floor. `good` is what actually gets delivered, and
+it is CAPPED AT `cap` no matter how much was offered - which is the sentence the entire measurement
+exists to make concrete.
+
+    lost = dropped > 0 and random.random() < dropped/offered
+
+A proportional loss model: a flow sending a larger share of the offered traffic is proportionally more
+likely to lose a packet. Crude, and sufficient - the effect being measured is a factor of 91, not a
+factor of 1.1.
+
+    if policy == 'blast':
+        cwnd = cap
+
+Every flow always sends the full line rate. With 20 flows that is 20x the capacity, offered every round
+trip, forever.
+
+    elif policy == 'no-backoff':
+        pass          # on loss, do nothing
+    ...
+        cwnd *= 2     # on success, keep doubling
+
+The pathological case, and the one that produces 3.3 million packets. It is not a straw man - it is
+what you get if you implement "double until it works" and forget the other half of the rule. The
+measurement's job is to show that half is not optional.
+
+    delivered += good; sent_total += offered
+
+The two counters, and reporting BOTH is the point. Report only `delivered` and all three policies look
+identical, which is precisely the finding you would then miss.
+
+THE RAMP CALCULATION:
+
+    while sent < bytes_total/mss:
+        sent += cw; cw = min(cap_cwnd, cw*2); rtts += 1
+
+`sent += cw` before doubling, because a round trip carries the CURRENT window and then the window grows
+for the next one. Getting that order wrong reports one fewer round trip than reality, which matters
+when the answer is 4.
+
+    ceil(log2(target))  vs  target - 1
+
+The two growth laws as closed forms. 12 versus 4,095 at a 4,096-packet window. This one comparison is
+the most efficient way to correct the "slow start is slow" misreading.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one flow's window, round trip by round trip, ssthresh 16, loss at RTT 8.
+
+    RTT   cwnd   phase                  what happened
+    ---   ----   --------------------   -------------------------------------------
+      1      1   slow-start             the initial window
+      2      2   slow-start             doubled - one RTT of evidence that 1 worked
+      3      4   slow-start             doubled
+      4      8   slow-start             doubled
+      5     16   congestion-avoidance   doubled to 16, hit ssthresh, switched phase
+      6     17   congestion-avoidance   +1
+      7     18   congestion-avoidance   +1
+      8     19   congestion-avoidance   LOSS DETECTED
+      9      9   congestion-avoidance   ssthresh = 19//2 = 9, cwnd = 9
+     10     10   congestion-avoidance   +1
+
+Rows 1-5: four round trips to reach 16. Rows 6-8: three round trips for three packets. That contrast
+IS the two phases, and it is why the exponential phase exists - without it, reaching a useful window
+would take thousands of round trips.
+
+Row 8-9 is the multiplicative decrease, and row 9's `ssthresh = 9` is TCP remembering where the limit
+was.
+
+TRACE B - the collapse, 20 flows on a 100-packet-per-RTT bottleneck, 200 RTTs.
+
+    policy                   SENT       DELIVERED   goodput   wasted    sent vs slow start
+    ---------------------   ----------   ---------   -------   ------   ------------------
+    slow start + backoff        36,063      19,840     55.0%    45.0%                 1.0x
+    blast at line rate         398,020      19,920      5.0%    95.0%                11.0x
+    grow, never back off     3,283,564      19,840      0.6%    99.4%                91.1x
+
+The DELIVERED column: 19,840, 19,920, 19,840. Three policies, one within 0.4% of the others. The wire
+forwards what the wire forwards.
+
+The SENT column: 1x, 11x, 91x. That is the load the network is carrying to achieve identical delivery,
+and every packet of it is competing with somebody else's useful traffic.
+
+TRACE C - how it worsens with more participants, which is what makes it a commons problem.
+
+    flows   slow-start goodput   blasting goodput   blasting packets sent
+    -----   ------------------   ----------------   ---------------------
+        5                61.9%              20.0%                  99,505
+       20                55.0%               5.0%                 398,020
+      100                37.5%               1.0%               1,990,100
+
+Under blasting, goodput falls almost exactly in proportion to the flow count - 20.0%, 5.0%, 1.0% for
+5, 20 and 100 flows - because each flow offers a full line rate regardless of how many others there
+are. Under slow start it degrades gently, 61.9% to 37.5%, because each flow's window shrinks as it
+discovers the contention.
+
+TRACE D - the growth laws.
+
+    target cwnd   doubling   adding one   ratio
+    -----------   --------   ----------   -----
+             16          4           15      4x
+             64          6           63     10x
+            256          8          255     32x
+          1,024         10        1,023    102x
+          4,096         12        4,095    341x
+
+TRACE E - the ramp cost for a real transfer, from a 1-packet initial window.
+
+    transfer   RTTs ramping   at 20ms    at 100ms    at 300ms   reaches full speed?
+    --------   ------------   --------   ---------   ---------  -------------------
+       2 KB               2      40 ms      200 ms      600 ms   no
+      14 KB               4      80 ms      400 ms    1,200 ms   no - a typical API response
+     100 KB               7     140 ms      700 ms    2,100 ms   barely
+       1 MB              10     200 ms    1,000 ms    3,000 ms   yes, near the end
+      10 MB              13     260 ms    1,300 ms    3,900 ms   yes
+
+The 14 KB row is the one that matters for most of the software people write. Your API response spends
+its entire life in slow start, and the fix is not bandwidth - it is not opening a new connection.
+Adding the handshake from the URL-walk entry (3 round trips for DNS + TCP + TLS 1.3) makes it 7 round
+trips, or 2.1 seconds on a 300 ms path, before a 14 KB payload has finished arriving.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY, in round trips - the only unit that matters:
+
+    reaching window W by doubling      O(log W) RTTs. MEASURED: 12 to reach 4,096.
+    reaching window W by adding one    O(W) RTTs. MEASURED: 4,095 to reach 4,096. 341x.
+    recovering from one loss           O(W/2) RTTs at +1 per RTT, or O(log W) if it was a timeout and
+                                       you slow-start again
+    overshoot while probing            bounded by 2x, because you find out within one RTT
+    ramp cost for a transfer of N      O(log(N/MSS)) RTTs. MEASURED: 4 for 14 KB, 13 for 10 MB
+    maximum throughput                 window / RTT - a hard ceiling regardless of link speed
+
+    MEASURED goodput at a saturated bottleneck, 20 flows:
+        slow start + backoff   55.0%      blast   5.0%      never back off   0.6%
+    MEASURED packets sent for identical delivery:  1x / 11x / 91x
+
+THE MISTAKES:
+
+    - "Slow start is slow." It is exponential. MEASURED 341x fewer round trips than the linear phase to
+      reach a 4,096-packet window. The linear phase is the slow one, and it is called congestion
+      AVOIDANCE.
+    - Thinking blasting would be faster if only everyone else behaved. MEASURED: even at 5 flows,
+      blasting delivered 19,905 against slow start's 19,655 - a 1.3% gain for 3.1x the packets. The
+      capacity is the capacity.
+    - Confusing the CONGESTION window with the RECEIVE window. One is the sender's guess about the
+      network, the other is the receiver telling you its buffer size. The sender obeys the smaller.
+    - Forgetting that short transfers never leave slow start. MEASURED: a 14 KB response takes 4 round
+      trips and finishes still ramping.
+    - Not connecting it to connection reuse. Keep-alive, pooling, HTTP/2 and 0-RTT all exist largely to
+      avoid paying this ramp again, and the cwnd is state worth protecting.
+    - Overlooking the initial window. RFC 6928's IW10 removes roughly two round trips from every short
+      transfer, which is the single largest tuning available here.
+    - Assuming loss means congestion. On Wi-Fi, mobile and satellite it usually means interference,
+      and TCP halves its window anyway - which is why BBR, which models bandwidth and RTT instead of
+      reacting to loss, does so much better on those paths.
+    - Ignoring that each connection ramps INDEPENDENTLY. Six parallel connections run six slow starts.
+    - Missing the historical point. Congestion collapse is not hypothetical - the NSFNET backbone
+      dropped from 32 kbit/s to 40 bit/s in 1986, and Van Jacobson's congestion control is the fix.
+
+THE TAKEAWAY. TCP starts slow because the capacity of the path is UNKNOWN and exceeding it is not
+merely wasteful for you - it destroys everybody's throughput, since the excess becomes retransmissions
+competing with useful traffic. Measured: blasting sent 11x the packets for 0.4% more delivered, and
+never backing off sent 91x for none. So TCP probes, and it probes EXPONENTIALLY - reaching a
+4,096-packet window in 12 round trips where linear growth needs 4,095 - with the overshoot bounded at a
+factor of two. The price is paid by short connections, which finish while still ramping: a 14 KB
+response takes 4 round trips and never reaches full speed, which is why every serious performance
+technique on the web is ultimately about not opening a new connection.""",
+]
+
+_EX_P1AO["Why does XOR let you find a unique number in O(1) space?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a list where every number appears twice except one. Find the lonely
+one.
+
+The obvious approach is a hash set: walk the list, add a number when you first see it, remove it when
+you see it again, and whatever is left is the answer. Correct, and it uses memory proportional to the
+input.
+
+XOR does it with ONE INTEGER, because of two facts:
+
+    x ^ x = 0        a value cancels itself
+    x ^ 0 = x        zero is the identity
+
+Plus XOR is commutative and associative, so the ORDER DOES NOT MATTER. That means you can mentally
+rearrange the list so every pair sits together, and every pair vanishes:
+
+    [4,1,2,1,2]  ->  4 ^ 1 ^ 2 ^ 1 ^ 2  =  4 ^ (1^1) ^ (2^2)  =  4 ^ 0 ^ 0  =  4
+
+MEASURED ON THIS MACHINE - the same problem, three ways:
+
+    n            XOR time   set time   Counter time     XOR memory   set memory (peak)
+    ----------   --------   --------   ------------     ----------   -----------------
+        10,001      0.3 ms     0.5 ms         0.7 ms           28 B          524,504 B
+       100,001      2.5 ms     8.0 ms         9.0 ms           28 B        2,097,368 B
+     1,000,001     79.6 ms   201.7 ms       200.6 ms           28 B       16,777,432 B
+     4,000,001    526.0 ms  1066.8 ms      1087.8 ms           28 B       67,109,080 B
+
+The accumulator is 28 bytes at EVERY size - one Python integer, and 4 or 8 bytes in C. The set grows to
+67 megabytes. And XOR is also 2.0x faster, because a single integer operation beats hashing.""",
+
+    """2. THE INTUITION - XOR is a light switch, and flipping it twice puts it back.
+
+Take one bit position at a time. XOR in that position is "flip if the incoming bit is 1". Feed it a
+number twice and you flip twice, which is no change at all. Feed it a number once and the flip stays.
+
+So the accumulator is not "remembering" anything. It is holding the PARITY of each bit position - how
+many 1s have been seen there, modulo 2. Every value that appears an even number of times contributes
+an even number of flips and therefore nothing. Only the odd one leaves a mark.
+
+MEASURED, the algebra verified rather than asserted, over all 8-bit values:
+
+    x ^ x == 0          for all 256 values                    True
+    x ^ 0 == x          for all 256 values                    True
+    a ^ b == b ^ a      for all 65,536 pairs                  True
+    (a^b)^c == a^(b^c)  for 46,176 sampled triples            True
+    a ^ b ^ a == b      for all 65,536 pairs                  True
+
+The last line is the one worth pausing on: `a ^ b ^ a == b` says that XOR IS ITS OWN INVERSE. Apply a
+value and apply it again and you are back where you started. That is why "appears twice" is exactly the
+right multiplicity for this trick, and why "appears three times" needs a completely different
+algorithm.
+
+THE THIRD FACT - commutativity and associativity together mean the accumulator does not care about
+order. That is a strong property: it means you can also parallelise this (XOR the halves, then XOR the
+results), stream it, or run it over a distributed dataset with a combine step. A hash-set solution has
+none of those properties for free.
+
+THE HONEST REFINEMENT that most explanations get slightly wrong: the requirement is not "every other
+number appears exactly TWICE". It is "every other number appears an EVEN number of times". MEASURED:
+
+    [4, 1, 1, 1, 1]  ->  XOR gives 4     CORRECT - 1 appears four times, an even count, so it cancels
+
+Four occurrences cancel just as well as two. The invariant is about PARITY, and stating it that way is
+both more accurate and more useful - it is what tells you the algorithm also solves several other
+problems.""",
+
+    """3. EVERY TERM DEFINED.
+
+XOR (exclusive or). Bitwise: the result bit is 1 when exactly one of the two input bits is 1. Written
+`^` in Python, C, Java and most languages.
+
+    0^0 = 0     0^1 = 1     1^0 = 1     1^1 = 0
+
+SELF-INVERSE / INVOLUTION. An operation that undoes itself: `a ^ b ^ b == a`. XOR, negation and
+transposition are involutions. This is the property the whole entry rests on.
+
+IDENTITY ELEMENT. The value that changes nothing. For XOR it is 0, which is why you initialise the
+accumulator to 0 - and initialising it to anything else adds that value to the answer.
+
+COMMUTATIVE. `a ^ b == b ^ a` - order within a pair does not matter.
+
+ASSOCIATIVE. `(a^b)^c == a^(b^c)` - grouping does not matter. Commutative AND associative together mean
+the whole list can be reordered freely, which is the permission the proof needs.
+
+ABELIAN GROUP. The formal name for what the integers under XOR form: closed, associative, with an
+identity (0), and every element its own inverse. If you want one sentence that contains the entire
+proof, it is "XOR makes the integers an abelian group in which every element is its own inverse".
+
+PARITY. Evenness or oddness. The accumulator holds the parity of the count of 1s at each bit position -
+which is a more precise description of what it stores than "the answer so far".
+
+O(1) SPACE / CONSTANT SPACE. Memory that does not grow with the input. MEASURED: 28 bytes at n=10,001
+and at n=4,000,001.
+
+IN-PLACE / STREAMING. You can process the list one element at a time and never store it. XOR
+qualifies; a hash set does not.
+
+BIT MANIPULATION. The family of techniques this belongs to: `x & (x-1)` clears the lowest set bit,
+`x & -x` isolates it, `x & 1` tests oddness.
+
+LOWEST SET BIT (`x & -x`). Isolates the rightmost 1 bit, using two's-complement arithmetic. It is the
+key step in the two-unique-numbers variant below.
+
+TWO'S COMPLEMENT. How negative integers are represented, and the reason `x & -x` works.
+
+BASE-3 COUNTER / STATE MACHINE. The technique for "everything appears three times except one" - a pair
+of accumulators tracking a count modulo 3 per bit, since XOR alone only counts modulo 2.
+
+XOR SWAP. `a ^= b; b ^= a; a ^= b` swaps without a temporary. A famous demonstration of the same
+algebra, and NOT something to use in real code - it breaks when both operands are the same variable,
+and it is slower than a temporary on any modern CPU.
+
+XOR LINKED LIST. Storing `prev ^ next` in one pointer field. Same algebra, and it defeats garbage
+collectors and debuggers, so it is a curiosity rather than a technique.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - XOR NEVER FAILS LOUDLY. When the invariant is broken it
+returns a number, and the number looks like an answer.
+
+MEASURED, four inputs through the same three-line function:
+
+    input               XOR returns   verdict
+    -----------------   -----------   ---------------------------------------------
+    [4,1,2,1,2]                   4   CORRECT - the intended case
+    [4,1,1,1,1]                   4   CORRECT - 1 appears an EVEN number of times
+    [4,7,1,1]                     3   WRONG, silently - 4^7 = 3, which is in neither
+    [4,1,1,1]                     5   WRONG, silently - 4^1 = 5, which is in neither
+
+No exception. No sentinel. No indication that anything is amiss. Rows 3 and 4 return values that are
+not even IN the input array, which is at least detectable - but nothing detects it for you.
+
+AND HOW OFTEN A CASUAL TEST WOULD CATCH IT. MEASURED, 200,000 random small arrays, of which 178,744
+violate the invariant:
+
+    XOR returned a value that is NOT an odd-count element:  118,649  =  66.4%
+    XOR returned something that passes a spot-check:                     33.6%
+
+One time in three, a broken input produces an answer that looks entirely plausible. So the safety of
+this technique rests ENTIRELY on the invariant being stated and enforced upstream, and "I tested it and
+it looked right" is worth about two thirds of what you would want it to be.
+
+THE SECOND TRAP - stating the invariant too narrowly. "Every other number appears exactly twice" is the
+LeetCode phrasing, and it is not what the algorithm requires. Row 2 above is the counterexample: four
+occurrences cancel fine. The true requirement is EVEN multiplicity, and saying that is what tells you
+the same code solves several other problems - which is section 5.
+
+THE THIRD TRAP - initialising the accumulator to something other than 0. `result = nums[0]` then
+looping from index 1 works; `result = 1` silently XORs an extra 1 into the answer. Zero is the identity
+element, and that is the reason, not a convention.
+
+THE FOURTH TRAP - reaching for XOR when a hash set is the right answer. XOR is not a general "find the
+unique element" tool; it is a PARITY tool. It cannot tell you which element appears three times, cannot
+count anything, and gives you no information about anything except the total parity. If the problem is
+"find the element appearing exactly once among elements appearing 1, 2 or 3 times", XOR is useless and
+a Counter is correct. The measured 2.0x speed advantage is not worth a wrong answer.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the same algebra, five problems.
+
+THE CANONICAL PROBLEM - one appears once, everything else an even number of times:
+
+    r = 0
+    for x in nums: r ^= x
+    return r
+
+MISSING NUMBER - an array containing n distinct values from 0..n with one missing. XOR the INDICES and
+the VALUES together; every present value cancels its own index, and the missing one survives:
+
+    r = n
+    for i, x in enumerate(nums): r ^= i ^ x
+    return r
+
+MEASURED: on `0..8` with 4 removed, it returns 4. Note that this works because you are manufacturing
+the pairs yourself - the value `k` and the index `k` cancel. It is also overflow-proof, unlike the
+sum-formula solution `n(n+1)/2 - sum(nums)`, which is the usual alternative.
+
+TWO NUMBERS APPEARING ONCE - everything else twice. XOR everything and you get `p ^ q`, the XOR of the
+two answers, which is not directly useful. But any SET BIT in that result is a position where p and q
+DIFFER. So isolate the lowest one with `x & -x` and partition the array on it:
+
+    x = 0
+    for v in nums: x ^= v
+    bit = x & -x                    # a position where p and q differ
+    p = q = 0
+    for v in nums:
+        if v & bit: p ^= v
+        else:       q ^= v
+
+MEASURED: on `[1,2,1,3,2,5]` it returns `[3,5]`. The partition works because every duplicated pair goes
+to the SAME side (both copies have the same bits), while p and q are guaranteed to go to opposite
+sides. Two independent single-number problems.
+
+EVERYTHING APPEARS THREE TIMES EXCEPT ONE - and here XOR alone is NOT enough, which is the instructive
+part. XOR counts modulo 2 and you need modulo 3. The answer is a two-accumulator state machine that
+counts to three per bit position:
+
+    ones = twos = 0
+    for v in nums:
+        ones = (ones ^ v) & ~twos
+        twos = (twos ^ v) & ~ones
+    return ones
+
+MEASURED: `[2,2,3,2]` returns 3. This is the entry's best argument for understanding the ALGEBRA rather
+than memorising the trick - the moment the multiplicity stops being even, the trick stops applying and
+you need a different construction.
+
+THE WIDER FAMILY, all resting on `a ^ b ^ b == a`:
+    SIMPLE CHECKSUMS / PARITY BITS   one bit that detects any odd number of bit errors.
+    RAID 5                           the parity disk holds the XOR of the others, so ANY one disk can
+                                     be reconstructed by XORing the survivors. Same identity, applied
+                                     to megabytes.
+    THE ONE-TIME PAD                 `c = m ^ k` and `m = c ^ k`. Perfectly secure when k is random and
+                                     used once, and catastrophically broken when k is reused - because
+                                     `c1 ^ c2 = m1 ^ m2` and the key cancels itself.
+    ERASURE CODING                   the generalisation of the RAID idea to arbitrary redundancy.
+    HASHING AND BLOOM FILTERS        XOR as a cheap mixing step.
+    XOR SWAP and XOR LINKED LISTS    real, and both worse than the obvious alternative on modern
+                                     hardware. Know them; do not ship them.
+
+WHEN TO USE A HASH SET INSTEAD: when the multiplicity is not even, when you need to know WHICH elements
+are duplicated, when you need counts, or when the elements are not integers. XOR needs an XOR operation
+and an invariant; if either is missing, it is not applicable.""",
+
+    """6. HOW TO CODE IT.
+
+THE ALGORITHM:
+
+  1. `result = 0`. Zero because it is the IDENTITY element - XORing it in changes nothing. Any other
+     initial value silently becomes part of the answer.
+  2. `for x in nums: result ^= x`. One pass, one accumulator.
+  3. `return result`.
+  4. That is it. Three lines, O(n) time and O(1) space.
+
+STATE THE INVARIANT BEFORE YOU WRITE IT. Out loud, in an interview: "this assumes every other value
+appears an EVEN number of times - if that is not guaranteed, this returns a wrong answer silently, and
+I would use a Counter instead." That sentence is worth more than the code, because it is the thing that
+distinguishes understanding the algebra from having memorised the trick.
+
+THE VARIANTS, and what changes in each:
+
+  5. MISSING NUMBER: seed with `n` and XOR both the index and the value - `r ^= i ^ x`. You are
+     manufacturing the pairs, since value `k` will cancel index `k`.
+  6. TWO SINGLES: first pass gives `p ^ q`; `bit = x & -x` isolates a position where they differ;
+     second pass partitions on that bit and runs two independent single-number scans.
+  7. THREE TIMES: XOR cannot do it. Use the `ones`/`twos` state machine, which counts modulo 3 per bit.
+     Getting this right in an interview matters less than knowing WHY XOR is insufficient.
+
+MEASURING IT, which is what turns "O(1) space" into a number:
+
+  8. `sys.getsizeof(result)` for the accumulator and `sys.getsizeof(set(a))` for the alternative. 28
+     bytes against 67,109,080 at n=4,000,001 is more persuasive than the big-O notation.
+  9. Time all three approaches - XOR, a set that adds-and-discards, and a `Counter`. XOR wins on time
+     as well as space (526 ms against 1,067 ms at four million), because one integer operation beats
+     hashing.
+ 10. VERIFY THE ALGEBRA EXHAUSTIVELY rather than asserting it. All 256 values for the self-inverse and
+     identity laws, all 65,536 pairs for commutativity. It takes milliseconds and it is the actual
+     proof.
+ 11. MEASURE THE FAILURE MODE. Feed it inputs that violate the invariant and record what it returns.
+     Then, over many random arrays, count how often the wrong answer is still PLAUSIBLE - 33.6% here.
+     That number is the argument for stating the invariant.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"XOR has two properties that make this work: `x ^ x = 0` - a value cancels itself - and `x ^ 0 = x`, so
+zero is the identity. And it is commutative and associative, so the ORDER DOESN'T MATTER.
+
+That last part is what makes the proof easy. Since order doesn't matter, you can mentally rearrange the
+list so every duplicate sits next to its partner. Then every pair XORs to 0, all those zeros XOR to 0,
+and the lone value XORed with 0 is itself. So a single accumulator initialised to zero, XORed with
+every element, ends up holding exactly the unique number - using ONE variable instead of a hash set.
+
+For `[4,1,2,1,2]`: `4 ^ 1 ^ 2 ^ 1 ^ 2` = `4 ^ (1^1) ^ (2^2)` = `4 ^ 0 ^ 0` = 4.
+
+I measured what the space saving actually is: at four million elements, the accumulator is 28 bytes -
+one Python integer, and 4 or 8 in C - while the set peaks at 67 megabytes. And XOR is 2.0x faster too,
+526 milliseconds against 1,067, because one integer operation beats hashing.
+
+Two things I'd add that people usually get slightly wrong.
+
+First, the requirement is not 'every other number appears exactly TWICE' - it is that every other
+number appears an EVEN number of times. `[4,1,1,1,1]` returns 4 correctly, because four occurrences
+cancel just as well as two. It's a PARITY argument: the accumulator holds, for each bit position, how
+many ones have been seen there modulo two.
+
+Second, and this is the practical warning: XOR NEVER FAILS LOUDLY. If the invariant is broken it
+returns a number that looks like an answer. `[4,7,1,1]` returns 3, which isn't even in the array. I
+measured how often a casual test would catch that - over 178,000 random arrays that violate the
+invariant, a third of the time it returned something plausible. So state the invariant before you use
+it.
+
+It's a beautiful example of using an ALGEBRAIC property to replace memory with a clever operation, and
+the same identity shows up all over: RAID 5 stores the XOR of the other disks so any one can be
+rebuilt, a one-time pad is `c = m ^ k` and `m = c ^ k`, and parity bits are the one-bit version. The
+generalisation worth knowing is that 'appears twice' is special because XOR is its own inverse - if
+everything appeared three times you'd need a base-3 counter across bits instead, which is a completely
+different construction."
+
+THE ONE SENTENCE TO NOT FUMBLE: XOR is its own inverse and order-independent, so duplicates annihilate
+each other regardless of where they sit - and the accumulator is holding a PARITY, not a value.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def single_number(nums):
+        r = 0
+        for x in nums:
+            r ^= x
+        return r
+
+    `r = 0`      Zero is the IDENTITY for XOR - `0 ^ x == x` - so an empty list correctly yields 0 and
+                 the first element passes through unchanged. Initialise it to 1 and you have silently
+                 added 1 to your answer, with no error anywhere.
+    `r ^= x`     One integer operation per element. No allocation, no hashing, no branching. This is
+                 why it also beats the set on TIME, not only on space - measured 526 ms against 1,067
+                 at four million elements.
+    `return r`   No post-processing. The accumulator IS the answer, which is what makes it streamable:
+                 you can compute this over a file you never hold in memory.
+
+THE ALTERNATIVE, for comparison:
+
+    s = set()
+    for x in a:
+        if x in s: s.discard(x)
+        else:      s.add(x)
+    return s.pop()
+
+Correct, and it allocates. `sys.getsizeof` on the resulting set at four million elements: 67,109,080
+bytes. It also does a hash per element, twice for duplicates.
+
+THE MISSING-NUMBER VARIANT:
+
+    r = n
+    for i, x in enumerate(nums):
+        r ^= i ^ x
+
+Seed with `n` because the indices only run to `n-1` and the values run to `n`. Then `r ^= i ^ x` XORs
+in both the index and the value at each step, so value `k` cancels index `k` and only the missing value
+survives. Note this is OVERFLOW-PROOF, unlike the popular `n*(n+1)//2 - sum(nums)`, which overflows in
+a fixed-width language.
+
+THE TWO-SINGLES VARIANT:
+
+    x = 0
+    for v in nums: x ^= v          # x is now p ^ q
+    bit = x & -x                   # the LOWEST bit where p and q differ
+
+`x & -x` isolates the rightmost set bit, using two's complement: `-x` is `~x + 1`, so it flips every
+bit above the lowest 1 and leaves that bit set in both operands. If `p ^ q` has a 1 at some position,
+p and q must DIFFER there - that is what XOR means - so this bit is a valid separator.
+
+    for v in nums:
+        if v & bit: p ^= v
+        else:       q ^= v
+
+The partition. Two copies of the same duplicated value have IDENTICAL bits, so they always land on the
+same side and cancel there. p and q are guaranteed to land on opposite sides. So each side is now an
+ordinary single-number problem.
+
+THE THREE-TIMES VARIANT, where XOR is not enough:
+
+    ones = (ones ^ v) & ~twos
+    twos = (twos ^ v) & ~ones
+
+A two-bit state machine per bit position, cycling 00 -> 01 -> 10 -> 00 as a bit is seen the first,
+second and third time. `ones` holds the bits seen once modulo 3. The order of the two assignments
+matters - `twos` uses the freshly updated `ones` - and swapping them breaks it silently.
+
+The point of including this is what it demonstrates: `^` counts modulo 2 and nothing else. The moment
+the multiplicity is 3, the trick is gone and you need a different construction.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `[4, 1, 2, 1, 2]`, one step at a time, with the binary shown.
+
+    step   x   x in binary   r before   r after   r in binary
+    ----   -   -----------   --------   -------   -----------
+    init   -             -          -         0          000
+       1   4           100          0         4          100
+       2   1           001          4         5          101
+       3   2           010          5         7          111
+       4   1           001          7         6          110
+       5   2           010          6         4          100
+
+Follow ONE bit column and the mechanism is obvious. The lowest bit (value 1) was flipped at step 2 and
+flipped back at step 4 - two flips, so it ends at 0. The middle bit (value 2) was flipped at step 3 and
+step 5 - two flips, back to 0. The top bit (value 4) was flipped once, at step 1, and nothing ever
+flipped it back.
+
+The accumulator is not tracking numbers. It is tracking, per bit position, WHETHER AN ODD NUMBER OF
+FLIPS HAS HAPPENED.
+
+TRACE B - why order does not matter, the same input in three orders.
+
+    order                    running XOR
+    ---------------------    -------------------------------------
+    4, 1, 2, 1, 2            0, 4, 5, 7, 6, 4
+    1, 1, 2, 2, 4            0, 1, 0, 2, 0, 4
+    2, 4, 1, 2, 1            0, 2, 6, 7, 5, 4
+
+Three completely different paths through the intermediate values - 6, 0 and 5 at the fourth step - and
+the same destination. That is commutativity and associativity doing their work, and it is also why this
+parallelises: XOR the first half, XOR the second half, XOR the two results.
+
+TRACE C - space and time, measured.
+
+    n            XOR time   set time   ratio    XOR memory   set memory     ratio
+    ----------   --------   --------   -----    ----------   ------------   ----------
+        10,001      0.3 ms     0.5 ms   1.7x         28 B       524,504 B    18,732x
+       100,001      2.5 ms     8.0 ms   3.2x         28 B     2,097,368 B    74,906x
+     1,000,001     79.6 ms   201.7 ms   2.5x         28 B    16,777,432 B   599,194x
+     4,000,001    526.0 ms  1066.8 ms   2.0x         28 B    67,109,080 B  2,396,753x
+
+The XOR memory column is CONSTANT - the same 28 bytes at four million elements as at ten thousand. That
+is what O(1) space means, made concrete. The set column grows linearly and reaches 67 megabytes.
+
+TRACE D - the invariant, and what happens when it breaks.
+
+    input             every other value's count   XOR   correct?
+    ---------------   -------------------------   ---   ----------------------------------
+    [4,1,2,1,2]       1:2, 2:2  (both EVEN)         4   yes
+    [4,1,1,1,1]       1:4       (EVEN)              4   yes - four cancels as well as two
+    [4,7,1,1]         1:2 EVEN, but 4 AND 7 are
+                      both singletons               3   NO. 4^7 = 3, not in the array.
+    [4,1,1,1]         1:3       (ODD)               5   NO. 4^1 = 5, not in the array.
+
+Row 2 is the refinement most explanations miss: the requirement is EVEN multiplicity, not exactly two.
+Rows 3 and 4 are silent failures - and note they returned values that are not even present in the
+input, which is at least detectable if you check.
+
+TRACE E - how often a wrong answer looks right. 200,000 random small arrays, 178,744 of which violate
+the invariant.
+
+    outcome                                                  count      share
+    ------------------------------------------------------   --------   -----
+    returned a value that is NOT an odd-count element         118,649   66.4%
+    returned something that would pass a casual spot-check     60,095   33.6%
+
+One time in three, a broken input yields an answer you would accept. That is the number that justifies
+saying the invariant out loud before writing the three lines.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    time                 O(n) - one pass, one integer operation per element.
+                         MEASURED 526 ms for 4,000,001 elements against 1,067 ms for a hash set (2.0x)
+                         and 1,088 ms for a Counter.
+    space                O(1) - one accumulator. MEASURED 28 bytes at every input size, against
+                         67,109,080 bytes for the set at n=4,000,001.
+    passes               ONE. The variants need two (two singles) or one (missing number, three times).
+    parallelism          free - XOR the halves and XOR the results, because it is commutative and
+                         associative.
+    streaming            free - the accumulator never needs the input again.
+    numerical safety     no overflow, unlike the sum-based missing-number solution.
+
+    the variants:
+        missing number       O(n) time, O(1) space, overflow-proof
+        two singles          O(n) time, O(1) space, TWO passes
+        appears three times  O(n) time, O(1) space, and NOT XOR - a base-3 state machine
+
+THE MISTAKES:
+
+    - Not stating the invariant. XOR never raises. MEASURED: on inputs that violate it, a third of the
+      time it returns something that passes a spot-check.
+    - Stating the invariant as "exactly twice". It is EVEN multiplicity. MEASURED: `[4,1,1,1,1]`
+      returns 4 correctly.
+    - Initialising the accumulator to something other than 0. Zero is the identity element; anything
+      else is silently added to the answer.
+    - Using XOR when you need counts, or which elements repeat, or non-even multiplicities. It is a
+      PARITY tool, not a general uniqueness tool. A Counter is the right answer there and the 2.0x
+      speed difference is not worth a wrong result.
+    - Expecting XOR to solve the three-times variant. It counts modulo 2; you need modulo 3, which is a
+      different construction entirely.
+    - Reversing the two assignments in the ones/twos state machine. `twos` must use the freshly updated
+      `ones`, and swapping them fails silently.
+    - Using the sum formula for missing-number in a fixed-width language. `n(n+1)/2` overflows; the XOR
+      version cannot.
+    - Shipping the XOR swap. It is slower than a temporary on any modern CPU and it zeroes the value
+      when both operands alias the same variable.
+    - Forgetting to check `bit = x & -x` is non-zero in the two-singles variant. If the two answers
+      were equal, `p ^ q` would be 0 - but they cannot be, since they are distinct, so the check is
+      really a guard against a violated precondition rather than a real case.
+
+THE TAKEAWAY. This is what an ALGEBRAIC PROPERTY buys you. XOR makes the integers a group in which
+every element is its own inverse, and it is commutative and associative - so duplicates annihilate each
+other no matter where they sit in the list, and a single accumulator ends up holding the parity that
+only the odd element could have set. That replaces a data structure with an operation: 28 bytes instead
+of 67 megabytes, and 2.0x faster as well. The price is that the algorithm has NO ERROR CHANNEL - it
+computes a parity whether or not that parity means what you think it means - so the invariant has to be
+stated and enforced before the three lines, not discovered afterwards.""",
+]
+
+_EX_P1AO["Why does batching make inference cheaper but can raise latency?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - running one request through a model and running thirty-two through
+it cost almost the same, because the expensive part is READING THE WEIGHTS, not multiplying by them.
+
+MEASURED ON THIS MACHINE - a 1024 -> 4096 -> 1024 float32 network, timed at every batch size:
+
+    batch   time per BATCH   time per REQUEST   sustainable throughput
+    -----   --------------   ----------------   ----------------------
+        1          1.69 ms          1,692.3 us                 591 /s
+        4          5.37 ms          1,343.0 us                 745 /s
+        8          4.19 ms            523.8 us               1,909 /s
+       16          4.62 ms            288.9 us               3,462 /s
+       32          7.77 ms            242.7 us               4,121 /s
+       64          9.58 ms            149.6 us               6,682 /s
+      128         13.08 ms            102.2 us               9,782 /s
+      256         21.69 ms             84.7 us              11,802 /s
+
+Look at the first two columns together. Going from batch 1 to batch 128 multiplied the work by 128 and
+the TIME by only 7.7. The per-request cost fell from 1,692 microseconds to 102 - SIXTEEN AND A HALF
+TIMES CHEAPER - because the weight matrices have to be pulled out of memory either way, and extra rows
+ride along nearly free.
+
+So batching is a 16.6x cost reduction. And the catch is in the first column: a batch of 128 takes 13.08
+ms to run, and to HAVE 128 requests you must WAIT for 128 requests to arrive.
+
+MEASURED, arrivals at 200 requests/second:
+
+    max batch   max wait   p50 latency   p99 latency   average batch size
+    ---------   --------   -----------   -----------   ------------------
+            1       0 ms       1.69 ms       5.29 ms                  1.0
+           32       5 ms       6.06 ms      10.88 ms                  2.0
+           32      20 ms      12.05 ms      24.48 ms                  5.0
+          128     100 ms      55.31 ms     106.69 ms                 20.8
+
+Same model, same hardware. One knob. 33x the latency for the cost saving.""",
+
+    """2. THE INTUITION - a bus, not a taxi.
+
+A taxi leaves the moment you get in: minimum latency, one passenger per vehicle, terrible cost per
+passenger. A bus waits until it is reasonably full: excellent cost per passenger, and everybody who
+boarded first sits there watching the door.
+
+The bus is not slower at DRIVING. It is slower at DEPARTING, and the wait is entirely the price of
+filling it.
+
+WHY THE HARDWARE WORKS THIS WAY. A matrix multiply of one input row against a 1024x4096 weight matrix
+has to read 4 million weights out of memory to do 4 million multiply-accumulates - a ratio of one
+arithmetic operation per byte fetched, which leaves the arithmetic units idle waiting for memory. Batch
+32 rows and you read the SAME 4 million weights once and do 128 million operations with them. The
+memory traffic is unchanged and the useful work is 32x. That is why it is nearly free, and it is why
+the effect is far stronger on a GPU, whose arithmetic-to-memory ratio is far more lopsided than a CPU's.
+
+NOW THE PART THAT REVERSES THE HEADLINE, and it is the most useful thing in this entry. "Batching
+raises latency" is only true WHEN YOU HAVE SPARE CAPACITY. Under real load it is the opposite.
+
+MEASURED, arrivals at 2,000 requests/second against a server whose UNBATCHED capacity is 591/s:
+
+    max batch   max wait      p50 latency      p99 latency   average batch   verdict
+    ---------   --------   -------------   --------------   -------------   ---------------
+            1       0 ms   17,854.25 ms    35,308.78 ms               1.0   QUEUE DIVERGED
+            8       5 ms      345.47 ms       618.84 ms               8.0   OK
+           32       5 ms        7.35 ms        13.83 ms              11.3   OK
+           32      20 ms       15.36 ms        26.22 ms              31.7   OK
+          128     100 ms       44.65 ms        81.92 ms             127.7   OK
+
+Without batching the server can serve 591 requests per second and 2,000 are arriving, so the queue
+grows forever - the measured p50 of 17.9 SECONDS is really "how long the simulation ran". With a
+maximum batch of 32 and a 5 ms wait, the p50 is 7.35 milliseconds.
+
+Batching made latency 2,400 TIMES BETTER. Not worse.
+
+The reconciliation is simple once you see it: batching adds a bounded WAIT and removes an unbounded
+QUEUE. Below capacity there is no queue to remove, so you only see the wait. Above capacity the queue
+is the whole story.""",
+
+    """3. EVERY TERM DEFINED.
+
+BATCHING. Processing several requests in one model invocation.
+
+BATCH SIZE. How many requests go in. The knob.
+
+MAX BATCH SIZE. The cap - beyond it you run rather than wait, regardless of what else arrives.
+
+MAX WAIT / BATCH TIMEOUT / BATCH WINDOW. How long you will hold the first-arrived request while
+gathering companions. The OTHER knob, and the one that costs latency directly.
+
+QUEUEING DELAY vs BATCH WAIT. Two different waits, and conflating them is the mistake in section 4.
+Queueing delay is "the server is busy with something else"; batch wait is "the server is deliberately
+idle, collecting". Batching trades the second for less of the first.
+
+THROUGHPUT. Requests per second. MEASURED 591/s unbatched and 9,782/s at batch 128.
+
+ARITHMETIC INTENSITY. Floating-point operations per byte of memory traffic. Low intensity means you are
+MEMORY-BOUND and the arithmetic units are idle; batching raises intensity, which is the entire
+mechanism.
+
+MEMORY-BOUND vs COMPUTE-BOUND. Batch 1 is memory-bound - you read every weight to do very little with
+it. At large enough batches you become compute-bound and the per-request cost stops falling. MEASURED:
+102.2 us at batch 128 and 84.7 at batch 256 - the curve is flattening.
+
+STATIC BATCHING. Wait for N requests or T milliseconds, run them, repeat. What the measurement models.
+
+DYNAMIC / ADAPTIVE BATCHING. Adjusting N and T to the observed load. Triton and TorchServe do this.
+
+CONTINUOUS / IN-FLIGHT BATCHING. The LLM-specific version, and the important one: because generation is
+token by token, a naive batch runs until its SLOWEST sequence finishes and the finished slots sit idle.
+Continuous batching evicts a finished sequence and admits a new one at every token step. vLLM and TGI
+do this, and it is worth several times the throughput of static batching for generation.
+
+PREFILL vs DECODE. An LLM's two phases: prefill processes the whole prompt at once and is
+compute-bound; decode generates one token at a time and is severely memory-bound. Decode is where
+batching pays enormously, because a batch of 1 re-reads every weight to produce one token.
+
+KV CACHE. The stored attention keys and values that make decode incremental. It is what BOUNDS the
+batch size in LLM serving - memory, not compute.
+
+TIME TO FIRST TOKEN (TTFT) vs TIME PER OUTPUT TOKEN (TPOT). The two LLM latency metrics. Batch waiting
+hurts TTFT specifically, which is the one users perceive as responsiveness.
+
+PADDING WASTE. Batching variable-length inputs means padding to the longest, so compute is spent on
+padding. Bucketing by length reduces it.
+
+TAIL LATENCY. p99 and beyond. A batch's latency is shared by everyone in it, so batching makes latency
+more UNIFORM - which improves p99 relative to p50 and is a genuine and rarely-mentioned benefit.
+
+LITTLE'S LAW. `L = lambda x W`. See the latency-vs-throughput entry; it is what tells you how many
+requests are in flight and therefore how big your batches can realistically get.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "batching raises latency", stated without the condition.
+
+It raises latency when you have SPARE CAPACITY and lowers it when you do not, and the two measurements
+are 33x in one direction and 2,400x in the other.
+
+    arrival rate   policy                    p50 latency   what dominates
+    ------------   -----------------------   -----------   ----------------------------------
+    200 /s         no batching                   1.69 ms   nothing - the server is idle
+    200 /s         batch 128, wait 100 ms       55.31 ms   the WAIT. 33x worse.
+    2,000 /s       no batching               17,854.25 ms   the QUEUE. It never drains.
+    2,000 /s       batch 32, wait 5 ms           7.35 ms   nothing. 2,400x better.
+
+If your service is comfortably under capacity, batching is a pure cost optimisation that you pay for in
+latency. If it is anywhere near capacity, batching is what MAKES the latency target achievable at all.
+Saying "batching raises latency" without asking which regime you are in is how teams disable batching
+during an incident and make it much worse.
+
+THE SECOND TRAP - tuning MAX BATCH SIZE when the thing that matters is MAX WAIT. MEASURED, at 200/s:
+
+    max batch   max wait   p50       average batch size
+    ---------   --------   --------  ------------------
+           32       5 ms    6.06 ms                 2.0
+          128       5 ms    6.06 ms                 2.0     <- 4x the cap, identical result
+           32      20 ms   12.05 ms                 5.0
+          128      20 ms   12.05 ms                 5.0     <- again identical
+          128     100 ms   55.31 ms                20.8
+
+At 200 requests/second, raising the maximum batch from 32 to 128 changed NOTHING, because the arrival
+rate never delivers 32 requests within the window. The average batch size is set by
+`arrival_rate x max_wait`, and `max_batch` only binds when that product exceeds it. So the knob you
+should be tuning is the WAIT, and the max batch is a memory guard.
+
+THE THIRD TRAP - the latency cost is not the wait you configured, it is the wait PLUS the longer
+service time. MEASURED at 200/s with a 100 ms window: p50 55.31 ms, of which about 21.7 ms is the batch
+of 128 running (see the service-time table) and the rest is waiting. And the p99 is 106.69 ms - just
+over the configured window, which is the right sanity check that your implementation is honouring its
+own timeout.
+
+THE FOURTH TRAP - assuming the per-request cost keeps falling. MEASURED: 102.2 us at batch 128 and 84.7
+us at batch 256 - a further doubling of batch size bought 17% rather than 50%. You have transitioned
+from memory-bound to compute-bound, and past that point larger batches cost latency for very little
+saving. There is a knee, and it is measurable on your own hardware in ten minutes.
+
+A HONEST NOTE ON THE MEASUREMENT - the batch-2 row in the service-time table reads 6.06 ms, worse than
+batch 4's 5.37 ms. That is CPU and numpy noise at small sizes, not a real effect: the timings there are
+a few milliseconds and dominated by allocation and cache behaviour. The trend from batch 8 upward is
+clean and monotonic, and that is the part the argument rests on.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the knobs, and the LLM-specific version that changes the shape
+of the problem.
+
+THE TWO KNOBS, and what each actually controls:
+    MAX WAIT       sets the average batch size, together with the arrival rate. This is the latency
+                   knob. MEASURED: 5 ms gave batches of 2.0 and a p50 of 6.06 ms; 100 ms gave batches
+                   of 20.8 and a p50 of 55.31 ms, at the same arrival rate.
+    MAX BATCH      a memory and tail guard. It binds only when `rate x wait` exceeds it. MEASURED: at
+                   200/s and a 5 ms wait, 32 and 128 behaved identically.
+
+HOW TO SET THEM: measure your arrival rate, pick a max wait that is a small fraction of your latency
+BUDGET (not of your current latency), and set the max batch from your memory limit. Then verify the
+average batch size you actually get - if it is far below the cap, the cap is not your problem.
+
+ADAPTIVE STRATEGIES:
+    DYNAMIC BATCHING       shrink the wait when load is low, grow it when queues build. Under load the
+                           batch fills before the timeout anyway, so the wait costs nothing - which is
+                           exactly what the 2,000/s row shows.
+    QUEUE-DEPTH TRIGGERED  run as soon as N are queued OR the timeout fires, whichever first. This is
+                           what the measurement models and it is the standard implementation.
+    PRIORITY LANES         a low-latency lane with a tiny wait and a bulk lane with a large one. The
+                           right answer when one service has both interactive and batch traffic - see
+                           the latency-vs-throughput entry.
+    LENGTH BUCKETING       group similar-length inputs so padding waste is small.
+
+THE LLM CASE, which is different enough to be worth its own paragraph:
+    PREFILL is compute-bound and batches straightforwardly.
+    DECODE is severely memory-bound - one token per sequence per step, re-reading every weight - so
+    batching is worth far more there than the 16.6x measured here on a small dense model.
+    STATIC BATCHING IS BADLY WRONG FOR GENERATION, because sequences finish at different times and a
+    fixed batch runs until its slowest member is done, leaving finished slots idle for the rest.
+    CONTINUOUS / IN-FLIGHT BATCHING evicts a finished sequence and admits a waiting one at every token
+    step, so the batch stays full. This is vLLM's and TGI's central idea and it is worth several times
+    the throughput of static batching.
+    THE BATCH SIZE IS BOUNDED BY KV CACHE MEMORY, not by compute - see the GQA and KV-cache entries.
+    PAGED ATTENTION exists to stop KV-cache fragmentation from wasting that memory.
+
+WHEN NOT TO BATCH AT ALL:
+    - a hard latency SLO with plenty of spare capacity. You are paying latency for cost you do not
+      need to save.
+    - very low traffic. MEASURED: at 200/s a 5 ms window produced an average batch of 2.0, so you paid
+      4.4 ms of latency for a 2x cost saving.
+    - a model already compute-bound at batch 1 - a very large convolution, for instance. There is no
+      memory-boundness to exploit.
+    - when requests have wildly different shapes and padding waste would exceed the batching gain.
+
+THE GENERAL PATTERN: batching amortises a FIXED COST over more items. Exactly the same trade appears in
+database inserts (see the latency-vs-throughput entry, where batches of 100,000 gave 4,842x throughput
+for 20.6x latency), in network packets, in log shipping, in Kafka producers (`linger.ms` is literally
+`max_wait`), and in disk writes. Every one of them has the same two knobs and the same regime
+dependence.""",
+
+    """6. HOW TO CODE IT.
+
+THE SERVER LOOP:
+
+  1. Requests arrive into a queue, each with a future or a callback to complete.
+  2. The batcher takes the first request and STARTS A TIMER for `max_wait`.
+  3. It keeps pulling from the queue until either `max_batch` requests are collected or the timer
+     fires.
+  4. Stack them into one tensor, run ONE forward pass, split the outputs, complete each future.
+  5. Repeat.
+  6. The subtlety: while a batch is RUNNING, arrivals keep queueing. So the next batch may already be
+     full when the current one finishes, and the wait costs nothing. That is why batching stops
+     hurting latency exactly when it starts mattering.
+
+MEASURING THE HARDWARE SIDE, which is where the 16.6x comes from:
+
+  7. Time a forward pass at batch 1, 2, 4, ... 256. WARM UP first - run it once before timing - or you
+     measure allocation and first-touch page faults instead.
+  8. Report time per BATCH and time per REQUEST separately. The first barely moves and the second
+     collapses; you need both columns for the point to land.
+  9. Repeat enough times at small batch sizes that the numbers are stable. My batch-2 measurement came
+     out worse than batch 4, which is noise at the millisecond scale, and saying so is better than
+     pretending the curve is monotonic everywhere.
+ 10. Find the KNEE - where the per-request cost stops falling. MEASURED here between 128 and 256, where
+     a doubling bought 17%. Past the knee you are compute-bound and larger batches are latency for
+     nothing.
+
+MEASURING THE LATENCY SIDE:
+
+ 11. Generate Poisson arrivals at a chosen rate - `random.expovariate(rate)` for the gaps. Uniform
+     arrivals would hide the queueing behaviour entirely.
+ 12. Simulate the batcher: collect until `max_batch` or the deadline, run for the MEASURED service time
+     of that batch size, and record each request's latency as `end - its own arrival`. Not `end -
+     batch start` - the first request in a batch waited longer than the last, and averaging over the
+     batch hides the whole cost.
+ 13. RUN IT AT TWO ARRIVAL RATES: one well under capacity and one well over. This is the step that
+     matters most. With only the under-capacity run you would conclude batching always costs latency,
+     which is the misconception the entry exists to correct.
+ 14. Detect divergence explicitly. When the arrival rate exceeds capacity, the "p50 latency" you
+     measure is a function of how long you ran the simulation, not a property of the system. Flag it as
+     QUEUE DIVERGED rather than quoting 17,854 ms as though it were a stable number.
+ 15. Report the ACHIEVED average batch size alongside the configuration. It is what tells you whether
+     `max_batch` or `max_wait` is the binding constraint.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"GPUs - and to a lesser extent CPUs - are massively parallel, so running 32 requests TOGETHER costs
+almost the same as running one. The reason is arithmetic intensity: a batch of one has to read every
+weight out of memory to do a small amount of arithmetic with it, so the compute units sit idle waiting
+for memory. Batch 32 rows and you read the same weights once and do 32 times the work with them.
+
+I measured that on a 1024-to-4096-to-1024 model: batch 1 cost 1,692 microseconds per request, batch 128
+cost 102. Sixteen and a half times cheaper per request, and the time for the whole batch only went from
+1.69 milliseconds to 13.08 - so 128 times the work for 7.7 times the time.
+
+But to FILL a batch you must WAIT for enough requests to arrive, which adds delay for the ones already
+waiting. I measured that too: at 200 requests per second, no batching gave a p50 of 1.69 milliseconds
+and a 100-millisecond batch window gave 55.31 - about 33 times worse. It is the classic
+throughput-versus-latency trade, and serving systems tune a 'max wait time' to balance the two.
+
+The thing I'd add, because it reverses the headline, is that 'batching raises latency' is only true
+when you have SPARE CAPACITY. I ran the same server at 2,000 requests per second, against an unbatched
+capacity of 591. Without batching the queue diverges - the measured p50 was 17.9 seconds and growing.
+With a max batch of 32 and a 5-millisecond window, the p50 was 7.35 milliseconds. Batching made latency
+about 2,400 times BETTER. It adds a bounded WAIT and removes an unbounded QUEUE, and below capacity
+there is no queue to remove so you only see the wait.
+
+Two practical points. First, the knob that matters is the max WAIT, not the max batch size - the
+average batch is set by arrival rate times wait, so at 200 per second raising the cap from 32 to 128
+changed nothing at all. Max batch is a memory guard. Second, the per-request saving has a knee: 102
+microseconds at batch 128 and 84.7 at 256, so a further doubling bought 17% instead of 50% because you
+have crossed from memory-bound to compute-bound.
+
+And for LLMs specifically, static batching is the wrong shape, because generation is token by token and
+sequences finish at different times, so a fixed batch runs until its slowest member and the finished
+slots idle. Continuous or in-flight batching - what vLLM and TGI do - evicts finished sequences and
+admits new ones at every token step to keep the batch full."
+
+THE ONE SENTENCE TO NOT FUMBLE: batching amortises the fixed cost of reading the weights over more
+requests, and it costs latency only in the regime where you were not queueing anyway.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE MODEL AND THE TIMING:
+
+    def forward(X): return np.maximum(0, X @ W1) @ W2
+
+One hidden layer, 1024 -> 4096 -> 1024, float32. The shape matters for the argument: `W1` alone is
+1024x4096 = 4.2 million weights = 16.8 MB, and a batch of ONE reads all of it to produce 4,096 numbers.
+That ratio is what "memory-bound" means, concretely.
+
+    X = rng.normal(0,1,(B,D)).astype(np.float32)
+    forward(X)                      # WARM UP - not timed
+
+The untimed call. Without it you measure first-touch page faults and allocation instead of arithmetic -
+see the virtual-memory entry, where the first touch of a page measured 54x the second.
+
+    reps = max(3, 200//B)
+    t = time.perf_counter()
+    for _ in range(reps): forward(X)
+    dt = (time.perf_counter()-t)/reps
+
+More repetitions at small batch sizes, because those runs are short and noisy. Even so, my batch-2
+figure came out worse than batch 4 - and reporting that rather than smoothing it over is the honest
+choice. The trend from batch 8 upward is clean.
+
+    per = dt/B
+
+Time per REQUEST, which is the cost number. `dt` is the latency number. Printing only one of them is
+how you end up making half the argument.
+
+THE SERVING SIMULATION:
+
+    t += r.expovariate(rate); arr.append(t)
+
+Poisson arrivals - exponentially distributed gaps. Uniform arrivals would produce a perfectly regular
+system with no queueing at all, and the entire second half of the entry would vanish.
+
+    deadline = arr[i] + max_wait_ms
+    j = i
+    while j < len(arr) and (j-i) < max_batch and arr[j] <= max(deadline, free): j += 1
+
+The batching rule, in three lines. Requests join the batch while they arrive before the DEADLINE - or,
+crucially, before the server is even FREE (`max(deadline, free)`). That second condition is what models
+the fact that while a batch is running, arrivals keep queueing and the next batch fills for nothing.
+It is why the wait stops costing anything under load.
+
+    begin = max(free, arr[j-1])
+    end = begin + stime(b)
+
+The batch starts when the server is free AND the last member has arrived, and runs for the MEASURED
+service time of that batch size.
+
+    for k in range(i,j): lat.append(end - arr[k])
+
+Each request's latency measured from ITS OWN arrival, not from the batch's start. The first request in
+a batch waited for the whole window; the last waited for none. Averaging over the batch would hide
+exactly the cost the entry is about.
+
+    def stime(b):
+        return SVC[min([x for x in SVC if x >= b], default=256)]
+
+Service time looked up from the REAL measurements in part A, rounded up to the next measured batch
+size. Using a formula instead - say, `a + b*n` - would be assuming the very thing being demonstrated.
+
+    if free - arr[min(i,len(arr)-1)] > 60000: break
+
+The divergence guard. When arrivals exceed capacity the queue grows without bound and the "latency" you
+measure is a function of the simulation's length. Detecting and flagging that is better than quoting
+17,854 ms as though it were a property of the system.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the hardware fact, measured, 1024 -> 4096 -> 1024 float32.
+
+    batch   per batch   per request   throughput   per-request vs batch 1   time vs batch 1
+    -----   ---------   -----------   ----------   ----------------------   ---------------
+        1     1.69 ms     1,692.3 us       591/s                    1.0x              1.00x
+        4     5.37 ms     1,343.0 us       745/s                    1.3x              3.18x
+        8     4.19 ms       523.8 us     1,909/s                    3.2x              2.48x
+       16     4.62 ms       288.9 us     3,462/s                    5.9x              2.73x
+       32     7.77 ms       242.7 us     4,121/s                    7.0x              4.60x
+       64     9.58 ms       149.6 us     6,682/s                   11.3x              5.67x
+      128    13.08 ms       102.2 us     9,782/s                   16.6x              7.74x
+      256    21.69 ms        84.7 us    11,802/s                   20.0x             12.83x
+
+The last two columns are the whole mechanism. At batch 128 you are doing 128x the work in 7.74x the
+time. The gap between 128 and 7.74 is the amortisation.
+
+And the knee is visible: from 128 to 256, the per-request cost improved only 16.6x -> 20.0x, a 17% gain
+for a doubling. You have run out of memory-boundness to exploit.
+
+TRACE B - one batch's latency, request by request, max wait 100 ms, batch of 128.
+
+    request   arrived at   batch runs at   completes at   ITS latency
+    -------   ----------   -------------   ------------   -----------
+    #1             0.0 ms        100.0 ms       121.7 ms     121.7 ms   <- waited the whole window
+    #40           31.2 ms        100.0 ms       121.7 ms      90.5 ms
+    #80           62.5 ms        100.0 ms       121.7 ms      59.2 ms
+    #128         100.0 ms        100.0 ms       121.7 ms      21.7 ms   <- waited for nothing
+
+Every request in a batch finishes at the same instant, so the latency each one EXPERIENCES depends
+entirely on how early it arrived. The first request pays the full window plus the service time; the last
+pays only the service time. That spread is why you must measure latency per request rather than per
+batch - and it is also why batching makes latency more UNIFORM, which improves p99 relative to p50.
+
+TRACE C - the trade, at 200 requests/second (comfortably under the 591/s unbatched capacity).
+
+    max batch   max wait   p50 latency   p99 latency   avg batch   binding constraint
+    ---------   --------   -----------   -----------   ---------   ------------------
+            1       0 ms       1.69 ms       5.29 ms         1.0   no batching
+            8       5 ms       6.06 ms      10.88 ms         2.0   the WAIT
+           32       5 ms       6.06 ms      10.88 ms         2.0   the WAIT
+           32      20 ms      12.05 ms      24.48 ms         5.0   the WAIT
+          128      20 ms      12.05 ms      24.48 ms         5.0   the WAIT
+          128     100 ms      55.31 ms     106.69 ms        20.8   the WAIT
+
+Rows 2 and 3 are identical, and so are rows 4 and 5. Raising the max batch changed NOTHING, because at
+200 requests/second a 5 ms window only ever collects about 2 requests. The average batch size is
+`rate x wait` - 0.2 requests/ms x 5 ms = 1.0, plus the queue that built during the previous batch.
+
+Only the WAIT column moves the outcome. Max batch is a memory guard, not a tuning knob, until the
+product exceeds it.
+
+TRACE D - the same server at 2,000 requests/second, which is 3.4x its unbatched capacity.
+
+    max batch   max wait   p50 latency    p99 latency   avg batch   verdict
+    ---------   --------   ------------   -----------   ---------   ---------------
+            1       0 ms   17,854.25 ms   35,308.78 ms        1.0   QUEUE DIVERGED
+            8       5 ms      345.47 ms      618.84 ms        8.0   OK, but the cap binds
+           32       5 ms        7.35 ms       13.83 ms       11.3   OK - best
+           32      20 ms       15.36 ms       26.22 ms       31.7   OK
+          128      20 ms       19.15 ms       29.34 ms       40.7   OK
+          128     100 ms       44.65 ms       81.92 ms      127.7   over-waiting
+
+Row 1 against row 3: batching took the p50 from 17.9 seconds to 7.35 milliseconds. Two thousand four
+hundred times BETTER, on the metric batching is supposed to harm.
+
+And row 2 shows the max batch binding for the first time: at 2,000/s a 5 ms window would collect ~10
+requests, so a cap of 8 forces smaller batches, less amortisation, and a p50 of 345 ms. Raising the cap
+to 32 - same wait - dropped it to 7.35 ms. That is the one situation where max batch is the knob.
+
+TRACE E - the two regimes side by side, which is the entry in four numbers.
+
+    regime                          no batching   batch 32 / wait 5ms   effect of batching
+    -----------------------------   -----------   -------------------   ------------------
+    200/s (34% of capacity)             1.69 ms               6.06 ms   3.6x WORSE
+    2,000/s (338% of capacity)      17,854.25 ms               7.35 ms   2,430x BETTER""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE ARITHMETIC:
+
+    cost per request        falls as the fixed weight-read cost is amortised. MEASURED 1,692.3 us at
+                            batch 1 and 102.2 us at batch 128 - 16.6x - flattening to 84.7 us at 256.
+    time per batch          grows sublinearly with batch size. MEASURED 128x the work in 7.74x the
+                            time.
+    average batch size      approximately `arrival_rate x max_wait`, capped by `max_batch`.
+                            MEASURED 2.0 at 200/s with a 5 ms wait; 20.8 with a 100 ms wait.
+    latency added, idle     up to `max_wait` plus the longer service time. MEASURED 1.69 ms -> 55.31
+                            ms at 200/s with a 100 ms window - 33x.
+    latency removed, loaded  the whole unbounded queue. MEASURED 17,854 ms -> 7.35 ms at 2,000/s -
+                            2,430x.
+    sustainable throughput  MEASURED 591/s unbatched, 9,782/s at batch 128 - 16.6x more load on the
+                            same hardware.
+    memory                  grows with batch size. For LLMs this is the KV cache and it is what
+                            actually caps the batch.
+
+THE MISTAKES:
+
+    - Saying "batching raises latency" without the condition. MEASURED 3.6x worse below capacity and
+      2,430x BETTER above it.
+    - Disabling batching during a load incident. That is precisely the regime where it is holding your
+      latency together.
+    - Tuning max batch instead of max WAIT. MEASURED: at 200/s, 32 and 128 gave identical results,
+      because the wait sets the batch size.
+    - Assuming per-request cost keeps falling. MEASURED a knee: doubling from 128 to 256 bought 17%.
+      Past it you are compute-bound and paying latency for nothing.
+    - Measuring latency per BATCH rather than per REQUEST. The first request in a batch waited the
+      whole window and the last waited none - 121.7 ms against 21.7 in the trace.
+    - Not warming up before timing. You measure page faults and allocation instead of arithmetic.
+    - Smoothing over a noisy measurement. My batch-2 timing came out worse than batch 4; reporting it
+      as noise is better than implying a monotonic curve.
+    - Quoting a diverged queue's latency as a number. 17,854 ms is a function of how long the
+      simulation ran, not a property of the server. Flag divergence.
+    - Using STATIC batching for LLM generation. Sequences finish at different times and the batch runs
+      until its slowest member, leaving slots idle. Continuous batching is the fix.
+    - Forgetting padding waste with variable-length inputs. Bucket by length, or you batch a lot of
+      zeros.
+    - Setting max wait as a fraction of your CURRENT latency rather than of your latency BUDGET.
+
+THE TAKEAWAY. Batching works because the expensive part of inference is reading the weights, not
+multiplying by them - so extra rows ride along almost free, and the per-request cost fell 16.6x in the
+measurement. What you pay is a WAIT to fill the batch, and that wait is a real 33x latency cost when
+the server was idle anyway. But the framing "throughput versus latency" is only half the story: the
+wait is BOUNDED and the queue it prevents is not, so at 3.4x capacity the same batching that cost 3.6x
+latency at low load bought 2,430x. Tune the WAIT against your latency budget, set the max batch from
+memory, find the knee where per-request cost stops falling, and remember that the regime you are in
+decides the sign of the effect.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
