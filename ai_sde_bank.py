@@ -322622,6 +322622,2061 @@ is only 1.9x, and too much of it is worse than none. Know the pathology it treat
 the conditioning where you can.""",
 ]
 
+_EX_P1AO["Why does more data usually beat a cleverer algorithm?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the folklore says "more data beats a better algorithm". It is one of
+the most-repeated claims in machine learning, and it is TRUE UNDER A CONDITION that almost nobody
+states.
+
+The condition is whether your model is VARIANCE-limited or BIAS-limited.
+
+    VARIANCE-LIMITED   the model COULD represent the truth, it just has not seen enough examples to
+                       pin it down. More data is exactly the cure.
+    BIAS-LIMITED       the model CANNOT represent the truth at all. More data does nothing, because
+                       there is nothing more to learn within that model class.
+
+MEASURED ON THIS MACHINE - a simple model (logistic regression) and a fancy one (300 boosted trees)
+on a target built from thresholds and interactions - the shape business data actually has:
+
+    training rows   simple (logreg)   fancy (GBT)   fancy advantage
+    -------------   ---------------   -----------   ---------------
+              100            0.6440        0.6383           -0.0057
+              300            0.6695        0.6918           +0.0223
+            1,000            0.6727        0.7372           +0.0645
+            3,000            0.6725        0.7493           +0.0768
+           10,000            0.6760        0.7570           +0.0810
+           30,000            0.6760        0.7605           +0.0845
+
+Read the simple column downward: 0.6727 at 1,000 rows and 0.6760 at 30,000. THIRTY TIMES the data
+bought it 0.0033. It plateaued, because it is bias-limited - it cannot express an interaction.
+
+The fancy column keeps climbing. So on THIS problem the folklore is false past a few hundred rows:
+
+    fancy on    100 rows: 0.6383   simple on   1,000 rows: 0.6727   SIMPLE + DATA WINS
+    fancy on    300 rows: 0.6918   simple on   3,000 rows: 0.6725   fancy wins
+    fancy on  1,000 rows: 0.7372   simple on  10,000 rows: 0.6760   fancy wins
+    fancy on  3,000 rows: 0.7493   simple on  30,000 rows: 0.6760   fancy wins
+
+Ten times the data beat the better algorithm exactly once - at the smallest scale, where the fancy
+model was still variance-limited too.""",
+
+    """2. THE INTUITION - a learning curve tells you which problem you have, and it is the only thing that
+does.
+
+Plot accuracy against training-set size. There are two shapes:
+
+    STILL CLIMBING     you are variance-limited. Collect more data. It is the highest-return action
+                       available and no amount of model tuning substitutes for it.
+    FLAT               you are bias-limited. More data is wasted money. Change the model, the
+                       features, or the problem.
+
+MEASURED, the SAME two models on a genuinely LINEAR truth, where logistic regression can express
+everything:
+
+    training rows   simple   fancy    fancy advantage
+    -------------   ------   ------   ---------------
+              100   0.7690   0.7048           -0.0642
+              300   0.8022   0.7503           -0.0518
+            1,000   0.8187   0.7818           -0.0368
+            3,000   0.8188   0.7887           -0.0302
+           10,000   0.8223   0.8030           -0.0193
+           30,000   0.8232   0.8090           -0.0142
+
+Here the simple model climbs from 0.7690 to 0.8232 and the fancy one NEVER CATCHES IT - the gap is
+negative in every row. The extra capacity has nothing to find, so it only adds variance.
+
+Put the two tables side by side and the whole lesson appears: the SAME two algorithms, the SAME sizes,
+and opposite verdicts. What changed is whether the simple model's inductive bias matched the truth.
+
+THE HONEST VERSION OF THE FOLKLORE, then, is not "more data beats a better algorithm". It is:
+
+    MORE DATA BEATS A BETTER ALGORITHM WHILE YOU ARE VARIANCE-LIMITED, AND STOPS BEATING IT THE MOMENT
+    YOU ARE NOT - AND THE LEARNING CURVE TELLS YOU WHICH REGIME YOU ARE IN FOR THE COST OF FIVE
+    TRAINING RUNS.
+
+Why the folklore is nonetheless good advice most of the time: real teams are usually variance-limited
+without knowing it, because real data is scarce, biased and full of uncovered edge cases. The famous
+results behind the slogan - Banko and Brill's 2001 spelling-correction paper, Halevy, Norvig and
+Pereira's "The Unreasonable Effectiveness of Data" - came from settings with millions of examples
+available and models that were nowhere near their bias floor.""",
+
+    """3. EVERY TERM DEFINED.
+
+BIAS. Error from the model class being unable to represent the truth. No amount of data fixes it.
+MEASURED: logistic regression plateaued at 0.676 on a target with interactions.
+
+VARIANCE. Error from being sensitive to which particular sample you saw. More data fixes it directly.
+See the ensembles entry for a measured bias-variance decomposition.
+
+IRREDUCIBLE ERROR / BAYES ERROR. The error no model can beat, because the label itself is stochastic.
+MEASURED here at 0.8053 - the Bayes-optimal accuracy on this test set. The fancy model reached 94.4% of
+that ceiling and the simple one 83.9%.
+
+LEARNING CURVE. Accuracy plotted against training-set size. The single most useful diagnostic in this
+entry, and it costs five training runs.
+
+INDUCTIVE BIAS. The assumptions a model class makes before seeing data. Linear models assume additive
+effects; trees assume axis-aligned thresholds; CNNs assume locality. When the bias matches, you need
+little data; when it does not, you need a different model, not more rows.
+
+SAMPLE COMPLEXITY. How much data a model class needs to reach a given error. Higher-capacity models
+have higher sample complexity, which is why the fancy model LOSES at 100 rows and wins at 30,000.
+
+LABEL NOISE. Wrong labels. MEASURED below, and the result is less alarming than the folklore.
+
+COVERAGE / REPRESENTATIVENESS. Whether your data contains the situations you will face. This, rather
+than raw volume, is usually what "more data" is really buying - a million more examples of the same
+easy case buy nothing.
+
+DISTRIBUTION SHIFT. Training data drawn from a different distribution than production. More of the
+wrong data makes this worse, not better. See the offline-versus-online entry.
+
+DATA-CENTRIC AI. The practice of improving the dataset - labels, coverage, cleaning - rather than the
+model. Andrew Ng's framing, and it is a restatement of the variance-limited case.
+
+ACTIVE LEARNING. Choosing WHICH examples to label next, rather than labelling randomly. The efficient
+version of "collect more data", and it matters because labels cost money.
+
+DATA AUGMENTATION. Manufacturing more training examples from existing ones. Cheap variance reduction
+when the transformations are label-preserving.
+
+TRANSFER LEARNING / PRETRAINING. Getting the variance reduction from SOMEBODY ELSE'S data. See the
+pretraining entry, where a good pretrained representation was worth an 80x data-efficiency multiplier.
+
+SCALING LAWS. The modern quantitative version: test loss falls as a power law in data, parameters and
+compute, and the exponents are measurable. The Chinchilla result - that most large models were trained
+on too little data for their size - is this entry's question asked at scale.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "so noisy data is fine, just collect more of it". MEASURED,
+and the answer is more nuanced than either camp claims.
+
+Starting from 3,000 CLEAN rows, add more rows at various label-noise rates. Averaged over 5 seeds:
+
+    extra rows   label noise   accuracy   change    verdict
+    ----------   -----------   --------   -------   ---------
+         3,000            0%     0.7551   +0.0046   HELPS
+         3,000           10%     0.7530   +0.0025   HELPS
+         3,000           25%     0.7526   +0.0020   HELPS
+         3,000           40%     0.7450   -0.0056   hurts
+         3,000           50%     0.7321   -0.0184   hurts
+
+        27,000            0%     0.7616   +0.0110   HELPS
+        27,000           10%     0.7632   +0.0127   HELPS
+        27,000           25%     0.7595   +0.0090   HELPS
+        27,000           40%     0.7451   -0.0055   hurts
+        27,000           50%     0.6550   -0.0956   hurts
+
+TWENTY-FIVE PERCENT WRONG LABELS STILL HELPED. That is far more tolerance than "noisy data hurts"
+implies, and the reason is simple: a label that is right 75% of the time still carries information, and
+the model can average across many of them. The break-even is around 40%, not 10%.
+
+And the other end of the table is the real warning: at 50% noise the labels are coin flips and carry
+ZERO information, and now MORE OF IT IS STRICTLY WORSE - 3,000 noisy rows cost 0.0184 and 27,000 cost
+0.0956, five times as much. Once data has no signal, volume becomes a liability rather than a
+neutral.
+
+So the caveat "the data must be relevant and clean" is right in spirit and wrong in its threshold.
+Useful labels survive a lot of noise. Useless labels get worse the more of them you have.
+
+THE SECOND TRAP - not knowing where the CEILING is. MEASURED, the Bayes-optimal accuracy on this test
+set - computed exactly, since the label-generating probability is known - is 0.8053. Nothing can beat
+it.
+
+    simple model at 30,000 rows: 0.6760   -  83.9% of the ceiling
+    fancy  model at 30,000 rows: 0.7605   -  94.4% of the ceiling
+
+If you do not know the ceiling, you cannot tell "we need more data" from "we are nearly done". The
+fancy model has 4.5 accuracy points left in the whole universe; a project to double the training set
+would be competing for a fraction of those. On real data you cannot compute the Bayes error, but you
+CAN estimate it - have humans label a sample twice and measure their disagreement, which bounds it.
+
+THE THIRD TRAP - measuring volume instead of COVERAGE. A million more examples of the case you already
+handle perfectly buy nothing at all. The reason "more data" works in practice is usually that it
+contains NEW SITUATIONS, and if you can choose which examples to label - active learning, or simply
+labelling your production failures - you get the same variance reduction for a fraction of the cost.
+
+THE FOURTH TRAP - forgetting the cost side. MEASURED: the fancy model took 4,915 ms to train at 30,000
+rows against the simple model's 291 ms - 17x - and the gap grows with data. "Collect more data" is also
+"pay for more compute, more storage, more labelling, and a slower experiment loop". None of those
+appear in an accuracy table.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what to actually do, in the order that pays.
+
+DIAGNOSE FIRST - this is five training runs and it decides everything that follows:
+    1. PLOT THE LEARNING CURVE. Train at 10%, 25%, 50%, 75% and 100% of your data and plot test
+       accuracy.
+    2. STILL CLIMBING at 100%? You are variance-limited. MORE DATA IS THE HIGHEST-RETURN ACTION.
+       Extrapolate the curve to estimate what 2x or 10x buys before you commission the labelling.
+    3. FLAT? You are bias-limited. More data is wasted money. MEASURED: 30x the data moved the simple
+       model 0.0033.
+    4. ALSO PLOT TRAINING accuracy. High training AND test error means bias. Low training and high test
+       error means variance. That one comparison separates the two regimes without any extrapolation.
+
+IF VARIANCE-LIMITED, in increasing order of cost:
+    DATA AUGMENTATION       manufacture examples from what you have. Free, when the transformations
+                            preserve the label.
+    TRANSFER LEARNING       borrow somebody else's variance reduction. See the pretraining entry: a
+                            good pretrained representation was worth an 80x data-efficiency
+                            multiplier.
+    SEMI-SUPERVISED / SELF-TRAINING   use unlabelled data, which is usually abundant and free.
+    ACTIVE LEARNING         label the examples the model is most unsure about, rather than random
+                            ones. Same variance reduction, fewer labels.
+    LABEL YOUR FAILURES     the cheapest form of active learning - mine production errors and label
+                            those. Directly attacks coverage.
+    COLLECT AND LABEL MORE  the expensive default.
+    REGULARISE MORE         the free alternative to more data: it trades a little bias for less
+                            variance, and is worth trying first.
+
+IF BIAS-LIMITED:
+    BETTER FEATURES         usually the highest-return option, and the most under-rated. Adding a
+                            hand-built interaction term to a linear model can close the gap the extra
+                            30,000 rows could not.
+    A MODEL WITH THE RIGHT INDUCTIVE BIAS   MEASURED: gradient-boosted trees on threshold-and-
+                            interaction data beat logistic regression by 8.5 points at 30,000 rows,
+                            and lost to it by 6.4 points when the truth was linear. Match the bias to
+                            the structure - see the trees-versus-deep-learning entry.
+    MORE CAPACITY           a bigger model, more layers, more trees.
+    RETHINK THE PROBLEM     sometimes the label is the thing that is wrong.
+
+THE MODERN CONTEXT - SCALING LAWS. At the frontier, the question has an empirical answer: test loss
+falls as a power law in data, parameters and compute simultaneously, and you can measure the exponents.
+The Chinchilla result found that most large language models had been trained on FAR TOO LITTLE DATA for
+their parameter count - which is the variance-limited case, at enormous scale, discovered by exactly
+the learning-curve reasoning in this entry. So the folklore's spirit survives at the frontier; what
+changed is that people now measure it rather than quoting it.""",
+
+    """6. HOW TO CODE IT - the learning curve, which is the only thing in this entry you should actually
+build.
+
+  1. Choose a FIXED test set, large enough that its noise does not swamp the differences you care
+     about. 6,000 rows here; anything under a thousand and your curve is mostly sampling noise.
+  2. For each training size - roughly logarithmic: 100, 300, 1,000, 3,000, 10,000, 30,000 - train from
+     scratch on a subset and evaluate on the fixed test set.
+  3. Plot BOTH the simple model and the complex one. The interesting question is not "how good is my
+     model" but "which of these is limited by what".
+  4. AVERAGE OVER SEEDS, at least at the small sizes. At 100 rows the run-to-run variation can exceed
+     the effect you are measuring, and a single-seed learning curve is mostly noise.
+  5. Also record TRAINING accuracy. High training error is bias; a large train-test gap is variance.
+     That comparison tells you the regime without needing to extrapolate.
+  6. Record TRAINING TIME too. MEASURED: 291 ms against 4,915 ms at 30,000 rows. The cost side belongs
+     in the decision.
+
+TESTING THE FOLKLORE DIRECTLY:
+
+  7. Train the FANCY model on n rows and the SIMPLE model on 10n rows, and compare. That is literally
+     the claim, and it is one line once you have the harness.
+  8. Do it at several n. MEASURED: it held at n=100 and failed at n=300, 1,000 and 3,000 - so the
+     answer depends entirely on where you are on the curve.
+
+MEASURING THE NOISE TOLERANCE:
+
+  9. Hold a clean baseline set fixed. ADD extra rows at a controlled label-noise rate. This is the
+     right experiment shape, because the real question is "should I accept this noisier data source",
+     not "what if all my data were noisy".
+ 10. Sweep the noise rate to 50%. The 50% row is essential - it is the point where labels carry zero
+     information and it shows the sign flipping and the magnitude growing with volume.
+ 11. Average over seeds. My first single-seed run showed 25% noise helping MORE than 10% noise, which
+     is impossible and was pure sampling variation.
+
+ESTIMATING THE CEILING:
+
+ 12. In a simulation you can compute the Bayes error exactly: `mean(max(p, 1-p))` over the test set,
+     where `p` is the true label probability. 0.8053 here.
+ 13. On real data you cannot - but you can BOUND it. Have two humans label the same 500 examples and
+     measure their disagreement rate. That is an estimate of the irreducible error, and it tells you
+     how much headroom exists before you commission a data-collection project.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Because most real-world error comes from the DATA, not the model class. More representative data
+reduces VARIANCE and covers edge cases an algorithm cannot invent; better labels and features fix
+systematic errors that no tuning will. Simple models on large data often beat sophisticated models on
+small data - 'the unreasonable effectiveness of data'.
+
+But I would state the condition, because the folklore is only true in one regime and I measured both.
+
+The question is whether your model is VARIANCE-limited or BIAS-limited. I trained logistic regression
+and a boosted-tree ensemble on the same problem at sizes from 100 to 30,000 rows. On a target with
+thresholds and interactions, the logistic regression plateaued at about 0.676 from a thousand rows
+onward - thirty times more data bought it 0.0033, because it structurally cannot express an
+interaction. The trees kept climbing to 0.7605. So testing the folklore directly: the fancy model on
+1,000 rows scored 0.7372 and the simple model on TEN TIMES the data scored 0.6760. The better algorithm
+won, decisively.
+
+Then I changed one thing - made the truth genuinely linear - and reran identically. Now the simple
+model climbed from 0.769 to 0.823 and the trees NEVER caught it at any size. Same two algorithms, same
+sizes, opposite verdict. What changed was whether the simple model's inductive bias matched the truth.
+
+So the honest version is: more data beats a better algorithm WHILE YOU ARE VARIANCE-LIMITED, and stops
+the moment you are not - and a LEARNING CURVE tells you which regime you are in for the cost of five
+training runs. If the curve is still climbing, collect data; if it is flat, more data is wasted money
+and you need better features or a different inductive bias.
+
+On the 'data must be clean' caveat, I measured that too and it is more forgiving than usually stated.
+Adding rows with 10% or even 25% wrong labels still HELPED - a label that is right three times in four
+still carries information. Break-even was around 40%. But at 50% noise, where labels are coin flips,
+more data is strictly worse and gets worse with volume: 3,000 junk rows cost 0.018 accuracy and 27,000
+cost 0.096.
+
+Two more things I would raise. First, know your CEILING - I computed the Bayes-optimal accuracy here at
+0.8053, and the good model was already at 94.4% of it, so a data-collection project would be competing
+for four and a half points in the entire universe. On real data you estimate that by having humans
+double-label a sample and measuring their disagreement. Second, it is COVERAGE that matters, not
+volume - a million more examples of the case you already handle buy nothing, which is why labelling
+your production failures beats labelling at random.
+
+Practically: invest in data coverage, labels, features and leakage-free splits before chasing exotic
+models - and plot the learning curve first so you know which of those you are actually short of."
+
+THE ONE SENTENCE TO NOT FUMBLE: more data cures VARIANCE and does nothing for BIAS, so plot the
+learning curve - if it is flat, no amount of data will help and you need a different model class.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    z = (0.8*X[:,0]
+         + 2.5*((X[:,1]>0.4)&(X[:,2]<-0.2)).astype(float)
+         - 2.0*((X[:,3]>0.8)|(X[:,4]<-1.0)).astype(float)
+         + 1.5*np.sign(X[:,5])*np.abs(X[:,6])
+         + 1.2*(X[:,7]*X[:,8]))
+
+The target, and the design of this expression is the whole experiment. It contains a linear term
+(expressible by logistic regression), two THRESHOLD-AND-CONJUNCTION terms and a product term (not
+expressible by any linear model, at any data volume). That deliberate mix is what makes the simple
+model bias-limited rather than merely under-trained.
+
+    y = (r.random(n) < 1/(1+np.exp(-z))).astype(float)
+
+The label is drawn STOCHASTICALLY from the true probability, not thresholded deterministically. That
+creates genuine irreducible error, which is what makes the Bayes-ceiling calculation meaningful - and
+it is what real data looks like.
+
+    def make_lin(n, seed):
+        z = X@W_true*0.7
+
+The second experiment, and the only difference is this line. Purely linear, so logistic regression's
+inductive bias is exactly right. Running the identical comparison against it is what turns a result
+into a principle.
+
+    for n in (100, 300, 1000, 3000, 10000, 30000):
+
+Logarithmic spacing. Learning curves are power laws, so linear spacing wastes most of your runs at the
+flat end and misses the interesting bend entirely.
+
+    Xte, yte = make(6000, 999)
+
+A FIXED test set, generated once with its own seed, used for every model at every size. Re-sampling it
+per run would add test-set noise on top of the effect being measured.
+
+    acc(GBT().fit(Xs,ys))   vs   acc(logreg(Xb,yb))
+
+The folklore, tested directly: fancy on `n` rows against simple on `10n`. One line, and it is the actual
+claim rather than a proxy for it.
+
+    Xn, yn = make(extra, 11, noise=nz)
+    X = np.vstack([Xc, yc-shaped...]); y = np.r_[yc, yn]
+
+The noise experiment ADDS noisy rows to a clean baseline rather than corrupting everything. That is the
+decision people actually face - "should I accept this cheaper, noisier data source" - and it is why 25%
+noise can still help: the clean rows anchor the model and the noisy ones still carry signal.
+
+    for s in range(1,6): ... np.mean(accs)
+
+Averaging over five seeds. My first single-seed run reported 25% noise helping MORE than 10% noise,
+which is impossible; it was sampling variation of about 0.008, comparable to the effect. Any
+learning-curve or noise experiment needs seed averaging or it is measuring its own randomness.
+
+    p_true = sig(...)
+    bayes = np.mean(np.maximum(p_true, 1-p_true))
+
+The Bayes-optimal accuracy: for each test point, the best you can do is predict the more likely class,
+which is right with probability `max(p, 1-p)`. Averaging gives the ceiling - 0.8053. This is only
+computable because the simulation knows the true `p`, and it is exactly why simulations are worth
+running: on real data this number is invisible and it is the single most useful thing to know.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the learning curves, side by side. Same two algorithms, two different truths.
+
+    TRUTH HAS THRESHOLDS AND INTERACTIONS        TRUTH IS LINEAR
+    rows      simple    fancy      gap           rows      simple    fancy      gap
+    -------   ------   ------   -------          -------   ------   ------   -------
+        100   0.6440   0.6383   -0.0057              100   0.7690   0.7048   -0.0642
+        300   0.6695   0.6918   +0.0223              300   0.8022   0.7503   -0.0518
+      1,000   0.6727   0.7372   +0.0645            1,000   0.8187   0.7818   -0.0368
+      3,000   0.6725   0.7493   +0.0768            3,000   0.8188   0.7887   -0.0302
+     10,000   0.6760   0.7570   +0.0810           10,000   0.8223   0.8030   -0.0193
+     30,000   0.6760   0.7605   +0.0845           30,000   0.8232   0.8090   -0.0142
+
+The GAP columns run in opposite directions. On the left it grows from -0.006 to +0.085 as data arrives,
+because the extra capacity finally has enough evidence to use. On the right it stays negative and
+SHRINKS toward zero, because there was never anything for the capacity to find - the fancy model is
+slowly converging to the same answer the simple model reached at 300 rows.
+
+And the simple model's own column: 0.6727 to 0.6760 across 30x on the left (flat - bias-limited),
+0.8187 to 0.8232 on the right (also flattening - it has reached ITS ceiling too, which happens to be
+near the Bayes ceiling because the model is correct).
+
+TRACE B - the folklore, tested at four scales.
+
+    fancy trained on   scored    simple trained on   scored   who wins
+    ----------------   ------    -----------------   ------   -----------------
+             100 rows   0.6383            1,000 rows  0.6727   SIMPLE + DATA
+             300 rows   0.6918            3,000 rows  0.6725   fancy
+           1,000 rows   0.7372           10,000 rows  0.6760   fancy
+           3,000 rows   0.7493           30,000 rows  0.6760   fancy
+
+The claim held in exactly ONE row, and it is the row where BOTH models are still on the steep part of
+their curves. From 300 rows onward the simple model has stopped improving, so multiplying its data by
+ten multiplies nothing.
+
+TRACE C - noise tolerance, averaged over 5 seeds. Baseline is 3,000 clean rows at 0.7506.
+
+    extra rows   noise   accuracy   change    information in a label   verdict
+    ----------   -----   --------   -------   ----------------------   ---------
+         3,000      0%     0.7551   +0.0046   full                      HELPS
+         3,000     10%     0.7530   +0.0025   high                      HELPS
+         3,000     25%     0.7526   +0.0020   moderate                  HELPS
+         3,000     40%     0.7450   -0.0056   low                       hurts
+         3,000     50%     0.7321   -0.0184   NONE                      hurts
+        27,000      0%     0.7616   +0.0110   full                      HELPS
+        27,000     10%     0.7632   +0.0127   high                      HELPS  <- the BEST row
+        27,000     25%     0.7595   +0.0090   moderate                  HELPS
+        27,000     40%     0.7451   -0.0055   low                       hurts
+        27,000     50%     0.6550   -0.0956   NONE                      hurts
+
+Two readings.
+
+    THE BEST ROW IN THE WHOLE TABLE is 27,000 extra rows at TEN PERCENT NOISE - better than 27,000
+    clean ones in this run, within noise of each other. Ten percent wrong labels cost essentially
+    nothing, and volume paid.
+    THE 50% ROWS show the sign flip AND the scaling: -0.0184 for 3,000 junk rows and -0.0956 for
+    27,000. When the labels carry no information, more of them is monotonically worse, because they
+    dilute the signal you do have.
+
+The crossover is around 40% - not 10%, and not "any noise is bad".
+
+TRACE D - the ceiling, which decides whether any of this is worth doing.
+
+    quantity                                       value    % of ceiling
+    -------------------------------------------   ------   -------------
+    BAYES-OPTIMAL accuracy on this test set       0.8053          100.0%
+    fancy model, 30,000 rows                      0.7605           94.4%
+    simple model, 30,000 rows                     0.6760           83.9%
+    headroom left for the fancy model             0.0448
+
+Four and a half accuracy points exist in the entire universe for the good model. A project to double
+the training set is competing for a fraction of those. Without this row you cannot tell an ambitious
+roadmap from an impossible one.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE DECISION, in one table:
+
+    symptom                                      diagnosis          action
+    ------------------------------------------   ----------------   --------------------------------
+    learning curve still climbing                variance-limited   MORE DATA. Highest return.
+    learning curve flat, train error also high   bias-limited       better features, different model
+    learning curve flat, train error near zero   overfitting        regularise, or more data
+    near the estimated Bayes error               done               stop; the remaining error is noise
+
+    MEASURED:
+        simple model, threshold-and-interaction truth: 0.6727 at 1,000 rows, 0.6760 at 30,000.
+            30x the data, +0.0033. BIAS-LIMITED.
+        simple model, linear truth: 0.7690 at 100 rows, 0.8232 at 30,000. VARIANCE-LIMITED, then
+            converged.
+        fancy model, threshold truth: 0.6383 to 0.7605 across the same range - still climbing.
+        the folklore ("10x data beats the better algorithm") held at 100 rows and failed at 300+.
+        label noise: 25% still helped; 40% broke even; 50% hurt, and hurt 5x more at 9x the volume.
+        Bayes ceiling 0.8053; the fancy model was at 94.4% of it.
+        training cost: 291 ms against 4,915 ms at 30,000 rows - 17x.
+
+THE MISTAKES:
+
+    - Quoting the folklore without the condition. MEASURED: it was false in three of four direct
+      tests, because the simple model was bias-limited.
+    - Never plotting a learning curve. It costs five training runs and it is the only thing that tells
+      you which regime you are in.
+    - Collecting more data when the curve is flat. MEASURED: 30x bought 0.0033.
+    - Assuming any label noise is fatal. MEASURED: 25% wrong labels still helped.
+    - Assuming noise is always survivable. MEASURED: at 50% - no information at all - more data was
+      monotonically worse, -0.0184 at 3,000 extra rows and -0.0956 at 27,000.
+    - Confusing VOLUME with COVERAGE. More of what you already handle buys nothing; that is why
+      labelling production failures beats labelling at random.
+    - Not estimating the ceiling. Double-label 500 examples with two humans and measure their
+      disagreement - it bounds the irreducible error and tells you whether there is anything left to
+      win.
+    - Ignoring the cost side. 17x the training time at 30,000 rows, plus labelling, storage and a
+      slower experiment loop.
+    - Adding data when the real problem is DISTRIBUTION SHIFT. More of the wrong distribution makes it
+      worse - see the offline-versus-online entry.
+    - Forgetting the alternatives to collecting data: augmentation, transfer learning (measured at an
+      80x data-efficiency multiplier in the pretraining entry), semi-supervised learning, active
+      learning, and simply regularising more.
+
+THE TAKEAWAY. "More data beats a better algorithm" is a statement about VARIANCE, and it is true
+exactly as long as variance is what is limiting you. The measurement makes both halves concrete: on a
+truth the simple model could not represent, thirty times the data bought it 0.0033 and the better
+algorithm won every direct comparison past 300 rows; on a truth it could represent, it climbed steadily
+and the fancier model never caught it. A learning curve distinguishes those two worlds for the cost of
+five training runs, and running it before commissioning a labelling project is the difference between a
+data strategy and a slogan.""",
+]
+
+_EX_P1AO["Why does more/better data often beat a fancier algorithm?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the folklore says "more data beats a better algorithm". It is one of
+the most-repeated claims in machine learning, and it is TRUE UNDER A CONDITION that almost nobody
+states.
+
+The condition is whether your model is VARIANCE-limited or BIAS-limited.
+
+    VARIANCE-LIMITED   the model COULD represent the truth, it just has not seen enough examples to
+                       pin it down. More data is exactly the cure.
+    BIAS-LIMITED       the model CANNOT represent the truth at all. More data does nothing, because
+                       there is nothing more to learn within that model class.
+
+MEASURED ON THIS MACHINE - a simple model (logistic regression) and a fancy one (300 boosted trees)
+on a target built from thresholds and interactions - the shape business data actually has:
+
+    training rows   simple (logreg)   fancy (GBT)   fancy advantage
+    -------------   ---------------   -----------   ---------------
+              100            0.6440        0.6383           -0.0057
+              300            0.6695        0.6918           +0.0223
+            1,000            0.6727        0.7372           +0.0645
+            3,000            0.6725        0.7493           +0.0768
+           10,000            0.6760        0.7570           +0.0810
+           30,000            0.6760        0.7605           +0.0845
+
+Read the simple column downward: 0.6727 at 1,000 rows and 0.6760 at 30,000. THIRTY TIMES the data
+bought it 0.0033. It plateaued, because it is bias-limited - it cannot express an interaction.
+
+The fancy column keeps climbing. So on THIS problem the folklore is false past a few hundred rows:
+
+    fancy on    100 rows: 0.6383   simple on   1,000 rows: 0.6727   SIMPLE + DATA WINS
+    fancy on    300 rows: 0.6918   simple on   3,000 rows: 0.6725   fancy wins
+    fancy on  1,000 rows: 0.7372   simple on  10,000 rows: 0.6760   fancy wins
+    fancy on  3,000 rows: 0.7493   simple on  30,000 rows: 0.6760   fancy wins
+
+Ten times the data beat the better algorithm exactly once - at the smallest scale, where the fancy
+model was still variance-limited too.""",
+
+    """2. THE INTUITION - a learning curve tells you which problem you have, and it is the only thing that
+does.
+
+Plot accuracy against training-set size. There are two shapes:
+
+    STILL CLIMBING     you are variance-limited. Collect more data. It is the highest-return action
+                       available and no amount of model tuning substitutes for it.
+    FLAT               you are bias-limited. More data is wasted money. Change the model, the
+                       features, or the problem.
+
+MEASURED, the SAME two models on a genuinely LINEAR truth, where logistic regression can express
+everything:
+
+    training rows   simple   fancy    fancy advantage
+    -------------   ------   ------   ---------------
+              100   0.7690   0.7048           -0.0642
+              300   0.8022   0.7503           -0.0518
+            1,000   0.8187   0.7818           -0.0368
+            3,000   0.8188   0.7887           -0.0302
+           10,000   0.8223   0.8030           -0.0193
+           30,000   0.8232   0.8090           -0.0142
+
+Here the simple model climbs from 0.7690 to 0.8232 and the fancy one NEVER CATCHES IT - the gap is
+negative in every row. The extra capacity has nothing to find, so it only adds variance.
+
+Put the two tables side by side and the whole lesson appears: the SAME two algorithms, the SAME sizes,
+and opposite verdicts. What changed is whether the simple model's inductive bias matched the truth.
+
+THE HONEST VERSION OF THE FOLKLORE, then, is not "more data beats a better algorithm". It is:
+
+    MORE DATA BEATS A BETTER ALGORITHM WHILE YOU ARE VARIANCE-LIMITED, AND STOPS BEATING IT THE MOMENT
+    YOU ARE NOT - AND THE LEARNING CURVE TELLS YOU WHICH REGIME YOU ARE IN FOR THE COST OF FIVE
+    TRAINING RUNS.
+
+Why the folklore is nonetheless good advice most of the time: real teams are usually variance-limited
+without knowing it, because real data is scarce, biased and full of uncovered edge cases. The famous
+results behind the slogan - Banko and Brill's 2001 spelling-correction paper, Halevy, Norvig and
+Pereira's "The Unreasonable Effectiveness of Data" - came from settings with millions of examples
+available and models that were nowhere near their bias floor.""",
+
+    """3. EVERY TERM DEFINED.
+
+BIAS. Error from the model class being unable to represent the truth. No amount of data fixes it.
+MEASURED: logistic regression plateaued at 0.676 on a target with interactions.
+
+VARIANCE. Error from being sensitive to which particular sample you saw. More data fixes it directly.
+See the ensembles entry for a measured bias-variance decomposition.
+
+IRREDUCIBLE ERROR / BAYES ERROR. The error no model can beat, because the label itself is stochastic.
+MEASURED here at 0.8053 - the Bayes-optimal accuracy on this test set. The fancy model reached 94.4% of
+that ceiling and the simple one 83.9%.
+
+LEARNING CURVE. Accuracy plotted against training-set size. The single most useful diagnostic in this
+entry, and it costs five training runs.
+
+INDUCTIVE BIAS. The assumptions a model class makes before seeing data. Linear models assume additive
+effects; trees assume axis-aligned thresholds; CNNs assume locality. When the bias matches, you need
+little data; when it does not, you need a different model, not more rows.
+
+SAMPLE COMPLEXITY. How much data a model class needs to reach a given error. Higher-capacity models
+have higher sample complexity, which is why the fancy model LOSES at 100 rows and wins at 30,000.
+
+LABEL NOISE. Wrong labels. MEASURED below, and the result is less alarming than the folklore.
+
+COVERAGE / REPRESENTATIVENESS. Whether your data contains the situations you will face. This, rather
+than raw volume, is usually what "more data" is really buying - a million more examples of the same
+easy case buy nothing.
+
+DISTRIBUTION SHIFT. Training data drawn from a different distribution than production. More of the
+wrong data makes this worse, not better. See the offline-versus-online entry.
+
+DATA-CENTRIC AI. The practice of improving the dataset - labels, coverage, cleaning - rather than the
+model. Andrew Ng's framing, and it is a restatement of the variance-limited case.
+
+ACTIVE LEARNING. Choosing WHICH examples to label next, rather than labelling randomly. The efficient
+version of "collect more data", and it matters because labels cost money.
+
+DATA AUGMENTATION. Manufacturing more training examples from existing ones. Cheap variance reduction
+when the transformations are label-preserving.
+
+TRANSFER LEARNING / PRETRAINING. Getting the variance reduction from SOMEBODY ELSE'S data. See the
+pretraining entry, where a good pretrained representation was worth an 80x data-efficiency multiplier.
+
+SCALING LAWS. The modern quantitative version: test loss falls as a power law in data, parameters and
+compute, and the exponents are measurable. The Chinchilla result - that most large models were trained
+on too little data for their size - is this entry's question asked at scale.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "so noisy data is fine, just collect more of it". MEASURED,
+and the answer is more nuanced than either camp claims.
+
+Starting from 3,000 CLEAN rows, add more rows at various label-noise rates. Averaged over 5 seeds:
+
+    extra rows   label noise   accuracy   change    verdict
+    ----------   -----------   --------   -------   ---------
+         3,000            0%     0.7551   +0.0046   HELPS
+         3,000           10%     0.7530   +0.0025   HELPS
+         3,000           25%     0.7526   +0.0020   HELPS
+         3,000           40%     0.7450   -0.0056   hurts
+         3,000           50%     0.7321   -0.0184   hurts
+
+        27,000            0%     0.7616   +0.0110   HELPS
+        27,000           10%     0.7632   +0.0127   HELPS
+        27,000           25%     0.7595   +0.0090   HELPS
+        27,000           40%     0.7451   -0.0055   hurts
+        27,000           50%     0.6550   -0.0956   hurts
+
+TWENTY-FIVE PERCENT WRONG LABELS STILL HELPED. That is far more tolerance than "noisy data hurts"
+implies, and the reason is simple: a label that is right 75% of the time still carries information, and
+the model can average across many of them. The break-even is around 40%, not 10%.
+
+And the other end of the table is the real warning: at 50% noise the labels are coin flips and carry
+ZERO information, and now MORE OF IT IS STRICTLY WORSE - 3,000 noisy rows cost 0.0184 and 27,000 cost
+0.0956, five times as much. Once data has no signal, volume becomes a liability rather than a
+neutral.
+
+So the caveat "the data must be relevant and clean" is right in spirit and wrong in its threshold.
+Useful labels survive a lot of noise. Useless labels get worse the more of them you have.
+
+THE SECOND TRAP - not knowing where the CEILING is. MEASURED, the Bayes-optimal accuracy on this test
+set - computed exactly, since the label-generating probability is known - is 0.8053. Nothing can beat
+it.
+
+    simple model at 30,000 rows: 0.6760   -  83.9% of the ceiling
+    fancy  model at 30,000 rows: 0.7605   -  94.4% of the ceiling
+
+If you do not know the ceiling, you cannot tell "we need more data" from "we are nearly done". The
+fancy model has 4.5 accuracy points left in the whole universe; a project to double the training set
+would be competing for a fraction of those. On real data you cannot compute the Bayes error, but you
+CAN estimate it - have humans label a sample twice and measure their disagreement, which bounds it.
+
+THE THIRD TRAP - measuring volume instead of COVERAGE. A million more examples of the case you already
+handle perfectly buy nothing at all. The reason "more data" works in practice is usually that it
+contains NEW SITUATIONS, and if you can choose which examples to label - active learning, or simply
+labelling your production failures - you get the same variance reduction for a fraction of the cost.
+
+THE FOURTH TRAP - forgetting the cost side. MEASURED: the fancy model took 4,915 ms to train at 30,000
+rows against the simple model's 291 ms - 17x - and the gap grows with data. "Collect more data" is also
+"pay for more compute, more storage, more labelling, and a slower experiment loop". None of those
+appear in an accuracy table.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what to actually do, in the order that pays.
+
+DIAGNOSE FIRST - this is five training runs and it decides everything that follows:
+    1. PLOT THE LEARNING CURVE. Train at 10%, 25%, 50%, 75% and 100% of your data and plot test
+       accuracy.
+    2. STILL CLIMBING at 100%? You are variance-limited. MORE DATA IS THE HIGHEST-RETURN ACTION.
+       Extrapolate the curve to estimate what 2x or 10x buys before you commission the labelling.
+    3. FLAT? You are bias-limited. More data is wasted money. MEASURED: 30x the data moved the simple
+       model 0.0033.
+    4. ALSO PLOT TRAINING accuracy. High training AND test error means bias. Low training and high test
+       error means variance. That one comparison separates the two regimes without any extrapolation.
+
+IF VARIANCE-LIMITED, in increasing order of cost:
+    DATA AUGMENTATION       manufacture examples from what you have. Free, when the transformations
+                            preserve the label.
+    TRANSFER LEARNING       borrow somebody else's variance reduction. See the pretraining entry: a
+                            good pretrained representation was worth an 80x data-efficiency
+                            multiplier.
+    SEMI-SUPERVISED / SELF-TRAINING   use unlabelled data, which is usually abundant and free.
+    ACTIVE LEARNING         label the examples the model is most unsure about, rather than random
+                            ones. Same variance reduction, fewer labels.
+    LABEL YOUR FAILURES     the cheapest form of active learning - mine production errors and label
+                            those. Directly attacks coverage.
+    COLLECT AND LABEL MORE  the expensive default.
+    REGULARISE MORE         the free alternative to more data: it trades a little bias for less
+                            variance, and is worth trying first.
+
+IF BIAS-LIMITED:
+    BETTER FEATURES         usually the highest-return option, and the most under-rated. Adding a
+                            hand-built interaction term to a linear model can close the gap the extra
+                            30,000 rows could not.
+    A MODEL WITH THE RIGHT INDUCTIVE BIAS   MEASURED: gradient-boosted trees on threshold-and-
+                            interaction data beat logistic regression by 8.5 points at 30,000 rows,
+                            and lost to it by 6.4 points when the truth was linear. Match the bias to
+                            the structure - see the trees-versus-deep-learning entry.
+    MORE CAPACITY           a bigger model, more layers, more trees.
+    RETHINK THE PROBLEM     sometimes the label is the thing that is wrong.
+
+THE MODERN CONTEXT - SCALING LAWS. At the frontier, the question has an empirical answer: test loss
+falls as a power law in data, parameters and compute simultaneously, and you can measure the exponents.
+The Chinchilla result found that most large language models had been trained on FAR TOO LITTLE DATA for
+their parameter count - which is the variance-limited case, at enormous scale, discovered by exactly
+the learning-curve reasoning in this entry. So the folklore's spirit survives at the frontier; what
+changed is that people now measure it rather than quoting it.""",
+
+    """6. HOW TO CODE IT - the learning curve, which is the only thing in this entry you should actually
+build.
+
+  1. Choose a FIXED test set, large enough that its noise does not swamp the differences you care
+     about. 6,000 rows here; anything under a thousand and your curve is mostly sampling noise.
+  2. For each training size - roughly logarithmic: 100, 300, 1,000, 3,000, 10,000, 30,000 - train from
+     scratch on a subset and evaluate on the fixed test set.
+  3. Plot BOTH the simple model and the complex one. The interesting question is not "how good is my
+     model" but "which of these is limited by what".
+  4. AVERAGE OVER SEEDS, at least at the small sizes. At 100 rows the run-to-run variation can exceed
+     the effect you are measuring, and a single-seed learning curve is mostly noise.
+  5. Also record TRAINING accuracy. High training error is bias; a large train-test gap is variance.
+     That comparison tells you the regime without needing to extrapolate.
+  6. Record TRAINING TIME too. MEASURED: 291 ms against 4,915 ms at 30,000 rows. The cost side belongs
+     in the decision.
+
+TESTING THE FOLKLORE DIRECTLY:
+
+  7. Train the FANCY model on n rows and the SIMPLE model on 10n rows, and compare. That is literally
+     the claim, and it is one line once you have the harness.
+  8. Do it at several n. MEASURED: it held at n=100 and failed at n=300, 1,000 and 3,000 - so the
+     answer depends entirely on where you are on the curve.
+
+MEASURING THE NOISE TOLERANCE:
+
+  9. Hold a clean baseline set fixed. ADD extra rows at a controlled label-noise rate. This is the
+     right experiment shape, because the real question is "should I accept this noisier data source",
+     not "what if all my data were noisy".
+ 10. Sweep the noise rate to 50%. The 50% row is essential - it is the point where labels carry zero
+     information and it shows the sign flipping and the magnitude growing with volume.
+ 11. Average over seeds. My first single-seed run showed 25% noise helping MORE than 10% noise, which
+     is impossible and was pure sampling variation.
+
+ESTIMATING THE CEILING:
+
+ 12. In a simulation you can compute the Bayes error exactly: `mean(max(p, 1-p))` over the test set,
+     where `p` is the true label probability. 0.8053 here.
+ 13. On real data you cannot - but you can BOUND it. Have two humans label the same 500 examples and
+     measure their disagreement rate. That is an estimate of the irreducible error, and it tells you
+     how much headroom exists before you commission a data-collection project.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Because most real-world error comes from the DATA, not the model class. More representative data
+reduces VARIANCE and covers edge cases an algorithm cannot invent; better labels and features fix
+systematic errors that no tuning will. Simple models on large data often beat sophisticated models on
+small data - 'the unreasonable effectiveness of data'.
+
+But I would state the condition, because the folklore is only true in one regime and I measured both.
+
+The question is whether your model is VARIANCE-limited or BIAS-limited. I trained logistic regression
+and a boosted-tree ensemble on the same problem at sizes from 100 to 30,000 rows. On a target with
+thresholds and interactions, the logistic regression plateaued at about 0.676 from a thousand rows
+onward - thirty times more data bought it 0.0033, because it structurally cannot express an
+interaction. The trees kept climbing to 0.7605. So testing the folklore directly: the fancy model on
+1,000 rows scored 0.7372 and the simple model on TEN TIMES the data scored 0.6760. The better algorithm
+won, decisively.
+
+Then I changed one thing - made the truth genuinely linear - and reran identically. Now the simple
+model climbed from 0.769 to 0.823 and the trees NEVER caught it at any size. Same two algorithms, same
+sizes, opposite verdict. What changed was whether the simple model's inductive bias matched the truth.
+
+So the honest version is: more data beats a better algorithm WHILE YOU ARE VARIANCE-LIMITED, and stops
+the moment you are not - and a LEARNING CURVE tells you which regime you are in for the cost of five
+training runs. If the curve is still climbing, collect data; if it is flat, more data is wasted money
+and you need better features or a different inductive bias.
+
+On the 'data must be clean' caveat, I measured that too and it is more forgiving than usually stated.
+Adding rows with 10% or even 25% wrong labels still HELPED - a label that is right three times in four
+still carries information. Break-even was around 40%. But at 50% noise, where labels are coin flips,
+more data is strictly worse and gets worse with volume: 3,000 junk rows cost 0.018 accuracy and 27,000
+cost 0.096.
+
+Two more things I would raise. First, know your CEILING - I computed the Bayes-optimal accuracy here at
+0.8053, and the good model was already at 94.4% of it, so a data-collection project would be competing
+for four and a half points in the entire universe. On real data you estimate that by having humans
+double-label a sample and measuring their disagreement. Second, it is COVERAGE that matters, not
+volume - a million more examples of the case you already handle buy nothing, which is why labelling
+your production failures beats labelling at random.
+
+Practically: invest in data coverage, labels, features and leakage-free splits before chasing exotic
+models - and plot the learning curve first so you know which of those you are actually short of."
+
+THE ONE SENTENCE TO NOT FUMBLE: more data cures VARIANCE and does nothing for BIAS, so plot the
+learning curve - if it is flat, no amount of data will help and you need a different model class.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    z = (0.8*X[:,0]
+         + 2.5*((X[:,1]>0.4)&(X[:,2]<-0.2)).astype(float)
+         - 2.0*((X[:,3]>0.8)|(X[:,4]<-1.0)).astype(float)
+         + 1.5*np.sign(X[:,5])*np.abs(X[:,6])
+         + 1.2*(X[:,7]*X[:,8]))
+
+The target, and the design of this expression is the whole experiment. It contains a linear term
+(expressible by logistic regression), two THRESHOLD-AND-CONJUNCTION terms and a product term (not
+expressible by any linear model, at any data volume). That deliberate mix is what makes the simple
+model bias-limited rather than merely under-trained.
+
+    y = (r.random(n) < 1/(1+np.exp(-z))).astype(float)
+
+The label is drawn STOCHASTICALLY from the true probability, not thresholded deterministically. That
+creates genuine irreducible error, which is what makes the Bayes-ceiling calculation meaningful - and
+it is what real data looks like.
+
+    def make_lin(n, seed):
+        z = X@W_true*0.7
+
+The second experiment, and the only difference is this line. Purely linear, so logistic regression's
+inductive bias is exactly right. Running the identical comparison against it is what turns a result
+into a principle.
+
+    for n in (100, 300, 1000, 3000, 10000, 30000):
+
+Logarithmic spacing. Learning curves are power laws, so linear spacing wastes most of your runs at the
+flat end and misses the interesting bend entirely.
+
+    Xte, yte = make(6000, 999)
+
+A FIXED test set, generated once with its own seed, used for every model at every size. Re-sampling it
+per run would add test-set noise on top of the effect being measured.
+
+    acc(GBT().fit(Xs,ys))   vs   acc(logreg(Xb,yb))
+
+The folklore, tested directly: fancy on `n` rows against simple on `10n`. One line, and it is the actual
+claim rather than a proxy for it.
+
+    Xn, yn = make(extra, 11, noise=nz)
+    X = np.vstack([Xc, yc-shaped...]); y = np.r_[yc, yn]
+
+The noise experiment ADDS noisy rows to a clean baseline rather than corrupting everything. That is the
+decision people actually face - "should I accept this cheaper, noisier data source" - and it is why 25%
+noise can still help: the clean rows anchor the model and the noisy ones still carry signal.
+
+    for s in range(1,6): ... np.mean(accs)
+
+Averaging over five seeds. My first single-seed run reported 25% noise helping MORE than 10% noise,
+which is impossible; it was sampling variation of about 0.008, comparable to the effect. Any
+learning-curve or noise experiment needs seed averaging or it is measuring its own randomness.
+
+    p_true = sig(...)
+    bayes = np.mean(np.maximum(p_true, 1-p_true))
+
+The Bayes-optimal accuracy: for each test point, the best you can do is predict the more likely class,
+which is right with probability `max(p, 1-p)`. Averaging gives the ceiling - 0.8053. This is only
+computable because the simulation knows the true `p`, and it is exactly why simulations are worth
+running: on real data this number is invisible and it is the single most useful thing to know.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the learning curves, side by side. Same two algorithms, two different truths.
+
+    TRUTH HAS THRESHOLDS AND INTERACTIONS        TRUTH IS LINEAR
+    rows      simple    fancy      gap           rows      simple    fancy      gap
+    -------   ------   ------   -------          -------   ------   ------   -------
+        100   0.6440   0.6383   -0.0057              100   0.7690   0.7048   -0.0642
+        300   0.6695   0.6918   +0.0223              300   0.8022   0.7503   -0.0518
+      1,000   0.6727   0.7372   +0.0645            1,000   0.8187   0.7818   -0.0368
+      3,000   0.6725   0.7493   +0.0768            3,000   0.8188   0.7887   -0.0302
+     10,000   0.6760   0.7570   +0.0810           10,000   0.8223   0.8030   -0.0193
+     30,000   0.6760   0.7605   +0.0845           30,000   0.8232   0.8090   -0.0142
+
+The GAP columns run in opposite directions. On the left it grows from -0.006 to +0.085 as data arrives,
+because the extra capacity finally has enough evidence to use. On the right it stays negative and
+SHRINKS toward zero, because there was never anything for the capacity to find - the fancy model is
+slowly converging to the same answer the simple model reached at 300 rows.
+
+And the simple model's own column: 0.6727 to 0.6760 across 30x on the left (flat - bias-limited),
+0.8187 to 0.8232 on the right (also flattening - it has reached ITS ceiling too, which happens to be
+near the Bayes ceiling because the model is correct).
+
+TRACE B - the folklore, tested at four scales.
+
+    fancy trained on   scored    simple trained on   scored   who wins
+    ----------------   ------    -----------------   ------   -----------------
+             100 rows   0.6383            1,000 rows  0.6727   SIMPLE + DATA
+             300 rows   0.6918            3,000 rows  0.6725   fancy
+           1,000 rows   0.7372           10,000 rows  0.6760   fancy
+           3,000 rows   0.7493           30,000 rows  0.6760   fancy
+
+The claim held in exactly ONE row, and it is the row where BOTH models are still on the steep part of
+their curves. From 300 rows onward the simple model has stopped improving, so multiplying its data by
+ten multiplies nothing.
+
+TRACE C - noise tolerance, averaged over 5 seeds. Baseline is 3,000 clean rows at 0.7506.
+
+    extra rows   noise   accuracy   change    information in a label   verdict
+    ----------   -----   --------   -------   ----------------------   ---------
+         3,000      0%     0.7551   +0.0046   full                      HELPS
+         3,000     10%     0.7530   +0.0025   high                      HELPS
+         3,000     25%     0.7526   +0.0020   moderate                  HELPS
+         3,000     40%     0.7450   -0.0056   low                       hurts
+         3,000     50%     0.7321   -0.0184   NONE                      hurts
+        27,000      0%     0.7616   +0.0110   full                      HELPS
+        27,000     10%     0.7632   +0.0127   high                      HELPS  <- the BEST row
+        27,000     25%     0.7595   +0.0090   moderate                  HELPS
+        27,000     40%     0.7451   -0.0055   low                       hurts
+        27,000     50%     0.6550   -0.0956   NONE                      hurts
+
+Two readings.
+
+    THE BEST ROW IN THE WHOLE TABLE is 27,000 extra rows at TEN PERCENT NOISE - better than 27,000
+    clean ones in this run, within noise of each other. Ten percent wrong labels cost essentially
+    nothing, and volume paid.
+    THE 50% ROWS show the sign flip AND the scaling: -0.0184 for 3,000 junk rows and -0.0956 for
+    27,000. When the labels carry no information, more of them is monotonically worse, because they
+    dilute the signal you do have.
+
+The crossover is around 40% - not 10%, and not "any noise is bad".
+
+TRACE D - the ceiling, which decides whether any of this is worth doing.
+
+    quantity                                       value    % of ceiling
+    -------------------------------------------   ------   -------------
+    BAYES-OPTIMAL accuracy on this test set       0.8053          100.0%
+    fancy model, 30,000 rows                      0.7605           94.4%
+    simple model, 30,000 rows                     0.6760           83.9%
+    headroom left for the fancy model             0.0448
+
+Four and a half accuracy points exist in the entire universe for the good model. A project to double
+the training set is competing for a fraction of those. Without this row you cannot tell an ambitious
+roadmap from an impossible one.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE DECISION, in one table:
+
+    symptom                                      diagnosis          action
+    ------------------------------------------   ----------------   --------------------------------
+    learning curve still climbing                variance-limited   MORE DATA. Highest return.
+    learning curve flat, train error also high   bias-limited       better features, different model
+    learning curve flat, train error near zero   overfitting        regularise, or more data
+    near the estimated Bayes error               done               stop; the remaining error is noise
+
+    MEASURED:
+        simple model, threshold-and-interaction truth: 0.6727 at 1,000 rows, 0.6760 at 30,000.
+            30x the data, +0.0033. BIAS-LIMITED.
+        simple model, linear truth: 0.7690 at 100 rows, 0.8232 at 30,000. VARIANCE-LIMITED, then
+            converged.
+        fancy model, threshold truth: 0.6383 to 0.7605 across the same range - still climbing.
+        the folklore ("10x data beats the better algorithm") held at 100 rows and failed at 300+.
+        label noise: 25% still helped; 40% broke even; 50% hurt, and hurt 5x more at 9x the volume.
+        Bayes ceiling 0.8053; the fancy model was at 94.4% of it.
+        training cost: 291 ms against 4,915 ms at 30,000 rows - 17x.
+
+THE MISTAKES:
+
+    - Quoting the folklore without the condition. MEASURED: it was false in three of four direct
+      tests, because the simple model was bias-limited.
+    - Never plotting a learning curve. It costs five training runs and it is the only thing that tells
+      you which regime you are in.
+    - Collecting more data when the curve is flat. MEASURED: 30x bought 0.0033.
+    - Assuming any label noise is fatal. MEASURED: 25% wrong labels still helped.
+    - Assuming noise is always survivable. MEASURED: at 50% - no information at all - more data was
+      monotonically worse, -0.0184 at 3,000 extra rows and -0.0956 at 27,000.
+    - Confusing VOLUME with COVERAGE. More of what you already handle buys nothing; that is why
+      labelling production failures beats labelling at random.
+    - Not estimating the ceiling. Double-label 500 examples with two humans and measure their
+      disagreement - it bounds the irreducible error and tells you whether there is anything left to
+      win.
+    - Ignoring the cost side. 17x the training time at 30,000 rows, plus labelling, storage and a
+      slower experiment loop.
+    - Adding data when the real problem is DISTRIBUTION SHIFT. More of the wrong distribution makes it
+      worse - see the offline-versus-online entry.
+    - Forgetting the alternatives to collecting data: augmentation, transfer learning (measured at an
+      80x data-efficiency multiplier in the pretraining entry), semi-supervised learning, active
+      learning, and simply regularising more.
+
+THE TAKEAWAY. "More data beats a better algorithm" is a statement about VARIANCE, and it is true
+exactly as long as variance is what is limiting you. The measurement makes both halves concrete: on a
+truth the simple model could not represent, thirty times the data bought it 0.0033 and the better
+algorithm won every direct comparison past 300 rows; on a truth it could represent, it climbed steadily
+and the fancier model never caught it. A learning curve distinguishes those two worlds for the cost of
+five training runs, and running it before commissioning a labelling project is the difference between a
+data strategy and a slogan.""",
+]
+
+_EX_P1AO["Why does pretraining + fine-tuning beat training from scratch?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you have 500 labelled X-rays. A network that has to learn "what an
+edge is" from those 500 images will spend almost all of them on that, and have nothing left for "what
+pneumonia looks like".
+
+A PRETRAINED model has already learned edges, textures and shapes from a million unrelated photographs.
+Your 500 labels only have to learn the LAST MILE on top of that representation.
+
+MEASURED ON THIS MACHINE - a simulation with a shared 32-dimensional feature extractor underneath many
+related tasks. "From scratch" learns the extractor AND the task from the target labels alone;
+"pretrained" starts with the extractor already in hand:
+
+    target labels   from SCRATCH   pretrained + probe   gain
+    -------------   ------------   ------------------   -------
+               25         0.5647               0.6002   +0.0355
+               50         0.5871               0.6298   +0.0427
+              100         0.6414               0.6929   +0.0515
+              250         0.7027               0.7621   +0.0593
+              500         0.7067               0.7844   +0.0777
+            1,000         0.7228               0.8058   +0.0831
+            4,000         0.7063               0.8159   +0.1096
+           20,000         0.7766               0.8187   +0.0421
+
+And the number that matters is not the gain - it is the DATA-EFFICIENCY MULTIPLIER:
+
+    pretrained at    100 labels reaches 0.6929;  scratch needs    250 labels to match   ->   2x
+    pretrained at    250 labels reaches 0.7621;  scratch needs 20,000 labels to match   ->  80x
+    pretrained at  1,000 labels reaches 0.8058;  scratch NEVER matched it within 20,000 -> >20x
+
+Two hundred and fifty labels with a pretrained representation are worth twenty thousand without one.
+That is the whole argument, and it is why nobody trains an image or language model from scratch any
+more.""",
+
+    """2. THE INTUITION - hiring someone who already speaks English, versus teaching a baby to speak first.
+
+Your company's jargon takes an afternoon to teach a fluent speaker. Teaching an infant to speak, and
+then the jargon, takes years - and you would be spending your afternoon on grammar.
+
+The technical version: a deep model's early layers learn GENERIC structure and its late layers learn
+TASK-SPECIFIC structure. Edges and textures are the same whether you are recognising cats or tumours.
+Grammar and word meaning are the same whether you are classifying sentiment or extracting entities.
+Learning that generic structure is the expensive part, it needs enormous data, and IT IS THE SAME PART
+FOR EVERYBODY.
+
+So pretraining amortises it. One organisation pays for it once, on a million examples, and everyone
+else starts from the answer.
+
+WHERE THE GAIN COMES FROM, and this is the sharp version: it is a VARIANCE reduction obtained from
+SOMEBODY ELSE'S DATA. Look at the more-data entry: more data cures variance and does nothing for bias.
+A small labelled set leaves you badly variance-limited - the model could represent the truth, it just
+cannot pin it down. Pretraining hands you most of that pinning-down for free.
+
+MEASURED, the shape of the benefit across dataset sizes:
+
+    target labels     25       50      100      250      500    1,000    4,000   20,000
+    gain          +0.036   +0.043   +0.052   +0.059   +0.078   +0.083   +0.110   +0.042
+
+The gain RISES to a peak around 4,000 labels and then falls at 20,000. Both ends are informative.
+
+At the tiny end the gain is smaller than you might expect, because 25 labels are not enough to learn
+even the TASK on top of a perfect representation - you are limited by something else. At the large end
+it shrinks because the from-scratch model is finally getting enough data to learn the representation
+itself, and it will eventually catch up.
+
+That is the honest shape: pretraining does not help infinitely, and its advantage is largest in the
+middle - the regime almost every real project lives in.""",
+
+    """3. EVERY TERM DEFINED.
+
+PRETRAINING. Training a model on a large general dataset before your task exists.
+
+FINE-TUNING. Continuing training on your task, updating some or all of the weights.
+
+LINEAR PROBE / FEATURE EXTRACTION. FREEZING the pretrained representation and training only a new head
+on top. The cheapest form of transfer, and MEASURED here to beat full fine-tuning at every dataset
+size - see section 4.
+
+TRANSFER LEARNING. The general name for reusing knowledge from one task on another.
+
+REPRESENTATION / EMBEDDING / FEATURE EXTRACTOR. The learned mapping from raw input to useful features.
+This is the expensive, reusable, general part.
+
+HEAD. The small task-specific layer on top. Cheap, and the only part a linear probe trains.
+
+SELF-SUPERVISED PRETRAINING. Creating labels from the data itself - predict the next token, predict a
+masked patch, match two augmentations of the same image. The reason pretraining scaled: it removes the
+need for labels at the pretraining stage, so "more data" becomes free.
+
+FOUNDATION MODEL. A large pretrained model intended to be adapted to many downstream tasks.
+
+CATASTROPHIC FORGETTING. Fine-tuning destroying the pretrained knowledge. The main risk of updating
+everything with a small dataset, and the reason for low learning rates and frozen layers.
+
+NEGATIVE TRANSFER. Pretraining on the WRONG domain making things worse than starting from scratch.
+MEASURED below: a frozen mismatched representation scored 0.6715 against scratch's 0.7063 at 4,000
+labels.
+
+DOMAIN GAP. How different the pretraining and target distributions are. This decides whether transfer
+is positive or negative, and it is the thing to estimate before committing.
+
+LAYER FREEZING. Keeping early layers fixed and training only later ones. The middle ground between a
+linear probe and full fine-tuning, and the standard answer when you have some data but not much.
+
+DISCRIMINATIVE LEARNING RATES. A smaller learning rate for early layers than late ones - a smooth
+version of freezing.
+
+PARAMETER-EFFICIENT FINE-TUNING (PEFT). LoRA, adapters, prefix tuning: train a tiny number of new
+parameters instead of all of them. Cheap, storage-efficient, and it inherently resists catastrophic
+forgetting because most weights cannot move.
+
+FEW-SHOT / ZERO-SHOT. Adapting with a handful of examples, or none - the extreme end of the same curve.
+
+SAMPLE COMPLEXITY / DATA EFFICIENCY. How many labels you need for a given accuracy. MEASURED at an 80x
+multiplier - which is the honest way to quote a transfer result, rather than an accuracy delta.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two of them, and the first is that FINE-TUNING CAN BE WORSE
+THAN FREEZING.
+
+MEASURED, the same pretrained representation used two ways:
+
+    target labels   pretrained + FROZEN probe   pretrained + FULL fine-tune   freezing wins by
+    -------------   -------------------------   ---------------------------   ----------------
+               25                      0.6002                        0.5859           +0.0143
+               50                      0.6298                        0.6113           +0.0185
+              100                      0.6929                        0.6498           +0.0431
+              250                      0.7621                        0.7068           +0.0553
+              500                      0.7844                        0.7217           +0.0627
+            1,000                      0.8058                        0.7338           +0.0720
+            4,000                      0.8159                        0.7198           +0.0961
+           20,000                      0.8187                        0.7744           +0.0443
+
+Freezing beat fine-tuning at EVERY dataset size, by up to 9.6 accuracy points. The mechanism is
+CATASTROPHIC FORGETTING: the representation is already good, and gradient updates driven by a limited,
+noisy label set pull it away from that optimum faster than they improve the task fit. The model is
+overwriting knowledge worth more than what it is learning.
+
+This is the standard practical guidance, and it is nice to see it fall out of a measurement: with very
+little data, FREEZE and train only a head. Unfreeze progressively as your labelled set grows. The
+"fine-tune everything" default is right when you have a lot of data and wrong when you have a little -
+and my simulation's representation is exactly optimal, which is the extreme version of "already good".
+
+THE SECOND TRAP - NEGATIVE TRANSFER. Pretraining is a BET that the source and target share structure,
+and the bet can lose.
+
+MEASURED, a frozen representation learned on the WRONG structure:
+
+    target labels   from scratch   RIGHT pretraining   WRONG pretraining
+    -------------   ------------   -----------------   -----------------
+               25         0.5647              0.6002              0.5368
+              100         0.6414              0.6929              0.5905
+              500         0.7067              0.7844              0.6378
+            4,000         0.7063              0.8159              0.6715
+
+The wrong representation is worse than starting from scratch at every size, and the gap WIDENS with
+data - 0.028 at 25 labels and 0.035 at 4,000 - because a frozen wrong representation is a hard ceiling
+that more labels cannot lift. You have thrown away information that a from-scratch model would have
+kept.
+
+That is the real risk in transfer learning, and it has a name and a diagnosis: if your domain is far
+from the pretraining domain - a spectrogram, a protein, a point cloud, satellite imagery in twelve
+spectral bands - check the frozen probe against a from-scratch baseline before assuming the pretrained
+model helps.
+
+THE THIRD TRAP - quoting an accuracy delta instead of a DATA MULTIPLIER. "+0.0593 accuracy" is
+unimpressive-sounding. "250 labels do the work of 20,000" is the same measurement stated in the units
+the business cares about, because labels cost money and accuracy points do not obviously convert into
+anything.
+
+THE FOURTH TRAP - assuming the gain grows without limit as data shrinks. MEASURED, it does not: the
+gain at 25 labels was +0.0355, SMALLER than at 4,000 (+0.1096). Below some point you cannot learn even
+the small head reliably, and no representation fixes that. Pretraining relaxes the data requirement; it
+does not remove it.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the adaptation ladder, and when to climb it.
+
+THE LADDER, from cheapest to most expensive - and the right rung is set by how many labels you have:
+
+    ZERO-SHOT             use the pretrained model directly with a prompt or a nearest-neighbour
+                          lookup. Zero labels, zero training.
+    LINEAR PROBE          freeze everything, train a linear head. MEASURED as the BEST option at every
+                          size in this simulation, up to +0.096 over full fine-tuning.
+    PARTIAL FREEZING      unfreeze the last block or two. The standard middle ground.
+    PEFT (LoRA, adapters) train a small number of NEW parameters, leaving the pretrained weights
+                          untouched. Cheap, storage-efficient across many tasks, and structurally
+                          resistant to catastrophic forgetting.
+    FULL FINE-TUNING      update everything, with a SMALL learning rate. Best when you have a lot of
+                          labels, and MEASURED to be actively harmful when you do not.
+    FROM SCRATCH          only when the domain genuinely shares nothing with any available pretrained
+                          model - and check that assumption, because the from-scratch baseline is
+                          cheap to run.
+
+CHOOSING THE RUNG - the rule that falls out of the measurements: the less data you have and the closer
+your domain is to the pretraining domain, the more you should FREEZE. The more data and the further the
+domain, the more you should unfreeze.
+
+WHERE THE PRETRAINING DATA COMES FROM - the innovation that made all of this work at scale is
+SELF-SUPERVISION, because it removes the labelling cost from the expensive stage:
+
+    LANGUAGE       predict the next token (GPT), or predict masked tokens (BERT). The internet is the
+                   dataset and it needs no annotation.
+    VISION         contrastive learning (SimCLR, CLIP) - two augmentations of the same image should
+                   embed together; masked autoencoding (MAE) - reconstruct hidden patches.
+    AUDIO, VIDEO, CODE, PROTEINS   the same idea in each modality.
+    Supervised pretraining on ImageNet was the previous generation and is still a perfectly good
+    starting point for many vision tasks.
+
+WHY IT WORKS AT ALL - the layer hierarchy. Early layers learn edges, colours and textures; middle
+layers learn parts; late layers learn whole objects and task-specific concepts. The early layers are
+almost universal, which is why they transfer nearly everywhere, and the late ones are not, which is why
+you replace the head.
+
+WHEN FROM SCRATCH IS STILL RIGHT:
+    - a genuinely alien input format with no relevant pretrained model
+    - a tiny model where pretraining costs more than the task
+    - an architecture constraint (a fixed latency budget that no pretrained model meets)
+    - MEASURED evidence of negative transfer against a from-scratch baseline
+
+AND THE CONNECTION TO THE REST OF THIS BANK: pretraining is a VARIANCE reduction bought with somebody
+else's data. See the more-data entry - more data cures variance, and a small labelled set is exactly
+the variance-limited case. Pretraining is how you get the variance reduction without the labelling
+budget.""",
+
+    """6. HOW TO CODE IT.
+
+THE PIPELINE:
+
+  1. Load a pretrained model. Replace its final layer with one sized for your classes.
+  2. FREEZE the backbone: set `requires_grad = False` on every pretrained parameter.
+  3. Train only the new head, with a normal learning rate. This is the linear probe, and it is the
+     baseline everything else must beat.
+  4. If you have enough data, unfreeze progressively - the last block first - with a MUCH SMALLER
+     learning rate for the pretrained layers (10x to 100x smaller). Discriminative learning rates.
+  5. Use the pretraining preprocessing EXACTLY - the same input resolution, the same normalisation
+     constants, the same tokeniser. A mismatch here silently destroys the representation you paid for,
+     and it is the most common transfer-learning bug.
+  6. Watch for catastrophic forgetting: if validation accuracy rises then falls as you unfreeze, you
+     are overwriting the representation. Freeze more, or lower the learning rate.
+
+MEASURING IT - and the design decisions matter more than the code:
+
+  7. BUILD A SHARED STRUCTURE explicitly. Here, a fixed matrix `B_true` maps raw inputs to 32 features,
+     and many tasks are simple functions OF THOSE FEATURES. That is what "the tasks share low-level
+     structure" means, made concrete - and without it there is nothing to transfer and the experiment
+     measures nothing.
+  8. THREE ARMS, not two: from scratch, frozen probe, and full fine-tune. The two-arm version hides the
+     most useful finding, which is that freezing beat fine-tuning everywhere.
+  9. ADD A NEGATIVE-TRANSFER ARM: the same procedure with a representation learned on a DIFFERENT
+     structure. Without it you have measured that transfer helps and not that it can hurt.
+ 10. SWEEP THE LABEL COUNT logarithmically - 25 to 20,000. The interesting behaviour is the SHAPE of
+     the gain, and it is not monotone.
+ 11. AVERAGE OVER SEEDS. At 25 labels the run-to-run variation is comparable to the effect.
+
+REPORTING IT - this is where most transfer results are weaker than they need to be:
+
+ 12. Convert the accuracy gain into a DATA-EFFICIENCY MULTIPLIER: find the smallest from-scratch
+     dataset that matches the pretrained result at n labels, and report the ratio. "80x" says more than
+     "+0.0593".
+ 13. Say when the from-scratch baseline NEVER matched, rather than extrapolating. MEASURED: at 1,000
+     labels the pretrained probe reached 0.8058 and from-scratch had not matched it at 20,000, so the
+     multiplier is ">20x" and stating the bound is more honest than fitting a curve to guess.
+ 14. Report the ceiling if you can compute it. Here the frozen probe on the TRUE representation
+     plateaus at 0.8187, which is the best this model class can do - so the remaining gap is the task
+     head and the label noise, not the representation.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Pretraining on a huge general dataset teaches the model reusable LOW-LEVEL STRUCTURE - edges and
+textures for images, grammar and word meaning for text. Your specific task then only has to learn the
+LAST MILE on top of that, so it works with far less labelled data and compute. Training from scratch
+would waste your small dataset re-learning the basics everyone else already learned.
+
+It is like hiring someone who already speaks English to learn your company's jargon, versus teaching a
+baby to speak first.
+
+I measured what that is worth. In a simulation where many tasks share a common feature extractor, a
+model that had the extractor already scored 0.7621 with 250 target labels; a from-scratch model needed
+TWENTY THOUSAND labels to reach the same accuracy. An 80x data-efficiency multiplier - and that is the
+right unit to quote, because labels cost money and accuracy points do not obviously convert into
+anything. At 1,000 labels the pretrained model reached 0.8058 and the from-scratch model had not
+matched it at 20,000 at all.
+
+What is really happening is a VARIANCE reduction obtained from somebody else's data. A small labelled
+set leaves you variance-limited - the model could represent the truth, it just cannot pin it down - and
+pretraining hands you most of that pinning-down for free.
+
+Two things I would raise that people usually get wrong.
+
+First, FINE-TUNING IS NOT ALWAYS THE RIGHT MOVE. I compared freezing the representation and training
+only a head against updating everything, and freezing won at EVERY dataset size, by up to 9.6 accuracy
+points. That is catastrophic forgetting: the representation is already good, and gradients from a
+small noisy label set pull it away from that optimum faster than they improve the task fit. So with
+little data, freeze and train a head; unfreeze progressively as your labelled set grows, with a much
+smaller learning rate for the pretrained layers.
+
+Second, TRANSFER IS A BET AND IT CAN LOSE. I pretrained on a deliberately mismatched structure and the
+frozen representation was worse than from scratch at every size - 0.6715 against 0.7063 at 4,000 labels
+- and the gap WIDENED with more data, because a frozen wrong representation is a ceiling that labels
+cannot lift. If your domain is far from the pretraining domain, check the frozen probe against a
+from-scratch baseline before assuming it helps.
+
+The reason this scaled to today's foundation models is SELF-SUPERVISION: predicting the next token or a
+masked patch creates labels from the data itself, so the expensive pretraining stage no longer needs
+annotation, and 'more data' becomes free at exactly the stage where it matters most."
+
+THE ONE SENTENCE TO NOT FUMBLE: pretraining is a variance reduction bought with someone else's data,
+so it is worth the most when you are label-poor - and freezing beats fine-tuning precisely there.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    B_true = rng.normal(0,1,(DIN,H))/np.sqrt(DIN)
+
+The SHARED STRUCTURE, made explicit: a fixed matrix mapping 64 raw inputs to 32 useful features. Every
+task in the simulation is a simple function of `tanh(X @ B_true)`. This one object is what "the tasks
+share low-level structure" means, and without it there would be nothing to transfer and the whole
+experiment would measure zero.
+
+    z = np.tanh(X@B_true) @ head * 1.5
+
+A task = the SHARED features, times a task-specific head. That factorisation is the model of transfer
+learning: an expensive general part and a cheap specific part.
+
+    def train(X, y, B0=None, freeze=False, ...):
+        Bm = (B0.copy() if B0 is not None else r.normal(...))
+
+Three arms in one function. `B0=None` is FROM SCRATCH - the extractor is random and must be learned from
+the target labels. `B0=B_true, freeze=True` is a LINEAR PROBE. `B0=B_true, freeze=False` is FULL
+FINE-TUNING. Same optimiser, same epochs, same everything else, so the comparison is about the
+initialisation and what is trainable, nothing else.
+
+    if not freeze:
+        Bm -= lr*(X.T@(np.outer(d,w)*(1-Z**2)))
+
+The backpropagation into the representation, and the `if` is the freeze switch. `(1-Z**2)` is the tanh
+derivative. Note that in the frozen case this line simply does not run, which is why a probe is also
+much cheaper to train.
+
+    w -= lr*(Z.T@d); b -= lr*d.sum()
+
+The head, always trained. Even a linear probe trains this - the pretrained model knows nothing about
+your classes.
+
+    B_wrong = np.random.default_rng(9999).normal(0,1,(DIN,H))/np.sqrt(DIN)
+
+The negative-transfer arm: a representation with the right SHAPE and the wrong CONTENT. Frozen, it is a
+hard ceiling - the model can only fit functions of the wrong features. This is the arm most transfer
+experiments omit, and it is the one that tells you the technique has a failure mode.
+
+    for n in (25,50,100,250,500,1000,4000,20000):
+
+Logarithmic label counts. Transfer gains are largest in the low-data regime and the interesting
+behaviour is the SHAPE across orders of magnitude, which linear spacing would miss entirely.
+
+    def avg(fn, seeds=3): return np.mean([fn(s) for s in range(1,seeds+1)])
+
+Averaging over seeds. At 25 labels the variation between draws of the training set is comparable to the
+effect being measured, and a single-seed transfer result at small n is mostly noise.
+
+    target = res[n][1]
+    for m in sorted(res):
+        if res[m][0] >= target: need = m; break
+
+The DATA-EFFICIENCY MULTIPLIER: walk up the from-scratch results until one matches the pretrained
+result at `n` labels, and report `need/n`. This converts an accuracy delta into the unit a business
+decision is actually made in - 80x, rather than +0.0593.
+
+And when nothing matches, say so rather than extrapolating. At 1,000 labels the probe reached 0.8058 and
+from-scratch had not matched it at 20,000, so the honest answer is ">20x", not a fitted estimate.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - three arms, eight label counts, averaged over 3 seeds.
+
+    target labels   from SCRATCH   frozen PROBE   full FINE-TUNE   probe - scratch
+    -------------   ------------   ------------   --------------   ---------------
+               25         0.5647         0.6002           0.5859           +0.0355
+               50         0.5871         0.6298           0.6113           +0.0427
+              100         0.6414         0.6929           0.6498           +0.0515
+              250         0.7027         0.7621           0.7068           +0.0593
+              500         0.7067         0.7844           0.7217           +0.0777
+            1,000         0.7228         0.8058           0.7338           +0.0831
+            4,000         0.7063         0.8159           0.7198           +0.1096
+           20,000         0.7766         0.8187           0.7744           +0.0421
+
+Three things in one table.
+
+    THE PROBE COLUMN climbs steadily to 0.8187 and flattens - it has reached the ceiling of what this
+    model class can do given the label noise.
+    THE SCRATCH COLUMN is noisy and slow: 0.7027 at 250, 0.7063 at 4,000 - barely moving in that range -
+    then 0.7766 at 20,000 as it finally accumulates enough data to learn the representation itself.
+    THE GAIN COLUMN peaks at 4,000 (+0.1096), not at 25 (+0.0355). Pretraining relaxes the data
+    requirement; it does not remove it, and 25 labels are too few to fit even the small head reliably.
+
+TRACE B - the data-efficiency multiplier, which is the same table read differently.
+
+    pretrained at   reaches   from-scratch needs   multiplier
+    -------------   -------   ------------------   ----------
+        100 labels    0.6929           250 labels          2x
+        250 labels    0.7621        20,000 labels         80x
+      1,000 labels    0.8058     never within 20,000     >20x
+
+The jump from 2x to 80x between 100 and 250 labels is not an anomaly - it is the from-scratch learning
+curve going FLAT in that region (0.7027 at 250 and 0.7063 at 4,000, essentially unchanged), so matching
+a small further gain requires an enormous amount more data. Which is the more-data entry's lesson
+appearing here: the from-scratch model is stuck, and the pretrained one is not.
+
+TRACE C - freezing versus fine-tuning, the counter-intuitive result.
+
+    target labels   frozen probe   full fine-tune   freezing wins by   why
+    -------------   ------------   --------------   ----------------   ---------------------------
+               25         0.6002           0.5859            +0.0143   nothing to gain, much to lose
+              100         0.6929           0.6498            +0.0431
+              500         0.7844           0.7217            +0.0627
+            1,000         0.8058           0.7338            +0.0720
+            4,000         0.8159           0.7198            +0.0961   the largest damage
+           20,000         0.8187           0.7744            +0.0443   catching up slightly
+
+Freezing wins in every row. In this simulation the pretrained representation is EXACTLY optimal, so any
+gradient step moves it away from the optimum - the extreme case of catastrophic forgetting, and a clean
+illustration of why the practical rule is "freeze first, unfreeze as data grows".
+
+On real data the pretrained representation is good but not optimal, so full fine-tuning does eventually
+win - typically somewhere in the thousands-to-tens-of-thousands of labels. The SHAPE here is the lesson;
+the crossover point is problem-specific and worth measuring on your own data.
+
+TRACE D - negative transfer: the same procedure with the WRONG representation, frozen.
+
+    target labels   from scratch   RIGHT pretraining   WRONG pretraining   wrong vs scratch
+    -------------   ------------   -----------------   -----------------   ----------------
+               25         0.5647              0.6002              0.5368           -0.0279
+              100         0.6414              0.6929              0.5905           -0.0509
+              500         0.7067              0.7844              0.6378           -0.0689
+            4,000         0.7063              0.8159              0.6715           -0.0348
+
+The wrong representation is worse than from scratch at every size. And notice the middle rows are the
+worst: at 500 labels it costs 0.069, because a from-scratch model can at least start learning the right
+features while the frozen wrong one cannot. The gap narrows at 4,000 only because the from-scratch model
+is itself struggling there.
+
+The practical reading: a frozen mismatched representation is a HARD CEILING. More labels cannot lift it,
+because the labels never reach the layers that would need to change.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE ECONOMICS:
+
+    pretraining cost        enormous, paid ONCE, by someone else. Millions of examples, thousands of
+                            GPU-hours. Self-supervision is what makes the data side free.
+    linear probe cost       train a single layer. Minutes. The backbone runs forward only, so you can
+                            even precompute the features once and reuse them.
+    fine-tuning cost        a full backward pass through the whole model, per step.
+    PEFT cost               a small fraction of fine-tuning, and one set of base weights serves many
+                            tasks.
+    storage                 full fine-tuning stores a whole model per task; LoRA stores megabytes.
+
+    MEASURED, the value:
+        data-efficiency multiplier   80x at 250 labels; >20x at 1,000 (never matched within 20,000)
+        accuracy gain                +0.036 at 25 labels, peaking at +0.110 at 4,000, +0.042 at 20,000
+        freezing vs fine-tuning      freezing won at EVERY size, by up to +0.096
+        negative transfer            a wrong frozen representation lost to from-scratch at every size,
+                                     by up to 0.069
+
+THE MISTAKES:
+
+    - Fine-tuning everything with a small dataset. MEASURED: freezing beat full fine-tuning at every
+      size, by up to 9.6 accuracy points. Catastrophic forgetting is not a theoretical concern.
+    - Not running a from-scratch baseline. It is the only way to detect negative transfer, and it is
+      cheap.
+    - Assuming transfer always helps. MEASURED: a mismatched representation was worse than scratch
+      everywhere, and the ceiling did not lift with more data.
+    - Using a different preprocessing pipeline from the pretraining. Different resolution, different
+      normalisation constants, a different tokeniser - each silently destroys the representation you
+      paid for, and this is the most common transfer bug.
+    - Using the same learning rate for the pretrained backbone and the new head. The head needs a
+      normal rate and the backbone needs 10-100x less.
+    - Quoting an accuracy delta rather than a data multiplier. "+0.0593" is unimpressive; "250 labels
+      do the work of 20,000" is the same number in the units that fund the project.
+    - Assuming the benefit grows without limit as data shrinks. MEASURED: the gain at 25 labels
+      (+0.036) was SMALLER than at 4,000 (+0.110). You still need enough labels to fit the head.
+    - Forgetting that the pretraining data can carry BIAS into your task, and that a model pretrained
+      on web-scale data has seen things you have not audited.
+    - Never checking whether your test set leaked into the pretraining corpus. For web-scale
+      pretraining this is a real and under-tested risk.
+    - Ignoring PEFT. LoRA and adapters give most of fine-tuning's benefit at a fraction of the cost and
+      with structural resistance to forgetting.
+
+THE TAKEAWAY. Pretraining works because a deep model's early layers learn something GENERAL - edges,
+textures, grammar - that is the same for everybody and expensive to learn, and your labels should be
+spent on the part that is specific to you. In measurement terms it is a VARIANCE reduction bought with
+somebody else's data, and its value is best quoted as a data multiplier: 250 labels doing the work of
+20,000. The two things to remember beyond the headline are that FREEZING beat fine-tuning at every
+dataset size here, because a good representation is easier to damage than to improve with few labels,
+and that transfer is a BET on shared structure - a mismatched representation was worse than starting
+from scratch, and no amount of extra data lifted that ceiling.""",
+]
+
+_EX_P1AO["Why does the browser enforce the same-origin policy, and why do we then need CORS?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - your browser automatically attaches your cookies to every request it
+makes to a site, including requests made by JAVASCRIPT ON A COMPLETELY DIFFERENT SITE.
+
+Think about what that means without any protection. You visit evil.com. Its script issues
+`fetch('https://bank.com/account')`. Your browser dutifully attaches your bank session cookie. The bank
+sees a perfectly authenticated request and returns your balance. evil.com reads it and sends it
+onwards.
+
+THE SAME-ORIGIN POLICY (SOP) is the browser rule that stops the last step: script from one ORIGIN
+(scheme + host + port) cannot READ responses from a different origin.
+
+MEASURED ON THIS MACHINE - a real API server that allow-lists exactly one origin, asked the same
+question three ways:
+
+    who is asking                                 status   Access-Control-Allow-Origin   body returned
+    -------------------------------------------   ------   ---------------------------   -------------
+    no Origin header (curl, a script, a server)    200 OK   (absent)                      the balance
+    Origin: http://app.example (the allow-listed
+      frontend)                                    200 OK   http://app.example            the balance
+    Origin: http://evil.example (an attacker)      200 OK   (absent)                      the balance
+
+READ THE LAST COLUMN. The server returned the balance in ALL THREE CASES. It ran the handler, hit the
+database, serialised the JSON and sent it down the wire every time.
+
+The only difference is one response header - and the only thing that acts on that header is a BROWSER,
+deciding whether to hand the bytes to the page's JavaScript. `curl` ignored it entirely and printed the
+balance.
+
+That single observation is the whole entry: SOP and CORS are BROWSER protections for the USER, not
+server-side access control.""",
+
+    """2. THE INTUITION - the browser is a hostile multi-tenant environment, and it is the only one you
+carry around.
+
+Your browser holds, simultaneously, your bank session, your email session, your company's admin
+console - and it is also executing arbitrary code from every site you happen to open. No other piece of
+software you use runs untrusted programs alongside your most sensitive credentials by design.
+
+SOP is the isolation boundary that makes that survivable. Without it, one tab could read another's
+authenticated data.
+
+THE CRITICAL DISTINCTION, and it is the one people get wrong: SOP blocks READING, not SENDING.
+
+    a cross-origin request is SENT            - always, and with cookies attached
+    the SERVER processes it                   - always
+    the RESPONSE is withheld from the script  - unless the server said otherwise
+
+MEASURED above: the evil.example request returned `200 OK` with the full body. The browser would refuse
+to expose it to the page, and the SERVER STILL DID THE WORK. Which is why a cross-origin POST that
+changes state is a real attack even under SOP - the attacker does not need to read the response to
+have caused a transfer. That is CSRF, and SOP does not prevent it; SameSite cookies and CSRF tokens do.
+
+NOW WHY CORS EXISTS. The modern web legitimately needs cross-origin reads: a frontend on `app.com`
+calling `api.com`, a CDN, a third-party API, a maps service. Blocking all of them would be safe and
+useless.
+
+So CORS is a CONTROLLED EXEMPTION, and the direction of control is the interesting part: THE TARGET
+SERVER DECIDES. `api.com` says, in a response header, "app.com may read this". The browser enforces
+that grant. The requesting page has no say at all - which is correct, because if the requester could
+opt in, evil.com would simply opt in.
+
+MEASURED, the grant in action - the same endpoint, two origins:
+
+    Origin: http://app.example   ->   Access-Control-Allow-Origin: http://app.example   -> page reads it
+    Origin: http://evil.example  ->   (no such header)                                  -> page blocked
+
+One header, present or absent, on an otherwise identical response. SOP is deny-by-default; CORS is the
+server-declared allowlist that re-enables the legitimate cases.""",
+
+    """3. EVERY TERM DEFINED.
+
+ORIGIN. The triple (SCHEME, HOST, PORT). `https://app.com` and `http://app.com` are different origins
+(scheme). `app.com` and `api.app.com` are different (host). `app.com:80` and `app.com:8080` are
+different (port). Subdomains do NOT share an origin, which surprises people constantly.
+
+SAME-ORIGIN POLICY (SOP). The browser rule that script from one origin cannot READ responses, DOM or
+storage belonging to another. Deny by default.
+
+CORS (cross-origin resource sharing). The protocol by which a server declares which origins may read
+its responses. An EXEMPTION mechanism layered on top of SOP.
+
+`Access-Control-Allow-Origin` (ACAO). The grant header. Either a specific origin or `*`. MEASURED:
+present for the allow-listed origin, absent for the other, on otherwise identical responses.
+
+`Origin` REQUEST HEADER. Sent by the browser on cross-origin requests, stating which origin the script
+came from. Set by the BROWSER and not by the script - a page cannot forge it. `curl` can send anything,
+which is exactly why CORS is not access control.
+
+SIMPLE REQUEST. GET, HEAD, or POST with a small set of content types and no custom headers. Sent
+directly, with no preflight.
+
+PREFLIGHT. For anything not "simple", the browser first sends an `OPTIONS` request ASKING PERMISSION,
+and only sends the real request if the server grants it. MEASURED below.
+
+`Access-Control-Request-Method` / `-Headers`. What the preflight asks about. MEASURED: the browser sent
+`DELETE` and `Authorization`.
+
+`Access-Control-Allow-Methods` / `-Headers` / `-Max-Age`. The preflight response. `Max-Age` caches the
+grant so the preflight is not repeated on every request - a real latency saving, since a preflight is a
+full extra round trip.
+
+`Access-Control-Allow-Credentials`. Whether cookies may be sent AND the response read. Crucially, when
+this is `true` the ACAO header MAY NOT be `*` - you must name a specific origin. That restriction is
+deliberate: `*` plus credentials would recreate the vulnerability SOP exists to prevent.
+
+`Vary: Origin`. Required when the ACAO depends on the request's Origin, or a shared cache will serve
+one origin's grant to another. A genuine and frequently-shipped bug.
+
+CSRF (cross-site request forgery). Making the browser send an authenticated STATE-CHANGING request.
+SOP does not stop it, because SOP only blocks reading. Fixed by SameSite cookies and CSRF tokens.
+
+SameSite COOKIES. `SameSite=Lax` or `Strict` tells the browser not to attach the cookie on cross-site
+requests at all - which attacks the problem at the root rather than at the response.
+
+CSP (Content Security Policy). A different, complementary control: which resources a page may LOAD.
+
+JSONP. The pre-CORS hack: `<script src="...">` is exempt from SOP, so APIs returned executable
+JavaScript. It works and it hands the remote site full script execution in your page. Dead, and worth
+knowing so you recognise it in old code.
+
+OPAQUE RESPONSE. What `fetch` returns in `no-cors` mode: the request was made and the response is
+unreadable. Useful for cache warming and nothing else.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we enabled CORS to secure the API". CORS is not security for
+your server. It is security for OTHER PEOPLE'S USERS.
+
+MEASURED, the three requests again, with the point made explicit:
+
+    request                                        server ran the handler?   returned the data?
+    --------------------------------------------   -----------------------   ------------------
+    curl, no Origin header                         YES                       YES
+    browser page from the allow-listed origin      YES                       YES
+    browser page from a disallowed origin          YES                       YES
+
+The server did the work every time. If `/account` should require authentication, it needs
+AUTHENTICATION - a session check, a token, an authorisation rule. CORS headers do nothing for you
+there, because `curl`, Postman, a Python script, a mobile app and any server-side proxy simply ignore
+them.
+
+The corollary that follows, and it is the one that actually matters: `Access-Control-Allow-Origin: *`
+is NOT automatically a vulnerability. On a PUBLIC endpoint that returns the same thing to everybody, it
+is correct and harmless. It becomes a serious vulnerability the moment the endpoint returns
+USER-SPECIFIC data based on a cookie - and the spec knows this, which is why `*` is forbidden when
+`Access-Control-Allow-Credentials: true`.
+
+THE SECOND TRAP - reflecting the Origin header back. The lazy way to "support all origins with
+credentials" is:
+
+    Access-Control-Allow-Origin: <whatever Origin the request sent>
+    Access-Control-Allow-Credentials: true
+
+This passes every test and it is exactly the vulnerability SOP exists to prevent, because evil.com's
+request carries `Origin: http://evil.example` and you have just granted it. You have reimplemented
+"allow everyone" while appearing to have an allowlist. Match against a real list - MEASURED, the
+server here checks `origin in self.ALLOW` and emits nothing when it does not match.
+
+THE THIRD TRAP - thinking SOP stops CSRF. It does not, and the measurement shows why: the server
+processed the disallowed-origin request and returned 200. If that had been
+`POST /transfer?to=attacker`, the transfer would have HAPPENED. The attacker never needed to read the
+response. SOP protects CONFIDENTIALITY, not INTEGRITY. SameSite cookies and CSRF tokens are what stop
+the send.
+
+THE FOURTH TRAP - not understanding the PREFLIGHT, which is where most CORS debugging time goes.
+MEASURED, what the server actually saw:
+
+    a simple GET with no custom headers:
+        server saw:  GET      /account   Origin=http://app.example
+        (one request - no preflight)
+
+    a DELETE with an Authorization header:
+        server saw:  OPTIONS  /account   Origin=http://app.example   wants DELETE with [Authorization]
+        server saw:  DELETE   /account   Origin=http://app.example
+        (two requests - the browser asked permission first)
+
+    and the preflight's response:
+        HTTP/1.1 204 No Content
+        Access-Control-Allow-Origin: http://app.example
+        Access-Control-Allow-Credentials: true
+        Access-Control-Allow-Methods: GET, POST, DELETE
+        Access-Control-Allow-Headers: Content-Type, Authorization
+        Access-Control-Max-Age: 600
+
+The preflight is why adding one custom header to a working request suddenly breaks it: you have moved
+it out of the "simple" category and your server must now answer `OPTIONS` as well. A server framework
+that routes `OPTIONS /account` to a 404 or a 405 produces the classic "CORS error" whose real cause is
+an unhandled method.
+
+MEASURED, the preflight for a disallowed origin:
+
+    HTTP/1.1 204 No Content
+    Access-Control-Allow-* headers present: 0
+
+No grant, so a browser would never send the real DELETE at all. And `curl` would send it anyway,
+because `curl` never asks.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what SOP covers, what it does not, and what else you need.
+
+WHAT SOP BLOCKS:
+    reading a cross-origin `fetch` or `XMLHttpRequest` response
+    reading another origin's DOM through an iframe
+    reading another origin's `localStorage`, `sessionStorage` and cookies
+    reading pixels from a cross-origin `<canvas>` image
+
+WHAT SOP DOES NOT BLOCK - and this list is the source of most confusion:
+    SENDING the request. It goes, with cookies. MEASURED: the server processed all three requests.
+    `<img src>`, `<script src>`, `<link rel=stylesheet>`, `<form action>` - these have been exempt
+        since before SOP existed and cannot be changed without breaking the web. A cross-origin form
+        POST is CSRF's delivery mechanism.
+    top-level navigation
+    reading the STATUS or TIMING of a cross-origin load, which is enough for real side-channel attacks
+        - which is why `Cross-Origin-Resource-Policy` and `Cross-Origin-Opener-Policy` exist.
+
+THE CONTROLS, and which threat each addresses:
+    SOP                    a page reading another origin's authenticated data. Confidentiality.
+    CORS                   the server-declared exemption to SOP.
+    SameSite COOKIES       the browser not attaching cookies cross-site at all. Attacks CSRF at the
+                           root, and `Lax` is now the default in major browsers - which quietly fixed a
+                           large fraction of CSRF.
+    CSRF TOKENS            an unguessable value the attacker's page cannot obtain. The classic defence.
+    CSP                    which resources a page may load or execute. Mitigates XSS.
+    AUTHENTICATION AND AUTHORISATION   the ACTUAL access control. Everything above is a browser
+                           behaviour; this is yours.
+    COOP / COEP / CORP     newer isolation headers, needed to re-enable
+                           `SharedArrayBuffer` and precise timers after Spectre.
+
+WAYS TO AVOID CORS ENTIRELY, in rough order of preference:
+    SAME ORIGIN            serve the API under `app.com/api` via a reverse proxy. No CORS at all, no
+                           preflights, no debugging. Usually the right answer, and it also removes a
+                           round trip.
+    A SERVER-SIDE PROXY    your backend calls the third party. The browser never makes a cross-origin
+                           request, and your credentials never reach the client.
+    JSONP                  the historical hack. `<script src>` is SOP-exempt, so APIs returned
+                           executable JavaScript - which hands the remote origin arbitrary code
+                           execution in your page. Do not.
+    postMessage            the sanctioned way for two windows or iframes on different origins to
+                           communicate - explicit, opt-in on both sides, and you MUST check
+                           `event.origin`, which is the thing people forget.
+
+CORS PERFORMANCE, since it is a real cost: a preflight is a FULL EXTRA ROUND TRIP before your request
+even starts. On a 150 ms mobile path that is 150 ms added to the first call - see the URL-walk entry,
+where setup already dominated a small page load. Mitigations: keep requests "simple" where you can, set
+a generous `Access-Control-Max-Age` so the grant is cached, and prefer same-origin.
+
+THE SENTENCE THAT TIES IT TOGETHER: SOP is "deny by default for safety"; CORS is "the server-declared
+allowlist that safely re-enables the legitimate cross-origin cases"; and neither is a substitute for
+authentication, because both are enforced by the browser and only the browser.""",
+
+    """6. HOW TO CODE IT.
+
+CONFIGURING CORS CORRECTLY:
+
+  1. Keep a REAL ALLOWLIST of origins and compare against it. `if origin in ALLOWED_ORIGINS`. Do not
+     reflect whatever arrived.
+  2. Echo back the SPECIFIC origin - `Access-Control-Allow-Origin: https://app.example` - not `*`, if
+     credentials are involved. The spec forbids `*` with credentials precisely because that combination
+     recreates the original vulnerability.
+  3. Set `Vary: Origin` whenever the ACAO depends on the request. Without it a CDN or shared cache will
+     hand one origin's grant to another, which is a genuine and commonly-shipped bug.
+  4. Handle `OPTIONS` on every route that might be preflighted, and return the allowed methods and
+     headers. A framework that 404s or 405s on OPTIONS produces the "CORS error" that is really a
+     routing error.
+  5. Set `Access-Control-Max-Age` - 600 seconds or more - so browsers cache the grant and stop
+     preflighting every request. Browsers cap this (Chrome at 2 hours), so setting a week is harmless
+     and pointless.
+  6. Send NO CORS headers at all when the origin is not allowed. Do not send an error - just omit the
+     grant, which is what the measured server does. The browser will block the read.
+  7. AND SEPARATELY: authenticate and authorise the request. CORS headers are not access control.
+
+MEASURING IT - this is genuinely worth doing once, because it makes the concept stick:
+
+  8. Stand up a tiny HTTP server that inspects the `Origin` request header and emits ACAO only for an
+     allow-listed value.
+  9. Hit it with a RAW SOCKET or `curl`, sending different `Origin` headers by hand, and print the
+     status, the ACAO header and the BODY.
+ 10. The finding is that the body is IDENTICAL in every case. Seeing your own "protected" data come
+     back in response to `Origin: http://evil.example` is the moment the distinction between "the
+     browser blocks the read" and "the server refuses" becomes permanent.
+ 11. Send an `OPTIONS` request with `Access-Control-Request-Method: DELETE` and
+     `Access-Control-Request-Headers: Authorization` and print what the server returns. That is exactly
+     what a browser sends, and doing it by hand demystifies preflight debugging.
+ 12. Log what the server RECEIVES for each case. MEASURED: a simple GET produced one request; a DELETE
+     with a custom header produced an `OPTIONS` followed by the real request.
+
+DEBUGGING A CORS ERROR, in order - the browser's error message is famously unhelpful:
+
+ 13. Open the network tab and look for an `OPTIONS` request. If it failed or 404'd, your problem is
+     that the route does not handle OPTIONS.
+ 14. Check the actual `Access-Control-Allow-Origin` value against the actual `Origin` sent. They must
+     match EXACTLY - including scheme, port, and the absence of a trailing slash.
+ 15. If credentials are involved, check that ACAO is not `*` and that
+     `Access-Control-Allow-Credentials: true` is present, AND that the client set
+     `credentials: 'include'`.
+ 16. Remember that the request probably SUCCEEDED. Check the server logs - the handler almost
+     certainly ran, and the failure is entirely on the browser side. That single realisation shortens
+     most CORS debugging sessions.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"The SAME-ORIGIN POLICY is a foundational browser rule: script from one origin - scheme plus host plus
+port - cannot READ responses from a different origin.
+
+Without it, any site you visit could silently call your bank or your email - your browser
+auto-attaches your cookies - and read the responses, stealing your data or acting as you. SOP isolates
+origins so a malicious page cannot exfiltrate another site's authenticated data.
+
+The critical detail is that SOP blocks the READ, not the SEND. I measured this with a real server that
+allow-lists one origin: I sent the same request with no Origin header, with the allow-listed origin,
+and with an attacker's origin. All three returned 200 OK, and ALL THREE RETURNED THE FULL RESPONSE
+BODY. The server ran the handler every time. The only difference was one response header,
+Access-Control-Allow-Origin, present in one case and absent in the other two - and the only thing that
+acts on that header is a browser deciding whether to hand the bytes to JavaScript. curl printed the
+balance.
+
+But the modern web legitimately needs cross-origin calls - a frontend on app.com talking to api.com,
+CDNs, third-party APIs - so CORS is the controlled EXEMPTION. Rather than blindly blocking all
+cross-origin reads, the target SERVER explicitly opts in via Access-Control-Allow-Origin headers, and
+the browser enforces those grants, preflighting risky requests. The direction matters: the server
+grants, not the requester, because if the requester could opt in then evil.com would.
+
+The preflight is worth describing because it is where CORS debugging time goes. A 'simple' request - a
+GET with no custom headers - goes straight out. Anything else makes the browser send an OPTIONS request
+first, asking permission. I measured that: a plain GET produced one request at the server; a DELETE
+with an Authorization header produced an OPTIONS carrying Access-Control-Request-Method: DELETE and
+Access-Control-Request-Headers: Authorization, and only then the real DELETE. Which is why adding one
+custom header to a working request suddenly breaks it, and why a framework that 404s on OPTIONS
+produces a 'CORS error' that is really a routing bug.
+
+Crucially the BROWSER - protecting the USER - enforces both. A non-browser client like curl is not
+bound by them, which is why CORS IS NOT SERVER-SIDE ACCESS CONTROL. You still need real
+authentication. The corollary is that Access-Control-Allow-Origin: * is not automatically a
+vulnerability on a public endpoint - it is one when the endpoint returns user-specific data based on a
+cookie, and the spec forbids * together with Allow-Credentials for exactly that reason.
+
+One more thing SOP does NOT do: stop CSRF. Since the request is still sent and processed, a
+state-changing POST succeeds even though the attacker cannot read the reply. SameSite cookies and CSRF
+tokens are what address that.
+
+So: SOP is 'deny by default for safety'; CORS is 'the server-declared allowlist that safely re-enables
+legitimate cross-origin cases'."
+
+THE ONE SENTENCE TO NOT FUMBLE: the request is always sent and the server always answers - CORS only
+decides whether the BROWSER lets the page read the reply, which is why it protects users and not
+servers.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    ALLOW = {'http://app.example'}
+
+    def _cors(self, origin):
+        h = {}
+        if origin in self.ALLOW:
+            h['Access-Control-Allow-Origin'] = origin
+            h['Access-Control-Allow-Credentials'] = 'true'
+            h['Vary'] = 'Origin'
+        return h
+
+Four lines, and every one of them is a decision.
+
+    `origin in self.ALLOW`   a REAL allowlist. The lazy alternative - echoing back whatever `Origin`
+                             arrived - passes every test and grants every attacker, because the
+                             attacker's request carries their own origin.
+    `= origin`, not `= '*'`  a specific origin. Required whenever credentials are involved, and the
+                             spec enforces it: `*` with `Allow-Credentials: true` is rejected by
+                             browsers.
+    `Vary: Origin`           because the response now DEPENDS on a request header. Without it a shared
+                             cache stores app.example's grant and serves it to evil.example, which is a
+                             real and commonly-shipped bug.
+    `return h` (empty)       for a disallowed origin, emit NOTHING. Not a 403 - just no grant. The
+                             browser will block the read.
+
+    def do_GET(self):
+        o = self.headers.get('Origin')
+        body = json.dumps({'balance': 4210.55, ...}).encode()
+        self.send_response(200)
+        for k,v in self._cors(o).items(): self.send_header(k,v)
+        ...
+        self.wfile.write(body)
+
+THE MOST IMPORTANT THING IN THIS ENTRY is what this handler does NOT do: it never checks whether the
+origin is allowed before doing the work. It builds the body, sends a 200, and writes the balance,
+unconditionally. The CORS headers are decoration on a response that has already been computed.
+
+That is not a flaw in my example - it is how CORS works. The server always answers. If you want the
+server to REFUSE, you write an authentication check, and that is a different piece of code entirely.
+
+    def do_OPTIONS(self):
+        h = self._cors(o)
+        if h:
+            h['Access-Control-Allow-Methods'] = 'GET, POST, DELETE'
+            h['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+            h['Access-Control-Max-Age'] = '600'
+        self.send_response(204)
+
+The preflight handler. Note `if h:` - the method and header grants are only added when the ORIGIN grant
+was given, so a disallowed origin receives a bare 204 with no `Access-Control-*` headers at all, and
+the browser stops there.
+
+`Max-Age: 600` caches the grant for ten minutes so the browser stops preflighting every call. Without
+it you pay an extra round trip on every non-simple request - on a 150 ms path, 150 ms each time.
+
+    self.send_response(204)
+
+204 rather than 200, and with `Content-Length: 0`. A preflight response has no body; some old
+middleware chokes on a 200 with no content.
+
+    LOG.append(('OPTIONS', self.path, o,
+                self.headers.get('Access-Control-Request-Method'),
+                self.headers.get('Access-Control-Request-Headers')))
+
+Logging what the server RECEIVES. This is what turns the preflight from folklore into an observation:
+you can see the browser's question - "may I use DELETE with an Authorization header?" - as two concrete
+request headers.
+
+    s.sendall(f"{method} {path} HTTP/1.1\\r\\nHost: api.example\\r\\n{hdr}Connection: close\\r\\n\\r\\n")
+
+Sending the request over a RAW SOCKET, setting the `Origin` header by hand. A browser would never let a
+script do this - `Origin` is set by the browser and cannot be forged from JavaScript. That asymmetry is
+the entire reason CORS can work at all inside a browser and means nothing outside one.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the attack SOP prevents, step by step.
+
+    step   what happens                                            without SOP        with SOP
+    ----   ----------------------------------------------------   ----------------   ----------------
+    1      you log into bank.com; it sets a session cookie         cookie stored      cookie stored
+    2      you open evil.com in another tab                        page loads         page loads
+    3      evil.com's script calls fetch('https://bank.com/acct')  request SENT       request SENT
+    4      the browser attaches your bank.com cookie               attached           ATTACHED
+    5      bank.com sees a valid session and returns your balance  200 + balance      200 + balance
+    6      the script tries to read the response                   READS IT           BLOCKED
+    7      the script POSTs the data to evil.com                   your data leaks    nothing to leak
+
+Steps 3, 4 and 5 are IDENTICAL in both columns. The protection is entirely at step 6, and my
+measurement confirms step 5 empirically: the server returned the balance to
+`Origin: http://evil.example` with a 200.
+
+TRACE B - the same endpoint, three callers, measured.
+
+    caller                             Origin sent            status   ACAO returned          body
+    --------------------------------   --------------------   ------   --------------------   ---------
+    curl / a script / another server    (none)                 200 OK   (absent)               balance
+    the allow-listed frontend           http://app.example     200 OK   http://app.example     balance
+    an attacker's page                  http://evil.example    200 OK   (absent)               balance
+
+    what a BROWSER does with each:
+        row 1 - not applicable; there is no browser
+        row 2 - hands the JSON to the page
+        row 3 - throws a CORS error and discards the bytes it already has
+
+The body column is constant. If you take one thing from this entry, take that column.
+
+TRACE C - simple request versus preflighted, what the server actually received.
+
+    the page calls                                          requests the server saw
+    ----------------------------------------------------   ---------------------------------------
+    fetch('/account')                                      GET /account   Origin=http://app.example
+
+    fetch('/account', {method:'DELETE',                     OPTIONS /account  Origin=http://app.example
+                       headers:{Authorization:'Bearer x'}})     Access-Control-Request-Method: DELETE
+                                                                Access-Control-Request-Headers:
+                                                                    Authorization
+                                                            DELETE /account  Origin=http://app.example
+
+One request became two. The `OPTIONS` is the browser asking permission BEFORE doing anything that could
+change state - which is why preflighting exists at all: a `DELETE` that is only blocked on the way back
+would have already deleted something.
+
+And the preflight response that granted it:
+
+    HTTP/1.1 204 No Content
+    Access-Control-Allow-Origin: http://app.example
+    Access-Control-Allow-Credentials: true
+    Access-Control-Allow-Methods: GET, POST, DELETE
+    Access-Control-Allow-Headers: Content-Type, Authorization
+    Access-Control-Max-Age: 600
+
+TRACE D - the preflight for a disallowed origin.
+
+    request                                                    response
+    -------------------------------------------------------   ------------------------------------
+    OPTIONS /account                                           HTTP/1.1 204 No Content
+      Origin: http://evil.example                              (0 Access-Control-* headers)
+      Access-Control-Request-Method: DELETE
+
+With no grant, the browser NEVER SENDS THE REAL DELETE. That is the one place CORS actually prevents a
+request rather than merely hiding a response - and it is why the preflight exists for state-changing
+methods.
+
+And `curl` would send the DELETE regardless, because `curl` never asks. Which is the fourth time this
+entry has arrived at the same conclusion from a different direction.
+
+TRACE E - what CORS costs, using measurements from elsewhere in this bank.
+
+    scenario                                        extra round trips   at a 150 ms RTT
+    ---------------------------------------------   -----------------   ---------------
+    same-origin request                                             0            0 ms
+    cross-origin SIMPLE request                                     0            0 ms
+    cross-origin preflighted request, first call                    1          150 ms
+    cross-origin preflighted, within Max-Age                        0            0 ms
+    cross-origin preflighted, no Max-Age set                        1     150 ms EVERY call
+
+The last row is a real and common performance bug: omit `Access-Control-Max-Age` and every single API
+call from your frontend pays a full extra round trip. On a page making twenty calls to a
+different-origin API over a mobile connection, that is three seconds of pure permission-asking.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+WHAT ENFORCES WHAT:
+
+    mechanism           enforced by   protects        against
+    -----------------   -----------   -------------   ----------------------------------------
+    same-origin policy  the BROWSER   the USER        a page reading another origin's data
+    CORS                the BROWSER   the USER        (it is the EXEMPTION, not the protection)
+    SameSite cookies    the BROWSER   the USER        cookies being attached cross-site (CSRF)
+    CSRF tokens         YOUR SERVER   the USER        forged state-changing requests
+    authentication      YOUR SERVER   YOUR DATA       anyone at all, browser or not
+    authorisation       YOUR SERVER   YOUR DATA       authenticated users doing what they may not
+
+    MEASURED: the same request from three origins returned 200 and the full body in all three cases.
+    MEASURED: a preflighted request produced TWO server-side requests instead of one.
+    MEASURED: a disallowed origin's preflight returned 0 `Access-Control-*` headers, so a browser
+              would never send the real request - and curl would.
+
+    COST: a preflight is one extra round trip. `Access-Control-Max-Age` caches the grant; without it,
+    every non-simple request pays it again.
+
+THE MISTAKES:
+
+    - Treating CORS as access control. MEASURED: curl received the balance with no Origin header at
+      all. CORS protects other people's users, not your data.
+    - Reflecting the `Origin` header back with `Allow-Credentials: true`. This looks like an allowlist
+      and grants everyone, because the attacker's request carries the attacker's origin.
+    - `Access-Control-Allow-Origin: *` on a credentialed, user-specific endpoint. The spec forbids the
+      combination for exactly this reason.
+    - Assuming `*` is always bad. On a genuinely public endpoint it is correct.
+    - Forgetting `Vary: Origin`. A shared cache will serve one origin's grant to another.
+    - Not handling `OPTIONS`. Most "CORS errors" are an unrouted preflight, which appears in the
+      network tab as a failed OPTIONS.
+    - Not setting `Access-Control-Max-Age`. Every non-simple request then pays an extra round trip.
+    - Believing SOP stops CSRF. It does not - the request is still sent and processed. SameSite cookies
+      and CSRF tokens do.
+    - Forgetting that subdomains are DIFFERENT origins, and so are different ports and different
+      schemes.
+    - Debugging on the browser side when the server logs would show the request succeeded. Check the
+      server first; it almost certainly ran the handler.
+    - Reaching for JSONP. It is `<script src>` and it gives the remote origin arbitrary code execution
+      in your page.
+    - Using `postMessage` without checking `event.origin`. You have replaced one boundary with none.
+
+THE TAKEAWAY. The browser is the only program you run that executes untrusted code alongside your
+authenticated sessions, so it needs an isolation boundary - and the same-origin policy is it: deny by
+default, and deny specifically the READ. The measurement is the thing to remember, because it corrects
+the most common misunderstanding in one observation: the same request from an allow-listed origin, an
+attacker's origin and no origin at all returned 200 OK with the full response body in every case, and
+the only difference was a single header that only a browser reads. CORS is the server-declared
+allowlist that re-enables the legitimate cases, with a preflight for anything that could change state -
+and neither it nor SOP is a substitute for authentication, because both of them stop existing the
+moment the client is not a browser.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
