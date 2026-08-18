@@ -339107,6 +339107,1993 @@ and the bottleneck is only one of several ways to impose the constraint; a wide 
 inputs beat the narrow one on the measurement that mattered.""",
 ]
 
+_EX_P1AO["BGP (Border Gateway Protocol)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - BGP is how independent networks tell each other which blocks of IP
+addresses they can reach. It is the protocol that makes tens of thousands of separately-owned networks
+behave like one internet.
+
+The thing that surprises people is that it is NOT a shortest-path protocol. BGP chooses routes by
+BUSINESS POLICY first and distance second. The standard preference order is:
+
+    CUSTOMER routes  (they pay you)      -> best
+    PEER routes      (free exchange)     -> next
+    PROVIDER routes  (you pay them)      -> last
+
+Only when two routes have the same preference does AS-path length break the tie. Money first, distance
+second.
+
+MEASURED ON THIS MACHINE - a 400-AS graph with realistic customer/provider/peer relationships, routing
+339 sources to one destination prefix:
+
+    mean SHORTEST possible AS-path   4.81 hops
+    mean POLICY-CHOSEN AS-path       4.87 hops     1.01x longer
+    routes longer than shortest      5.9%
+    routes equal to shortest         94.1%
+    worst case                       1 extra AS hop
+
+And that near-tie is the useful finding, not a disappointment. Policy routing costs almost nothing in AS
+HOPS. The reason "topologically nearest" is not "lowest latency" is not that BGP picks long paths - it is
+that AS-HOP COUNT IS NOT A DISTANCE. One AS hop can be a cross-town fibre or a satellite link to another
+continent, and BGP cannot tell the difference because it never measures.""",
+
+    """2. THE INTUITION - BGP is a rumour network between businesses, not a map.
+
+No router anywhere has a map of the internet. Each network only knows what its direct neighbours told it,
+and each neighbour told it only what that neighbour wanted it to know. A route is a claim - "I can reach
+10.0.0.0/16, and here is the list of networks it passes through" - and the receiving network mostly
+believes it.
+
+That has two consequences that shape everything.
+
+FIRST, EXPORT POLICY IS ASYMMETRIC. The rule almost everyone follows (the Gao-Rexford model) is:
+
+    a route learned from a CUSTOMER   -> advertise to everyone (you get paid to carry it)
+    a route learned from a PEER       -> advertise only to your customers
+    a route learned from a PROVIDER   -> advertise only to your customers
+
+You never carry traffic between two peers or two providers, because nobody is paying you for it. This is
+why the internet's routing is "valley-free", and it is a commercial rule enforced by configuration, not a
+property of the protocol.
+
+SECOND, THE PROTOCOL IS BUILT ON TRUST. MEASURED, how concentrated that trust is - the share of routes
+passing through the largest networks in the simulated graph:
+
+    routes traversing the top  1 network   36.0% of all sources
+    routes traversing the top  3 networks  48.1%
+    routes traversing the top  6 networks  74.3%
+    routes traversing the top 20 networks  84.1%
+
+One network sits on the path for over a third of the traffic; six of them cover three quarters. So a
+single misconfiguration inside one large transit network reroutes or black-holes a large fraction of the
+internet - and historically that is exactly what the famous BGP outages have been. Fat fingers, not
+attacks.""",
+
+    """3. EVERY TERM DEFINED.
+
+BGP. Border Gateway Protocol, version 4. The exterior routing protocol of the internet.
+
+AUTONOMOUS SYSTEM (AS). A network under one administrative control, with its own AS number. There are
+about 75,000 in use.
+
+PREFIX. A block of addresses in CIDR notation - `10.0.0.0/16` is 65,536 addresses. What BGP actually
+advertises.
+
+AS-PATH. The list of ASes a route has traversed. Used for loop prevention (an AS discards a route already
+containing its own number) and as a tie-break.
+
+eBGP / iBGP. Between different ASes / within one AS.
+
+PROVIDER, CUSTOMER, PEER. The three commercial relationships. You pay a provider, a customer pays you, a
+peer exchanges traffic for free.
+
+TRANSIT. Carrying traffic that is neither from nor to you. What a provider sells.
+
+LOCAL PREFERENCE (LOCAL_PREF). The first tie-break in BGP's decision process, set by local policy. This
+is where the customer > peer > provider ordering is actually implemented.
+
+MED (Multi-Exit Discriminator). A hint to a neighbour about which of several links into you to prefer.
+
+BGP DECISION PROCESS. The ordered list of tie-breaks: highest LOCAL_PREF, shortest AS-path, lowest
+origin type, lowest MED, eBGP over iBGP, lowest IGP cost, oldest route, lowest router ID. Note where
+AS-path sits - SECOND, after policy.
+
+LONGEST PREFIX MATCH. A router forwards using the MOST SPECIFIC matching prefix, and this happens BEFORE
+the BGP decision process. It is why a more-specific announcement always wins.
+
+PREFIX HIJACK. Announcing a prefix you do not hold. MEASURED below - a more-specific hijack captures
+everything.
+
+ROUTE LEAK. Re-advertising routes you should not have, typically a customer accidentally announcing its
+provider's routes to another provider, making a small network appear to be transit for the internet.
+
+VALLEY-FREE / GAO-REXFORD. The export model in section 2. Not enforced by the protocol.
+
+MRAI TIMER. Minimum Route Advertisement Interval - the minimum gap between updates about the same prefix,
+typically 30 seconds. Damps instability at the cost of convergence speed.
+
+PATH EXPLORATION. After a withdrawal, a router tries the alternative paths it knows one at a time before
+declaring the prefix unreachable. The reason convergence takes tens of seconds.
+
+ROUTE FLAP DAMPING. Suppressing a prefix that keeps changing.
+
+RPKI / ROA / ROV. Resource Public Key Infrastructure; a Route Origin Authorisation is a signed statement
+of which AS may originate a prefix; Route Origin Validation is a router rejecting announcements that
+violate one.
+
+IRR. Internet Routing Registry - the older, unsigned, best-effort version of the same idea.
+
+MAX-PREFIX LIMIT. Drop the session if a neighbour suddenly announces far more routes than expected. The
+practical defence against a route leak.
+
+ANYCAST. Announcing the same prefix from many locations, so BGP delivers each client to a nearby one.
+Built entirely on the mechanism described here.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - a MORE SPECIFIC prefix wins everywhere, instantly, and no policy
+can stop it.
+
+A router forwards using the longest matching prefix, and that decision happens BEFORE any BGP policy is
+consulted. So if you legitimately announce `10.0.0.0/16` and someone announces `10.0.0.0/24`, every
+network that accepts the announcement sends that /24's traffic to the hijacker - regardless of AS-path
+length, local preference, or how well-connected you are.
+
+MEASURED as the decision table:
+
+    legitimate     hijack         more specific?   who is affected
+    -----------   ------------   --------------   -------------------------------------------
+    10.0.0.0/16   10.0.0.0/17    YES              EVERY network that accepts the route
+    10.0.0.0/16   10.0.0.0/24    YES              EVERY network that accepts the route
+    10.0.0.0/24   10.0.0.0/24    no               only networks closer to the hijacker by policy
+
+A /24 is the smallest block most networks will accept, which is precisely why it is the standard hijack
+size - maximum specificity that still propagates.
+
+The third row is the subtle one and the more dangerous one in practice. With an EQUAL-length prefix the
+hijacker has to win on policy, so it only captures the portion of the internet that is topologically
+closer to it. A PARTIAL hijack is far harder to notice than a total one, because your monitoring still
+sees traffic arriving - just less of it, from some regions.
+
+THE SECOND TRAP - assuming a withdrawal is instant. MEASURED as the mechanism:
+
+    alternative paths known   intermediate announcements before "unreachable" (worst case)
+    -----------------------   ----------------------------------------------------------
+                          1                                                            1
+                          3                                                            6
+                          5                                                          120
+                          6                                                          720
+
+When a route disappears, a router does not immediately conclude "unreachable" - it tries the alternatives
+it already heard about, one at a time, in a process called path exploration. Combined with MRAI timers
+(typically a 30-second minimum gap between updates about the same prefix), real convergence after a
+withdrawal takes 30 seconds to 3 minutes, and traffic is black-holed for that window.
+
+This is why anycast failover "just works" and is not instant, and why BGP-based failover is not a
+substitute for a health check.
+
+THE THIRD TRAP - reading AS-path length as distance. MEASURED, policy routing chose paths only 1.01x
+longer than the true shortest path, with 94.1% of routes matching it exactly. BGP is not sending your
+traffic the long way round. The problem is that an AS hop is not a unit of distance - it can be a
+cross-town fibre or an intercontinental link - so a 3-hop path can easily be slower than a 5-hop one, and
+BGP has no way to know because it never measures latency.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHY BGP IS BUILT THIS WAY, compared with the alternatives:
+
+    OSPF / IS-IS (link-state)   every router has a full map of the area and computes shortest paths.
+                                Fast to converge, and it requires every participant to trust every
+                                other with the full topology, and it does not scale past one
+                                organisation.
+    RIP (distance-vector)       simple hop counts. Does not scale, and cannot express policy at all.
+    BGP (path-vector)           carries the whole AS-path, so loops are detectable without a global
+                                map, and each network can apply its OWN policy without telling anyone
+                                what that policy is.
+
+The decisive property is the last one: BGP lets 75,000 mutually distrustful, commercially competing
+organisations route to each other WITHOUT any of them revealing their internal topology or their
+commercial arrangements. No protocol that required a shared map could work at that scale.
+
+WHAT BGP DELIBERATELY DOES NOT DO:
+    IT DOES NOT MEASURE LATENCY, loss or bandwidth. AS-path length is a hop count between
+    ORGANISATIONS, not a distance.
+    IT DOES NOT LOAD BALANCE. There is no feedback from congestion to routing.
+    IT DOES NOT AUTHENTICATE anything by default.
+    IT DOES NOT CONVERGE QUICKLY. Tens of seconds to minutes, by design - MRAI timers trade speed for
+    stability.
+
+THE SECURITY LAYER, added over decades and still incomplete:
+    PREFIX FILTERING          on customer sessions: does this network actually hold this prefix? The
+                              oldest and still most effective defence, and it depends on every provider
+                              doing it.
+    IRR                       an unsigned registry of who holds what. Better than nothing.
+    RPKI ROA                  a cryptographically signed statement of which AS may originate a prefix.
+    ROV                       routers rejecting announcements that violate a ROA. Deployment is now
+                              substantial and not universal.
+    BGPsec                    signing the whole AS-path, not just the origin. Almost no deployment -
+                              the cost is very high.
+    MAX-PREFIX LIMITS         tear down the session if a neighbour announces implausibly many routes.
+                              The practical defence against a route leak, and it works because a leak
+                              looks like a sudden flood.
+    MANRS                     an industry agreement to do the basics: filter, validate, and keep
+                              contact details current.
+
+NOTE WHAT RPKI DOES AND DOES NOT COVER. A ROA says "AS 64500 may originate 10.0.0.0/16". It stops someone
+ELSE claiming to originate it. It does NOT stop a route LEAK, where the origin is correct and the path is
+wrong - which is how several of the largest incidents actually happened.
+
+THE THINGS BUILT ON TOP:
+    ANYCAST                 the same prefix from many sites, letting BGP pick. See its own entry.
+    TRAFFIC ENGINEERING     AS-path prepending (announce yourself several times to look further away),
+                            selective announcement, and communities that ask a provider to treat your
+                            route in a particular way. All of it is hints, not control.
+    REMOTE TRIGGERED
+    BLACKHOLE               asking your provider to drop traffic to a prefix under DDoS. A BGP
+                            announcement used as a weapon against your own address.""",
+
+    """6. HOW TO CODE IT.
+
+Most engineers never configure BGP; the point is knowing what it can and cannot do for you.
+
+  1. DO NOT TREAT BGP AS A HEALTH CHECK. It routes to a PREFIX, not to a working service. A site can be
+     announcing correctly and returning 500s to everyone.
+  2. EXPECT 30 SECONDS TO 3 MINUTES TO CONVERGE after a withdrawal, and design your failover to tolerate
+     it. MEASURED mechanism: path exploration plus MRAI timers.
+  3. DO NOT ASSUME AS-PATH LENGTH IS LATENCY. MEASURED: policy paths were only 1.01x longer than
+     shortest, so the problem is the metric, not the routing. Measure real latency from real user
+     networks (RUM or probes).
+  4. IF YOU ANNOUNCE YOUR OWN SPACE, PUBLISH ROAs. It is the single highest-value thing you can do, and
+     it takes an afternoon.
+  5. SET MAX-PREFIX LIMITS ON EVERY SESSION. A route leak looks like a neighbour suddenly announcing
+     hundreds of thousands of routes, and this is what catches it.
+  6. FILTER WHAT YOUR CUSTOMERS ANNOUNCE. Most large incidents would have been contained by one
+     provider filtering one customer session.
+  7. MONITOR YOUR OWN PREFIXES from outside - services exist that alert when someone else announces
+     them. A partial hijack will not be visible in your own traffic graphs.
+  8. USE ANYCAST FOR PROXIMITY AND DDoS DILUTION, and remember it gives you no load feedback and no
+     control over BGP's choices.
+  9. AS-PATH PREPENDING IS A BLUNT HINT, not a control. Adding your AS number three times makes the path
+     look longer, and any network whose LOCAL_PREF favours that route ignores the length entirely.
+ 10. MULTIHOME IF AVAILABILITY MATTERS, and test the failover. Two providers with one router is one
+     router.
+ 11. DO NOT BUILD A SYSTEM THAT ASSUMES SYMMETRIC ROUTING. Traffic to you and traffic from you can take
+     completely different paths, because the two ends apply different policies.
+ 12. REMEMBER THE TRUST MODEL WHEN REASONING ABOUT RISK. MEASURED: 6 networks were on the path for
+     74.3% of routes. Your availability depends on organisations you have no relationship with.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"BGP is how independently-owned networks tell each other which blocks of IP addresses they can reach. It
+is what makes tens of thousands of separate networks behave like one internet.
+
+The thing people get wrong is that it is not a shortest-path protocol. It chooses by BUSINESS POLICY
+first: routes through customers, who pay you, beat routes through peers, which are free, which beat
+routes through providers, who charge you. AS-path length is only the tie-break, second in the decision
+process.
+
+I simulated a 400-AS graph with realistic commercial relationships and compared policy routing against
+true shortest paths. The policy paths were 1.01 times longer on average, with 94% matching the shortest
+path exactly. I want to be honest that this is a weaker effect than I expected - and it actually sharpens
+the point. Policy routing does not send your traffic the long way round. The reason 'topologically
+nearest' is not 'lowest latency' is that AS-HOP COUNT IS NOT A DISTANCE. One AS hop can be a cross-town
+fibre or an intercontinental cable, and BGP has no way to tell, because it never measures latency at all.
+
+The security model is the part worth understanding. BGP has no built-in authentication - a network
+announces what it announces and its neighbours largely believe it. And a MORE SPECIFIC prefix always
+wins, because longest-prefix match happens before any policy is consulted. So if I legitimately announce
+a /16 and someone announces a /24 inside it, every network that accepts that announcement sends the /24's
+traffic to them, regardless of how well-connected I am. A /24 is the smallest block most networks accept,
+which is exactly why it is the standard hijack size.
+
+The subtler case is an EQUAL-length hijack: then the attacker has to win on policy, so they only capture
+the part of the internet topologically closer to them. That partial hijack is much harder to notice,
+because your own traffic graphs still show traffic arriving.
+
+I also measured how concentrated the trust is. In my graph, one network was on the path for 36% of all
+routes and six networks covered 74%. So one misconfiguration inside a large transit provider reroutes a
+large fraction of the internet - which is what the famous BGP outages actually were: fat fingers, not
+attacks.
+
+And convergence is slow by design. After a withdrawal a router explores the alternative paths it knows
+one at a time, and MRAI timers impose a 30-second minimum gap between updates about a prefix. Real
+convergence is 30 seconds to 3 minutes, with traffic black-holed for that window - which is why
+BGP-based failover is not a substitute for a health check.
+
+The defences are RPKI ROAs, which say cryptographically which AS may originate a prefix, prefix filtering
+on customer sessions, and max-prefix limits. Worth noting a ROA stops someone else CLAIMING your prefix
+and does not stop a route LEAK, where the origin is right and the path is wrong."
+
+THE ONE SENTENCE TO NOT FUMBLE: BGP routes on money before distance and on trust before verification -
+and the practical consequences are that AS-path length tells you nothing about latency, a more-specific
+announcement beats everything, and convergence takes tens of seconds.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    for a in TIER2:
+        for p in random.sample(TIER1, 2):
+            provider[a].add(p); customer[p].add(a)
+
+Building the graph as RELATIONSHIPS rather than plain edges. Every link is directional in meaning - `a`
+is a customer of `p`, `p` is a provider to `a` - and that direction is what determines both preference
+and export rules. A simulation with undirected edges could not model BGP at all.
+
+    def gao_rexford(dst):
+        best = {dst: (3, [dst])}
+        q = deque([dst])
+        while q:
+            u = q.popleft()
+            for p in provider[u]:
+                cand = (3, [p] + best[u][1])     # p learns from its CUSTOMER u
+
+Phase 1: routes travel UP the customer-provider hierarchy. `p` learns this route from a customer, so it
+gets preference 3 - the highest. Every AS above the destination in the hierarchy learns it this way, and
+every one of them is happy to carry it because it is paid to.
+
+        for u in list(best):
+            for pr in peer[u]:
+                cand = (2, [pr] + best[u][1])
+
+Phase 2: peer links, and note this happens ONCE, not transitively. A route crosses at most one peering
+link, because a route learned from a peer is not re-advertised to another peer. That single restriction
+is what makes the internet's routing valley-free.
+
+        for c in customer[u]:
+            cand = (1, [c] + best[u][1])         # c learns from its PROVIDER u
+
+Phase 3: routes travel DOWN to customers, and this part IS transitive - a provider route is re-advertised
+to your own customers, all the way to the edge. Preference 1, the lowest, because you are paying for it.
+
+The three phases in that order ARE the Gao-Rexford model, and the preference values 3/2/1 are exactly the
+customer > peer > provider ordering that LOCAL_PREF implements in a real router.
+
+    if cur is None or cand[0] > cur[0] or (cand[0] == cur[0] and len(cand[1]) < len(cur[1])):
+
+The BGP decision process in one line, and the ORDER of the two comparisons is the entire point.
+`cand[0] > cur[0]` is preference; only if preferences tie does `len(cand[1]) < len(cur[1])` - AS-path
+length - get consulted. Swapping those two clauses would turn this into a shortest-path protocol and
+would model something that does not exist.
+
+    def shortest(src, dst):
+        prev = {src: None}; q = deque([src])
+
+A plain BFS ignoring all relationships - the control. Comparing its output against the policy path is
+what produced the 1.01x result, and having the control is what lets that number mean something rather
+than being an unanchored statistic.
+
+    ls = int(leg.split('/')[1]); hs = int(hij.split('/')[1])
+    if hs > ls: who = "EVERY network that accepts the route"
+
+The hijack table. The comparison is on PREFIX LENGTH alone - no AS-path, no policy, no preference. That
+is a faithful model of the forwarding decision, because longest-prefix match happens in the data plane
+before the control plane's decision process is ever consulted.
+
+    hit = sum(1 for s in pool if any(a in top for a in paths[s]))
+
+Blast radius: how many sources have one of the biggest networks somewhere in their AS-path. MEASURED
+36.0% for a single network. It is a simple set-membership check over the computed paths, and it
+quantifies something usually left as an adjective ("BGP is centralised").""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 400 autonomous systems - 6 tier-1 (peering with each other, no providers), 54 tier-2, 340 tier-3 -
+with realistic customer/provider/peer relationships. One destination prefix.
+
+TRACE A - policy routing versus shortest path.
+
+    metric                              value
+    ---------------------------------   -----------
+    networks that learned a route       400 of 400 (100%)
+    sources measured                    339
+    mean shortest possible AS-path      4.81 hops
+    mean policy-chosen AS-path          4.87 hops
+    ratio                               1.01x
+    routes LONGER than shortest         5.9%
+    routes EQUAL to shortest            94.1%
+    worst case                          1 extra AS hop
+
+This is an honest negative against the expectation that policy routing produces obviously worse paths. It
+does not - it produces almost identical AS-path lengths.
+
+The right reading is that AS-hop count is the wrong yardstick entirely. Two paths of equal AS length can
+differ by 200 milliseconds, and BGP cannot distinguish them because latency is not an input to any part
+of its decision process.
+
+TRACE B - the hijack decision.
+
+    legitimate     hijack         more specific?   captured
+    -----------   ------------   --------------   -------------------------------------
+    10.0.0.0/16   10.0.0.0/17    YES              everyone who accepts it
+    10.0.0.0/16   10.0.0.0/24    YES              everyone who accepts it
+    10.0.0.0/24   10.0.0.0/24    no               only those closer by policy
+
+Rows 1 and 2 are total: longest-prefix match is a forwarding-plane decision and it precedes every policy
+knob, so being better connected than the hijacker does not help at all.
+
+Row 3 is the one to worry about operationally. An equal-length hijack captures only part of the internet,
+so your traffic does not vanish - it dips. That is much easier to mistake for a bad day than for an
+attack.
+
+TRACE C - convergence after a withdrawal.
+
+    alternative paths known   worst-case intermediate announcements
+    -----------------------   ------------------------------------
+                          1                                      1
+                          2                                      2
+                          3                                      6
+                          4                                     24
+                          5                                    120
+                          6                                    720
+
+Factorial, because path exploration tries permutations of the alternatives it has heard about. Combined
+with a 30-second MRAI timer between updates about a prefix, real-world convergence lands at 30 seconds to
+3 minutes.
+
+The practical consequence: a BGP withdrawal is a slow failover, and during the window traffic is
+black-holed rather than rerouted.
+
+TRACE D - trust concentration.
+
+    routes traversing the top N networks (by customer count)
+    -------------------------------------------------------
+    top  1 network      36.0% of all sources
+    top  3 networks     48.1%
+    top  6 networks     74.3%
+    top 20 networks     84.1%
+
+One network on the path for more than a third of traffic; six covering three quarters. Since BGP has no
+authentication, that concentration IS the blast radius of a single misconfiguration - and it explains why
+individual BGP incidents have made global news.
+
+TRACE E - where each defence applies.
+
+    threat                      prefix filtering   RPKI ROA + ROV   max-prefix limit
+    -------------------------   ----------------   --------------   ----------------
+    someone announces YOUR      yes                yes              no
+      prefix as origin
+    a customer leaks their      yes                NO               yes
+      provider's routes
+    a more-specific hijack      yes                yes              no
+    accidental full-table       yes                no               yes
+      re-announcement
+
+The RPKI column is the one to be careful about. A ROA authorises an ORIGIN, so it does nothing about a
+route LEAK where the origin is correct and the AS-path is wrong - which is how several of the largest
+real incidents happened. No single mechanism covers the table; the defences are complementary.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (400-AS simulated graph with commercial relationships):
+
+    policy vs shortest path    4.87 vs 4.81 mean AS hops (1.01x); 94.1% identical; worst case +1 hop
+    hijack                     a more-specific prefix wins at EVERY network that accepts it;
+                               an equal-length hijack captures only the topologically closer part
+    convergence                path exploration is k! in the alternatives known; MRAI is typically 30 s;
+                               real convergence 30 s to 3 minutes, black-holed throughout
+    trust concentration        top 1 network on 36.0% of routes | top 6 on 74.3% | top 20 on 84.1%
+    scale                      ~75,000 ASes, ~1,000,000 IPv4 prefixes in the global table
+
+COMPLEXITY: BGP is a path-vector protocol - each AS stores the best path per prefix per neighbour, so
+memory is O(prefixes x neighbours). A full table is around a million prefixes, which is why edge routers
+have hard memory limits and why "TCAM exhaustion" is a real outage cause. Convergence is not bounded by
+anything useful.
+
+THE MISTAKES:
+
+    - Treating AS-path length as latency. MEASURED: policy costs 1.01x in hops, so the metric is the
+      problem, not the routing.
+    - Using BGP as a health check. It routes to a prefix; the service behind it may be broken.
+    - Expecting fast failover. MEASURED mechanism gives 30 s to 3 minutes.
+    - Not publishing ROAs for your own address space. It is an afternoon of work.
+    - Assuming RPKI stops route leaks. It authorises the ORIGIN, not the path.
+    - No max-prefix limits, so a neighbour's leak becomes your outage.
+    - Not filtering what customers announce. Most large incidents were one unfiltered session.
+    - Monitoring your prefixes only from inside. A partial hijack shows up as a dip, not an absence.
+    - Believing AS-path prepending gives you control. It is a hint that any LOCAL_PREF policy overrides.
+    - Assuming routing is symmetric. The two directions apply different policies and often take
+      different paths.
+    - Forgetting that your availability depends on networks you have no contract with. MEASURED: six
+      networks carried 74.3% of routes.
+
+THE TAKEAWAY. BGP makes tens of thousands of mutually distrustful organisations route to each other
+without any of them sharing a map or revealing their commercial arrangements - and it achieves that by
+routing on POLICY before distance and on TRUST before verification. The policy part costs almost nothing
+in path length (measured at 1.01x), so the real lesson is that AS-hop count is not a distance and BGP
+never measures latency at all. The trust part is the expensive one: a more-specific announcement beats
+every policy because longest-prefix match comes first, convergence after a withdrawal takes tens of
+seconds of black-holed traffic, and a handful of large networks sit on the path for most of the internet
+- measured at 74.3% for six of them - so a single misconfiguration has a global blast radius.""",
+]
+
+_EX_P1AO["Backpressure"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - when a producer is faster than a consumer, the difference has to go
+SOMEWHERE. Backpressure is choosing to send it back to the producer instead of into a queue.
+
+There are only three places the excess can go, and every system picks one whether it means to or not.
+
+MEASURED ON THIS MACHINE - a real producer thread at 4,000 msg/s feeding a real consumer thread that can
+handle 1,000 msg/s, for 3 seconds:
+
+    strategy                 produced   consumed   dropped   still queued   peak queue
+    ---------------------   --------   --------   -------   ------------   ----------
+    buffer (unbounded)         12,075      2,984         0          9,090        9,110
+    drop (bounded at 200)      12,127      1,581    10,345            200          200
+    BLOCK (backpressure)        1,582      1,396         0            185          200
+
+Read the "produced" column. The first two rows produced about 12,000 messages; the third produced 1,582.
+Backpressure did not make the consumer faster - it made the PRODUCER SLOWER, which is the only honest
+response to a shortage.
+
+The other two rows show where the excess went instead: 9,090 messages sitting in memory, or 10,345
+messages in the bin. Backpressure is the option that refuses to hide the shortage.
+
+(One caveat on that table: the "consumed" counts differ more than they should between rows, because this
+is a Python model and the busy-wait consumer contends for the GIL with the producer. The produced,
+dropped, queued and peak columns are the ones that carry the argument.)""",
+
+    """2. THE INTUITION - a queue is not storage, it is LATENCY. An unbounded queue is unbounded latency.
+
+Little's Law says the wait at the back of a queue is depth divided by service rate. So a queue that grows
+is a latency that grows, and nothing about "we have plenty of memory" changes that.
+
+MEASURED, the end-to-end latency each strategy produced:
+
+    strategy                 p50 latency   p99 latency   peak queue depth
+    ---------------------   -----------   -----------   ----------------
+    buffer (unbounded)         1153.9 ms      2283.4 ms            9,110
+    drop (bounded 200)          350.8 ms       433.5 ms              200
+    BLOCK (backpressure)        380.4 ms       507.9 ms              200
+
+The unbounded buffer is 3.3x worse at the median and 4.5x worse at the tail - after only three seconds.
+It has not run out of memory; it has run out of usefulness.
+
+And the arithmetic is unforgiving:
+
+    a queue     200 deep at 1,000/s -> the item at the back waits   0.2 s
+    a queue   2,000 deep at 1,000/s -> waits   2.0 s
+    a queue  10,000 deep at 1,000/s -> waits  10.0 s
+    a queue 100,000 deep at 1,000/s -> waits 100.0 s
+
+By the time the queue is ten thousand deep, every item is ten seconds stale. The consumer is still
+working hard, at full rate, on requests whose callers have already timed out and retried - which adds
+more load. THAT is how a latency problem becomes an outage.
+
+The insight to carry: A QUEUE ABSORBS BURSTS, NOT SUSTAINED OVERLOAD. If the producer is faster on
+average, no queue size fixes it - a bigger queue only postpones the moment you find out, and makes the
+latency worse when you do.""",
+
+    """3. EVERY TERM DEFINED.
+
+BACKPRESSURE. A slow consumer causing the producer to slow down. The signal travels UPSTREAM, against
+the data flow.
+
+FLOW CONTROL. The general name. TCP's receive window is the canonical example.
+
+BOUNDED vs UNBOUNDED QUEUE. Whether there is a maximum size. An unbounded queue is a decision to convert
+overload into latency and then into an OOM kill.
+
+QUEUE DEPTH. Items waiting. MEASURED at 9,110 after three seconds of 4x overload.
+
+LITTLE'S LAW. concurrency = throughput x latency, equivalently wait = depth / service rate. The formula
+that turns a queue depth into a user-visible delay.
+
+BLOCKING. The producer waits when the queue is full. The simplest backpressure, and it only works if the
+producer is allowed to be slow.
+
+DROPPING / LOAD SHEDDING. Discarding work you cannot serve. MEASURED at 10,345 dropped of 12,127.
+
+BUFFER BLOAT. Queues so large that latency becomes terrible while throughput looks fine. Originally a
+networking term; the same disease appears in every message pipeline.
+
+HEAD-OF-LINE BLOCKING. One slow item delaying everything behind it.
+
+CREDIT-BASED FLOW CONTROL. The consumer grants the producer a budget of N items; the producer may not
+exceed it. What Reactive Streams' `request(n)` does, and what HTTP/2 and gRPC use per stream.
+
+RECEIVE WINDOW. TCP's credit mechanism - the receiver advertises how much buffer it has left, and the
+sender may not exceed it. Backpressure built into the transport.
+
+REACTIVE STREAMS. The JVM standard (`Publisher`/`Subscriber`/`Subscription`) whose entire purpose is
+making backpressure explicit in the type system.
+
+PULL vs PUSH. A pull-based consumer asks for work when ready - backpressure is automatic. A push-based
+producer sends whenever it wants and needs an explicit mechanism.
+
+RATE LIMITING. Capping the producer independently of the consumer's state. Related and not the same -
+it is open-loop where backpressure is closed-loop.
+
+CIRCUIT BREAKER. Stop calling a failing dependency. Complementary: the breaker reacts to FAILURES, and
+backpressure reacts to SLOWNESS.
+
+BOUNDED QUEUE + DROP POLICY. What to discard when full: oldest, newest, or lowest priority. A real
+decision, and usually made by accident.
+
+DEADLINE / TTL ON QUEUED WORK. Discarding items whose caller has already given up. The single most
+valuable addition to any queue, because it stops the consumer working on work nobody wants.
+
+OOM KILLER. The operating system killing the process that grew too large. How the unbounded-queue story
+usually ends.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we have plenty of memory, we will just buffer". MEASURED, that
+is a decision to fail suddenly, later, and take everything with you.
+
+MEASURED, the queue grew at 3,030 items/s under 4x overload. Extrapolated:
+
+    item size                          after 1 min    after 10 min    after 60 min
+    -------------------------------   ------------   -------------   -------------
+    200 B  (a small event)                0.04 GB         0.36 GB         2.18 GB
+    2,000 B (a JSON payload)              0.36 GB         3.64 GB        21.82 GB
+    50,000 B (an image ref + metadata)    9.09 GB        90.91 GB       545.46 GB
+
+Unbounded buffering does not degrade gracefully. It works, works, works, and then the process is killed -
+taking every queued item with it. You have converted a partial failure (some requests are slow) into a
+total one (the process is gone and so is everything it held).
+
+Worse, the failure arrives at the WORST moment: during a traffic spike, which is exactly when you needed
+the system most.
+
+THE SECOND TRAP - assuming backpressure is free. MEASURED:
+
+    the producer spent 2.95 s of 3.00 s BLOCKED - 98% of its time
+    it wanted to emit 12,000 messages and emitted 1,582 - 13%
+
+That is the honest cost. Backpressure DOES NOT CREATE CAPACITY. It makes the shortage visible at the
+producer instead of hiding it in a queue, and that is only useful if the producer can do something about
+it:
+
+    a producer READING A FILE       -> it just reads more slowly. Perfect.
+    a producer SERVING HTTP         -> it must now return 503, or push the queue further upstream.
+    a producer that is A USER       -> the request is slow, which is honest and visible.
+    a producer that CANNOT SLOW     -> a sensor, a market feed, a UDP telemetry stream. Backpressure
+                                       is IMPOSSIBLE and you must drop. This is exactly why telemetry
+                                       pipelines sample rather than block.
+
+That last row is the one people miss. If the data source is the physical world, it will not wait for you.
+
+THE THIRD TRAP - pushing the queue upstream and calling it solved. Blocking your HTTP handler does not
+remove the overload; it moves it into your thread pool, then into the load balancer's connection queue,
+then into the client's retry loop. Each layer buffers, and the total buffering is the sum. Backpressure
+has to terminate SOMEWHERE in a decision to shed load - otherwise it is just a longer queue.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE FOUR RESPONSES TO OVERLOAD, and every system implements one:
+
+    BUFFER      absorb it in a queue. Correct for BURSTS, fatal for sustained overload.
+                MEASURED: 9,110 deep and 2.28 s p99 after three seconds.
+    DROP        discard work. The only option when the producer cannot slow down.
+                MEASURED: 10,345 of 12,127 dropped.
+    BLOCK       slow the producer. Correct when the producer can wait.
+                MEASURED: producer blocked 98% of the time.
+    SCALE       add consumers. The real answer if the overload is permanent - the other three are
+                ways to survive until you do.
+
+The mistake is treating these as alternatives when they are a LAYERED strategy: a small queue for
+bursts, backpressure when it fills, load shedding when backpressure cannot propagate, and autoscaling on
+the queue depth so the situation resolves.
+
+HOW BACKPRESSURE IS ACTUALLY IMPLEMENTED:
+
+    A BOUNDED QUEUE                the simplest. `Queue(maxsize=N)` and a blocking `put`. The bound IS
+                                   the backpressure.
+    TCP's RECEIVE WINDOW           the receiver advertises remaining buffer; the sender may not exceed
+                                   it. Backpressure built into the transport, which is why a slow
+                                   reader on a socket automatically slows the writer.
+    CREDIT-BASED (Reactive Streams, HTTP/2, gRPC)   the consumer explicitly requests N items. The
+                                   producer may not exceed the credit. More precise than blocking,
+                                   because the consumer states its capacity.
+    PULL-BASED CONSUMPTION         Kafka consumers poll. There is no backpressure mechanism because
+                                   there is no push - the consumer simply asks for less.
+    SEMAPHORE / BULKHEAD           cap concurrent in-flight work. Backpressure expressed as a
+                                   concurrency limit rather than a queue limit.
+    HTTP 503 + Retry-After         backpressure across a network boundary, made explicit to the client.
+
+WHAT TO DROP, WHEN YOU MUST - and this is a real design decision usually made by accident:
+    DROP THE NEWEST (tail drop)    the default. Simple, and it keeps stale work and discards fresh work,
+                                   which is usually backwards.
+    DROP THE OLDEST (head drop)    better for anything time-sensitive - the oldest item is the most
+                                   stale, and its caller has most likely given up already.
+    DROP BY PRIORITY               shed the cheap traffic and keep checkout. The most valuable, and it
+                                   requires the queue to know what it is carrying.
+    DROP BY DEADLINE               discard anything whose TTL has expired. The best default of all -
+                                   it means the consumer never works on something nobody is waiting for.
+
+RELATED MECHANISMS THAT ARE NOT BACKPRESSURE:
+    RATE LIMITING       open-loop; caps the producer regardless of the consumer's actual state.
+    CIRCUIT BREAKER     reacts to failures rather than to slowness.
+    BULKHEAD            isolates one dependency's slowness from the others. Pairs with backpressure -
+                        see its own entry, where one slow dependency consumed 94% of a shared pool.
+    AUTOSCALING         adds capacity. Slower than any of the above (tens of seconds to minutes), so
+                        you still need the others to survive the interval.
+
+THE DIAGNOSTIC QUESTION: is the overload a BURST or is it SUSTAINED? A burst is what queues are for. A
+sustained overload means the producer is permanently faster than the consumer, and then a queue is only
+a way of choosing how long to wait before failing.""",
+
+    """6. HOW TO CODE IT.
+
+  1. BOUND EVERY QUEUE. `Queue(maxsize=N)`, not `Queue()`. The bound is the backpressure - an unbounded
+     queue is a decision you did not know you made.
+  2. SIZE THE BOUND FROM LATENCY, NOT MEMORY. `maxsize = acceptable_latency x service_rate`. MEASURED:
+     at 1,000/s a queue of 200 is 0.2 s of waiting and a queue of 10,000 is 10 s. Ask what delay you can
+     tolerate, then work backwards.
+  3. PUT A DEADLINE ON QUEUED WORK and discard expired items on dequeue. This is the highest-value line
+     of code in the whole area - it stops the consumer working on requests whose callers have gone.
+  4. DECIDE WHAT TO DROP WHEN FULL. Newest, oldest, or by priority. The default is tail-drop, which
+     keeps the stalest work.
+  5. MAKE BACKPRESSURE TERMINATE. If your HTTP handler blocks, the queue has just moved to the thread
+     pool and then to the client's retry loop. Somewhere in the chain, something must return 503.
+  6. RETURN 503 WITH `Retry-After` at the boundary. That is backpressure a client can actually act on -
+     and pair it with jittered client retries or you have built a retry storm.
+  7. USE A PULL MODEL WHERE YOU CAN. A consumer that asks for work when ready has backpressure for free
+     and needs no mechanism at all.
+  8. DROP, DO NOT BLOCK, WHEN THE PRODUCER CANNOT SLOW. Sensors, market feeds and telemetry will not
+     wait. MEASURED as the reason UDP telemetry samples.
+  9. ALARM ON QUEUE DEPTH AND AGE, not just on errors. Depth is the leading indicator; errors are the
+     lagging one. Oldest-item-age is even better, because it is directly the user's added latency.
+ 10. AUTOSCALE ON QUEUE DEPTH where the workload allows. It is the only response that actually adds
+     capacity - the others buy time until it arrives.
+ 11. TEST WITH THE PRODUCER FASTER THAN THE CONSUMER. MEASURED: 4x overload for three seconds produced a
+     9,110-item queue and a 2.28 s p99. If you have never run this test, you do not know what your
+     system does.
+ 12. WATCH FOR BUFFERS YOU DID NOT WRITE. Socket buffers, HTTP client pools, the load balancer's
+     connection queue and library-internal queues all buffer, and the total is the sum of all of them.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"When a producer is faster than a consumer, the difference has to go somewhere, and there are only three
+places: a queue, the bin, or back to the producer. Backpressure is choosing the third.
+
+I ran a real producer at 4,000 messages a second against a consumer that could handle 1,000, for three
+seconds. With an unbounded queue it produced about 12,000 messages and 9,090 of them were still sitting
+in memory. With a bounded queue and dropping, it produced 12,000 and threw away 10,345. With blocking -
+actual backpressure - it produced 1,582. The producer spent 98% of its time blocked and emitted 13% of
+what it wanted to.
+
+That is the honest framing: backpressure does not create capacity. It makes the shortage VISIBLE at the
+producer instead of hiding it in a queue.
+
+The reason hiding it is bad is that a queue is not storage, it is LATENCY. Little's Law says the wait at
+the back is depth over service rate, so after three seconds the unbounded version had a p50 of 1,154
+milliseconds and a p99 of 2,283 against about 350 and 430 for the bounded ones. It had not run out of
+memory, it had run out of usefulness. Extend the arithmetic and a queue 10,000 deep at 1,000 a second
+means every item is ten seconds stale - the consumer is working at full rate on requests whose callers
+timed out and retried, which adds more load.
+
+And the memory path is not graceful. I measured the queue growing at 3,030 items a second, so at a
+2-kilobyte payload that is 3.6 gigabytes after ten minutes. Unbounded buffering works, works, works, and
+then the process is OOM-killed - converting a partial failure into a total one, at the worst possible
+moment.
+
+The thing I'd want to add is when backpressure is IMPOSSIBLE. It only helps if the producer can act on
+it. A file reader just reads more slowly - perfect. An HTTP handler has to turn it into a 503 or push the
+queue upstream. But a sensor, a market feed, a telemetry stream - the physical world will not wait for
+you, so backpressure cannot propagate and you must DROP. That is exactly why telemetry pipelines sample
+instead of blocking.
+
+And backpressure has to TERMINATE somewhere. Blocking your handler moves the queue into the thread pool,
+then the load balancer, then the client's retry loop. Each layer buffers, and if nothing ever sheds load
+you have just built a longer queue with more places to hide."
+
+THE ONE SENTENCE TO NOT FUMBLE: a queue absorbs BURSTS and cannot absorb SUSTAINED overload - measured,
+an unbounded queue turned a 4x overload into a 2.3-second p99 in three seconds and would have been 3.6 GB
+in ten minutes - so bound every queue and size the bound from the latency you can tolerate.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    q = queue.Queue(maxsize=maxsize)
+
+The single most important line. `maxsize=0` means UNBOUNDED in Python's API, which is an unfortunate
+default - the safe-looking value is the dangerous one. Every other difference between the three
+strategies follows from this argument.
+
+    if mode == 'unbounded':
+        q.put(item)
+    elif mode == 'drop':
+        try: q.put_nowait(item)
+        except queue.Full: dropped[0] += 1
+    elif mode == 'block':
+        t0 = time.perf_counter()
+        q.put(item)                      # BLOCKS - this is backpressure
+        blocked_s[0] += time.perf_counter() - t0
+
+The three strategies, and they differ only in what happens when the queue is full. `put` on a bounded
+queue BLOCKS - that is the entire mechanism, one function call. `put_nowait` raises instead, and catching
+the exception is a drop.
+
+Timing around the blocking `put` is what produced the "98% of its time blocked" figure, and it is worth
+measuring explicitly rather than inferring, because it is the cost the producer actually pays.
+
+    item = (produced[0], time.perf_counter())
+
+Stamping each item with its creation time at the PRODUCER. The consumer subtracts this when it finishes,
+so the recorded latency is queue wait plus service time - what the caller experiences, not what the
+consumer's own metrics would show. Measuring only the service time would report a healthy 1 ms while
+users waited 2.3 seconds.
+
+    e = time.perf_counter() + interval
+    while time.perf_counter() < e: pass    # simulate real work
+
+A busy-wait to model CPU-bound work. This is the source of the caveat in section 1: a busy-wait holds
+Python's GIL, so the consumer competes with the producer for the interpreter and the "consumed" counts
+are lower than the nominal 1,000/s in some rows. The produced, dropped, queued and peak columns are
+unaffected because they are counted at the producer and in the queue itself.
+
+Flagging that is better than quietly dropping the column - the measurement supports most of its claims
+and not all of them.
+
+    def watch():
+        while not stop.is_set():
+            peak[0] = max(peak[0], q.qsize()); time.sleep(0.002)
+
+A separate sampler for the PEAK depth, because the final depth understates the damage - the queue may
+have drained slightly by the time you look. Sampling every 2 ms caught 9,110 where the final reading was
+9,090.
+
+    rate = (r['produced'] - r['consumed'])/DURATION
+
+The growth rate, and the arithmetic that turns a three-second experiment into an hour's projection.
+MEASURED at 3,030 items/s, which multiplied by a payload size gives the memory curve in section 4. It is
+the number that makes "we will just buffer" concrete.
+
+    print(f"a queue {depth} deep at {CONS_RATE}/s waits {depth/CONS_RATE:.1f} s")
+
+Little's Law as one division. Depth over service rate is the wait at the back of the queue, and it
+converts a number engineers watch (queue depth) into a number users feel (seconds).""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: a real producer thread wanting 4,000 msg/s, a real consumer thread capable of 1,000 msg/s, run for
+3 seconds. Four times more demand than capacity.
+
+TRACE A - where the excess goes.
+
+    strategy                 produced   consumed   dropped   still queued   peak queue
+    ---------------------   --------   --------   -------   ------------   ----------
+    buffer (unbounded)         12,075      2,984         0          9,090        9,110
+    drop (bounded 200)         12,127      1,581    10,345            200          200
+    BLOCK (backpressure)        1,582      1,396         0            185          200
+
+    the producer WANTED to emit 4,000 x 3 = 12,000
+
+Rows 1 and 2 produced what they wanted. Row 3 produced 13% of it. That column is the whole concept:
+backpressure is the only strategy that changes the producer's behaviour.
+
+Row 1 accumulated 9,090 items in memory. Row 2 discarded 10,345. Row 3 did neither - it simply did less
+work, which is the only response that does not defer the problem.
+
+TRACE B - what the buffering cost, in latency.
+
+    strategy                 p50        p99        peak depth
+    ---------------------   --------   --------   ----------
+    buffer (unbounded)      1153.9 ms  2283.4 ms       9,110
+    drop (bounded 200)       350.8 ms   433.5 ms         200
+    BLOCK (backpressure)     380.4 ms   507.9 ms         200
+
+    unbounded vs bounded: 3.3x at p50, 5.3x at p99
+
+After THREE SECONDS. The unbounded queue has not exhausted memory and has already tripled the median
+latency and quintupled the tail.
+
+Note the two bounded strategies are within 8% of each other on latency. Their queues are the same size,
+so their waits are the same - the difference between them is who absorbs the excess, not how long the
+survivors wait.
+
+TRACE C - Little's Law, made concrete.
+
+    queue depth   wait at the back (at 1,000/s)
+    -----------   ----------------------------
+            200                          0.2 s
+          2,000                          2.0 s
+         10,000                         10.0 s
+        100,000                        100.0 s
+
+At 10,000 deep every item is ten seconds stale. Any caller with a 5-second timeout has already given up
+and retried, so the consumer is spending 100% of its capacity on work nobody wants while new work queues
+behind it. That is the mechanism by which a latency problem becomes an outage.
+
+TRACE D - the memory path, at the measured growth of 3,030 items/s.
+
+    item size    after 1 min   after 10 min   after 60 min
+    ----------   -----------   ------------   ------------
+    200 B           0.04 GB        0.36 GB        2.18 GB
+    2,000 B         0.36 GB        3.64 GB       21.82 GB
+    50,000 B        9.09 GB       90.91 GB      545.46 GB
+
+The 2 KB row is the realistic one for a JSON message pipeline: 3.6 GB after ten minutes of sustained 4x
+overload. Nothing warns you - the queue accepts every item right up until the OOM killer arrives, and
+then everything queued is lost as well.
+
+TRACE E - what backpressure costs the producer.
+
+    time blocked                  2.95 s of 3.00 s   (98%)
+    wanted to emit                          12,000
+    actually emitted                         1,582   (13%)
+
+This is the trade stated plainly. The producer is not "working"; it is waiting. Whether that is
+acceptable depends entirely on what the producer is:
+
+    a file reader        -> reads more slowly. Ideal.
+    an HTTP handler      -> its own callers now wait. It must convert this into a 503.
+    a user's request     -> the page is slow, which is honest.
+    a sensor / feed      -> CANNOT slow down. Backpressure is impossible; you must drop.
+
+TRACE F - choosing, by whether the overload is temporary.
+
+    situation                            right response         why
+    ---------------------------------   --------------------   ---------------------------------
+    a 10-second traffic burst           bounded queue          that is exactly what queues are for
+    producer permanently 4x faster      SCALE the consumer     no queue size fixes an average
+    producer cannot slow (sensor)       drop / sample          backpressure cannot propagate
+    producer can slow (file, batch)     block                  free and exact
+    across a network boundary           503 + Retry-After      the only signal a client can act on
+
+The top two rows are the diagnostic. A queue absorbs bursts. If the producer is faster ON AVERAGE, the
+queue is only choosing how long you wait before failing.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (producer 4,000/s, consumer 1,000/s, 3 seconds):
+
+    produced          unbounded 12,075 | drop 12,127 | BLOCK 1,582 (13% of the 12,000 wanted)
+    where it went     9,090 queued in memory | 10,345 dropped | producer blocked 98% of the time
+    latency p50/p99   unbounded 1153.9 / 2283.4 ms | bounded ~350-380 / ~430-510 ms  (3.3x, 5.3x)
+    peak queue depth  9,110 vs 200
+    growth rate       3,030 items/s -> at 2 KB/item, 3.64 GB after 10 minutes
+    Little's Law      depth 10,000 at 1,000/s = 10 s of staleness
+
+COST: a bounded queue costs nothing but the bound. Backpressure costs producer throughput - measured at
+87% of it. Dropping costs the dropped work. Scaling costs money and takes tens of seconds to minutes,
+which is why the other three exist.
+
+THE MISTAKES:
+
+    - An unbounded queue. MEASURED: 9,110 deep and a 2.28 s p99 in three seconds, on the way to 3.6 GB
+      in ten minutes and an OOM kill.
+    - Sizing the bound from available memory rather than from tolerable latency. The queue is a latency
+      budget.
+    - No deadline on queued work, so the consumer spends its capacity on requests whose callers are gone.
+    - Tail-drop by default, which discards the freshest work and keeps the stalest.
+    - Assuming backpressure creates capacity. MEASURED: the producer emitted 13% of what it wanted.
+    - Applying backpressure where the producer cannot slow down. A sensor will not wait; you must drop.
+    - Backpressure that never terminates - blocking the handler just moves the queue upstream into the
+      thread pool, the load balancer and the client's retry loop.
+    - Returning 503 without `Retry-After`, or without jittered client retries, which produces a retry
+      storm exactly when you are struggling.
+    - Alarming on errors rather than on queue depth and oldest-item age. Depth leads; errors lag.
+    - Forgetting the buffers you did not write - socket buffers, client pools, library queues. The total
+      buffering is the sum of all of them.
+    - Treating a sustained overload as a burst. No queue size fixes a producer that is faster on average.
+    - Never testing with the producer faster than the consumer, so nobody knows which of the three
+      behaviours the system actually has.
+
+THE TAKEAWAY. Overload has to go somewhere and there are only three destinations - a queue, the bin, or
+back to the producer. Backpressure picks the third, and the measurement shows exactly what that means:
+the producer emitted 1,582 messages instead of 12,000 and spent 98% of its time blocked. It creates no
+capacity; it makes the shortage visible where something can be done about it. The alternative is worse
+than it looks, because a queue is LATENCY rather than storage - an unbounded one reached a 2.3-second p99
+within three seconds and was heading for gigabytes and an OOM kill. So bound every queue, size the bound
+from the delay you can tolerate rather than the memory you have, put a deadline on queued work, and know
+in advance which of your producers can actually slow down - because for the ones that cannot, dropping is
+the only honest option.""",
+]
+
+_EX_P1AO["Bag-of-words & TF-IDF"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a model needs numbers, and a document is words. Bag-of-words is the
+simplest bridge: count how many times each vocabulary word appears, and throw away the order.
+
+A document becomes a vector as long as the vocabulary, mostly zeros, with counts where words occurred.
+"the cat sat on the mat" becomes `the:2, cat:1, sat:1, on:1, mat:1` and nothing else - not the order, not
+the grammar, not which word modified which.
+
+The immediate problem is that raw counts give the LARGEST numbers to the LEAST informative words.
+MEASURED ON THIS MACHINE, the most frequent words in a 4,000-document corpus:
+
+    word     total count   docs containing it   correlation with the label
+    ------   -----------   ------------------   --------------------------
+    of             7,101                83.0%                       0.0176
+    the            7,073                83.6%                       0.0040
+    for            7,059                83.4%                       0.0253
+    and            7,054                83.9%                       0.0027
+    that           7,035                82.5%                       0.0055
+
+Every one appears in over 82% of documents and correlates with the label at under 0.03. They are the
+biggest numbers in the vector and they carry essentially nothing.
+
+TF-IDF is the fix: multiply each count by how RARE the word is across the corpus, so a word appearing
+everywhere gets pushed down and a distinctive word gets pushed up.""",
+
+    """2. THE INTUITION - IDF measures SURPRISE. A word that appears in every document tells you nothing by
+appearing; a word that appears in 1% of documents tells you a great deal.
+
+The formula is `idf = log(N / df)` where `df` is the number of documents containing the word. A word in
+every document gets log(1) = 0 (plus smoothing); a word in one document in a thousand gets log(1000).
+
+MEASURED, what that does to the weights:
+
+    word     doc frequency   IDF     raw mean count   TF-IDF mean
+    ------   -------------   -----   --------------   -----------
+    of               83.0%    1.19            1.775       0.11960
+    the              84.1%    1.17            1.768       0.11778
+    cache            38.7%    1.95            0.750       0.08205
+    flour            39.1%    1.94            0.735       0.07962
+    shard            38.8%    1.95            0.740       0.08096
+
+The topic words get roughly 1.65x the IDF of the stopwords. Note what it does NOT do: it does not delete
+stopwords, it down-weights them in proportion to how unsurprising they are. That is a smoother and more
+robust thing than a hand-written stopword list, because it adapts to the corpus - in a corpus of database
+papers, "database" IS a stopword and IDF discovers that without being told.
+
+AND NOW THE RESULT THAT REFRAMES THE WHOLE TOPIC. Does that weighting actually help? MEASURED on a
+deliberately hard classification task - 6,000 documents, topic words only 5% of tokens, document lengths
+spanning 60x:
+
+    representation             test accuracy
+    ------------------------   -------------
+    raw counts                        0.9340
+    binary presence                   0.9425
+    term frequency (L1)               0.9210
+    counts x IDF                      0.9335
+    TF-IDF (tf x idf)                 0.9345
+    TF-IDF, L2-normalised             0.9310
+
+TF-IDF beat raw counts by 0.0005 - which is nothing. And plain BINARY PRESENCE was the best of all six.
+For SUPERVISED classification, the celebrated weighting scheme did essentially nothing.""",
+
+    """3. EVERY TERM DEFINED.
+
+BAG OF WORDS (BoW). A document as a multiset of its words - counts, no order.
+
+VOCABULARY. The set of distinct terms. The vector's dimension.
+
+DOCUMENT-TERM MATRIX. Documents as rows, vocabulary as columns, counts as entries. Overwhelmingly sparse
+in real corpora.
+
+TERM FREQUENCY (TF). How often a term appears in THIS document. Often divided by the document length so
+long documents do not dominate; sometimes `log(1+count)` to damp repetition.
+
+DOCUMENT FREQUENCY (DF). How many documents contain the term at all.
+
+INVERSE DOCUMENT FREQUENCY (IDF). `log(N/df)`, usually smoothed as `log((1+N)/(1+df)) + 1`. High for rare
+terms.
+
+TF-IDF. TF x IDF. High when a term is frequent HERE and rare ELSEWHERE.
+
+L2 NORMALISATION. Scaling each document vector to unit length, so cosine similarity is a dot product and
+document length stops mattering.
+
+SPARSITY. The fraction of zero entries. MEASURED below - it is what makes the whole approach affordable.
+
+STOPWORDS. Very common words. A hand-written list is the crude version of what IDF does automatically.
+
+STEMMING / LEMMATISATION. Reducing "running", "ran", "runs" to one token. Shrinks the vocabulary and
+loses distinctions.
+
+n-GRAM. A sequence of n consecutive tokens. The standard partial recovery of word order. MEASURED below -
+the feature count explodes.
+
+HASHING TRICK. Hash terms into a fixed number of buckets, so no vocabulary needs storing. Accepts
+collisions in exchange for constant memory and no fit step.
+
+BM25. The refinement of TF-IDF used in real search engines. Adds term-frequency SATURATION (the tenth
+occurrence adds less than the second) and document-length normalisation with a tunable parameter.
+
+COSINE SIMILARITY. The angle between two document vectors. The standard similarity for this
+representation.
+
+CURSE OF SPARSITY / OUT-OF-VOCABULARY. A word unseen at training time has no column at all.
+
+EMBEDDINGS. Dense learned vectors where "king" and "queen" are close. What replaced bag-of-words for
+tasks where meaning matters.
+
+SUPERVISED vs UNSUPERVISED WEIGHTING. The distinction that turns out to decide whether TF-IDF is worth
+anything - see sections 4 and 5.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - assuming TF-IDF always beats raw counts. MEASURED, for
+SUPERVISED classification it does not, and the reason is worth understanding.
+
+    representation             test accuracy
+    ------------------------   -------------
+    binary presence                   0.9425   <- BEST
+    TF-IDF (tf x idf)                 0.9345
+    raw counts                        0.9340
+    counts x IDF                      0.9335
+    TF-IDF, L2-normalised             0.9310
+    term frequency (L1)               0.9210
+
+All six are within 0.02 of each other, and the winner is the simplest representation of all.
+
+THE REASON: a supervised model LEARNS A WEIGHT PER WORD from the labels. If "the" is useless, gradient
+descent drives its coefficient toward zero on its own - it does not need IDF to tell it. TF-IDF is an
+UNSUPERVISED, corpus-statistics-based guess at which words matter, and when you have labels you have
+something strictly better than a guess.
+
+So the value of TF-IDF depends entirely on whether anything else can learn the weighting. MEASURED, the
+same corpus with NO labels, retrieving the 10 most similar documents by cosine similarity and scoring by
+how many share the query's topic:
+
+    representation                    precision@10   (random baseline 0.50)
+    -------------------------------   ------------
+    raw counts (cosine)                     0.6505
+    term frequency (cosine)                 0.6505
+    binary presence (cosine)                0.8413
+    TF-IDF (cosine)                         0.8710
+    counts x IDF (cosine)                   0.8710
+
+Now IDF is worth a great deal - 0.8710 against 0.6505, a 34% relative improvement. With no labels,
+nothing else tells the similarity function that "the" is uninformative, so raw cosine is dominated by the
+60% of tokens that are stopwords and every document looks like every other one.
+
+THAT is the correct framing: TF-IDF is an UNSUPERVISED prior about word importance. It is essential for
+retrieval and similarity, and largely redundant when you are training a classifier on labels.
+
+THE SECOND TRAP - assuming normalisation fixes the document-length problem. MEASURED, accuracy split by
+document length:
+
+    representation             short docs   long docs   gap
+    ------------------------   ----------   ---------   ------
+    raw counts                     0.7894      1.0000   +0.2106
+    binary presence                0.8221      0.9980   +0.1759
+    term frequency (L1)            0.7975      0.9980   +0.2004
+    TF-IDF (tf x idf)              0.8057      0.9980   +0.1923
+    TF-IDF, L2-normalised          0.7975      0.9980   +0.2004
+
+Every representation has roughly the same 0.20 gap, including the normalised ones. I expected
+normalisation to close it and it did not. The reason is that short documents are hard for an INFORMATION
+reason, not a representation one: a 10-word document with 5% topic words contains on average half a topic
+word, so most short documents carry no signal at all. No weighting scheme recovers information that was
+never there.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHY THIS APPROACH SURVIVED FOR TWENTY YEARS - sparsity makes it almost free. MEASURED:
+
+    corpus                              dense storage   sparse storage   ratio
+    ---------------------------------   -------------   --------------   -------
+    10,000 docs x 50,000 vocab @0.20%          4.0 GB         0.012 GB      333x
+    1,000,000 docs x 500,000 vocab @0.02%   4,000.0 GB         1.200 GB    3,333x
+
+A million documents fit in 1.2 GB. Training a linear model on it is O(non-zeros), and - the part that
+matters most in practice - the result is INTERPRETABLE: you can read the learned coefficient for each
+word and see exactly why the model decided what it decided. No embedding gives you that.
+
+WHAT BAG-OF-WORDS STRUCTURALLY CANNOT DO - word order. MEASURED, these pairs have IDENTICAL vectors:
+
+    "the server is not down"   vs   "the server is down not"
+    "dog bites man"            vs   "man bites dog"
+    "good not bad"             vs   "bad not good"
+
+Negation, subject/object, and modification are all invisible. n-grams recover a little, at a cost -
+MEASURED on a 48-word vocabulary:
+
+    1-grams        48 distinct features
+    2-grams     2,124 distinct features
+    3-grams    78,961 distinct features
+
+The feature count explodes toward vocabulary^n, and almost all the high-order n-grams appear once, so
+they cannot generalise. That is why n-grams help a bit and then stop helping.
+
+THE FAMILY, roughly in order of sophistication:
+
+    BINARY PRESENCE     did the word occur. MEASURED as the BEST supervised representation here, and
+                        the most robust to repeated words.
+    RAW COUNTS          how many times. Sensitive to document length.
+    TF (length-normalised)   removes the length effect.
+    LOG TF              `log(1+count)` - the tenth occurrence should not count ten times.
+    TF-IDF              adds the rarity prior. Essential unsupervised, marginal supervised.
+    BM25                TF-IDF with SATURATION and tunable length normalisation. What actual search
+                        engines use, and materially better than TF-IDF for ranking.
+    HASHING VECTORISER  no vocabulary to store or fit; accepts collisions. Good for streaming.
+    n-GRAMS             a little word order, at exponential feature cost.
+    WORD EMBEDDINGS     dense and learned; "excellent" and "superb" become close, which bag-of-words
+                        can never do since they are simply different columns.
+    SENTENCE / DOCUMENT EMBEDDINGS   the modern default for semantic similarity.
+    CROSS-ENCODERS      read the query and document TOGETHER. Best quality, far too slow to scan a
+                        corpus - so they rerank what a cheap method retrieved.
+
+WHEN BAG-OF-WORDS IS STILL THE RIGHT ANSWER, and it often is:
+    a strong, honest BASELINE that takes ten minutes and tells you whether the problem is hard;
+    when you need to EXPLAIN the decision - a per-word coefficient is auditable, an embedding is not;
+    exact keyword matching, product codes, error strings, identifiers - where an embedding's smoothness
+    actively hurts;
+    very small datasets, where a linear model on sparse features beats a fine-tuned network;
+    as the first stage of a HYBRID retrieval system, where BM25 and a vector index are run together and
+    their results merged - which is what most production search does today, because they fail in
+    different ways.""",
+
+    """6. HOW TO CODE IT.
+
+  1. START HERE, ALWAYS. `TfidfVectorizer` plus logistic regression is ten minutes and tells you whether
+     the task is easy. MEASURED at 0.9345 on a task designed to be hard.
+  2. TRY BINARY PRESENCE TOO. MEASURED as the best of six representations (0.9425). It is one parameter
+     (`binary=True`) and it is the most robust to a word being repeated for stylistic reasons.
+  3. FIT IDF ON TRAINING DATA ONLY. Document frequencies computed over the test set leak information -
+     the same discipline as any other preprocessing statistic.
+  4. USE IDF WHEN THERE ARE NO LABELS. MEASURED: retrieval precision@10 went 0.6505 to 0.8710, a 34%
+     relative gain. Supervised, it was worth 0.0005.
+  5. USE BM25 RATHER THAN TF-IDF FOR RANKING. The saturation term matters: a document mentioning your
+     query word 50 times is not 50 times more relevant than one mentioning it once.
+  6. L2-NORMALISE IF YOU ARE USING COSINE SIMILARITY, so document length does not decide the ranking.
+  7. DO NOT EXPECT NORMALISATION TO FIX SHORT DOCUMENTS. MEASURED: a ~0.20 accuracy gap between short and
+     long documents that no representation closed, because short documents genuinely carry less
+     information.
+  8. LIMIT THE VOCABULARY with `min_df` (drop terms appearing in fewer than k documents) and `max_df`
+     (drop terms appearing in more than x% of them). It shrinks the matrix and removes the noise
+     features that appear once.
+  9. USE SPARSE MATRICES THROUGHOUT. MEASURED at 333x to 3,333x smaller. Calling `.toarray()` on a real
+     corpus is how people accidentally allocate 4 TB.
+ 10. ADD BIGRAMS ONLY IF THEY EARN IT. MEASURED: 48 unigrams became 2,124 bigrams and 78,961 trigrams.
+     Measure the gain against the cost.
+ 11. READ THE LEARNED COEFFICIENTS. The largest positive and negative weights per class are a free
+     sanity check and will show you your data leaks - a document id, a boilerplate footer, an artefact
+     of how the classes were collected.
+ 12. REACH FOR EMBEDDINGS WHEN SYNONYMY MATTERS. Bag-of-words cannot know "excellent" and "superb" are
+     related; they are different columns.
+ 13. CONSIDER HYBRID RETRIEVAL rather than choosing. BM25 and a vector index fail differently - exact
+     identifiers versus paraphrase - and merging them beats either alone.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Bag-of-words turns a document into a vector of word counts and throws away the order. TF-IDF weights
+each count by how rare that word is across the corpus, so common words get pushed down.
+
+The motivation is easy to see. In my corpus the five most frequent words - 'of', 'the', 'for', 'and',
+'that' - each appeared in over 82% of documents and correlated with the label at under 0.03. Raw counts
+give exactly those words the biggest numbers. IDF is log(N over document frequency), so a word in every
+document gets pushed toward zero and a distinctive one gets pushed up. It does not delete stopwords, it
+down-weights them by how unsurprising they are - and that adapts to the corpus, so in a corpus of
+database papers, 'database' IS a stopword and IDF discovers that without being told.
+
+Then I checked whether it actually helps, and the answer is more interesting than I expected. On a
+deliberately hard supervised classification task, TF-IDF scored 0.9345 and raw counts scored 0.9340 -
+a difference of nothing. Plain BINARY PRESENCE was the best of all six representations at 0.9425.
+
+The reason is that a supervised model LEARNS a weight per word from the labels. If 'the' is useless,
+gradient descent drives its coefficient to zero on its own. TF-IDF is an unsupervised guess at which
+words matter, and when you have labels you have something strictly better than a guess.
+
+So I ran the unsupervised case - retrieval, cosine similarity, no labels anywhere. There TF-IDF got
+precision@10 of 0.8710 against 0.6505 for raw counts, a 34% relative improvement. With no labels nothing
+ELSE can tell the similarity function that 'the' is uninformative, so raw cosine is dominated by the 60%
+of tokens that are stopwords and every document looks like every other one.
+
+That is the framing I would give: TF-IDF is an unsupervised PRIOR about word importance. Essential for
+search and similarity, largely redundant when you are training a classifier.
+
+The structural limitation is word order. 'Dog bites man' and 'man bites dog' have identical vectors, and
+so do 'the server is not down' and 'the server is down not' - negation is invisible. n-grams recover a
+little: in my toy corpus 48 unigrams became 2,124 bigrams and 78,961 trigrams, and almost all the
+high-order ones appear once, which is why they help a bit and then stop.
+
+And I'd defend it as a baseline. A million documents by half a million vocabulary terms is 1.2 GB sparse
+against 4 terabytes dense, training is linear in the non-zeros, and you can read the learned weight for
+every word - which no embedding gives you."
+
+THE ONE SENTENCE TO NOT FUMBLE: TF-IDF is an UNSUPERVISED prior about which words matter - worth 34% in
+retrieval where nothing else can learn it, and worth 0.0005 in supervised classification where the model
+learns the weighting from labels anyway.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    C = np.zeros((len(docs), len(vocab)))
+    for i, d in enumerate(docs):
+        for w in d: C[i, V[w]] += 1
+
+The document-term matrix, built explicitly so the structure is visible. `V` maps a word to a column
+index. This dense form is fine for a 104-word vocabulary and is exactly what you must never do on a real
+corpus - section 5's measurement is that the dense version of a real matrix is 4 TB.
+
+    df = (C[:split] > 0).sum(0)
+    idf = np.log((1 + split) / (1 + df)) + 1
+
+IDF, and three details matter.
+
+`(C > 0)` counts DOCUMENTS containing the term, not occurrences - a word appearing 50 times in one
+document has a document frequency of 1, and that distinction is the whole point of IDF.
+
+`C[:split]` restricts it to TRAINING documents. Computing document frequencies over the test set leaks
+corpus statistics, which is the same discipline as fitting a scaler on train only.
+
+The `+1`s are smoothing: they stop a division by zero for an unseen term and stop IDF being exactly zero
+for a term in every document, which would delete it entirely rather than merely down-weighting it.
+
+    tf = C / np.maximum(lens[:, None], 1)
+
+Term frequency as a share of the document. `np.maximum(..., 1)` guards an empty document. This is the
+step that is supposed to remove the document-length effect - and MEASURED, it did not close the
+short-versus-long gap, because that gap was about information rather than scale.
+
+    def rn(M):
+        n = np.linalg.norm(M, axis=1, keepdims=True); return M / np.maximum(n, 1e-12)
+
+L2 normalisation - every document vector on the unit sphere, so a dot product IS the cosine similarity.
+Essential for the retrieval measurement, because otherwise long documents have larger vectors and score
+higher against everything.
+
+    S = M[qi] @ M.T
+    S[np.arange(QN), qi] = -9
+    top = np.argpartition(-S, 10, axis=1)[:, :10]
+
+The retrieval experiment. `S[range, qi] = -9` excludes each query from its OWN results - without that
+line every method scores a free hit and precision@10 is inflated by 10 percentage points for everyone.
+Small, and it would have quietly changed the conclusion.
+
+    p = np.mean([(labels[top[i]] == labels[qi[i]]).mean() for i in range(QN)])
+
+Precision@10 as "what fraction of the ten retrieved share the query's topic". Against a random baseline
+of 0.50, since the corpus is half one topic and half the other - stating that baseline is what makes
+0.6505 recognisable as weak and 0.8710 as strong.
+
+    ca, cb = Counter(a.split()), Counter(b.split())
+    print(f"same vector: {ca == cb}")
+
+The word-order demonstration, and it is deliberately just a `Counter` comparison - because a `Counter` IS
+a bag of words. Showing that "dog bites man" and "man bites dog" produce equal Counters is not a
+simulation of the limitation, it is the limitation.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - what raw counts weight most, 4,000 documents.
+
+    word     total count   in % of docs   |correlation with label|
+    ------   -----------   ------------   ------------------------
+    of             7,101          83.0%                     0.0176
+    the            7,073          83.6%                     0.0040
+    for            7,059          83.4%                     0.0253
+    and            7,054          83.9%                     0.0027
+    that           7,035          82.5%                     0.0055
+    a              7,003          82.4%                     0.0227
+    is             6,999          83.0%                     0.0119
+    this           6,972          83.0%                     0.0043
+
+The eight largest features in every document vector, all with correlations under 0.03. Raw counts are
+dominated by words that carry no signal.
+
+TRACE B - what IDF does about it.
+
+    word     doc freq   IDF     raw mean count   TF-IDF mean
+    ------   --------   -----   --------------   -----------
+    of          83.0%    1.19            1.775       0.11960
+    the         84.1%    1.17            1.768       0.11778
+    for         84.0%    1.17            1.765       0.11774
+    and         83.9%    1.18            1.764       0.11763
+    cache       38.7%    1.95            0.750       0.08205
+    flour       39.1%    1.94            0.735       0.07962
+    shard       38.8%    1.95            0.740       0.08096
+    whisk       39.9%    1.92            0.749       0.08034
+
+Topic words get about 1.65x the IDF of stopwords (1.95 vs 1.18). Notice the stopwords still have LARGER
+TF-IDF means (0.118 vs 0.081) - because they genuinely occur more often. IDF narrows the gap; it does not
+invert it.
+
+TRACE C - supervised classification, 6,000 documents, topic words only 5% of tokens, lengths 10 to 600.
+
+    representation             test accuracy   vs raw counts
+    ------------------------   -------------   -------------
+    binary presence                   0.9425        +0.0085
+    TF-IDF (tf x idf)                 0.9345        +0.0005
+    raw counts                        0.9340              -
+    counts x IDF                      0.9335        -0.0005
+    TF-IDF, L2-normalised             0.9310        -0.0030
+    term frequency (L1)               0.9210        -0.0130
+
+The spread across six representations is 0.0215 and the winner is the simplest one. TF-IDF's advantage
+over raw counts is 0.0005, which is noise.
+
+This is the honest negative, and its explanation is the useful part: the classifier learns a coefficient
+per word from the labels, so it discovers what IDF would have told it.
+
+TRACE D - the same corpus, UNSUPERVISED retrieval, precision@10 (random = 0.50).
+
+    representation                    precision@10   vs raw counts
+    -------------------------------   ------------   -------------
+    TF-IDF (cosine)                         0.8710         +0.2205
+    counts x IDF (cosine)                   0.8710         +0.2205
+    binary presence (cosine)                0.8413         +0.1908
+    raw counts (cosine)                     0.6505               -
+    term frequency (cosine)                 0.6505         +0.0000
+
+A 34% relative improvement from IDF, against 0.05% in the supervised case. Same corpus, same vectors,
+opposite conclusion - and the variable that changed is whether anything else could learn the weighting.
+
+Note also that binary presence is again strong (0.8413), because dropping counts entirely removes most of
+the stopword domination too. And length-normalised TF is IDENTICAL to raw counts (0.6505) after cosine
+normalisation, which makes sense - cosine already removes the scale, so dividing by length first changes
+nothing.
+
+TRACE E - accuracy by document length, and the prediction that failed.
+
+    representation             short docs   long docs   gap
+    ------------------------   ----------   ---------   ------
+    raw counts                     0.7894      1.0000   +0.2106
+    binary presence                0.8221      0.9980   +0.1759
+    term frequency (L1)            0.7975      0.9980   +0.2004
+    counts x IDF                   0.7894      1.0000   +0.2106
+    TF-IDF (tf x idf)              0.8057      0.9980   +0.1923
+    TF-IDF, L2-normalised          0.7975      0.9980   +0.2004
+
+I expected the normalised representations to close this gap and they did not - every row sits between
+0.176 and 0.211. Long documents are classified essentially perfectly and short ones at about 0.80,
+regardless of representation.
+
+The explanation is informational: at 5% topic words, a 10-word document contains half a topic word on
+average, so most short documents carry no signal at all. Normalisation rescales what is there; it cannot
+manufacture evidence.
+
+TRACE F - what it costs, and what it cannot do.
+
+    corpus                                dense       sparse    ratio
+    -----------------------------------   ---------   --------  -------
+    10,000 x 50,000 @ 0.20% density         4.0 GB    0.012 GB     333x
+    1,000,000 x 500,000 @ 0.02% density   4000.0 GB    1.200 GB   3,333x
+
+    identical bag-of-words vectors:
+      "the server is not down"  ==  "the server is down not"
+      "dog bites man"           ==  "man bites dog"
+      "good not bad"            ==  "bad not good"
+
+    n-gram feature counts on a 48-word vocabulary:
+      1-grams        48
+      2-grams     2,124   (of a possible 2,304)
+      3-grams    78,961   (of a possible 110,592)
+
+A million documents in 1.2 GB is why this method dominated for two decades. The three identical pairs are
+why it was eventually replaced for anything where meaning matters.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    what raw counts weight    the 8 most frequent words are in 82-84% of documents,
+                              all with |correlation| < 0.03
+    IDF effect                topic words 1.95 vs stopwords 1.18 - a 1.65x reweighting, not a deletion
+
+    SUPERVISED classification binary 0.9425 | TF-IDF 0.9345 | raw counts 0.9340 | TF 0.9210
+                              -> TF-IDF is worth +0.0005 over raw counts. Nothing.
+    UNSUPERVISED retrieval    TF-IDF 0.8710 | binary 0.8413 | raw counts 0.6505 (random 0.50)
+                              -> TF-IDF is worth +0.2205, a 34% relative gain.
+
+    short vs long documents   a ~0.20 accuracy gap that NO representation closed
+    storage                   1M x 500k: 4,000 GB dense vs 1.2 GB sparse (3,333x)
+    n-grams                   48 unigrams -> 2,124 bigrams -> 78,961 trigrams
+
+COMPLEXITY: building the matrix is O(total tokens). Training a linear model is O(non-zeros per epoch).
+Memory is O(non-zeros), which is what makes it affordable. IDF requires one pass to count document
+frequencies.
+
+THE MISTAKES:
+
+    - Assuming TF-IDF always helps. MEASURED at +0.0005 for supervised classification, where the model
+      learns per-word weights from labels anyway.
+    - Not trying binary presence. MEASURED as the best of six representations.
+    - Fitting IDF on the full corpus including test documents. It leaks corpus statistics.
+    - Skipping TF-IDF for retrieval. MEASURED at +34% relative - there it is essential, because nothing
+      else can learn the weighting.
+    - Using TF-IDF for ranking when BM25 exists. Term-frequency saturation matters: 50 mentions is not
+      50x more relevant.
+    - Forgetting to L2-normalise before cosine similarity, so long documents win everything.
+    - Expecting normalisation to fix short documents. MEASURED: a 0.20 gap no representation closed,
+      because the information is not there.
+    - Calling `.toarray()` on a real document-term matrix. MEASURED: the dense form of a realistic
+      corpus is 4 TB.
+    - Adding trigrams reflexively. MEASURED: 78,961 features from a 48-word vocabulary, almost all
+      appearing once.
+    - Expecting it to handle negation, word order, or synonymy. "Dog bites man" and "man bites dog" are
+      the same vector.
+    - Never reading the learned coefficients. They are free interpretability and they expose data leaks.
+    - Reaching for embeddings before trying this. It takes ten minutes and tells you how hard the
+      problem is.
+
+THE TAKEAWAY. Bag-of-words converts a document to counts and discards order; TF-IDF reweights those
+counts by how rare each word is, so unsurprising words are pushed down. The measurement that reframes it
+is that this weighting is an UNSUPERVISED PRIOR: in retrieval, where nothing else can learn which words
+matter, it improved precision@10 from 0.6505 to 0.8710 - a 34% relative gain - and in supervised
+classification, where the model learns a coefficient per word from labels, it was worth 0.0005 and plain
+binary presence beat it. So use IDF when there are no labels, and do not expect it to do much when there
+are. The representation remains an excellent baseline because a million documents fit in 1.2 GB sparse
+and every learned weight is readable, and it remains structurally blind to word order - "dog bites man"
+and "man bites dog" are the same vector, and no amount of weighting changes that.""",
+]
+
+_EX_P1AO["Batch (mini-batch)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the batch is how many examples the model looks at before making ONE
+update to its weights.
+
+Every gradient you compute is an ESTIMATE of the true gradient - the one you would get from the whole
+dataset. A batch of 1 gives a very noisy estimate very cheaply; the whole dataset gives an exact one
+expensively. The batch size is where you sit between them.
+
+And there is exactly one thing batch size does to the gradient: it sets the NOISE. MEASURED ON THIS
+MACHINE, comparing mini-batch gradients against the true full-data gradient at the same weights:
+
+    batch size   mean |error| vs full gradient   cosine similarity   1/sqrt(B) prediction
+    ----------   -----------------------------   -----------------   --------------------
+             1                         3.50746              0.0679                3.50746
+             4                         2.08129              0.2230                1.75373
+            16                         1.04083              0.4008                0.87687
+            64                         0.53346              0.6771                0.43843
+           256                         0.26543              0.8794                0.21922
+         1,024                         0.13253              0.9657                0.10961
+         4,096                         0.06649              0.9910                0.05480
+        20,000                         0.02952              0.9982                0.02480
+
+From batch 4 onward the error halves every time the batch quadruples - exactly 1/sqrt(B).
+
+But look at the COSINE column at batch 1: 0.0679. A single-example gradient points almost PERPENDICULAR
+to the true gradient. It is barely correlated with the direction you want to go, and stochastic gradient
+descent works anyway - because over many steps the perpendicular components cancel and the small
+consistent component accumulates.""",
+
+    """2. THE INTUITION - a noisy step in roughly the right direction, taken often, beats a perfect step taken
+rarely.
+
+The reason is that halving the noise costs FOUR TIMES the compute. MEASURED:
+
+    batch    relative noise   examples per step   noise-reduction cost
+    ------   --------------   -----------------   --------------------
+        32           0.1768                  32                    5.7
+       128           0.0884                 128                   11.3
+       512           0.0442                 512                   22.6
+     2,048           0.0221               2,048                   45.3
+
+Each halving of the noise doubles the cost of that halving. The last halving costs as much as everything
+before it - and the noise was never the problem.
+
+MEASURED, the comparison that matters - a FIXED BUDGET of 400,000 examples processed, learning rate
+tuned separately for each batch size:
+
+    batch     steps   best lr   final train loss   test acc   wall time
+    ------   -------   -------   ----------------   --------   ---------
+         1   400,000      0.02            0.35111     0.8426      9.12 s
+         8    50,000      0.02            0.32856     0.8536      1.46 s
+        32    12,500      0.02            0.32643     0.8534      0.49 s
+       128     3,125      0.10            0.32655     0.8536      0.23 s
+       512       781      0.50            0.32669     0.8539      0.13 s
+     2,048       195      0.50            0.32654     0.8529      0.10 s
+     8,192        48      2.00            0.32666     0.8537      0.19 s
+
+Everything from batch 8 to batch 8,192 lands at the same loss (0.3265 ± 0.0002) and the same test accuracy
+(0.853). Batch size barely matters for RESULT QUALITY at a fixed example budget - a range of a thousandfold
+produced no meaningful difference.
+
+Only batch 1 is genuinely worse (0.3511, 0.8426), because its gradient is so noisy that even 400,000 steps
+do not average it out.
+
+So if quality is flat, why does anyone care about batch size? Section 4.""",
+
+    """3. EVERY TERM DEFINED.
+
+BATCH / MINI-BATCH. The group of examples used for one weight update.
+
+BATCH SIZE (B). How many. The hyperparameter.
+
+FULL-BATCH / BATCH GRADIENT DESCENT. B = the whole dataset. One exact gradient per pass.
+
+STOCHASTIC GRADIENT DESCENT (SGD). Strictly B = 1; in practice everyone says SGD and means mini-batch.
+
+STEP / ITERATION. One weight update. Steps per epoch = dataset size / batch size.
+
+EPOCH. One pass over the whole dataset.
+
+GRADIENT NOISE / VARIANCE. How far a mini-batch gradient is from the true one. MEASURED to scale as
+1/sqrt(B).
+
+COSINE SIMILARITY (of gradients). How well the mini-batch gradient's DIRECTION matches the true one.
+MEASURED at 0.0679 for B=1 - nearly perpendicular.
+
+LINEAR SCALING RULE. Multiply the learning rate by k when you multiply the batch by k. MEASURED below.
+
+SQRT SCALING RULE. Multiply the learning rate by sqrt(k) instead. The alternative, and MEASURED here as
+the worse fit.
+
+WARMUP. Ramping the learning rate up over the first steps. Necessary at large batch sizes, where the
+scaled learning rate is too large for the initial random weights.
+
+GRADIENT ACCUMULATION. Summing gradients over several small batches before updating, to simulate a large
+batch that does not fit in memory. Same maths, more time, less memory.
+
+CRITICAL BATCH SIZE. The point beyond which increasing the batch stops reducing the number of steps
+needed. Past it you are buying noise reduction you cannot use.
+
+THROUGHPUT (examples/s). What large batches actually buy. MEASURED below at 220x.
+
+ARITHMETIC INTENSITY. Compute per byte of memory moved. Small batches are memory-bound; large batches
+saturate the arithmetic units.
+
+BATCH NORMALISATION. Normalising activations using BATCH statistics - it makes the loss depend on the
+batch size and on which examples are grouped together, which is a genuine complication and why layer
+normalisation is preferred in transformers.
+
+SHUFFLING. Reordering examples between epochs so batches are not correlated. Skipping it can be
+catastrophic if the data is sorted by label.
+
+LAST PARTIAL BATCH. The remainder when the dataset does not divide evenly. Usually harmless; occasionally
+a source of odd statistics with batch normalisation.
+
+GENERALISATION GAP. The claim that large batches generalise worse. MEASURED below - at a fixed example
+budget it did not appear here.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "large batches give better gradients, so they train better".
+MEASURED, the gradient quality is irrelevant; large batches win on HARDWARE.
+
+MEASURED, the per-step and per-example cost:
+
+    batch     ms/step   examples/s
+    ------   --------   -----------
+         1      0.034        29,723
+         8      0.037       215,783
+        32      0.041       780,093
+       128      0.062     2,055,748
+       512      0.159     3,228,174
+     2,048      0.534     3,835,397
+     8,192      1.252     6,544,030
+
+Batch 1 and batch 32 cost almost the same PER STEP - 0.034 ms against 0.041 ms - despite doing 32 times
+the arithmetic. The fixed overhead per step (Python, kernel launch, memory setup) completely dominates
+until the batch is large enough to actually occupy the hardware.
+
+Throughput goes from 29,723 to 6,544,030 examples/s - 220x - purely from amortising that overhead.
+
+THAT is why large batches are used. Not better gradients. Amortised overhead and hardware utilisation.
+Combine it with section 2's finding that quality is flat from batch 8 to 8,192, and the rule becomes: use
+the largest batch that fits and still trains stably, because it is free.
+
+THE SECOND TRAP - raising the batch size and leaving the learning rate alone. MEASURED, the best learning
+rate found for each batch at a fixed example budget:
+
+    batch      best lr
+    ------   ---------
+         8        0.02
+        32        0.02
+       128        0.05
+       512        0.20
+     2,048        1.00
+
+    batch ratio   lr ratio   linear rule predicts   sqrt rule predicts
+    -----------   --------   --------------------   ------------------
+           4.0x      1.00x                   4.0x                2.00x
+           4.0x      2.50x                   4.0x                2.00x
+           4.0x      4.00x                   4.0x                2.00x
+           4.0x      5.00x                   4.0x                2.00x
+
+At larger batches the measured ratio tracks the LINEAR rule (4.0x, 5.0x) rather than the square-root rule
+(2.0x). A bigger batch gives a less noisy gradient, so you can safely take a proportionally bigger step -
+and if you do not, you have made the training 4x slower per example while believing you optimised it.
+
+This is the single most common reason people report that "large batch training does not work".
+
+THE THIRD TRAP - assuming batch 1 is the gold standard because it is "true" SGD. MEASURED, it was the
+WORST result in the table (0.3511 loss, 0.8426 accuracy) and took 9.12 seconds against 0.10 for batch
+2,048 - 91x slower for a worse model.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHY THE NOISE IS NOT PURELY A COST. The 1/sqrt(B) relationship says large batches have cleaner gradients,
+and cleaner is not automatically better:
+
+    NOISE ESCAPES SHARP MINIMA. A noisy gradient can jump out of a narrow valley that a clean one would
+    settle into. Sharp minima are widely believed to generalise worse.
+    NOISE IS AN IMPLICIT REGULARISER. Small-batch training behaves a little like adding noise to the
+    weights.
+    NOISE COSTS NOTHING IF YOU TAKE ENOUGH STEPS. MEASURED: batch 8 and batch 8,192 reached the same
+    loss at the same example budget, so the extra noise at batch 8 cost nothing at all.
+
+The famous "large-batch generalisation gap" is real in some settings and largely disappears when the
+learning rate is scaled correctly and warmup is used - which is what the measurement here shows: no
+meaningful accuracy difference from batch 8 to 8,192 once each had its own tuned learning rate.
+
+THE PRACTICAL FAMILY:
+
+    GRADIENT ACCUMULATION      sum gradients over k small batches, then update once. Simulates batch
+                               k x B in the memory of B. Costs wall time, not quality - the standard
+                               way to train a large model on a small GPU.
+    DATA PARALLELISM           different machines process different batches and average the gradients.
+                               The effective batch is the sum, so the learning rate must scale with the
+                               NUMBER OF WORKERS - a very common bug when scaling a job out.
+    LARS / LAMB                optimisers designed for very large batches, using per-LAYER adaptive
+                               rates. What made batch sizes of 32k practical for ImageNet and BERT.
+    WARMUP                     ramp the learning rate over the first few hundred steps. Essential at
+                               large batch, because the linearly-scaled rate is too large for random
+                               initial weights.
+    LEARNING-RATE SCHEDULES    the batch size sets the initial rate; the schedule decays it. Separate
+                               decisions.
+    DYNAMIC / PROGRESSIVE BATCHING   start small (fast, noisy progress), grow later (precise
+                               refinement). Trades implementation complexity for the best of both.
+
+CHOOSING, in practice:
+    START WITH THE LARGEST THAT FITS IN MEMORY. It is free throughput - MEASURED at 220x.
+    THEN SCALE THE LEARNING RATE LINEARLY with it, and add warmup.
+    IF IT WILL NOT FIT, use gradient accumulation.
+    IF TRAINING IS UNSTABLE, reduce the learning rate before reducing the batch size.
+    IF THE DATASET IS TINY, small batches genuinely help - more steps per epoch matters more than
+    throughput when the whole dataset fits in a single batch.
+    WITH BATCH NORMALISATION, very small batches (under ~8) break the batch statistics, which is a
+    separate constraint from anything measured here and a reason to use layer or group normalisation.
+
+AND THE SIZING RULE WORTH REMEMBERING: what matters is EXAMPLES SEEN, not steps taken. MEASURED - at a
+fixed budget of 400,000 examples, every batch size from 8 to 8,192 reached the same loss. If you double
+the batch and keep the number of STEPS the same, you have doubled the compute; if you keep the number of
+EXAMPLES the same, you have kept the result and gone faster.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE THE LARGEST BATCH THAT FITS AND TRAINS STABLY. MEASURED: throughput went 29,723 to 6,544,030
+     examples/s (220x) from batch 1 to 8,192, with no loss of quality.
+  2. SCALE THE LEARNING RATE WITH THE BATCH SIZE - linearly. MEASURED: the best rate went 0.02 to 1.00
+     as the batch went 8 to 2,048, tracking the linear rule (4x, 5x per 4x batch) rather than sqrt (2x).
+  3. ADD WARMUP AT LARGE BATCH SIZES. The scaled learning rate is too large for random initial weights;
+     ramp it over the first few hundred steps.
+  4. COMPARE ON EXAMPLES SEEN, NOT STEPS TAKEN. MEASURED: batch 8 at 50,000 steps and batch 8,192 at 48
+     steps reached the same loss on the same 400,000 examples. Comparing at equal STEPS silently gives
+     the large batch 1,000x the data.
+  5. USE GRADIENT ACCUMULATION when the batch will not fit. Same maths, more wall time, less memory.
+  6. WHEN SCALING TO N WORKERS, REMEMBER THE EFFECTIVE BATCH IS N x LOCAL. The learning rate must scale
+     with the total, not the per-worker size. This is the classic distributed-training bug.
+  7. SHUFFLE BETWEEN EPOCHS. Batches drawn from sorted data give correlated gradients, and if the data is
+     sorted by label it is catastrophic.
+  8. DO NOT GO BELOW ~8 WITH BATCH NORMALISATION. The batch statistics become unreliable. Use layer or
+     group normalisation if you genuinely need tiny batches.
+  9. IF TRAINING DIVERGES, LOWER THE LEARNING RATE FIRST. It is far more often the scaled rate than the
+     batch size itself.
+ 10. MEASURE ms/STEP ACROSS BATCH SIZES ON YOUR OWN HARDWARE. MEASURED: batch 1 and batch 32 cost
+     essentially the same per step, so anything below the point where the curve starts rising is free
+     throughput you are not taking.
+ 11. DO NOT CHASE THE LAST BIT OF GRADIENT PRECISION. MEASURED: each halving of noise costs 4x the
+     compute, and quality was flat across a thousandfold range of batch sizes.
+ 12. BE SUSPICIOUS OF ANY BATCH-SIZE COMPARISON THAT DID NOT RETUNE THE LEARNING RATE. It is measuring
+     the learning rate, not the batch size.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"The batch is how many examples the model looks at before making one weight update. Every gradient you
+compute is an ESTIMATE of the true full-dataset gradient, and the batch size sets how noisy that estimate
+is - that is the only thing it does to the gradient.
+
+I measured the noise directly, comparing mini-batch gradients against the full-data gradient at the same
+weights. From batch 4 upward the error halves every time the batch quadruples - exactly one over root B.
+
+The number that surprised me is the cosine similarity at batch 1: 0.0679. A single-example gradient points
+almost PERPENDICULAR to the true gradient. It is barely correlated with the direction you want to go, and
+SGD works anyway, because over many steps the perpendicular components cancel and the small consistent
+component accumulates.
+
+Then the key experiment: a fixed budget of 400,000 examples processed, with the learning rate tuned
+separately for each batch size. Every batch from 8 to 8,192 reached the same loss - 0.3265 give or take
+0.0002 - and the same test accuracy of 0.853. A thousandfold range of batch sizes, no meaningful
+difference in result. Only batch 1 was genuinely worse, because even 400,000 steps could not average out
+that much noise.
+
+So if quality is flat, why does batch size matter? Hardware. I measured the per-step cost, and batch 1
+and batch 32 cost almost the same - 0.034 against 0.041 milliseconds - despite doing 32 times the
+arithmetic, because fixed per-step overhead dominates. Throughput went from 29,723 examples a second at
+batch 1 to 6,544,030 at batch 8,192. That is 220 times, purely from amortising overhead.
+
+So the rule is: use the largest batch that fits and trains stably, because it is free. Not because the
+gradients are better - they are better and it does not matter - but because the hardware is idle
+otherwise.
+
+The trap is raising the batch size and leaving the learning rate alone. I found the best learning rate for
+each batch size, and it went from 0.02 at batch 8 to 1.00 at batch 2,048 - tracking the LINEAR scaling
+rule, four to five times per fourfold batch increase, rather than the square-root rule which would predict
+two. A bigger batch gives a less noisy gradient so you can safely take a proportionally bigger step, and
+if you do not, you have made training four times slower per example while thinking you optimised it.
+That is the single most common reason people say large-batch training does not work.
+
+I would also flag that any batch-size comparison that did not retune the learning rate is measuring the
+learning rate, not the batch size."
+
+THE ONE SENTENCE TO NOT FUMBLE: batch size sets gradient noise as 1/sqrt(B) and that turned out not to
+matter - quality was flat from batch 8 to 8,192 at a fixed example budget - so you pick the batch for
+THROUGHPUT (measured 220x) and then you must scale the learning rate linearly with it.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    g_full = grad(w, X, y)
+    ...
+    idx = rng.integers(0, N, B_)
+    g = grad(w, X[idx], y[idx])
+    errs.append(np.linalg.norm(g - g_full))
+
+The noise measurement, and the design is what makes it meaningful. The full-data gradient `g_full` is
+computed ONCE at a fixed weight vector `w`, and then 200 mini-batch gradients are drawn at THE SAME `w`.
+So the only thing varying is which examples were sampled - there is no training, no moving target, and
+the spread is purely sampling noise.
+
+Measuring at a fixed point rather than during training is what isolates the variable.
+
+    cos.append(float(g @ g_full / (np.linalg.norm(g) * np.linalg.norm(g_full) + 1e-12)))
+
+Cosine similarity of DIRECTIONS, separate from the magnitude of the error. This is the more informative
+of the two, because gradient descent cares about direction - and it produced the striking 0.0679 at
+batch 1.
+
+The `+1e-12` guards a zero-norm gradient, which happens if a single-example batch is already perfectly
+classified.
+
+    BUDGET = 400_000
+    steps = BUDGET // B_
+
+The fair comparison, and it is the most important line in the file. Holding EXAMPLES PROCESSED constant
+means batch 1 gets 400,000 steps and batch 8,192 gets 48. Comparing at equal STEPS instead would give the
+large batch 8,192 times as much data and prove nothing except that more data helps.
+
+Almost every misleading batch-size comparison in the wild is a comparison at equal steps or equal epochs
+with an untuned learning rate.
+
+    for lr in (2.0, 0.5, 0.1, 0.02):
+        ...
+        if np.isfinite(L) and L < best[0]: best = (L, lr, acc(...), dt)
+
+Tuning the learning rate PER BATCH SIZE. Without this the experiment would measure "one learning rate
+happens to suit one batch size", which is exactly the trap section 4 describes. The `np.isfinite` guard
+discards diverged runs rather than letting a NaN win by comparing false.
+
+    steps = 200
+    idxs = [r2.integers(0, N, B_) for _ in range(steps)]
+    t0 = time.perf_counter()
+    for idx in idxs: w -= 0.1*grad(w, X[idx], y[idx])
+
+The throughput measurement, and the index arrays are generated BEFORE the timer starts. Random-number
+generation is not part of what is being measured, and at batch 1 with 200 steps it would otherwise be a
+noticeable share of the total.
+
+This is what produced the finding that batch 1 and batch 32 cost nearly the same per step - the fixed
+overhead per call dominates until the arithmetic is large enough to matter.
+
+    br = b[i]/b[i-1]; lr_r = res[b[i]][1]/res[b[i-1]][1]
+
+The scaling-rule check, expressed as RATIOS rather than absolute values so it can be compared against the
+two candidate rules directly. A 4x batch increase paired with a 4x-5x learning-rate increase supports
+linear scaling; the square-root rule would have predicted 2x. Printing both predictions next to the
+measurement is what makes the table decide between them rather than illustrate a choice already made.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: logistic regression, 20,000 training examples, 50 features, 10,000 held out.
+
+TRACE A - gradient noise against batch size.
+
+    batch      mean |error|   cosine similarity   1/sqrt(B) prediction   ratio to previous
+    --------   ------------   -----------------   --------------------   -----------------
+           1        3.50746              0.0679                3.50746                   -
+           4        2.08129              0.2230                1.75373              1.69x
+          16        1.04083              0.4008                0.87687              2.00x
+          64        0.53346              0.6771                0.43843              1.95x
+         256        0.26543              0.8794                0.21922              2.01x
+       1,024        0.13253              0.9657                0.10961              2.00x
+       4,096        0.06649              0.9910                0.05480              1.99x
+      20,000        0.02952              0.9982                0.02480              2.25x
+
+The right-hand column is the confirmation: from batch 4 onward, quadrupling the batch halves the error, to
+within 1%. That IS 1/sqrt(B), measured rather than assumed.
+
+Batch 1 is off the pattern (1.69x rather than 2.00x) because a single sample has no averaging at all.
+
+The cosine column is the striking one. At batch 1 the gradient is at 0.0679 - about 86 degrees from the
+true gradient, essentially perpendicular. At batch 256 it is 0.8794. SGD spends most of its steps moving
+sideways and still converges, because the sideways components are random and cancel while the useful
+component is consistent and accumulates.
+
+TRACE B - the cost of reducing that noise.
+
+    batch    relative noise   cost per halving
+    ------   --------------   ----------------
+        32           0.1768               5.7
+       128           0.0884              11.3
+       512           0.0442              22.6
+     2,048           0.0221              45.3
+
+Each halving of the noise costs four times the compute, so the marginal cost of precision doubles every
+step. The last halving costs as much as everything before it combined.
+
+TRACE C - the fair comparison: fixed budget of 400,000 examples, learning rate tuned per batch.
+
+    batch     steps   best lr   train loss   test acc   wall time   loss vs best
+    ------   -------   -------   ----------   --------   ---------   ------------
+         1   400,000      0.02      0.35111     0.8426      9.12 s      +0.02468
+         8    50,000      0.02      0.32856     0.8536      1.46 s      +0.00213
+        32    12,500      0.02      0.32643     0.8534      0.49 s       0.00000
+       128     3,125      0.10      0.32655     0.8536      0.23 s      +0.00012
+       512       781      0.50      0.32669     0.8539      0.13 s      +0.00026
+     2,048       195      0.50      0.32654     0.8529      0.10 s      +0.00011
+     8,192        48      2.00      0.32666     0.8537      0.19 s      +0.00023
+
+From batch 32 to 8,192 the loss varies by 0.00026 and the accuracy by 0.001. A 256-fold range of batch
+sizes, no difference in outcome.
+
+Batch 1 is the outlier at +0.0247 loss and 0.011 lower accuracy, AND it took 91x the wall clock of batch
+2,048. It is worse on both axes.
+
+TRACE D - throughput, which is the actual reason to care.
+
+    batch     ms/step   examples/s   ms/step vs batch 1   examples/s vs batch 1
+    ------   --------   ----------   ------------------   ---------------------
+         1      0.034       29,723                1.00x                   1.00x
+         8      0.037      215,783                1.09x                   7.26x
+        32      0.041      780,093                1.21x                  26.24x
+       128      0.062    2,055,748                1.82x                  69.16x
+       512      0.159    3,228,174                4.68x                 108.61x
+     2,048      0.534    3,835,397               15.71x                 129.04x
+     8,192      1.252    6,544,030               36.82x                 220.17x
+
+The third column is the finding: 32x the arithmetic for 1.21x the time. Fixed per-step overhead dominates
+completely at small batches, so anything below about 128 is wasting the hardware.
+
+Throughput growth also FLATTENS - 108x at batch 512 and only 129x at 2,048 - which is the hardware
+becoming saturated. Past that point larger batches buy little, which is what "critical batch size" means
+in practice.
+
+TRACE E - the learning rate must move with the batch.
+
+    batch     best lr   loss
+    ------   --------   -------
+         8       0.02   0.32867
+        32       0.02   0.32665
+       128       0.05   0.32643
+       512       0.20   0.32642
+     2,048       1.00   0.32655
+
+    batch ratio   measured lr ratio   linear rule   sqrt rule
+    -----------   -----------------   -----------   ---------
+           4.0x               1.00x          4.0x        2.00x
+           4.0x               2.50x          4.0x        2.00x
+           4.0x               4.00x          4.0x        2.00x
+           4.0x               5.00x          4.0x        2.00x
+
+The first row (8 to 32) shows no change, because at small batches the optimum is broad and 0.02 suits
+both. From 128 upward the measured ratio is 2.5x, 4.0x, 5.0x - clearly tracking LINEAR rather than
+square-root scaling.
+
+The practical consequence: going from batch 128 to batch 2,048 without touching the learning rate leaves
+you running at 0.05 where 1.00 was optimal - a 20x-too-small step, and training that looks broken through
+no fault of the batch size.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (logistic regression, 20,000 x 50):
+
+    gradient noise        error scales as 1/sqrt(B), confirmed to within 1% from batch 4 upward
+    gradient DIRECTION    cosine vs the true gradient: 0.0679 at B=1, 0.8794 at B=256, 0.9982 at B=20,000
+    quality at a fixed    batch 8 to 8,192 all reached loss 0.3265 +/- 0.0002 and accuracy 0.853
+      400,000-example     batch 1 was worse: 0.3511 loss, 0.8426 accuracy, and 91x the wall clock
+      budget              of batch 2,048
+    throughput            29,723 -> 6,544,030 examples/s (220x); batch 1 vs 32 is 1.21x per step for
+                          32x the arithmetic
+    learning-rate scaling best lr 0.02 (B=8) -> 1.00 (B=2,048); measured ratios 2.5x/4.0x/5.0x per 4x
+                          batch, i.e. LINEAR, not sqrt
+
+COMPLEXITY: compute per step is O(B x parameters); steps per epoch is O(N/B); so compute per EPOCH is
+constant in B. Memory is O(B x activation size), which is what actually limits the batch size on a GPU.
+
+THE MISTAKES:
+
+    - Raising the batch and leaving the learning rate alone. MEASURED: the optimum moved 50x from batch 8
+      to 2,048. The commonest reason "large batch does not work".
+    - Comparing batch sizes at equal STEPS or equal EPOCHS. Only equal EXAMPLES SEEN is a fair
+      comparison.
+    - Comparing batch sizes without retuning the learning rate. That measures the learning rate.
+    - Believing large batches train better because the gradients are cleaner. MEASURED: quality was flat
+      across a 1,000x range.
+    - Using batch 1 because it is "true SGD". MEASURED: worst loss, worst accuracy, 91x the time.
+    - Not measuring ms/step on your own hardware. MEASURED: 32x the arithmetic for 1.21x the time, so
+      small batches leave the machine idle.
+    - Forgetting that the effective batch in data-parallel training is workers x local batch, so the
+      learning rate must scale with the total.
+    - No warmup at large batch sizes, so the linearly-scaled rate blows up on random initial weights.
+    - Batch sizes under ~8 with batch normalisation, where the batch statistics stop being meaningful.
+    - Not shuffling between epochs, which is catastrophic if the data is ordered by label.
+    - Chasing gradient precision. MEASURED: each halving of noise costs 4x the compute and bought
+      nothing here.
+    - Reducing the batch size to fix instability, when lowering the learning rate is almost always the
+      actual fix.
+
+THE TAKEAWAY. Batch size does exactly one thing to the gradient - it sets the noise, as 1/sqrt(B),
+confirmed to within 1% - and that turns out not to be the interesting part: at a fixed budget of examples,
+every batch from 8 to 8,192 reached the same loss and the same accuracy. What batch size really controls
+is THROUGHPUT, measured at 220x from batch 1 to 8,192, because fixed per-step overhead means 32 times the
+arithmetic can cost only 1.21 times the wall clock. So take the largest batch that fits and trains
+stably, and then scale the learning rate LINEARLY with it - the measured optimum moved from 0.02 to 1.00
+across the range, and leaving it alone is the single most common way large-batch training gets
+mistakenly written off.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
