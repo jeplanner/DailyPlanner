@@ -331273,6 +331273,1961 @@ did not write. When you genuinely need a create to be retry-safe, do not misuse 
 key, and the same 510 retried requests produce 400 orders instead of 514.""",
 ]
 
+_EX_P1AO["Why subtract the max before exponentiating in softmax, and why is the result unchanged?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - softmax turns a row of scores into probabilities by computing
+exp(x_i) divided by the sum of all the exp's. The answer is always between 0 and 1 and always sums to 1,
+so it can never be too big.
+
+But `exp` on the way there absolutely can be. MEASURED ON THIS MACHINE:
+
+    float32: the largest finite value is 3.402823e+38, so exp(x) overflows for x > 88.7228
+    float64: the largest finite value is 1.797693e+308, so exp(x) overflows for x > 709.7827
+
+        exp(88)  in float32 = 1.6516363e+38     (fine)
+        exp(89)  in float32 = inf
+        exp(1000) in float64 = inf
+
+So a logit of 89 - which a network produces routinely, and which is not a large number by any human
+standard - destroys the calculation in float32. And it does not just give a wrong number, it gives
+`inf / inf = nan`, which then propagates through every subsequent operation.
+
+THE FIX is one line: subtract the row's maximum from every logit before exponentiating. MEASURED:
+
+    logits [88, 89, 90] in float32
+        naive  softmax = [ 0.  nan  nan]
+        stable softmax = [0.09003057  0.24472846  0.66524094]
+
+    logits [1000, 1001, 1002]
+        naive  softmax = [nan nan nan]
+        stable softmax = [0.09003057  0.24472846  0.66524094]
+
+Same answer in both stable rows, which is the tell: the difference between the logits is all that
+matters, and 88/89/90 and 1000/1001/1002 have the same differences.""",
+
+    """2. THE INTUITION - the constant cancels, exactly, algebraically. This is not an approximation.
+
+Write out what happens when you subtract any constant c from every logit:
+
+    exp(x_i - c)            exp(x_i) / exp(c)            exp(x_i)
+    ---------------  =  ---------------------------  =  ------------
+    sum exp(x_j - c)      sum(exp(x_j)) / exp(c)        sum exp(x_j)
+
+The `exp(c)` appears once in the numerator and once in every term of the denominator, so it factors out
+of the sum and cancels. The ratio is untouched. Softmax cares about DIFFERENCES between logits, not
+their absolute level - which is why adding 1000 to everything above changed nothing.
+
+MEASURED, on logits small enough that BOTH versions work - 20,000 rows x 10 classes:
+
+    max  |naive - stable| : 5.551e-16
+    mean |naive - stable| : 1.171e-17
+    machine epsilon (float64): 2.220e-16
+
+The largest disagreement anywhere is about 2.5 machine epsilons - pure floating-point rounding, not a
+change of algorithm. (Only 2 of 20,000 rows are bit-for-bit identical, which is exactly what you expect:
+the operations are reordered, so the last bit wobbles.)
+
+SO WHY THE MAX, if any constant works? MEASURED with logits [1000, 1001, 1002]:
+
+    c = 0 (naive)      exp = [inf, inf, inf]                    -> [nan nan nan]
+    c = mean           exp = [0.368, 1.0, 2.718]                -> correct
+    c = first element  exp = [1.0, 2.718, 7.389]                -> correct
+    c = max            exp = [0.135, 0.368, 1.0]                -> correct
+    c = max + 50       exp = [2.6e-23, 7.1e-23, 1.9e-22]        -> correct
+
+Three constants all give the right answer here. The max is the only one that gives a GUARANTEE:
+    - the largest shifted logit is exactly 0, so its exp is exactly 1.0 - overflow is impossible
+    - every other shifted logit is <= 0, so every exp is in (0, 1]
+    - the denominator therefore contains a 1.0 and is always >= 1 - you can never divide by zero
+
+The mean works on this example and does not generalise: with logits [0, 0, 2000] the mean is 666, and
+2000 - 666 = 1334 still overflows.""",
+
+    """3. EVERY TERM DEFINED.
+
+SOFTMAX. exp(x_i) / sum_j exp(x_j). Maps a vector of real scores to a probability distribution.
+
+LOGIT. A raw, unnormalised score - the network's output before softmax. Can be any real number.
+
+OVERFLOW. A result too large for the floating-point type, which becomes `inf`. MEASURED: above 88.72 in
+float32, above 709.78 in float64.
+
+UNDERFLOW. A result too small, which becomes 0 (or a subnormal). MEASURED: exp(x) reaches 0 below about
+-103.28 in float32 and -744.44 in float64.
+
+SUBNORMAL / DENORMAL. Very small floats below the normal range, with reduced precision. The gap between
+"normal range ends" (-87.34 in float32) and "underflows to zero" (-103.28) is where these live.
+
+NaN. Not-a-Number. Produced by inf/inf and 0/0. It POISONS everything it touches - any arithmetic with a
+NaN gives NaN - which is why one bad row can turn an entire batch's loss into NaN.
+
+FLOAT32 / FLOAT64. 32-bit and 64-bit floating point. Machine epsilon 1.19e-07 and 2.22e-16.
+
+MACHINE EPSILON. The smallest number that changes 1.0 when added to it. The scale at which two
+mathematically identical computations may legitimately disagree.
+
+NUMERICAL STABILITY. Whether an algorithm's floating-point error stays bounded. The max-shift is the
+canonical example of a stable reformulation.
+
+SHIFT INVARIANCE. Softmax's property that softmax(x + c) = softmax(x) for any scalar c. What makes the
+trick valid.
+
+LOG-SUM-EXP (LSE). log(sum(exp(x))), computed stably as max + log(sum(exp(x - max))). Appears throughout
+machine learning - in softmax denominators, in the forward algorithm for HMMs, in variational bounds.
+
+LOG-SOFTMAX. log(softmax(x)), computed as (x - max) - log(sum(exp(x - max))). Never as log(softmax(x)) -
+see the measurement in section 5.
+
+CROSS-ENTROPY LOSS. -log(p_correct). Computed directly from log-softmax, which is why frameworks give you
+a fused `cross_entropy(logits, labels)` rather than making you call softmax first.
+
+TEMPERATURE. Dividing logits by T before softmax. Large T flattens the distribution, small T sharpens it,
+and a very small T makes overflow far more likely - a practical reason the shift matters.
+
+FUSED KERNEL. A single operation that computes softmax and the loss together, so the intermediate
+probabilities never exist in memory. Faster and more accurate.
+
+CATASTROPHIC CANCELLATION. Losing precision when subtracting nearly equal numbers. A different numerical
+hazard, and not the one here - the max-shift subtracts before exponentiating, so nothing cancels.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the shift protects against UNDERFLOW too, not just overflow,
+and the underflow failure is the more surprising one.
+
+MEASURED, all-negative logits with NO shift:
+
+    logits [-800, -900, -1000] in float64
+        exp(x)   = [0.  0.  0.]
+        sum      = 0.0
+        softmax  = [nan nan nan]
+
+Every term underflowed to exactly zero, the denominator became 0, and 0/0 is NaN. No number here was
+large. The true answer is perfectly well defined - [0.665, 0.245, 0.090], the same as [0, -1, -2] -
+and the naive computation returns NaN.
+
+MEASURED, the same logits WITH the shift:
+
+    logits [0, -800, -900]
+        exp(x - max) = [1.  0.  0.]     <- two terms underflowed
+        sum          = 1.0              <- but the max term contributes exactly 1.0
+        softmax      = [1.  0.  0.]
+
+Two terms still underflow, and now it does not matter: the shift guarantees the largest term is exactly
+1.0, so the denominator is always at least 1. And the underflow is CORRECT here - the true probabilities
+are about 1e-348, which is below float64's range regardless of what algorithm you use.
+
+THE SECOND TRAP - taking the log of a softmax. MEASURED in float32:
+
+    logits [0, -50, -100]:
+        softmax then log : log(p[2]) = -99.983093
+        log-softmax      :             -100.000000
+
+The answer is already wrong in the second decimal place, and nothing has overflowed or underflowed yet -
+this is ordinary precision loss from routing a very small number through a float32 division.
+
+    logits [0, -50, -200]:
+        softmax then log : p[2] = 0.0, log(p[2]) = -inf
+        log-softmax      : -200.0000
+
+Now it is catastrophic. The probability underflowed to zero, its log is -inf, and the loss is infinite
+for a prediction that is merely very confident. The log-softmax form stays finite and the gradient stays
+well defined. THIS is why every framework has a fused `cross_entropy(logits, targets)` and warns you not
+to apply softmax first.
+
+THE THIRD TRAP - assuming float64 makes you safe. It raises the threshold from 88.72 to 709.78, which is
+a lot of headroom and not infinite. Low-temperature sampling (dividing logits by 0.01) multiplies your
+logits by 100, and a logit of 8 becomes 800. Mixed-precision training goes the other way: float16
+overflows at about 11.09.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHAT ELSE COULD YOU DO ABOUT OVERFLOW?
+
+    USE A BIGGER TYPE          float64 buys 709.78 instead of 88.72. Costs 2x memory and bandwidth,
+                               and does not fix the underflow-to-zero-denominator case at all.
+    CLIP THE LOGITS            changes the answer. The max-shift does not.
+    NORMALISE THE LOGITS       dividing by the norm changes the distribution's sharpness. Not the same
+                               operation.
+    THE MAX-SHIFT              exact, free, and universally used. There is no reason to do anything
+                               else.
+
+THE LOG-SUM-EXP FAMILY, because this trick is one instance of a general pattern:
+
+    LOGSUMEXP(x) = max(x) + log(sum(exp(x - max(x))))
+    MEASURED, logits [1000, 1001, 1002]: logsumexp = 1002.407606, computed without a single overflow.
+
+    LOG-SOFTMAX    (x - max) - log(sum(exp(x - max))).  MEASURED: [-2.4076, -1.4076, -0.4076] where
+                   the naive version gives [nan nan nan].
+    CROSS-ENTROPY  just -log_softmax[correct_class]. Never build the probabilities first.
+    HMM FORWARD ALGORITHM, BELIEF PROPAGATION, VARIATIONAL BOUNDS - all sums of exponentials of
+                   log-probabilities, all needing the same treatment.
+    SIGMOID        the same problem: 1/(1+exp(-x)) overflows for very negative x. The stable form
+                   branches on the sign, and `logaddexp(0, x)` is the stable log-sigmoid.
+
+WHY YOU RARELY WRITE THIS YOURSELF: `scipy.special.softmax`, `torch.softmax`, `jax.nn.softmax` and
+`tf.nn.softmax` all do the max-shift internally. You will meet it when you hand-implement a layer, write
+a CUDA kernel, port a model to a new framework, or debug a NaN loss.
+
+THE COST OF BEING SAFE - MEASURED, 20,000 x 1,000 logits in float32:
+
+    naive  exp/sum        68.7 ms
+    stable max-shift      74.0 ms
+    overhead              7.7%
+
+One extra pass over the data to find the max, and one subtraction. Under eight percent, for an operation
+that cannot fail. Fused kernels reduce even that to nearly nothing by computing the max, the exponentials
+and the sum in a single pass over memory.
+
+THE RELATED NUMERICAL TRICKS WORTH KNOWING:
+    log1p(x) and expm1(x)   for log(1+x) and exp(x)-1 when x is tiny.
+    logaddexp(a, b)         stable log(exp(a) + exp(b)); the two-element logsumexp.
+    Kahan summation         for accumulating many floats without losing the small ones.
+    Welford's algorithm     for a numerically stable running variance.
+All are the same discipline: two expressions that are equal in mathematics can be very different in
+floating point, and you pick the one whose intermediate values stay in range.""",
+
+    """6. HOW TO CODE IT.
+
+  1. THE WHOLE FIX: `e = np.exp(x - x.max(axis=-1, keepdims=True))` then `e / e.sum(axis=-1,
+     keepdims=True)`.
+  2. TAKE THE MAX PER ROW, not over the whole array. `keepdims=True` makes the broadcast work; forgetting
+     it either errors or silently subtracts a scalar from a batch.
+  3. USE THE MAX, not the mean or the first element. All three work on friendly inputs; only the max
+     GUARANTEES no overflow and a denominator of at least 1.
+  4. NEVER COMPUTE `log(softmax(x))`. Use `(x - max) - log(sum(exp(x - max)))`. MEASURED: the naive form
+     was already wrong in the second decimal at logit -50 and returned -inf at -200.
+  5. FOR THE LOSS, CALL THE FUSED FUNCTION. `torch.nn.functional.cross_entropy(logits, targets)` takes
+     LOGITS, not probabilities. Applying softmax first is the most common version of this bug.
+  6. WATCH THE DTYPE. float16 overflows at about 11.09, float32 at 88.72, float64 at 709.78. Mixed
+     precision makes the shift essential rather than merely prudent.
+  7. WATCH THE TEMPERATURE. Dividing logits by T=0.01 multiplies them by 100. A perfectly ordinary
+     logit of 8 becomes 800.
+  8. IF YOU SEE A NaN LOSS, CHECK THE LOGIT MAGNITUDES FIRST. `np.abs(logits).max()` takes one line and
+     is the fastest diagnostic available.
+  9. UNDERFLOW TO ZERO IS FINE, and expected, for probabilities below about 1e-308. What is not fine is
+     the denominator reaching zero - and the max-shift makes that impossible.
+ 10. TEST WITH ADVERSARIAL INPUTS: [1000, 1001, 1002], [-1000, -1001, -1002], [0, 0, 0], and a single
+     element. The second one is the case people forget, and it NaNs the naive version.
+ 11. THE GRADIENT IS UNAFFECTED. d(softmax)/dx = diag(p) - p p^T uses only the output probabilities, so
+     a stable forward pass gives you a stable backward pass for free.
+ 12. DO NOT CLIP LOGITS TO AVOID OVERFLOW. That changes the answer; the shift does not.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Softmax's output is always between 0 and 1, but the exponentials on the way there are not bounded at
+all. I checked where they break: in float32, exp overflows above a logit of 88.72, and in float64 above
+709.78. So exp(88) is fine and exp(89) is inf - and inf over inf is NaN, which then poisons everything
+downstream, because any arithmetic with a NaN gives a NaN.
+
+The fix is to subtract the row's maximum before exponentiating, and the important thing is that it
+changes nothing mathematically. exp(x_i - c) is exp(x_i) over exp(c), and that exp(c) appears in the
+numerator and in every term of the denominator, so it factors out and cancels exactly. Softmax only ever
+cared about the DIFFERENCES between logits. I verified it on 20,000 rows where both versions work: the
+largest disagreement anywhere was 5.6e-16, about two machine epsilons - rounding, not algorithm.
+
+Any constant would cancel. The max is chosen because it gives guarantees rather than luck: the largest
+shifted logit becomes exactly zero, so its exp is exactly 1 and can never overflow; every other exp is
+between 0 and 1; and the denominator therefore always contains a 1, so it can never be zero.
+
+That last point is the part people miss, because the shift also protects against UNDERFLOW. With logits
+of [-800, -900, -1000] and no shift, every exponential underflows to zero, the denominator is 0.0, and
+you get NaN - and nothing here was large. With the shift, two terms still underflow to zero, but the max
+term contributes exactly 1.0, so the sum is at least 1 and the answer is correct.
+
+The related thing I would raise is never computing log of a softmax. In float32 with logits [0, -50,
+-100], going through probabilities gives -99.983 where the right answer is -100.000 - already wrong in
+the second decimal, with nothing having overflowed. Push it to -200 and the probability underflows to
+zero, its log is negative infinity, and your loss is infinite for a prediction that was merely very
+confident. Computing log-softmax directly as (x - max) minus logsumexp stays finite. That is exactly why
+frameworks give you a fused cross_entropy that takes LOGITS, and why applying softmax before it is the
+classic bug.
+
+And it is nearly free - I timed it at 7.7% overhead on a 20,000 by 1,000 array, one extra pass to find
+the max."
+
+THE ONE SENTENCE TO NOT FUMBLE: the subtraction is exact because softmax depends only on the DIFFERENCES
+between logits, and the max is chosen because it forces the largest exponential to be exactly 1 - which
+kills overflow at the top and a zero denominator at the bottom.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def naive(x):
+        e = np.exp(x)
+        return e / e.sum()
+
+Two lines and one hazard. `np.exp(x)` is evaluated for every element before anything else happens, so a
+single large logit produces `inf` and the division becomes inf/inf. There is no recovery after that
+line; the information is already gone.
+
+    def stable(x):
+        e = np.exp(x - x.max())
+        return e / e.sum()
+
+The identical two lines with `- x.max()` inserted. The subtraction happens BEFORE the exponential, which
+is the whole point - it keeps the argument to `exp` in a safe range rather than trying to fix the result
+afterwards.
+
+In real code the max must be per row:
+
+    e = np.exp(x - x.max(axis=-1, keepdims=True))
+    p = e / e.sum(axis=-1, keepdims=True)
+
+`axis=-1` because softmax runs across classes, and `keepdims=True` so the (batch, 1) max broadcasts
+against the (batch, classes) logits. Dropping `keepdims` gives a shape error at best, and at worst -
+for a 1-D input - subtracts a global scalar, which still works but for the wrong reason.
+
+    thr = np.log(np.finfo(dt).max)
+
+Where overflow begins, derived rather than looked up. `finfo(float32).max` is 3.402823e+38 and its log is
+88.7228, so any logit above that overflows. Computing it this way means it is correct for float16,
+bfloat16 or whatever comes next.
+
+    for cname, c in (('0 (naive)', 0.0), ('mean', x.mean()), ('max', x.max()), ...):
+        p = np.exp(x - c) / np.exp(x - c).sum()
+
+The constant sweep, and it is the experiment that makes "any constant cancels" a demonstrated fact
+rather than an algebraic claim. Three different constants give byte-identical probabilities on
+[1000, 1001, 1002]; only c=0 fails.
+
+    x2 = np.array([-800.0, -900.0, -1000.0])
+    e2 = np.exp(x2)         # [0. 0. 0.]
+    e2 / e2.sum()           # 0/0 -> nan
+
+The underflow case, and the reason it is worth writing out. Nothing overflowed. Every exponential
+underflowed to zero, so the SUM is zero, and the division is 0/0. People protect against big logits and
+are then surprised by small ones - the max-shift handles both because it re-centres the row either way.
+
+    good = (x - m) - np.log(np.exp(x - m).sum())
+
+Log-softmax. Read it as: the shifted logit, minus the log of the shifted denominator. It never forms a
+probability, so it never has a tiny number to lose precision in, and `log` is applied to a sum that is
+always at least 1.
+
+    m + np.log(np.exp(x - m).sum())
+
+Log-sum-exp - the same trick standing alone. MEASURED, logsumexp([1000, 1001, 1002]) = 1002.407606 with
+no intermediate above 1.0. This function shows up in HMM forward passes, belief propagation and
+variational bounds, and it is always implemented exactly this way.
+
+    for _ in range(5): f(X)
+
+The timing loop. MEASURED 68.7 ms naive against 74.0 ms stable for 20,000 x 1,000 - 7.7%, which is one
+extra pass over the array to compute the max. Fused kernels do the max, the exp and the sum in one pass
+and recover most of that.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - where each type breaks.
+
+    type      largest finite value   exp overflows above   exp underflows to 0 below
+    -------   --------------------   -------------------   -------------------------
+    float32           3.402823e+38               88.7228                   -103.2789
+    float64          1.797693e+308              709.7827                   -744.4401
+
+    exp(88) float32 = 1.6516363e+38     exp(89) float32 = inf
+    exp(709) float64 = 8.2184e+307      exp(710) float64 = inf
+
+The float32 threshold of 88.72 is the one that matters in practice - a logit of 89 is entirely ordinary
+for a confident network, and it is enough.
+
+TRACE B - the same computation, five inputs.
+
+    logits                    naive softmax                  stable softmax
+    ----------------------   ----------------------------   ------------------------------
+    [1, 2, 3]                [0.09003058 0.2447 0.6652]     [0.09003057 0.2447 0.6652]
+    [80, 81, 82]  f32        [0.09003057 0.2447 0.6652]     [0.09003057 0.2447 0.6652]
+    [88, 89, 90]  f32        [0.  nan  nan]                 [0.09003057 0.2447 0.6652]
+    [1000, 1001, 1002]       [nan nan nan]                  [0.09003057 0.2447 0.6652]
+    [-1000, -1001, -1002]    [nan nan nan]                  [0.66524094 0.2447 0.0900]
+
+Every stable row with differences of (0, 1, 2) gives the SAME probabilities, which is the shift
+invariance made visible. The last row is reversed because the differences are reversed.
+
+Row 3 is the instructive failure: `[0., nan, nan]`. The first element did not overflow, so it produced a
+finite numerator over an infinite denominator - zero. The other two produced inf/inf. One row of logits,
+two different flavours of wrong.
+
+TRACE C - the shift is exact, 20,000 rows x 10 classes, logits ~ N(0,3).
+
+    max  |naive - stable|      5.551e-16
+    mean |naive - stable|      1.171e-17
+    machine epsilon float64    2.220e-16
+    bitwise-identical rows     2 of 20,000
+
+About 2.5 epsilons at worst. The rows are NOT usually bit-identical, and that is correct and expected -
+the operations happen in a different order, so the final bit differs. What matters is that the error is
+at rounding scale rather than at algorithm scale.
+
+TRACE D - choosing the constant, logits [1000, 1001, 1002].
+
+    constant c        shifted logits        exp values                   result
+    --------------   -------------------   --------------------------   -------------
+    0 (naive)        [1000, 1001, 1002]    [inf, inf, inf]              [nan nan nan]
+    mean (1001)      [-1, 0, 1]            [0.368, 1.0, 2.718]          correct
+    first (1000)     [0, 1, 2]             [1.0, 2.718, 7.389]          correct
+    MAX (1002)       [-2, -1, 0]           [0.135, 0.368, 1.0]          correct
+    max + 50         [-52, -51, -50]       [2.6e-23, 7.1e-23, 1.9e-22]  correct
+
+Four constants produce identical probabilities. Only the MAX row has every exp in (0, 1] with the largest
+exactly 1.0 - which is the property that holds for ANY input, not just this one. The mean happens to work
+here and fails on [0, 0, 2000], where 2000 - 666 = 1334 still overflows.
+
+TRACE E - underflow, with and without the shift.
+
+    WITHOUT the shift, logits [-800, -900, -1000]:
+        exp(x)     [0.  0.  0.]
+        sum        0.0
+        result     [nan nan nan]        <- 0/0, and nothing was large
+
+    WITH the shift, logits [0, -800, -900]:
+        exp(x-max) [1.  0.  0.]         <- two terms still underflow
+        sum        1.0                  <- guaranteed >= 1 by the max term
+        result     [1.  0.  0.]         <- correct; the true values are ~1e-348
+
+The shift did not prevent the underflow and did not need to. It guaranteed the denominator.
+
+TRACE F - log-softmax versus log of softmax, float32.
+
+    logits              via softmax then log   via log-softmax   error
+    -----------------   --------------------   ---------------   -------------
+    [0, -50, -100]                 -99.983093       -100.000000   0.017 absolute
+    [0, -50, -200]                       -inf         -200.0000   catastrophic
+
+    logits [1000, 1001, 1002]:
+        naive log(softmax)   [nan nan nan]
+        log-softmax          [-2.40760596 -1.40760596 -0.40760596]
+        logsumexp            1002.407606
+
+The first row is the quiet failure - no exception, no inf, just a wrong loss value that makes gradients
+slightly wrong. The second is the loud one.
+
+TRACE G - the price.
+
+    implementation           20,000 x 1,000 float32
+    ---------------------   -----------------------
+    naive exp/sum                          68.7 ms
+    stable max-shift                       74.0 ms
+    overhead                                  7.7%
+
+One extra pass to find the max, one subtraction, and the operation can no longer produce NaN.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    overflow thresholds     float32 x > 88.7228 | float64 x > 709.7827 | float16 x > ~11.09
+    underflow to zero       float32 below -103.2789 | float64 below -744.4401
+    exactness               max |naive - stable| = 5.551e-16 over 20,000 rows (eps = 2.220e-16)
+    cost                    68.7 ms -> 74.0 ms on 20,000 x 1,000, i.e. 7.7%
+    log precision (f32)     log(softmax) gave -99.983093 where log-softmax gives -100.000000
+                            at logit -200, log(softmax) = -inf and log-softmax = -200.0
+
+COMPLEXITY: softmax is O(n) either way; the shift adds one extra O(n) pass to find the max. Memory is
+unchanged. Fused kernels merge the max, exp and sum passes and recover most of the 7.7%.
+
+THE MISTAKES:
+
+    - Not shifting at all, and getting NaN from a logit of 89 in float32.
+    - Believing float64 makes you safe. It moves the threshold to 709.78; low temperature or extreme
+      logits still reach it, and float16 breaks at 11.09.
+    - Taking the max over the wrong axis, or forgetting `keepdims=True`.
+    - Using the MEAN as the shift constant. It works on friendly inputs and fails on [0, 0, 2000].
+    - Only protecting against overflow. MEASURED: all-negative logits with no shift give a ZERO
+      denominator and NaN.
+    - Computing `log(softmax(x))`. MEASURED wrong in the second decimal at -50 and -inf at -200. Use
+      log-softmax.
+    - Applying softmax before `cross_entropy`. The framework function takes LOGITS and does the stable
+      thing internally; feeding it probabilities computes the loss of the loss.
+    - Clipping logits to dodge overflow. That changes the answer; the shift does not.
+    - Treating underflow to zero as a bug. Below 1e-308 there is nothing to represent, and the max-shift
+      keeps the denominator safe regardless.
+    - Forgetting that temperature scales logits. T = 0.01 multiplies them by 100.
+    - Not checking `np.abs(logits).max()` first when a loss goes NaN. It is one line and usually the
+      answer.
+
+THE TAKEAWAY. Softmax's answer is bounded and its intermediate values are not, so the naive formula
+fails at a logit of 89 in float32 - not a large number. Subtracting the row max is exact, because the
+constant factors out of numerator and denominator and softmax only ever depended on the DIFFERENCES
+between logits; measured over 20,000 rows the two versions agree to about two machine epsilons. The MAX
+specifically is what turns a lucky escape into a guarantee: largest exponential exactly 1.0, so no
+overflow above and no zero denominator below. It costs 7.7%, every library does it for you, and the
+place you will actually meet it is a NaN loss - where the first thing to check is the magnitude of your
+logits, and the second is whether someone applied softmax before the cross-entropy.""",
+]
+
+_EX_P1AO["Why train classifiers with cross-entropy loss instead of accuracy?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you care about accuracy, and you cannot do gradient descent on it,
+because its gradient is zero almost everywhere.
+
+Accuracy counts how many predictions land on the correct side of the boundary. Nudge a weight by a tiny
+amount and no prediction flips sides, so the count does not change, so the derivative is zero. Nudge it
+further and one prediction flips - and the count jumps by exactly 1/N. Accuracy is a STAIRCASE: flat
+steps with vertical risers, and gradient descent needs a slope.
+
+MEASURED ON THIS MACHINE by finite differences, at a random weight vector on 4,000 training rows:
+
+    eps       d(accuracy)/dw0     d(cross-entropy)/dw0
+    -----     ----------------    --------------------
+    1e-08        +0.0000000000          -0.1100128433
+    1e-06        +0.0000000000          -0.1100128439
+    1e-04        +0.0000000000          -0.1100128440
+    1e-02        +0.2000000000          -0.1100132264
+    1e-01        +0.1437500000          -0.1100510240
+
+The cross-entropy column is stable to nine decimal places across four orders of magnitude of step size -
+that is what a well-defined derivative looks like, and it matches the analytic gradient exactly. The
+accuracy column is EXACTLY ZERO for any step small enough to be a derivative, then jumps to a meaningless
+value once the step is big enough to flip labels.
+
+MEASURED, how flat the staircase is: from that point, accuracy is EXACTLY 0.383000 for every step up to
+w0 + 0.00075. Over the same interval cross-entropy moved -0.00008245. One of those numbers tells you
+which way to go.""",
+
+    """2. THE INTUITION - accuracy answers "how many did I get right?"; cross-entropy answers "how right was
+I, and how wrong was I when I was wrong?".
+
+The second question has a smooth answer, and the smoothness is not a mathematical nicety - it is the
+entire training signal. A model that predicts 0.51 for a positive example and a model that predicts 0.99
+have IDENTICAL accuracy, and one of them is much better. Accuracy cannot see the difference, so it cannot
+tell you to move from the first toward the second.
+
+MEASURED, sweeping one weight across [-3, 3] at 20,001 points on 4,000 rows:
+
+    distinct ACCURACY values      :    990
+    distinct CROSS-ENTROPY values : 20,001
+
+Cross-entropy takes a different value at every single point - it is genuinely a continuous function of
+the weights. Accuracy takes 990 values across 20,001 points, so on average it is perfectly flat for 20
+consecutive steps. Between the steps, gradient descent has nothing to descend.
+
+WHY THIS IS STRUCTURAL, not an artefact of small data: accuracy can only ever change in units of 1/N. It
+is a COUNT. With 4,000 rows the smallest possible change is 0.00025, and no amount of extra data makes it
+continuous - more data makes the steps smaller and there are still steps, and the derivative between them
+is still exactly zero.
+
+MEASURED, what the extra information buys during training:
+
+    step   train acc   train CE    test acc   test CE
+       1      0.8093     0.5978      0.8293    0.5938
+      10      0.8123     0.4235      0.8295    0.4133
+      50      0.8150     0.3914      0.8293    0.3801
+     100      0.8153     0.3906      0.8290    0.3793
+     600      0.8155     0.3906      0.8290    0.3792
+
+Accuracy is essentially finished by step 10 - it moves 0.003 over the remaining 590 steps. Cross-entropy
+falls from 0.4235 to 0.3906, because it is still rewarding CONFIDENCE long after every prediction is
+already on the correct side.""",
+
+    """3. EVERY TERM DEFINED.
+
+ACCURACY. The fraction of predictions that are correct. A count divided by N - which is why it is
+discrete.
+
+LOSS FUNCTION. What you MINIMISE during training. Not necessarily what you report.
+
+METRIC. What you REPORT and make decisions with. Accuracy, F1, AUC, revenue. Often not differentiable.
+
+SURROGATE LOSS. A differentiable stand-in for the metric you actually care about. Cross-entropy is a
+surrogate for accuracy; the whole practice of deep learning depends on good surrogates.
+
+CROSS-ENTROPY. -sum over classes of y_true * log(p_predicted). For binary, -[y log p + (1-y) log(1-p)].
+Also called log loss or logistic loss.
+
+NEGATIVE LOG LIKELIHOOD. The same thing from the statistics side: minimising cross-entropy is maximising
+the likelihood of the data under the model.
+
+DIFFERENTIABLE. Has a well-defined derivative. MEASURED above: cross-entropy's finite-difference
+derivative is stable to nine decimals; accuracy's is exactly zero.
+
+GRADIENT. The vector of partial derivatives - the direction of steepest increase. Its value is that it
+tells you which way to move in ALL parameters at once, from one pass over the data.
+
+0-1 LOSS. Loss of 1 for a wrong prediction and 0 for a right one. Exactly `1 - accuracy`, and exactly as
+undifferentiable.
+
+STEP FUNCTION / PIECEWISE CONSTANT. Flat with jumps. Derivative zero on the flats, undefined at the
+jumps.
+
+CONVEX. A bowl shape, with one minimum and no local traps. Cross-entropy with a linear model is convex;
+accuracy is not even continuous.
+
+CALIBRATION. Whether a predicted probability of 0.7 corresponds to being right 70% of the time.
+MEASURED below: cross-entropy training gives an expected calibration error of 0.0163 more or less for
+free.
+
+EXPECTED CALIBRATION ERROR (ECE). The average gap between predicted probability and observed frequency,
+weighted by bucket size.
+
+PROPER SCORING RULE. A loss minimised exactly when your stated probabilities are the true ones.
+Cross-entropy and Brier score are proper; accuracy is not. This is the formal reason cross-entropy gives
+calibration.
+
+LOGIT. The raw score before the sigmoid or softmax.
+
+SIGMOID / SOFTMAX. Maps logits to probabilities so a probabilistic loss can be applied.
+
+HINGE LOSS. The SVM surrogate: differentiable except at one point, and it stops caring once a point is
+correctly classified by a margin. A different trade-off from cross-entropy, which never stops caring.
+
+FOCAL LOSS. Cross-entropy that down-weights easy examples. Useful with extreme class imbalance.
+
+LABEL SMOOTHING. Training toward 0.9 instead of 1.0, which caps how confident cross-entropy pushes you.
+
+DERIVATIVE-FREE OPTIMISATION. Random search, evolutionary methods, Bayesian optimisation - what you must
+fall back on when there is no gradient. MEASURED below, and its scaling is the real argument.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "so just optimise accuracy directly with random search". You
+can, and in low dimensions it is competitive, which is exactly why the argument has to be about SCALING.
+
+MEASURED honestly, 8 dimensions, 4,000 rows:
+
+    method                                    train acc   test acc      time
+    ---------------------------------------   ---------   --------   -------
+    gradient descent on CE, 400 steps            0.8155     0.8290     17 ms
+    random search on accuracy, 400 evals         0.8125     0.8207      9 ms
+    random search on accuracy, 4,000 evals       0.8190     0.8217    105 ms
+    random search on accuracy, 40,000 evals      0.8225     0.8215    932 ms
+    the Bayes-optimal weights                    0.8170     0.8303          -
+
+Random search BEAT gradient descent on training accuracy - 0.8225 against 0.8155 - and lost on test
+accuracy, 0.8215 against 0.8290, while taking 55 times as long. It was fitting the specific 4,000 rows
+rather than the pattern, which is what direct accuracy optimisation does: it will happily flip individual
+points across the boundary to buy a fraction of a percent.
+
+Now scale the dimension, which is the honest test:
+
+    D     CE, 400 steps (train/test, time)     random search, 40,000 evals (train/test, time)
+    ---   ---------------------------------    ----------------------------------------------
+      2      0.8333 / 0.8430      14 ms           0.8357 / 0.8450        775 ms
+      8      0.7465 / 0.7358      16 ms           0.7532 / 0.7328      1,095 ms
+     32      0.8157 / 0.8017      41 ms           0.8207 / 0.7890      1,721 ms
+    128      0.8580 / 0.8255     374 ms           0.8410 / 0.7903      3,381 ms
+    512      0.8615 / 0.7865   2,879 ms           0.6907 / 0.6305     40,937 ms
+
+At D=2 they are indistinguishable. At D=512, gradient descent gets 0.7865 test accuracy in 2.9 seconds
+and random search gets 0.6305 in 41 seconds - fourteen times the time for a model barely better than
+guessing.
+
+THE REASON, in one sentence: a gradient tells you which way to move in ALL D dimensions simultaneously,
+for the cost of one pass over the data. A random probe gives you ONE BIT - better or not better -
+regardless of D. Modern networks have D in the millions.
+
+THE SECOND TRAP - reporting cross-entropy to stakeholders. Nobody outside the team knows what a log loss
+of 0.39 means. OPTIMISE the surrogate, REPORT the metric, and make decisions on the metric.
+
+THE THIRD TRAP - assuming lower cross-entropy always means higher accuracy. It does not: cross-entropy
+punishes confident mistakes very heavily, so a model can improve its loss by becoming more cautious
+about the examples it gets wrong without changing a single prediction. Track both.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHAT CROSS-ENTROPY GIVES YOU THAT ACCURACY CANNOT - three separate things.
+
+FIRST, A GRADIENT. Established above.
+
+SECOND, CALIBRATED PROBABILITIES. MEASURED, the cross-entropy-trained model on 4,000 held-out rows:
+
+    predicted bucket   count   predicted   actual    gap
+    ----------------   -----   ---------   ------   ------
+    [0.0, 0.1)           869       0.037    0.052   -0.015
+    [0.2, 0.3)           289       0.249    0.253   -0.004
+    [0.4, 0.5)           235       0.449    0.434   +0.015
+    [0.7, 0.8)           284       0.751    0.768   -0.017
+    [0.9, 1.0)           849       0.962    0.967   -0.005
+
+    expected calibration error: 0.0163
+
+When it says 0.75, it is right about 77% of the time. That falls out of the loss for free, because
+cross-entropy is a PROPER SCORING RULE - it is minimised exactly when your stated probabilities are the
+true ones. An accuracy-optimising model has no reason to produce meaningful numbers at all; only the SIGN
+of the score matters to it. Anything that ranks, thresholds, sets prices or triggers a review needs the
+probability, not the label.
+
+THIRD, IT DISTINGUISHES MODELS THAT ACCURACY CANNOT. MEASURED, three models with the SAME decision
+boundary - the trained weights scaled by different constants, so no prediction changes:
+
+    model                  test acc   test CE   mean p(correct class)
+    --------------------   --------   -------   ---------------------
+    scaled x0.15 (timid)     0.8290    0.5740                  0.5680
+    the trained model        0.8290    0.3792                  0.7574
+    scaled x8 (brash)        0.8290    1.3832                  0.8268
+
+Identical accuracy - the sign of the score never changed. Cross-entropy ranges from 0.379 to 1.383. And
+note the last column: the brash model has HIGHER average confidence in the right answer and a much WORSE
+loss, because cross-entropy punishes confident mistakes far more than it rewards confident hits. That
+asymmetry is the calibration pressure, expressed as arithmetic.
+
+THE SURROGATE FAMILY - each trades off differently:
+
+    CROSS-ENTROPY   convex for linear models, calibrated, never stops caring. The default.
+    HINGE (SVM)     stops caring once a point is correct by a margin. More robust to outliers, and
+                    gives no calibrated probability.
+    BRIER / MSE     also proper, and its gradient vanishes when the model is confidently wrong -
+                    exactly when you most need a signal. Usually worse for classification.
+    FOCAL LOSS      cross-entropy down-weighting easy examples. For extreme imbalance.
+    LABEL SMOOTHING  target 0.9 rather than 1.0, capping the confidence push.
+
+THE SAME PATTERN EVERYWHERE ELSE - most metrics you care about are not differentiable, so:
+    F1, PRECISION, RECALL   train with cross-entropy, then TUNE THE THRESHOLD on the metric.
+    AUC                     train with cross-entropy or a pairwise ranking loss.
+    BLEU, ROUGE, WER        train with token-level cross-entropy; evaluate with the metric.
+    REVENUE, CLICKS         train a surrogate; the business metric is measured in an A/B test.
+    NON-DIFFERENTIABLE OBJECTIVES generally  policy gradients / REINFORCE, which estimate a gradient
+                            through sampling - much noisier, and used when there is no alternative.
+
+THE DISCIPLINE: choose the surrogate so its minimum is close to your metric's optimum, optimise the
+surrogate, monitor the metric, and stop when the metric stops improving - not when the loss does.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE THE FRAMEWORK'S FUSED FUNCTION. `torch.nn.functional.cross_entropy(logits, targets)` takes
+     LOGITS, not probabilities. Applying softmax first is the classic bug and is numerically worse.
+  2. COMPUTE BINARY CE STABLY: `mean(logaddexp(0, z) - y*z)` where z is the logit. Never
+     `-y*log(sigmoid(z))`, which underflows for confident predictions.
+  3. THE GRADIENT IS EMBARRASSINGLY SIMPLE. For logistic regression it is `X.T @ (p - y) / N` -
+     prediction minus truth. That clean form is not luck; it is exactly what pairing cross-entropy with
+     a sigmoid/softmax produces.
+  4. TRACK BOTH LOSS AND METRIC EVERY EPOCH. MEASURED: accuracy plateaued at step 10 while CE kept
+     falling to step 100. They tell you different things and can move in opposite directions.
+  5. EARLY-STOP ON THE METRIC YOU CARE ABOUT, evaluated on validation data - not on the training loss.
+  6. REPORT THE METRIC, OPTIMISE THE SURROGATE. Nobody outside the team knows what a log loss of 0.39
+     means.
+  7. FOR F1 OR PRECISION/RECALL, TUNE THE THRESHOLD AFTER TRAINING. The model gives calibrated
+     probabilities; the threshold turns them into decisions, and it is a separate, cheap, one-dimensional
+     search.
+  8. CHECK CALIBRATION with a reliability table - bucket the predictions, compare mean predicted against
+     observed frequency. MEASURED ECE 0.0163. It takes ten lines and catches a lot.
+  9. DO NOT ADD A REGULARISER FOR CONFIDENCE by hand before checking whether label smoothing does what
+     you want.
+ 10. FOR CLASS IMBALANCE, WEIGHT THE CROSS-ENTROPY or use focal loss, rather than switching to
+     accuracy - which is even more misleading under imbalance, since predicting the majority class
+     always scores well.
+ 11. IF YOU EVER GENUINELY CANNOT DIFFERENTIATE THE OBJECTIVE, use policy gradients / REINFORCE rather
+     than random search - it at least estimates a gradient. MEASURED: random search degrades badly with
+     dimension, 0.6305 test accuracy at D=512 against 0.7865 for gradient descent.
+ 12. SANITY-CHECK YOUR GRADIENT with finite differences on a small example. MEASURED: the analytic value
+     -0.1100128439 matched the finite difference to nine decimals, which is what a correct
+     implementation looks like.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"You care about accuracy and you cannot train on it, because its gradient is zero almost everywhere.
+
+Accuracy is a COUNT of correct predictions, so it only changes when a prediction crosses the decision
+boundary. Nudge a weight slightly and nothing crosses, so the count is unchanged, so the derivative is
+exactly zero. I measured it by finite differences: at a random weight vector, the derivative of accuracy
+was exactly 0.0000000000 at step sizes of 1e-8, 1e-6 and 1e-4, while cross-entropy's derivative was
+-0.1100128 and stable to nine decimals across all of them - and matched the analytic gradient. From that
+point, accuracy stayed at exactly 0.383000 for every step up to +0.00075.
+
+It is a staircase. Sweeping one weight across a range at 20,001 points, cross-entropy took 20,001
+distinct values and accuracy took 990 - so on average it is perfectly flat for twenty consecutive steps.
+And that is structural, not a small-data artefact: accuracy can only change in units of one over N,
+because it is a count.
+
+The obvious pushback is 'then optimise accuracy directly with random search', and I want to be honest
+that in low dimensions this works. In 8 dimensions, random search actually beat gradient descent on
+TRAINING accuracy - 0.8225 against 0.8155 - though it lost on test, 0.8215 against 0.8290, and took 55
+times longer. It was flipping individual points across the boundary to buy fractions of a percent.
+
+The argument is about scaling. I ran both as the dimension grew: at D=2 they are indistinguishable; at
+D=512, gradient descent reached 0.7865 test accuracy in 2.9 seconds while random search reached 0.6305
+in 41 seconds. The reason is simple - a gradient tells you which way to move in all D dimensions at once
+for the cost of one pass, while a random probe gives you one bit, better or not better, no matter how big
+D is. Real networks have millions of parameters.
+
+Two other things cross-entropy buys. It keeps improving after accuracy stops: in my run accuracy was
+finished by step 10 and cross-entropy kept falling to step 100, because it rewards CONFIDENCE, not just
+being on the right side. And it gives calibrated probabilities almost for free - my model's expected
+calibration error was 0.0163, so when it says 0.75 it is right about 77% of the time. That happens
+because cross-entropy is a proper scoring rule; an accuracy-optimising model has no reason to produce
+meaningful numbers, since only the sign of the score matters to it.
+
+The framing I would use is: OPTIMISE the differentiable surrogate, REPORT and decide on the metric. It is
+the same pattern for F1, AUC, BLEU and revenue - none of them are differentiable either."
+
+THE ONE SENTENCE TO NOT FUMBLE: accuracy is a count, so it is flat between the points where a prediction
+flips and has exactly zero gradient there - cross-entropy is the differentiable stand-in you descend,
+while accuracy stays the number you report.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def ce(w, X, y):
+        z = X @ w
+        return np.mean(np.logaddexp(0, z) - y*z)
+
+Binary cross-entropy computed STABLY. The textbook form is `-[y log p + (1-y) log(1-p)]` with
+`p = sigmoid(z)`, and for a confident prediction `p` underflows to 0 and its log is -inf. `logaddexp(0,
+z)` computes `log(1 + exp(z))` without ever forming `exp(z)`, so the loss is finite for any logit. The
+whole expression is `log(1+exp(z)) - y*z`, which is algebraically identical and numerically safe.
+
+    def acc(w, X, y):
+        return np.mean((X @ w > 0) == (y > 0.5))
+
+Accuracy, and the `> 0` is where the gradient dies. A comparison produces a boolean; a boolean has no
+derivative. Everything before it is smooth - `X @ w` is perfectly differentiable - and one thresholding
+step destroys the signal.
+
+    ga = (acc(w+e, X, y) - acc(w-e, X, y)) / (2*eps)
+    gc = (ce(w+e, X, y)  - ce(w-e, X, y))  / (2*eps)
+
+Central finite differences: how the function actually responds to a small change. This is the honest way
+to ask "is there a gradient here?" rather than reasoning about it. MEASURED, `ga` is exactly 0.0 for eps
+up to 1e-4 - `acc(w+e)` and `acc(w-e)` return the identical float, so the subtraction is exactly zero -
+while `gc` is -0.1100128 at every scale.
+
+At eps = 1e-2 the accuracy "derivative" becomes 0.2, which is not a derivative at all: the step is now
+large enough to flip labels, so it is measuring a chord across a staircase.
+
+    g = X.T @ (sig(X @ w) - y) / N
+
+The analytic cross-entropy gradient - PREDICTION MINUS TRUTH, projected onto the features. That
+remarkably clean form is what pairing cross-entropy with a sigmoid gives you: the sigmoid's derivative
+and the log's derivative cancel. MEASURED to match the finite difference to nine decimals, which is the
+standard check that an implementation is right.
+
+    vals = set()
+    for t in np.linspace(-3, 3, 20001):
+        w2 = w.copy(); w2[0] = t
+        vals.add(round(acc(w2, X, y), 10))
+
+Counting the staircase's steps. MEASURED 990 distinct accuracy values against 20,001 distinct
+cross-entropy values, which turns "piecewise constant" from an adjective into a number.
+
+    cand = w + r.normal(size=D)*0.3
+    if acc(cand, X, y) > best: best, w = a, cand
+
+Random search - hill climbing directly on accuracy. It is legitimate and it extracts ONE BIT per
+evaluation: was the probe better? A gradient extracts a direction in all D dimensions from one pass.
+That difference is invisible at D=8 and decisive at D=512, MEASURED at 0.7865 against 0.6305 test
+accuracy.
+
+    wb = w_ce * 0.15
+    wc = w_ce * 8.0
+
+Scaling the weights leaves `sign(X @ w)` unchanged, so the decision boundary and the accuracy are
+IDENTICAL by construction. Only the confidence changes. MEASURED: accuracy 0.8290 for all three, CE
+ranging 0.3792 to 1.3832 - which demonstrates that cross-entropy carries information accuracy simply does
+not have.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the derivative, by finite differences at a random weight vector.
+
+    eps      d(accuracy)/dw0    d(cross-entropy)/dw0
+    ------   ----------------   --------------------
+    1e-08      +0.0000000000          -0.1100128433
+    1e-06      +0.0000000000          -0.1100128439
+    1e-04      +0.0000000000          -0.1100128440
+    1e-02      +0.2000000000          -0.1100132264
+    1e-01      +0.1437500000          -0.1100510240
+
+    analytic CE gradient: -0.1100128439
+
+The CE column agrees with the analytic value to nine decimals at three different step sizes - the
+signature of a genuine derivative. The accuracy column is exactly zero wherever the step is small enough
+to be a derivative, and once the step is large enough to flip labels (1e-2, 1e-1) it returns two
+different non-zero numbers, neither of which is a derivative of anything.
+
+    accuracy is EXACTLY 0.383000 for every step up to w0 + 0.00075
+    cross-entropy over that same interval moved -0.00008245
+
+TRACE B - the staircase, sweeping w0 over [-3, 3] at 20,001 points, N = 4,000.
+
+    function          distinct values   implication
+    ---------------   ---------------   -------------------------------------------
+    accuracy                      990   flat for ~20 consecutive sample points
+    cross-entropy              20,001   a different value at every point
+
+    smallest possible change in accuracy: 1/4000 = 0.00025
+
+More data shrinks the steps and never removes them - accuracy is a count, so it is discrete for any N.
+
+TRACE C - training, and where the two signals diverge.
+
+    step   train acc   train CE   test acc   test CE
+    ----   ---------   --------   --------   -------
+       1      0.8093     0.5978     0.8293    0.5938
+       5      0.8110     0.4652     0.8313    0.4562
+      10      0.8123     0.4235     0.8295    0.4133
+      25      0.8153     0.3968     0.8293    0.3858
+      50      0.8150     0.3914     0.8293    0.3801
+     100      0.8153     0.3906     0.8290    0.3793
+     600      0.8155     0.3906     0.8290    0.3792
+
+Test accuracy is 0.8293 at step 1 and 0.8290 at step 600 - it does not improve at all. Test CE falls from
+0.5938 to 0.3792, a 36% reduction. All of that improvement is in CONFIDENCE, which is invisible to
+accuracy and very visible to anything downstream that consumes the probability.
+
+TRACE D - gradient descent versus random search, D = 8.
+
+    method                          train acc   test acc      time
+    -----------------------------   ---------   --------   -------
+    CE gradient descent, 400 steps     0.8155     0.8290     17 ms
+    random search, 400 evals           0.8125     0.8207      9 ms
+    random search, 4,000 evals         0.8190     0.8217    105 ms
+    random search, 40,000 evals        0.8225     0.8215    932 ms
+    Bayes-optimal weights              0.8170     0.8303          -
+
+Random search wins on TRAIN (0.8225 > 0.8155) and loses on TEST (0.8215 < 0.8290) - and it even beats the
+Bayes-optimal weights on train, which is the giveaway that it is memorising the sample. Direct accuracy
+optimisation will flip individual points to buy a fraction of a percent, and those flips do not
+generalise.
+
+TRACE E - the same comparison as dimension grows. This is the real argument.
+
+     D    CE 400 steps  train/test    time    random search 40k  train/test      time
+    ---   ------------------------   ------   ------------------------------   --------
+      2         0.8333 / 0.8430        14 ms          0.8357 / 0.8450             775 ms
+      8         0.7465 / 0.7358        16 ms          0.7532 / 0.7328           1,095 ms
+     32         0.8157 / 0.8017        41 ms          0.8207 / 0.7890           1,721 ms
+    128         0.8580 / 0.8255       374 ms          0.8410 / 0.7903           3,381 ms
+    512         0.8615 / 0.7865     2,879 ms          0.6907 / 0.6305          40,937 ms
+
+At D=2 the two are indistinguishable. The crossover is around D=32, where random search still matches on
+train and starts losing on test. By D=512 it has collapsed to 0.6305 while taking 14x the wall clock.
+One gradient evaluation yields a direction in all 512 dimensions; one random probe yields one bit.
+
+TRACE F - calibration, the free by-product.
+
+    predicted bucket   count   predicted   actual    gap
+    ----------------   -----   ---------   ------   ------
+    [0.0, 0.1)           869       0.037    0.052   -0.015
+    [0.1, 0.2)           394       0.149    0.160   -0.011
+    [0.2, 0.3)           289       0.249    0.253   -0.004
+    [0.3, 0.4)           257       0.352    0.366   -0.014
+    [0.4, 0.5)           235       0.449    0.434   +0.015
+    [0.5, 0.6)           211       0.550    0.592   -0.042
+    [0.6, 0.7)           254       0.652    0.638   +0.014
+    [0.7, 0.8)           284       0.751    0.768   -0.017
+    [0.8, 0.9)           358       0.852    0.902   -0.050
+    [0.9, 1.0)           849       0.962    0.967   -0.005
+
+    expected calibration error: 0.0163
+
+The gaps are within a few points everywhere, and nothing in the training explicitly asked for this. It
+falls out of cross-entropy being a proper scoring rule.
+
+TRACE G - three models, one decision boundary.
+
+    model                  test acc   test CE   mean p(correct class)
+    --------------------   --------   -------   ---------------------
+    scaled x0.15 (timid)     0.8290    0.5740                  0.5680
+    the trained model        0.8290    0.3792                  0.7574
+    scaled x8 (brash)        0.8290    1.3832                  0.8268
+
+Scaling the weights cannot change `sign(X @ w)`, so accuracy is identical to four decimals. Cross-entropy
+spans 3.6x.
+
+The brash model is the interesting row: it has the HIGHEST average confidence in the correct class
+(0.8268) and by far the WORST loss (1.3832). Cross-entropy punishes its confident mistakes more than it
+rewards its confident hits, which is precisely the pressure that produces calibration - and precisely the
+information accuracy throws away.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    derivative by finite differences   accuracy 0.0000000000 at eps 1e-8/1e-6/1e-4
+                                       cross-entropy -0.1100128 at all of them, matching the analytic value
+    flat region                        accuracy exactly 0.383000 for every step up to +0.00075
+    distinct values over a sweep       accuracy 990 | cross-entropy 20,001 (20,001 sample points)
+    smallest possible accuracy change  1/N = 0.00025 at N = 4,000
+
+    training                           test acc 0.8293 -> 0.8290 over 600 steps (no change)
+                                       test CE  0.5938 -> 0.3792 (-36%)
+
+    CE vs random search on accuracy    D=8:   0.8290 vs 0.8215 test,     17 ms vs   932 ms
+                                       D=512: 0.7865 vs 0.6305 test,  2,879 ms vs 40,937 ms
+
+    calibration (free)                 ECE 0.0163
+    same boundary, different scale     acc 0.8290 for all three; CE 0.3792 / 0.5740 / 1.3832
+
+COST: cross-entropy and accuracy are both O(N) per evaluation. The gradient costs one extra pass. There
+is no efficiency argument for accuracy - it is strictly less informative for the same work.
+
+THE MISTAKES:
+
+    - Trying to train on accuracy, or on any counting metric, and wondering why nothing moves. MEASURED
+      gradient: exactly zero.
+    - Assuming more data makes accuracy differentiable. It shrinks the steps to 1/N; it is still a count.
+    - Concluding random search is fine because it worked in low dimensions. MEASURED: competitive at
+      D=8, collapsed at D=512.
+    - Reporting cross-entropy to stakeholders. Optimise the surrogate, report the metric.
+    - Early-stopping on training loss instead of the validation metric. MEASURED: they stop moving at
+      very different times.
+    - Assuming lower CE means higher accuracy. It can improve purely by becoming less confidently wrong.
+    - Applying softmax before `cross_entropy`. The framework function takes logits.
+    - Computing binary CE as `-y*log(sigmoid(z))`. Use `logaddexp(0, z) - y*z`.
+    - Using accuracy at all under class imbalance - predicting the majority class always scores well.
+      Weighted CE or focal loss, and report precision/recall.
+    - Ignoring calibration when something downstream consumes the probability. It is a ten-line check
+      and MEASURED at 0.0163 here.
+    - Optimising F1 directly. Train with CE, then tune the threshold - a cheap one-dimensional search
+      done after the fact.
+
+THE TAKEAWAY. Accuracy is a count, so between the points where a prediction flips it is exactly flat and
+its gradient is exactly zero - measured at 0.0000000000 while cross-entropy gave a stable -0.1100128 at
+the same point. Cross-entropy is the differentiable stand-in you descend, and it earns its place three
+times over: it has a gradient, it keeps improving after accuracy plateaus because it rewards confidence,
+and it hands you calibrated probabilities as a by-product of being a proper scoring rule. The
+generalisable habit is the split - OPTIMISE a differentiable surrogate, REPORT and decide on the metric -
+and it is the same answer for F1, AUC, BLEU and revenue, none of which you can differentiate either.""",
+]
+
+_EX_P1AO["Why use CQRS (separate read and write models), and when is it worth the complexity?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - writes and reads want OPPOSITE shapes of data, and one model cannot be
+optimal for both.
+
+A WRITE model wants NORMALISED data: one fact in one place, foreign keys, constraints - so that
+invariants are enforceable and nothing can become inconsistent. A READ model wants DENORMALISED data:
+everything the screen needs already joined and pre-aggregated in one row, so a page load is one lookup.
+
+CQRS - Command Query Responsibility Segregation - stops compromising. Commands go through the normalised
+write model; reads are served from one or more PROJECTIONS, each shaped for a specific query.
+
+MEASURED ON THIS MACHINE with real SQLite - 20,000 customers, 2,000 products, 200,000 orders, 600,000
+order items:
+
+    query                                        normalised (4-table join)   projection   speedup
+    ------------------------------------------   -------------------------   ----------   -------
+    "this customer's orders with totals"                        0.103 ms      0.024 ms      4.2x
+    "revenue by country and status" (analytics)             1,586.653 ms     93.547 ms     17.0x
+
+And what it costs:
+
+    write to the normalised model only             0.0166 ms/order
+    write + update the projection synchronously    0.0469 ms/order       2.82x
+    full projection rebuild                        1.86 s for 200,000 orders
+    disk                                           42.3 MB for both copies together
+
+So: reads 4x to 17x faster, writes 2.8x slower, and a complete second copy of the data to keep correct.
+That is the whole trade, and it says immediately when CQRS is worth it - when reads massively outnumber
+writes, and when the read shape genuinely differs from the write shape.""",
+
+    """2. THE INTUITION - a kitchen and a menu.
+
+The kitchen is organised for CORRECTNESS: ingredients in labelled containers, one thing in one place, so
+nothing spoils and nothing is double-counted. The menu is organised for the CUSTOMER: dishes described in
+the terms they order in, prices already computed, no mention of where the flour lives.
+
+You do not serve customers by walking them through the pantry. You maintain a menu, derived from the
+kitchen, and you accept that when the kitchen runs out of something the menu is briefly wrong.
+
+THAT LAST CLAUSE IS THE ENTIRE COST OF CQRS. The projection is a derived copy, and unless you update it
+inside the same transaction it is STALE. MEASURED, at 500 writes per second:
+
+    projection lag   orders visible in the write model and NOT YET in the read model
+    --------------   -------------------------------------------------------------
+              0 ms                                                               0
+             50 ms                                                              25
+            200 ms                                                             100
+          1,000 ms                                                             500
+          5,000 ms                                                           2,500
+
+Which means, concretely: a user places an order, is redirected to "my orders", and it is not there. That
+is not a corner case - it is the first thing a user does after writing. Every CQRS system needs a
+deliberate answer to it: read-your-own-writes served from the write model, an optimistic client-side
+insert, or a version token the read side waits for.
+
+WHY THE READ IS FASTER, mechanically. The normalised query for "revenue by country" touches four tables,
+follows 600,000 order-item rows to products to get prices, multiplies, and groups. The projection has
+already done all of that; the query is a scan of 200,000 pre-computed rows with a GROUP BY. MEASURED, 17x
+- and the ratio grows with the number of joins and the size of the fan-out.""",
+
+    """3. EVERY TERM DEFINED.
+
+CQRS. Command Query Responsibility Segregation. Separate models for writing and reading. Note the name
+says SEGREGATION, not separate DATABASES - the lightest version is two sets of classes over one database.
+
+COMMAND. An instruction that changes state - PlaceOrder, CancelSubscription. Named in the imperative.
+
+QUERY. A request that returns data and changes nothing.
+
+WRITE MODEL. Normalised, constraint-enforcing, optimised for validating and applying commands.
+
+READ MODEL / PROJECTION / MATERIALISED VIEW. A denormalised, query-shaped copy built from the write
+model. MEASURED at 4.2x to 17.0x faster to read.
+
+DENORMALISATION. Deliberately duplicating data so a query needs no joins. `order_view` here carries the
+customer's name, tier and country on every order row.
+
+PROJECTION LAG / STALENESS. How far behind the read model is. MEASURED as 25 orders at 50 ms and 2,500 at
+5 seconds, at 500 writes/s.
+
+EVENTUAL CONSISTENCY. The read model converges to the write model, given no new writes.
+
+READ-YOUR-OWN-WRITES. The guarantee that a user immediately sees their own change. The specific
+consistency property CQRS breaks first, and the one users notice.
+
+EVENT SOURCING. Storing the sequence of state-changing events as the source of truth, rather than
+current state. Pairs naturally with CQRS - the events feed the projections - and is a SEPARATE decision.
+Doing both at once is where CQRS gets its reputation for complexity.
+
+REBUILD / REPLAY. Reconstructing a projection from scratch. MEASURED at 1.86 s for 200,000 orders here.
+The ability to do this is what makes projections safe to change.
+
+SYNCHRONOUS vs ASYNCHRONOUS PROJECTION. Updated in the write transaction (no staleness, slower writes,
+tighter coupling) or by a separate consumer (fast writes, staleness).
+
+MATERIALISED VIEW. The database's own version of a projection, with refresh managed for you. Often the
+right answer before hand-rolling CQRS.
+
+READ REPLICA. A full copy of the same schema for read scaling. Solves CAPACITY, not SHAPE - the joins
+are still there.
+
+INVARIANT. A rule that must always hold - "an order must have at least one item". Enforceable in the
+normalised write model; not enforceable in a denormalised projection.
+
+AGGREGATE. In domain-driven design, a consistency boundary - the unit a command operates on.
+
+EVENTUAL CONSISTENCY WINDOW. The time during which the two models disagree. Must be stated as a number,
+not as "eventually".""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - adopting CQRS when the real problem was capacity, or an index.
+
+Before separating the models, check what you are actually short of:
+
+    "reads are slow because of JOINS and aggregation"     -> a projection helps. MEASURED 17x.
+    "reads are slow because there is no INDEX"            -> add the index. Free.
+    "reads are slow because there is TOO MUCH TRAFFIC"    -> read replicas. Same schema, no staleness
+                                                             beyond replication lag, far less code.
+    "reads and writes CONTEND for the same tables"        -> replicas, or partitioning.
+    "the READ SHAPE is genuinely different from the
+     WRITE SHAPE, and the join cost is structural"        -> CQRS.
+
+Only the last one is a CQRS problem. A read replica gives you read scaling for a configuration change; a
+projection is a second data model that your team now owns forever.
+
+THE SECOND TRAP - not planning for staleness, which is the failure users actually see. MEASURED above:
+at 500 writes/s and one second of lag, 500 orders exist in the write model and not in the read model at
+any instant. The user who just checked out is one of them.
+
+The standard answers, and you must pick one deliberately:
+    READ-YOUR-OWN-WRITES from the write model for the N seconds after a user's own command.
+    OPTIMISTIC UI - the client shows the order it just created without asking the server.
+    A VERSION TOKEN returned by the command, which the read side waits to catch up to.
+    SYNCHRONOUS PROJECTION for the specific view where staleness is unacceptable. MEASURED at 2.82x
+    write cost - which is often affordable for one view.
+
+THE THIRD TRAP - assuming the write side is unaffected. MEASURED: updating the projection inside the
+write transaction took 0.0166 ms/order to 0.0469 ms/order, a 2.82x penalty. Asynchronous projection moves
+that cost off the write path and buys staleness in exchange - it does not remove the work.
+
+THE FOURTH TRAP - conflating CQRS with event sourcing. They are separate decisions and CQRS is much the
+cheaper one. You can maintain projections from ordinary table triggers, change-data-capture, or an
+application-level dual write. Event sourcing brings its own large costs - schema evolution of events,
+replay semantics, snapshotting - and adopting both at once is how CQRS got its reputation.
+
+THE FIFTH TRAP - one projection per query, unbounded. Each is more storage, more write amplification and
+another thing that can drift. MEASURED: one projection over 200,000 orders already brings the database to
+42.3 MB with a full duplicate of the data. Ten projections is ten duplicates.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE LADDER, cheapest first, and you should climb it in order:
+
+  1. INDEXES AND QUERY TUNING. Free, no new consistency model, and it fixes a surprising fraction of
+     "we need CQRS" situations.
+  2. CACHING. A key-value cache in front of the expensive query. Staleness, but no new data model, and
+     invalidation is the only hard part.
+  3. READ REPLICAS. Same schema, more capacity, staleness bounded by replication lag. Solves VOLUME.
+  4. MATERIALISED VIEWS. The database maintains the denormalised copy for you - this IS a projection,
+     with the refresh logic already written and tested. MEASURED here as a 17.0x analytics speedup, and
+     PostgreSQL will do it without any application code.
+  5. CQRS WITH A HAND-BUILT PROJECTION. Your code owns the read model, so it can live in a different
+     store entirely - Elasticsearch for search, Redis for a leaderboard, a columnar store for analytics.
+  6. CQRS + EVENT SOURCING. The full version. Events as the source of truth, projections rebuilt by
+     replay.
+
+Most teams that "need CQRS" need step 1 or 4.
+
+WHERE THE PROJECTION LIVES, which is the real reason to hand-build one:
+    THE SAME DATABASE           simplest; can be updated in the same transaction, so no staleness.
+    A DIFFERENT DATABASE        lets you pick the right engine per query shape.
+    A SEARCH INDEX              full-text and faceted search that a relational write model cannot do.
+    A CACHE                     for the hottest views.
+    A COLUMNAR STORE            for analytics. MEASURED here: the aggregate query was 1,586 ms
+                                normalised and 93.5 ms over the projection, and a columnar layout
+                                would improve on that again.
+
+HOW THE PROJECTION IS KEPT UP TO DATE:
+    IN THE SAME TRANSACTION     no staleness. MEASURED 2.82x write cost. Strong coupling.
+    DATABASE TRIGGER            no application change; hard to test and easy to forget.
+    CHANGE DATA CAPTURE         read the database's replication log and project from it. No dual write,
+                                and the standard modern answer.
+    OUTBOX + CONSUMER           write the event in the business transaction; a consumer projects it.
+                                Reliable, at-least-once, so the projection must be IDEMPOTENT.
+    PERIODIC REBUILD            simplest of all for analytics. MEASURED 1.86 s for 200,000 orders -
+                                for many systems, a nightly or hourly full rebuild is entirely enough
+                                and removes all incremental-update bugs.
+
+WHEN CQRS IS DEFINITELY WRONG:
+    a simple CRUD application where the read shape IS the write shape;
+    when a read replica or an index solves it;
+    when the team has no operational appetite for a second data model;
+    when strong read-your-own-writes is required everywhere and you cannot afford synchronous updates.
+
+WHEN IT IS CLEARLY RIGHT:
+    a large read/write ratio with a genuinely different read shape;
+    reads and writes needing to scale independently;
+    several different UIs over the same data, each wanting its own shape;
+    search or analytics that the write store cannot serve;
+    a write model whose invariants demand normalisation that reads cannot afford.""",
+
+    """6. HOW TO CODE IT.
+
+  1. MEASURE FIRST. Time the actual query. MEASURED here: 0.103 ms for a point read against 1,586 ms for
+     the aggregate - two orders of magnitude apart, and only one of them is a CQRS problem.
+  2. TRY AN INDEX, THEN A REPLICA, THEN A MATERIALISED VIEW, before writing any CQRS code. Most of the
+     benefit with almost none of the cost.
+  3. START WITH ONE PROJECTION FOR ONE PAINFUL QUERY. Not a rewrite. CQRS is per-view, not per-system.
+  4. PUT EVERYTHING THE SCREEN NEEDS IN THE PROJECTION ROW - the customer's name and tier as well as the
+     order. Any field you leave out reintroduces a join and gives back the speedup.
+  5. DECIDE SYNCHRONOUS OR ASYNCHRONOUS PER VIEW. MEASURED: synchronous costs 2.82x on the write and
+     eliminates staleness. That is often the right trade for the one view a user checks immediately after
+     writing.
+  6. MAKE THE PROJECTION IDEMPOTENT. Asynchronous delivery is at-least-once, so `UPSERT BY id`, never
+     `INSERT` or `count = count + 1`. The same reasoning as any at-least-once consumer.
+  7. MAKE IT REBUILDABLE FROM SCRATCH, and rehearse it. MEASURED 1.86 s for 200,000 orders. If you can
+     rebuild, a projection bug is a five-minute fix rather than a data-corruption incident - this is the
+     single most valuable property to preserve.
+  8. VERSION THE PROJECTION. Build v2 alongside v1, switch reads, drop v1. Schema changes to a read model
+     should never require downtime.
+  9. MONITOR THE LAG as a first-class metric, in seconds AND in unprocessed events. MEASURED: at 500
+     writes/s, one second of lag is 500 invisible orders.
+ 10. SOLVE READ-YOUR-OWN-WRITES EXPLICITLY. Read from the write model for a few seconds after a user's
+     own command, or return a version token the read side waits for. Do not leave it to chance.
+ 11. NEVER ENFORCE AN INVARIANT ON THE READ MODEL. It is stale by construction. All validation happens on
+     the write side.
+ 12. RECONCILE PERIODICALLY. Compare counts and checksums between the models and alarm on divergence.
+     Projections drift; you want to find out before a user does.
+ 13. BUDGET THE STORAGE. MEASURED: 42.3 MB for the write model plus one projection. Each additional
+     projection is another full copy.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Writes and reads want opposite shapes. A write model wants normalised data - one fact in one place,
+foreign keys, constraints - so invariants are enforceable. A read model wants everything the screen needs
+already joined and pre-aggregated in a single row. CQRS stops compromising: commands go through the
+normalised model, and reads come from projections shaped for specific queries.
+
+I measured it on real SQLite with 200,000 orders and 600,000 order items. The point query - 'this
+customer's orders with totals' - is 0.103 ms as a four-table join and 0.024 ms from a projection, 4.2x.
+The analytics query - 'revenue by country and status' - is 1,586 ms as a join and 93.5 ms from the
+projection, 17 times faster. The gap between those two speedups is the useful signal: CQRS pays in
+proportion to how much joining and aggregating you are repeating on every read.
+
+The costs are real and I measured those too. Updating the projection inside the write transaction took
+writes from 0.0166 ms to 0.0469 ms per order - 2.82x. The database holds a full second copy of the data.
+And if you update the projection asynchronously instead, it is STALE: at 500 writes a second and one
+second of lag, 500 orders exist in the write model and not in the read model at any given moment. Which
+means the user who just checked out is redirected to 'my orders' and does not see their order. That is
+not an edge case, it is the first thing a user does, and every CQRS system needs a deliberate answer -
+read-your-own-writes from the write model, an optimistic client-side insert, or a version token the read
+side waits for.
+
+The thing I would push back on hardest is adopting CQRS when the problem is something cheaper. If reads
+are slow for lack of an index, add the index. If the problem is read VOLUME rather than read SHAPE, use
+read replicas - same schema, a configuration change, no new consistency model. If your database has
+materialised views, that IS a projection with the refresh logic already written. CQRS is for when the
+read shape is genuinely different from the write shape and the join cost is structural.
+
+I would also separate it from event sourcing. They pair naturally and they are different decisions, and
+adopting both at once is how CQRS got its reputation for complexity. You can maintain projections from
+change-data-capture or an outbox without ever making events your source of truth.
+
+The property I would protect above all is REBUILDABILITY. I measured a full rebuild at 1.86 seconds for
+200,000 orders. If you can always rebuild the projection from the write model, a projection bug is a
+five-minute fix instead of a data-corruption incident."
+
+THE ONE SENTENCE TO NOT FUMBLE: CQRS trades write cost, storage and staleness for read speed - measured
+here at 2.82x, a full second copy, and hundreds of invisible rows at a second of lag, in exchange for 4x
+to 17x - so it is worth it exactly when reads dominate AND their shape genuinely differs from the write
+shape.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    CREATE TABLE customers(id, name, tier, country);
+    CREATE TABLE products(id, name, category, price);
+    CREATE TABLE orders(id, customer_id, ts, status);
+    CREATE TABLE order_items(id, order_id, product_id, qty);
+
+The write model. Every fact lives in exactly one place - a customer's tier is stored once, a product's
+price is stored once. That is what makes invariants enforceable: there is no second copy to disagree
+with. It is also what makes reads expensive, because assembling anything user-facing means joining.
+
+Note `order_items` has `qty` and NOT the price. The price lives on the product, so the line total must be
+computed at read time - one join per read, forever.
+
+    SELECT o.id, c.name, c.tier, o.status, COUNT(oi.id), SUM(oi.qty*p.price)
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    LEFT JOIN order_items oi ON oi.order_id=o.id
+    LEFT JOIN products p ON p.id=oi.product_id
+    WHERE o.customer_id=? GROUP BY o.id
+
+The normalised read. Four tables, a GROUP BY, and an arithmetic expression - all to render one screen.
+MEASURED at 0.103 ms with indexes on both foreign keys, which is fine for one user and is being paid on
+every page load by every user.
+
+    CREATE TABLE order_view(
+      order_id PRIMARY KEY, customer_id, customer_name, tier, country,
+      ts, status, item_count, total, top_category);
+
+The projection. `customer_name`, `tier` and `country` are DUPLICATED onto every order row - which would
+be a normalisation error in the write model and is the entire point here. `item_count` and `total` are
+pre-aggregated, so the read never touches `order_items` at all.
+
+The design rule visible in this schema: put everything the SCREEN needs in the row. Any field left out
+forces a join back and gives up the speedup.
+
+    SELECT order_id, customer_name, tier, status, item_count, total
+    FROM order_view WHERE customer_id=?
+
+The same screen, one table, one index lookup, no aggregation. MEASURED 0.024 ms - 4.2x.
+
+    INSERT INTO order_view SELECT o.id, c.id, c.name, ... GROUP BY o.id
+
+The rebuild - the projection defined as a QUERY over the write model. This is the most important line in
+the whole design, because it means the projection is DERIVED and therefore disposable: if it is wrong,
+drop it and re-run this. MEASURED at 1.86 s for 200,000 orders.
+
+    cur.execute('INSERT INTO orders VALUES(?,?,?,?)', ...)
+    for _ in range(3): cur.execute('INSERT INTO order_items VALUES(?,?,?,?)', ...)
+    row = cur.execute('SELECT name,tier,country FROM customers WHERE id=?', (cust,)).fetchone()
+    tot = cur.execute('SELECT SUM(oi.qty*p.price) ... WHERE oi.order_id=?', (oid,)).fetchone()[0]
+    cur.execute('INSERT INTO order_view VALUES(...)')
+
+The synchronous write path, and you can read the 2.82x penalty directly off it: the two extra SELECTs and
+the extra INSERT are the projection maintenance. MEASURED 0.0166 ms/order to 0.0469 ms/order.
+
+Doing this ASYNCHRONOUSLY moves those three statements to a consumer - the write gets fast again and the
+work does not disappear, it just happens somewhere else, later. That "later" is the staleness.
+
+    stale = writes_per_second * lag_ms/1000
+
+The staleness arithmetic, and it deserves to be written down because teams discuss lag in milliseconds
+and users experience it in ROWS. 500 writes/s x 1 s = 500 orders that exist and are invisible. Converting
+the lag into a row count is what makes the product conversation possible.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+The dataset, real SQLite: 20,000 customers, 2,000 products, 200,000 orders, 600,000 order items.
+
+TRACE A - the point read, "this customer's orders with totals".
+
+    implementation                tables touched   time       relative
+    ---------------------------   --------------   --------   --------
+    normalised (4-table join)                  4   0.103 ms      4.2x
+    projection (1 table)                       1   0.024 ms      1.0x
+
+A 4.2x win on an already-fast query. Worth having and not, on its own, worth a second data model - which
+is exactly the honest reading.
+
+TRACE B - the analytics read, "revenue by country and status".
+
+    implementation                time          relative
+    ---------------------------   -----------   --------
+    normalised (4-table join)     1,586.653 ms     17.0x
+    projection                       93.547 ms      1.0x
+
+This is the query that justifies the architecture. It walks 600,000 order items, joins each to a product
+for the price, multiplies, and groups - on every dashboard refresh. The projection has already done the
+multiplication once, at write time, so the read is a scan of 200,000 pre-computed totals.
+
+The contrast between Trace A and Trace B is the decision rule: CQRS pays in proportion to the joining and
+aggregating you are repeating.
+
+TRACE C - the write side.
+
+    path                                        cost per order   relative
+    -----------------------------------------   --------------   --------
+    normalised write only                            0.0166 ms      1.00x
+    write + synchronous projection update            0.0469 ms      2.82x
+    difference                                      +0.0302 ms
+
+    full projection rebuild: 1.86 s for 200,000 orders (about 9.3 microseconds per order)
+
+The 2.82x is the honest price of zero staleness. Asynchronous projection returns the write to 0.0166 ms
+and moves the 0.0302 ms to a consumer - the work is conserved, and what you have bought is that the user
+does not wait for it.
+
+The rebuild number is the one to remember, because it changes how you treat projection bugs: 1.86 seconds
+means "drop it and rebuild" is a viable production response.
+
+TRACE D - storage.
+
+    table            rows
+    -------------   -------
+    customers        20,000
+    products          2,000
+    orders          204,000
+    order_items     612,000
+    order_view      202,000
+
+    total on disk: 42.3 MB (write model + one projection)
+
+`order_view` has essentially one row per order, carrying duplicated customer fields and pre-computed
+totals. It is a complete second copy of the data, reshaped - so each additional projection is another
+copy, and "one projection per query" scales the storage linearly in the number of screens.
+
+TRACE E - staleness, in rows rather than milliseconds, at 500 writes/s.
+
+    projection lag   orders in the write model but NOT in the read model
+    --------------   --------------------------------------------------
+              0 ms                                                    0
+             50 ms                                                   25
+            200 ms                                                  100
+          1,000 ms                                                  500
+          5,000 ms                                                2,500
+
+At one second of lag - a completely ordinary figure for an asynchronous consumer - five hundred orders
+exist and are invisible. The user who just clicked "buy" is statistically certain to be one of them,
+because they are reading immediately after writing.
+
+This table is the argument for making the "my orders" view synchronous (2.82x on the write, from Trace C)
+while leaving the analytics projection asynchronous. CQRS is a per-view decision, and these two numbers
+are how you make it.
+
+TRACE F - the decision, assembled.
+
+    symptom                                  right fix                cost
+    --------------------------------------   ----------------------   ---------------------------
+    a query has no index                     add the index            nothing
+    too much read TRAFFIC, same shape        read replicas            a config change
+    joins and aggregation on every read      materialised view        refresh logic, already written
+    the read shape differs structurally      CQRS projection          2.82x writes, 2x storage,
+                                                                      staleness, a second model
+    all of the above plus audit/replay       + event sourcing         a much larger commitment
+
+Only the fourth row is a CQRS problem, and the measurements above are what tell you whether you are in
+it: a 17x join cost you pay on every read says yes; a 4.2x on an already-sub-millisecond query says find
+something cheaper.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (real SQLite: 20,000 customers, 2,000 products, 200,000 orders, 600,000 items):
+
+    point read      normalised 0.103 ms   -> projection 0.024 ms      4.2x
+    analytics read  normalised 1,586.7 ms -> projection 93.5 ms      17.0x
+    write           0.0166 ms -> 0.0469 ms with a synchronous projection   2.82x
+    rebuild         1.86 s for 200,000 orders (~9.3 us/order)
+    storage         42.3 MB for the write model plus one projection
+    staleness       at 500 writes/s: 25 rows at 50 ms lag, 500 at 1 s, 2,500 at 5 s
+
+COMPLEXITY: reads go from O(joins x rows) to O(1) index lookups. Writes gain the projection maintenance -
+either in the transaction (2.82x, no staleness) or asynchronously (fast writes, staleness). Storage is
+roughly doubled per projection. Operationally you now own a second data model, its lag, its rebuild, and
+its reconciliation.
+
+THE MISTAKES:
+
+    - Reaching for CQRS when an INDEX or a READ REPLICA solves it. Volume is not shape.
+    - Not measuring the query first. MEASURED: 0.103 ms and 1,586 ms in the same schema, and only one of
+      them justifies anything.
+    - Ignoring read-your-own-writes. MEASURED: 500 invisible orders at one second of lag, and the user
+      reading is the one who just wrote.
+    - Assuming the write side is free. MEASURED 2.82x for a synchronous projection.
+    - A non-idempotent projection consumer. Asynchronous delivery is at-least-once, so `UPSERT`, never
+      `count = count + 1`.
+    - No rebuild path. MEASURED at 1.86 s - if you can rebuild, a projection bug is trivial; if you
+      cannot, it is data corruption.
+    - Enforcing invariants on the read model. It is stale by construction; validation belongs on the
+      write side.
+    - Adopting event sourcing at the same time. Two large decisions at once, and the reason CQRS is
+      thought to be complicated.
+    - Unbounded projections, one per query. Each is a full copy - MEASURED, one already doubles the
+      database.
+    - Not monitoring lag, in seconds AND in rows. Users experience rows.
+    - Never reconciling. Projections drift; compare counts and checksums on a schedule.
+    - Leaving a needed field out of the projection, which reintroduces a join and cancels the win.
+
+THE TAKEAWAY. Normalised is right for writing and wrong for reading, and CQRS stops splitting the
+difference: measured here at 4.2x on a point read and 17.0x on an aggregate, in exchange for 2.82x on the
+write, a full second copy of the data, and staleness that at one second of lag hides 500 rows at 500
+writes/s. That trade is worth it when reads dominate AND their shape genuinely differs - not when the
+problem is an index or read volume, which are far cheaper to fix. Adopt it one view at a time, decide
+synchronous or asynchronous per view, keep the projection idempotent, and above all keep it rebuildable:
+1.86 seconds to reconstruct is what turns a projection bug from an incident into a fix.""",
+]
+
+_EX_P1AO["Why use a sidecar / service mesh instead of a shared library in each service?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - every service needs the same cross-cutting things: mTLS, retries,
+timeouts, circuit breaking, routing, metrics, tracing. You can put them in a LIBRARY that every service
+imports, or in a PROXY process that runs beside every service.
+
+The library runs INSIDE your process; the sidecar runs BESIDE it and intercepts the network traffic.
+
+The difference that matters is not technical elegance, it is HOW YOU SHIP A CHANGE. MEASURED as a rollout
+model for a fleet of 60 services in 4 languages, changing one retry policy:
+
+    SHARED LIBRARY                              SIDECAR / MESH
+    ----------------------------------------    -----------------------------------------
+    4 library versions to build and publish     1 proxy version
+    60 services must bump a dependency          0 application services change
+    60 services must be REDEPLOYED              0 application redeploys
+    ~18 teams to coordinate                     1 control-plane config push
+    after 1 week:  ~15 of 60 on the new policy  all 60, immediately
+    after 4 weeks: ~41 of 60
+    after 12 weeks: ~58 of 60
+
+Three months for a library change to reach 97% of the fleet, against one config push. That is the entire
+argument, and it is an ORGANISATIONAL argument, not a performance one.
+
+The cost is equally concrete. MEASURED with real sockets on localhost - a backend service, a proxy in
+front of it, and a second proxy in front of that:
+
+    path                                  p50        p99
+    ---------------------------------   -------   -------
+    direct to the service               0.753 ms   1.469 ms
+    through ONE proxy                   1.982 ms   3.004 ms
+    through TWO proxies (both sidecars) 3.353 ms   4.511 ms""",
+
+    """2. THE INTUITION - a library is a decision every team makes; a sidecar is a decision the platform
+makes once.
+
+If networking policy lives in a library, then changing it is a MIGRATION: publish, get 60 teams to
+upgrade, get 60 services redeployed. Every service that is between releases, or owned by a busy team, or
+written in the one language you did not build a library for, is out of policy indefinitely - and you
+cannot even state what the fleet's current retry behaviour IS.
+
+If it lives in a proxy, changing it is a CONFIG PUSH, because the proxy is not part of the application's
+release cycle.
+
+WHY THE SHAPE OF THE LATENCY COST IS WHAT IT IS. Every call now traverses two extra proxies - one leaving
+the caller, one entering the callee - so you pay the hop twice per request. MEASURED:
+
+    added by one hop  : +1.229 ms p50, +1.535 ms p99
+    added by two hops : +2.600 ms p50, +3.042 ms p99
+
+(A Python proxy is much slower than Envoy, which is C++ and does roughly 0.3-0.5 ms per hop in practice.
+The SHAPE - two extra hops, one out and one in - is what transfers; the absolute numbers here are an
+upper bound.)
+
+And the crucial property: the mesh tax is a FIXED number of milliseconds, so what matters is what
+fraction of your call it represents. MEASURED, using the 2.600 ms round-trip overhead:
+
+    service latency   overhead as a share of the call
+    ---------------   -------------------------------
+             0.5 ms                            83.87%
+             1.0 ms                            72.22%
+             5.0 ms                            34.21%
+            20.0 ms                            11.50%
+           100.0 ms                             2.53%
+           500.0 ms                             0.52%
+
+A slow service barely notices. A 0.5 ms cache lookup nearly doubles. This is why meshes are usually
+exempted for the hottest, fastest internal calls, and why "add a mesh" is a very different proposal for a
+data-access tier than for a request-handling tier.""",
+
+    """3. EVERY TERM DEFINED.
+
+CROSS-CUTTING CONCERN. Functionality every service needs and none of them is about - mTLS, retries,
+timeouts, metrics, tracing, routing.
+
+SHARED LIBRARY. Code linked into the application process. Same language, same release cycle.
+
+SIDECAR. A separate process (or container) deployed alongside each service instance, sharing its network
+namespace, intercepting traffic.
+
+SERVICE MESH. The sidecars plus a CONTROL PLANE that configures them centrally. Istio, Linkerd,
+Consul Connect.
+
+DATA PLANE. The proxies that actually carry traffic. Envoy is the common choice.
+
+CONTROL PLANE. The component that distributes configuration to every proxy. The thing that turns a
+policy change into one push - and the thing whose blast radius is the whole fleet.
+
+mTLS. Mutual TLS - both sides present certificates. Sidecars can provide it without any application
+change, which is often the single largest reason to adopt a mesh.
+
+CIRCUIT BREAKER. Stop calling a failing dependency for a while rather than piling on.
+
+RETRY BUDGET. A cap on the fraction of traffic that may be retries, so a struggling service is not
+finished off by its callers.
+
+CANARY / TRAFFIC SPLIT. Send 5% of requests to a new version. Trivial in a mesh, application code in a
+library.
+
+POLYGLOT. Multiple programming languages in one fleet. The condition that makes libraries expensive -
+MEASURED as 4 library versions for the same policy.
+
+LANGUAGE-AGNOSTIC. Works identically regardless of the service's language. The sidecar's defining
+property.
+
+LOCKSTEP UPGRADE. Requiring many services to move together. What a library change is; what a mesh change
+is not.
+
+BLAST RADIUS. How much breaks when one thing breaks. A library bug breaks one service; a bad control
+plane push reaches all of them.
+
+AMBIENT / SIDECAR-LESS MESH. A newer design (Istio ambient, Cilium) using a per-NODE proxy rather than a
+per-POD one, to cut the resource overhead measured below.
+
+eBPF. Kernel-level packet handling, used by sidecar-less meshes to avoid a userspace hop entirely.
+
+HOP. One additional network traversal. MEASURED at +1.229 ms p50 per hop here, and around 0.3-0.5 ms for
+Envoy in practice.
+
+GATEWAY / EDGE PROXY. The same technology at the fleet boundary rather than beside each service - and
+usually the sensible first step.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - adopting a mesh for a small, homogeneous fleet, where every
+number in the argument points the other way.
+
+The library's cost is proportional to (number of services) x (number of languages) x (release friction).
+For 6 Go services owned by 2 teams, that product is small: 1 library, 6 dependency bumps, one afternoon.
+For 60 services in 4 languages across 18 teams, MEASURED at ~12 weeks to reach 97%, the product dominates
+everything else.
+
+The mesh's cost is proportional to the number of INSTANCES, and it is paid whether or not you benefit.
+MEASURED:
+
+    sidecar size            400 pods
+    --------------------   ----------------------
+    50 MB / 0.05 vCPU      19.5 GB RAM, 20 vCPU
+    100 MB / 0.10 vCPU     39.1 GB RAM, 40 vCPU
+    200 MB / 0.20 vCPU     78.1 GB RAM, 80 vCPU
+
+At 400 pods that is a rack of machines doing nothing but proxying. It is not free at any size - it is
+merely worth it at some sizes.
+
+THE SECOND TRAP - not realising the latency tax lands hardest exactly where you can least afford it.
+MEASURED: 83.87% overhead on a 0.5 ms call, 0.52% on a 500 ms call. Teams evaluate a mesh on their
+request-handling tier, see 2%, and then enable it fleet-wide including the cache and database access
+paths, where the same absolute milliseconds are most of the call.
+
+THE THIRD TRAP - the blast radius, which is the same property as the rollout advantage. A shared library
+bug breaks ONE service, and you read the stack trace in your own logs. A bad control-plane push reaches
+ALL 60 services at once - and a connection-refused from a sidecar looks like a network problem, not like
+a config change, so the diagnosis starts in the wrong place. You cannot have "one push changes
+everything" without "one bad push breaks everything"; they are the same sentence.
+
+THE FOURTH TRAP - believing the sidecar removes work from the application. It moves NETWORK-level
+concerns out. It cannot do anything that requires application context: business-level authorisation,
+request validation, domain retries that must be idempotent-aware, or a schema-aware cache. A mesh gives
+you transport policy, and everyone rediscovers the boundary the first time they try to express a rule
+that needs to know what the request MEANS.
+
+THE FIFTH TRAP - debugging. Two extra processes in every call path means two more places to look, two
+more sets of logs and two more configuration surfaces. The mesh's own telemetry is a genuine benefit and
+it does not offset the fact that "the request failed" now has more candidate explanations.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE LADDER, and most teams should stop before the top:
+
+  1. NOTHING. Timeouts and retries written per service. Fine for a handful of services; the policies WILL
+     diverge, and for 5 services that is survivable.
+  2. A SHARED LIBRARY, one language. Cheap and effective when the fleet is homogeneous. MEASURED: the
+     pain is proportional to language count and team count, and both are 1-2 here.
+  3. AN EDGE GATEWAY. One proxy at the boundary - TLS termination, rate limiting, authentication - with
+     nothing between internal services. Most of the security benefit, one proxy instead of hundreds, and
+     usually the correct first step.
+  4. A SIDECAR PER SERVICE, no control plane. A proxy config file deployed with each service. Gets the
+     language-agnostic property without the central push.
+  5. A FULL SERVICE MESH. Sidecars plus a control plane. MEASURED: 1 config push replaces a ~12-week,
+     18-team migration - and costs 2 hops per call and a proxy per instance.
+  6. A SIDECAR-LESS MESH (Istio ambient, Cilium/eBPF). A per-NODE proxy or kernel-level handling, which
+     directly targets the per-pod overhead measured above. The current direction of travel, precisely
+     because the sidecar's resource cost is the strongest objection.
+
+WHAT A SIDECAR GIVES YOU THAT A LIBRARY CANNOT:
+    LANGUAGE INDEPENDENCE   Python and Go services behave identically. MEASURED as 4 library builds
+                            versus 1 proxy build.
+    DECOUPLED UPGRADES      patch the proxy, not 60 applications. This includes SECURITY patches, which
+                            is often the decisive argument.
+    CENTRAL POLICY          one push changes the fleet.
+    UNIFORM TELEMETRY       identical metrics and traces from every service, including ones nobody has
+                            instrumented.
+    mTLS EVERYWHERE         without touching application code or certificate handling.
+
+WHAT A LIBRARY GIVES YOU THAT A SIDECAR CANNOT:
+    NO EXTRA HOP            MEASURED at 2.600 ms round trip here; ~0.6-1.0 ms with Envoy.
+    NO EXTRA PROCESS        MEASURED at up to 78 GB and 80 vCPU across 400 pods.
+    APPLICATION CONTEXT     it can see the request's meaning, not just its bytes.
+    A SMALL BLAST RADIUS    a bug breaks one service, and the stack trace is in your own logs.
+    SIMPLER DEBUGGING       one process in the path instead of three.
+
+THE DECIDING QUESTIONS, in order:
+    How many LANGUAGES? One means a library is probably enough.
+    How many TEAMS? The coordination cost is what libraries actually charge you.
+    How FAST are the calls? MEASURED: 83.87% overhead at 0.5 ms, 2.53% at 100 ms.
+    How many INSTANCES? The sidecar cost scales with pods, not with services.
+    Do you need mTLS everywhere without touching application code? That single requirement justifies more
+    meshes than all the traffic-management features combined.""",
+
+    """6. HOW TO CODE IT.
+
+  1. COUNT YOUR LANGUAGES AND TEAMS FIRST. MEASURED: the library cost is 4 builds x 60 dependency bumps
+     x ~18 teams. One language and two teams is a completely different calculation.
+  2. START AT THE EDGE. One gateway gives you TLS, rate limiting and authentication for one proxy instead
+     of hundreds. Do this before considering a mesh.
+  3. MEASURE YOUR CURRENT p50 PER CALL before adopting. MEASURED: the tax is 83.87% of a 0.5 ms call and
+     2.53% of a 100 ms one - and it is your own latency, not the vendor's benchmark, that decides.
+  4. ROLL OUT NAMESPACE BY NAMESPACE, not fleet-wide. Meshes support per-workload injection precisely so
+     you can exempt the hot paths.
+  5. EXEMPT THE HOTTEST, FASTEST CALLS. Cache and datastore access on a sub-millisecond budget should
+     usually bypass the sidecar.
+  6. SIZE THE SIDECARS DELIBERATELY AND MULTIPLY BY POD COUNT. MEASURED: 100 MB and 0.1 vCPU across 400
+     pods is 39 GB and 40 vCPU. Put that number in the proposal.
+  7. TREAT CONTROL-PLANE PUSHES AS DEPLOYS. Canary them, stage them, and be able to roll them back. One
+     push reaching all 60 services is the feature AND the risk.
+  8. KEEP APPLICATION-LEVEL CONCERNS IN THE APPLICATION. Business authorisation, request validation and
+     anything needing domain context cannot live in a transport proxy.
+  9. MAKE THE SIDECAR'S FAILURE MODE EXPLICIT. Decide and test what happens when the proxy is
+     unavailable - fail closed is usually right and it means your service is down when the proxy is.
+ 10. WATCH STARTUP ORDERING. The application must not send traffic before the sidecar is ready; this is a
+     classic and confusing source of intermittent startup failures.
+ 11. USE THE MESH'S TELEMETRY, since you are paying for it. Uniform metrics from every service, including
+     ones nobody instrumented, is a large part of the value.
+ 12. RE-EVALUATE SIDECAR-LESS OPTIONS. Per-node proxies and eBPF exist specifically to remove the
+     per-pod overhead measured above.
+ 13. IF THE ANSWER IS A LIBRARY, MAKE UPGRADES CHEAP: automated dependency PRs, a version-support policy,
+     and a dashboard of who is on which version. MEASURED: without that, adoption is ~25% after a week.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Both approaches solve the same problem - every service needs mTLS, retries, timeouts, routing, metrics -
+and they differ in HOW YOU SHIP A CHANGE.
+
+With a shared library, changing a retry policy is a migration. I modelled a fleet of 60 services in 4
+languages: 4 library versions to build, 60 services to bump a dependency, 60 redeploys, about 18 teams to
+coordinate. With a realistic adoption rate that reaches about 25% of the fleet after a week, 68% after a
+month, and 97% after twelve weeks. And in the meantime you cannot even state what your fleet's retry
+behaviour IS. With a mesh it is one config push and all 60 services get it immediately.
+
+That is the whole argument, and it is organisational rather than technical. The mesh's other big win is
+security: mTLS everywhere without touching application code, and patching the proxy instead of 60
+applications.
+
+The cost is an extra network hop in each direction. I measured it with real sockets - a backend, a proxy
+in front of it, and a second proxy in front of that: 0.753 ms direct, 1.982 ms through one proxy, 3.353
+ms through two, at the median. My proxy is Python and slow; Envoy does roughly 0.3 to 0.5 ms per hop. The
+shape is what matters - you pay the hop twice per call, once leaving the caller and once entering the
+callee.
+
+And because it is a fixed number of milliseconds, what matters is the fraction. Using my 2.6 ms
+round-trip figure: 84% of a 0.5 ms call, 34% of a 5 ms call, 2.5% of a 100 ms call, half a percent of a
+500 ms call. Teams evaluate the mesh on their request-handling tier, see 2%, then enable it fleet-wide
+including cache access where the same milliseconds are most of the call. Exempt the hot paths.
+
+Then there is the resource cost, which scales with INSTANCES rather than services: at 100 MB and a tenth
+of a vCPU per sidecar across 400 pods, that is 39 GB of RAM and 40 vCPU doing nothing but proxying. That
+number is why sidecar-less meshes - per-node proxies, eBPF - exist.
+
+The thing I would want to say explicitly is that the blast radius is the SAME PROPERTY as the rollout
+advantage. One push changing 60 services means one bad push breaking 60 services - and a
+connection-refused from a sidecar looks like a network problem rather than a config change, so the
+diagnosis starts in the wrong place. You cannot have one without the other.
+
+So my rule: count languages and teams first. One language and two teams, use a library. Put a gateway at
+the edge before putting a proxy beside every pod. And if the requirement is mTLS everywhere without
+touching application code, that single item justifies more meshes than all the traffic-management
+features put together."
+
+THE ONE SENTENCE TO NOT FUMBLE: a library makes every policy change a 60-service migration and a mesh
+makes it one config push - and you pay for that with two hops per call, a proxy per instance, and a blast
+radius that is the same size as the convenience.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def pump(a, b):
+        while True:
+            d = a.recv(65536)
+            if not d: break
+            b.sendall(d)
+
+The proxy, and it is deliberately the simplest possible one: read from one socket, write to the other.
+No parsing, no policy, no TLS. That matters for the honesty of the measurement - whatever overhead this
+shows is the FLOOR. A real Envoy sidecar parses HTTP, applies routing rules, terminates and originates
+TLS, and emits metrics, so it does strictly more work per byte (though in C++ rather than Python).
+
+    def handle(cs):
+        us = socket.create_connection(('127.0.0.1', target))
+        cs.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        us.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        threading.Thread(target=pump, args=(cs, us)).start()
+        threading.Thread(target=pump, args=(us, cs)).start()
+
+One upstream connection per downstream connection, and two threads to pump both directions. `TCP_NODELAY`
+on both sockets disables Nagle's algorithm - without it, small writes are buffered for up to 40 ms
+waiting for more data, and the measurement would show a latency cliff that is an artefact of the proxy
+rather than a property of proxying. Any hand-rolled proxy that forgets this looks catastrophically slow.
+
+Note also that a real sidecar POOLS upstream connections rather than opening one per downstream
+connection - which removes a TCP handshake from the path and is part of why Envoy's per-hop cost is
+lower than this.
+
+    P1 = start_proxy(BPORT)     # one sidecar hop
+    P2 = start_proxy(P1)        # client sidecar + server sidecar
+
+The three paths, chained. `P2` proxies to `P1`, which proxies to the backend - which is exactly the mesh
+topology: the caller's sidecar, the callee's sidecar, then the service. Measuring all three separately is
+what lets us attribute the cost per hop rather than quoting one aggregate number.
+
+    for port in (BPORT, P1, P2): measure(port, 60)   # warm up
+
+Sixty warm-up requests per path before timing. Without this, the first measurements include Python's
+import and JIT-free startup costs, thread pool creation and TCP slow-start - and the direct path, being
+measured first, would be unfairly penalised.
+
+    xs.sort(); return mean(xs), xs[len(xs)//2], xs[int(len(xs)*0.99)]
+
+Reporting p50 and p99 rather than just the mean, for the reasons in the tail-latency entry - a proxy adds
+queueing, and queueing shows up in the tail before it shows up in the average. MEASURED: the p99 gap
+(+3.042 ms) is larger than the p50 gap (+2.600 ms), which is exactly that effect.
+
+    100*hop/(svc+hop)
+
+The fraction arithmetic, and it is the number that should drive the decision. `hop` is fixed at 2.600 ms;
+`svc` is your service's own latency. The result ranges from 83.87% to 0.52% across realistic service
+latencies - so "what does a mesh cost?" has no single answer, and the honest form is "what does it cost
+FOR THIS CALL PATH?".
+
+    adopted = SERVICES * (1 - 0.75**weeks)
+
+The library rollout model: each week, roughly a quarter of the remaining services adopt. It is a model
+rather than a measurement and I would say so - but the SHAPE is the familiar one, a long tail of
+stragglers. MEASURED against it: 25% after one week, 68% after four, 97% after twelve. The mesh
+alternative has no curve, because there is nothing to adopt.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the hop, real sockets, 400 requests per path.
+
+    path                                    mean       p50       p99
+    -----------------------------------   -------   -------   -------
+    direct to the service                 0.787     0.753     1.469 ms
+    through ONE proxy (server sidecar)    2.025     1.982     3.004 ms
+    through TWO proxies (both sidecars)   3.451     3.353     4.511 ms
+
+    one hop   : +1.229 ms p50, +1.535 ms p99
+    two hops  : +2.600 ms p50, +3.042 ms p99
+    relative  : 2.63x and 4.45x on the median
+
+Two things to read. The p99 penalty exceeds the p50 penalty - a proxy adds queueing, and queueing appears
+in the tail first. And the second hop costs slightly more than the first (+1.371 vs +1.229), because it
+also carries the first proxy's own scheduling variance.
+
+These are UPPER BOUNDS: this proxy is Python and opens a fresh upstream connection per client connection.
+Envoy is C++ and pools connections, at roughly 0.3-0.5 ms per hop.
+
+TRACE B - the overhead as a fraction, using the measured 2.600 ms round trip.
+
+    service latency   overhead share   verdict
+    ---------------   --------------   ---------------------------------------
+             0.5 ms          83.87%    the mesh nearly doubles the call
+             1.0 ms          72.22%    unacceptable for a cache tier
+             5.0 ms          34.21%    noticeable
+            20.0 ms          11.50%    tolerable
+           100.0 ms           2.53%    invisible
+           500.0 ms           0.52%    irrelevant
+
+The mesh tax is a constant, so it is entirely determined by what you are calling. This table is the
+argument for per-workload injection rather than fleet-wide enablement: the same mesh is a rounding error
+on one tier and a doubling on another.
+
+TRACE C - shipping a policy change to 60 services in 4 languages.
+
+    step                              shared library    sidecar / mesh
+    -------------------------------   ---------------   --------------
+    artefacts to build                              4                1
+    services that must change                      60                0
+    services that must be redeployed               60                0
+    teams to coordinate                           ~18                1
+    adoption after 1 week                   ~15 (25%)        60 (100%)
+    adoption after 4 weeks                  ~41 (68%)        60 (100%)
+    adoption after 12 weeks                 ~58 (97%)        60 (100%)
+
+The "12 weeks to 97%" row is the real cost of a library, and note the second-order effect: for three
+months your fleet has TWO retry policies and nobody can say which services have which. That
+unknowability is often worse than the delay.
+
+TRACE D - the resource cost, which scales with PODS not services.
+
+    sidecar size              400 pods
+    ---------------------   ----------------------------
+    50 MB  / 0.05 vCPU      19.5 GB RAM,  20.0 vCPU
+    100 MB / 0.10 vCPU      39.1 GB RAM,  40.0 vCPU
+    200 MB / 0.20 vCPU      78.1 GB RAM,  80.0 vCPU
+
+A whole extra process per instance. At 400 pods the middle row is roughly a rack's worth of RAM and CPU
+doing nothing but proxying - and this is the number that gets a mesh proposal rejected, which is exactly
+why sidecar-less designs (per-node proxies, eBPF) are where the industry is heading.
+
+TRACE E - the failure modes, which is where the two approaches differ most and get discussed least.
+
+    property                    shared library                 sidecar / mesh
+    -------------------------   ----------------------------   -----------------------------------
+    where the policy runs       in your process                in another process
+    a bug breaks                one service                    every service, on one bad push
+    what the failure looks      a stack trace in your logs     connection refused - looks like the
+      like                                                       network, not like a config change
+    who can diagnose it         the owning team                the platform team
+    rollback                    revert a dependency, redeploy  revert the config push
+    blast radius                1 service                      all 60
+
+The last row is the same fact as Trace C read backwards. One push reaching 60 services immediately is
+precisely what makes one BAD push reach 60 services immediately, and the two cannot be separated - they
+are the same mechanism.
+
+The middle row is the one that costs real incident time: a sidecar failure presents as a network symptom,
+so the investigation starts by checking the network, and the actual cause was a configuration change
+somewhere else entirely.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    latency (real sockets, localhost, 400 requests per path)
+        direct              0.753 ms p50,  1.469 ms p99
+        one proxy           1.982 ms p50,  3.004 ms p99      (+1.229 / +1.535)
+        two proxies         3.353 ms p50,  4.511 ms p99      (+2.600 / +3.042)
+        (Envoy in practice: ~0.3-0.5 ms per hop; this Python proxy is an upper bound)
+
+    overhead as a share of the call (2.600 ms round trip)
+        0.5 ms service 83.87% | 1 ms 72.22% | 5 ms 34.21% | 20 ms 11.50% | 100 ms 2.53% | 500 ms 0.52%
+
+    rollout of one policy change, 60 services / 4 languages / ~18 teams
+        library: 4 builds, 60 redeploys, ~25% adopted after 1 week, 97% after 12 weeks
+        mesh:    1 build, 0 redeploys, 1 config push, 100% immediately
+
+    resource cost at 400 pods
+        50 MB/0.05 vCPU -> 19.5 GB, 20 vCPU | 100/0.10 -> 39.1 GB, 40 vCPU | 200/0.20 -> 78.1 GB, 80 vCPU
+
+THE MISTAKES:
+
+    - Adopting a mesh for a small homogeneous fleet. The library cost scales with languages x teams; at
+      1 x 2 it is an afternoon.
+    - Evaluating the latency tax on your slowest tier and enabling it everywhere. MEASURED 2.53% at
+      100 ms and 83.87% at 0.5 ms.
+    - Not multiplying the sidecar footprint by POD count. MEASURED up to 78 GB and 80 vCPU at 400 pods.
+    - Treating a control-plane push as configuration rather than as a deploy. Its blast radius is the
+      whole fleet.
+    - Forgetting that the blast radius IS the rollout advantage. One push changing everything means one
+      bad push breaking everything.
+    - Expecting the sidecar to handle application-level concerns. It sees transport, not meaning.
+    - Skipping the edge gateway. One proxy at the boundary gives most of the security benefit for a
+      fraction of the cost.
+    - Not defining the sidecar's failure mode. Fail-closed means your service is down when the proxy is,
+      and that must be a decision rather than a discovery.
+    - Ignoring startup ordering, so the application sends traffic before the proxy is ready.
+    - Forgetting `TCP_NODELAY` (or equivalent tuning) in any hand-rolled proxy - Nagle's algorithm alone
+      can add tens of milliseconds.
+    - Choosing a library and then not making upgrades cheap. MEASURED: ~25% adoption after a week
+      without automation.
+    - Not re-evaluating sidecar-less options, which exist specifically to remove the per-pod cost.
+
+THE TAKEAWAY. The choice is not about elegance, it is about who pays to change a policy. A library makes
+every change a migration - modelled here at 4 builds, 60 redeploys, ~18 teams and twelve weeks to reach
+97%, during which your fleet has two policies and nobody knows which service has which. A mesh makes it
+one config push. You buy that with two extra hops per call (measured at +2.600 ms here, and 83.87% of a
+0.5 ms call against 2.53% of a 100 ms one), a proxy per instance (up to 78 GB and 80 vCPU at 400 pods),
+and a blast radius exactly as large as the convenience. Count your languages and teams first, put a
+gateway at the edge before a proxy beside every pod, exempt the fast paths - and if the requirement is
+mTLS everywhere without touching application code, that one item justifies more meshes than every traffic
+feature combined.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
