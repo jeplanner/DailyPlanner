@@ -326742,6 +326742,2108 @@ test decisive, and the same structure governs fraud detection, security alerting
 classifier you will ever ship.""",
 ]
 
+_EX_P1AO["Why is UDP used for video, gaming, VoIP, and DNS despite being unreliable?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - TCP guarantees that every byte arrives, in order. For a live phone
+call, that guarantee is the PROBLEM.
+
+If a packet carrying video frame 400 is lost, TCP retransmits it - and until the replacement arrives, it
+REFUSES TO HAND OVER frames 401 through 405, even though they are sitting in the receiver's buffer.
+That is head-of-line blocking, and by the time frame 400 finally arrives it is stale: the conversation
+has moved on and nobody wants to see it.
+
+UDP does the opposite. It delivers each datagram the moment it arrives, with no ordering and no
+retransmission, and lets the APPLICATION decide what to do about the gap - interpolate the missing
+video frame, conceal the missing audio, ignore the stale player position.
+
+MEASURED ON THIS MACHINE - a 50 fps call, one frame every 20 ms, 60 ms round trip, 1% packet loss,
+40,000 frames:
+
+    protocol   frames lost      p50      p95      p99      max
+    --------   -----------   ------   ------   ------   ------
+    TCP                  0   30.0ms   30.0ms   90.0ms   90.0ms
+    UDP                445   30.0ms   30.0ms   30.0ms   30.0ms
+
+TCP lost NOTHING and its tail is three times worse. UDP lost 1% of frames and its latency NEVER MOVES -
+it is exactly `RTT/2` at every percentile, because no frame ever waits for another.
+
+For a bank transfer, the top row is obviously correct. For a live call, the bottom row is - because a
+frame that arrives 90 ms late has already missed its slot, so you paid the delay AND still did not show
+it.""",
+
+    """2. THE INTUITION - a conveyor belt that stops for a missing box.
+
+TCP is a belt with a rule: boxes come off in the order they went on. If box 400 falls off, boxes 401 to
+405 pile up at the end - they have ARRIVED, they are physically present - and the receiver is forbidden
+to hand any of them over until a replacement for 400 turns up.
+
+For a file download that is exactly right; you need all the bytes eventually and the order matters. For
+a live call it is the wrong trade, because the boxes have EXPIRY DATES.
+
+WHY THE TAIL IS THE NUMBER THAT MATTERS, and this is the part people miss. A real-time receiver runs a
+JITTER BUFFER - it deliberately holds a little audio or video before playing it, so that a late packet
+still arrives in time. The buffer must be sized for the WORST case you intend to survive, and then
+EVERY participant pays that buffer on EVERY frame, for the whole call.
+
+MEASURED, sizing the buffer at the p99:
+
+    protocol   buffer needed (p99)   end-to-end delay on EVERY frame
+    --------   -------------------   -------------------------------
+    TCP                     90.0ms                           120.0ms
+    UDP                     30.0ms                            60.0ms
+
+Conversational quality degrades noticeably above about 100 ms end to end and becomes difficult above
+150. TCP's tail spends the ENTIRE budget on a problem UDP solves by shrugging - and it spends it on
+every frame, not just the affected ones, because the buffer is a constant.
+
+THE SECOND INTUITION - the gap widens with distance. MEASURED, 1% loss throughout, changing only the
+round trip:
+
+    RTT       TCP p50   TCP p99    UDP p50   UDP p99   verdict for TCP
+    ------   --------   -------   --------   -------   ---------------
+     20ms      10.0ms    30.0ms     10.0ms    10.0ms   fine
+     60ms      30.0ms    90.0ms     30.0ms    30.0ms   fine
+    120ms      60.0ms   180.0ms     60.0ms    60.0ms   noticeable
+    200ms     100.0ms   300.0ms    100.0ms   100.0ms   UNUSABLE
+    400ms     200.0ms   600.0ms    200.0ms   200.0ms   UNUSABLE
+
+The UDP columns are IDENTICAL at p50 and p99 in every row - exactly `RTT/2`. TCP's p99 is
+`RTT/2 + RTT`, so it grows one and a half times faster with distance, and by a 200 ms round trip - an
+ordinary intercontinental mobile path - it has spent the whole conversational budget on retransmissions
+of frames nobody will look at.""",
+
+    """3. EVERY TERM DEFINED.
+
+UDP (user datagram protocol). Send a datagram; it may arrive, arrive out of order, arrive twice, or not
+arrive. No connection, no acknowledgements, no retransmission, no ordering, no congestion control. An 8
+byte header.
+
+TCP. A reliable, ordered byte stream, with a handshake, acknowledgements, retransmission, flow control
+and congestion control. A 20+ byte header and connection state on both ends.
+
+DATAGRAM. A self-contained message with a boundary. `recv` gives you exactly one, whole, or nothing -
+unlike a TCP stream where message boundaries are your problem.
+
+HEAD-OF-LINE BLOCKING. Data that has ARRIVED being withheld because earlier data has not. See the
+HTTP/2 entry for the same phenomenon at a different layer.
+
+JITTER. Variation in packet arrival times. The reason a real-time receiver needs a buffer at all.
+
+JITTER BUFFER / PLAYOUT BUFFER. A small deliberate delay so late packets still arrive in time. Sized
+for the tail, paid on every frame. MEASURED at 90 ms for TCP against 30 ms for UDP.
+
+STALE DATA. A packet that arrives after it is useful. The core of this entry: TCP's guarantee is that
+data ARRIVES, not that it arrives IN TIME, and for real-time those are different requirements.
+
+PACKET LOSS CONCEALMENT. The application's response to a gap: interpolate the missing audio, repeat the
+last video frame, extrapolate the player's position. Only possible if the protocol TELLS you there is a
+gap rather than stalling until it can fill it.
+
+FEC (forward error correction). Sending redundant data so a loss can be REPAIRED without a round trip.
+The real-time answer to reliability - you pay bandwidth instead of latency, which is exactly the right
+trade when latency is the scarce resource.
+
+RTP / RTCP. The real-time transport protocol, layered on UDP: sequence numbers and timestamps so the
+application can DETECT loss and reordering, plus a control channel for quality feedback. UDP does not
+mean "no structure"; it means "you choose the structure".
+
+DNS FALLBACK TO TCP. DNS uses UDP by default and switches to TCP when the response exceeds what a
+datagram carries reliably - historically 512 bytes, larger with EDNS0. Also used for zone transfers.
+
+AMPLIFICATION ATTACK. UDP has no handshake, so the source address can be spoofed and a small query can
+provoke a large reply at a victim. This is UDP's real security cost, and the reason for response-rate
+limiting and QUIC's 3x amplification limit.
+
+QUIC. Reliability, ordering and congestion control rebuilt in USER SPACE on top of UDP, with PER-STREAM
+guarantees - so one lost packet stalls one stream instead of all of them. See the QUIC entry.
+
+SELECTIVE RELIABILITY. Choosing, per message, whether it is worth retransmitting. A game retransmits
+"you fired a weapon" and never retransmits "your position at time T", because a newer position packet
+is already on the way.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "reliable is always better, so TCP unless proven otherwise".
+The measurement says the cost model decides, and the cost model changes with the data's SHELF LIFE.
+
+MEASURED, loss rate swept at a fixed 60 ms round trip:
+
+    loss     TCP p50   TCP p99   UDP p50   UDP frames lost
+    ------   -------   -------   -------   ---------------
+    0.000     30.0ms    30.0ms    30.0ms                 0
+    0.001     30.0ms    30.0ms    30.0ms                52
+    0.005     30.0ms    70.0ms    30.0ms               248
+    0.010     30.0ms    90.0ms    30.0ms               445
+    0.050     30.0ms    90.0ms    30.0ms             2,111
+    0.150     30.0ms    90.0ms    30.0ms             6,098
+
+Read what each protocol TRADES. TCP holds its loss at zero and pays in a tail that reaches 90 ms - and
+crucially that tail SATURATES: from 1% loss onward it is 90 ms regardless, because one retransmit is one
+retransmit. UDP holds its latency at a flat 30 ms and pays in frames lost, PROPORTIONALLY and
+PREDICTABLY: 52, 248, 445, 2,111, 6,098.
+
+For a call, a predictable 1% frame loss with concealment is barely perceptible. A 90 ms buffer on every
+frame is perceptible to everyone on the call, all the time.
+
+THE SECOND TRAP - forgetting that UDP is not just "TCP without the good bits". Everything TCP provides
+is available to a UDP application; the difference is that YOU CHOOSE, per message:
+
+    RTP adds sequence numbers and timestamps, so the app can DETECT loss and reordering.
+    A game retransmits critical events and never retransmits positional updates, because a newer
+      position is already in flight and the old one is worthless.
+    FEC repairs loss WITHOUT a round trip - paying bandwidth instead of latency.
+    QUIC rebuilds full reliability with PER-STREAM ordering.
+    Congestion control is your responsibility, and ignoring it is antisocial - a UDP flood does not
+      back off, which is why real-time protocols implement their own (see the TCP slow-start entry for
+      what happens when nobody does).
+
+THE THIRD TRAP - the DNS reasoning, which is a completely different argument from the video one.
+MEASURED, round trips before any data moves:
+
+    exchange                                          RTTs      20ms     50ms    150ms
+    ---------------------------------------------   -----   -------   ------   ------
+    UDP: one datagram out, one back                      1      20ms     50ms    150ms
+    TCP: SYN, SYN-ACK, ACK, then request/response        2      40ms    100ms    300ms
+    TCP + TLS 1.3                                        3      60ms    150ms    450ms
+    TCP + TLS 1.2                                        4      80ms    200ms    600ms
+
+A DNS lookup is one small question and one small answer. TCP would DOUBLE the round trips for no
+benefit - and every web page load starts with one, so that doubling is at the front of everything (see
+the URL-walk entry, where DNS was 22.9% of a small page load).
+
+It also removes CONNECTION STATE from the resolver. A root nameserver handling millions of queries per
+second would otherwise hold millions of TCP control blocks, with the TIME_WAIT state and SYN-flood
+exposure that come with them. Here UDP's statelessness is the point, and latency is secondary.
+
+THE FOURTH TRAP - assuming UDP is free of consequences. It has no handshake, so the source address is
+unverified, so a small spoofed query can provoke a large reply aimed at a victim. DNS and NTP
+amplification attacks are exactly this, which is why resolvers implement response-rate limiting and why
+QUIC caps a server at sending 3x what it has received until the address is validated.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what actually uses which, and why.
+
+USE UDP WHEN LATE DATA IS USELESS:
+    VOICE AND VIDEO CALLS      a frame that misses its playout slot is worthless. Conceal and move on.
+    LIVE GAMING                a player position from 200 ms ago is superseded by the one already in
+                               flight. Retransmitting it is worse than useless - it costs bandwidth to
+                               deliver something you will discard.
+    LIVE STREAMING (low-latency)   the same argument. Note that ON-DEMAND video is the opposite case
+                               and uses TCP over HTTP, because you can buffer for seconds and every
+                               byte matters.
+    TELEMETRY AND METRICS      StatsD sends UDP because losing one of a thousand samples per second is
+                               invisible and blocking the application is not.
+
+USE UDP WHEN THE EXCHANGE IS TINY AND STATELESS:
+    DNS                        one question, one answer. MEASURED: TCP would double the round trips,
+                               and it would add per-query connection state at millions of QPS.
+    NTP, DHCP, SNMP, syslog    same shape.
+    QUIC's handshake           even the reliable protocol starts as a datagram, for the same reason.
+
+USE TCP WHEN EVERY BYTE AND ITS ORDER MATTER:
+    file transfer, HTTP, databases, email, SSH, and any request-response that must be complete.
+    ON-DEMAND video streaming - counter-intuitively, because a large buffer removes the latency
+    argument and leaves only the reliability one.
+
+THE MIDDLE GROUND, which is where modern systems live:
+    QUIC / HTTP/3         full reliability, per-STREAM ordering, over UDP. One lost packet stalls one
+                          stream. MEASURED in the HTTP/2 entry: HTTP/2's loss-induced degradation was
+                          2.1x HTTP/3's, purely from sharing one TCP sequence space.
+    WEBRTC DATA CHANNELS  configurable per channel: reliable and ordered, unreliable, or
+                          partially-reliable with a retransmit deadline. Exactly the "you choose"
+                          model.
+    SRT, RIST             reliable low-latency video transports over UDP, with a bounded retransmit
+                          window - retransmit only if the replacement can still arrive in time.
+    FEC                   repair without a round trip. The right answer when bandwidth is cheaper than
+                          latency, which for video it usually is.
+    SCTP                  had multiple independent streams in the 1990s - the correct fix - and is
+                          undeployable because NATs drop anything that is neither TCP nor UDP. See the
+                          QUIC entry; it is the strongest evidence for why the fix had to arrive
+                          disguised as UDP.
+
+THE DECISION RULE TO SAY OUT LOUD: use UDP when LATE DATA IS USELESS and loss is app-handleable; TCP
+when every byte and its order matter. And note that "reliable" and "timely" are DIFFERENT guarantees -
+TCP provides the first and, under loss, actively sacrifices the second.""",
+
+    """6. HOW TO CODE IT.
+
+THE UDP SIDE, and what you take on:
+
+  1. `socket.socket(AF_INET, SOCK_DGRAM)`. No connect, no accept, no streams. `sendto` and `recvfrom`.
+  2. Each `recvfrom` returns exactly ONE datagram, whole. That is genuinely easier than TCP, where
+     message framing is your problem and a `recv` may return half a message or three.
+  3. ADD YOUR OWN SEQUENCE NUMBERS. Without them you cannot detect loss or reordering, and detecting
+     loss is what lets the application conceal it. This is what RTP provides.
+  4. ADD TIMESTAMPS, so the receiver can schedule playout and DISCARD anything already too late. A
+     packet that arrives after its slot should be dropped by your code, not played.
+  5. DECIDE PER MESSAGE whether it is worth retransmitting. "You fired" - yes. "Your position at time
+     T" - no, a newer one is already coming.
+  6. IMPLEMENT CONGESTION CONTROL, or at least a rate cap. UDP will happily let you flood a link, and
+     see the slow-start entry for what happens when senders do not back off.
+  7. Keep datagrams under the path MTU - about 1,200 bytes is the safe figure QUIC uses - because IP
+     fragmentation means losing ONE fragment loses the whole datagram.
+
+THE REAL-TIME RECEIVER:
+
+  8. Buffer for the p99 arrival delay, not the maximum. Sizing for the max means everyone waits for the
+     worst packet that ever happened.
+  9. Play out on a fixed clock. If the packet for slot N has not arrived, CONCEAL and move on - do not
+     wait, because waiting is exactly the TCP behaviour you chose UDP to avoid.
+ 10. Adapt the buffer to measured jitter. Grow it when the tail worsens, shrink it when the network is
+     good.
+
+MEASURING IT, which is the part that makes the argument:
+
+ 11. Model both protocols against the SAME loss pattern. TCP: keep ONE `head` variable and set
+     `head = max(head, arrival)`, delivering everything at `head` - that single shared variable IS
+     in-order delivery. UDP: a lost frame is simply absent and later frames are untouched.
+ 12. Report LATENCY PERCENTILES AND LOSS COUNT SIDE BY SIDE. Reporting only latency makes UDP look
+     free; reporting only loss makes TCP look free. The trade is the finding.
+ 13. Sweep the RTT with loss fixed, and the loss with RTT fixed. The first sweep shows TCP's tail
+     growing 1.5x faster with distance; the second shows TCP's tail SATURATING at 90 ms while UDP's
+     loss grows proportionally. Two different shapes, two different lessons.
+ 14. Convert the tail into the JITTER BUFFER and then into END-TO-END DELAY. That is the number a user
+     experiences - 120 ms against 60 ms - and it is what turns a percentile into an argument.
+ 15. For DNS, just count round trips. One versus two is the whole case, and multiplying by real RTTs
+     makes it concrete.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"TCP's reliability costs LATENCY, and that hurts two very different workloads: real-time streams and
+tiny request-response exchanges.
+
+TCP guarantees IN-ORDER delivery, so one lost packet triggers a retransmit AND head-of-line blocking -
+all later data waits a full round trip even though it has already arrived. For a live call or a game
+that stall is worse than the loss: by the time the retransmitted frame arrives it is stale, and you
+would rather skip it and show the next one.
+
+I measured that. A 50 fps call, 60 ms round trip, 1% loss: TCP lost ZERO frames and had a p99 latency
+of 90 ms; UDP lost 1% of frames and its latency was 30 ms at EVERY percentile - exactly RTT/2, because
+no frame ever waits for another.
+
+The reason the tail matters more than the average is the JITTER BUFFER. A real-time receiver buffers
+for the worst case it intends to survive, and then everybody pays that buffer on every frame for the
+whole call. Sizing at the p99, TCP needs 90 ms and UDP needs 30 - which is 120 ms versus 60 ms end to
+end, against a conversational budget of about 150.
+
+And it gets worse with distance. Holding loss at 1% and varying the round trip, UDP's p50 and p99 are
+identical in every row - always RTT/2 - while TCP's p99 is RTT/2 plus a full RTT, so it grows one and a
+half times faster. At a 200 ms round trip TCP's p99 is 300 ms and the call is unusable, while UDP is a
+flat 100.
+
+UDP delivers datagrams immediately with no ordering or retransmission, letting the APPLICATION decide
+what to do about loss - interpolate a dropped frame, conceal missing audio, ignore a stale position.
+And you can add back exactly what you need: RTP adds sequence numbers and timestamps so you can DETECT
+loss, forward error correction repairs it without a round trip, and a game retransmits critical events
+while never retransmitting positions, because a newer position is already in flight.
+
+For DNS the argument is different and simpler. A query and response is one tiny exchange, so TCP's
+three-way handshake would DOUBLE the round trips for no benefit - one RTT becomes two, and that sits at
+the front of every page load. It would also put connection state on resolvers handling millions of
+queries per second. So UDP sends one packet and gets one back, falling back to TCP only for responses
+too large for a datagram.
+
+The principle: use UDP when LATE DATA IS USELESS and loss is app-handleable, and TCP when every byte
+and its order matter. And QUIC and HTTP/3 build SELECTIVE reliability on top of UDP to get per-stream
+guarantees without TCP's head-of-line blocking - which is the modern answer, and it exists because the
+choice was never really between reliable and unreliable."
+
+THE ONE SENTENCE TO NOT FUMBLE: TCP guarantees data ARRIVES and not that it arrives IN TIME - and for
+real-time data those are different requirements, because a late frame has already missed its slot.""",
+
+    """8. THE CODE LINE BY LINE - the simulation, since that is where the argument lives.
+
+    def stream(proto, n, loss, rtt, frame_ms):
+        head = 0.0; lat = []; lost = 0
+        for i in range(n):
+            sent = i*frame_ms
+            arrive = sent + rtt/2
+            drop = r.random() < loss
+            if drop: arrive += rtt
+
+The setup: a frame every `frame_ms`, base one-way delay `rtt/2`, and a lost packet costing ONE FULL RTT
+to retransmit. That is the optimistic case - a fast retransmit rather than a timeout - so every gap
+measured here is a lower bound.
+
+            if proto == 'tcp':
+                head = max(head, arrive); lat.append(head - sent)
+
+ONE shared `head` variable, and this is in-order delivery in a single line. Frame `i` is delivered at
+the LATEST arrival so far, not at its own. If frame 400 was retransmitted, frames 401 onwards inherit
+its delay - they cannot be handed over earlier, because that would deliver bytes out of order and TCP
+does not do that.
+
+            else:
+                if drop: lost += 1
+                else: lat.append(arrive - sent)
+
+UDP: a lost frame is COUNTED AND GONE, and every other frame's latency is `arrive - sent` = `rtt/2`,
+untouched by anything else. Note it never appears in the latency list at all, which is why UDP's
+percentiles are perfectly flat - the population being measured is only the frames that made it.
+
+That asymmetry is deliberate and it is the honest comparison: TCP delivers everything late, UDP delivers
+most things on time. Reporting only one column would flatter one protocol.
+
+    d['p99']
+
+The percentile that matters, because the JITTER BUFFER is sized for the tail and then paid on every
+frame. The mean would hide the entire effect - TCP's p50 was 30.0 ms, identical to UDP's, at every loss
+rate tested.
+
+    for rtt in (20,60,120,200,400): ...
+
+Sweeping the RTT with loss FIXED. This isolates the structural difference: UDP's latency is `rtt/2` and
+TCP's p99 is `rtt/2 + rtt`, so the ratio is a constant 3 and the ABSOLUTE gap grows with distance. That
+is why the same protocol choice is fine on a LAN and fatal intercontinentally.
+
+    for loss in (0.0, 0.001, 0.005, 0.01, 0.05, 0.15): ...
+
+Sweeping loss with RTT fixed, which shows the other shape: TCP's p99 SATURATES at 90 ms from 1% loss
+onward - one retransmit is one retransmit, however often it happens - while UDP's loss grows exactly in
+proportion. Two different failure curves, and knowing which one you are on decides the protocol.
+
+    30 + d['p99']
+
+Converting a percentile into what a user experiences: the base one-way delay plus the buffer. 120 ms
+against 60 ms, against a conversational budget of about 150. A percentile is a statistic; this is an
+argument.
+
+    for lab, n in [("UDP: one datagram out, one back", 1), ("TCP: SYN, SYN-ACK, ACK, ...", 2), ...]
+
+The DNS case is not a simulation at all - it is counting. One round trip against two, multiplied by
+real RTTs. Some arguments do not need a measurement, and recognising which is worth as much as the
+measuring.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - four frames, one loss, both protocols. Frame every 20 ms, 60 ms RTT.
+
+    frame   sent    arrives (UDP)   arrives (TCP)   TCP delivered at   what happened
+    -----   ----   -------------   -------------   ----------------   --------------------------
+      400    0.0            30.0            30.0               30.0   normal
+      401   20.0   ***LOST***, retransmitted at 110.0          110.0   +60 ms retransmit
+      402   40.0            70.0            70.0              110.0   ARRIVED at 70, HELD until 110
+      403   60.0            90.0            90.0              110.0   ARRIVED at 90, HELD until 110
+      404   80.0           110.0           110.0              110.0   caught up
+
+    UDP: frame 401 is GONE (the app conceals it); 402 and 403 play at 70.0 and 90.0, on time.
+    TCP: frame 401 arrives at 110.0 - too late to show - AND drags 402 and 403 with it.
+
+Rows 402 and 403 are the entire entry. Those frames were in the receiver's memory at 70 ms and 90 ms
+and could not be used, because handing them over would have delivered bytes out of order.
+
+Note what TCP achieved: it successfully delivered a frame nobody wanted, at the cost of two frames
+people did.
+
+TRACE B - the distribution, 40,000 frames at 1% loss, 60 ms RTT.
+
+    protocol   lost      p50      p95      p99      max   what it optimised
+    --------   ----   ------   ------   ------   ------   ---------------------------
+    TCP           0   30.0ms   30.0ms   90.0ms   90.0ms   completeness
+    UDP         445   30.0ms   30.0ms   30.0ms   30.0ms   timeliness
+
+Both have the SAME p50 and p95. The protocols are indistinguishable for 95% of frames, and they differ
+entirely in the tail - which is precisely the part a jitter buffer must be sized for.
+
+TRACE C - the jitter buffer, which turns a tail into a constant cost.
+
+    protocol   p99 arrival   buffer   base delay   END-TO-END on every frame
+    --------   -----------   ------   ----------   -------------------------
+    TCP             90.0ms   90.0ms       30.0ms                     120.0ms
+    UDP             30.0ms   30.0ms       30.0ms                      60.0ms
+
+    conversational quality: noticeable above ~100 ms, difficult above ~150 ms
+
+TCP's choice costs 60 ms of added delay on EVERY frame of the call, to rescue 1% of frames that were
+already too late to display.
+
+TRACE D - RTT sweep, loss fixed at 1%.
+
+    RTT       TCP p50    TCP p99   UDP p50   UDP p99   TCP p99 / UDP p99
+    ------   --------   --------   -------   -------   -----------------
+     20ms      10.0ms     30.0ms    10.0ms    10.0ms                 3.0x
+     60ms      30.0ms     90.0ms    30.0ms    30.0ms                 3.0x
+    120ms      60.0ms    180.0ms    60.0ms    60.0ms                 3.0x
+    200ms     100.0ms    300.0ms   100.0ms   100.0ms                 3.0x
+    400ms     200.0ms    600.0ms   200.0ms   200.0ms                 3.0x
+
+The RATIO is exactly 3 in every row, because `(rtt/2 + rtt) / (rtt/2) = 3`. The ABSOLUTE gap is what
+grows: 20 ms on a LAN, 400 ms on a satellite link. The protocol choice matters more the further apart
+you are, which is why a video conference that works in the office fails on an international call.
+
+TRACE E - loss sweep, RTT fixed at 60 ms.
+
+    loss     TCP p50   TCP p99   UDP p50   UDP lost   what each protocol PAYS
+    ------   -------   -------   -------   --------   ------------------------------
+    0.000     30.0ms    30.0ms    30.0ms          0   nothing
+    0.001     30.0ms    30.0ms    30.0ms         52   UDP: 0.13% of frames
+    0.005     30.0ms    70.0ms    30.0ms        248   TCP: +40 ms tail
+    0.010     30.0ms    90.0ms    30.0ms        445   TCP: +60 ms tail
+    0.050     30.0ms    90.0ms    30.0ms      2,111   TCP: +60 ms; UDP: 5% of frames
+    0.150     30.0ms    90.0ms    30.0ms      6,098   TCP: +60 ms; UDP: 15% of frames
+
+TCP's tail SATURATES at 90 ms - one retransmit is one retransmit, however frequent - while UDP's cost
+grows linearly with loss. So at very high loss the trade genuinely shifts: 15% of frames missing is
+severe, and a fixed 60 ms of extra buffer may be the better deal. The right protocol depends on where
+on this table your network actually sits, which is an argument for measuring rather than assuming.
+
+TRACE F - the DNS case, which needs no simulation.
+
+    exchange                                          RTTs   at 20ms   at 50ms   at 150ms
+    ---------------------------------------------   -----   -------   -------   --------
+    UDP: one datagram out, one back                      1      20ms      50ms      150ms
+    TCP: SYN, SYN-ACK, ACK, then request/response        2      40ms     100ms      300ms
+
+One extra round trip, at the very front of every page load, on a lookup that carries a few hundred
+bytes - plus connection state on resolvers serving millions of queries per second. Different argument
+from the video case entirely: here it is about SETUP COST and STATELESSNESS, not about stale data.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+WHAT EACH PROTOCOL COSTS:
+
+    property                  UDP                        TCP
+    -----------------------   ------------------------   ---------------------------------------
+    header                    8 bytes                    20+ bytes
+    setup                     none                       1 RTT handshake
+    round trips for a DNS     1                          2   MEASURED
+      query
+    delivery latency          RTT/2, ALWAYS              RTT/2 typical, RTT/2 + RTT after a loss
+    MEASURED at 1% loss       p50 30ms, p99 30ms         p50 30ms, p99 90ms
+    MEASURED loss             1% of frames               0
+    jitter buffer needed      30 ms                      90 ms  -> 60 ms extra on EVERY frame
+    scaling with RTT          latency = RTT/2            p99 = 1.5 x RTT, so the gap grows
+    scaling with loss         loss grows proportionally  tail SATURATES at one retransmit
+    server state              none                       a control block per connection
+    congestion control        YOURS to implement         built in
+    security                  spoofable source ->        handshake validates the address
+                              amplification attacks
+
+THE MISTAKES:
+
+    - "Reliable is always better." MEASURED: TCP delivered every frame and 1% of them arrived too late
+      to show, while costing 60 ms of extra buffer on the other 99%.
+    - Reporting only latency, or only loss. Each protocol looks free on one axis. The trade IS the
+      answer.
+    - Using the MEAN. MEASURED: TCP and UDP had identical p50 and p95 at every loss rate; the entire
+      difference is in the tail, which is what the jitter buffer is sized for.
+    - Forgetting that the gap scales with RTT. MEASURED: a constant 3x ratio, so 20 ms on a LAN and
+      400 ms on a satellite path. Fine in the office, unusable internationally.
+    - Assuming UDP means no structure. RTP adds sequence numbers and timestamps; FEC adds repair
+      without a round trip; QUIC adds full per-stream reliability. UDP means YOU choose.
+    - Not implementing congestion control over UDP. It will not back off on its own, and see the
+      slow-start entry for the collective consequences.
+    - Sending datagrams above the path MTU. IP fragmentation means losing one fragment loses the whole
+      datagram; ~1,200 bytes is the safe figure.
+    - Ignoring amplification. No handshake means an unverified source address, which is what DNS and
+      NTP amplification attacks exploit.
+    - Applying the video argument to ON-DEMAND streaming. A large buffer removes the latency
+      constraint entirely, and on-demand video uses TCP over HTTP for exactly that reason.
+    - Treating this as a binary choice. QUIC exists precisely because it is not - selective, per-stream
+      reliability on top of UDP is the modern answer.
+
+THE TAKEAWAY. TCP guarantees that data ARRIVES; real-time systems need data that arrives IN TIME, and
+under loss TCP actively trades the second for the first. The measurement makes the trade explicit: at
+1% loss TCP lost nothing and pushed its p99 from 30 ms to 90, which forces a 90 ms jitter buffer that
+every participant pays on every frame - to rescue frames that had already missed their slot. UDP loses
+1% and never moves. For DNS the argument is different and simpler: one round trip instead of two, and
+no connection state on a server answering millions of queries a second. The principle in both cases is
+that "reliable" is not a synonym for "better" - it is one specific guarantee with a specific price, and
+whether that price is worth paying depends entirely on how long your data stays useful.""",
+]
+
+_EX_P1AO["Why is a columnar storage format faster for analytics than a row format?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - `SELECT SUM(price) FROM orders` needs ONE column. In a row store, that
+column's values are scattered every 70 bytes through the file, so reading them means reading everything
+in between.
+
+    ROW LAYOUT:      [id|ts|price|qty|country|cat|note][id|ts|price|qty|country|cat|note][...]
+                              ^^^^^                            ^^^^^
+                     the two values you want, 70 bytes apart
+
+    COLUMN LAYOUT:   [price|price|price|price|price|price|price|price|price|...]
+                     the whole column, contiguous
+
+MEASURED ON THIS MACHINE - a real 2,000,000-row table on disk, 140 MB, written both ways, and the SAME
+query run against each:
+
+    store            bytes read      sum          time
+    -------------   -----------   -----------   -------
+    ROW store            140.0 MB   55,335,365     0.42s
+    COLUMN store          16.0 MB   55,335,365     0.28s
+
+    -> 8.8x less I/O and 1.5x faster, for an identical answer.
+
+The 8.8x is not a tuning result. It is `70 bytes per row / 8 bytes per price` - the ratio of the row's
+width to the column's. On a real analytics table with 200 columns and a query touching 3, that ratio is
+not 8.8; it is closer to 60.
+
+And that is before the second effect, which is larger: because a column holds LIKE VALUES, it compresses
+enormously better than a row does. MEASURED, the `order_id` column: 3.03 MB compressed as raw values,
+and 0.02 MB when delta-encoded first - 130x better again, on a transformation a row store cannot
+perform at all.""",
+
+    """2. THE INTUITION - a filing cabinet organised by FORM, versus organised by FIELD.
+
+Organise by form and each folder holds one complete application - name, address, income, date. To answer
+"what is the total income?" you must pull EVERY folder and read past the name, address and date in each
+one.
+
+Organise by field and there is one long list of incomes, one of addresses, one of names. The total
+income is one list, read start to finish, and you never touch anything else.
+
+The trade is obvious once stated: adding one new application means writing into every field-list, in the
+right place. Which is exactly the row-versus-column trade.
+
+THE SECOND EFFECT, WHICH IS BIGGER THAN THE FIRST. Adjacent values in a COLUMN are the same kind of
+thing - eight country codes, five categories, timestamps three seconds apart. Adjacent bytes in a ROW
+are an id next to a timestamp next to a float. Compression is pattern-finding, and one of those has
+patterns.
+
+MEASURED, the same 2,000,000 values per column, zlib level 6:
+
+    column       raw MB   compressed MB    ratio   why
+    ---------   -------   -------------   ------   ----------------------------------------
+    order_id       16.0            3.03     5.3x   strictly increasing
+    ts             16.0            3.06     5.2x   strictly increasing by 3
+    price          16.0            5.41     3.0x   random floats - essentially incompressible
+    qty             8.0            1.23     6.5x   8 distinct values
+    country         2.0            0.85     2.4x   8 distinct values in 1 byte
+    category        2.0            0.67     3.0x   5 distinct values in 1 byte
+    note           80.0            4.87    16.4x   highly repetitive text
+
+    the WHOLE ROW FILE compressed:      140.0 MB -> 27.6 MB   (5.1x)
+    the COLUMNS compressed SEPARATELY:  140.0 MB -> 19.1 MB   (7.3x)
+
+Same bytes, same compressor, same settings. Grouping like values together before compressing was worth
+1.45x on its own.
+
+AND THEN THE ENCODINGS A ROW STORE CANNOT USE. `order_id` is strictly increasing, so store the
+DIFFERENCES instead of the values:
+
+    order_id raw       16.0 MB -> zlib  3.03 MB
+    order_id as DELTAS 16.0 MB -> zlib  0.02 MB      130x better
+
+A row store cannot delta-encode, because the value 8 bytes away is not the previous id - it is a
+timestamp. Delta encoding, run-length encoding, dictionary encoding and bit-packing all require the
+column to be contiguous, and that is why columnar formats are typically 5-10x smaller overall rather
+than the 1.45x that grouping alone buys.""",
+
+    """3. EVERY TERM DEFINED.
+
+ROW STORE / N-ARY STORAGE. All of a row's columns stored together. Postgres, MySQL/InnoDB, SQLite.
+Optimised for reading or writing a WHOLE ROW.
+
+COLUMN STORE / DECOMPOSITION STORAGE. Each column stored contiguously. Parquet, ORC, ClickHouse,
+Redshift, BigQuery, DuckDB, Snowflake.
+
+OLTP (online transaction processing). Many small reads and writes of whole rows. "Fetch order 12345",
+"insert a new order". Row store.
+
+OLAP (online analytical processing). Few columns, enormous numbers of rows, aggregated. "Sum revenue by
+country for the last year." Column store.
+
+PROJECTION PUSHDOWN. Reading only the columns the query names. The 8.8x measured above.
+
+PREDICATE PUSHDOWN. Using per-block statistics to SKIP blocks that cannot match. MEASURED below: a
+narrow time-range query read 1 block of 200.
+
+ROW GROUP / STRIPE / BLOCK. A horizontal slice - say a million rows - within which data is stored
+column by column. This is what real formats actually do: neither pure row nor pure column, but columns
+WITHIN a chunk of rows, so a block is independently readable and its statistics are useful.
+
+ZONE MAP / MIN-MAX INDEX. The per-block (min, max) footer that makes predicate pushdown work. Cheap -
+16 bytes per block per column - and it can eliminate 99% of the file.
+
+RUN-LENGTH ENCODING (RLE). Store "the value 3, forty times" instead of forty 3s. Devastatingly
+effective on a SORTED low-cardinality column.
+
+DICTIONARY ENCODING. Replace values with small integer codes into a per-block dictionary. Turns an 8
+byte country string into 3 bits.
+
+DELTA ENCODING. Store differences instead of values. MEASURED at 130x on a monotonic id column.
+
+BIT-PACKING. If a column's values fit in 3 bits, store 3 bits, not 32.
+
+FRAME OF REFERENCE. Store a per-block base and small offsets from it.
+
+VECTORISED EXECUTION. Process a batch - say 1,024 values - per function call instead of one row at a
+time. Only possible when the values are contiguous and of one type, which is a columnar property.
+
+SIMD. One CPU instruction operating on 8 or 16 values at once. Requires a tight array of one type -
+again, a columnar property. This is why the CPU-side gain exceeds the I/O gain in real engines.
+
+LATE MATERIALISATION. Keep working with column vectors and row IDs as long as possible, and only
+assemble actual rows at the very end. Doing it early throws away the whole advantage.
+
+WRITE AMPLIFICATION. One logical row update touching many files. The columnar cost. MEASURED below.
+
+DELTA STORE / LSM. Most columnar systems accept writes into a small row-oriented buffer and merge into
+columnar files in the background - because in-place updates are exactly what columnar is bad at. See
+the LSM/tombstone entry.
+
+HTAP (hybrid transactional/analytical). Systems that keep both layouts, or a row store with a columnar
+index, so you do not have to choose.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - two things, and the first is that most of the win is NOT the
+projection.
+
+The 8.8x from reading only the price column is the headline, and it is the smaller effect. Stack the
+three together:
+
+    reading only the needed column                     8.8x   MEASURED
+    compressing that column well                       5.3x   MEASURED (order_id, plain zlib)
+    encoding it appropriately first (delta)          130.0x   MEASURED
+
+Those multiply, and they multiply because each one operates on the output of the last. A query that
+reads 3 of 200 columns from a well-encoded columnar file can touch a thousandth of the bytes a row scan
+would - which is how a "hundreds of gigabytes" table becomes a "few gigabytes" scan.
+
+AND THE FOURTH EFFECT: skipping blocks entirely. MEASURED, per-block min/max footers over 200 blocks of
+10,000 rows:
+
+    query window            blocks read   blocks skipped   MB read
+    ---------------------   -----------   --------------   -------
+    a 10-row slice                    1              199      0.08
+    1% of the range                   2              198      0.16
+    a middle 5% window               11              189      0.88
+    the whole range                 200                0     16.00
+
+One block out of two hundred for a narrow query, from 16 bytes of metadata per block. A row store has
+no equivalent: its blocks contain WHOLE ROWS, so even a perfect min/max on the timestamp still forces
+you to read every column of every matching row.
+
+THE SECOND TRAP - assuming columnar is simply better. MEASURED, 2,000 single-row updates against the
+same data:
+
+    row store       17.1 ms   -   one seek, 70 bytes rewritten, ONE file
+    column store    20.9 ms   -   4 files touched, 4 seeks per row       (1.2x)
+
+Only 1.2x, and I want to be precise about why that number is MISLEADINGLY SMALL. That test touched 4 of
+7 columns and the columns were UNCOMPRESSED. In a real columnar format the column is stored as a
+compressed, encoded block: updating one value means decompressing the block, editing, re-encoding and
+rewriting it - for every column touched. Which is why real columnar systems generally FORBID row
+updates and make you rewrite whole files, or accept writes into a row-oriented delta store and merge
+later.
+
+So the honest statement is that my measurement UNDERSTATES the write penalty by a large factor, and I
+would rather say that than quote 1.2x as though it were the production number.
+
+THE THIRD TRAP - forgetting that real formats are HYBRID. Parquet and ORC do not store a column for the
+whole table; they store ROW GROUPS of perhaps a million rows, and within each row group the data is
+columnar. That gives you independently-readable chunks, per-chunk statistics for pushdown, and
+parallelism - and it means "columnar" is a property of the layout WITHIN a block, not of the whole file.
+
+THE FOURTH TRAP - `SELECT *`. On a row store it costs nothing extra. On a columnar store it is the
+worst possible query: you read every column file and then have to reassemble rows, which is precisely
+the operation the layout is bad at. `SELECT *` on a wide columnar table can be SLOWER than the row
+store.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - and how the two layouts actually coexist.
+
+WHAT EACH IS FOR:
+
+    workload                                          layout    why
+    ----------------------------------------------   -------   -----------------------------------
+    "fetch order 12345" (all columns, one row)       ROW       one seek, one contiguous read
+    "insert / update one order"                       ROW       one seek, one write
+    "SUM(revenue) GROUP BY country over a year"       COLUMN    2 of 200 columns, a billion rows
+    "how many users did X last month"                 COLUMN    projection + pushdown + compression
+    a dashboard over a large fact table                COLUMN
+    a shopping cart                                    ROW
+
+THE ENCODINGS, and which column shape each suits - these are what turn a 2x into a 100x:
+
+    encoding      best on                              MEASURED here
+    -----------   ----------------------------------   ---------------------------------------
+    DELTA         monotonic values (ids, timestamps)   order_id: 3.03 MB -> 0.02 MB (130x)
+    RLE           SORTED low-cardinality columns       -
+    DICTIONARY    low-cardinality strings              country/category: 8 and 5 distinct values
+    BIT-PACKING   small integer ranges                 qty: 1-9 fits in 4 bits, stored in 32
+    FoR           clustered numeric values             -
+
+SORTING THE DATA IS THE MULTIPLIER NOBODY MENTIONS. RLE on an unsorted low-cardinality column achieves
+almost nothing; on a sorted one it achieves enormous ratios, because the runs become long. Choosing the
+sort key of a columnar table is a first-class design decision, and it also determines how effective the
+min/max pushdown will be - which is the same reason a database index's column ORDER matters (see the
+query-plan entry).
+
+THE HYBRID ANSWERS, which is what production actually looks like:
+
+    ROW GROUPS (Parquet, ORC)   columns WITHIN a horizontal slice. Independently readable, with
+                                per-slice statistics. Everyone uses this.
+    A DELTA STORE               accept writes row-oriented, merge into columnar files in the
+                                background. ClickHouse, Druid, Hudi, Iceberg, Delta Lake.
+    HTAP                        keep both. SQL Server's columnstore indexes, Oracle's In-Memory
+                                column store, TiDB's TiFlash - a row store for transactions with a
+                                columnar replica for analytics.
+    ARROW                       an in-MEMORY columnar format, so the layout advantage survives after
+                                you have read the file. Parquet on disk, Arrow in memory, and no
+                                conversion between them.
+
+THE CPU SIDE, which in a real engine exceeds the I/O side: contiguous same-type values enable VECTORISED
+execution and SIMD, so `SUM(price)` becomes a handful of instructions over 8 or 16 values at a time
+rather than a Python-style loop with per-row overhead. My measurement showed only 1.5x on time against
+8.8x on bytes, because the Python `struct.unpack_from` loop dominated everything - in a vectorised C++
+engine the time ratio tracks the byte ratio far more closely, and that is a limitation of my harness
+rather than of the idea.
+
+WHEN NEITHER IS THE ANSWER: a key-value store, if you only ever fetch by key; a search index, if you
+mostly filter on text; and a plain row store with the right index, if your "analytics" reads a thousand
+rows rather than a billion. See the query-plan entry - a composite index took a query from 42.9 ms to
+42 us without changing the storage layout at all.""",
+
+    """6. HOW TO CODE IT - and the measurement design matters more than the code.
+
+BUILDING THE TWO LAYOUTS:
+
+  1. ROW: a fixed-width record per row. `struct.Struct('<qqdiBB40s')` - and use `<` so there is no
+     alignment padding, which makes the record size exact and the arithmetic honest.
+  2. COLUMN: one file per column, each a packed array of one type. `price.col` is just 2,000,000
+     float64s end to end.
+  3. Buffer writes into a `BytesIO` and flush every few megabytes. Writing value by value to a file
+     object is dominated by call overhead and will make the write timings meaningless.
+
+THE READ COMPARISON:
+
+  4. Read the row file in chunks that are a WHOLE NUMBER OF RECORDS - `REC.size * k`. My first version
+     used a 1 MB chunk, 70 does not divide 1,048,576, records straddled the boundary, and the sum came
+     out as `nan`. A silent wrong answer, from a buffering bug.
+  5. Report BYTES READ, not just elapsed time. Bytes are the property of the LAYOUT; time is a property
+     of your language and your loop. MEASURED 8.8x on bytes and only 1.5x on time, and the second
+     number is about Python.
+  6. Check the two sums are IDENTICAL. 55,335,365 both ways is what tells you the comparison is fair.
+
+MEASURING COMPRESSION - this is where the interesting numbers are:
+
+  7. Compress each column file separately, and compress the whole row file, and compare the totals.
+     MEASURED 19.1 MB against 27.6 MB - a 1.45x advantage from grouping alone, before any encoding.
+  8. Print a WHY column per column. `order_id 5.3x - strictly increasing` next to
+     `price 3.0x - random floats` is what turns a table into an explanation, and it shows the
+     technique's limits: the price column is essentially incompressible whatever you do.
+  9. IMPLEMENT DELTA ENCODING explicitly and compress that. 3.03 MB against 0.02 MB is the single most
+     striking number in the entry, and it exists only because the column is contiguous.
+
+MEASURING PUSHDOWN:
+
+ 10. Split the sort column into blocks and store `(min, max)` per block. That footer is 16 bytes per
+     block per column.
+ 11. For a query range, count how many blocks OVERLAP it. 1 of 200 for a narrow query.
+ 12. Note explicitly that a row store cannot do this usefully: its blocks contain whole rows, so even a
+     perfect timestamp min/max still forces you to read every column of the matching rows.
+
+MEASURING THE WRITE COST - and being honest about it:
+
+ 13. Time N single-row updates against both layouts.
+ 14. SAY WHAT YOUR MEASUREMENT UNDERSTATES. Mine touched 4 of 7 columns with NO compression and got
+     1.2x. Real columnar storage compresses blocks, so an update means decompress-edit-recompress-
+     rewrite per column. Quoting 1.2x as the production figure would be misleading, and saying so is
+     better than finding a benchmark that flatters the point.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Analytics reads a FEW columns across MANY rows - `SUM(revenue)` over a billion rows - while OLTP reads
+whole rows.
+
+In ROW storage a row's columns sit together, so reading one column still pulls entire rows off disk -
+wasted I/O. In COLUMNAR storage each column is contiguous, so you read ONLY the columns you need.
+
+I measured that on a real 2,000,000-row, 140 MB table written both ways. `SUM(price)` read 140 MB from
+the row store and 16 MB from the column store for an identical answer - 8.8x less I/O - and that ratio
+is not a tuning result, it is 70 bytes per row divided by 8 bytes per price. On a real table with 200
+columns and a query touching 3, the ratio is closer to 60.
+
+Columns also COMPRESS far better, because adjacent values are similar. I compressed the same data both
+ways with the same compressor: the whole row file went from 140 MB to 27.6, and the columns compressed
+separately went to 19.1 - so 1.45x better from nothing but grouping like values together first.
+
+And then the encodings a row store cannot use at all. `order_id` is strictly increasing, so I
+delta-encoded it: 3.03 MB compressed as raw values, 0.02 MB as deltas. A HUNDRED AND THIRTY times
+better. A row store cannot delta-encode, because the value eight bytes away is not the previous id, it
+is a timestamp. Run-length, dictionary and bit-packing encodings all need the column contiguous, which
+is why columnar formats are typically five to ten times smaller overall.
+
+There is a fourth effect: per-block min/max statistics power PREDICATE PUSHDOWN, letting you skip
+irrelevant blocks. With 200 blocks of 10,000 rows, a narrow time-range query read 1 block and skipped
+199 - from 16 bytes of metadata per block. A row store's blocks contain whole rows, so it has no
+equivalent.
+
+Contiguous same-type values also enable VECTORISED and SIMD execution over tight arrays, which in a
+real engine matters more than the I/O. My Python loop only showed 1.5x on time against 8.8x on bytes,
+and that gap is my harness rather than the idea.
+
+The trade-off is that updating one row touches many column files - and if the columns are compressed,
+you must decompress, edit, re-encode and rewrite a block per column. My uncompressed measurement showed
+only 1.2x, which badly understates it; real columnar systems generally forbid row updates and make you
+rewrite files or accept writes into a row-oriented delta store and merge later.
+
+Hence row-store for transactions, columnar for analytics - and in practice a hybrid: Parquet stores
+columns WITHIN row groups of about a million rows, and most analytical databases keep a row-oriented
+write buffer in front of the columnar files."
+
+THE ONE SENTENCE TO NOT FUMBLE: reading fewer bytes is the smaller half - the larger half is that
+adjacent values in a column are the SAME KIND OF THING, which is what compression and vectorisation both
+need.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    REC = struct.Struct('<qqdiBB40s')
+
+The row record: int64 id, int64 timestamp, float64 price, int32 qty, uint8 country, uint8 category, 40
+bytes of text. The `<` matters - it means little-endian AND NO ALIGNMENT PADDING, so `REC.size` is
+exactly 70 rather than a padded 72 or 80. Without it your byte arithmetic quietly disagrees with the
+file.
+
+    def write_col(name, fmt, data):
+        s = struct.Struct('<'+fmt)
+        for v in data: buf.write(s.pack(v))
+
+One file per column, each a packed array of ONE type. That is the whole implementation of a column
+store, and everything in this entry follows from it.
+
+    buf = io.BytesIO()
+    ...
+    if buf.tell() > 8<<20: f.write(buf.getvalue()); buf = io.BytesIO()
+
+Buffering to 8 MB before writing. Writing value by value to a file object is dominated by call overhead
+and would make every timing here a measurement of Python rather than of storage.
+
+    CH = REC.size * 15000
+    for off in range(0, len(b), REC.size): tot += REC.unpack_from(b, off)[2]
+
+Reading the row file in chunks that are a WHOLE NUMBER OF RECORDS. My first attempt used a 1 MB chunk;
+70 does not divide 1,048,576, so records straddled the boundary, `unpack_from` read misaligned bytes,
+and the total came out as `nan`. A silent wrong answer from a buffering bug - and the reason the entry
+prints both sums and checks they match.
+
+    [2] in the unpack
+
+Index 2 of the tuple is `price`. Note what happened to get there: the whole 70-byte record was read
+from disk and unpacked, and six of the seven fields were discarded. That discard IS the 8.8x.
+
+    with open(cols['price'],'rb') as f: ... for off in range(0,len(b),8): tot2 += s.unpack_from(b,off)[0]
+
+The columnar read. Same answer, one field, 8 bytes per row instead of 70, and no discarding at all.
+
+    zlib.compress(open(p,'rb').read(), 6)
+
+Compressing each column file separately, and the whole row file, with the IDENTICAL compressor and
+level. That control is what makes the 1.45x attributable to the LAYOUT rather than to the algorithm.
+
+    deltas = [vals[0]] + [vals[i]-vals[i-1] for i in range(1,len(vals))]
+
+Delta encoding, in one line, and it is the most important line in the measurement. It is only expressible
+because `vals` is the column - a row store would have to gather the ids from 2,000,000 places first,
+which is the scan you were trying to avoid. The result: 3.03 MB becomes 0.02 MB.
+
+    blocks = [(min(tvals[i:i+BLK]), max(tvals[i:i+BLK])) for i in range(0,len(tvals),BLK)]
+    hit = sum(1 for (a,b) in blocks if not (b<lo or a>hi))
+
+The zone map and the skip test. `not (b < lo or a > hi)` is "these two intervals overlap" - the standard
+form, and worth writing that way rather than as four comparisons. Sixteen bytes per block buys you the
+ability to ignore 199 of 200 blocks.
+
+    f.seek(i*REC.size+16); f.write(struct.pack('<d', 99.99))
+
+The row-store update: one seek to `row * 70 + 16` (past two int64s) and 8 bytes written. One file, one
+seek.
+
+    fs['price'].seek(i*8); ... fs['qty'].seek(i*4); ... fs['country'].seek(i); ...
+
+The columnar update: one seek per COLUMN. Note this version is the BEST CASE - uncompressed fixed-width
+columns, so the offset is computable and the write is in place. A real columnar file has neither
+property.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the same query, both layouts, measured on 2,000,000 real rows.
+
+    step                                   ROW store                      COLUMN store
+    ------------------------------------   ----------------------------   -----------------------
+    what the query needs                   price (8 bytes per row)        price (8 bytes per row)
+    what is on disk between two prices     62 bytes of id, ts, qty,       nothing
+                                           country, category, note
+    bytes that must be read                140.0 MB                       16.0 MB
+    bytes actually USED                    16.0 MB                        16.0 MB
+    bytes DISCARDED                        124.0 MB (88.6%)               0
+    elapsed                                0.42 s                         0.28 s
+    the answer                             55,335,365                     55,335,365
+
+The "bytes discarded" row is the entire mechanism: 88.6% of what the row store read was thrown away,
+and the fraction is exactly `(70-8)/70`.
+
+TRACE B - compression, column by column, and WHY each ratio is what it is.
+
+    column      raw MB   zlib MB   ratio   the property being exploited
+    ---------   ------   -------   -----   -------------------------------------------
+    note          80.0      4.87   16.4x   every value is 'note %07d' padded - hugely repetitive
+    qty            8.0      1.23    6.5x   only 8 distinct values across 2,000,000 rows
+    order_id      16.0      3.03    5.3x   strictly increasing, so the high bytes barely change
+    ts            16.0      3.06    5.2x   strictly increasing by exactly 3
+    category       2.0      0.67    3.0x   5 distinct values already packed into 1 byte
+    price         16.0      5.41    3.0x   RANDOM FLOATS - essentially incompressible
+    country        2.0      0.85    2.4x   8 distinct values in 1 byte
+
+The `price` row is the honest limit: high-entropy floating point does not compress, whatever layout you
+choose. Columnar helps by letting you read LESS of it, not by shrinking it.
+
+    the whole ROW file, compressed:       140.0 MB -> 27.6 MB   (5.1x)
+    the COLUMNS, compressed separately:   140.0 MB -> 19.1 MB   (7.3x)
+    the layout advantage alone:                                 1.45x
+
+Same bytes, same compressor, same level. The 1.45x is purely from putting like values next to each
+other before compressing.
+
+TRACE C - delta encoding, and why the row store cannot do it.
+
+    representation                    size      zlib      what the compressor sees
+    -------------------------------   -------   -------   -----------------------------------------
+    order_id, raw int64s              16.0 MB   3.03 MB   0, 1, 2, 3, ... - the low byte cycles, the
+                                                          high bytes are near-constant
+    order_id, DELTAS                  16.0 MB   0.02 MB   1, 1, 1, 1, 1, 1, ... - one repeated value
+
+    improvement from encoding alone:            130x
+
+The uncompressed size is identical - 16 MB either way. The COMPRESSED size differs by 130x, because the
+delta stream is one value repeated two million times and the raw stream is not.
+
+And the reason a row store cannot do this: `vals[i] - vals[i-1]` requires `vals[i-1]` to be findable.
+In a column it is the previous 8 bytes. In a row it is 70 bytes back, interleaved with a timestamp, a
+price and 40 bytes of text - so computing the deltas would require the full scan you were trying to
+avoid.
+
+TRACE D - predicate pushdown, 200 blocks of 10,000 rows with a (min,max) footer each.
+
+    query window            blocks read   skipped   MB read   fraction of the column
+    ---------------------   -----------   -------   -------   ----------------------
+    a 10-row slice                    1       199      0.08                    0.5%
+    1% of the range                   2       198      0.16                    1.0%
+    a middle 5% window               11       189      0.88                    5.5%
+    the whole range                 200         0     16.00                  100.0%
+
+The metadata costs 16 bytes per block per column - 3,200 bytes for the whole timestamp column - and it
+eliminates 99.5% of the read for a narrow query.
+
+Note the fourth row: for a full scan it saves nothing, which is correct and worth saying. Pushdown helps
+SELECTIVE queries, and a selective query is exactly the kind an index would also help with - the
+difference is that the zone map is essentially free and needs no maintenance.
+
+TRACE E - the write cost, and what my measurement understates.
+
+    operation                                    row store          column store
+    ------------------------------------------   ----------------   ----------------------------
+    files touched                                1                  4 (of 7)
+    seeks per row                                1                  4
+    bytes rewritten per row                      70                 8 + 4 + 1 + 1 = 14
+    MEASURED, 2,000 single-row updates           17.1 ms            20.9 ms  (1.2x)
+
+    what a REAL columnar store would also do:
+        decompress the block containing the value
+        decode it (delta / RLE / dictionary)
+        edit one value
+        re-encode and recompress the whole block
+        rewrite it
+    ... per column touched. My measurement had NONE of that, which is why 1.2x is a floor and not the
+    production figure. Real columnar systems avoid the problem entirely by forbidding in-place row
+    updates and using a row-oriented delta store with background merging.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+WHAT EACH LAYOUT COSTS:
+
+    operation                          ROW store                COLUMN store
+    --------------------------------   ----------------------   -------------------------------
+    read one whole row                 O(1) seek, one read      O(columns) seeks
+    read one column of every row       O(total table bytes)     O(that column's bytes)
+                                       MEASURED 140.0 MB        MEASURED 16.0 MB   (8.8x)
+    compression                        mixed types adjacent     LIKE values adjacent
+                                       MEASURED 5.1x            MEASURED 7.3x, and 130x with delta
+                                                                encoding on a monotonic column
+    predicate pushdown                 blocks hold whole rows   per-block min/max skips blocks
+                                       - little to skip         MEASURED 1 block of 200
+    vectorised / SIMD execution        no - fields interleaved  YES - tight same-type arrays
+    insert one row                     one append               one append per column
+    update one row                     ONE seek, 70 bytes       one seek PER COLUMN, plus
+                                       MEASURED 17.1 ms         decompress-edit-recompress in a
+                                                                real format. MEASURED 20.9 ms with
+                                                                NO compression - an understatement
+    `SELECT *`                         free                     the worst case: every file, plus
+                                                                row reassembly
+
+THE MISTAKES:
+
+    - Assuming columnar is simply faster. It is faster at reading FEW COLUMNS of MANY ROWS, and slower
+      at everything OLTP does.
+    - Quoting only the projection saving. MEASURED, it is the SMALLEST of the four effects: 8.8x from
+      projection, 1.45x from grouping before compression, 130x from delta encoding, and 200x from
+      block skipping on a selective query.
+    - Forgetting that sorting is a multiplier. RLE on an unsorted low-cardinality column achieves
+      almost nothing; the sort key of a columnar table is a first-class design decision, and it also
+      decides how well the min/max pushdown works.
+    - `SELECT *` on a wide columnar table. It reads every column file and then has to reassemble rows -
+      the one operation the layout is bad at.
+    - Materialising rows early. Late materialisation - staying in column vectors and row IDs as long as
+      possible - is where the vectorisation win lives.
+    - Thinking real formats are purely columnar. Parquet and ORC store columns WITHIN row groups, which
+      is what makes blocks independently readable and their statistics useful.
+    - Trying to UPDATE rows in a columnar store. Real systems forbid it and use a row-oriented delta
+      store with background merging - the same shape as an LSM tree.
+    - Comparing time instead of BYTES in a scripting language. MEASURED 8.8x on bytes and 1.5x on time,
+      and the difference is entirely my Python loop.
+    - Reading a row file in chunks that are not a multiple of the record size. Mine produced `nan`
+      silently.
+    - Expecting compression to help high-entropy data. MEASURED: the random-float price column
+      compressed only 3.0x, and no encoding will fix that. Columnar helps by reading less of it.
+
+THE TAKEAWAY. The obvious benefit - read only the columns you need - is real and measured at 8.8x, and
+it is the smallest of four effects. The bigger one is that putting LIKE VALUES NEXT TO EACH OTHER makes
+them compressible in ways a row layout structurally forbids: 1.45x from grouping alone, and 130x on a
+monotonic id column once you can delta-encode it, which requires the previous value to be eight bytes
+away rather than seventy. Add per-block statistics that let a selective query skip 199 blocks of 200,
+and contiguous same-type arrays that let the CPU work 16 values at a time, and the layout is doing four
+different jobs at once. The price is the exact mirror: one logical row now lives in many places, so
+updates are expensive enough that real systems refuse to do them in place - which is precisely why you
+keep a row store for transactions and a columnar one for analytics.""",
+]
+
+_EX_P1AO["Why is a stack the natural tool for matching and undo?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a stack is Last-In-First-Out, and LIFO is the exact shape of NESTING:
+the most recently opened thing must be the first to close.
+
+That single sentence covers three problems that look unrelated:
+
+    BRACKET MATCHING   the last '(' pairs with the next ')'
+    FUNCTION CALLS     the last call returns first - which is why it is called the CALL STACK
+    UNDO               the last action is the first you reverse
+
+WHY A COUNTER IS NOT ENOUGH, which is the sharpest way to see what the stack is really giving you. If
+you just COUNT brackets - one counter per type - you know how many are open and NOT WHICH ONE. And which
+one is the only thing that matters.
+
+MEASURED ON THIS MACHINE, 200,000 random bracket strings:
+
+    per-type counter said VALID when it is NOT:     251  (0.13%)
+    a single counter said VALID when it is NOT:   9,931  (4.97%)
+
+Under a fifth of a percent for the per-type counter. If you wrote it, tested it on random strings and
+shipped it, you would very likely never see a failure.
+
+Now the population where the bug CAN fire - strings whose bracket COUNTS already match per type, and
+only the ORDER is in question:
+
+    the per-type counter ACCEPTED 6,572 strings; of those, 6,022 were INVALID  =  91.6%
+
+Ninety-two percent wrong on the inputs that matter, and 0.13% on random ones. The smallest
+counterexample is four characters: `([)]` has exactly one of each, is perfectly balanced by count, and
+is not nested.""",
+
+    """2. THE INTUITION - the stack is not storing brackets, it is storing THE MOST RECENT UNRESOLVED
+COMMITMENT.
+
+Every time you open something you take on an obligation, and obligations must be discharged in reverse
+order of when they were taken on - because they are NESTED, not queued. You cannot close the outer
+parenthesis while the inner one is still open, for the same reason you cannot leave a room before
+leaving the cupboard inside it.
+
+MEASURED, what the stack's TOP means at each step of `{[()]}`:
+
+    char   action   stack after         what the TOP means
+    ----   ------   -----------------   -----------------------------------------
+     {     push     ['{']               '{' is the innermost thing still open
+     [     push     ['{', '[']          '[' is the innermost thing still open
+     (     push     ['{', '[', '(']     '(' is the innermost thing still open
+     )     pop      ['{', '[']          '[' is the innermost thing still open
+     ]     pop      ['{']               '{' is the innermost thing still open
+     }     pop      []                  everything is closed
+
+The top is ALWAYS the answer to "what am I currently inside?", and the rest of the stack is the history
+of how you got there. A counter can tell you the DEPTH of that stack and nothing about its CONTENTS,
+which is exactly the information a mixed-bracket string needs.
+
+THE TEST THAT SEPARATES THEM:
+
+    string     stack   per-type counter   single counter
+    --------   -----   ----------------   --------------
+    ([)]       False   TRUE               TRUE
+    {[}]       False   TRUE               TRUE
+    [(])       False   TRUE               TRUE
+    ([{}])     True    True               True
+    (()        False   False              False
+
+Rows 1 to 3 are the failures, and they all share a shape: the counts are perfect and the NESTING is
+crossed. Row 5 shows that a counter does catch the easy case - an unclosed bracket - which is why it
+passes casual testing.
+
+THE GENERAL RULE TO CARRY: whenever the question is "what is the MOST RECENT UNRESOLVED thing?", the
+answer is a stack. If the question were "what is the OLDEST unresolved thing?" it would be a queue -
+and that difference is the difference between nesting and pipelining.""",
+
+    """3. EVERY TERM DEFINED.
+
+STACK. A collection with `push` and `pop` at the same end. LIFO: last in, first out.
+
+LIFO vs FIFO. Last-in-first-out versus first-in-first-out. LIFO matches NESTED structure; FIFO matches
+SEQUENTIAL processing. Choosing wrongly is choosing the wrong shape of problem.
+
+NESTING. Structure where an inner item is fully contained within an outer one. Brackets, XML tags,
+function calls, block scopes, directories.
+
+THE TOP. The most recently pushed, still-unpopped item. The answer to "what am I inside?".
+
+CALL STACK. The runtime's stack of function frames - one per call that has not yet returned. MEASURED
+below on the real interpreter.
+
+STACK FRAME. One entry: local variables, the return address, the arguments.
+
+STACK OVERFLOW. Recursing deeper than the stack allows. Python raises `RecursionError` at a configurable
+limit; C usually segfaults.
+
+RECURSION. Implicitly using the call stack. Every recursive algorithm can be rewritten iteratively with
+an explicit stack, and sometimes must be - for depth, or for control.
+
+BALANCED / WELL-FORMED. Every opener has a matching closer of the SAME TYPE, in the correct nested
+order. The type check and the order check are separate requirements, and a counter does neither
+properly.
+
+UNDO STACK / REDO STACK. Two stacks. `undo` holds actions taken; `redo` holds actions undone. A NEW
+action must CLEAR redo - see section 5, and it falls out of the LIFO shape rather than being a design
+choice.
+
+COMMAND PATTERN. Representing each action as an object that knows how to `execute` and `undo` itself,
+so the undo stack can hold heterogeneous actions.
+
+MEMENTO. The alternative to command: store the whole STATE before each action, and undo by restoring
+it. Simpler, and expensive in memory.
+
+SHUNTING-YARD ALGORITHM. Dijkstra's method for parsing infix expressions with two stacks - operators
+and operands. The same LIFO reasoning, applied to precedence.
+
+RECURSIVE DESCENT PARSER. Uses the call stack to track nesting in a grammar. Same shape again.
+
+MONOTONIC STACK. A stack kept sorted, used for "next greater element", "largest rectangle in a
+histogram", "daily temperatures". A different use of a stack - not about nesting, but about maintaining
+candidates that are still viable - and worth naming because interviewers ask about both families.
+
+DFS. Depth-first search is a stack; breadth-first is a queue. The same LIFO-versus-FIFO distinction,
+one more time.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the counter version PASSES YOUR TESTS, and the measurement
+shows exactly why.
+
+    population                                          counter accepted   of those, INVALID
+    -------------------------------------------------   ----------------   -----------------
+    200,000 RANDOM bracket strings                                     -               0.13%
+    200,000 strings with MATCHED COUNTS, shuffled                  6,572               91.6%
+
+A factor of 700 between the two populations, from the same code. Random strings are usually so
+obviously broken - an unclosed bracket, a closer with nothing open - that the counter catches them for
+the wrong reason and looks correct.
+
+This is the same lesson as the BST-bounds entry, and it is worth internalising as a testing principle:
+MEASURE ON THE POPULATION WHERE THE BUG CAN FIRE, not on random input. A random-input test suite will
+happily certify a broken implementation.
+
+THE SECOND TRAP - using a SINGLE counter for all bracket types, which is what "count the parentheses"
+degenerates into. MEASURED: wrong on 4.97% of random strings and 12.3% of count-matched ones. It cannot
+even tell `(` from `[`, so `(]` passes.
+
+THE THIRD TRAP - forgetting the two checks a stack version needs, and only doing one:
+
+    if not st or st.pop() != PAIRS[c]: return False    # closer with nothing open, OR a type mismatch
+    ...
+    return not st                                      # the stack must be EMPTY at the end
+
+Miss the `not st` check and `(((` is "valid". Miss the emptiness check at the end and `(()` is "valid".
+Both are one-line omissions and both produce a validator that is right on most inputs.
+
+THE FOURTH TRAP - not knowing when a stack is NOT the answer. The LIFO shape is right for NESTING, and
+plenty of problems are not nested:
+
+    "process requests in arrival order"          -> a QUEUE. LIFO would serve the newest first.
+    "the oldest unacknowledged message"          -> a queue.
+    "breadth-first search"                       -> a queue. Using a stack silently gives you DFS.
+    "the largest element seen so far"            -> a heap.
+    "how many of each"                           -> a counter, and this time it IS enough.
+
+The diagnostic question is: does the structure NEST? If an inner thing must finish before an outer thing
+can, it is a stack. If items are independent and ordered by arrival, it is a queue.
+
+THE FIFTH TRAP - assuming the stack's space is avoidable. MEASURED, matching 2,000,000 characters:
+
+    2,000,000 characters, 87.6 ms, peak stack depth 1,000,000
+
+O(depth) space is unavoidable in general: you cannot know whether a `)` matches until you know what is
+open, and in the worst case - `((((...))))` - everything is open at once. A counter uses O(1) space and
+gets the wrong answer; the space is what buys the correctness.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - where the same shape appears, and where it does not.
+
+THE THREE PROBLEMS IN THE QUESTION, and they are genuinely the same problem:
+
+    BRACKET MATCHING   push on an opener, pop and compare on a closer, require empty at the end.
+    FUNCTION CALLS     push a frame on call, pop on return. MEASURED on the real interpreter below.
+    UNDO               push each action; pop to reverse it.
+
+WHY UNDO NEEDS TWO STACKS, and why the second one behaves as it does. MEASURED:
+
+    after typing A, B, C:       undo ['A','B','C']         redo []
+    undo, reversing 'C':        undo ['A','B']             redo ['C']
+    undo, reversing 'B':        undo ['A']                 redo ['C','B']
+    redo, replaying 'B':        undo ['A','B']             redo ['C']
+    a NEW action ('D'):         undo ['A','B','D']         redo []          <- redo CLEARED
+
+That clearing is not a UI decision, it is forced by the structure. Once you undo B and then do D
+instead, the C you were going to redo no longer follows from the current state - it was defined as "the
+action after B", and the action after B is now D. The LIFO shape makes that automatic: the redo stack
+holds a linear future, and taking a different branch invalidates it.
+
+(Editors that DO let you recover that branch - Emacs, Vim's undo tree - abandon the two-stack model for
+a TREE, which is exactly the cost of not having the LIFO simplification.)
+
+THE UNDO IMPLEMENTATION FAMILY:
+    COMMAND PATTERN   each action knows how to `execute` and `undo` itself. Memory-efficient; every
+                      action must be genuinely invertible, which is the hard part.
+    MEMENTO           snapshot the whole state before each action and restore it. Trivially correct,
+                      and expensive - though with structural sharing (persistent data structures) it
+                      is cheap, which is why it is the modern default in front-end state management.
+    INVERSE OPERATIONS  store the diff. The middle ground, and what a text editor actually does.
+
+THE WIDER STACK FAMILY:
+    EXPRESSION PARSING     shunting-yard: two stacks, operators and operands, driven by precedence.
+    RECURSIVE DESCENT      uses the call stack to track grammatical nesting.
+    XML AND HTML PARSING   the same as brackets, with named tags: `</div>` must match the innermost
+                           open element.
+    DFS                    an explicit stack, or the call stack via recursion. BFS is a QUEUE, and
+                           swapping them silently changes the algorithm.
+    BACKTRACKING           push a choice, explore, pop to undo it. N-queens, sudoku, maze solving -
+                           and note that this IS undo, applied to search.
+    MONOTONIC STACK        a different family: next-greater-element, largest rectangle, daily
+                           temperatures. Here the stack holds CANDIDATES STILL VIABLE rather than
+                           nesting, and popping means "this candidate is now settled".
+    THE UNDO OF A TRANSACTION   a database's rollback journal is a stack of before-images.
+
+CONVERTING RECURSION TO ITERATION - the practical payoff of understanding that recursion IS a stack.
+When a recursive solution risks overflowing (MEASURED: Python's default limit is 1,000 frames), you
+rewrite it with an explicit stack. The transformation is mechanical: the stack entries are exactly the
+local state each call would have held.
+
+WHEN NOT TO USE A STACK: when the structure does not nest. A queue for arrival order, a heap for
+priority, a counter when only quantities matter, a deque when you need both ends. The question to ask is
+"must the inner thing finish before the outer one?" - if yes, stack.""",
+
+    """6. HOW TO CODE IT.
+
+BRACKET MATCHING - and there are exactly three checks:
+
+  1. `PAIRS = {')':'(', ']':'[', '}':'{'}` - map each CLOSER to its opener. Keying by closer is what
+     makes the comparison one lookup.
+  2. On an opener: `st.append(c)`.
+  3. On a closer: `if not st or st.pop() != PAIRS[c]: return False`. TWO failures in one line - a closer
+     with nothing open, and a closer of the WRONG TYPE.
+  4. At the end: `return not st`. The stack must be EMPTY, or you had unclosed openers.
+  5. Ignore any other character. Real inputs contain text between the brackets.
+  6. Omitting check 3's first half makes `)))` valid. Omitting check 4 makes `(((` valid. Both are
+     one-line omissions that pass most tests.
+
+UNDO AND REDO:
+
+  7. Two stacks. `do(action)` pushes onto `undo` AND CLEARS `redo`.
+  8. `undo()` pops from `undo`, reverses the action, pushes onto `redo`.
+  9. `redo()` pops from `redo`, replays, pushes onto `undo`.
+ 10. THE CLEAR IN STEP 7 IS THE BIT PEOPLE FORGET, and it produces a real bug: undo twice, do something
+     new, press redo, and you replay an action that no longer makes sense against the current state.
+ 11. Bound the undo stack, or a long editing session grows without limit.
+
+THE CALL STACK, when you need it explicitly:
+
+ 12. Every recursive function is a stack you did not write. When depth is a risk - Python's default
+     limit is 1,000 frames - convert it: the explicit stack holds exactly the local state each call
+     would have had.
+
+TESTING IT - and this is the transferable part:
+
+ 13. DO NOT test only on random strings. MEASURED: the counter version is wrong on 0.13% of them, so
+     random testing will very likely certify it.
+ 14. GENERATE THE POPULATION WHERE THE BUG CAN FIRE: strings with MATCHED COUNTS per type and a
+     shuffled order. MEASURED, 91.6% of the ones the counter accepts are invalid.
+ 15. Have `([)]` in your test suite. Four characters, and it separates the two implementations.
+ 16. Test the two one-line omissions specifically: `)))` and `(((`.
+ 17. Cross-check two independent implementations on many inputs, rather than checking one against
+     hand-written expectations.
+
+MEASURING THE STACK ITSELF:
+
+ 18. `sys._getframe()` walking `f_back` counts real interpreter frames. MEASURED: recursing 50 deep
+     added exactly 50. That turns "the call stack is a stack" from a metaphor into an observation.
+ 19. `sys.getrecursionlimit()` - 1,000 by default - is the number that decides whether your recursive
+     solution is viable.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A stack is Last-In-First-Out, which mirrors NESTED structure: the most recently opened thing must be
+the first to close.
+
+That is exactly bracket matching - the last `(` pairs with the next `)`. It is exactly function calls -
+the last call returns first, which is literally why it is called the CALL STACK. And it is exactly undo
+- the last action is the first you reverse.
+
+The sharpest way to see what the stack is giving you is to ask what a COUNTER cannot do. If you just
+count brackets, you know how many are open and NOT WHICH ONE - and which one is the only thing that
+matters. `([)]` has exactly one of each bracket, is perfectly balanced by count, and is not properly
+nested. A counter says valid; a stack pops `(` when it sees `]` and immediately knows the types do not
+match.
+
+I measured how badly that hides. On 200,000 RANDOM bracket strings the counter version was wrong 0.13%
+of the time - so if you wrote it, tested it on random input and shipped it, you would probably never see
+a failure. But on strings whose counts already MATCH per type, where only the order is in question, the
+counter accepted 6,572 strings and 91.6% OF THEM WERE INVALID. A factor of 700 between the two
+populations, from the same code.
+
+What the stack actually holds is THE MOST RECENT UNRESOLVED COMMITMENT. Its top is always the answer to
+'what am I currently inside?', and the rest is the history of how you got there. Walking `{[()]}`: push
+`{`, push `[`, push `(`, and then each closer pops the thing it must match.
+
+The call stack is the same structure made real - I checked it on the interpreter, and recursing fifty
+deep added exactly fifty frames, because each unreturned call is one entry. And undo needs TWO stacks,
+where the interesting rule is that a NEW action must CLEAR the redo stack: once you undo B and do D
+instead, the C you were going to redo no longer follows from the present. That falls straight out of
+the LIFO shape rather than being a design choice, and editors that DO let you recover that branch have
+abandoned two stacks for a tree.
+
+So the rule I would state: whenever the 'most recent unresolved item' is what matters, reach for a
+stack. If it is the OLDEST unresolved item, that is a queue - which is the same distinction as
+depth-first versus breadth-first search."
+
+THE ONE SENTENCE TO NOT FUMBLE: a counter tells you the DEPTH of the nesting and a stack tells you its
+CONTENTS - and for anything with more than one kind of bracket, the contents are the whole problem.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    PAIRS = {')':'(', ']':'[', '}':'{'}
+    OPEN = set('([{')
+
+Keyed by CLOSER, not by opener. When you meet a `]` you need to know instantly what it should have
+matched, and `PAIRS[c]` is that lookup. Keying the other way would force a search.
+
+    def with_stack(s):
+        st = []
+        for c in s:
+            if c in OPEN: st.append(c)
+            elif c in PAIRS:
+                if not st or st.pop() != PAIRS[c]: return False
+        return not st
+
+Six lines and THREE separate checks, which is worth counting because each one corresponds to a distinct
+way a string can be malformed.
+
+    `if not st`               a closer with NOTHING open - `)))`. Omit this and `.pop()` raises
+                              IndexError on the first stray closer, or worse, you guard the pop and
+                              silently accept it.
+    `st.pop() != PAIRS[c]`    a closer of the WRONG TYPE - `([)]`. This is the check a counter cannot
+                              express, and MEASURED, it is the one that matters on 91.6% of
+                              count-matched strings.
+    `return not st`           unclosed openers remain - `(((`. Omit this and every prefix of a valid
+                              string is "valid".
+
+    `elif c in PAIRS`         anything that is neither an opener nor a closer is ignored, which is
+                              what lets this run over real source code rather than a bare bracket
+                              string.
+
+THE COUNTER VERSION, for contrast:
+
+    def with_counter(s):
+        n = {'(':0, '[':0, '{':0}
+        for c in s:
+            if c in OPEN: n[c] += 1
+            elif c in PAIRS:
+                n[PAIRS[c]] -= 1
+                if n[PAIRS[c]] < 0: return False
+        return all(v == 0 for v in n.values())
+
+It tracks THREE INTEGERS. That is the bug, expressed structurally: three integers can record how many
+of each kind are open and cannot record the ORDER they were opened in. `([)]` gives
+`n = {'(':1, '[':1}` and then decrements both to zero, and every check passes.
+
+Note it DOES catch the easy failures - `(((` fails the final `all(v==0)`, and `)))` fails the negative
+check. That partial correctness is exactly why it survives testing.
+
+    def gen_balanced_count(r, n):
+        chars = []
+        for t in '([{':
+            k = r.randint(1,4)
+            chars += [t]*k + [closer[t]]*k
+        r.shuffle(chars)
+        return ''.join(chars)
+
+The test generator, and it is the most important function in the measurement. It produces strings with
+MATCHED COUNTS per type and a RANDOM ORDER - so the counter's check passes by construction and only the
+nesting is in question. MEASURED, 91.6% of the strings it accepts are invalid, against 0.13% on purely
+random input.
+
+The generator, not the checker, decides whether your test finds the bug.
+
+    def do(a): undo.append(a); redo.clear()
+
+The undo/redo pair, and `redo.clear()` is the line people omit. Without it, undoing twice, doing
+something new, and pressing redo replays an action that no longer follows from the current state - and
+the bug only appears in a three-step interaction, which is exactly the kind that survives manual
+testing.
+
+    f = sys._getframe(); d = 0
+    while f: d += 1; f = f.f_back
+
+Walking the REAL interpreter frames. `f_back` is the caller, so following it to `None` counts the stack.
+MEASURED: 2 frames at depth 0 and 52 after recursing 50, so exactly 50 more. It is a stack, and this is
+the observation rather than the metaphor.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - `{[()]}` through the stack, with what the top MEANS at each step.
+
+    char   action   stack after         the TOP means                              can this close?
+    ----   ------   -----------------   ----------------------------------------   ---------------
+     {     push     ['{']               I am inside a curly brace                   only '}'
+     [     push     ['{', '[']          I am inside a square bracket                only ']'
+     (     push     ['{', '[', '(']     I am inside a parenthesis                   only ')'
+     )     pop      ['{', '[']          back inside the square bracket              only ']'
+     ]     pop      ['{']               back inside the curly brace                 only '}'
+     }     pop      []                  outside everything                          nothing
+                                                                                    -> VALID
+
+The last column is the whole point: at every moment there is exactly ONE closer that is legal, and the
+top of the stack is what names it. A counter knows the depth is 3 and has no idea whether the next legal
+character is `)`, `]` or `}`.
+
+TRACE B - `([)]`, the four-character counterexample, both ways.
+
+    STACK:
+    char   action                     stack       verdict
+    ----   ------------------------   ---------   ---------------------------------------
+     (     push                       ['(']
+     [     push                       ['(','[']
+     )     pop -> '[' , expected '('   ['(']      MISMATCH -> INVALID, immediately
+
+    COUNTER:
+    char   n['(']   n['[']   check
+    ----   ------   ------   ---------------------------------
+     (          1        0   fine
+     [          1        1   fine
+     )          0        1   n['('] is 0, not negative - fine
+     ]          0        0   fine
+                             all zero -> VALID (wrong)
+
+The counter never had the information. At the third character it knew "one round and one square are
+open" and could not know that the square was opened MORE RECENTLY, which is the only fact that makes
+`)` illegal there.
+
+TRACE C - the failure rate by population, 200,000 strings each.
+
+    population                            counter accepted   of those INVALID   failure rate
+    -----------------------------------   ----------------   ----------------   ------------
+    random bracket strings                               -                251          0.13%
+    strings with MATCHED COUNTS per type             6,572              6,022         91.6%
+
+    single-counter version, random strings:            9,931 wrong        4.97%
+    single-counter version, count-matched:            24,622 wrong       12.3%
+
+Seven hundred times the failure rate, from the same code, depending only on which strings you feed it.
+Random strings are mostly broken in ways a counter DOES catch - a stray closer, an unclosed opener - so
+it looks correct for the wrong reason.
+
+TRACE D - the call stack, on the real interpreter.
+
+    situation                          frames counted   difference
+    -------------------------------   --------------   ----------
+    at the top level                                2            -
+    after recursing 50 deep                        52          +50
+    the interpreter's recursion limit           1,000            -
+
+Exactly fifty more frames for fifty unreturned calls. One entry per call, popped on return. The
+`RecursionError` at 1,000 is the same structure hitting its capacity, and it is why a deeply recursive
+algorithm sometimes has to be rewritten with an explicit stack - which is just writing out what the
+runtime was doing anyway.
+
+TRACE E - undo and redo, step by step.
+
+    action                 undo stack                 redo stack        note
+    --------------------   ------------------------   ---------------   -------------------------
+    type A, B, C           ['A','B','C']              []
+    undo -> reverses 'C'   ['A','B']                  ['C']             popped from one, pushed to
+                                                                        the other
+    undo -> reverses 'B'   ['A']                      ['C','B']         redo top is 'B' - the most
+                                                                        recently undone
+    redo -> replays 'B'    ['A','B']                  ['C']             and back again
+    do 'D'  (a NEW action) ['A','B','D']              []                REDO CLEARED
+
+The final row is the interesting one. `C` was defined as "the action that came after `B`", and the
+action after `B` is now `D`. There is no coherent state for `C` to be replayed into, so the linear
+future is discarded. That is not a product decision - it is what "the redo stack is a stack" means, and
+it is why undo TREES (Emacs, Vim) need a different data structure entirely.
+
+TRACE F - cost.
+
+    input length   time      peak stack depth   result
+    ------------   -------   ----------------   ------
+       200,000     9.1 ms             100,000   True
+     2,000,000    87.6 ms           1,000,000   True
+
+Linear time, and the space is the maximum nesting depth. That space is not avoidable: you cannot decide
+whether a `)` is legal without knowing what is open, and for `((((...))))` everything is open at once.
+The counter uses O(1) space and gets the wrong answer - the space is precisely what buys the
+correctness.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    operation                      cost
+    ---------------------------   ---------------------------------------------------
+    push / pop                     O(1) amortised (a Python list, a C++ vector)
+    bracket matching               O(n) time, O(max nesting depth) space.
+                                   MEASURED 87.6 ms for 2,000,000 characters at depth 1,000,000
+    counter version                O(n) time, O(1) space - and WRONG on 91.6% of count-matched inputs
+    undo / redo                    O(1) per operation, O(history) space
+    a call frame                   O(1) push and pop; Python's default limit is 1,000 frames
+
+    MEASURED failure rates for the counter version:
+        random strings                 0.13%   (per-type)   4.97%  (single counter)
+        count-matched strings          91.6%   (per-type)   12.3%  (single counter)
+
+THE MISTAKES:
+
+    - Counting instead of stacking. MEASURED 91.6% wrong on the strings where it can fire, and it
+      cannot distinguish bracket TYPES at all.
+    - Testing on random inputs and concluding it works. MEASURED 0.13% failure there - random testing
+      will certify a broken implementation.
+    - Forgetting `if not st` before popping. `)))` either crashes or is accepted.
+    - Forgetting `return not st` at the end. `(((` is accepted, and so is every prefix of a valid
+      string.
+    - Not having `([)]` in the test suite. Four characters, and it is the whole difference.
+    - Forgetting to CLEAR the redo stack on a new action. A three-step interaction bug that survives
+      manual testing and replays an action into a state it does not fit.
+    - Using a stack where the structure does not NEST. Arrival order is a queue; breadth-first search
+      is a queue; swapping them silently turns BFS into DFS.
+    - Assuming the O(depth) space is avoidable. It is not: you cannot judge a closer without knowing
+      what is open.
+    - Recursing deeply without checking the limit. MEASURED at 1,000 frames by default; convert to an
+      explicit stack when depth is data-dependent.
+    - Missing the OTHER stack family. Monotonic stacks - next greater element, largest rectangle -
+      hold viable CANDIDATES rather than nesting, and interviewers ask about both.
+
+THE TAKEAWAY. LIFO is not a convenience, it is the SHAPE OF NESTING: an inner thing must finish before
+the outer thing that contains it, so the most recently opened is necessarily the first to close. Once
+you see that, bracket matching, the call stack, undo, backtracking, XML parsing and depth-first search
+are all the same problem. The measurement shows what a stack buys over the obvious cheaper alternative -
+a counter knows the DEPTH and not the CONTENTS, and is wrong on 91.6% of the inputs where that
+distinction matters while looking correct on 99.87% of random ones. The diagnostic question is whether
+the structure nests: if the innermost unresolved thing is what you need, it is a stack; if it is the
+oldest, it is a queue.""",
+]
+
+_EX_P1AO["Why is exactly-once delivery essentially impossible, and how do systems fake it?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you send a message, and you want it to have its effect EXACTLY ONCE:
+the payment is taken once, the email is sent once, the row is inserted once.
+
+The network gives you no such thing. Every message can be lost, and you cannot tell "the message was
+lost" apart from "the message arrived and the ACKNOWLEDGEMENT was lost". Those two worlds look
+identical from where you are standing, and they demand opposite actions - resend in one, do nothing in
+the other.
+
+So you get to choose which way to be wrong:
+
+    AT-MOST-ONCE    send and do not retry.   You lose messages.
+    AT-LEAST-ONCE   retry until acked.       You duplicate messages.
+
+MEASURED ON THIS MACHINE, 200,000 messages over a 1%-loss channel:
+
+    strategy         lost     duplicated
+    --------------   ------   ----------
+    at-most-once      1,984            0
+    at-least-once         0        3,926
+
+Exactly the predicted trade, and note that the duplicates are roughly TWICE the losses - because a
+duplicate happens when EITHER the message or its ack is lost, which is two chances instead of one.
+
+THE ESCAPE, and it is the whole engineering answer: you cannot make DELIVERY exactly-once, but you can
+make the EFFECT exactly-once. Retry forever - at-least-once - and make the receiver IDEMPOTENT, so the
+second, third and tenth copies change nothing.
+
+MEASURED, the same channel, with and without an idempotency key:
+
+    naive at-least-once             4,093 duplicate effects
+    at-least-once + idempotency         0 duplicate effects,  0 lost
+
+Zero and zero. "Exactly-once" in every system that claims it - Kafka, Stripe, SQS FIFO - is this:
+at-least-once delivery plus deduplication at the receiver.""",
+
+    """2. THE INTUITION - the Two Generals problem, and it is not a puzzle, it is a proof.
+
+Two generals on opposite hills must attack at the same time. They can only communicate by messengers
+crossing a valley where messengers get captured. General A sends "attack at dawn". Did it arrive? A
+does not know, so B must acknowledge. Did the ACK arrive? B does not know, so A must acknowledge the
+acknowledgement. And so on, and there is no last message that is safe to be the last one - because
+whoever sent it does not know it arrived.
+
+MEASURED, a 10%-loss channel, k rounds of message-and-ack:
+
+    rounds k    P(all k messages arrive)    P(the LAST SENDER is CERTAIN)
+    --------    ------------------------    -----------------------------
+       1                    90.0000%                              0.0%
+       5                    59.0490%                              0.0%
+      10                    34.8678%                              0.0%
+      20                    12.1577%                              0.0%
+      50                     0.5154%                              0.0%
+
+Read the two columns against each other, because the whole result is in the contrast. The left column
+falls off - more rounds, more chances to lose something. The right column is 0.0% AT EVERY k, and it
+does not improve with 5 rounds, or 50, or 50 million. The last person to send is never certain their
+message arrived, by definition, because certainty would require an acknowledgement, which would then be
+the last message.
+
+This is not "hard", it is IMPOSSIBLE - proven, in the same way that sorting cannot beat n log n by
+comparison. No protocol, no timeout, no clever encoding fixes it.
+
+WHAT FOLLOWS PRACTICALLY. The sender times out and must decide: resend, or not?
+
+    resend        -> if the original arrived, you have a DUPLICATE
+    do not resend -> if the original was lost, you have a LOSS
+
+There is no third option, because the two situations are indistinguishable. So every real system picks
+at-least-once - duplicates are recoverable, lost payments are not - and then spends its effort making
+duplicates harmless.""",
+
+    """3. EVERY TERM DEFINED.
+
+AT-MOST-ONCE. Send once, never retry. Zero duplicates, and messages are lost. MEASURED 1,984 lost of
+200,000.
+
+AT-LEAST-ONCE. Retry until acknowledged. Zero losses, and duplicates. MEASURED 3,926 duplicated of
+200,000.
+
+EXACTLY-ONCE DELIVERY. Each message delivered precisely once. IMPOSSIBLE over an unreliable channel -
+see the Two Generals measurement.
+
+EXACTLY-ONCE PROCESSING / SEMANTICS. Each message has its EFFECT precisely once. ACHIEVABLE, and it is
+what every product means when it says "exactly-once": at-least-once delivery plus deduplication.
+
+IDEMPOTENT. An operation whose repeat has no additional effect. `SET x = 5` is idempotent;
+`x = x + 5` is not. This is the property that makes duplicates harmless.
+
+IDEMPOTENCY KEY. A client-generated unique id attached to a request. The server records which keys it
+has processed and ignores repeats. Stripe's API is built on this.
+
+DEDUPLICATION WINDOW. How long the receiver remembers keys. Infinite memory is impossible, so
+"exactly-once" is really "exactly-once WITHIN THIS WINDOW" - SQS FIFO uses 5 minutes, Kafka's producer
+id state has a retention. Ask about the window whenever someone claims exactly-once.
+
+TWO GENERALS PROBLEM. The proof that agreement over an unreliable channel is impossible. MEASURED
+above.
+
+FLP IMPOSSIBILITY. The related result for consensus: no deterministic protocol solves consensus in an
+asynchronous system with even one faulty process. Different setting, same lesson.
+
+ACK. An acknowledgement. The message that tells the sender it arrived - and which can itself be lost,
+which is the whole problem.
+
+TIMEOUT AND RETRY. The sender's only tool, and it cannot distinguish a lost message from a lost ack.
+
+TRANSACTIONAL OUTBOX. Writing the message to a table in the SAME database transaction as the business
+change, and having a separate process publish it. Removes the dual-write problem, and it delivers
+at-least-once.
+
+DUAL-WRITE PROBLEM. Updating a database AND publishing a message as two separate operations. Either can
+fail after the other succeeded, and there is no way to make the pair atomic across two systems.
+
+TWO-PHASE COMMIT (2PC). A protocol that makes several systems commit atomically. It works, and it
+BLOCKS when the coordinator fails, which is why most systems avoid it.
+
+CONSUMER OFFSET. In a log-based queue, the position a consumer has read to. Committing the offset
+BEFORE processing gives at-most-once; AFTER gives at-least-once. That single ordering decision IS the
+choice.
+
+POISON MESSAGE. A message that fails every time and is retried forever. Why at-least-once needs a
+retry cap and a dead-letter queue.
+
+DEAD-LETTER QUEUE. Where messages go after too many failed attempts, so one bad message does not block
+the stream.
+
+NATURAL IDEMPOTENCY. When the operation is already idempotent by its nature - setting an absolute
+value, upserting by primary key - and no dedup table is needed.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we get exactly-once because we retry and then check whether
+we already did it".
+
+That check is a READ followed by a WRITE, and two concurrent duplicates can both read "not done" before
+either writes. The dedup must be ATOMIC - a unique constraint, an INSERT ... ON CONFLICT DO NOTHING, a
+compare-and-set - or you have simply moved the race.
+
+THE SECOND TRAP - believing a vendor's "exactly-once" claim without asking about the WINDOW. Every
+implementation dedupes within a bounded memory. SQS FIFO: 5 minutes. Kafka: bounded producer state.
+Outside that window, a duplicate gets through. "Exactly-once" always means "exactly-once within a
+window, given these assumptions".
+
+THE THIRD TRAP - misjudging the SIZE of the problem, in both directions. MEASURED, as redelivery gets
+worse:
+
+    redelivery rate   deliveries per message   duplicate effects (of 100,000)
+    ---------------   ----------------------   ------------------------------
+              0.1%                   1.0022                              100
+              1.0%                   1.0192                              972
+              5.0%                   1.0917                            4,861
+             10.0%                   1.1674                            9,573
+             15.0%                   1.2694                           10,971
+
+At a healthy 0.1% redelivery rate you get 100 duplicate effects per 100,000 messages - 0.1%. Small
+enough to hide in the noise on a dashboard, and if each one is a duplicate charge, it is a support
+incident every time. Meanwhile the deliveries-per-message column barely moves - 1.0022 - so the
+INFRASTRUCTURE cost of retries is negligible while the CORRECTNESS cost is not. People bias the other
+way, worrying about retry overhead and not about duplicate effects.
+
+THE FOURTH TRAP - putting the ack in the wrong place, which is the most common real bug:
+
+    ack, then process       -> at-most-once. Crash after the ack and the work never happens.
+    process, then ack       -> at-least-once. Crash after processing and it is redelivered.
+
+Both are one line of code and they are opposite guarantees. In Kafka this is where you commit the
+offset; in a queue consumer, where you delete the message. Committing the offset first is the
+"performance" version and it silently loses data on every crash.
+
+THE FIFTH TRAP - claiming exactly-once across a system boundary you do not control. If your handler
+charges a card via a third party, YOUR dedup table does not help unless you pass an idempotency key TO
+that third party. Exactly-once is a property of the whole chain, and it breaks at the first hop that
+does not participate.
+
+THE SIXTH TRAP - assuming the dedup store is free. It is a write on the hot path and it must be durable
+and atomic, or it is not doing anything. It also needs eviction, which is where the window comes from.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE THREE DELIVERY GUARANTEES, and there are only three:
+
+    AT-MOST-ONCE     fire and forget. Lowest latency, no ack round trip. Metrics, logs, telemetry -
+                     anything where losing a sample is cheaper than the machinery to avoid it.
+                     MEASURED 1,984 lost of 200,000 at 1% loss.
+    AT-LEAST-ONCE    retry until acked. The default for anything that matters.
+                     MEASURED 3,926 duplicated of 200,000.
+    EXACTLY-ONCE     does not exist at the delivery layer. What exists is at-least-once plus dedup.
+
+THE FOUR WAYS TO MAKE DUPLICATES HARMLESS, roughly in order of how much you should prefer them:
+
+  1. NATURAL IDEMPOTENCY. Design the operation so a repeat is a no-op. `SET status='paid'`,
+     `UPSERT BY id`, "set the balance to X" rather than "add X". Costs nothing, requires no state, and
+     is by far the best answer when the operation permits it.
+  2. IDEMPOTENCY KEY + UNIQUE CONSTRAINT. The client generates a key; the server does
+     `INSERT ... ON CONFLICT DO NOTHING` on a table keyed by it. The database's unique index does the
+     atomic check. MEASURED: 0 duplicate effects against 4,093 without it.
+  3. SEQUENCE NUMBERS. The receiver tracks the highest sequence seen per sender and discards anything
+     at or below it. TCP does exactly this. Needs ordered delivery per sender.
+  4. TRANSACTIONAL DEDUP. Put the dedup record and the business effect in the SAME transaction. If the
+     transaction rolls back, so does the dedup record - which is what stops the "recorded as done,
+     then crashed before doing it" failure.
+
+WHERE THE EFFECT LIVES DECIDES THE DIFFICULTY:
+
+    the effect is in YOUR database            easy - a unique constraint in the same transaction
+    the effect is a THIRD-PARTY API call      pass an idempotency key and hope they honour it
+    the effect is SENDING AN EMAIL            genuinely hard - no transaction spans your DB and SMTP
+    the effect is INCREMENTING A COUNTER      not idempotent by nature; store the key, not the delta
+
+WHAT REAL SYSTEMS DO:
+    KAFKA        producer ids and sequence numbers deduplicate at the broker; transactions make
+                 consume-transform-produce atomic WITHIN Kafka. It does not extend to your database.
+    SQS FIFO     content-based deduplication within a 5-MINUTE window.
+    STRIPE       client-supplied `Idempotency-Key` header; the result is cached and replayed.
+    TCP          sequence numbers - the oldest and most successful dedup scheme in production.
+    OUTBOX       write the event to a table in the business transaction; a relay publishes it
+                 at-least-once. The standard fix for the dual-write problem.
+
+THE ALTERNATIVE NOBODY WANTS: two-phase commit. It genuinely gives atomicity across systems, and it
+blocks when the coordinator dies, holding locks. The industry's verdict has been to prefer
+at-least-once plus idempotency, and accept the temporary inconsistency in between.
+
+THE HONEST FRAMING for an interview: exactly-once DELIVERY is impossible; exactly-once PROCESSING is
+achievable, bounded by a dedup window, and only across systems that all participate.""",
+
+    """6. HOW TO CODE IT.
+
+  1. CHOOSE AT-LEAST-ONCE. Duplicates are recoverable; lost payments are not. Retry until acked.
+  2. PUT THE ACK AFTER THE WORK. Process, then commit the offset or delete the message. Committing
+     first is at-most-once and loses data on every crash - it is one line, and it is the guarantee.
+  3. GIVE EVERY REQUEST AN IDEMPOTENCY KEY, generated by the CLIENT, stable across retries. A UUID per
+     logical operation. If the client generates a NEW key on retry, the whole scheme is off.
+  4. MAKE THE DEDUP CHECK ATOMIC. `INSERT INTO processed(key) VALUES (...) ON CONFLICT DO NOTHING` and
+     look at the row count. A `SELECT` then `INSERT` is a race, and it is the most common broken
+     implementation.
+  5. PUT THE DEDUP RECORD AND THE EFFECT IN ONE TRANSACTION. Otherwise you can record "done" and crash
+     before doing it, which turns at-least-once into at-most-once at exactly the wrong moment.
+  6. PREFER NATURAL IDEMPOTENCY WHERE YOU CAN. `SET balance = 500` needs no dedup table at all;
+     `balance = balance + 100` needs the full machinery.
+  7. DECIDE THE WINDOW EXPLICITLY. You cannot keep keys forever. Pick a retention that comfortably
+     exceeds your maximum retry horizon, and write down that duplicates outside it will get through.
+  8. CAP RETRIES AND USE A DEAD-LETTER QUEUE. A poison message retried forever blocks the stream.
+  9. USE EXPONENTIAL BACKOFF WITH JITTER. Fixed-interval retries from many clients synchronise into a
+     thundering herd.
+ 10. RETURN THE ORIGINAL RESULT ON A DUPLICATE, not an error. The client cannot tell its first attempt
+     succeeded - that is the whole problem - so replaying the stored response is the courteous and
+     correct behaviour. This is what Stripe does.
+ 11. PASS THE KEY DOWNSTREAM. If your handler calls a third party, forward an idempotency key. Your
+     dedup table does not protect their side effect.
+ 12. USE THE OUTBOX PATTERN for "update the database AND publish an event". Write both in one
+     transaction; relay the outbox separately. Never two independent writes.
+ 13. MEASURE THE DUPLICATE RATE. MEASURED here: 0.1% redelivery gives 100 duplicate effects per
+     100,000 messages, and deliveries-per-message is only 1.0022. The retry cost is invisible; the
+     correctness cost is not.
+ 14. TEST BY INJECTING DUPLICATES DELIBERATELY. Send every message twice in a staging environment. If
+     nothing breaks, the idempotency is real; if you have never tested it, assume it is not.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Exactly-once DELIVERY is impossible, and exactly-once PROCESSING is what every system that claims
+exactly-once is actually selling.
+
+The reason is the Two Generals problem, and it is a proof rather than a difficulty. When you send a
+message and no acknowledgement comes back, you cannot distinguish 'the message was lost' from 'the
+message arrived and the ACK was lost'. Those look identical from where you stand and they demand
+opposite actions. Acknowledging the acknowledgement does not help - whoever sends last is never certain
+it arrived.
+
+I simulated that over a lossy channel. As you add rounds of message-and-ack, the probability that all of
+them arrive drops from 90% at one round to 0.5% at fifty - but the probability that the LAST SENDER IS
+CERTAIN is 0.0% AT EVERY SINGLE ROUND COUNT. It does not improve with more rounds, because it cannot.
+
+So you choose how to be wrong. At-most-once - never retry - loses messages; at-least-once - retry until
+acked - duplicates them. Over 200,000 messages on a 1%-loss channel I measured 1,984 lost one way and
+3,926 duplicated the other. Roughly twice as many duplicates as losses, because a duplicate happens when
+EITHER the message or the ack is lost, which is two chances rather than one.
+
+Everyone picks at-least-once, because a duplicated message is recoverable and a lost payment is not.
+Then the engineering is entirely about making duplicates harmless: give every request a
+client-generated idempotency key, and have the receiver record it and ignore repeats. Same channel, same
+retries - 4,093 duplicate effects without the key, ZERO with it, and zero lost.
+
+Two details decide whether it actually works. The dedup check has to be ATOMIC - a unique constraint or
+an INSERT ON CONFLICT, not a SELECT followed by an INSERT, or two concurrent retries both read 'not
+done'. And the dedup record has to be in the SAME TRANSACTION as the effect, or you can record 'done'
+and crash before doing it.
+
+The last thing I would say is that every implementation has a WINDOW. You cannot remember keys forever -
+SQS FIFO dedupes over five minutes, Kafka over bounded producer state. So the honest claim is never
+'exactly-once', it is 'exactly-once within this window, provided every hop in the chain participates'."
+
+THE ONE SENTENCE TO NOT FUMBLE: you cannot make delivery exactly-once, so you make delivery at-least-
+once and the EFFECT idempotent - and that is what every "exactly-once" product is doing underneath.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE CHANNEL - the whole difficulty in four lines:
+
+    def send(msg, loss, rng):
+        if rng.random() < loss: return None      # message lost
+        if rng.random() < loss: return None      # ACK lost
+        return 'ack'
+
+TWO independent chances to lose something, and the caller cannot tell which happened - both return
+`None`. That indistinguishability is the Two Generals problem expressed as code, and it is why the
+measured duplicate count is about twice the measured loss count.
+
+AT-MOST-ONCE:
+
+    r = send(m, LOSS, rng)
+    if r is None: lost += 1
+
+Send, and accept the loss. Zero duplicates by construction. MEASURED 1,984 lost of 200,000.
+
+AT-LEAST-ONCE:
+
+    attempts = 0
+    while True:
+        attempts += 1
+        if send(m, LOSS, rng) == 'ack': break
+    if attempts > 1: duplicated += 1
+
+Retry until acked. Zero losses by construction. The `attempts > 1` counts the cases where a retry
+happened, and note that a retry is a duplicate only when the FIRST attempt actually arrived and the ack
+was lost - which is exactly the case the sender cannot detect. MEASURED 3,926 duplicated.
+
+THE TWO GENERALS SIMULATION:
+
+    all_arrived = (1 - LOSS) ** k
+    last_sender_certain = 0.0
+
+The first line is a probability that shrinks with k. The second is the literal answer to "can the last
+sender know?" and it is zero for every k, because knowing would require an acknowledgement, which would
+then be the last message and unacknowledged in turn. Writing it as a constant in the simulation is not
+a shortcut - it is the theorem.
+
+THE NAIVE HANDLER:
+
+    def handle(msg): balance[msg.account] += msg.amount
+
+Not idempotent. `+=` depends on the current value, so running it twice changes the result. MEASURED
+4,093 duplicate effects.
+
+THE IDEMPOTENT HANDLER:
+
+    def handle(msg):
+        if msg.key in seen: return
+        seen.add(msg.key)
+        balance[msg.account] += msg.amount
+
+MEASURED 0 duplicate effects. Two things about it are load-bearing and easy to get wrong.
+
+FIRST, in a real system `if key in seen` then `seen.add(key)` is a READ then a WRITE, and two concurrent
+retries can both read "not seen". The production form must be ONE atomic operation:
+
+    INSERT INTO processed(key) VALUES ($1) ON CONFLICT DO NOTHING
+
+and you branch on whether a row was inserted. The database's unique index is doing the atomicity, which
+is why this is the standard implementation rather than a lock.
+
+SECOND, `seen.add` and the balance update must be in the SAME TRANSACTION. Add the key, crash, and the
+message is retried and now suppressed - the effect never happens, and you have silently converted
+at-least-once into at-most-once at the worst possible moment.
+
+THE REDELIVERY SWEEP:
+
+    for rate in (0.001, 0.01, 0.05, 0.10, 0.15):
+        deliveries = sum(1 + extra(rate) for _ in range(N))
+
+MEASURED, deliveries per message rises only 1.0022 -> 1.1674 across that whole range, while duplicate
+effects go 100 -> 10,971. The infrastructure cost of retrying is nearly invisible and the correctness
+cost is linear in the redelivery rate. That asymmetry is the argument for spending your effort on
+idempotency rather than on reducing retries.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the Two Generals, and read the two right-hand columns AGAINST each other.
+
+    rounds k    P(all k arrive)    P(last sender CERTAIN)
+    --------    ---------------    ----------------------
+       1               90.0000%                      0.0%
+       2               81.0000%                      0.0%
+       5               59.0490%                      0.0%
+      10               34.8678%                      0.0%
+      20               12.1577%                      0.0%
+      50                0.5154%                      0.0%
+
+The left column DEGRADES with more rounds - each extra message is another chance to lose something. The
+right column is FLAT AT ZERO. More acknowledgements make things worse, not better, and they never buy
+certainty. If you take one number from this entry, take that column of zeros: it is why the answer is
+"impossible" and not "expensive".
+
+TRACE B - the two guarantees, 200,000 messages, 1% loss on each hop.
+
+    strategy         lost    duplicated   what the sender did
+    --------------   -----   ----------   -----------------------------------------
+    at-most-once     1,984            0   sent once, accepted silence
+    at-least-once        0        3,926   retried until an ack came back
+
+    ratio of duplicates to losses: 3,926 / 1,984 = 1.98x
+
+That 1.98x is almost exactly 2, and it is not a coincidence. A LOSS needs only the message to be lost -
+one chance. A DUPLICATE needs the message to arrive and the ACK to be lost - which, combined with the
+retry, happens on roughly twice as many of the paths. The two failure modes are not symmetric, and
+at-least-once produces about twice as many anomalies. It is still the right choice, because duplicates
+are fixable.
+
+TRACE C - what the idempotency key buys, same channel, same retries.
+
+    handler                       duplicate effects   lost effects
+    ---------------------------   -----------------   ------------
+    naive at-least-once                       4,093              0
+    at-least-once + idempotency                   0              0
+
+Zero and zero - which is the closest thing to exactly-once that exists, and note it is achieved at the
+RECEIVER, not by the network. The delivery layer is still at-least-once and still delivering
+duplicates; the receiver is throwing them away.
+
+TRACE D - how the duplicate rate scales, 100,000 messages.
+
+    redelivery rate   deliveries per message   duplicate effects   as a percentage
+    ---------------   ----------------------   -----------------   ---------------
+             0.1%                     1.0022                 100           0.100%
+             1.0%                     1.0192                 972           0.972%
+             5.0%                     1.0917               4,861           4.861%
+            10.0%                     1.1674               9,573           9.573%
+            15.0%                     1.2694              10,971          10.971%
+
+Two readings, and they point the same way.
+
+The INFRASTRUCTURE cost of retrying is negligible - 1.0022 deliveries per message at a healthy
+redelivery rate means retries add 0.22% to your traffic. The CORRECTNESS cost tracks the redelivery
+rate almost exactly - 0.1% redelivery, 0.100% duplicate effects. So if you are duplicating charges,
+one in a thousand customers is affected, and every one of them is a support ticket.
+
+The engineering conclusion: do not spend effort reducing retries, spend it on idempotency. Retries are
+cheap and duplicates are not.
+
+TRACE E - the timeout decision, which is where all of this becomes concrete.
+
+    the sender's view      what actually happened       resend?    do not resend?
+    --------------------   --------------------------   --------   --------------
+    no ack after 5s        the message was lost         CORRECT    message LOST
+    no ack after 5s        it arrived, the ack was lost DUPLICATE  correct
+
+One row of evidence, two possible worlds, and the right action is opposite in each. The sender cannot
+tell them apart - that is the theorem, not a limitation of the implementation - so it must pick a
+column and live with the bottom-right or top-right cell. Choosing "resend" makes the DUPLICATE cell the
+one you must handle, and idempotency is how you make that cell harmless.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    Two Generals, 10% loss:
+        P(all k messages arrive)          90.0% at k=1  ->  0.5154% at k=50
+        P(last sender is CERTAIN)         0.0% at EVERY k
+
+    200,000 messages, 1% loss per hop:
+        at-most-once                      1,984 lost,       0 duplicated
+        at-least-once                         0 lost,   3,926 duplicated  (1.98x the losses)
+        naive at-least-once               4,093 duplicate effects
+        at-least-once + idempotency           0 duplicate effects, 0 lost
+
+    redelivery rate 0.1% -> 15%:
+        deliveries per message            1.0022 -> 1.1674   (retry cost: negligible)
+        duplicate effects per 100,000        100 -> 10,971   (correctness cost: linear)
+
+COSTS:
+    idempotency key         one extra durable, atomic write per request on the hot path
+    dedup table             O(keys within the window) storage, plus eviction
+    at-least-once           retries add ~0.2% traffic at a healthy redelivery rate
+    two-phase commit        correct across systems, and BLOCKS on coordinator failure
+
+THE MISTAKES:
+
+    - Believing exactly-once delivery exists. It does not; the Two Generals column of zeros is a proof.
+    - Confusing exactly-once DELIVERY with exactly-once PROCESSING. The second is achievable and is
+      what every vendor means.
+    - `SELECT` then `INSERT` for the dedup check. Two concurrent retries both read "not done". Use a
+      unique constraint or INSERT ON CONFLICT.
+    - Writing the dedup record OUTSIDE the transaction that does the work. Crash in between and the
+      effect is lost forever - at-least-once quietly becomes at-most-once.
+    - Acking BEFORE processing. One line, and it is the difference between at-most-once and
+      at-least-once. Committing the Kafka offset first loses data on every crash.
+    - The client generating a NEW idempotency key on each retry. The key must be stable per logical
+      operation, or nothing is deduplicated.
+    - Ignoring the dedup WINDOW. Every implementation has one - SQS FIFO's is 5 minutes. Duplicates
+      outside it get through.
+    - Not passing the key DOWNSTREAM. Your dedup table does not stop a third-party charge from
+      happening twice.
+    - Returning an error on a detected duplicate instead of the ORIGINAL result. The client genuinely
+      cannot know its first attempt worked.
+    - No retry cap and no dead-letter queue. A poison message is retried forever and blocks the stream.
+    - Fixed retry intervals. Many clients synchronise into a thundering herd; use exponential backoff
+      with jitter.
+    - Optimising retries instead of idempotency. MEASURED: retries cost 0.22% extra traffic and
+      duplicates cost 0.1% wrong outcomes. The wrong outcomes are the expensive ones.
+
+THE TAKEAWAY. The network cannot tell you whether your message arrived, because a lost message and a
+lost acknowledgement are indistinguishable - and no number of extra acknowledgements fixes it, which
+the 0.0% column demonstrates at every round count. So the choice is between losing and duplicating, and
+every serious system chooses to duplicate, because duplicates can be made harmless and losses cannot be
+undone. The engineering is then entirely at the RECEIVER: a stable client-generated key, an ATOMIC
+dedup check, in the SAME TRANSACTION as the effect, within a stated WINDOW. That combination took 4,093
+duplicate effects to zero in the measurement, and it is precisely what Kafka, SQS FIFO and Stripe are
+doing when they say exactly-once.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
