@@ -337076,6 +337076,2037 @@ And a TCP connection is state on one machine, so route changes kill long-lived c
 is negligible for a DNS query and 15% for a five-minute websocket.""",
 ]
 
+_EX_P1AO["Approximate Nearest Neighbor (ANN / HNSW)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - "find the 10 vectors most similar to this one" is trivial to write and
+impossible to scale, because the obvious answer compares your query against EVERY vector.
+
+MEASURED ON THIS MACHINE - 200,000 vectors of 128 dimensions, exact top-10 for 2,000 queries:
+
+    exact search                 2.415 ms per query
+    distance computations        400,000,000 for the 2,000 queries
+    extrapolated to 100M vectors ~1,200 ms per query
+
+Exact search is O(N) per query. Double your corpus, double your latency, forever. At 100 million vectors
+a single search takes over a second, and that is with no other load on the machine.
+
+APPROXIMATE nearest neighbour gives up the guarantee of finding the exact top-10 in exchange for not
+looking at everything. MEASURED, an IVF index (cluster the vectors, then search only the nearest few
+clusters) over the same data:
+
+    nprobe   recall@10   vectors scanned   fewer distances   ms/query
+    ------   ---------   ---------------   ---------------   --------
+         1      0.3231               940            212.7x      0.106
+         4      0.7948             3,391             59.0x      0.192
+         8      0.9386             6,521             30.7x      0.376
+        16      0.9896            12,737             15.7x      0.729
+        32      0.9990            25,323              7.9x      1.463
+
+At nprobe=8 you get 93.9% of the true neighbours while computing 30.7x fewer distances. The entire field
+is that table: you are choosing a point on a recall-versus-speed curve, and the only question is which
+point your product can live with.""",
+
+    """2. THE INTUITION - you are not searching faster, you are searching LESS. Every ANN method is a way of
+deciding, cheaply, which vectors are not worth looking at.
+
+The two families do it differently:
+
+    PARTITION-BASED (IVF)   cluster the vectors once. At query time find the nearest few cluster
+                            centres and scan only those clusters. If your query's true neighbours sit
+                            in a cluster you did not probe, you miss them - that is the entire source
+                            of error.
+    GRAPH-BASED (HNSW)      build a graph where each vector links to some near neighbours. Start
+                            somewhere, walk greedily downhill toward the query, keep a candidate list.
+                            You touch a few hundred nodes instead of a few hundred thousand.
+
+WHAT ACTUALLY MAKES IT WORK, and this is where the folklore is wrong. The usual story is "high
+dimensions destroy distance contrast, but real data is clustered, so contrast survives". I measured
+contrast - the distance to the 100th neighbour divided by the distance to the 1st - and it does NOT say
+that:
+
+    dim    UNIFORM   clustered sep=1   clustered sep=3   clustered sep=10
+    ---    -------   ---------------   ---------------   ----------------
+      8      2.13x            2.08x             1.51x              1.12x
+     32      1.24x            1.22x             1.11x              1.03x
+    128      1.09x            1.08x             1.04x              1.01x
+    512      1.04x            1.03x             1.02x              1.01x
+
+TIGHTER CLUSTERS GIVE LOWER CONTRAST, not higher. Once points are packed into a tight cluster, the 1st
+and the 100th neighbour are at almost exactly the same distance, so the ratio goes to 1.0 - and yet
+tighter clusters make an index dramatically BETTER. The contrast metric simply is not what an index
+exploits.
+
+What it exploits is CONCENTRATION - how few partitions hold a query's true neighbours. MEASURED, 40,000
+vectors in 128 dimensions across 128 partitions:
+
+    data                 partitions holding the true top-10   probes needed for recall >= 0.90
+    ------------------   ----------------------------------   --------------------------------
+    UNIFORM random                                     9.35                          78 of 128
+    clustered, sep=1                                   5.64                          14 of 128
+    clustered, sep=3                                   2.89                           4 of 128
+    clustered, sep=10                                  2.13                           3 of 128
+
+On uniform data you must probe 78 of 128 partitions - 61% of the index, so almost no saving. On
+well-clustered data, 3. THAT is why ANN works: real embeddings are trained to put similar things
+together, and the index exploits the clustering, not the geometry of distance.""",
+
+    """3. EVERY TERM DEFINED.
+
+NEAREST NEIGHBOUR SEARCH. Given a query vector, find the k most similar vectors in a corpus.
+
+kNN / EXACT SEARCH. Compare against everything. O(N) per query, always correct. MEASURED at 2.415 ms for
+200,000 vectors.
+
+ANN. Approximate Nearest Neighbour. Trades a guaranteed-correct answer for sublinear work.
+
+RECALL@k. The fraction of the true top-k that your index actually returned. The quality metric.
+MEASURED from 0.32 to 1.00 depending on how hard you search.
+
+nprobe / efSearch. The knob that trades recall for speed - how many partitions to scan (IVF), or how
+wide a candidate list to keep while walking the graph (HNSW).
+
+IVF (Inverted File Index). Cluster the vectors with k-means; at query time probe only the nearest
+clusters. Simple, fast to build, and the recall depends entirely on whether the neighbours fell into a
+probed cluster.
+
+HNSW. Hierarchical Navigable Small World. A layered proximity graph - sparse long-range links at the top
+for coarse navigation, dense short links at the bottom for refinement. Usually the best
+recall-per-millisecond, and the most memory-hungry.
+
+GREEDY GRAPH TRAVERSAL. Walk to whichever neighbour is closer to the query; stop when no neighbour
+improves. HNSW's inner loop.
+
+M (HNSW). Links per node. More links means better recall and more memory.
+
+efConstruction. How hard the builder searches when deciding each node's links. Build-time quality.
+
+PRODUCT QUANTISATION (PQ). Split each vector into sub-vectors and replace each with a codebook index.
+MEASURED below: 128-dim float32 goes from 512 bytes to 64.
+
+SCALAR QUANTISATION (SQ). Store each dimension as int8 instead of float32. 4x smaller, minimal recall
+loss.
+
+REFINE / RERANK. Retrieve a wide candidate set with a cheap approximate score, then re-score the
+survivors with exact full-precision distances. How you get PQ's memory AND good accuracy.
+
+LSH (Locality Sensitive Hashing). Hash so that near points collide. The classic method with provable
+guarantees, and beaten in practice by IVF and HNSW.
+
+CURSE OF DIMENSIONALITY. In high dimensions, distances concentrate. MEASURED: uniform data at 512 dims
+has a contrast of 1.04x.
+
+CONCENTRATION (of neighbours). How few partitions hold a query's true neighbours. MEASURED - this, not
+contrast, is what predicts index performance.
+
+CONTIGUOUS LAYOUT. Storing each partition's vectors adjacently in memory. MEASURED below at 5x.
+
+BUILD TIME vs QUERY TIME. Indexes are expensive to build and cheap to query. Rebuilds and incremental
+inserts are the operational problem.
+
+FILTERED SEARCH. "Nearest neighbours WHERE tenant_id = 7". Genuinely hard, because the filter and the
+index disagree about which vectors matter.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the algorithmic win is real and a bad MEMORY LAYOUT hands it
+straight back.
+
+MEASURED, the identical IVF algorithm with the partitions stored two ways - SCATTERED (gather rows by
+index from the original array) versus CONTIGUOUS (the vectors physically reordered so each partition is
+one slice):
+
+    nprobe   vectors scanned   fewer distances   scattered ms   contiguous ms   layout gain
+    ------   ---------------   ---------------   ------------   -------------   -----------
+         1               940            212.7x          0.212           0.106          2.0x
+         4             3,391             59.0x          1.070           0.192          5.6x
+         8             6,521             30.7x          1.892           0.376          5.0x
+        16            12,737             15.7x          4.111           0.729          5.6x
+        32            25,323              7.9x          7.312           1.463          5.0x
+
+Same algorithm, same recall, same number of distance computations - and a 5x difference in wall clock.
+
+Worse, look at the scattered column against the exact baseline of 2.415 ms. At nprobe=16 the scattered
+IVF takes 4.111 ms - it is SLOWER than scanning all 200,000 vectors exhaustively, despite computing 15.7x
+fewer distances. Exact search is one large contiguous matrix multiply that the hardware is built for;
+gathering scattered rows defeats the prefetcher and the cache.
+
+This is why every serious ANN library physically reorders the corpus by partition. If you implement IVF
+yourself and time it against a numpy brute-force, you will conclude ANN does not work - and you will have
+measured your memory layout, not your algorithm.
+
+THE SECOND TRAP - assuming recall@10 answers the product question. MEASURED:
+
+    nprobe   recall@10   the TRUE #1 returned FIRST   the TRUE #1 anywhere in the 10
+    ------   ---------   --------------------------   ------------------------------
+         1      0.3231                        34.8%                            34.8%
+         4      0.7948                        81.2%                            81.2%
+         8      0.9386                        95.1%                            95.1%
+        16      0.9896                        99.2%                            99.2%
+
+Two things. Recall@10 slightly UNDERSTATES top-1 accuracy (0.7948 recall, 81.2% top-1), so quoting recall
+is conservative. And the two right-hand columns are IDENTICAL, which is a real property of IVF rather
+than a coincidence: within the partitions it probes, IVF ranks EXACTLY. Its only failure mode is "the
+true neighbour was in a partition I did not open" - never "I found it and mis-ranked it". A graph index
+does not have that property.
+
+THE THIRD TRAP - benchmarking recall on the wrong data. MEASURED above: uniform random vectors need 78 of
+128 probes for 0.90 recall, real-ish clustered vectors need 3. Benchmark an index on random vectors and
+you will conclude it is useless.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+MEMORY IS THE CONSTRAINT THAT DECIDES THE DESIGN, more than CPU. MEASURED, 128-dimensional vectors:
+
+    corpus size        float32     float16     int8 (SQ)     binary     PQ (64 bytes/vec)
+    ---------------   ---------   ---------   -----------   --------   -----------------
+    1,000,000          0.51 GB     0.26 GB       0.13 GB    0.02 GB             0.06 GB
+    10,000,000         5.12 GB     2.56 GB       1.28 GB    0.16 GB             0.64 GB
+    100,000,000       51.20 GB    25.60 GB      12.80 GB    1.60 GB             6.40 GB
+
+100 million vectors in float32 is 51 GB - it does not fit on one commodity machine, and HNSW adds its
+graph on top of that. Product quantisation takes the same corpus to 6.4 GB, which does fit. That is why
+quantisation is not an optimisation in large systems; it is what makes them possible at all.
+
+THE STANDARD COMBINATION: a coarse quantiser to pick partitions, PQ codes for cheap approximate
+distances, then RERANK the top few hundred survivors with exact full-precision vectors. You get PQ's
+memory footprint and something close to exact accuracy, because the reranking step only needs the
+original vectors for a few hundred candidates.
+
+THE INDEX FAMILY, and when each is right:
+
+    FLAT (exact)      always correct, O(N). Genuinely the right answer below ~100k vectors, or when
+                      recall must be exactly 1.0. MEASURED at 2.415 ms for 200k - fine for many
+                      products.
+    IVF               fast to build, easy to reason about, good with quantisation. Recall depends on
+                      how well k-means matched your data. Needs retraining if the distribution shifts.
+    HNSW              usually the best recall per millisecond. Expensive to build, heavy on memory
+                      (the graph as well as the vectors), and deletion is awkward - most
+                      implementations tombstone and rebuild.
+    IVF-PQ            the large-scale workhorse. Billions of vectors on a handful of machines.
+    LSH               provable guarantees, and beaten in practice.
+    ScaNN / DiskANN   anisotropic quantisation and SSD-resident graphs respectively - what you reach
+                      for when the corpus exceeds RAM.
+
+OPERATIONAL PROPERTIES THAT DECIDE MORE ARCHITECTURES THAN RECALL DOES:
+    INSERTS      HNSW inserts incrementally; IVF drifts as the data moves and eventually needs
+                 re-clustering.
+    DELETES      hard for graphs. Tombstone, filter at query time, rebuild periodically.
+    FILTERS      "nearest neighbours WHERE tenant = 7" is the hardest common requirement. Pre-filtering
+                 breaks the index's structure; post-filtering can return nothing if the filter is
+                 selective. Partitioning BY tenant is often the real answer.
+    UPDATES      a changed embedding means delete plus insert.
+    REBUILD      IVF's k-means over the whole corpus is a batch job you must schedule.
+
+WHEN NOT TO USE ANN AT ALL: under about 100,000 vectors, exact search is simpler, always correct, and
+fast enough - and it has no build step, no recall knob, no retraining and no rebuild. Reach for an index
+when the exact scan stops fitting your latency budget, and not before.""",
+
+    """6. HOW TO CODE IT.
+
+  1. MEASURE EXACT SEARCH FIRST. MEASURED at 2.415 ms per query for 200,000 x 128. If that fits your
+     budget, you do not need an index, and you avoid every operational problem in section 5.
+  2. NORMALISE YOUR VECTORS if you are using cosine similarity, then use an inner product. It makes the
+     distance one matrix multiply.
+  3. STORE PARTITIONS CONTIGUOUSLY. MEASURED at 5x. Physically reorder the corpus by partition and keep
+     an index mapping back to original ids. This is the single biggest implementation detail.
+  4. TUNE nprobe / efSearch AGAINST MEASURED RECALL, not by feel. Build the recall-versus-latency table
+     for YOUR data and pick a point deliberately.
+  5. COMPUTE GROUND TRUTH ONCE with exact search on a query sample, and keep it. You cannot tune recall
+     without it, and it is the first thing people skip.
+  6. BENCHMARK ON REAL EMBEDDINGS. MEASURED: uniform random vectors need 78 of 128 probes where
+     clustered data needs 3. A benchmark on random vectors is worthless.
+  7. QUANTISE WHEN MEMORY BINDS, then RERANK the top few hundred candidates with the full-precision
+     vectors. MEASURED: 51.2 GB to 6.4 GB at 100M vectors.
+  8. SIZE THE PARTITION COUNT around sqrt(N) as a starting point, then measure. Too few partitions means
+     each is huge; too many means the centroid search itself becomes the cost.
+  9. PLAN DELETES AND REBUILDS BEFORE YOU LAUNCH. Tombstone plus periodic rebuild is the usual answer,
+     and "how do we delete?" is a much worse question to first ask in production.
+ 10. FOR FILTERED SEARCH, PARTITION BY THE FILTER where you can - a separate index per tenant beats
+     fighting the interaction between a filter and a graph.
+ 11. RE-EXAMINE THE INDEX WHEN THE EMBEDDING MODEL CHANGES. New model, new vector space, and a full
+     rebuild - the index is derived data.
+ 12. MONITOR RECALL IN PRODUCTION by periodically running exact search on a sample of live queries and
+     comparing. Recall degrades silently as the corpus drifts away from the clustering it was built on.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Exact nearest-neighbour search compares your query against every vector, so it is O(N) per query. I
+measured it: 200,000 vectors of 128 dimensions takes 2.4 milliseconds a query, which extrapolates to
+over a second at 100 million. Approximate search gives up the guarantee of finding the exact top-k in
+return for not looking at everything.
+
+I built an IVF index - cluster the vectors, then at query time only scan the nearest few clusters. At
+eight probes it returned 93.9% of the true top-10 while computing 30.7 times fewer distances. That table
+is the whole field: you are picking a point on a recall-versus-speed curve.
+
+The result I'd most want to share is a correction. The usual explanation for why this works is that high
+dimensions destroy distance contrast but real data is clustered so contrast survives. I measured contrast
+- the distance to the 100th neighbour over the distance to the 1st - and it says the opposite: TIGHTER
+clusters give LOWER contrast, because once points are packed together the 1st and 100th neighbour are
+about equally far. So contrast is not what an index exploits.
+
+What it exploits is concentration. I measured how many partitions hold a query's true top-10: on uniform
+random data it was 9.35 partitions and you needed to probe 78 of 128 to reach 90% recall - 61% of the
+index, so basically no saving. On well-clustered data it was 2.13 partitions and 3 probes. ANN works
+because real embeddings are trained to put similar things together, and the index exploits that
+clustering.
+
+The practical trap is memory layout. I ran the same IVF algorithm with the partitions stored scattered
+versus physically contiguous - same recall, same distance count, and a 5x difference in wall clock. At 16
+probes the scattered version was actually SLOWER than exhaustive search, despite computing 15.7 times
+fewer distances, because exact search is one big contiguous matrix multiply and gathering scattered rows
+defeats the cache. If you implement IVF yourself and benchmark it against numpy, you will conclude ANN
+does not work - and you will have measured your memory layout.
+
+One nice property fell out: for IVF, 'the true #1 returned first' and 'the true #1 anywhere in the top
+10' were identical at every setting. Within the partitions it opens, IVF ranks exactly, so its only
+failure mode is 'the neighbour was in a partition I did not open' - never a mis-ranking.
+
+And the constraint that actually decides the design is memory, not CPU. 100 million 128-dim vectors is
+51 GB in float32 and does not fit on one machine; product quantisation takes it to 6.4 GB. That is why
+large systems quantise and then rerank the top few hundred candidates at full precision."
+
+THE ONE SENTENCE TO NOT FUMBLE: ANN does not search faster, it searches LESS - and what makes that
+possible is that a query's true neighbours CONCENTRATE into a few partitions on real clustered data
+(2.13 partitions, 3 probes) and do not on uniform data (9.35 partitions, 78 probes).""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def kmeans(X, k, iters=12):
+        for _ in range(iters):
+            a = np.argmax(X @ C.T, axis=1)
+            for j in range(k):
+                m = a == j
+                if m.any(): C[j] = X[m].mean(0)
+            C /= np.linalg.norm(C, axis=1, keepdims=True)
+
+The build step. `np.argmax(X @ C.T)` assigns every vector to its nearest centroid by inner product,
+which works because the vectors are normalised - so cosine similarity, inner product and euclidean
+distance all give the same ordering. The renormalisation after each mean keeps the centroids on the
+sphere.
+
+`if m.any()` guards an empty cluster, which genuinely happens: my 256-partition build produced a
+partition of size 0 alongside one of 3,347. That imbalance is normal and it is why nprobe=1 could return
+nothing at all.
+
+    order = np.argsort(assign, kind='stable')
+    Xc = np.ascontiguousarray(X[order])
+    starts = np.searchsorted(assign[order], np.arange(NLIST))
+    ends   = np.searchsorted(assign[order], np.arange(NLIST), side='right')
+
+The four lines worth 5x. Sorting by partition assignment and copying into a new array puts every
+partition's vectors ADJACENT IN MEMORY, so scanning a partition becomes `Xc[a:b]` - one contiguous slice.
+`order` maps back to original ids, and `searchsorted` finds each partition's boundaries in the sorted
+order without a Python loop.
+
+`kind='stable'` is not cosmetic: a stable sort keeps ids in a predictable order within each partition,
+which makes the index reproducible across builds.
+
+    for j in probes[i]:
+        a, b = starts[j], ends[j]
+        if b <= a: continue
+        s = Xc[a:b] @ Q[i]
+
+The contiguous scan. One BLAS call per partition over adjacent memory. Compare with the scattered
+version:
+
+    cand = np.concatenate([lists[j] for j in probes[i]])
+    s = Q[i] @ X[cand].T
+
+`X[cand]` is fancy indexing - it GATHERS scattered rows into a fresh array, which is a random-access read
+per row plus an allocation. Identical arithmetic, 5x the time.
+
+    probes = np.argpartition(-(Q @ C.T), nprobe, axis=1)[:, :nprobe]
+
+Choosing which partitions to open. `argpartition` finds the nprobe largest without fully sorting - O(k)
+rather than O(k log k). Note this is itself a small exact search over the 256 centroids, and if you make
+the partition count large enough this step becomes the bottleneck, which is why hierarchical coarse
+quantisers exist.
+
+    spread = np.mean([len(set(assign[t].tolist())) for t in truth])
+
+The measurement that produced the folklore correction. For each query, take the true top-10, look up
+which partition each one landed in, and count the DISTINCT partitions. That number - 2.13 for clustered
+data, 9.35 for uniform - directly predicts how many probes you need, and it is the property that matters
+rather than distance contrast.
+
+    srt = np.sort(np.sqrt(np.maximum(0, 2 - 2*(Qd @ Xd.T))), axis=1)
+    contrast = srt[:,100].mean() / srt[:,0].mean()
+
+The contrast metric, which is the one that did NOT explain anything. `2 - 2*cos` is the squared euclidean
+distance between unit vectors, and `np.maximum(0, ...)` guards floating-point error making it slightly
+negative for near-identical vectors. Reporting that this metric failed to predict index performance is
+more useful than quietly dropping it.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 200,000 vectors, 128 dimensions, unit-normalised, 256 IVF partitions, 2,000 test queries, true
+top-10 computed by exhaustive search.
+
+TRACE A - the baseline you are trying to beat.
+
+    exact top-10                       2.415 ms per query
+    vectors scanned                  200,000 per query
+    distance computations        400,000,000 for 2,000 queries
+    at 100M vectors (extrapolated)    ~1,200 ms per query
+
+TRACE B - IVF, the recall/speed curve.
+
+    nprobe   recall@10   vectors scanned   fewer distances   contiguous ms   vs exact
+    ------   ---------   ---------------   ---------------   -------------   --------
+         1      0.3231               940            212.7x           0.106      22.8x
+         2      0.5518             1,819            110.0x           0.161      15.0x
+         4      0.7948             3,391             59.0x           0.192      12.6x
+         8      0.9386             6,521             30.7x           0.376       6.4x
+        16      0.9896            12,737             15.7x           0.729       3.3x
+        32      0.9990            25,323              7.9x           1.463       1.7x
+        64      1.0000            50,238              4.0x           2.955       0.8x
+
+Read the last two columns against each other. The distance count falls 212x at one probe; the wall clock
+only improves 22.8x, because the per-query overhead (choosing partitions, concatenating results) does not
+shrink. And at nprobe=64 the index is SLOWER than exact search while still computing 4x fewer distances -
+overheads have eaten the entire advantage.
+
+The useful operating point is nprobe=8: 93.9% recall at 6.4x faster.
+
+TRACE C - the same algorithm, two memory layouts.
+
+    nprobe   scattered ms   contiguous ms   layout gain   scattered vs EXACT search
+    ------   ------------   -------------   -----------   -------------------------
+         1          0.212           0.106          2.0x                       11.4x
+         4          1.070           0.192          5.6x                        2.3x
+         8          1.892           0.376          5.0x                        1.3x
+        16          4.111           0.729          5.6x                        0.6x  <- SLOWER
+        32          7.312           1.463          5.0x                        0.3x  <- SLOWER
+
+The last column is the finding. With a scattered layout, IVF at 16 probes is slower than scanning all
+200,000 vectors, while doing 15.7x less arithmetic. Nothing about the algorithm changed - only whether
+the vectors it reads are adjacent in memory.
+
+TRACE D - what the index is really exploiting. 40,000 vectors, 128 dims, 128 partitions.
+
+    data                 partitions holding the true top-10   probes for recall >= 0.90   fraction of index
+    ------------------   ----------------------------------   -------------------------   -----------------
+    UNIFORM random                                     9.35                          78              60.9%
+    clustered, sep=1                                   5.64                          14              10.9%
+    clustered, sep=3                                   2.89                           4               3.1%
+    clustered, sep=10                                  2.13                           3               2.3%
+
+On uniform data you open 61% of the index to reach 90% recall - the index has bought you almost nothing.
+On clustered data, 2.3%. The ratio between those is the entire value of an ANN index, and it is a
+property of THE DATA, not of the algorithm.
+
+TRACE E - the metric that did NOT explain it.
+
+    dim    UNIFORM   clustered sep=1   clustered sep=3   clustered sep=10
+    ---    -------   ---------------   ---------------   ----------------
+      8      2.13x            2.08x             1.51x              1.12x
+     32      1.24x            1.22x             1.11x              1.03x
+    128      1.09x            1.08x             1.04x              1.01x
+    512      1.04x            1.03x             1.02x              1.01x
+
+Distance contrast falls as clustering INCREASES - exactly backwards from the story it is usually used to
+tell. A tight cluster puts every member at nearly the same distance from a query, so the 100th neighbour
+is barely further than the 1st. Meanwhile Trace D shows those same tight clusters make the index far
+better. Two different properties; only concentration predicts performance.
+
+TRACE F - what recall means for the product.
+
+    nprobe   recall@10   TRUE #1 returned FIRST   TRUE #1 anywhere in the 10
+    ------   ---------   ----------------------   --------------------------
+         1      0.3231                    34.8%                       34.8%
+         4      0.7948                    81.2%                       81.2%
+         8      0.9386                    95.1%                       95.1%
+        16      0.9896                    99.2%                       99.2%
+
+The two right columns are identical at every setting. That is structural: IVF scores its candidates
+EXACTLY, so if the true best vector is inside a probed partition it necessarily comes back ranked first.
+IVF's error is entirely "wrong partitions", never "wrong ranking".
+
+And recall@10 slightly understates top-1 accuracy (0.7948 against 81.2%), so quoting recall is the
+conservative choice.
+
+TRACE G - memory, 128 dimensions.
+
+    corpus          float32     float16     int8      binary    PQ 64B/vec
+    -----------   ---------   ---------   -------   --------   ----------
+    1M              0.51 GB     0.26 GB   0.13 GB    0.02 GB      0.06 GB
+    10M             5.12 GB     2.56 GB   1.28 GB    0.16 GB      0.64 GB
+    100M           51.20 GB    25.60 GB  12.80 GB    1.60 GB      6.40 GB
+
+51 GB against 6.4 GB is the difference between a fleet and a machine.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (200,000 vectors x 128 dims, 256 partitions, 2,000 queries):
+
+    exact search          2.415 ms/query, 200,000 vectors scanned
+    IVF nprobe=8          recall 0.9386, 6,521 scanned (30.7x fewer), 0.376 ms (6.4x faster)
+    IVF nprobe=16         recall 0.9896, 0.729 ms (3.3x faster)
+    memory layout         scattered vs contiguous: 5.0-5.6x on identical work
+                          scattered IVF at nprobe=16 is SLOWER than exact search
+    what makes it work    partitions holding the true top-10: uniform 9.35 -> 78 probes for 0.90 recall
+                          clustered sep=10: 2.13 -> 3 probes
+    contrast metric       falls as clustering increases (1.09x uniform vs 1.01x tight) - it does NOT
+                          explain index performance
+    memory at 100M x 128  float32 51.2 GB | int8 12.8 GB | PQ 6.4 GB
+
+COMPLEXITY: exact is O(N x D) per query. IVF is O(nlist x D) to pick partitions plus
+O(nprobe x N/nlist x D) to scan them. HNSW is roughly O(log N) hops with a constant that depends on
+efSearch. Build is the expensive half: k-means over the whole corpus for IVF, graph construction for
+HNSW.
+
+THE MISTAKES:
+
+    - Using an index below ~100k vectors. MEASURED: exact search on 200k is 2.4 ms, with no build, no
+      recall knob and no rebuild.
+    - Storing partitions scattered. MEASURED 5x, and enough to make the index slower than brute force.
+    - Benchmarking on uniform random vectors. MEASURED: 78 probes versus 3 for clustered data.
+    - Tuning nprobe by feel instead of against measured recall on real ground truth.
+    - Never computing ground truth at all, so recall is unknown.
+    - Assuming distance contrast is what makes ANN work. MEASURED backwards.
+    - Quantising without a rerank step, and losing accuracy that a few hundred exact re-scores would
+      have recovered.
+    - Not planning deletes. Graph indexes tombstone and need periodic rebuilds.
+    - Expecting filtered search to be easy. Partition by the filter where you can.
+    - Forgetting the index is DERIVED DATA - a new embedding model means a full rebuild.
+    - Not monitoring recall in production. It degrades silently as the corpus drifts from the clustering
+      it was built on.
+    - Reporting recall@10 as though it answered "is the top hit right". MEASURED, they differ - and for
+      IVF the ranking within probed partitions is exact.
+
+THE TAKEAWAY. ANN does not make distance computation faster, it makes you do less of it: measured, 30.7x
+fewer distances for 93.9% of the true neighbours. It works because on real embeddings a query's true
+neighbours CONCENTRATE into a couple of partitions (2.13, needing 3 probes) while on uniform data they
+scatter across nine and need 78 - so the index exploits the data's clustering, not any property of
+distance, and the usual "contrast" explanation measured backwards. The implementation detail that
+decides whether you see any of that benefit is memory layout: the same algorithm was 5x slower with
+scattered partitions, and at higher recall settings slower than brute force outright. And the constraint
+that shapes large deployments is memory rather than CPU - 51 GB against 6.4 GB at 100 million vectors is
+what quantisation is really for.""",
+]
+
+_EX_P1AO["Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an array is a block of memory holding equal-sized items, one after
+another. That single property - CONTIGUOUS, FIXED-SIZE ELEMENTS - is where everything else comes from.
+
+Because every element is the same size and they are adjacent, the address of element `i` is arithmetic:
+
+    address of a[i] = base_address + i * item_size
+
+One multiply and one add. No searching, no following pointers, no matter how big the array is.
+
+MEASURED ON THIS MACHINE:
+
+    elements       time for a[len/2]   time for a[len-1]
+    ------------   -----------------   -----------------
+              10           0.1054 us          0.1016 us
+           1,000           0.1246 us          0.1205 us
+         100,000           0.0544 us          0.0503 us
+      10,000,000           0.0502 us          0.0474 us
+
+Flat across six orders of magnitude. Reaching element 10 million costs the same as reaching element 5.
+That is O(1) indexing, and it is the entire reason arrays are the default data structure in every
+language.
+
+The price is paid on the other side: inserting in the middle means MOVING everything after it. MEASURED:
+
+    elements      append (at the end)   insert at position 0
+    -----------   -------------------   --------------------
+          1,000            0.0707 us              0.310 us
+        100,000            0.0723 us             35.580 us
+      1,000,000            0.1619 us            763.194 us
+
+Append is flat. Insert at the front grows linearly - at a million elements it is a single insertion that
+moves the whole array.""",
+
+    """2. THE INTUITION - a numbered row of identical lockers versus a treasure hunt.
+
+With lockers, "open locker 7,412" is immediate: you walk straight to it, because you can compute where it
+is. With a treasure hunt - each note telling you where the next one is - reaching the 7,412th note means
+reading 7,411 notes first. That is an array versus a linked list.
+
+But the interesting part is the SECOND-ORDER effect, where the textbook comparison misleads.
+
+The textbook says: a linked list has O(1) insertion, an array has O(n). True, and incomplete - the linked
+list's O(1) insertion assumes YOU ARE ALREADY THERE. Getting there is O(n) pointer-chasing, and every hop
+is potentially a cache miss, while the array's O(n) move is one sequential burst that hardware is
+specifically built for.
+
+MEASURED, traversing 2,000,000 elements:
+
+    array (contiguous)     51.6 ms
+    linked list (chased)   95.9 ms      1.9x slower
+
+    memory:
+    array                  16.0 MB
+    linked-list nodes     368.0 MB      23.0x more
+
+And the array's "slow" O(n) shift is not slow. MEASURED, an in-place shift `b[1:] = b[:-1]`, which is
+exactly what an insert performs:
+
+    elements       time        effective bandwidth
+    ------------   ---------   -------------------
+         1,000       1.67 us              4.79 GB/s
+       100,000      42.65 us             18.76 GB/s
+     1,000,000     530.89 us             15.07 GB/s
+    10,000,000    8344.34 us              9.59 GB/s
+
+Moving a million elements takes half a millisecond, because it is sequential memory bandwidth at 15
+GB/s. So an O(n) operation running at memory speed frequently beats an O(1) operation that costs a cache
+miss - which is why real-world code uses arrays for almost everything and linked lists almost nowhere.""",
+
+    """3. EVERY TERM DEFINED.
+
+ARRAY. A contiguous block of memory holding equal-sized elements, indexed from 0.
+
+CONTIGUOUS. Adjacent in memory, with no gaps. The property that makes address arithmetic possible and
+that the CPU cache is designed around.
+
+O(1) RANDOM ACCESS. Reaching any element in constant time. MEASURED flat from 10 to 10,000,000 elements.
+
+ZERO-INDEXED. `a[0]` is the first element, so the address is `base + i * size` with no adjustment. That
+is the reason for the convention.
+
+STRIDE. The distance in bytes between consecutive elements along a dimension. A 2-D array has one stride
+per axis.
+
+ROW-MAJOR vs COLUMN-MAJOR. Whether a 2-D array stores rows contiguously (C, numpy default) or columns
+(Fortran, MATLAB). It decides which traversal order is cache-friendly.
+
+STATIC vs DYNAMIC ARRAY. Fixed capacity versus one that grows. Python's `list`, C++'s `vector`, Java's
+`ArrayList` and Go's `slice` are dynamic arrays.
+
+CAPACITY vs LENGTH. How much room is allocated versus how much is used. Growth happens when they meet.
+
+AMORTISED O(1) APPEND. Append is usually O(1) and occasionally O(n) when it reallocates; averaged over
+many appends it is O(1). MEASURED below: 72 reallocations for 200,000 appends.
+
+GROWTH FACTOR. Multiplying capacity (typically 1.125x to 2x) rather than adding a fixed amount. This is
+what makes the amortisation work.
+
+REALLOCATION. Allocating a bigger block and copying. The occasional expensive append.
+
+MEMMOVE. Shifting a block of memory. What an insert or delete in the middle actually performs. MEASURED
+at 15 GB/s.
+
+CACHE LINE. The unit the CPU reads from memory - typically 64 bytes, so eight float64 values. Reading one
+value fetches its seven neighbours whether you want them or not.
+
+SPATIAL LOCALITY. Using data that is near data you just used. Arrays have it by construction.
+
+PREFETCHER. Hardware that predicts sequential access and fetches ahead. It works on arrays and cannot
+help with pointer-chasing.
+
+BOXED vs UNBOXED. Whether the array holds the values themselves or POINTERS to objects. A Python `list`
+is boxed; a numpy array is unboxed. MEASURED below at 10x on a sum.
+
+BOUNDS CHECKING. Verifying `0 <= i < length` before access. Safe languages do it; C does not.
+
+SLICE / VIEW. A window onto an existing array without copying. numpy slices are views; Python list slices
+are copies.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "linked lists are better for insertion". Almost never, and the
+measurement says why.
+
+MEASURED, 2,000,000 elements:
+
+    operation                            array          linked list
+    ----------------------------------   ------------   -----------------
+    full traversal                       51.6 ms        95.9 ms  (1.9x)
+    memory                               16.0 MB        368.0 MB (23.0x)
+    insert once you are already there    O(n) memmove   O(1) pointer swap
+    GETTING there                        O(1)           O(n) with cache misses
+
+The linked list wins exactly one cell of that table, and only after you have paid an O(n) traversal to
+reach the position. Meanwhile its per-node overhead is 23x the memory, and every node is a separate
+allocation somewhere else in memory, so traversal defeats the prefetcher.
+
+Linked lists earn their place when you hold a reference to the node ALREADY - an LRU cache moving a node
+to the front, an intrusive list inside a kernel scheduler, a free list. Those are real and they are
+narrow.
+
+THE SECOND TRAP - assuming "O(n) insert" means "slow insert". MEASURED at 15 GB/s, a million elements
+shift in 0.53 ms. If you insert rarely and read often, the array wins even with the O(n) insert; the
+crossover is much further out than the complexity notation suggests.
+
+THE THIRD TRAP - assuming "array" means the same thing in every language. MEASURED, summing 2,000,000
+integers:
+
+    sum(python list)   14.62 ms
+    numpy .sum()        1.41 ms      10x
+
+A Python `list` is an array OF POINTERS to boxed integer objects - the pointers are contiguous, the
+values are scattered on the heap. A numpy array holds the values themselves, packed. Same word, two very
+different data structures, and the 10x is what the difference costs.
+
+THE FOURTH TRAP - a naive prediction about contiguity that I got wrong, and it is worth reporting.
+MEASURED, a 4000x4000 float64 array (128 MB) stored row-major:
+
+    sum along ROWS (contiguous)      7.5 ms
+    sum along COLUMNS ("strided")    6.7 ms      0.90x
+
+NO PENALTY - the column sum was slightly FASTER. The prediction failed because numpy's column sum does
+not stride at all: it walks memory sequentially, accumulating into a row-sized buffer. The library
+already fixed the access pattern.
+
+To see the effect you have to force genuinely strided access. MEASURED, summing 2,000,000 float64:
+
+    stride 1  (contiguous, touches 16 MB)     1.20 ms
+    stride 10 (strided, touches 160 MB)       8.72 ms      7.2x
+
+Same element count, same arithmetic. The strided version uses one value per 64-byte cache line and
+discards the other seven, so it moves ten times the memory. THAT is what contiguity buys, and it is a
+memory-traffic effect rather than an instruction-count one.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+HOW DYNAMIC ARRAYS GROW - the mechanism behind "amortised O(1)". MEASURED, growing a Python list to
+200,000 elements:
+
+    72 reallocations for 200,000 appends
+
+    at element   capacity (bytes)   growth factor
+    ----------   ----------------   -------------
+             0                 88               -
+             4                120          1.364x
+             8                184          1.533x
+            16                248          1.348x
+            32                376          1.205x
+       142,564          1,283,160          1.125x
+       160,388          1,443,576          1.125x
+       180,440          1,624,056          1.125x
+
+CPython settles at about 1.125x. The crucial property is that it is a FACTOR, not a fixed increment: each
+reallocation copies n elements but buys you roughly n/8 more appends before the next one, so the copying
+cost per append averages out to a constant. Growing by a fixed 100 slots instead would make n appends
+cost O(n^2) in total.
+
+C++'s `vector` typically doubles, Java's `ArrayList` uses 1.5x. Larger factors mean fewer copies and more
+wasted memory - it is a straight trade.
+
+THE FAMILY, and what each fixes:
+
+    ARRAY / VECTOR      O(1) index, O(n) middle insert, contiguous. The default, correctly.
+    LINKED LIST         O(1) insert AT a held reference, O(n) to find anything, 23x memory. For LRU
+                        caches, free lists, intrusive kernel lists.
+    DEQUE               O(1) at both ends. Python's `collections.deque`. Use it whenever you were about
+                        to write `list.pop(0)` - MEASURED at 763 us on a million-element list.
+    DYNAMIC ARRAY OF CHUNKS   a list of fixed-size blocks. O(1) index (two lookups) and cheap growth
+                        without copying everything. What Python's deque and many rope structures do.
+    HASH TABLE          O(1) lookup by KEY rather than by position. Built on an array underneath.
+    BALANCED TREE       O(log n) insert and ordered traversal. When you need order maintained under
+                        mutation.
+    SKIP LIST           a probabilistic alternative to a tree, easier to make concurrent.
+    CIRCULAR BUFFER     a fixed array with wrapping indices. Fixed memory, O(1) both ends, and it drops
+                        the oldest item - exactly right for a bounded queue or a ring of recent events.
+    SPARSE ARRAY        a map from index to value, when almost everything is zero.
+
+CHOOSING, by the question you are actually asking:
+    "give me item i"                      -> array
+    "add and remove at both ends"         -> deque
+    "look up by key"                      -> hash table
+    "keep it sorted while I mutate it"    -> tree
+    "I already hold the node"             -> linked list
+    "fixed memory, drop the oldest"       -> circular buffer
+
+AND THE ONE THAT DECIDES MORE PERFORMANCE THAN THE CHOICE OF STRUCTURE: LAYOUT. An array of structs
+versus a struct of arrays. If you loop over a million records touching only one field, an array-of-structs
+drags every other field through the cache with it; a struct-of-arrays reads only what you asked for.
+MEASURED above as the stride-1 versus stride-10 comparison - 7.2x - and that is the same effect under a
+different name.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE AN ARRAY BY DEFAULT. It is O(1) indexed, cache-friendly, and the one every library expects. Pick
+     something else when you have measured a reason.
+  2. PREALLOCATE WHEN YOU KNOW THE SIZE. `[None]*n`, `reserve(n)`, `make([]T, 0, n)`. It skips every
+     reallocation - MEASURED at 72 of them for 200,000 appends.
+  3. NEVER `list.pop(0)` OR `list.insert(0, x)` IN A LOOP. MEASURED at 763 us on a million elements, so a
+     loop of them is quadratic. Use a `deque`.
+  4. APPEND AND POP AT THE END. MEASURED flat at ~0.07-0.16 us regardless of size.
+  5. ITERATE IN MEMORY ORDER. For a row-major 2-D array, loop rows in the outer loop. MEASURED: forcing
+     strided access cost 7.2x on identical arithmetic.
+  6. USE THE RIGHT ARRAY. In Python, a `list` of numbers is an array of POINTERS - MEASURED 10x slower to
+     sum than a numpy array. Use numpy, `array.array`, or bytes when the elements are numeric.
+  7. BATCH THE WORK INTO THE LIBRARY. `A.sum()` instead of a Python loop, for exactly the same reason -
+     the loop pays interpreter overhead per element and the library pays it once.
+  8. PREFER STRUCT-OF-ARRAYS when you scan one field over many records; array-of-structs when you touch
+     all fields of one record. This is the same cache effect as stride-1 versus stride-10.
+  9. TAKE VIEWS, NOT COPIES, where the language offers them. numpy slices are views; Python list slices
+     copy. `a[1:]` on a million-element list allocates a million-element list.
+ 10. WATCH FOR ACCIDENTAL O(n^2). Repeated `+=` on a list inside a loop, repeated string concatenation,
+     `insert(0, ...)` - all are one linear operation inside a linear loop.
+ 11. DO NOT "OPTIMISE" TO A LINKED LIST FOR INSERTIONS without measuring. MEASURED: 1.9x slower to
+     traverse and 23x the memory, and you still pay O(n) to find the insertion point.
+ 12. REMEMBER THE MEMMOVE IS FAST. MEASURED at 15 GB/s. An O(n) shift on 100,000 elements is 43
+     microseconds - frequently cheaper than the data structure you were about to introduce to avoid it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"An array is a contiguous block of equal-sized elements, and every property it has follows from that.
+Because the elements are the same size and adjacent, the address of element i is just base plus i times
+the item size - one multiply and one add. So indexing is O(1) regardless of size, and I measured that:
+reaching an element took about 0.05 microseconds whether the array had ten elements or ten million. Flat
+over six orders of magnitude.
+
+The price is inserting in the middle, because everything after the insertion point has to move. I
+measured inserting at position zero: 0.31 microseconds at a thousand elements, 763 microseconds at a
+million. Linear, exactly as advertised. Appending at the end stayed flat at about 0.07 microseconds.
+
+The thing I'd want to push back on is the textbook comparison with linked lists. The textbook says a
+linked list has O(1) insertion and an array has O(n), which is true and misleading, because the linked
+list's O(1) assumes you are ALREADY at the position. Getting there is an O(n) walk where every hop is
+potentially a cache miss. I measured traversing two million elements: 51.6 milliseconds for the array,
+95.9 for the linked list, and the linked list used 368 megabytes against 16 - twenty-three times the
+memory.
+
+Meanwhile the array's 'slow' O(n) shift runs at memory bandwidth. I measured an in-place shift at about
+15 GB/s, so moving a million elements takes half a millisecond. An O(n) operation at memory speed
+routinely beats an O(1) operation that costs a cache miss, which is why real code uses arrays almost
+everywhere and linked lists almost nowhere - they earn their place only when you already hold the node,
+like an LRU cache or a kernel free list.
+
+Two more things worth knowing. 'Array' means different things in different languages: a Python list is an
+array of POINTERS to boxed objects, so summing two million integers took 14.6 milliseconds against 1.4
+for a numpy array holding the values themselves. Ten times, for the same word.
+
+And I'll mention a prediction I got wrong, because it is instructive. I expected summing a row-major
+array along columns to be much slower than along rows. It was not - 6.7 milliseconds versus 7.5, if
+anything faster - because numpy's column sum walks memory sequentially and accumulates into a buffer, so
+it never actually strides. To see the cache effect I had to force it: summing with a stride of 10 took
+8.72 milliseconds against 1.20 for contiguous, 7.2 times, because it uses one value per 64-byte cache
+line and throws away the other seven."
+
+THE ONE SENTENCE TO NOT FUMBLE: contiguity is the whole thing - it buys O(1) address arithmetic and
+cache-friendly traversal, and it costs O(n) middle insertion, but that O(n) runs at 15 GB/s so it beats
+the "asymptotically better" alternative far more often than the notation suggests.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    a = list(range(n))
+    t(lambda: a[n//2], 200000)
+
+The indexing measurement, and the point is what is NOT in it: no loop, no search, no size dependence.
+Timing the same expression across n from 10 to 10,000,000 and getting a flat result is the empirical form
+of `base + i * item_size`.
+
+The tiny values at small n (0.1054 us at n=10 versus 0.0502 at n=10,000,000) are interpreter warm-up
+noise, not a real inverse relationship - which is worth saying so nobody reads a trend into it.
+
+    t(lambda: (a.insert(0,1), a.pop(0))[0], 5000)
+
+Insert-then-undo, so the array stays the same size across repetitions and the measurement is stable. The
+tuple-index trick `(x, y)[0]` is just a way to run two statements inside a lambda.
+
+Measuring insert WITHOUT the matching pop would grow the list by 5,000 elements during the timing loop
+and quietly change what is being measured.
+
+    nodes = [{'v': i, 'next': None} for i in range(N)]
+    for i in range(N-1): nodes[i]['next'] = nodes[i+1]
+
+The linked list, built from dicts. Each node is a separate heap object, so the nodes are scattered -
+which is the realistic case and the reason traversal is slow. Note the nodes list itself holds them alive;
+the `next` pointers are the actual structure.
+
+    while n is not None:
+        s += n['v']; n = n['next']
+
+Pointer chasing. Each iteration must READ the current node before it can know where the next one is, so
+the CPU cannot prefetch - the address is not known until the load completes. That serial dependency is
+what the 1.9x measures, and on a larger-than-cache working set with truly random node placement the gap
+is far wider than 1.9x.
+
+    b.__setitem__(slice(1,None), b[:-1])
+
+The in-place shift - `b[1:] = b[:-1]` written so it fits in a lambda. This is what an insert actually
+does, and it is a single `memmove`.
+
+An earlier version of this measurement used `np.roll`, which ALLOCATES a new array, so it was timing the
+allocator: it reported 179 us for 1,000 elements (0.04 GB/s), which is nonsense for a memmove. Switching
+to the in-place form gave 1.67 us. The lesson generalises - if a microbenchmark's number looks physically
+implausible, the benchmark is measuring something else.
+
+    caps = []
+    for i in range(200000):
+        a.append(i)
+        c = sys.getsizeof(a)
+        if c != last: caps.append((i, c)); last = c
+
+Recording every reallocation by watching the object's size change. MEASURED 72 of them for 200,000
+appends, with the factor settling at 1.125x. This makes "amortised O(1)" concrete: the reallocations are
+rare and get rarer, because each one buys you proportionally more room.
+
+    a[::10].sum()
+
+Forcing a strided read. `a[::10]` is a VIEW with a stride of 80 bytes, so consecutive elements are on
+different cache lines. Summing 2,000,000 of them touches 160 MB of memory instead of 16 MB, and the 7.2x
+is that ratio showing up as time.
+
+The contrast with `M.sum(axis=0)` - which I expected to be slow and was not - is the useful one: numpy
+chose a sequential access pattern internally, so the array's LAYOUT was strided but the ACCESS was not.
+Only the access pattern matters.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - O(1) indexing.
+
+    elements       a[len/2]     a[len-1]
+    ------------   ----------   ----------
+              10   0.1054 us    0.1016 us
+           1,000   0.1246 us    0.1205 us
+         100,000   0.0544 us    0.0503 us
+      10,000,000   0.0502 us    0.0474 us
+
+A million-fold change in size, no change in access time. Both columns agree, so it is not an artefact of
+which element was chosen.
+
+TRACE B - the cost of insertion.
+
+    elements       append (end)   insert at 0    insert at middle
+    -----------   ------------   ------------   ----------------
+          1,000      0.0707 us      0.310 us          0.237 us
+        100,000      0.0723 us     35.580 us         14.655 us
+      1,000,000      0.1619 us    763.194 us        206.219 us
+
+    insert-at-0 scaling: 1,000 -> 100,000 is 100x the data and 115x the time
+                         100,000 -> 1,000,000 is 10x the data and 21x the time
+
+Append is flat. Insert-at-0 tracks the size, and the middle insert is consistently cheaper because it
+moves half as much.
+
+The last row's 21x for 10x the data is superlinear, which is the array exceeding cache: at a million
+int-pointers the shift no longer fits in L2 and starts paying main-memory bandwidth.
+
+TRACE C - array versus linked list, 2,000,000 elements.
+
+    property                 array        linked list   ratio
+    ----------------------   ----------   -----------   ------
+    full traversal           51.6 ms      95.9 ms        1.9x
+    memory                   16.0 MB      368.0 MB      23.0x
+    index element 1,000,000  O(1)         O(n) walk         -
+    insert at a held node    O(n) move    O(1)              -
+
+The linked list wins exactly one row, and only once you already hold the node.
+
+TRACE D - the memmove that "O(n) insert" is made of.
+
+    elements       time          bandwidth
+    ------------   ----------    -----------
+         1,000       1.67 us      4.79 GB/s
+       100,000      42.65 us     18.76 GB/s
+     1,000,000     530.89 us     15.07 GB/s
+    10,000,000    8344.34 us      9.59 GB/s
+
+Peak bandwidth is in the middle. At 1,000 elements fixed call overhead dominates, so the effective rate
+is low. At 10,000,000 the array is far larger than cache and the rate falls back toward main-memory
+speed. The plateau of 15-19 GB/s is the real number.
+
+This is the table that reframes "insert is O(n)": at 100,000 elements it is 43 microseconds.
+
+TRACE E - amortised growth, 200,000 appends.
+
+    total reallocations: 72
+
+    at element   capacity bytes   growth factor
+    ----------   --------------   -------------
+             0               88               -
+             4              120          1.364x
+             8              184          1.533x
+            16              248          1.348x
+            32              376          1.205x
+       142,564        1,283,160          1.125x
+       160,388        1,443,576          1.125x
+       180,440        1,624,056          1.125x
+
+Seventy-two copies for two hundred thousand appends - roughly one reallocation per 2,800 appends by the
+end, and the interval keeps growing. The early factors are noisy because the absolute sizes are tiny;
+CPython settles at 1.125x.
+
+TRACE F - the contiguity claim, including the part that failed.
+
+    the prediction that did NOT hold:
+      4000x4000 float64, row-major
+      sum along ROWS      7.5 ms
+      sum along COLUMNS   6.7 ms       0.90x   <- no penalty at all
+
+    forcing a strided ACCESS pattern instead:
+      2,000,000 float64, stride 1     1.20 ms   (touches  16 MB)
+      2,000,000 float64, stride 10    8.72 ms   (touches 160 MB)   7.2x
+
+The first block is the honest negative. numpy's `sum(axis=0)` reads memory sequentially and accumulates
+into a row buffer, so the array's layout was strided while its ACCESS was not - and only access matters.
+
+The second block isolates the effect properly: identical element count, identical arithmetic, ten times
+the memory traffic, 7.2x the time.
+
+TRACE G - "array" is not one thing.
+
+    summing 2,000,000 integers
+      sum(python list)   14.62 ms
+      numpy .sum()        1.41 ms      10x
+
+A Python list stores POINTERS to heap-allocated integer objects; numpy stores the integers. The pointers
+are contiguous and the values are not, so the list gets an indirection and a cache miss per element on
+top of the interpreter overhead.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    operation                cost              MEASURED
+    ----------------------   ---------------   ------------------------------------------
+    index a[i]               O(1)              0.05 us flat from 10 to 10,000,000 elements
+    append                   O(1) amortised    0.07-0.16 us, 72 reallocations per 200,000
+    insert / delete at end   O(1)              same
+    insert / delete at 0     O(n)              0.31 us at 1k, 763 us at 1M
+    search (unsorted)        O(n)              -
+    search (sorted)          O(log n)          binary search
+    traversal                O(n)              51.6 ms for 2,000,000, contiguous
+
+THE NUMBERS:
+
+    memmove bandwidth        15-19 GB/s plateau (4.79 at 1k, 15.07 at 1M, 9.59 at 10M)
+    array vs linked list     1.9x traversal, 23.0x memory
+    python list vs numpy     10x on a sum of 2,000,000 integers
+    stride 1 vs stride 10    1.20 ms vs 8.72 ms (7.2x) for identical arithmetic
+    row vs column sum        7.5 ms vs 6.7 ms - NO penalty; the naive prediction was wrong
+
+THE MISTAKES:
+
+    - `list.pop(0)` or `insert(0, x)` in a loop. MEASURED 763 us per call at a million elements, so the
+      loop is quadratic. Use a deque.
+    - Not preallocating when the size is known.
+    - Reaching for a linked list to make insertion faster. MEASURED 1.9x slower to traverse, 23x the
+      memory, and you still pay O(n) to find the position.
+    - Treating "O(n) insert" as "slow". MEASURED at 15 GB/s - 43 us for 100,000 elements.
+    - Assuming `list` means the same thing as a numeric array. MEASURED 10x.
+    - Writing a Python loop where a library call would do the same work in one pass.
+    - Iterating a 2-D array against its memory order - though check first, because the library may
+      already have fixed the access pattern, as numpy did here.
+    - Copying where a view would do. `a[1:]` on a Python list allocates a whole new list.
+    - Array-of-structs when you scan one field across many records; that is the stride-10 case wearing
+      different clothes.
+    - Trusting a microbenchmark whose number is physically implausible. MEASURED: `np.roll` reported
+      0.04 GB/s because it was timing the allocator, not a memmove.
+    - Forgetting bounds checks exist in safe languages, and that they are usually worth their cost.
+
+THE TAKEAWAY. Everything about an array follows from CONTIGUOUS, EQUAL-SIZED ELEMENTS: the address of
+element i is arithmetic, so indexing is O(1) and measured flat across six orders of magnitude, and the
+cache and prefetcher are built for exactly this access pattern. What you pay is O(n) to insert in the
+middle - and that O(n) runs at 15 GB/s, which is why it beats the asymptotically-better linked list on
+almost every real workload (1.9x faster to traverse, 23x less memory). The two things worth internalising
+beyond the complexity table are that "array" means an array of POINTERS in some languages and an array of
+VALUES in others - a measured 10x - and that what actually costs you is the ACCESS PATTERN rather than
+the layout, which I confirmed by predicting a column-sum penalty that did not exist and then measuring
+7.2x once the access was genuinely strided.""",
+]
+
+_EX_P1AO["At-least-once vs at-most-once vs exactly-once"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - these are the three things a messaging system can promise about how
+many times your handler runs. There are only three, and you must pick one.
+
+    AT-MOST-ONCE    the handler runs 0 or 1 times. You may LOSE messages, never duplicate them.
+    AT-LEAST-ONCE   the handler runs 1 or more times. You never lose, you may DUPLICATE.
+    EXACTLY-ONCE    the handler runs precisely once. Not available at the delivery layer.
+
+The striking thing is where the choice is actually made. It is not a configuration setting or a product
+feature - it is WHERE ONE STATEMENT SITS IN YOUR CODE.
+
+MEASURED ON THIS MACHINE, 200,000 messages with a 0.2% chance the consumer crashes mid-request:
+
+    ordering                                        never processed   processed twice or more
+    ---------------------------------------------   ---------------   -----------------------
+    commit the offset, THEN process (at-most-once)               398                         0
+    process, THEN commit the offset (at-least-once)                0                       406
+
+Swap two lines and you swap which failure you get. Commit first and a crash means the offset has moved
+past work that never happened - the message is gone. Process first and a crash means the work happened
+and the offset did not move - the message comes back.
+
+Nothing else about the system changed. Same crash rate, same broker, same handler. The guarantee IS the
+ordering.""",
+
+    """2. THE INTUITION - you cannot get "once", so you choose which way to be wrong, and then you engineer
+around it.
+
+(The reason "once" is unavailable is the Two Generals problem - a lost message and a lost acknowledgement
+are indistinguishable to the sender. That is covered in its own entry; here the concern is the
+operational choice.)
+
+WHAT THE CHOICE COSTS, at the producer end. MEASURED as arithmetic with a 1 ms network round trip and a
+5 ms fsync:
+
+    setting                        RTT    fsync   latency   max msgs/s (one in flight)
+    ----------------------------   ----   -----   -------   --------------------------
+    acks=0  (fire and forget)      0 ms    0 ms      0 ms                    unbounded
+    acks=1  (leader only)          1 ms    0 ms      1 ms                        1,000
+    acks=all (leader + replicas)   1 ms    0 ms      1 ms                        1,000
+    acks=all + fsync               1 ms    5 ms      6 ms                          167
+
+Durability costs LATENCY, and latency caps throughput only if you send one message at a time. BATCHING
+buys the throughput back without weakening the guarantee:
+
+    batch of     1        167 msgs/s at 6 ms latency
+    batch of    10      1,667 msgs/s at 6 ms latency
+    batch of   100     16,667 msgs/s at 6 ms latency
+    batch of 1,000    166,667 msgs/s at 6 ms latency
+
+Throughput is batch divided by latency. That is why every durable messaging system batches aggressively -
+it is the only way to have both, and it is why "durability is slow" is usually a statement about an
+unbatched client rather than about durability.
+
+THE ASYMMETRY THAT DECIDES THE DEFAULT: a duplicate is recoverable (dedupe it, make the effect
+idempotent, reconcile later). A lost message is not - there is nothing left to recover from. So
+essentially every system that matters chooses at-least-once and spends its engineering on making
+duplicates harmless.""",
+
+    """3. EVERY TERM DEFINED.
+
+AT-MOST-ONCE. Zero or one executions. Lossy, never duplicated. Cheapest - no acknowledgement round trip
+needed.
+
+AT-LEAST-ONCE. One or more executions. Never lossy, duplicates possible. The default for anything that
+matters.
+
+EXACTLY-ONCE DELIVERY. Impossible over an unreliable channel.
+
+EXACTLY-ONCE PROCESSING / SEMANTICS. Achievable, and it means at-least-once delivery plus deduplication
+at the receiver. What every product that advertises exactly-once is actually selling.
+
+OFFSET. A consumer's position in a log. Committing it says "I am done up to here".
+
+OFFSET COMMIT ORDERING. Whether you commit before or after processing. MEASURED above - this single
+decision IS the guarantee.
+
+ACK / ACKNOWLEDGEMENT. The signal that a message was received or handled. Deleting a message from a
+queue is the same act under another name.
+
+acks=0 / 1 / all. Kafka's producer durability levels: do not wait, wait for the leader, wait for the
+in-sync replicas. MEASURED above.
+
+fsync. Forcing data from the OS page cache onto physical storage. The difference between "the broker
+has it" and "the broker still has it after a power cut".
+
+IN-SYNC REPLICA (ISR). A replica that is caught up. `acks=all` waits for all of them.
+
+BATCHING. Sending many messages per round trip. MEASURED - it converts a latency cost into no throughput
+cost.
+
+IDEMPOTENT. Repeating the operation changes nothing further. What makes at-least-once safe.
+
+IDEMPOTENCY KEY. A client-generated id the receiver records so it can recognise a repeat.
+
+DEDUPLICATION WINDOW. How long the receiver remembers keys. MEASURED below - this is why "exactly-once"
+always has an asterisk.
+
+REDELIVERY RATE. What fraction of messages get delivered more than once. The input to the multiplication
+in section 4.
+
+DEAD-LETTER QUEUE. Where a message goes after too many failed attempts, so one poison message does not
+block the stream.
+
+POISON MESSAGE. One that fails every time and is retried forever.
+
+END-TO-END GUARANTEE. What the whole pipeline promises, as opposed to one hop. MEASURED below: it is the
+WEAKEST link.
+
+TRANSACTIONAL OUTBOX. Writing the message in the same database transaction as the business change, so
+the two cannot disagree.
+
+CONSUMER GROUP REBALANCE. When partitions move between consumers - a common source of duplicates even
+without a crash, because the new owner restarts from the last committed offset.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - reasoning about one hop when you have a pipeline. The end-to-end
+guarantee is the WEAKEST link, and the duplicates MULTIPLY.
+
+MEASURED as composition:
+
+    stage             guarantee
+    ---------------   -------------
+    ingest API        at-least-once
+    queue             at-least-once
+    enrichment job    AT-MOST-ONCE
+    warehouse load    at-least-once
+    ---------------   -------------
+    END-TO-END        AT-MOST-ONCE
+
+One at-most-once hop makes the whole pipeline lossy. Three careful stages are undone by one job that
+acknowledges before it works, and the loss appears at the far end where nobody can tell which stage
+dropped it.
+
+AND THE DUPLICATES COMPOUND. MEASURED, if each hop redelivers r% of messages:
+
+    hops    r = 0.1%    r = 1%     r = 5%
+    ----    --------    -------    -------
+       1     1.0010x    1.0100x    1.0500x
+       2     1.0020x    1.0201x    1.1025x
+       3     1.0030x    1.0303x    1.1576x
+       5     1.0050x    1.0510x    1.2763x
+      10     1.0100x    1.1046x    1.6289x
+
+At a 5% redelivery rate over ten hops, each source message becomes 1.63 downstream effects. Not 5% extra
+- 63% extra. Duplicates multiply along the chain because each hop can duplicate what the previous one
+already duplicated.
+
+The consequence: IDEMPOTENCY IS NEEDED AT EVERY STAGE, not just the last one. A pipeline where only the
+final writer dedupes still does 1.63x the intermediate work, and any stage with a side effect - sending
+an email, calling a payment API, incrementing a counter - has performed it 1.63 times.
+
+THE SECOND TRAP - believing "exactly-once" without asking about the WINDOW. A dedup table must remember
+every key it has seen. MEASURED:
+
+    rate            window    keys to remember    memory at 40 bytes/key
+    ------------   -------   -----------------   ----------------------
+    1,000 msg/s     5 min             300,000                   0.01 GB
+    1,000 msg/s      1 day          86,400,000                   3.46 GB
+    10,000 msg/s     1 hour         36,000,000                   1.44 GB
+    100,000 msg/s    1 hour        360,000,000                  14.40 GB
+    100,000 msg/s    1 day       8,640,000,000                 345.60 GB
+
+Nobody stores 345 GB of deduplication keys. So every implementation bounds the window - SQS FIFO at 5
+minutes, Kafka at a bounded producer-id retention - and a duplicate arriving outside that window gets
+through. "Exactly-once" always means "exactly-once within this window", and the window is the first
+question to ask.
+
+THE THIRD TRAP - assuming duplicates only come from crashes. A consumer group REBALANCE produces them
+routinely: partitions move, the new owner starts from the last committed offset, and anything processed
+since that commit runs again. Deploys cause rebalances. So duplicates arrive on every deploy, not just on
+failures.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+CHOOSING BY WHAT THE MESSAGE DOES - which is the only sound basis, because the right answer depends
+entirely on the cost of each failure:
+
+    a metrics sample         -> AT-MOST-ONCE. Losing one sample is invisible in an aggregate; the ack
+                                round trip is not worth it at a million samples a second.
+    a log line               -> AT-MOST-ONCE, unless it is an audit log, in which case it is not a log.
+    a click for analytics    -> AT-LEAST-ONCE. Counts are aggregated, so a 0.1% duplicate rate sits
+                                inside the noise of the estimate.
+    an order placement       -> AT-LEAST-ONCE + IDEMPOTENCY KEY. A lost order is unrecoverable revenue;
+                                a duplicate order is a refund and an apology.
+    a payment capture        -> AT-LEAST-ONCE + IDEMPOTENCY KEY, with the key written in the same
+                                transaction as the charge.
+    a balance increment      -> AT-LEAST-ONCE + DEDUP IN THE SAME TRANSACTION. `balance += x` is not
+                                idempotent, so store the KEY rather than relying on the operation.
+    an audit record          -> AT-LEAST-ONCE, and never sampled. Duplicates are acceptable, loss is a
+                                compliance failure.
+
+The pattern in that list: at-most-once is correct when the data is STATISTICAL and losing one item does
+not change the answer. At-least-once is correct when each item is INDIVIDUALLY meaningful. Nobody should
+be choosing based on which sounds stronger.
+
+HOW THE THREE ARE ACTUALLY IMPLEMENTED:
+
+    AT-MOST-ONCE     send without waiting, or commit the offset before processing. No retry logic, no
+                     dedup state, lowest latency.
+    AT-LEAST-ONCE    retry until acknowledged; commit the offset after processing. Needs a retry cap and
+                     a dead-letter queue so a poison message does not loop forever.
+    EXACTLY-ONCE     at-least-once plus one of:
+                       NATURAL IDEMPOTENCY   `SET status='paid'` rather than a delta. Free, and the
+                                             best answer whenever the operation permits it.
+                       UNIQUE CONSTRAINT     `INSERT ... ON CONFLICT DO NOTHING` on an idempotency key.
+                                             The database's index does the atomic check.
+                       SEQUENCE NUMBERS      track the highest seen per producer and discard anything
+                                             at or below it. What TCP does, and what Kafka's idempotent
+                                             producer does.
+                       TRANSACTIONAL WRITE   dedup record and business effect in ONE transaction, so a
+                                             crash between them is impossible.
+
+WHAT THE PRODUCTS ACTUALLY GIVE YOU:
+    KAFKA          idempotent producer (sequence numbers, dedupes at the broker) and transactions that
+                   make consume-transform-produce atomic WITHIN Kafka. It does NOT extend to your
+                   database - that is the boundary people miss.
+    SQS STANDARD   at-least-once, out of order.
+    SQS FIFO       ordered, with content-based deduplication over a 5-minute window.
+    RABBITMQ       at-least-once with manual acks; at-most-once with auto-ack.
+    STRIPE et al   at-least-once retries plus a client-supplied `Idempotency-Key`.
+
+AND THE ONE THAT SPANS THE BOUNDARY: the TRANSACTIONAL OUTBOX. Write the event into a table in the SAME
+transaction as the business change, and let a separate relay publish it at-least-once. It removes the
+dual-write problem - the case where you update the database and then fail to publish, or publish and
+then fail to commit - and it is the standard answer for "update the database AND emit an event".""",
+
+    """6. HOW TO CODE IT.
+
+  1. DECIDE THE GUARANTEE PER STREAM, from what the message DOES. Metrics and orders do not deserve the
+     same answer.
+  2. PUT THE ACK AFTER THE WORK. MEASURED: commit-then-process lost 398 of 200,000; process-then-commit
+     lost 0. It is one statement's position.
+  3. DEFAULT TO AT-LEAST-ONCE. A duplicate is recoverable; a loss is not.
+  4. BATCH TO PAY FOR DURABILITY. MEASURED: a batch of 1,000 gives 166,667 msgs/s at the same 6 ms
+     latency as a batch of 1 giving 167. Do not weaken the guarantee to get throughput - batch.
+  5. MAKE THE HANDLER IDEMPOTENT AT EVERY STAGE, not just the last. MEASURED: 5% redelivery over ten
+     hops is 1.63 effects per source message.
+  6. USE NATURAL IDEMPOTENCY WHERE POSSIBLE. Absolute values, upserts by key. It needs no state and
+     cannot drift.
+  7. WHEN YOU NEED A KEY, CHECK IT ATOMICALLY - a unique constraint or `INSERT ... ON CONFLICT`, never
+     `SELECT` then `INSERT`, which two concurrent retries both pass.
+  8. WRITE THE DEDUP RECORD IN THE SAME TRANSACTION AS THE EFFECT, or a crash between them silently
+     converts at-least-once into at-most-once.
+  9. STATE THE DEDUPLICATION WINDOW EXPLICITLY, and size it from the memory table. MEASURED: 100,000
+     msg/s for a day is 345 GB of keys, which is why the window exists.
+ 10. CAP RETRIES AND ADD A DEAD-LETTER QUEUE. Unbounded retries on a poison message block the partition.
+ 11. EXPECT DUPLICATES ON EVERY DEPLOY, not just on crashes - a consumer group rebalance replays from
+     the last committed offset.
+ 12. USE THE OUTBOX PATTERN for "update the database AND publish an event". Two independent writes cannot
+     be made atomic.
+ 13. AUDIT THE WHOLE PIPELINE, not one hop. MEASURED: one at-most-once stage makes four stages lossy
+     end to end.
+ 14. TEST BY DELIVERING EVERYTHING TWICE in staging. If nothing breaks, the idempotency is real; if you
+     have never tried it, assume it is not.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"There are exactly three possibilities and you have to pick one. At-most-once means the handler runs zero
+or one times - you can lose messages but never duplicate them. At-least-once means one or more - you
+never lose, you can duplicate. Exactly-once does not exist at the delivery layer.
+
+What surprises people is where the choice is actually made. It is not a config setting, it is where one
+statement sits in your code. I simulated 200,000 messages with a 0.2% chance the consumer crashes
+mid-request. Committing the offset and then processing lost 398 messages and duplicated none. Processing
+and then committing lost none and duplicated 406. Same crash rate, same broker, same handler - two lines
+swapped.
+
+Everyone picks at-least-once, and the reason is asymmetry: a duplicate is recoverable - dedupe it, make
+the effect idempotent, reconcile later - and a lost message is not, because there is nothing left to
+recover from.
+
+The cost is latency, not throughput, and that distinction matters. With a 1 ms round trip and a 5 ms
+fsync, full durability is 6 ms per message, so one message at a time caps you at 167 a second. But
+throughput is batch divided by latency, so a batch of a thousand gives 166,667 a second at the SAME 6 ms.
+That is why every durable system batches hard, and why 'durability is slow' is usually a statement about
+an unbatched client.
+
+The thing I'd most want to flag is that these guarantees COMPOSE, and badly. End to end, a pipeline is
+only as strong as its weakest hop - one at-most-once stage in the middle of four makes the whole pipeline
+lossy, and the loss shows up at the far end where you cannot tell which stage dropped it. And duplicates
+MULTIPLY rather than add: at a 5% redelivery rate over ten hops, each source message becomes 1.63
+downstream effects. Not 5% extra, 63%. So idempotency is needed at every stage, not just the last one.
+
+And whenever someone says exactly-once, the question to ask is 'over what window'. A dedup table has to
+remember every key it has seen, and I worked out the arithmetic - at 100,000 messages a second, one day
+of keys is 345 gigabytes. Nobody stores that, so every implementation bounds it: SQS FIFO dedupes over
+five minutes. Exactly-once always means exactly-once within a window.
+
+One last practical point: duplicates are not only a crash phenomenon. A consumer group rebalance replays
+from the last committed offset, and deploys cause rebalances - so you get duplicates on every deploy."
+
+THE ONE SENTENCE TO NOT FUMBLE: the guarantee is decided by whether you acknowledge BEFORE or AFTER you
+do the work - measured as 398 lost versus 406 duplicated out of 200,000 - and everything else is
+engineering to make the duplicates harmless.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    if commit_first:
+        if crashed: lost += 1; i += 1; continue      # offset moved, work never ran
+        processed[i] = processed.get(i, 0) + 1
+    else:
+        processed[i] = processed.get(i, 0) + 1        # work ran...
+        if crashed:                                   # ...offset not committed
+            continue                                  # same message redelivered
+    i += 1
+
+The whole experiment. Look at what differs between the branches: only the ORDER of "record the work" and
+"advance the position".
+
+In the commit-first branch, `i += 1` happens on the crash path - the offset moved past a message whose
+work never ran, so it is gone forever. In the process-first branch, `continue` WITHOUT incrementing `i`
+means the same message is picked up again, and the `processed` counter shows it ran twice.
+
+`processed[i] = processed.get(i, 0) + 1` counts EXECUTIONS per message id rather than just successes,
+which is what lets the duplicate count be measured rather than assumed.
+
+    dup = sum(v-1 for v in processed.values())
+
+Duplicates are executions beyond the first, per message. Summing `v-1` counts a message that ran three
+times as two duplicates, which is the number that matters for side effects - three charges is two extra
+charges, not one.
+
+    lat = rtt + fs
+    tp = 1000/lat if lat else float('inf')
+
+The durability arithmetic. Latency is the round trip plus the fsync; throughput with ONE message in
+flight is one over the latency. That "if lat else inf" is the acks=0 case: with no acknowledgement to
+wait for there is no latency-imposed cap at all, which is exactly why fire-and-forget exists for metrics.
+
+    print(f"batch of {batch}: {1000/lat*batch:,.0f} msgs/s at {lat:.0f} ms latency")
+
+The line that resolves the apparent conflict between durability and throughput. `1000/lat` is messages
+per second at one in flight; multiplying by the batch size leaves the LATENCY unchanged and scales the
+THROUGHPUT. Durability costs latency; batching pays for it in a currency you usually have.
+
+    for r in (0.001, 0.01, 0.05):
+        row.append((1+r)**hops)
+
+Duplicate multiplication - `(1+r)^hops`, not `1 + r*hops`. The exponent is the whole point: each hop can
+duplicate messages the previous hop already duplicated, so the effects compound. At r=0.05 and 10 hops
+that is 1.63x rather than the 1.50x you would get by adding.
+
+    worst = "at-most-once" if any(g=="at-most-once" for _,g in stages) else "at-least-once"
+
+The composition rule as one line. An end-to-end guarantee is a MINIMUM over the hops, not an average -
+a single lossy stage makes the pipeline lossy, and no amount of care elsewhere compensates.
+
+    keys = rps*win_s
+    print(f"{keys:,} keys = {keys*40/1e9:.2f} GB at 40 bytes/key")
+
+The dedup-state arithmetic. Two multiplications, and it is the calculation that turns "we do
+exactly-once" into a number someone can accept or reject: 345 GB for a day at 100,000 msg/s is what
+forces every real system to bound the window.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - where the guarantee is decided. 200,000 messages, 0.2% crash rate per attempt.
+
+    ordering                                   never processed   processed 2+ times
+    ----------------------------------------   ---------------   ------------------
+    commit offset THEN process                              398                   0
+    process THEN commit offset                                0                 406
+
+    expected losses at 0.2% of 200,000: 400
+
+The measured 398 matches the 400 the crash rate predicts, which confirms the model is doing what it
+claims. The duplicate count (406) is slightly higher than the loss count because a message that is
+redelivered can itself be interrupted again.
+
+Two lines swapped, two opposite failure modes, and the totals are otherwise identical.
+
+TRACE B - what durability costs.
+
+    setting                        RTT     fsync   latency   msgs/s (1 in flight)
+    ----------------------------   -----   -----   -------   --------------------
+    acks=0                          0 ms    0 ms      0 ms              unbounded
+    acks=1                          1 ms    0 ms      1 ms                  1,000
+    acks=all                        1 ms    0 ms      1 ms                  1,000
+    acks=all + fsync                1 ms    5 ms      6 ms                    167
+
+    and with batching at acks=all + fsync:
+    batch     1        167 msgs/s   at 6 ms
+    batch    10      1,667 msgs/s   at 6 ms
+    batch   100     16,667 msgs/s   at 6 ms
+    batch 1,000    166,667 msgs/s   at 6 ms
+
+The latency column never changes with batching, and the throughput column scales linearly. A thousandfold
+throughput improvement with no change to the guarantee and no change to per-message latency.
+
+Note also that acks=1 and acks=all have the SAME latency here - replication is parallel with the leader
+write. The difference between them is not speed, it is what survives a leader failure.
+
+TRACE C - composition, four stages.
+
+    stage             guarantee
+    ---------------   -------------
+    ingest API        at-least-once
+    queue             at-least-once
+    enrichment job    AT-MOST-ONCE
+    warehouse load    at-least-once
+    END-TO-END        AT-MOST-ONCE
+
+Three careful stages, one careless one, and the pipeline loses data. The failure surfaces at the
+warehouse, where the only observable fact is "some rows are missing" and nothing points at the third
+stage.
+
+TRACE D - duplicates multiply.
+
+    hops    r = 0.1%    r = 1%      r = 5%
+    ----    --------    --------    --------
+       1     1.0010x     1.0100x     1.0500x
+       2     1.0020x     1.0201x     1.1025x
+       3     1.0030x     1.0303x     1.1576x
+       5     1.0050x     1.0510x     1.2763x
+      10     1.0100x     1.1046x     1.6289x
+
+    additive prediction at r=5%, 10 hops: 1.50x
+    actual (compounding):                 1.63x
+
+At a healthy 0.1% redelivery the ten-hop total is 1.01x - genuinely negligible, and worth saying so
+rather than alarming about it. At 5% it is 1.63x, and every stage with a side effect has performed it
+1.63 times.
+
+TRACE E - the deduplication window, in memory.
+
+    rate             window   keys              memory at 40 B/key
+    -------------   -------   ---------------   ------------------
+    1,000 msg/s      5 min            300,000              0.01 GB
+    1,000 msg/s      1 hour         3,600,000              0.14 GB
+    1,000 msg/s      1 day         86,400,000              3.46 GB
+    10,000 msg/s     5 min          3,000,000              0.12 GB
+    10,000 msg/s     1 day        864,000,000             34.56 GB
+    100,000 msg/s    1 hour       360,000,000             14.40 GB
+    100,000 msg/s    1 day      8,640,000,000            345.60 GB
+
+The bottom row is why SQS FIFO's window is five minutes rather than a day. It is not a limitation anyone
+chose for its own sake - it is the only affordable point on this table.
+
+TRACE F - choosing, by what the message does.
+
+    message               guarantee                              why
+    -------------------   ------------------------------------   --------------------------------
+    metrics sample        at-most-once                           statistical; one sample invisible
+    log line              at-most-once                           unless it is an audit log
+    analytics click       at-least-once                          aggregated; duplicates in the noise
+    order placement       at-least-once + idempotency key         loss is unrecoverable revenue
+    payment capture       at-least-once + idempotency key         the effect must happen once
+    balance increment     at-least-once + dedup in the same txn   `+=` is not idempotent
+    audit record          at-least-once, never sampled            loss is a compliance failure
+
+The dividing line is whether the data is STATISTICAL or INDIVIDUALLY MEANINGFUL. Everything in the top
+two rows is an aggregate where one lost item does not change the answer; everything below is an item
+someone can point at.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    the ordering decision       commit-then-process: 398 lost / 0 duplicated of 200,000
+                                process-then-commit: 0 lost / 406 duplicated
+                                (0.2% crash rate; 400 losses predicted, 398 measured)
+
+    durability cost             acks=0: 0 ms | acks=1: 1 ms | acks=all: 1 ms | +fsync: 6 ms
+    batching                    167 -> 166,667 msgs/s at the SAME 6 ms latency
+
+    composition                 one at-most-once hop makes 4 stages lossy end to end
+    duplicate compounding       (1+r)^hops: at r=5%, 10 hops -> 1.6289x (additive would say 1.50x)
+                                at r=0.1%, 10 hops -> 1.0100x - genuinely negligible
+
+    dedup state                 1,000 msg/s x 1 day = 3.46 GB
+                                100,000 msg/s x 1 day = 345.60 GB  <- why windows exist
+
+COST: at-most-once costs nothing. At-least-once costs a retry path, a retry cap and a dead-letter queue.
+Exactly-once processing costs a durable atomic write per message plus the dedup store and its eviction.
+
+THE MISTAKES:
+
+    - Acknowledging before processing without meaning to. MEASURED: 398 lost messages from one statement
+      in the wrong place.
+    - Choosing at-most-once because it is faster, for data that is individually meaningful.
+    - Weakening durability to get throughput. MEASURED: batching gives 1,000x throughput at identical
+      latency and an unchanged guarantee.
+    - Auditing one hop. The end-to-end guarantee is the weakest link.
+    - Assuming duplicates add rather than multiply. MEASURED 1.63x against an additive 1.50x at ten hops.
+    - Making only the final stage idempotent, so every intermediate side effect still happens 1.63 times.
+    - Accepting "exactly-once" without asking about the window. MEASURED: a day of keys at 100,000 msg/s
+      is 345 GB.
+    - `SELECT` then `INSERT` for the dedup check, which two concurrent retries both pass.
+    - Writing the dedup record outside the transaction that does the work - a crash between them turns
+      at-least-once into at-most-once at the worst moment.
+    - Assuming Kafka's exactly-once extends to your database. It is exactly-once WITHIN Kafka.
+    - No retry cap and no dead-letter queue, so a poison message blocks the partition forever.
+    - Expecting duplicates only from crashes. A consumer rebalance replays from the last commit, and
+      every deploy causes a rebalance.
+    - Using `balance += x` and calling it idempotent. Store the key, not the delta.
+
+THE TAKEAWAY. There are three guarantees, exactly-once is not available at the delivery layer, and the
+choice between the other two is made by whether you acknowledge BEFORE or AFTER doing the work - measured
+as 398 lost versus 406 duplicated from the same run with two lines swapped. At-least-once is almost always
+right because duplicates are recoverable and losses are not, and its latency cost is paid off by batching
+rather than by weakening the guarantee (167 to 166,667 msgs/s at the same 6 ms). The two things that
+catch people are composition - one at-most-once hop makes the whole pipeline lossy, and duplicates
+compound to 1.63x over ten hops at a 5% redelivery rate - and the deduplication window, which exists
+because remembering a day of keys at 100,000 msg/s would cost 345 GB.""",
+]
+
+_EX_P1AO["Autoencoder"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an autoencoder is a network trained to output its own input. That is
+trivial unless you STOP IT from copying, and every interesting thing about autoencoders is a way of
+stopping it.
+
+The classic constraint is a BOTTLENECK: force everything through a middle layer narrower than the input,
+so the network must find a compact code that captures what matters and discard the rest.
+
+MEASURED ON THIS MACHINE - 64-dimensional data that genuinely lives on a 6-dimensional curved manifold,
+plus noise:
+
+    bottleneck   train MSE   test MSE   compression
+    ----------   ---------   --------   -----------
+             1      0.8323     0.8381         64.0x
+             2      0.6809     0.6822         32.0x
+             4      0.4574     0.4621         16.0x
+             6      0.2533     0.2552         10.7x
+             8      0.1860     0.1874          8.0x
+            16      0.1226     0.1240          4.0x
+            64      0.0127     0.0130          1.0x
+
+Look at the last row. With a bottleneck as wide as the input, the reconstruction is nearly perfect and
+completely worthless - the network has learned the identity function. It has compressed nothing and
+learned nothing.
+
+The narrowing is not a limitation of the architecture. It IS the architecture.""",
+
+    """2. THE INTUITION - you are asking the network to prove it understood the data by making it rebuild the
+data from a summary.
+
+If a 64-number vector can be rebuilt from 6 numbers, then the data never really had 64 independent
+degrees of freedom - it had 6, and the other 58 were determined by them. The autoencoder finds that
+structure without ever being told what it is, which is why it is unsupervised: the input IS the label.
+
+WHERE THE ELBOW SITS TELLS YOU THE INTRINSIC DIMENSION. In the table above, the error falls steeply from
+bottleneck 1 to 6 (0.838 to 0.255) and then much more slowly from 6 to 16 (0.255 to 0.124). The true
+latent dimension of the data is 6, and the curve bends there. That is the diagnostic use - you do not
+need to know the answer in advance to read it off the graph.
+
+AND THE PART THAT IS USUALLY ASSERTED WITHOUT EVIDENCE. "An autoencoder beats PCA because it can learn
+non-linear structure." I measured it, and the honest answer has three parts:
+
+    bottleneck   PCA test MSE   LINEAR AE   SHALLOW tanh AE   DEEP AE (64-128-h-128-64)
+    ----------   ------------   ---------   ---------------   -------------------------
+             2         0.6464      0.6855            0.6774                      0.6959
+             6         0.1493      0.1488            0.1513                      0.0409
+            16         0.0982      0.0996            0.1002                      0.0334
+
+  1. A LINEAR autoencoder MATCHES PCA - 0.1488 against 0.1493 at bottleneck 6. That is the theorem,
+     measured: with no non-linearity, the optimum spans the same subspace as the top principal
+     components.
+  2. A SHALLOW non-linear autoencoder LOSES to PCA at every bottleneck. One tanh layer is not enough
+     capacity to bend the manifold, and PCA has a closed-form global optimum while the autoencoder is
+     solving a harder non-convex problem.
+  3. A DEEP autoencoder BEATS PCA decisively - 0.0409 against 0.1493 at bottleneck 6, a 3.7x lower
+     error.
+
+So "autoencoders beat PCA" is true, and only with enough depth. A shallow one is a slower, worse PCA.""",
+
+    """3. EVERY TERM DEFINED.
+
+AUTOENCODER. A network trained to reconstruct its own input. Unsupervised, because the input is the
+target.
+
+ENCODER. Input to code. The half you usually keep.
+
+DECODER. Code back to input. Often thrown away after training, except in generative uses.
+
+BOTTLENECK / CODE / LATENT VECTOR. The narrow middle layer. Its width is the compressed representation
+size.
+
+LATENT SPACE. The space the codes live in.
+
+RECONSTRUCTION ERROR. How far the output is from the input, usually MSE. The training loss AND the
+anomaly score.
+
+UNDERCOMPLETE. Bottleneck narrower than the input. The classic design.
+
+OVERCOMPLETE. Bottleneck as wide as or wider than the input. Useless unless otherwise constrained -
+MEASURED at 0.0130 test MSE, i.e. it copied.
+
+INTRINSIC DIMENSION. How many degrees of freedom the data really has. Read off the elbow in the
+bottleneck-versus-error curve.
+
+MANIFOLD. The lower-dimensional curved surface the data lies on inside the high-dimensional space.
+
+PCA. Principal Component Analysis - the optimal LINEAR compression, available in closed form via SVD.
+MEASURED as exactly what a linear autoencoder converges to.
+
+DENOISING AUTOENCODER. Trained on CORRUPTED input with CLEAN targets, so it must learn the manifold
+rather than the identity. MEASURED below.
+
+SPARSE AUTOENCODER. Penalises the number of active units instead of narrowing the layer. Another way to
+prevent copying.
+
+VARIATIONAL AUTOENCODER (VAE). Encodes a DISTRIBUTION rather than a point, with a KL penalty pulling it
+toward a prior. Makes the latent space continuous enough to SAMPLE from, which a plain autoencoder's is
+not.
+
+CONTRACTIVE AUTOENCODER. Penalises the encoder's sensitivity to input changes.
+
+TIED WEIGHTS. Decoder weights as the transpose of the encoder's. Halves the parameters and regularises.
+
+RECONSTRUCTION-BASED ANOMALY DETECTION. Score by reconstruction error - the decoder can only produce
+points on the manifold it learned, so anything off it comes back wrong. MEASURED below at AUC 1.0000.
+
+REPRESENTATION LEARNING. Using the encoder's output as features for another task. The main practical use.
+
+MASKED AUTOENCODER. Hide patches of the input and reconstruct them. The modern self-supervised form,
+behind BERT and MAE.
+
+BOTTLENECK vs REGULARISATION. Two different ways to stop copying, and they compose - MEASURED below.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - assuming the bottleneck is the only thing preventing the
+network from cheating, and that a narrow one is therefore always better.
+
+MEASURED, comparing narrow-and-plain against wide-and-constrained. Evaluation is always against the CLEAN
+test input:
+
+    model                              clean test MSE   noisy-input test MSE
+    -------------------------------   --------------   --------------------
+    h=64, plain (no bottleneck)               0.0010                 0.3089
+    h=64 + input noise 0.6                    0.0348                 0.0769
+    h=6,  plain (bottleneck)                  0.1513                 0.1863
+    h=6  + input noise 0.6                    0.1537                 0.1830
+
+The first row is the identity function: essentially perfect on clean input (0.0010) and the WORST of all
+four on noisy input (0.3089), because it faithfully copies the noise too. It learned nothing.
+
+The second row is the interesting one. A WIDE autoencoder with a corruption penalty gets 0.0769 on noisy
+input - four times better than the plain wide one and more than twice as good as the narrow bottleneck.
+So the bottleneck is ONE way to prevent copying, not the only way, and not always the best one.
+
+THE SECOND TRAP - assuming a non-linear autoencoder automatically beats PCA. MEASURED, it does not
+unless it is deep enough:
+
+    shallow tanh AE at bottleneck 6 : 0.1513
+    PCA at bottleneck 6             : 0.1493      <- PCA WINS
+    deep AE at bottleneck 6         : 0.0409      <- 3.7x better than PCA
+
+And notice what happens BELOW the true latent dimension. At bottleneck 2, PCA (0.6464) beats even the
+deep autoencoder (0.6959). When the code is too narrow to hold the manifold, no amount of non-linearity
+helps - you are choosing which information to destroy, and PCA's closed-form optimum is the best linear
+compromise. Depth only pays once the bottleneck is wide enough to represent the structure.
+
+THE THIRD TRAP - expecting reconstruction-based anomaly detection to catch every anomaly. MEASURED, it
+works spectacularly when the anomalies are OFF the manifold:
+
+    normal reconstruction error   mean 0.2552   p95 0.4182
+    anomaly reconstruction error  mean 1.6107   p05 1.1565
+    AUC                           1.0000
+    threshold at the normal p99   catches 100.0% of anomalies at a 1.0% false-positive rate
+
+Perfect separation. But that is the easy case, and the mechanism tells you the failure mode: an anomaly
+that happens to LIE ON the learned manifold reconstructs perfectly and scores zero. Fraud that looks like
+ordinary behaviour in your feature space is invisible to this method, no matter how good the autoencoder
+is.
+
+THE FOURTH TRAP - trying to GENERATE by sampling random codes from a plain autoencoder. Its latent space
+has holes; nothing constrains the regions between training points to decode to anything sensible. That is
+precisely what a VAE's KL penalty fixes.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+DENOISING, measured fairly - and the first attempt at this measurement was not fair, which is worth
+showing. Train on corrupted input with clean targets; evaluate on corrupted test input against the clean
+test input:
+
+    corruption   do nothing   plain AE   DENOISING AE   denoising vs plain
+    ----------   ----------   --------   ------------   ------------------
+           0.3       0.0897     0.1600         0.1597                1.00x
+           1.0       1.0018     0.2462         0.2328                1.06x
+
+Two honest readings. At LOW corruption (0.3), "do nothing" is the best answer at 0.0897 - the noise is
+smaller than the autoencoder's own reconstruction error, so passing the input through any 6-dimensional
+bottleneck loses more than the noise added. At HIGH corruption (1.0), both autoencoders crush "do
+nothing" (0.2462 and 0.2328 against 1.0018), and the denoising variant is 6% better than the plain one.
+
+So denoising is worth having when the noise is large relative to your reconstruction error, and is not
+magic. And the reason to use it is usually not denoising at all - it is that corrupting the input is a
+REGULARISER, which is what the wide-network measurement in section 4 shows (0.3089 to 0.0769).
+
+THE FAMILY - all of them are answers to "how do I stop it copying?":
+
+    UNDERCOMPLETE (bottleneck)   narrow the middle. The classic, and it forces a hard choice of width.
+    DENOISING                    corrupt the input, ask for the clean output. MEASURED as an effective
+                                 regulariser even at full width.
+    SPARSE                       penalise active units. Lets the layer be wide while the CODE stays
+                                 small - useful when different inputs need different features.
+    CONTRACTIVE                  penalise the encoder's sensitivity to input perturbations.
+    VARIATIONAL (VAE)            encode a distribution and pull it toward a prior, so the latent space
+                                 is continuous and samplable. The generative member of the family.
+    MASKED (MAE, BERT)           hide parts of the input and predict them. The modern self-supervised
+                                 form, and by far the most consequential.
+
+WHAT ELSE COMPRESSES OR DETECTS, and when to prefer it:
+
+    PCA                       linear, closed-form, no hyperparameters, no training, deterministic, and
+                              interpretable. MEASURED as matching a linear autoencoder exactly and
+                              BEATING a shallow non-linear one. It should be your baseline every time.
+    t-SNE / UMAP              for VISUALISATION only. They do not give you an encoder for new points in
+                              the way an autoencoder does.
+    ISOLATION FOREST / LOF    anomaly detection without a neural network. Usually a stronger baseline
+                              than people expect on tabular data.
+    JPEG, gzip                if the goal is literally compression, use a codec. An autoencoder's
+                              compression is lossy, data-specific, and needs the decoder shipped
+                              alongside.
+
+WHERE AUTOENCODERS ACTUALLY EARN THEIR PLACE TODAY: as PRETRAINING and REPRESENTATION LEARNING rather
+than compression. The masked variant - predict the hidden part - is what BERT does to text and MAE does
+to images, and it is the single most economically important use of the idea. Nobody deploys a plain
+undercomplete autoencoder to compress files.""",
+
+    """6. HOW TO CODE IT.
+
+  1. START WITH PCA. It is one SVD, has no hyperparameters, and MEASURED here it beat a shallow
+     non-linear autoencoder. If PCA is good enough, you are finished.
+  2. SWEEP THE BOTTLENECK AND PLOT THE ERROR. MEASURED: the curve bends at the true latent dimension.
+     That elbow is a real estimate of intrinsic dimension and it is free.
+  3. GO DEEP IF YOU GO NON-LINEAR. MEASURED: shallow tanh LOST to PCA (0.1513 vs 0.1493); a
+     64-128-h-128-64 network beat it 3.7x (0.0409). A single non-linear layer is not worth the trouble.
+  4. NEVER LEAVE IT OVERCOMPLETE AND UNCONSTRAINED. MEASURED: at h=64 it learned the identity - 0.0010
+     clean MSE and the worst noisy performance of any model.
+  5. CONSIDER A WIDE NETWORK WITH A CONSTRAINT instead of a narrow one. MEASURED: h=64 with input noise
+     reached 0.0769 on noisy input against 0.1863 for the h=6 bottleneck.
+  6. NORMALISE THE INPUTS. Reconstruction MSE weights every dimension equally, so an unscaled feature
+     dominates the loss and the code becomes about that feature.
+  7. USE ADAM, NOT PLAIN GRADIENT DESCENT. My first attempt with plain GD diverged to NaN on the linear
+     model and undertrained the rest - which produced a table whose conclusions contradicted its own
+     numbers.
+  8. FOR ANOMALY DETECTION, SET THE THRESHOLD FROM THE NORMAL DISTRIBUTION'S PERCENTILE, not by
+     eyeballing. MEASURED: the normal p99 gave 100% detection at a 1.0% false-positive rate.
+  9. TRAIN THE ANOMALY DETECTOR ON CLEAN DATA ONLY. If anomalies are in the training set, the model
+     learns to reconstruct them too and the score collapses.
+ 10. DO NOT SAMPLE RANDOM LATENT VECTORS FROM A PLAIN AUTOENCODER. Its latent space has holes; use a VAE
+     if you need to generate.
+ 11. KEEP THE ENCODER, USUALLY DISCARD THE DECODER. The representation is the product; the decoder was
+     the training device.
+ 12. CHECK WHETHER YOU NEED THE NON-LINEARITY AT ALL by comparing against PCA at the same code size,
+     every time. It is a two-line baseline and it wins more often than people expect.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"An autoencoder is a network trained to output its own input. That sounds pointless, and it is - unless
+you stop it from copying. Everything interesting about autoencoders is a way of stopping it.
+
+The classic method is a bottleneck: force the data through a middle layer narrower than the input. I
+measured this on 64-dimensional data that really lives on a 6-dimensional curved manifold. With a
+bottleneck of 6 the test error was 0.255; with a bottleneck of 64 - no narrowing at all - it was 0.013,
+nearly perfect and completely worthless, because the network had just learned the identity function.
+
+A useful side effect is that the error curve bends at the true latent dimension. Error fell steeply from
+bottleneck 1 to 6 and then slowly from 6 to 16, and the data's real dimension was 6. So sweeping the
+bottleneck gives you an estimate of intrinsic dimension for free.
+
+The claim I wanted to check was 'autoencoders beat PCA because they handle non-linear structure'. The
+honest answer has three parts. A LINEAR autoencoder matches PCA almost exactly - 0.1488 against 0.1493 -
+which is the theorem, measured. A SHALLOW non-linear autoencoder actually LOSES to PCA at every
+bottleneck I tried, because one tanh layer is not enough capacity to bend the manifold and PCA has a
+closed-form global optimum. Only a DEEP autoencoder beat it, and then decisively: 0.0409 against 0.1493,
+3.7 times lower error. So a shallow autoencoder is a slower, worse PCA, and PCA should be the baseline
+every time.
+
+There is a nice detail underneath that. Below the true latent dimension - at a bottleneck of 2 - PCA beat
+even the deep autoencoder. When the code is too narrow to hold the structure you are only choosing what
+to destroy, and PCA's closed-form answer is the best linear compromise. Depth pays only once the
+bottleneck is wide enough to represent the manifold.
+
+I'd also push back on the idea that the bottleneck is the only tool. I trained a full-width autoencoder
+with corrupted inputs, and on noisy test data it scored 0.0769 against 0.1863 for the narrow bottleneck
+and 0.3089 for the plain full-width version. So a WIDE network with a constraint beat the narrow one -
+the bottleneck is one way to prevent copying, not the only way.
+
+For anomaly detection the mechanism is that the decoder can only produce points on the manifold it
+learned, so anything off it comes back wrong. I got an AUC of 1.0 and 100% detection at a 1% false
+positive rate - but that same mechanism tells you the failure mode: an anomaly that lies ON the manifold
+reconstructs perfectly and scores zero."
+
+THE ONE SENTENCE TO NOT FUMBLE: an autoencoder is only as good as the constraint that stops it copying -
+and measured against PCA, a linear one ties, a shallow non-linear one LOSES, and only a deep one wins
+(3.7x), so PCA is the baseline you must actually beat.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    z1 = Xin@W1 + b1
+    a1 = z1 if linear else np.tanh(z1)
+    out = a1@W2 + b2
+    e = 2*(out - Xtr)/Xtr.size
+
+The whole autoencoder. `W1` is the encoder (D to h), `W2` the decoder (h to D), and the target is `Xtr` -
+the input itself. There is no label anywhere, which is what "unsupervised" means concretely.
+
+The `linear` flag is the control that makes the PCA comparison meaningful: identical code, identical
+optimiser, identical initialisation, with the non-linearity as the only difference. That is what lets the
+0.1488-versus-0.1493 result be attributed to the non-linearity rather than to anything else.
+
+    e = 2*(out - Xtr)/Xtr.size
+
+The MSE gradient. The `2/size` matters for comparability - with Adam the step size is normalised anyway,
+but getting it wrong changes the effective learning rate and would make the linear and non-linear runs
+incomparable.
+
+    U,S,Vt = np.linalg.svd(Xtr - Xtr.mean(0), full_matrices=False)
+    def pca_rec(X,h):
+        P = Vt[:h]; return (X - Xtr.mean(0)) @ P.T @ P + Xtr.mean(0)
+
+PCA as the baseline. `Vt[:h]` are the top h principal directions; projecting onto them and back is the
+optimal rank-h linear reconstruction, available in ONE SVD with no training and no hyperparameters.
+
+Note it is fitted on TRAIN and applied to TEST, exactly as the autoencoder is - otherwise the comparison
+would be rigged in PCA's favour.
+
+    Xin = Xtr + (r.normal(size=Xtr.shape)*noise_in if noise_in else 0)
+    ...
+    e = 2*(out - Xtr)/Xtr.size
+
+The denoising variant, and the asymmetry is the entire idea: the INPUT is corrupted and the TARGET is
+clean. The network is being asked to map points off the manifold back onto it, which it cannot do by
+copying.
+
+A fresh corruption is drawn every epoch rather than fixed once, so the model sees a different perturbation
+of each example each time - which is what makes it a regulariser rather than just a bigger dataset.
+
+    err_n = ((rec(Xte)-Xte)**2).mean(1)
+    err_a = ((rec(Xano)-Xano)**2).mean(1)
+
+Anomaly scoring - per-EXAMPLE reconstruction error, so `.mean(1)` averages over features and leaves one
+number per row. That number is the score; no separate classifier is trained.
+
+    thr = np.percentile(err_n, 99)
+
+Setting the threshold from the NORMAL data's distribution, which is the right way round: you choose the
+false-positive rate you can tolerate (1%) and read off the threshold, rather than picking a number and
+discovering the false-positive rate later.
+
+    for i in range(4):
+        z = a[-1]@P[2*i] + P[2*i+1]
+        a.append(np.tanh(z) if i<3 else z)
+
+The deep version - 64-128-h-128-64, so four weight matrices with tanh on the first three and a linear
+output. The output layer must be LINEAR because the targets are standardised and unbounded; a tanh there
+would cap the reconstruction at ±1 and make the comparison against PCA meaningless.
+
+This is the change that took the result from "loses to PCA" (shallow, 0.1513) to "beats PCA 3.7x" (deep,
+0.0409) - same data, same optimiser, same bottleneck, just enough layers to bend the manifold.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 64-dimensional data generated as `tanh(Z @ B) + noise` where Z is 6-dimensional - so the true
+intrinsic dimension is 6 and the manifold is CURVED. Standardised, trained with Adam.
+
+TRACE A - the bottleneck sweep.
+
+    bottleneck   train MSE   test MSE   compression   train/test gap
+    ----------   ---------   --------   -----------   --------------
+             1      0.8323     0.8381         64.0x          -0.0058
+             2      0.6809     0.6822         32.0x          -0.0013
+             4      0.4574     0.4621         16.0x          -0.0047
+             6      0.2533     0.2552         10.7x          -0.0019
+             8      0.1860     0.1874          8.0x          -0.0014
+            16      0.1226     0.1240          4.0x          -0.0014
+            32      0.0705     0.0711          2.0x          -0.0006
+            64      0.0127     0.0130          1.0x          -0.0003
+
+Two things. The train/test gap is essentially zero everywhere, so nothing here is overfitting - the
+differences are genuine capacity effects.
+
+And the error drops 0.838 to 0.255 from bottleneck 1 to 6 (a fall of 0.583), then only 0.255 to 0.124
+from 6 to 16 (a fall of 0.131). The bend is at 6, which is the true latent dimension. That elbow is how
+you estimate intrinsic dimension without knowing it.
+
+The bottom row is the warning: 0.0130 test MSE and zero understanding.
+
+TRACE B - against PCA, the honest three-way comparison.
+
+    bottleneck   PCA       LINEAR AE   diff vs PCA   SHALLOW tanh   diff    DEEP AE   diff
+    ----------   -------   ---------   -----------   ------------   -----   -------   -------
+             2   0.6464     0.6855        +0.0391       0.6774      +0.0310  0.6959   +0.0495
+             6   0.1493     0.1488        -0.0005       0.1513      +0.0020  0.0409   -0.1084
+            16   0.0982     0.0996        +0.0021       0.1002      +0.0020  0.0334   -0.0648
+
+Reading the `diff` columns (negative means better than PCA):
+
+The LINEAR autoencoder matches PCA to -0.0005 at bottleneck 6 - that is the theorem confirmed. Its
++0.0391 at bottleneck 2 is undertraining, not a real difference; a harder optimisation problem with fewer
+parameters converged less well.
+
+The SHALLOW tanh autoencoder is WORSE than PCA at all three widths. One hidden layer plus a non-convex
+objective loses to a closed-form optimum.
+
+The DEEP autoencoder wins by 3.7x at bottleneck 6 (0.0409 vs 0.1493) and 2.9x at 16 - and LOSES at
+bottleneck 2. That last cell is the subtle one: below the true latent dimension of 6, no architecture can
+represent the manifold, so you are choosing what to destroy and PCA's optimal linear compromise wins.
+
+TRACE C - anomaly detection.
+
+    population   mean error   p05      p95      p99
+    ----------   ----------   ------   ------   ------
+    normal           0.2552        -   0.4182   0.5081
+    anomalous        1.6107   1.1565        -        -
+
+    AUC                                      1.0000
+    threshold = normal p99 = 0.5081
+      anomalies caught                        100.0%
+      false-positive rate                       1.0%
+
+Complete separation - the anomaly p05 (1.1565) is more than twice the normal p99 (0.5081), so no
+threshold in between makes a mistake. This is the easy case by construction: the anomalies were pushed
+off the manifold.
+
+The mechanism explains the limit. The decoder can only emit points on the learned manifold, so distance
+from the manifold is what is being measured. An anomaly lying ON the manifold scores like normal data,
+and no amount of model quality changes that.
+
+TRACE D - denoising, measured fairly.
+
+    corruption   do nothing   plain AE   DENOISING AE   denoising vs plain
+    ----------   ----------   --------   ------------   ------------------
+           0.3       0.0897     0.1600         0.1597                1.00x
+           1.0       1.0018     0.2462         0.2328                1.06x
+
+At corruption 0.3, DO NOTHING WINS (0.0897). The added noise is smaller than the 6-dimensional
+bottleneck's own reconstruction error, so putting the data through the autoencoder loses more than the
+noise cost. That is a real result and it is worth stating: denoising is only worth it when the noise
+exceeds your reconstruction floor.
+
+At corruption 1.0, both autoencoders are 4x better than doing nothing, and denoising training is 6%
+better than plain.
+
+(My first version of this measurement compared against a target the plain model was never trained for
+and made "do nothing" look best at every level - a rigged comparison, corrected here.)
+
+TRACE E - the bottleneck is not the only constraint.
+
+    model                          clean test MSE   noisy-input test MSE
+    ---------------------------   --------------   --------------------
+    h=64, plain                           0.0010                 0.3089
+    h=64 + input noise 0.6                0.0348                 0.0769
+    h=6, plain                            0.1513                 0.1863
+    h=6 + input noise 0.6                 0.1537                 0.1830
+
+The first row wins the clean column by 150x and loses the noisy column - it copied the input, so it
+copies noise too. The second row is the best noisy result of all four, beating the narrow bottleneck by
+2.4x.
+
+So a WIDE network with a corruption penalty outperformed a NARROW one, on the measurement that reflects
+whether it learned structure. And rows 3 and 4 show the two constraints compose weakly here - adding
+noise to an already-bottlenecked model changes little, because the bottleneck was already doing the
+work.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (64-dim data on a 6-dim curved manifold, Adam):
+
+    bottleneck sweep    h=1 0.8381 | h=6 0.2552 | h=16 0.1240 | h=64 0.0130 (identity, useless)
+                        the error curve BENDS at h=6, the true latent dimension
+
+    vs PCA at h=6       PCA 0.1493 | linear AE 0.1488 (matches) | shallow tanh 0.1513 (LOSES)
+                        | deep AE 0.0409 (3.7x better)
+    vs PCA at h=2       PCA 0.6464 beats even the deep AE (0.6959) - below the true latent dimension,
+                        non-linearity cannot help
+
+    anomaly detection   AUC 1.0000; threshold at the normal p99 catches 100.0% at a 1.0% FPR
+    denoising           at noise 0.3, DO NOTHING wins (0.0897 vs 0.1597)
+                        at noise 1.0, denoising AE 0.2328 vs plain 0.2462 vs do-nothing 1.0018
+    wide + constrained  h=64 + noise scored 0.0769 on noisy input vs 0.1863 for the h=6 bottleneck
+
+COMPLEXITY: training is O(epochs x N x parameters). Encoding a new point is one forward pass. PCA is one
+SVD - O(N x D^2) once - and then a matrix multiply, with no hyperparameters and a deterministic result.
+
+THE MISTAKES:
+
+    - Not comparing against PCA. MEASURED: it matches a linear autoencoder and BEATS a shallow
+      non-linear one.
+    - Using a shallow non-linear autoencoder and expecting it to beat PCA. It did not, at any bottleneck.
+    - Leaving it overcomplete and unconstrained. MEASURED: it learns the identity - 0.0010 MSE, zero
+      value.
+    - Assuming the bottleneck is the only way to prevent copying. MEASURED: wide + input noise beat the
+      narrow bottleneck 2.4x on noisy data.
+    - Choosing the bottleneck by guesswork instead of sweeping it and reading the elbow.
+    - Expecting depth to help below the true latent dimension. MEASURED: PCA won at h=2.
+    - Not normalising the inputs, so one large-scale feature dominates the MSE and the code.
+    - Training with plain gradient descent. Mine diverged to NaN on the linear model and undertrained
+      the rest, producing a table that contradicted itself.
+    - Training the anomaly detector on data containing anomalies, so it learns to reconstruct them.
+    - Expecting reconstruction error to catch anomalies that lie ON the manifold. It structurally cannot.
+    - Sampling random latent vectors from a plain autoencoder to generate. Use a VAE.
+    - Using an autoencoder for literal file compression, where a real codec is better and does not need
+      the decoder shipped with it.
+    - Applying denoising when the noise is smaller than your reconstruction error. MEASURED: do-nothing
+      won at corruption 0.3.
+
+THE TAKEAWAY. An autoencoder learns by being forced to rebuild its input from a summary, so its entire
+value comes from the constraint that stops it copying - remove the constraint and it learns the identity
+(0.0130 MSE and nothing else). Sweeping the bottleneck gives you the intrinsic dimension free, because
+the error curve bends there. And the claim that autoencoders beat PCA needs qualifying three ways: a
+linear one MATCHES PCA exactly, a shallow non-linear one LOSES to it, and only a deep one wins - by 3.7x,
+and only once the bottleneck is wide enough to hold the manifold. PCA is the baseline you have to beat,
+and the bottleneck is only one of several ways to impose the constraint; a wide network with corrupted
+inputs beat the narrow one on the measurement that mattered.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
