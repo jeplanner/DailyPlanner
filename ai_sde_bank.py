@@ -320591,6 +320591,2037 @@ memory, find the knee where per-request cost stops falling, and remember that th
 decides the sign of the effect.""",
 ]
 
+_EX_P1AO["Why does focal loss help with class imbalance where weighted cross-entropy alone falls short?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - there are two completely different things called "imbalance", and
+weighted cross-entropy only fixes one of them.
+
+    IMBALANCE IN COUNT       there are 100 positives and 100,000 negatives.
+                             Fix: a CLASS WEIGHT (alpha). Multiply the rare class's loss up.
+    IMBALANCE IN DIFFICULTY  most of those negatives are TRIVIAL - the model is already confident and
+                             correct on them - but there are so many that their SUM still dominates.
+                             A class weight cannot see this, because it treats every example of a
+                             class identically whether the model gets it right or not.
+
+MEASURED ON THIS MACHINE - a detection-shaped problem: 100 positives, 100,000 EASY negatives (far from
+the boundary) and 2,000 HARD negatives (near it). Positives are 0.098% of the data.
+
+Take a model that has already learned the easy negatives - mean predicted probability 0.0041 on them, a
+realistic mid-training state - and ask where the GRADIENT comes from:
+
+    loss function                positives   EASY negatives   hard negatives
+    --------------------------   ---------   --------------   --------------
+    plain cross-entropy             15.08%           67.00%           17.92%
+    weighted CE (alpha only)        99.44%            0.44%            0.12%
+    focal loss (gamma=2)            99.52%            0.01%            0.47%
+    alpha-balanced focal            99.84%            0.00%            0.16%
+
+Read the last two columns of the middle two rows. Weighted CE gives the EASY negatives 0.44% of the
+gradient and the HARD ones 0.12% - it hands MORE signal to the examples the model already knows than to
+the ones it is getting wrong, because it cannot tell them apart. Focal loss inverts that: 0.01% easy
+and 0.47% hard, a 47x ratio in favour of the informative examples.
+
+That inversion is the entire answer.""",
+
+    """2. THE INTUITION - a class weight asks "which class are you?"; the focal term asks "have I learned
+you yet?"
+
+The first is a STATIC property of an example, fixed before training starts. The second is DYNAMIC - it
+changes as the model improves, so the loss automatically shifts its attention onto whatever is still
+hard, and keeps shifting.
+
+THE MODULATING FACTOR is `(1 - p_t)^gamma`, where `p_t` is the model's predicted probability of the
+TRUE class. When the model is confident and correct, `p_t` is near 1, so `(1-p_t)` is near 0 and the
+example's loss is scaled toward nothing. When the model is wrong or unsure, `(1-p_t)` stays near 1 and
+the full loss survives.
+
+MEASURED, the factor evaluated by hand:
+
+    p_t      CE loss   gamma=0.5   gamma=1   gamma=2   gamma=5      down-weight at gamma=2
+    -----   --------   ---------   -------   -------   ---------    ----------------------
+    0.999    0.00100    0.000032  0.000001  0.000000  0.00000000               1,000,000x
+    0.990    0.01005    0.001005  0.000101  0.000001  0.00000000                  10,000x
+    0.900    0.10536    0.033318  0.010536  0.001054  0.00000105                     100x
+    0.700    0.35667    0.195359  0.107002  0.032101  0.00086672                      11x
+    0.500    0.69315    0.490129  0.346574  0.173287  0.02166085                       4x
+    0.300    1.20397    1.007316  0.842781  0.589947  0.20235171                       2x
+    0.100    2.30259    2.184424  2.072327  1.865094  1.35965347                       1x
+
+Follow the last column down. A confidently-correct example at `p_t = 0.99` has its loss cut TEN
+THOUSAND times. A wrong one at `p_t = 0.1` is cut by 1.2 - essentially untouched. That gap is
+what a class weight cannot produce, because those two examples might be the same class.
+
+WHY IT MATTERS SO MUCH IN DETECTION - the arithmetic before training even starts. MEASURED, with an
+untrained model predicting 0.5 everywhere:
+
+    share of total cross-entropy: positives 0.10%   EASY negatives 97.94%   hard negatives 1.96%
+
+Ninety-eight percent of the gradient is easy background at step one, purely because there is so much of
+it. And unlike the positives, the easy negatives get EASIER as training proceeds - so their individual
+losses shrink while their COUNT does not. That is the situation focal loss was designed for, and it is
+why it appeared in an object-detection paper rather than a general-imbalance one.""",
+
+    """3. EVERY TERM DEFINED.
+
+CROSS-ENTROPY (CE). `-log(p_t)` where `p_t` is the predicted probability of the true class. The
+standard classification loss.
+
+p_t. The model's confidence IN THE CORRECT ANSWER: `p` if the label is 1, `1-p` if it is 0. Writing the
+loss in terms of `p_t` rather than `p` is what makes focal loss expressible in one factor.
+
+CLASS IMBALANCE. Unequal class frequencies. MEASURED here at 0.098% positives.
+
+WEIGHTED / BALANCED CROSS-ENTROPY. Multiply each example's loss by a per-CLASS constant `alpha`,
+typically the inverse class frequency. Corrects COUNT imbalance.
+
+EASY vs HARD EXAMPLE. Easy = the model already assigns it a high `p_t`. Hard = low `p_t`. This is a
+property of the MODEL AND THE EXAMPLE TOGETHER, and it changes during training - which is exactly why a
+constant cannot capture it.
+
+FOCAL LOSS. `-alpha_t * (1 - p_t)^gamma * log(p_t)`. Cross-entropy times a modulating factor.
+
+GAMMA (the focusing parameter). How aggressively easy examples are suppressed. `gamma=0` recovers plain
+cross-entropy; `gamma=2` is the paper's default. MEASURED above across five values.
+
+ALPHA-BALANCED FOCAL LOSS. Focal loss WITH a class weight as well - the form the RetinaNet paper
+actually used, with `alpha=0.25` on the rare class. Both imbalances, two mechanisms.
+
+HARD NEGATIVE MINING (OHEM). The predecessor: explicitly SELECT the highest-loss negatives and train
+only on those, discarding the rest. Focal loss achieves a similar effect CONTINUOUSLY and
+differentiably, without discarding anything.
+
+ONE-STAGE vs TWO-STAGE DETECTOR. Two-stage detectors (Faster R-CNN) use a region proposal network to
+cut the candidate set from ~100,000 to ~1,000 before classifying - a SAMPLING solution to the same
+imbalance. One-stage detectors (YOLO, SSD, RetinaNet) score every location, so they face the full
+imbalance and needed a LOSS solution. Focal loss is what let RetinaNet match two-stage accuracy.
+
+ANCHOR / LOCATION. A candidate box position. A one-stage detector evaluates ~100k of them per image and
+a handful contain objects.
+
+GRADIENT CONTRIBUTION. `d(loss)/d(logit)`, which for cross-entropy is simply `p - y`, times whatever
+coefficient the loss applies. This is what the section-1 table measures - not the loss, the GRADIENT,
+because gradient is what actually moves the weights.
+
+CLASS PRIOR INITIALISATION. Initialising the final bias so the model starts predicting the base rate
+(e.g. `p=0.01`) rather than 0.5. A small detail the RetinaNet paper found necessary for stability, and
+one that is unrelated to focal loss but always mentioned with it.
+
+LABEL SMOOTHING, RESAMPLING, SMOTE. Other imbalance tools, addressing count rather than difficulty.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - weighted cross-entropy can OVERCORRECT and be worse than
+doing nothing. MEASURED, and it is dramatic.
+
+Same problem, same optimiser, same number of steps, four losses:
+
+    loss function                  AUC     recall@top-200   precision@top-200
+    --------------------------   ------   --------------   -----------------
+    plain cross-entropy          0.9987            73.0%               36.5%
+    weighted CE (alpha only)     0.9933             0.0%                0.0%
+    focal loss (gamma=2)         0.9987            72.0%               36.0%
+    alpha-balanced focal         0.9987            74.0%               37.0%
+
+Weighted cross-entropy with the natural weight - the inverse class ratio, 1000 - produced a model with
+an AUC of 0.9933, which SOUNDS excellent, and a recall of ZERO in the top 200 scores.
+
+Both things are true at once, and the reconciliation is the useful part: an AUC of 0.9933 on 102,100
+examples means the average positive sits around rank 680 from the top. Excellent on average. Useless
+for a detector, which only looks at the top of the list. The gigantic class weight pushed the model to
+predict positive broadly rather than to separate the hard cases at the very top of the ranking.
+
+That is the trap: the metric you would naturally report (AUC) says the class weight barely cost
+anything, and the metric the SYSTEM cares about (precision at a small budget) says it destroyed it.
+
+THE SECOND TRAP - assuming the gradient shares tell you what will happen. Look again:
+
+    weighted CE:     positives 99.44%,  easy negatives 0.44%,  hard negatives 0.12%
+    focal (gamma=2): positives 99.52%,  easy negatives 0.01%,  hard negatives 0.47%
+
+The POSITIVES column is almost identical - 99.44 against 99.52. If you only looked at "how much
+attention do the positives get", you would conclude the two losses do the same thing. The difference is
+entirely in how the NEGATIVES' remaining share is split: weighted CE puts 3.7x more of it on the EASY
+negatives than the hard ones, and focal loss puts 47x more on the HARD ones. That is a ratio swing of
+170x, and it is invisible in the positives column.
+
+THE THIRD TRAP - forgetting that focal loss changes the total loss SCALE. Because it multiplies
+everything by a number less than 1, the total loss shrinks - MEASURED, the loss share by group at a
+mid-training model:
+
+    plain CE      : positives  0.76%   easy negs 92.58%   hard negs  6.66%
+    weighted CE   : positives 88.41%   easy negs 10.81%   hard negs  0.78%
+    focal gamma=2 : positives 13.12%   easy negs 51.05%   hard negs 35.83%
+
+Focal loss moved the HARD negatives from 6.66% of the loss to 35.83%, a 5.4x increase in the attention
+paid to the examples that are actually informative. But note the total shrank, so if you compare
+absolute loss values between a focal run and a CE run you are comparing different scales, and the
+learning rate may need retuning.
+
+THE FOURTH TRAP - reaching for focal loss when the imbalance is COUNT ONLY. If your negatives are not
+overwhelmingly easy - a medical dataset with 5% positives where the negatives are genuinely varied -
+the focal term has little to suppress and a class weight or resampling is the right tool. Focal loss
+solves a difficulty problem; check that you have one.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the tools, matched to which imbalance they fix.
+
+FOR COUNT IMBALANCE (there are simply more of one class):
+    CLASS WEIGHTS / alpha        multiply the rare class's loss. Simple, and it cannot distinguish easy
+                                 from hard. MEASURED to destroy top-of-ranking precision when set to
+                                 the raw inverse ratio.
+    OVERSAMPLING the minority    repeat rare examples. Risks overfitting them.
+    UNDERSAMPLING the majority   discard common examples. Throws away data, and it is what two-stage
+                                 detectors effectively do with region proposals.
+    SMOTE                        synthesise minority examples by interpolation. Popular on tabular
+                                 data; dubious in high dimensions.
+    THRESHOLD MOVING             train normally and move the decision threshold. Often the whole fix,
+                                 and the most under-used option - if your model's RANKING is good, the
+                                 imbalance was a thresholding problem, not a training problem.
+
+FOR DIFFICULTY IMBALANCE (most examples are already solved):
+    FOCAL LOSS                   `(1-p_t)^gamma`. Continuous, differentiable, no examples discarded.
+    ONLINE HARD EXAMPLE MINING   explicitly keep the top-k highest-loss examples per batch and drop
+                                 the rest. The discrete predecessor; focal loss is its smooth version.
+    HARD NEGATIVE MINING         the classic detection technique - the same idea, done offline.
+    GHM (gradient harmonising)   down-weight by how COMMON an example's gradient magnitude is, which
+                                 also suppresses outliers and label noise - a real weakness of focal
+                                 loss, which up-weights mislabelled examples because they look hard.
+
+FOR BOTH AT ONCE:
+    ALPHA-BALANCED FOCAL LOSS, which is what the RetinaNet paper actually used: `alpha=0.25`,
+    `gamma=2`. MEASURED here as the best of the four - AUC 0.9987 and recall@200 of 74.0%. Note that
+    `alpha=0.25` puts LESS weight on the rare class, not more, which surprises people: once the focal
+    term has suppressed the easy negatives, the positives no longer need a large boost, and a large one
+    over-corrects.
+
+CHOOSING GAMMA: 0 is plain CE, 2 is the default, 5 is very aggressive. MEASURED, the down-weight at
+`p_t = 0.9`: gamma=0.5 gives 3x, gamma=1 gives 10x, gamma=2 gives 100x, gamma=5 gives 100,000x. Larger
+gamma also amplifies label noise, because a mislabelled example is permanently "hard".
+
+THE ADJACENT TECHNIQUES that get confused with it:
+    LABEL SMOOTHING   the OPPOSITE direction - it stops the model becoming over-confident, by softening
+                      targets. Focal loss stops confident examples DOMINATING. Both touch confidence
+                      and they are not substitutes.
+    CLASS-BALANCED LOSS (effective number of samples)   a more principled alpha.
+    DICE / TVERSKY LOSS   used in segmentation, optimising overlap directly rather than reweighting.
+
+THE PRINCIPLE TO STATE: "imbalance" can mean imbalance in COUNT, fixed by class weighting, or imbalance
+in DIFFICULTY and therefore in CONTRIBUTION, fixed by down-weighting easy examples - and they need
+different tools. Diagnose which you have by measuring where the gradient actually goes.""",
+
+    """6. HOW TO CODE IT.
+
+FOCAL LOSS - four lines from cross-entropy:
+
+  1. `p = sigmoid(logits)`.
+  2. `p_t = where(y == 1, p, 1 - p)` - the confidence in the TRUE class. This one line is what makes
+     the rest expressible.
+  3. `modulator = (1 - p_t) ** gamma`.
+  4. `loss = -alpha_t * modulator * log(p_t)`, with `alpha_t = where(y==1, alpha, 1-alpha)`.
+  5. Numerical care: clamp `p_t` away from 0 before the log, or use the logits-based formulation
+     (`binary_cross_entropy_with_logits`) and multiply by the modulator, which is what every real
+     implementation does.
+  6. DETACH the modulator or not? The original paper does NOT - the gradient flows through
+     `(1-p_t)^gamma` as well. Some implementations detach it, which changes the loss subtly. Know which
+     one you are using.
+  7. Initialise the final bias to the class prior: `b = log(pi/(1-pi))` for a base rate `pi`. The
+     RetinaNet paper found this necessary for stable early training, and it is a one-line change that
+     is nothing to do with focal loss itself.
+
+DIAGNOSING WHICH IMBALANCE YOU HAVE - this is the part worth doing at work:
+
+  8. Take a partially-trained model. Compute each example's GRADIENT contribution -
+     `|coefficient * (p - y)|` - and group it by class AND by whether the model is already correct.
+  9. Print the shares. MEASURED here: plain CE gave 67.00% of the gradient to easy negatives.
+ 10. If the easy-correct group dominates, you have a DIFFICULTY problem and focal loss is the tool. If
+     the rare class is simply starved and the common class's examples are genuinely varied, you have a
+     COUNT problem and a class weight or resampling is the tool.
+ 11. This diagnostic is ten lines and almost nobody runs it, which is why people reach for focal loss
+     on datasets where it has nothing to suppress.
+
+MEASURING IT HONESTLY:
+
+ 12. Build the dataset with THREE groups - positives, EASY negatives and HARD negatives - not two. With
+     only two groups you cannot show the thing that distinguishes focal loss from a class weight, and
+     the entry's whole result is in the easy-versus-hard split.
+ 13. Report the metric your SYSTEM cares about, not just AUC. MEASURED: weighted CE scored 0.9933 AUC
+     and 0.0% recall in the top 200. For a detector, ranking quality at the very top is the product.
+ 14. Compare all four losses trained identically, from the same initialisation, for the same number of
+     steps. Anything else and you are comparing tuning effort.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Extreme class imbalance - like object detection, where a single image has a handful of true objects
+and tens of thousands of easy background locations - breaks naive training because the loss is
+dominated by the SHEER NUMBER of easy negatives. Even though each easy background example contributes a
+tiny individual loss, because the model is already confident it is background, there are so many that
+their SUM overwhelms the gradient from the rare, hard, informative positives. I measured that: with an
+untrained model, 97.94% of the total cross-entropy came from the easy negatives before a single step
+was taken.
+
+The first fix people reach for is WEIGHTED cross-entropy: multiply the rare class's loss by a large
+alpha. That corrects for how MANY of each class there are. But it has a blind spot - it weights every
+example of a class the SAME, regardless of whether the model already gets it right. It does not
+distinguish EASY from HARD.
+
+FOCAL LOSS adds the missing ingredient: a modulating factor `(1 - p_t)^gamma`, where `p_t` is the
+model's predicted probability of the TRUE class. When the model is confident and correct, `p_t` is near
+1 and the factor is tiny, so that example's loss is scaled toward zero - it is already learned, stop
+letting it dominate. When the model is wrong or unsure, the factor stays near 1 and the full loss
+survives. Gamma controls the strength: 0 recovers cross-entropy, 2 is typical. At gamma=2, an example
+at `p_t = 0.99` has its loss cut ten thousand times and one at `p_t = 0.1` by only 1.2.
+
+The crucial difference from weighted CE is that focal loss reweights by DIFFICULTY - a per-example,
+DYNAMIC property that changes as the model learns - not by class membership, which is static.
+
+I measured the gradient split on a detection-shaped problem, at a mid-training model. Plain CE gave 67%
+of the gradient to the easy negatives. Weighted CE gave the positives 99.44%, and then split the
+remaining negatives' share 0.44% easy against 0.12% hard - MORE attention to the ones already solved.
+Focal loss gave 0.01% easy against 0.47% hard - a 47x ratio the other way. Same positives share, and
+completely different behaviour on the negatives.
+
+And weighted CE alone can overcorrect badly. With the natural inverse-frequency weight, it scored an
+AUC of 0.9933, which sounds fine, and ZERO recall in the top 200 scores - useless for a detector, which
+only looks at the top of the ranking. Alpha-balanced focal loss, the paper's combination, was best at
+74% recall at 200.
+
+The broader principle: 'imbalance' can mean imbalance in COUNT, fixed by class weighting, or imbalance
+in DIFFICULTY and contribution, fixed by focal-style down-weighting - and they need different tools."
+
+THE ONE SENTENCE TO NOT FUMBLE: a class weight is a static property of the LABEL and the focal term is
+a dynamic property of the MODEL'S CURRENT CONFIDENCE, which is why one cannot substitute for the other.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    p_t = np.where(y == 1, p, 1 - p)
+
+The pivot of the whole formulation: the model's confidence in the CORRECT answer, whatever that answer
+is. Once you have `p_t`, cross-entropy is `-log(p_t)` for both classes and the focal modulator is a
+single expression rather than two cases.
+
+    coef = (1 - pt) ** gamma
+
+The focal term. Note what it depends on: `p` - the model's CURRENT prediction. Not the label, not the
+class frequency, not any precomputed statistic. It is recomputed every forward pass, so as the model
+improves, the set of examples it emphasises automatically shifts. That is the dynamic property a class
+weight cannot have.
+
+    coef = np.where(y == 1, NEASY/NP_, 1.0)
+
+Weighted cross-entropy, for comparison. It depends ONLY on `y`. Every positive gets the same 1000x,
+whether the model has nailed it or is completely wrong about it. Every negative gets 1x, whether it is
+an obvious patch of sky or a hard boundary case.
+
+Putting those two lines next to each other is the fastest way to see the difference: one reads `p`, the
+other reads `y`.
+
+    coef = np.where(y==1, alpha, 1-alpha) * (1-pt)**gamma
+
+Alpha-balanced focal loss - both mechanisms multiplied together. The paper uses `alpha = 0.25`, which
+puts LESS weight on the rare class. That is counter-intuitive and correct: once the focal term has
+suppressed the easy negatives, the positives are already receiving most of the gradient, and a large
+alpha on top over-corrects. My measurement shows plain focal loss already giving positives 99.52% of
+the gradient - there is nothing left to boost.
+
+    g = Xa.T @ (coef * (p - y)) / len(y)
+
+The gradient. `(p - y)` is the gradient of cross-entropy with respect to the logit - a satisfyingly
+simple fact - and every reweighting scheme is just a coefficient in front of it. Which means the
+"share of the gradient" table is computed directly from `|coef * (p - y)|`, with no approximation.
+
+    contrib = np.abs(c * (p - y))
+    print(100 * contrib[grp==0].sum() / contrib.sum())
+
+The diagnostic, and the most useful ten lines in the entry. It answers "what is my model actually
+paying attention to?" - grouped by whatever categorisation you care about. Running this on a real
+imbalanced problem before choosing a loss would prevent most of the mistakes in section 10.
+
+    top = np.argsort(-p)[:200]
+    rec = y[top].sum() / y.sum()
+
+Recall in the top 200 scores - the metric a detector actually lives on, because it can only afford to
+examine a fixed budget of candidates. Reporting AUC alone gave weighted CE a 0.9933 and hid a complete
+failure.
+
+    W = np.zeros(D+1)  ... for _ in range(600): ...
+
+Identical initialisation, identical step count, identical learning rate for all four losses. Without
+that the comparison measures tuning effort rather than the loss function.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - one easy negative and one hard positive, through each loss. gamma=2, alpha=0.75.
+
+    example              y   p      p_t     CE loss   weighted CE       focal (g=2)    a-focal
+    ------------------   -   ----   -----   -------   ---------------   ------------   -----------
+    easy background      0   0.01   0.99    0.01005   0.01005 (x1)      0.0000010      0.00000025
+    hard positive        1   0.30   0.30    1.20397   1203.97  (x1000)  0.5899467      0.44246
+
+Read the two loss columns for the easy background. Cross-entropy already gives it very little - 0.01005
+- which is why people think it cannot be the problem. The trouble is that there are ONE HUNDRED
+THOUSAND of it: 100,000 x 0.01005 = 1,005, against a single hard positive's 1.204. The easy negatives
+outweigh the positive 834 to 1 by sheer count.
+
+Weighted CE fixes that for the POSITIVE (1203.97 now dominates) and leaves the easy background at
+0.01005 each, so 100,000 of them still sum to 1,005. Focal loss attacks the other end: it cuts the easy
+background to 0.0000010, so 100,000 of them sum to 0.1.
+
+    total contribution from 100,000 easy backgrounds:
+        plain CE      1,005
+        weighted CE   1,005      (unchanged - the weight applies to the CLASS, and they are the
+                                  majority class, so they get x1)
+        focal g=2         0.1    (10,000x less)
+
+That is the mechanism in one comparison: weighted CE raised the positives, and focal loss lowered the
+easy negatives, and only the second of those scales with how many easy negatives there are.
+
+TRACE B - where the gradient goes, measured, at a mid-training model (mean p on easy negatives =
+0.0041).
+
+    loss function                positives   EASY negs   hard negs   easy:hard ratio
+    --------------------------   ---------   ---------   ---------   ---------------
+    plain cross-entropy             15.08%      67.00%      17.92%          3.7 : 1
+    weighted CE (alpha only)        99.44%       0.44%       0.12%          3.7 : 1
+    focal loss (gamma=2)            99.52%       0.01%       0.47%          1 : 47
+    alpha-balanced focal            99.84%       0.00%       0.16%          1 : large
+
+The last column is the finding. Plain CE and weighted CE have the IDENTICAL easy:hard ratio of 3.7:1 -
+because a class weight multiplies both by the same number, so it cannot change their relationship at
+all. Focal loss inverts it to 1:47. A swing of 170x in the ratio, from a loss function that never sees
+the class label.
+
+TRACE C - the modulator, and how sharply it discriminates.
+
+    p_t      status                     (1-p_t)^2   effect on this example's loss
+    -----   ------------------------   ----------   ------------------------------
+    0.999   confidently correct          0.000001   divided by 1,000,000
+    0.990   confidently correct          0.000100   divided by 10,000
+    0.900   correct                      0.010000   divided by 100
+    0.700   correct but unsure           0.090000   divided by 11
+    0.500   no idea                      0.250000   divided by 4
+    0.300   wrong                        0.490000   divided by 2
+    0.100   confidently WRONG            0.810000   divided by 1.2
+
+A smooth, monotonic, differentiable version of "focus on what you are getting wrong". No threshold, no
+selection, no discarding - which is the practical advantage over hard-example mining.
+
+TRACE D - final model quality, and the metric that disagrees with AUC.
+
+    loss function                  AUC     recall@top-200   precision@top-200
+    --------------------------   ------   --------------   -----------------
+    plain cross-entropy          0.9987            73.0%               36.5%
+    weighted CE (alpha only)     0.9933             0.0%                0.0%
+    focal loss (gamma=2)         0.9987            72.0%               36.0%
+    alpha-balanced focal         0.9987            74.0%               37.0%
+
+An AUC of 0.9933 and a recall of 0.0% in the same row. Over 102,100 examples, that AUC puts the average
+positive at about rank 680 - excellent on average and outside a detector's budget. If you evaluate an
+imbalanced model with AUC alone, this is the failure you will ship.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COST AND EFFECT:
+
+    computational cost      one extra elementwise power per example. Negligible - well under 1% of a
+                            forward pass.
+    memory                  none.
+    hyperparameters         gamma (and alpha, if alpha-balanced). Two more knobs than cross-entropy.
+    what it changes         the DISTRIBUTION of gradient across examples, not the model or the data.
+
+    MEASURED, gradient share at a mid-training model:
+        plain CE       positives 15.08%   easy negs 67.00%   hard negs 17.92%
+        weighted CE    positives 99.44%   easy negs  0.44%   hard negs  0.12%
+        focal g=2      positives 99.52%   easy negs  0.01%   hard negs  0.47%
+    MEASURED, down-weight at gamma=2: 10,000x at p_t=0.99 and 1.2x at p_t=0.1.
+    MEASURED, final quality: alpha-balanced focal 74.0% recall@200; weighted CE alone 0.0%.
+
+THE MISTAKES:
+
+    - Treating "imbalance" as one problem. COUNT imbalance needs a class weight; DIFFICULTY imbalance
+      needs focal-style down-weighting. MEASURED: a class weight left the easy:hard ratio at 3.7:1,
+      exactly where plain CE had it.
+    - Applying the raw inverse-frequency class weight. MEASURED: AUC 0.9933 and 0.0% recall at the top
+      200. Over-correction is a real failure, not a theoretical one.
+    - Evaluating an imbalanced model with AUC alone. It reported 0.9933 for a model with zero useful
+      output.
+    - Using focal loss where the negatives are genuinely varied. It suppresses EASY examples; if you
+      have none, it does nothing and you have added two hyperparameters.
+    - Forgetting the alpha in alpha-balanced focal loss - and forgetting that the paper's alpha is
+      0.25, LESS weight on the rare class, because the focal term has already done most of the work.
+    - Setting gamma too high. It amplifies label noise, because a MISLABELLED example looks permanently
+      hard and gets ever more attention. This is focal loss's real weakness and what GHM addresses.
+    - Not initialising the final bias to the class prior. RetinaNet needed it for stable early
+      training, and it is a one-line change.
+    - Comparing absolute loss values between a focal run and a CE run. Focal loss multiplies everything
+      by a number below 1, so the scales differ and the learning rate may need retuning.
+    - Never running the diagnostic. Ten lines tell you where your gradient actually goes; almost nobody
+      writes them.
+    - Forgetting the alternative: if the model's RANKING is already good, moving the decision threshold
+      may be the entire fix and no loss change is needed.
+
+THE TAKEAWAY. There are two imbalances and they need two mechanisms. A class weight is a function of
+the LABEL, so it can rebalance how much attention each class gets and can never distinguish an example
+the model has mastered from one it is failing - measured, it left the easy-to-hard gradient ratio at
+exactly 3.7:1, unchanged from plain cross-entropy. The focal modulator is a function of the MODEL'S
+CURRENT CONFIDENCE, so it suppresses whatever has already been learned and keeps re-aiming as training
+proceeds - measured, it inverted that ratio to 1:47. Use alpha for the count problem, gamma for the
+difficulty problem, and measure where your gradient is going before choosing either.""",
+]
+
+_EX_P1AO["Why does layer normalization work better than batch normalization for Transformers and RNNs?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - both normalise activations. They differ in WHAT THEY AVERAGE OVER,
+and that one choice decides everything else.
+
+    BATCH NORM   for each FEATURE, compute the mean and variance ACROSS THE BATCH.
+                 Your example's output depends on the other examples that happened to share its batch.
+    LAYER NORM   for each EXAMPLE (each token), compute the mean and variance ACROSS ITS OWN FEATURES.
+                 Your example's output depends on nothing but itself.
+
+That second sentence sounds like a technicality. It is the whole answer.
+
+MEASURED ON THIS MACHINE - take ONE fixed input vector of 512 features and put it in 200 different
+random batches. How much does its own output move?
+
+    batch size   BatchNorm: sd of that input's output   LayerNorm
+    ----------   ------------------------------------   ---------
+             2                               0.794556    0.000000
+             4                               0.571615    0.000000
+             8                               0.415265    0.000000
+            16                               0.294715    0.000000
+            64                               0.147194    0.000000
+           256                               0.073474    0.000000
+
+Under BatchNorm the SAME input produces a materially different output depending on who it was batched
+with - a standard deviation of 0.42 at batch 8, on activations that were themselves normalised to unit
+scale. Under LayerNorm it is EXACTLY zero at every batch size, because the arithmetic never touches
+another example.
+
+Sequence models are precisely the setting where batches are small (long sequences eat memory) and
+variable-length (which makes "the same feature across the batch" ill-defined), so both of BatchNorm's
+dependencies bite at once.""",
+
+    """2. THE INTUITION - grading on a curve versus grading on the paper.
+
+BatchNorm grades on a curve: your score depends on who else sat the exam. With 256 candidates the curve
+is stable. With 8, one unusual candidate moves everyone's grade - and the SAME script gets a different
+mark depending on the room it was marked in.
+
+LayerNorm marks each paper on its own terms: your 512 features are normalised against each other, and
+nobody else's paper is consulted. Same script, same mark, always.
+
+WHY THE CURVE IS SHAKY AT SMALL BATCHES - the statistics themselves are estimates, and estimates from 8
+samples are bad. MEASURED, sampling from a true mean of 0 and a true sd of 1:
+
+    batch size   sd of the batch MEAN   sd of the batch SD   relative error in the sd
+    ----------   --------------------   ------------------   ------------------------
+             2                 0.7033               0.4176                     41.8%
+             4                 0.4887               0.3355                     33.5%
+             8                 0.3505               0.2414                     24.1%
+            16                 0.2470               0.1722                     17.2%
+            32                 0.1760               0.1219                     12.2%
+           128                 0.0894               0.0626                      6.3%
+           512                 0.0450               0.0304                      3.0%
+
+At batch 8 the standard deviation you divide every activation by is itself wrong by 24% on average.
+That is not regularisation noise you chose - it is measurement error you inherited, and it scales as
+`1/sqrt(batch)`, so the only way to fix it is a bigger batch, which is exactly what a long-sequence
+model cannot afford.
+
+THE SECOND INTUITION - BatchNorm is TWO DIFFERENT FUNCTIONS. During training it uses the batch's
+statistics; at inference there is no batch, so it uses running averages accumulated during training.
+Those are not the same numbers.
+
+MEASURED, a BatchNorm layer trained on activations with mean 0.3 and sd 1.4, then evaluated on a fresh
+batch of 16 both ways:
+
+    mean absolute difference between train-mode and inference-mode output:   0.2576
+    the same for LayerNorm:                                                  0.0000  (it has no modes)
+
+A quarter of a unit of difference between what your model computed during training and what it computes
+in production, on every activation. It is manageable - people manage it - but it is a whole class of
+bug (forgetting `model.eval()`, a distribution shift making the running stats stale, fine-tuning on
+tiny batches) that LayerNorm simply does not have, because it has no state and no modes.""",
+
+    """3. EVERY TERM DEFINED.
+
+NORMALISATION LAYER. Rescales activations to roughly zero mean and unit variance, then applies a
+learned scale `gamma` and shift `beta` so the network can undo it if it wants to.
+
+BATCH NORMALISATION. Statistics over the BATCH dimension, per feature. For a `(B, D)` activation, `D`
+means and `D` variances, each computed from `B` numbers.
+
+LAYER NORMALISATION. Statistics over the FEATURE dimension, per example. For a `(B, D)` activation, `B`
+means and `B` variances, each computed from `D` numbers. For a Transformer, `D` is the model dimension -
+512, 768, 4096 - which is a lot of samples for an estimate, and it is the same number for every token
+regardless of batch size.
+
+RUNNING / MOVING STATISTICS. The exponential moving averages of mean and variance BatchNorm accumulates
+during training and uses at inference. State that must be saved, restored and kept in sync.
+
+TRAIN MODE vs EVAL MODE. `model.train()` and `model.eval()`. BatchNorm behaves differently in each;
+LayerNorm does not. Forgetting the switch is one of the most common bugs in PyTorch code, and it is a
+bug that cannot exist with LayerNorm.
+
+BATCH DEPENDENCE. An example's output being a function of the other examples in its batch. MEASURED at
+sd 0.42 for batch 8. It also means your model is not a pure function during training, which complicates
+reproducibility and debugging.
+
+INTERNAL COVARIATE SHIFT. The original justification for BatchNorm. Largely discredited - the modern
+explanation is that normalisation SMOOTHS THE LOSS LANDSCAPE, allowing larger learning rates. Say the
+second, and mention that the first was the paper's claim.
+
+PADDING / MASKING. Sequences in a batch have different lengths, so short ones are padded. Padded
+positions are not real data and must be excluded from any statistic computed over them.
+
+VARIABLE SEQUENCE LENGTH. Which timesteps should BatchNorm pool over? There is no clean answer, and
+whatever you choose couples statistics across TIME as well as across the batch.
+
+RMSNORM. LayerNorm without the mean subtraction - just divide by the root-mean-square. Cheaper, and it
+works about as well, which is why LLaMA and most recent large models use it. Evidence that the
+re-centring was never the important part.
+
+PRE-LN vs POST-LN. Whether the normalisation sits inside the residual branch or after the addition.
+Pre-LN trains far more stably at depth and is why modern Transformers can be trained without a
+carefully tuned warmup schedule; the original Transformer was Post-LN.
+
+GROUP NORM / INSTANCE NORM. Middle grounds for vision: normalise over groups of channels per example.
+Batch-independent like LayerNorm, and designed for the CNN activation shape. What you use when you need
+BatchNorm's job done at batch size 2.
+
+GHOST BATCH NORM. Computing BatchNorm statistics over sub-batches, to control the amount of noise
+deliberately.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "BatchNorm is better, so use it everywhere". It is better for
+CNNs, for a reason that is specific to CNNs, and the reason does not transfer.
+
+MEASURED, 256 examples with 512 features spanning four orders of magnitude in scale:
+
+    after BatchNorm: per-feature sd across the batch = 0.9973 for every feature - all equalised
+    after LayerNorm: per-feature sd across the batch = 0.043076 to 4.3531 - the imbalance survives
+
+They are doing DIFFERENT JOBS. BatchNorm equalises FEATURES against each other, which is exactly what
+you want when feature 3 is a colour channel measured in one unit and feature 47 is a gradient magnitude
+measured in another. LayerNorm equalises each SAMPLE internally and leaves the feature-scale imbalance
+completely intact.
+
+So the question is not "which is better" but "which imbalance do you have". A CNN on images has real
+per-channel scale differences and usually a healthy batch size, so BatchNorm wins. A Transformer's
+model dimension is a learned embedding space where no coordinate is intrinsically different from
+another - and the batch is small and ragged - so LayerNorm wins.
+
+THE SECOND TRAP - not realising how badly PADDING corrupts BatchNorm's statistics. MEASURED, a batch of
+8 sentences of lengths [3, 7, 2, 12, 5, 9, 4, 11], padded to 12:
+
+    53 real tokens out of 96 slots - only 55% of the tensor is data
+    BatchNorm mean computed over ALL slots (padding included):   0.0592
+    BatchNorm mean computed over REAL tokens only:               0.1073
+    the padding shifted every feature's mean by 45% on average
+
+Forty-five percent of your per-feature mean, from tokens that do not exist. And this varies BATCH BY
+BATCH depending on which sentence lengths happened to be grouped together - so it is not even a
+consistent bias you could correct for. Masked BatchNorm implementations exist; they are fiddly, and
+they still leave the batch-dependence and the train/eval split.
+
+LayerNorm has nothing to do here: a padded slot's normalisation is meaningless, but it never MIXES into
+a real token's statistics, because each token normalises over its own 512 features and nothing else.
+
+THE THIRD TRAP - assuming small batches are an unusual case. For sequence models they are the NORMAL
+case: memory scales with batch x sequence length x model dimension, and attention scales with the
+square of the sequence length, so a long-context model is often at batch 1 or 2 per device. Every
+number in the batch-8 row of section 2 is optimistic for that setting.
+
+THE FOURTH TRAP - forgetting that BatchNorm's noise is sometimes a FEATURE. The batch-dependence is a
+regulariser: your example's output being perturbed by its batch-mates is a form of noise injection, and
+part of BatchNorm's benefit on CNNs is exactly that. LayerNorm gives up that regularisation along with
+the instability. If you swap BatchNorm for LayerNorm in a CNN and it overfits slightly more, that is
+why.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the full menu, organised by what they average over.
+
+    normalisation   averages over               batch-dependent?   train/eval differ?   typical use
+    -------------   -------------------------   ----------------   ------------------   --------------
+    BatchNorm       the batch, per feature      YES                YES                  CNNs, large B
+    LayerNorm       features, per example       no                 no                   Transformers,
+                                                                                        RNNs
+    RMSNorm         features, no mean subtract  no                 no                   modern LLMs
+    InstanceNorm    spatial dims, per channel   no                 no                   style transfer
+                    per example
+    GroupNorm       groups of channels,         no                 no                   CNNs at small
+                    per example                                                          batch sizes
+    WeightNorm      the WEIGHTS, not the        no                 no                   niche
+                    activations
+
+READ THE SECOND AND THIRD COLUMNS. Every row except BatchNorm answers "no" to both, and they answer no
+for the same structural reason: they never look outside the current example. BatchNorm is the outlier,
+and everything difficult about it follows from that one design choice.
+
+WHEN TO USE WHICH:
+    CNN, batch size >= 32          BatchNorm. It equalises features - MEASURED, per-feature sd 0.9973
+                                   across the batch - which is the job on images, and the batch is big
+                                   enough for the statistics to be stable.
+    CNN, batch size < 8            GroupNorm. Same feature-equalising intent, no batch dependence.
+                                   This is why detection and segmentation models, which run at tiny
+                                   batch sizes because the images are huge, use GroupNorm.
+    Transformer or RNN             LayerNorm. Small ragged batches, variable lengths, and a feature
+                                   space where no coordinate is special.
+    a very large LLM               RMSNorm. Cheaper, and the mean subtraction turns out not to matter.
+    online / streaming inference   anything except BatchNorm. There is no batch at inference and the
+                                   running statistics may be stale.
+    reinforcement learning         LayerNorm, generally. The data distribution shifts as the policy
+                                   changes, so BatchNorm's running statistics are perpetually out of
+                                   date.
+
+THE PRE-LN / POST-LN POINT, which is worth knowing because it is what actually made deep Transformers
+trainable: the ORIGINAL Transformer put LayerNorm AFTER the residual addition (Post-LN), which needs a
+carefully tuned learning-rate warmup or it diverges at depth. Modern models put it INSIDE the residual
+branch (Pre-LN), which keeps the residual path clean and trains stably to great depth without the
+warmup. That is a placement question rather than a which-norm question, and interviewers who know the
+area often ask it next.
+
+WHAT NORMALISATION IS ACTUALLY FOR, since the original story was wrong: the BatchNorm paper claimed it
+reduced "internal covariate shift". Later work showed that is not the mechanism - what normalisation
+does is SMOOTH THE LOSS LANDSCAPE, which permits larger learning rates and less careful
+initialisation. Both BatchNorm and LayerNorm deliver that; they differ only in what they average over
+and therefore in what they depend on.""",
+
+    """6. HOW TO CODE IT.
+
+THE TWO LAYERS, and the difference is one axis:
+
+  1. `bn(X)`: `mu = X.mean(axis=0)`, `var = X.var(axis=0)` - reduce over the BATCH axis, giving one
+     statistic per feature.
+  2. `ln(X)`: `mu = X.mean(axis=-1, keepdims=True)`, `var = X.var(axis=-1, keepdims=True)` - reduce
+     over the FEATURE axis, giving one statistic per example.
+  3. Both then compute `(X - mu) / sqrt(var + eps)` and apply learned `gamma` and `beta`.
+  4. That is genuinely the whole difference: `axis=0` versus `axis=-1`. Everything in this entry -
+     batch dependence, train/eval modes, padding corruption, small-batch noise - follows from which
+     axis you reduce over.
+  5. `keepdims=True` matters for LayerNorm so the broadcast works against the last dimension. Getting
+     it wrong produces a silent shape error or, worse, a silently wrong broadcast.
+  6. BatchNorm additionally needs: running mean and variance buffers, a momentum, and a train/eval
+     switch. LayerNorm needs none of those - which is a real engineering simplification, not just a
+     conceptual one.
+
+MEASURING BATCH DEPENDENCE - the experiment that makes it concrete:
+
+  7. Fix ONE input vector. Put it in 200 different random batches of size B. Record ITS output each
+     time and take the standard deviation across those 200 runs.
+  8. Repeat for several B. The result should fall as `1/sqrt(B)` for BatchNorm and be exactly 0.000000
+     for LayerNorm.
+  9. Getting exactly zero is the point, and it is a useful check on your implementation too - if
+     LayerNorm gives you anything non-zero, you have reduced over the wrong axis.
+
+MEASURING THE STATISTIC NOISE:
+
+ 10. Sample B values from a known distribution and record the sample mean and sample sd. Repeat 2,000
+     times and take the standard deviation of each. Sweep B.
+ 11. Report the sd-of-the-sd as a RELATIVE error, since that is the number you divide by. 24.1% at
+     batch 8 is the sentence people remember.
+
+MEASURING THE TRAIN/EVAL GAP:
+
+ 12. Accumulate running statistics over a few hundred simulated training batches with the standard
+     momentum of 0.1.
+ 13. Take a fresh batch and normalise it BOTH ways - with its own statistics and with the running ones.
+     Report the mean absolute difference. 0.2576 here.
+ 14. Do the same for LayerNorm and get exactly 0, because there is only one function.
+
+MEASURING THE PADDING PROBLEM:
+
+ 15. Build a batch of variable-length sequences, pad with zeros, and build the mask.
+ 16. Compute the per-feature mean over ALL slots and over MASKED slots only, and report the relative
+     difference. 45% here, at 55% real tokens.
+ 17. Vary the length spread. The more ragged the batch, the worse it gets - and note that it varies
+     from batch to batch, so it is not a bias you can correct once.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Batch norm normalises each FEATURE using statistics computed ACROSS THE BATCH, which creates two
+problems for sequence models.
+
+First, DEPENDENCE ON BATCH SIZE AND COMPOSITION. With small batches - common for long sequences that
+eat memory - the batch mean and variance are noisy estimates, and the model's output for one example
+depends on the other examples in its batch. I measured both. Sampling from a known distribution, at
+batch 8 the estimated standard deviation is itself off by 24% on average - and that is the number you
+divide every activation by. And taking one FIXED input and placing it in 200 different random batches,
+its own output varied with a standard deviation of 0.42 at batch 8. Under layer norm that number is
+exactly zero, at every batch size.
+
+Second, VARIABLE SEQUENCE LENGTHS. In RNNs and Transformers, different timesteps and padded lengths
+make 'the same feature across the batch' ill-defined - which timesteps do you pool over? Batch norm has
+no clean answer, and whatever you choose couples statistics across time. I measured the padding effect:
+eight sentences of lengths 3 to 12, padded to 12, is only 55% real tokens - and including the padding
+shifted every feature's mean by 45%, differently for every batch depending on which lengths were
+grouped.
+
+LAYER NORM sidesteps both by normalising across the FEATURE dimension of each individual token
+independently. Every example's normalisation uses only its own activations, so it is completely
+independent of batch size, batch composition and sequence length - and it behaves identically in
+training and inference, with no running statistics to maintain. I measured that too: batch norm's
+train-mode and inference-mode outputs differed by 0.26 per activation on the same input, while layer
+norm has no modes at all.
+
+That per-token stability is exactly what deep residual Transformer stacks need: each sublayer's input is
+well-conditioned regardless of what else is in the batch.
+
+The trade-off is real, and I'd state it rather than pretending layer norm is strictly better. Layer norm
+cannot exploit cross-batch FEATURE statistics the way batch norm does. On 512 features spanning four
+orders of magnitude in scale, batch norm equalised every feature to a per-feature standard deviation of
+0.997, while under layer norm they still spanned 0.04 to 4.35. Equalising features is exactly the job on
+images, which is why batch norm still usually wins for CNNs with decent batch sizes. So the choice is
+ARCHITECTURE-DEPENDENT: batch norm for CNNs with big batches, group norm for CNNs with small ones, and
+layer norm for sequence models and small or variable batches."
+
+THE ONE SENTENCE TO NOT FUMBLE: batch norm makes an example's output depend on its batch-mates, and
+layer norm does not - which is a technicality for a CNN at batch 256 and a fundamental problem for a
+Transformer at batch 8 with ragged sequences.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def bn(X, eps=1e-5):
+        mu = X.mean(0, keepdims=True); var = X.var(0, keepdims=True)
+        return (X - mu) / np.sqrt(var + eps)
+
+    def ln(X, eps=1e-5):
+        mu = X.mean(-1, keepdims=True); var = X.var(-1, keepdims=True)
+        return (X - mu) / np.sqrt(var + eps)
+
+Two functions, identical except for `0` and `-1`. Every consequence in this entry comes from that one
+character. `axis=0` reduces over examples, so the statistic is shared and the output is coupled;
+`axis=-1` reduces over features, so the statistic is private and the output is independent.
+
+    eps
+
+Inside the square root, added to the variance. It matters more for LayerNorm than people expect: a
+token whose 512 features happen to be nearly identical has a near-zero variance, and without `eps` the
+division explodes. `1e-5` is the usual value and `1e-6` is common in LLMs.
+
+    X = np.vstack([x, others])
+    outs_bn.append(bn(X)[0])
+
+The batch-dependence experiment. `x` is FIXED across all 200 repetitions; only `others` is redrawn. Then
+`[0]` extracts `x`'s own output. Taking the standard deviation of those 200 vectors answers "how much
+does my output depend on strangers", and it is the cleanest possible statement of the problem.
+
+    np.std(np.array(outs_ln), axis=0).mean()
+
+The same for LayerNorm, and it returns exactly 0.000000 - not "small", not "0.0001". `ln(X)[0]` is a
+function of `x` alone; `others` never enters the arithmetic. Getting a hard zero rather than a small
+number is what tells you this is a structural property and not a quantitative advantage.
+
+    run_mu = (1-mom)*run_mu + mom*X.mean(0)
+    run_var = (1-mom)*run_var + mom*X.var(0)
+
+BatchNorm's running statistics - an exponential moving average with momentum 0.1. Note that this is
+STATE: it must be saved with the model, restored correctly, and kept consistent across distributed
+replicas. And it is a zero-initialised EMA, so it carries the same early bias as Adam's moments - see
+the bias-correction entry.
+
+    train_mode = (Xtest - Xtest.mean(0)) / np.sqrt(Xtest.var(0)+1e-5)
+    infer_mode = (Xtest - run_mu) / np.sqrt(run_var+1e-5)
+
+The two modes, side by side on the SAME input. Their mean absolute difference was 0.2576. This is a
+model that computes one thing while you are training it and a measurably different thing when you
+deploy it - manageable, and a whole class of bug that does not exist for LayerNorm.
+
+    mask[i,:L] = 1
+    real = Spad[mask[:,:,0]==1]
+    bn_all = flat.mean(0);  bn_real = real.mean(0)
+
+The padding experiment. `bn_all` includes the padded zeros in the per-feature mean; `bn_real` does not.
+The 45% relative difference between them is the corruption, and it changes with every batch's mix of
+lengths - which is why it is not a bias you can subtract out.
+
+    X = rng.normal(0,1,(B,D)) * np.logspace(-2, 2, D)
+
+The CNN-shaped test: features on wildly different scales. `logspace(-2,2,D)` spans four orders of
+magnitude, which is what makes BatchNorm's feature-equalising behaviour the RIGHT one in that setting -
+and it is the experiment that stops this entry from being a one-sided argument.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the two reductions on the same tiny tensor. Three examples, four features.
+
+    X = [[ 1,  2,  3,  4],
+         [10, 20, 30, 40],
+         [ 5,  5,  5,  5]]
+
+    BATCH NORM reduces DOWN the columns:
+        feature means:  [5.3333, 9.0000, 12.6667, 16.3333]   (one per FEATURE, from 3 numbers each)
+        row 3 becomes:  [-0.0905, -0.5080, -0.6241, -0.6770] (its output used rows 1 and 2)
+
+    LAYER NORM reduces ACROSS the rows:
+        example means:  [2.5, 25.0, 5.0]                     (one per EXAMPLE, from 4 numbers each)
+        row 3 becomes:  [0, 0, 0, 0]                         (its own features are identical; nothing
+                                                              else entered the calculation)
+
+NOW CHANGE ROW 1 from [1,2,3,4] to [100,200,300,400] and recompute, WITHOUT touching row 3:
+
+        BatchNorm, row 3:  [-0.7636, -0.7901, -0.7986, -0.8029]   <- every value changed
+        LayerNorm, row 3:  [0, 0, 0, 0]                           <- unchanged, necessarily
+
+Row 3 is the whole entry. Under BatchNorm its output is a function of rows 1 and 2, so editing a
+different example rewrote it. Under LayerNorm it is a function of row 3 alone, so nothing you do
+elsewhere can move it.
+
+Note also the sample-count asymmetry: BatchNorm estimated each statistic from 3 numbers and LayerNorm
+from 4. In a real Transformer that is 8 (the batch) against 512 (the model dimension).
+
+TRACE B - batch dependence, measured. One fixed 512-feature input placed in 200 random batches.
+
+    batch size   BatchNorm sd of its output   LayerNorm   BatchNorm x sqrt(B)
+    ----------   --------------------------   ---------   -------------------
+             2                     0.794556    0.000000                  1.124
+             4                     0.571615    0.000000                  1.143
+             8                     0.415265    0.000000                  1.175
+            16                     0.294715    0.000000                  1.179
+            64                     0.147194    0.000000                  1.178
+           256                     0.073474    0.000000                  1.176
+
+The last column is nearly constant, which confirms the dependence falls exactly as `1/sqrt(batch)` -
+so it never disappears, it only dilutes. And you cannot dilute it in a model whose batch size is
+capped by memory.
+
+The LayerNorm column is 0.000000 at every size. Not small. Zero.
+
+TRACE C - the statistics themselves, sampling from mean 0, sd 1.
+
+    batch size   sd of the sample MEAN   sd of the sample SD   relative error you divide by
+    ----------   ---------------------   -------------------   ----------------------------
+             2                  0.7033                0.4176                        41.8%
+             8                  0.3505                0.2414                        24.1%
+            32                  0.1760                0.1219                        12.2%
+           512                  0.0450                0.0304                         3.0%
+
+By contrast, LayerNorm at model dimension 512 estimates from 512 samples for EVERY token, whatever the
+batch size - which is the third row's stability, permanently, for free.
+
+TRACE D - train mode versus inference mode.
+
+    quantity                                                        value
+    ------------------------------------------------------------   ------
+    BatchNorm, mean |train-mode output - inference-mode output|     0.2576
+    LayerNorm, the same                                             0.0000
+
+TRACE E - padding, 8 sentences of lengths [3, 7, 2, 12, 5, 9, 4, 11] padded to 12.
+
+    quantity                                                 value
+    ------------------------------------------------------   --------
+    real tokens / total slots                                 53 / 96  (55%)
+    mean |per-feature mean| over ALL slots                     0.0592
+    mean |per-feature mean| over REAL tokens only              0.1073
+    relative distortion from including the padding                45%
+
+And this varies batch by batch with the mix of lengths, so it is not a constant bias.
+
+TRACE F - the case FOR BatchNorm. 256 examples, 512 features spanning 1e-2 to 1e2 in scale.
+
+    after           per-feature sd across the batch
+    -------------   -----------------------------------------
+    BatchNorm       0.9973 for every feature - fully equalised
+    LayerNorm       0.043076 to 4.3531 - a 101x spread remains
+
+Different jobs. On images, where channel scales genuinely differ, equalising features is the point. In
+a Transformer's learned embedding space, no coordinate is intrinsically privileged, so there is far less
+to equalise - and the cost of trying is everything in traces B through E.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE PROPERTIES, side by side:
+
+    property                           BatchNorm                     LayerNorm
+    --------------------------------   ---------------------------   -------------------------
+    reduces over                       the batch, per feature        features, per example
+    samples per statistic              the batch size (8 in a         the model dimension (512+)
+                                       long-sequence model)
+    output depends on batch-mates      YES. MEASURED sd 0.42 at B=8   no. MEASURED 0.000000
+    statistic noise                    O(1/sqrt(B)). MEASURED 24.1%   O(1/sqrt(D)), and D is large
+                                       relative error at B=8            and constant
+    train vs inference                 DIFFERENT functions.           identical
+                                       MEASURED gap 0.2576
+    extra state                        running mean and variance      none
+    padding / variable length          corrupts the statistics.       unaffected
+                                       MEASURED 45% mean shift
+    equalises FEATURES                 YES. MEASURED all features     no. MEASURED 0.04 to 4.35
+                                       to sd 0.9973                     spread remains
+    regularisation from batch noise    yes, and it helps CNNs         none
+    distributed training               needs cross-device sync for    nothing to sync
+                                       correct statistics
+    compute                            O(BD) both. Comparable; RMSNorm is slightly cheaper than either.
+
+THE MISTAKES:
+
+    - Using BatchNorm in a Transformer or RNN. MEASURED: an example's output moves with sd 0.42 at
+      batch 8, and padding shifts the feature means by 45%.
+    - Assuming LayerNorm is strictly better. MEASURED: on features spanning four orders of magnitude,
+      BatchNorm equalised them all to sd 0.9973 and LayerNorm left a 101x spread. That is the job on
+      images.
+    - Forgetting `model.eval()`. BatchNorm silently uses batch statistics at inference and your results
+      depend on how you happened to batch the test set. A bug that cannot exist with LayerNorm.
+    - Using BatchNorm at batch size 2 or 4 in a CNN. MEASURED: 41.8% relative error in the sd at batch
+      2. Use GroupNorm.
+    - Applying BatchNorm to padded sequences without masking. MEASURED 45% distortion, varying by batch.
+    - Forgetting that BatchNorm's running statistics are STATE - to save, restore, and synchronise
+      across distributed replicas.
+    - Confusing WHICH norm with WHERE it goes. Pre-LN versus Post-LN is a separate question, and it is
+      the one that decides whether a deep Transformer trains without a warmup schedule.
+    - Repeating "internal covariate shift" as the explanation. That was the original paper's claim and
+      it did not hold up; the modern account is that normalisation smooths the loss landscape.
+    - Not knowing RMSNorm. Modern LLMs drop the mean subtraction entirely and lose nothing, which says
+      the re-centring was never the important half.
+
+THE TAKEAWAY. The entire difference is which axis you average over, and everything else is a
+consequence. Averaging over the BATCH means your output depends on strangers - measured at a standard
+deviation of 0.42 at batch 8, falling only as `1/sqrt(batch)` - and it forces two different functions
+for training and inference, and it has no sensible answer for ragged padded sequences, which shifted
+the statistics by 45%. Averaging over FEATURES gives you 512 samples per statistic at every batch size,
+one function everywhere, no state, and exact independence from the batch. Sequence models sit in
+precisely the regime where those matter and CNNs do not - and the one thing BatchNorm does that
+LayerNorm cannot, equalising features against each other, is exactly the thing images need and a
+learned embedding space does not.""",
+]
+
+_EX_P1AO["Why does min-max scaling suffer from outliers while standardization is more robust?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - min-max scaling maps a feature to [0,1] using
+`(x - min) / (max - min)`. Its two anchor points are the MINIMUM and the MAXIMUM - the two single most
+outlier-prone statistics that exist. Every other value is measured against them.
+
+Standardisation uses `(x - mean) / std`. Both of those are AGGREGATE statistics computed from every
+sample, so one bad point is diluted across n.
+
+MEASURED ON THIS MACHINE - a salary column of [30k, 40k, 50k] with a single data-entry error of
+1,000,000:
+
+    scaler              30,000      40,000      50,000   1,000,000
+    -------------   ----------  ----------  ----------  ----------
+    min-max           0.000000    0.010309    0.020619    1.000000
+    standardise      -0.601320   -0.577267   -0.553214    1.731800
+    robust (IQR)     -0.060000   -0.020000    0.020000    3.820000
+
+Under min-max the three REAL salaries occupy 0.0206 of the [0,1] range - 2.06% of it - crushed into a
+sliver near zero. A model asked to distinguish a 30k earner from a 50k earner now sees a difference of
+0.0206 in a feature whose nominal range is 1.
+
+Under standardisation they sit at -0.60, -0.58, -0.55 - still compressed, but visibly distinct - and
+the typo shows up as a +1.73 z-score, which is a value you could actually detect and clip.
+
+ONE POINT DICTATED THE SCALE FOR ALL POINTS. That is the difference between an anchor and an average.""",
+
+    """2. THE INTUITION - measuring a room with a ruler whose far end is on the Moon.
+
+Min-max says "call the smallest thing 0 and the largest thing 1, and place everything in between". That
+is a perfectly good ruler as long as the largest thing is really the largest THING. If one measurement
+is a typo of a million, the ruler is now a million long and your furniture is all clustered within the
+first 0.002% of it.
+
+Standardisation says "call the average 0 and one standard deviation 1". An outlier still tugs both
+numbers - it is not immune - but it is one voice among n, not the definition of the endpoint.
+
+MEASURED, the two failure curves. 1,000 clean values uniformly in [0,100], plus ONE outlier:
+
+    outlier value    min-max: range the clean data occupies   standardised range   robust range
+    --------------   --------------------------------------   ------------------   ------------
+               100                               0.99851534               3.4024         1.9098
+             1,000                               0.09984127               2.3784         1.9098
+            10,000                               0.00998402               0.3162         1.9098
+         1,000,000                               0.00009984               0.0032         1.9098
+     1,000,000,000                               0.00000010               0.0000         1.9098
+
+Read the min-max column: it collapses in DIRECT PROPORTION to the outlier. Ten times the outlier, ten
+times less resolution. There is no dilution at all, because `max` is not an average of anything - it IS
+that one point.
+
+The standardised column also shrinks, and that is worth being honest about - the outlier inflates the
+standard deviation, so the divisor grows. But it shrinks more slowly, and section 3 measures exactly
+how much more slowly.
+
+The robust column - median and interquartile range - does not move at all. 1.9098 in every row,
+including with a billion-scale outlier, because neither the median nor the 25th and 75th percentiles
+can see a single extreme point.
+
+THE ARITHMETIC OF THE DILUTION, which is the precise version of "more robust":
+
+    the MEAN moves by   outlier / n              - diluted linearly in the sample size
+    the SD inflates by  roughly outlier / sqrt(n) - diluted as the square root
+    the MAX moves by    the whole outlier         - not diluted at all, ever
+
+So standardisation is not immune; it is diluted. Min-max is not diluted.""",
+
+    """3. EVERY TERM DEFINED.
+
+FEATURE SCALING. Putting features on comparable numeric ranges so a model does not treat "income in
+pounds" as thousands of times more important than "years of tenure" purely because of units.
+
+MIN-MAX SCALING / NORMALISATION. `(x - min) / (max - min)`. Output guaranteed in [0,1] - for the
+training data.
+
+STANDARDISATION / Z-SCORE / ZERO-MEAN UNIT-VARIANCE. `(x - mean) / std`. Output has mean 0 and sd 1, and
+NO bounded range.
+
+ROBUST SCALING. `(x - median) / IQR`. Both anchors are order statistics from the middle of the
+distribution, so extremes cannot move them.
+
+BREAKDOWN POINT. The fraction of the data that must be corrupted before an estimator becomes
+arbitrarily wrong. This is the formal version of the whole entry:
+
+    max, min          breakdown point 0     - ONE point destroys it
+    mean, sd          breakdown point 0     - technically also 0, but the damage is diluted by n
+    median            breakdown point 50%   - you need to corrupt half the data
+    IQR               breakdown point 25%
+
+Naming the breakdown point, and noting that the mean's is also technically zero but bounded in
+magnitude by `outlier/n`, is the precise answer to "why is standardisation MORE robust rather than
+robust".
+
+OUTLIER. A value far from the bulk. Could be an error (a typo), or real and rare (a genuine
+billionaire). Which it is decides whether you clip it or keep it.
+
+WINSORISING. Clipping values to a percentile - say the 1st and 99th - before scaling. The standard
+practical fix, and the one that makes min-max usable.
+
+QUANTILE TRANSFORM. Map each value to its rank-based quantile, giving a uniform or Gaussian output.
+Completely outlier-proof, and it destroys the original spacing.
+
+LOG TRANSFORM. `log(1+x)` for skewed positive data. Compresses the tail before any scaling.
+
+LEAKAGE. Computing the scaler's statistics on the whole dataset instead of on the training split only.
+The scaler's parameters are learned parameters and they must come from training data alone.
+
+UNBOUNDED OUTPUT. Standardisation makes no promise about range. Fine for most models, a problem for
+anything expecting [0,1] inputs - image pixel pipelines, some activation ranges, certain distance
+metrics.
+
+WHICH MODELS CARE:
+    SCALE-SENSITIVE:   linear and logistic regression with regularisation, SVMs, k-NN, k-means, PCA,
+                       and every neural network. Any model using distances or gradients.
+    SCALE-INVARIANT:   decision trees and tree ensembles. A split is a threshold, and any monotone
+                       rescaling picks the same rows - see the trees-versus-deep-learning entry, where
+                       standardising changed the tree result by exactly 0.0000.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - standardisation is MORE robust, and the measurement shows it
+is not ROBUST. At a large enough outlier it fails too, and the entry's own example understates this.
+
+MEASURED, one outlier of 1,000,000 added to n clean values in [0,100]:
+
+    n clean points   shift in the MEAN   inflation of the SD
+    --------------   -----------------   -------------------
+                10            90,904.7             9,819.0x
+               100             9,900.5             3,728.2x
+             1,000               999.0             1,117.1x
+            10,000               100.0               349.3x
+           100,000                10.0               109.5x
+
+The mean's shift falls as `1/n` exactly - 90,904 to 9,900 to 999 to 100 to 10 - and the sd's inflation
+falls as `1/sqrt(n)`. Both are diluted, and NEITHER goes to zero. With 1,000 points, a
+million-scale outlier still inflates your standard deviation by 1,117x, which means every real value is
+divided by a number a thousand times too large.
+
+AND THE DOWNSTREAM EFFECT. MEASURED, logistic regression on two features where one is contaminated,
+3,000 training rows, five seeds, test accuracy:
+
+    scaler       no outliers   1 outlier @ 1e4   1 outlier @ 1e6
+    ----------   -----------   ---------------   ---------------
+    min-max           0.9322            0.6404            0.6384
+    standardise       0.9382            0.9362            0.6384
+    robust (IQR)      0.9382            0.9368            0.7064
+
+The MIDDLE column is the entry's thesis, confirmed: a 100x typo destroyed min-max (0.9322 -> 0.6404, a
+collapse to near the majority-class rate) and standardisation shrugged it off (0.9382 -> 0.9362).
+
+The RIGHT column is the honest limit: a 10,000x typo destroyed standardisation too. At n=3,000 the sd
+inflates by roughly `1e6/sqrt(3000)/29 = 640x`, so the clean data spans about 1/640 of a standard
+deviation - which is, numerically, nothing. Only the robust scaler retained anything.
+
+So the correct claim is graded, not binary: MIN-MAX fails at any outlier, STANDARDISATION fails at
+outliers large relative to `sd x sqrt(n)`, and ROBUST SCALING does not fail at all until a quarter of
+your data is corrupted.
+
+THE SECOND TRAP - the OTHER min-max failure, which has nothing to do with outliers. MEASURED, fitting
+on 1,000 training values in [0,100] and then transforming test values:
+
+    raw test value          -20            0           50          100          150
+    ------------------   -------   ----------   ----------   ----------   ----------
+    min-max              -0.2016      -0.0012       0.4995       1.0003       1.5011
+    standardised         -2.3950      -1.6990       0.0410       1.7810       3.5211
+
+Min-max PROMISES [0,1] and silently breaks that promise on any unseen value outside the training range.
+If a downstream component relies on the bound - a sigmoid-input assumption, an image pipeline, a
+quantisation scheme - it now receives 1.5011. Standardisation never promised a bound, so nothing is
+violated; a value at +3.52 is just a large z-score.
+
+THE THIRD TRAP - fitting the scaler on the full dataset. The min, max, mean and sd are LEARNED
+PARAMETERS. Compute them on the training split, store them, apply them unchanged to validation, test
+and production. Computing them on everything is leakage, and with min-max it is worse than usual,
+because a single test-set outlier would then rescale your entire training set.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - four scalers, and what each anchors on.
+
+    scaler          formula                     anchors                  breakdown point   bounded?
+    -------------   -------------------------   ----------------------   ---------------   --------
+    min-max         (x-min)/(max-min)           min and max              0 (one point)     [0,1] on
+                                                                                            train only
+    standardise     (x-mean)/std                mean and sd              0, diluted by n   no
+    robust          (x-median)/IQR              median and quartiles     25%               no
+    max-abs         x/max(|x|)                  max absolute value       0 (one point)     [-1,1]
+    quantile        rank -> uniform or normal   the whole ORDERING       50%               yes
+    unit-norm       x/||x||                     the row, not the column  n/a               per-row
+
+WHEN TO USE WHICH:
+    STANDARDISE BY DEFAULT. It is what almost every model wants, it degrades gracefully, and it keeps
+    outliers VISIBLE as large z-scores you can then detect and act on.
+    MIN-MAX when you specifically NEED a bounded range - image pixels, an algorithm with a [0,1]
+    assumption, a quantisation scheme - AND the data is outlier-clean or you have clipped it first.
+    ROBUST SCALING when outliers are heavy and real. MEASURED: completely unaffected across five orders
+    of magnitude of outlier, and the only scaler that survived the 1e6 contamination downstream.
+    QUANTILE TRANSFORM when the distribution is badly shaped and you care more about rank than about
+    spacing. It is outlier-proof by construction and it destroys the metric structure, which matters
+    for anything distance-based.
+    NOTHING AT ALL for tree ensembles. A split is a threshold and any monotone transform selects the
+    same rows.
+
+THE PRACTICAL RECIPE, in order:
+    1. LOOK AT THE DATA. Print the min, max, mean, median, and the 1st and 99th percentiles of every
+       column. A max that is 10,000x the 99th percentile is a typo, not a distribution.
+    2. DECIDE WHETHER THE OUTLIER IS AN ERROR OR REAL. A salary of 1,000,000 in a payroll of graduate
+       trainees is an error - fix or drop it. A salary of 1,000,000 in a dataset that includes
+       executives is real, and you should keep it and choose a scaler that can cope.
+    3. WINSORISE OR LOG-TRANSFORM if the tail is real but heavy. Clipping at the 1st and 99th
+       percentiles makes min-max usable again and costs almost nothing.
+    4. FIT ON TRAIN ONLY. Store the parameters. Apply them everywhere else.
+    5. MONITOR THE PARAMETERS IN PRODUCTION. If your feature's mean or max drifts, your scaler is
+       stale - and see the offline-versus-online entry, where a units mismatch between training and
+       serving took a model's AUC to exactly chance.
+
+WHY THIS MATTERS AT ALL - the models that care. Anything using distances (k-NN, k-means, SVM) or
+gradients (every neural network, regularised regression) is scale-sensitive: an unscaled feature with a
+larger numeric range dominates the distance metric or the gradient. See the trees-versus-deep-learning
+entry, where feeding a neural network raw features with an income column in the tens of thousands took
+its accuracy from 0.8433 to 0.4408 - worse than predicting the majority class - purely because one
+column's gradients swamped the rest.""",
+
+    """6. HOW TO CODE IT.
+
+THE THREE SCALERS:
+
+  1. `minmax(x) = (x - lo) / (hi - lo)` where `lo, hi` come from the TRAINING data.
+  2. `standard(x) = (x - m) / s` where `m, s` come from the training data.
+  3. `robust(x) = (x - median) / (q75 - q25)`, again from training.
+  4. In every case FIT on train and TRANSFORM everything with the stored parameters. This is why
+     scikit-learn separates `.fit()` from `.transform()`, and why `.fit_transform()` on your test set
+     is a bug rather than a shortcut.
+  5. Guard against a zero denominator: a constant column gives `max == min` and `std == 0`. Every real
+     implementation special-cases it; hand-rolled ones divide by zero and produce NaNs that surface
+     three layers downstream.
+
+MEASURING THE FAILURE, which is what turns "sensitive to outliers" into a number:
+
+  6. Take clean data and add ONE outlier. Sweep the outlier's magnitude across orders of magnitude.
+  7. Report the RANGE THE CLEAN DATA OCCUPIES after scaling - `scaled[clean].max() -
+     scaled[clean].min()`. That is the resolution the model has left, and it is the quantity that
+     matters. Reporting the outlier's own scaled value tells you nothing useful.
+  8. The min-max column should fall exactly in proportion to the outlier and the standardised column as
+     `1/sqrt(n)` of that. Seeing those two different shapes side by side is the finding.
+
+MEASURING THE DILUTION, which is the precise version of "more robust":
+
+  9. Sweep n with the outlier FIXED. Report `mean_with - mean_without` and
+     `sd_with / sd_without`. MEASURED: the mean shift is exactly `outlier/n` and the sd inflation falls
+     as `1/sqrt(n)`.
+ 10. This is the experiment that stops you overclaiming. It shows standardisation is diluted, not
+     immune - and at n=1,000 a million-scale outlier still inflated the sd by 1,117x.
+
+MEASURING THE DOWNSTREAM EFFECT:
+
+ 11. Train the SAME model with each scaler, on the same data, with and without contamination. Report
+     test accuracy.
+ 12. Use a realistic outlier magnitude AND an extreme one. MEASURED: at 1e4 the scalers separate
+     cleanly (0.6404 against 0.9362); at 1e6 standardisation fails as well (0.6384). Reporting only one
+     magnitude would give you either a false endorsement or a false dismissal.
+ 13. Check that a poor result is not just non-convergence - re-run with a much larger optimisation
+     budget. I did: 20x the steps moved min-max at 1e4 from 0.6404 to 0.8538, so part of that gap was
+     optimisation difficulty caused by the crushed feature, and part was information loss. Saying which
+     is which is more honest than reporting the first number alone.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Min-max scaling maps a feature to [0,1] via `(x - min) / (max - min)`. Its two anchor points are the
+extreme MIN and MAX of the data - the single most outlier-prone statistics there are. If one sample is
+a wild outlier - a data-entry error of 1,000,000 in a column normally ranging 0 to 100 - it becomes the
+max, and now every other value is divided by roughly a million, so the entire normal range gets crushed
+into a tiny sliver near zero. The feature loses almost all its resolution.
+
+I measured that. Salaries of 30k, 40k and 50k with a 1,000k typo: under min-max the three real values
+land at 0.000000, 0.010309 and 0.020619 - they occupy 2.06% of the [0,1] range. A SINGLE BAD POINT
+DICTATES THE SCALE FOR ALL POINTS.
+
+Standardisation, `(x - mean) / std`, centres on the MEAN and scales by the STANDARD DEVIATION - both
+AGGREGATE statistics computed over all samples. An outlier still perturbs them, but its influence is
+diluted across n rather than being the sole anchor. The same three salaries land at -0.60, -0.58 and
+-0.55, still distinguishable, and the typo shows up as a visible +1.73 z-score.
+
+I'd be precise about HOW MUCH more robust, because 'robust' overstates it. The mean moves by
+`outlier/n` - diluted linearly - and the standard deviation inflates by roughly `outlier/sqrt(n)` -
+diluted as the square root. The max moves by the whole outlier, diluted not at all. So the formal
+statement is about breakdown points: min and max have a breakdown point of zero, one point destroys
+them; the mean and sd technically do too, but the damage is bounded by `outlier/n`; the median is 50%
+and the IQR 25%.
+
+And I measured where standardisation's dilution runs out. Downstream, logistic regression on a
+contaminated feature: with a 100x typo, min-max fell from 0.9322 to 0.6404 and standardisation held at
+0.9362 - the thesis, confirmed. With a 10,000x typo, standardisation ALSO collapsed to 0.6384, because
+at n=3,000 the sd was inflated hundreds of times over. Only robust scaling survived.
+
+The other trade-offs: min-max gives a guaranteed bounded range, which some algorithms and image
+pipelines need - but it is fragile to outliers AND it silently breaks its own promise on test values
+outside the training min and max. I measured a test value of 150 mapping to 1.5011 when the training
+range was 0 to 100. Standardisation has an unbounded range but preserves relative spacing and handles
+outliers more gracefully.
+
+Best practice: standardise by default; use min-max when you specifically need bounded inputs and the
+data is outlier-clean or clipped first; use ROBUST scaling - median and IQR - when outliers are heavy
+and real."
+
+THE ONE SENTENCE TO NOT FUMBLE: min and max are ANCHORS that one point can define outright, while mean
+and sd are AVERAGES that dilute one point across n - and the median and IQR cannot see it at all.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def mm(x, lo=None, hi=None):
+        lo = x.min() if lo is None else lo
+        hi = x.max() if hi is None else hi
+        return (x - lo) / (hi - lo)
+
+The two `if lo is None` clauses are the FIT/TRANSFORM split, in the cheapest possible form. Called
+without arguments it fits; called with stored parameters it transforms. Real pipelines separate these
+into two methods precisely so you cannot accidentally refit on your test set - and calling
+`.fit_transform()` on test data is the single most common leakage bug in feature engineering.
+
+`hi - lo` is the denominator, and it is ONE SUBTRACTION OF TWO SINGLE OBSERVATIONS. No averaging
+anywhere. That is the entire fragility.
+
+    def std(x, m=None, s=None):
+        return (x - m) / s
+
+Here `m` and `s` are each computed from all n points. Same structure, completely different sensitivity,
+because the denominator is now an aggregate.
+
+    def rob(x, med=None, iqr=None):
+        med = np.median(x); iqr = np.percentile(x,75) - np.percentile(x,25)
+
+Order statistics. `np.median` and `np.percentile` sort the data and read positions out of the middle -
+so an extreme value changes which value sits at position 50% only if you have corrupted enough of the
+data to push the middle. That is why the measured robust range was 1.9098 for every outlier magnitude
+from 100 to a billion, identically.
+
+    m[:1000].max() - m[:1000].min()
+
+The metric that matters: THE RANGE THE CLEAN DATA STILL OCCUPIES after scaling. Not the outlier's own
+scaled value, which is always 1.0 for min-max and tells you nothing. This number is the resolution the
+model has left to work with, and watching it fall from 0.998 to 0.0000001 as the outlier grows is the
+measurement.
+
+    x = np.r_[c, 1e6]
+    print(x.mean()-c.mean(), x.std()/c.std())
+
+The dilution experiment. `x.mean() - c.mean()` is the shift caused by one point, and it comes out as
+exactly `1e6/n` - 90,904 at n=10 and 10.0 at n=100,000. `x.std()/c.std()` is the inflation, falling as
+`1/sqrt(n)`. Two different exponents, measured rather than derived, and together they are the precise
+meaning of "more robust".
+
+    lo, hi = X[tr].min(0), X[tr].max(0); Z = (X - lo) / (hi - lo)
+
+Fitting on the TRAINING SLICE only, then transforming everything including the test slice. Note this is
+exactly where the unbounded-output problem appears: `Z` for test rows can and does fall outside [0,1],
+which is what the section-4 table measures.
+
+    for _ in range(3000): W -= 0.5*(Za[tr].T@(sig(Za[tr]@W)-yv[tr]))/3000
+
+A FIXED optimisation budget for every scaler. That is what makes the accuracy comparison fair - and it
+is also a confound, because a crushed feature is harder to optimise as well as less informative. I
+re-ran at 60,000 steps to separate the two: min-max at a 1e4 outlier went from 0.6404 to 0.8538, so
+some of the damage was optimisation difficulty and some was genuine information loss. Reporting only
+the 3,000-step number would have overstated the scaling effect.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - four salaries, three scalers, worked through.
+
+    the fitted parameters, computed from these four values:
+        min-max       min = 30,000        max = 1,000,000      denominator =   970,000
+        standardise   mean = 280,000      sd  =   415,752      denominator =   415,752
+        robust        median = 45,000     IQR =   250,000      denominator =   250,000
+                                          (q25 = 37,500, q75 = 287,500)
+
+    value           min-max   standardised     robust
+    ----------   ----------   ------------   --------
+        30,000     0.000000      -0.601320     -0.060
+        40,000     0.010309      -0.577267     -0.020
+        50,000     0.020619      -0.553214     +0.020
+     1,000,000     1.000000      +1.731800     +3.820
+
+Look at the DENOMINATORS. Min-max's is 970,000 - which is the outlier minus the smallest real value, so
+the typo is essentially the entire divisor. Standardisation's is 415,752, still dominated by the typo
+but pulled down by averaging. Robust's is 250,000 here only because there are just four points; with
+1,000 clean points the IQR would be about 50 and the typo would not touch it at all - which is exactly
+what the sweep in Trace B shows.
+
+The three real salaries under each scaler:
+
+    min-max        span 0.0206 of the [0,1] range   -> 2.06% of the nominal resolution survives
+    standardise    span 0.0481 standard deviations   -> compressed, but ordered and distinguishable
+    robust         span 0.0800 IQRs                  -> and the typo sits at +3.82, obviously flagged
+
+Notice that standardisation is ALSO badly compressed here - 0.048 sd across a 20k salary range. With
+only four points the `1/n` dilution has almost nothing to work with. Standardisation's advantage is a
+function of n, and at n=4 there is barely any.
+
+TRACE B - the failure curves, 1,000 clean points in [0,100] plus one outlier.
+
+    outlier          min-max clean range   standardised range   robust range   min-max falls by
+    --------------   -------------------   ------------------   ------------   ----------------
+               100            0.99851534               3.4024         1.9098                 1x
+             1,000            0.09984127               2.3784         1.9098                10x
+            10,000            0.00998402               0.3162         1.9098               100x
+         1,000,000            0.00009984               0.0032         1.9098            10,000x
+     1,000,000,000            0.00000010               0.0000         1.9098        10,000,000x
+
+The last column is exact: min-max's resolution falls in DIRECT PROPORTION to the outlier, forever,
+because the denominator IS the outlier. The standardised column falls too but more slowly. The robust
+column is constant to four decimal places across seven orders of magnitude.
+
+TRACE C - the dilution, which is the precise sense of "more robust". Outlier fixed at 1,000,000.
+
+    n clean points   shift in the MEAN   predicted (1e6/n)   inflation of the SD
+    --------------   -----------------   -----------------   -------------------
+                10            90,904.7            100,000              9,819.0x
+               100             9,900.5             10,000              3,728.2x
+             1,000               999.0              1,000              1,117.1x
+            10,000               100.0                100                349.3x
+           100,000                10.0                 10                109.5x
+
+The measured mean shift matches `outlier/n` almost exactly - 999.0 against a predicted 1,000 at n=1,000.
+And the sd inflation falls by roughly `sqrt(10)` = 3.16 per decade: 9819 / 3728 = 2.63, 3728 / 1117 =
+3.34, 1117 / 349 = 3.20, 349 / 110 = 3.19. That is `1/sqrt(n)`, confirmed.
+
+Both fall. Neither reaches zero. Min-max's would be a constant column of "the whole outlier".
+
+TRACE D - the other min-max failure: unseen values. Fitted on 1,000 values in [0,100].
+
+    raw test value       -20        0       50      100      150
+    ------------------   -----   ------   ------   ------   ------
+    min-max              -0.20   -0.0012   0.4995   1.0003   1.5011
+    standardised         -2.40   -1.699    0.041    1.781    3.521
+
+Min-max produced -0.20 and 1.50 from a scaler whose contract is [0,1]. It broke the promise silently -
+no error, no warning - and anything downstream relying on the bound now has out-of-range input.
+
+TRACE E - does it actually matter? Logistic regression, five seeds, 3,000 training rows.
+
+    scaler       no outliers   1 outlier @ 1e4   1 outlier @ 1e6   verdict
+    ----------   -----------   ---------------   ---------------   -------------------------------
+    min-max           0.9322            0.6404            0.6384   fails at BOTH magnitudes
+    standardise       0.9382            0.9362            0.6384   survives 1e4, fails at 1e6
+    robust            0.9382            0.9368            0.7064   survives both, degrades at 1e6
+
+The middle column is the entry's claim, cleanly demonstrated. The right column is the honest limit, and
+it lines up with Trace C: at n=3,000 a million-scale outlier inflates the sd by several hundred times,
+which is enough to crush the clean data into numerical insignificance for standardisation as well.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE PROPERTIES:
+
+    scaler        anchors                 breakdown point   damage from one outlier   bounded output
+    -----------   ---------------------   ---------------   -----------------------   --------------
+    min-max       min, max                0                 THE WHOLE OUTLIER          [0,1] on train
+                                                                                        data only
+    standardise   mean, sd                0, but diluted    mean: outlier/n            no
+                                                            sd: ~outlier/sqrt(n)
+    robust        median, IQR             25%               none until 25% corrupted   no
+    quantile      the full ordering       50%               none                       yes
+
+    MEASURED, 1,000 clean points plus one outlier of 1e6:
+        min-max leaves the clean data 0.0001 of the [0,1] range
+        standardisation leaves it 0.0032 standard deviations
+        robust scaling leaves it 1.9098 IQRs - unchanged from no outlier at all
+    MEASURED downstream, logistic regression: at a 1e4 outlier, min-max 0.6404 and standardisation
+        0.9362; at 1e6, both 0.6384 and robust 0.7064.
+    COST: all three are O(n) to fit and O(1) per value to apply. There is no efficiency argument for
+        choosing between them.
+
+THE MISTAKES:
+
+    - Using min-max on data you have not inspected. MEASURED: one typo left the real values occupying
+      2.06% of the range.
+    - Believing standardisation is outlier-PROOF. It is outlier-DILUTED. MEASURED: a 1e6 outlier
+      destroyed it too, at n=3,000.
+    - Not knowing the dilution rates. The mean moves by `outlier/n` and the sd by `~outlier/sqrt(n)`.
+      Those two exponents are the entire quantitative content of "more robust".
+    - Fitting the scaler on the full dataset. Leakage - and with min-max, a single test-set outlier
+      would rescale your whole training set.
+    - Relying on min-max's [0,1] guarantee at inference. MEASURED: a test value of 150 mapped to 1.5011
+      when the training range was 0-100.
+    - Not distinguishing an error from a real extreme. A typo should be fixed or dropped; a genuine
+      heavy tail should be kept and scaled robustly or log-transformed.
+    - Forgetting winsorising. Clipping at the 1st and 99th percentiles costs almost nothing and makes
+      min-max viable again.
+    - Scaling before splitting, or scaling the target when you did not mean to.
+    - Not handling constant columns. `max == min` and `std == 0` both divide by zero.
+    - Scaling for a tree ensemble. It is a no-op - measured elsewhere in this bank as a change of
+      exactly 0.0000 - and it wastes a step in your pipeline while adding a parameter to keep in sync.
+    - Blaming the scaler when the result was really an optimisation failure. I re-ran at 20x the steps
+      and min-max at a 1e4 outlier recovered from 0.6404 to 0.8538, so part of the gap was
+      conditioning rather than lost information.
+
+THE TAKEAWAY. The difference is anchors versus averages. Min-max's denominator is the distance between
+two SINGLE OBSERVATIONS, so one bad point defines the scale for every other point and the damage is
+undiluted - measured, the clean data's resolution falls in exact proportion to the outlier's size.
+Standardisation's anchors are computed from all n samples, so a single outlier moves the mean by
+`outlier/n` and inflates the sd by about `outlier/sqrt(n)` - diluted, and therefore more robust rather
+than robust, which the 1e6 measurement makes concrete by breaking it too. If your outliers are real and
+heavy, use the median and the IQR, whose anchors sit in the middle of the distribution and cannot see
+an extreme point at all.""",
+]
+
+_EX_P1AO["Why does momentum speed up gradient descent, and what problem with plain SGD does it fix?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - plain gradient descent takes a step in the direction the gradient
+points. On a long narrow valley, the gradient does not point along the valley. It points at the WALLS.
+
+That shape - steep in some directions and gentle in others - is called an ILL-CONDITIONED problem, and
+it is the normal case, not a pathological one. In such a valley plain SGD bounces from wall to wall,
+making large moves that mostly cancel, while creeping along the floor toward the actual minimum.
+
+MOMENTUM gives the optimiser INERTIA. Instead of stepping by the raw gradient, it keeps a VELOCITY that
+is a running average of past gradients: `v = beta*v + g`, then `w -= lr*v`.
+
+MEASURED ON THIS MACHINE - a quadratic valley `f(w) = 0.5*(k1*w1^2 + k2*w2^2)`, steps to reach
+`|w| < 1e-6` from (1,1), each method at ITS OWN largest stable learning rate:
+
+    condition number   plain SGD   momentum (b=0.9)   Nesterov (b=0.9)   best
+    ----------------   ---------   ----------------   ----------------   ---------
+                   3          68                259                 43   Nesterov
+                  10          69                230                102   SGD
+                 100         754                264                212   Nesterov
+               1,000           -                274                998   momentum
+              10,000           -              3,913                  -   momentum
+
+Read the SGD column downward. At condition number 3 and 10 it is fine - 68 and 69 steps - and it BEATS
+momentum. At 100 it takes 754. At 1,000 and above it never converges within 4,000 steps at all.
+
+Momentum's column barely moves: 259, 230, 264, 274. Two orders of magnitude of extra ill-conditioning
+cost it almost nothing.
+
+So momentum is not a general speed-up. It is a fix for a SPECIFIC pathology, and on a well-conditioned
+problem it is slower.""",
+
+    """2. THE INTUITION - a running average treats a CONSISTENT direction and an OSCILLATING one completely
+differently, and that asymmetry is the entire mechanism.
+
+Consider what the gradient does along each axis of the valley.
+
+    ALONG THE STEEP WALLS: you overshoot, so the next gradient points BACK. Then you overshoot again,
+    so it points forward. The sequence is +, -, +, -, ...
+    ALONG THE VALLEY FLOOR: the slope is gentle and always in the same direction. The sequence is +, +,
+    +, +, ...
+
+Now feed each of those into a running average `v = 0.9*v + g`. MEASURED:
+
+    after N steps   consistent gradient (+1 every step)   alternating gradient (+1,-1,+1,...)
+    -------------   -----------------------------------   -----------------------------------
+                1                                1.0000                                1.0000
+                2                                1.9000                               -0.1000
+                5                                4.0951                                0.8371
+               10                                6.5132                               -0.3428
+               20                                8.7842                               -0.4623
+               50                                9.9485                               -0.5236
+              100                                9.9997                               -0.5263
+
+    limits:  1/(1-beta) = 10.00      versus      1/(1+beta) = 0.5263      -> a 19x ratio
+
+A consistent direction builds to a step TEN TIMES the raw gradient. An alternating one settles at HALF
+of it. Same beta, same formula, a 19x difference in amplification - and the two directions of a ravine
+are exactly those two cases.
+
+That is why momentum simultaneously DAMPS the wasteful zig-zag and ACCELERATES the productive
+direction. It is one mechanism producing two opposite effects, because the two directions have opposite
+gradient statistics.
+
+MEASURED, the zig-zag counted directly. Condition number 100, both methods at the SAME learning rate:
+
+    method     sign flips on the STEEP axis in 600 steps   |w_shallow| after 600 steps
+    --------   -----------------------------------------   ---------------------------
+    SGD                                              599                      0.000017
+    momentum                                         124                      0.000001
+
+SGD's steep coordinate changed sign on 599 of 600 steps - it flipped on essentially EVERY step, which
+is the zig-zag made countable. Momentum flipped a fifth as often and reached the valley floor 17 times
+closer to zero, at the identical learning rate.""",
+
+    """3. EVERY TERM DEFINED.
+
+GRADIENT DESCENT. `w -= lr * g`. Memoryless: the step depends only on the current gradient.
+
+MOMENTUM. `v = beta*v + g; w -= lr*v`. The step depends on an exponentially-weighted average of all
+past gradients.
+
+Note there are two conventions. `v = beta*v + g` (used here) and `v = beta*v + (1-beta)*g`. The second
+keeps the velocity's scale comparable to the gradient's; the first inflates it by up to `1/(1-beta)`,
+which is why the effective learning rate differs by 10x between the two at beta=0.9. PyTorch uses the
+first, so switching frameworks changes what your learning rate means.
+
+BETA / MOMENTUM COEFFICIENT. How much history is retained. 0.9 is standard, giving an effective window
+of about `1/(1-beta) = 10` steps.
+
+VELOCITY. The accumulated direction. Not a physical velocity, but the analogy is apt - a ball rolling
+downhill gathers speed in a consistent direction and is not deflected much by small bumps.
+
+RAVINE / VALLEY. A region steeply curved in some directions and gently in others.
+
+CONDITION NUMBER. `max(eigenvalue)/min(eigenvalue)` of the Hessian - the ratio of the steepest curvature
+to the shallowest. This ONE NUMBER predicts whether plain SGD will struggle. MEASURED: fine at 10,
+struggling at 100, hopeless at 1,000.
+
+ILL-CONDITIONED. A large condition number. Caused by features on different scales (see the scaling
+entry), by correlated features, or simply by the geometry of a deep network's loss.
+
+HESSIAN. The matrix of second derivatives - the local curvature. You never compute it for a large
+model; the condition number is a way of talking about it without doing so.
+
+OSCILLATION / ZIG-ZAG. Successive steps pointing in opposite directions along the same axis. MEASURED
+at 599 sign flips in 600 steps for plain SGD.
+
+STABILITY LIMIT. For a quadratic with maximum curvature `k`, plain gradient descent diverges above
+`lr = 2/k`. So the STEEPEST direction sets your learning rate, and the SHALLOWEST direction determines
+how slowly you make progress. That tension is the whole problem.
+
+NESTEROV ACCELERATED GRADIENT. Evaluate the gradient at the LOOK-AHEAD position `w - lr*beta*v`, where
+the velocity is about to take you, rather than at `w`. More responsive when the velocity is about to
+overshoot.
+
+PLATEAU. A flat region where the gradient is tiny. Accumulated velocity carries you across; plain SGD
+crawls.
+
+EXPONENTIAL MOVING AVERAGE. The `v = beta*v + ...` recurrence. Note it is initialised to ZERO, so it is
+biased low for the first steps - the same transient as in Adam. Classical momentum does not correct for
+it, and at beta=0.9 the bias is gone within about 50 steps.
+
+ADAM. Momentum (the first moment) plus per-parameter adaptive scaling (the second moment). The first
+half is exactly this entry.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "momentum lets you use a bigger learning rate". Only a
+little, and that is not where the benefit comes from.
+
+MEASURED, the largest stable learning rate found by bisection on a condition-number-100 problem (where
+`2/k_max = 0.02`):
+
+    method     largest stable lr
+    --------   -----------------
+    SGD                  0.02017
+    momentum             0.03801
+    Nesterov             0.01366
+
+Momentum's is 1.9x SGD's. Not 10x. And Nesterov's is actually LOWER than plain SGD's.
+
+The stability limit is set by the STEEPEST direction for all of them, because that is the direction
+that diverges first. Momentum's advantage is not that it can take a bigger step - it is what it does
+with the SHALLOW direction at whatever step you take. MEASURED, at the identical learning rate:
+
+    method     sign flips (steep axis, 600 steps)   |w_shallow| after 600 steps
+    --------   ----------------------------------   ---------------------------
+    SGD                                       599                      0.000017
+    momentum                                  124                      0.000001
+    Nesterov                                  599                      0.000000
+
+Same lr, same problem. SGD spent 600 steps oscillating and got the shallow coordinate to 1.7e-5.
+Momentum got it to 1e-6 - seventeen times closer - while flipping sign a fifth as often.
+
+THE SECOND TRAP - assuming more momentum is better. MEASURED, sweeping beta on the same problem, each
+at its own stable learning rate:
+
+    beta   1/(1-beta)   max stable lr   steps to converge   sign flips
+    ----   ----------   -------------   -----------------   ----------
+    0.00          1.0         0.01816                 754          753
+    0.50          2.0         0.02707                 234          193
+    0.90         10.0         0.03421                 264          210
+    0.95         20.0         0.03510                 459          365
+    0.99        100.0         0.03582               2,553        2,030
+
+The best value here is 0.5, not 0.9 - and 0.99 is THREE AND A HALF TIMES WORSE than beta=0, despite
+having a hundred steps of memory. Too much inertia means the optimiser cannot change direction when the
+landscape does: it overshoots the minimum, has to decelerate, overshoots the other way, and the sign
+flips climb back to 2,030.
+
+There is a sweet spot, it depends on the problem, and 0.9 is a default rather than a law.
+
+THE THIRD TRAP - believing momentum always helps. MEASURED, at condition numbers 3 and 10, plain SGD
+converged in 68 and 69 steps and momentum needed 259 and 230. On a well-conditioned problem there is no
+oscillation to damp and no shallow direction to accelerate, so momentum's only effect is to make the
+optimiser sluggish about stopping.
+
+THE FOURTH TRAP - the beta convention. `v = beta*v + g` inflates the step by up to `1/(1-beta)` = 10x
+at beta=0.9, while `v = beta*v + (1-beta)*g` does not. PyTorch's SGD uses the first. So if you port a
+learning rate from a paper or a framework that uses the second convention, your steps are ten times too
+large - and it will look like momentum made training unstable.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - other ways to fix ill-conditioning, and where momentum sits.
+
+FIX THE CONDITIONING ITSELF, which is better than compensating for it:
+    FEATURE SCALING              the cheapest and most under-used. Features on wildly different scales
+                                 ARE an ill-conditioned Hessian - see the scaling entry, where a
+                                 neural network on raw features scored 0.4408 against 0.8433 on
+                                 standardised ones.
+    NORMALISATION LAYERS         BatchNorm and LayerNorm smooth the loss landscape, which is the modern
+                                 explanation of what they do - see the normalisation entry.
+    BETTER INITIALISATION        He and Xavier keep activation variance stable across depth, which
+                                 keeps the curvature comparable across layers.
+    RESIDUAL CONNECTIONS         give the gradient a short path, dramatically improving conditioning at
+                                 depth.
+
+COMPENSATE FOR IT - the optimiser family, in order of how much state each keeps:
+    SGD                       no state. Fails at condition number 1,000 in the measurement.
+    MOMENTUM                  one velocity vector per parameter. Fixes the oscillation.
+    NESTEROV                  the same state, gradient evaluated at the look-ahead point. MEASURED as
+                              the best at condition numbers 3 and 100, and worse than plain momentum at
+                              1,000 - it is a refinement, not a strict improvement.
+    ADAGRAD                   per-parameter learning rates from accumulated squared gradients. Attacks
+                              the same problem from the other side: rather than smoothing the
+                              direction, it rescales each axis. Its accumulator only grows, so the
+                              learning rate decays to zero.
+    RMSPROP                   AdaGrad with an exponential average instead of a sum, so it does not
+                              die.
+    ADAM                      momentum AND per-parameter scaling. The first moment is exactly this
+                              entry; the second is RMSProp. See the bias-correction entry for what its
+                              zero-initialised averages cost early on.
+    LION, SHAMPOO, K-FAC      newer, and Shampoo and K-FAC explicitly approximate the curvature rather
+                              than working around it.
+
+SECOND-ORDER METHODS - the direct fix:
+    NEWTON'S METHOD           multiply the gradient by the inverse Hessian, which makes the problem
+                              perfectly conditioned by construction. It converges in a handful of steps
+                              and requires a `d x d` matrix inverse, so it is impossible for a model
+                              with a billion parameters.
+    L-BFGS                    approximates that inverse from a window of past gradients. Excellent on
+                              small deterministic problems, and it does not tolerate mini-batch noise.
+    Momentum is, in a real sense, the cheapest possible approximation to this idea: it uses the HISTORY
+    of gradients to infer something about curvature, with one extra vector of state and no matrix
+    anywhere.
+
+WHY MOMENTUM ALSO HELPS BEYOND RAVINES:
+    PLATEAUS AND SMALL LOCAL BUMPS   accumulated velocity carries the optimiser across a flat region
+                                     where the raw gradient is nearly zero, and past small local minima
+                                     that would trap a memoryless method.
+    GRADIENT NOISE                   in stochastic gradient descent every gradient is a noisy estimate.
+                                     A running average of the last ~10 of them is a lower-variance
+                                     estimate of the true gradient, which is a second, independent
+                                     reason momentum helps - and one that has nothing to do with
+                                     curvature.""",
+
+    """6. HOW TO CODE IT.
+
+MOMENTUM - two lines:
+
+  1. `v = beta*v + g`
+  2. `w -= lr*v`
+  3. Initialise `v` to zeros, the same shape as the parameters. That doubles your optimiser memory,
+     which for a large model is a real cost and is why Adafactor exists.
+  4. `v` is zero-initialised, so it is biased low for the first few steps - the same transient as in
+     Adam. Classical momentum does not correct it; at beta=0.9 it is gone within ~50 steps.
+  5. BE CLEAR WHICH CONVENTION YOU ARE USING. `beta*v + g` versus `beta*v + (1-beta)*g` differ by a
+     factor of up to `1/(1-beta)` = 10x in effective step size.
+
+NESTEROV - one line different:
+
+  6. `g = grad(w - lr*beta*v)` - evaluate the gradient at the LOOK-AHEAD point, where the velocity is
+     about to take you, rather than where you are.
+  7. Then `v = beta*v + g; w -= lr*v` exactly as before.
+  8. The intuition: if the velocity is about to carry you past the minimum, the look-ahead gradient
+     already points back, so you decelerate a step earlier.
+
+MEASURING IT - the experiment design matters more than the code:
+
+  9. USE A QUADRATIC with a controllable condition number: `f(w) = 0.5*sum(k_i * w_i^2)`, gradient
+     `k*w`. Two parameters is enough. The condition number is `max(k)/min(k)` and you can sweep it
+     directly - which you cannot do on a real network.
+ 10. COMPARE EACH METHOD AT ITS OWN LARGEST STABLE LEARNING RATE, found by bisection. That is the fair
+     comparison, because in practice you would tune the learning rate for whichever optimiser you
+     chose. Comparing at a shared learning rate answers a different question - and section 4 asks that
+     one separately, on purpose.
+ 11. SWEEP THE CONDITION NUMBER over orders of magnitude - 3, 10, 100, 1,000, 10,000. That sweep is
+     what shows momentum is a fix for a specific pathology rather than a general speed-up, and it is
+     the finding.
+ 12. COUNT SIGN FLIPS on the steep coordinate. `sign(w[0]) != sign(prev[0])` per step. This turns "it
+     oscillates" into a number - 599 out of 600 - and it is far more convincing than a plot.
+ 13. TRACK THE SHALLOW COORDINATE SEPARATELY. The whole story is that one axis oscillates and the other
+     crawls; a single loss value averages them together and hides it.
+ 14. VERIFY THE MECHANISM directly: run `v = beta*v + g` on a constant gradient and on an alternating
+     one and print both. Getting 10.00 and 0.5263 - the limits `1/(1-beta)` and `1/(1+beta)` - is the
+     proof that the asymmetry is real and not a story.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Plain gradient descent updates by `w -= lr*g`, taking a step directly proportional to the current
+gradient. This struggles in a very common loss-surface shape: a long, narrow RAVINE - steeply curved in
+some directions and gently sloped in others, which formally means the Hessian has very different
+eigenvalues, a high condition number.
+
+In such a ravine the gradient points mostly ACROSS the valley, down the steep walls, rather than ALONG
+it toward the minimum. So plain SGD oscillates back and forth between the walls, making big zig-zag
+moves that largely cancel, while creeping only slowly along the shallow direction. And to avoid
+diverging on the steep axis you are forced to use a small learning rate, which makes the slow progress
+along the floor even slower.
+
+MOMENTUM fixes this with INERTIA. Instead of stepping by the raw gradient, it keeps a VELOCITY that is
+an exponentially-weighted average of past gradients - `v = beta*v + g`, then `w -= lr*v`, with beta
+around 0.9.
+
+The key effect is DIRECTIONAL FILTERING. Along the oscillating steep axis, successive gradients point
+in OPPOSITE directions on alternate steps, so they largely CANCEL in the running average and the
+zig-zag is damped. Along the consistent shallow axis, successive gradients all point the SAME way, so
+they ACCUMULATE and the optimiser accelerates - like a ball rolling downhill.
+
+I measured that asymmetry directly. Feeding a constant gradient into `v = 0.9*v + g` builds the
+velocity to 10.0 - the limit `1/(1-beta)`. Feeding an ALTERNATING gradient into the same recurrence
+settles at 0.5263 - the limit `1/(1+beta)`. A 19x difference in amplification, from the identical
+formula, purely because of the gradient's sign pattern.
+
+And I measured the effect. On a quadratic ravine, at each method's own best learning rate: at condition
+number 100, plain SGD took 754 steps and momentum 264. At condition number 1,000 and 10,000, SGD never
+converged within 4,000 steps at all, while momentum took 274 and 3,913. At the SAME learning rate,
+SGD's steep coordinate flipped sign on 599 of 600 steps - that is the zig-zag, counted - against 124
+for momentum.
+
+Two things I'd correct in the usual telling. First, 'momentum lets you use a bigger learning rate' is
+only slightly true: I measured its stability limit at 0.038 against SGD's 0.020, so 1.9x, not 10x. The
+benefit is what it does with the shallow direction at whatever rate you use. Second, momentum is NOT a
+general speed-up - at condition numbers 3 and 10 plain SGD converged in about 68 steps and momentum
+needed 230 to 259. It fixes a specific pathology.
+
+Beta has a sweet spot too: on that problem, 0.5 converged in 234 steps, 0.9 in 264, and 0.99 in 2,553 -
+worse than no momentum at all, because too much inertia means you cannot change direction.
+
+Momentum also helps on plateaus, where the raw gradient is tiny and accumulated velocity carries you
+through, and it reduces gradient NOISE, since an average of the last ten stochastic gradients is a
+lower-variance estimate. NESTEROV refines it by evaluating the gradient at the look-ahead position, and
+Adam combines this first-moment momentum with per-parameter adaptive scaling."
+
+THE ONE SENTENCE TO NOT FUMBLE: a running average amplifies a consistent direction by `1/(1-beta)` and
+an alternating one by `1/(1+beta)` - a 19x asymmetry at beta=0.9 - and a ravine's two axes are exactly
+those two cases.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    # plain SGD
+    g = k*w
+    w = w - lr*g
+
+Memoryless. The step is a function of the current position only. On a quadratic `f = 0.5*sum(k*w^2)`,
+the gradient is exactly `k*w` - which makes the whole experiment analytic and noise-free, so any
+difference you measure is the optimiser and not the data.
+
+    # momentum
+    g = k*w
+    v = beta*v + g
+    w = w - lr*v
+
+One extra line and one extra state vector. `v` starts at zeros - which, note, is the same
+zero-initialised exponential moving average that Adam bias-corrects. Classical momentum does not
+correct it; at beta=0.9 the transient is over in about 50 steps.
+
+    # Nesterov
+    g = k*(w - lr*beta*v)
+    v = beta*v + g
+    w = w - lr*v
+
+The ONLY difference is the argument to the gradient: `w - lr*beta*v` instead of `w`. That is where the
+velocity is about to carry you. If you are about to overshoot, the gradient there already points back
+and you decelerate one step earlier. Note the measured consequence in section 4: this makes Nesterov's
+stability limit LOWER than plain momentum's, not higher - it is a responsiveness refinement, not a
+strictly better method.
+
+    beta*v + g       vs       beta*v + (1-beta)*g
+
+The convention question, and it is not cosmetic. The first accumulates to `1/(1-beta)` = 10x the
+gradient on a consistent direction; the second accumulates to 1x. PyTorch's `SGD(momentum=0.9)` uses
+the first, so its effective step is up to ten times larger than an implementation using the second at
+the same `lr`. This is a common source of "momentum made my training diverge".
+
+    flips += int(np.sign(w[0]) != np.sign(prev[0]))
+
+The zig-zag, made countable. `w[0]` is the STEEP coordinate. Counting sign changes turns a qualitative
+claim into 599 out of 600, and it is a two-line diagnostic worth having in any optimiser experiment.
+
+    def max_stable(kind, k, beta=0.9):
+        lo, hi = 1e-7, 10.0
+        for _ in range(60):
+            mid = (lo+hi)/2
+            ... ok = np.isfinite(path[-1]).all() and np.abs(path[-1]).max() < 1e3
+            if ok: lo = mid
+            else:  hi = mid
+
+Bisection on the learning rate. Sixty halvings gives about 18 significant figures, which is far more
+than needed - the point is that it finds each method's OWN limit rather than assuming one. Comparing
+optimisers at a learning rate tuned for one of them is the most common way to produce a misleading
+benchmark.
+
+    L = max_stable(kind, k) * 0.9
+
+Running at 90% of the stability limit rather than at it, because exactly at the limit the iteration
+neither converges nor diverges. This is also what you would do in practice.
+
+    v = 0.9*v + 1.0                      # consistent
+    v = 0.9*v + ((-1)**(t+1))            # alternating
+
+The mechanism, isolated from any optimisation at all. Two recurrences, one differing only in the sign
+pattern of its input, converging to 10.0 and to -0.5263. Those are `1/(1-beta)` and `1/(1+beta)`, and
+running them is more convincing than deriving them.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the ravine, five steps by hand. `f = 0.5*(100*w1^2 + 1*w2^2)`, starting at (1, 1), lr = 0.018.
+
+    PLAIN SGD, gradient = (100*w1, 1*w2):
+
+    step   w1        gradient w1   step taken    new w1     w2       new w2
+    ----   -------   -----------   -----------   -------   ------   --------
+       0    1.0000        100.00        -1.800   -0.8000   1.0000     0.9820
+       1   -0.8000        -80.00        +1.440    0.6400   0.9820     0.9643
+       2    0.6400         64.00        -1.152   -0.5120   0.9643     0.9469
+       3   -0.5120        -51.20        +0.922    0.4096   0.9469     0.9299
+       4    0.4096         40.96        -0.737   -0.3277   0.9299     0.9132
+
+`w1` flips sign on EVERY step - 1.0, -0.8, 0.64, -0.512, 0.41 - and the steps are large: 1.8, 1.44,
+1.15. Meanwhile `w2` has moved from 1.0000 to 0.9132 in five steps. The optimiser has spent almost all
+its motion crossing and re-crossing the valley.
+
+    MOMENTUM, beta = 0.9, same lr, computed rather than sketched:
+
+    step   w1 gradient   w1 velocity      w2 gradient   w2 velocity
+    ----   -----------   -----------      -----------   -----------
+       0        100.00        100.00           1.0000        1.0000
+       1        -80.00         10.00           0.9820        1.8820
+       2        -98.00        -89.00           0.9481        2.6419
+       3         62.20        -17.90           0.9006        3.2783
+       4         94.42         78.31           0.8416        3.7920
+
+    Read the two velocity columns. `w1`'s gradients alternate in sign, so its velocity is repeatedly
+    knocked back - 100, then 10, because -80 nearly cancelled the stored 100. `w2`'s gradients all
+    have the same sign, so its velocity climbs monotonically: 1.00, 1.88, 2.64, 3.28, 3.79, heading
+    toward the limit of 10x.
+
+    Note that `w1`'s velocity is still messy early on - this is a transient, and momentum takes a few
+    steps to settle. The convergence numbers in Trace B are what the settled behaviour looks like.
+
+TRACE B - convergence, each method at its own best learning rate, steps to `|w| < 1e-6`.
+
+    condition #   SGD lr    steps   momentum lr   steps   Nesterov lr   steps   winner
+    -----------   -------   ------   -----------   -----   -----------   -----   ---------
+              3   0.60523      68        1.14034     259       0.40985      43   Nesterov
+             10   0.18157      69        0.34210     230       0.12296     102   SGD
+            100   0.01816     754        0.03421     264       0.01230     212   Nesterov
+          1,000   0.00182       -        0.00342     274       0.00123     998   momentum
+         10,000   0.00018       -        0.00034   3,913       0.00012       -   momentum
+
+Two readings.
+
+    THE SGD COLUMN is fine, then bad, then impossible: 68, 69, 754, -, -. Its learning rate is forced
+    down by the steep direction (`2/k_max`), and the shallow direction then needs `O(condition number)`
+    steps at that rate.
+    THE MOMENTUM COLUMN is almost flat: 259, 230, 264, 274. It only degrades at 10,000. That flatness
+    IS the claim "momentum fixes ill-conditioning".
+
+And note the top two rows: momentum is 3.8x and 3.3x SLOWER than plain SGD on well-conditioned
+problems. It is a targeted fix.
+
+TRACE C - the same learning rate, so the comparison is purely about the update rule. Condition 100.
+
+    method     sign flips (600 steps)   |w_shallow| after 600
+    --------   ----------------------   ---------------------
+    SGD                           599                0.000017
+    momentum                      124                0.000001
+    Nesterov                      599                0.000000
+
+SGD flipped on 599 of 600 steps. Momentum flipped 124 times - 4.8x fewer - and got 17x closer on the
+shallow axis. Nesterov flipped just as often as SGD and still reached the floor fastest, which is worth
+noticing: the sign-flip count measures oscillation and is not the same thing as progress.
+
+TRACE D - the mechanism, isolated. `v = 0.9*v + g` fed two different sign patterns.
+
+    after N steps   consistent (+1,+1,+1,...)   alternating (+1,-1,+1,...)
+    -------------   -------------------------   --------------------------
+                1                      1.0000                      1.0000
+                2                      1.9000                     -0.1000
+                5                      4.0951                      0.8371
+               10                      6.5132                     -0.3428
+               20                      8.7842                     -0.4623
+               50                      9.9485                     -0.5236
+              100                      9.9997                     -0.5263
+
+    limits:  1/(1-0.9) = 10.00        1/(1+0.9) = 0.5263        ratio 19x
+
+Nothing about optimisation appears here - it is one line of arithmetic run on two inputs. The 19x
+asymmetry is the whole reason momentum damps one axis and accelerates the other.
+
+TRACE E - beta is not monotone. Condition number 100, each beta at its own stable learning rate.
+
+    beta   effective window   max stable lr   steps   sign flips   verdict
+    ----   ----------------   -------------   -----   ----------   -------------------------
+    0.00                1.0         0.01816     754          753   plain SGD
+    0.50                2.0         0.02707     234          193   BEST here
+    0.90               10.0         0.03421     264          210   the usual default
+    0.95               20.0         0.03510     459          365   worse
+    0.99              100.0         0.03582   2,553        2,030   worse than no momentum
+
+The stability limit barely moves from beta=0.5 upward (0.027 to 0.036), so extra beta is not buying you
+a bigger step. What it buys is more inertia - and past the sweet spot, inertia means overshooting the
+minimum and having to turn around, which the sign-flip column shows climbing back to 2,030.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COST AND EFFECT:
+
+    extra memory              one velocity vector per parameter - DOUBLE the optimiser state of plain
+                              SGD. At LLM scale this is real, and it is why Adafactor and 8-bit
+                              optimisers exist.
+    extra compute             one multiply-add per parameter per step. Negligible.
+    extra hyperparameter      beta. MEASURED to have a sweet spot, not a monotone benefit.
+    amplification, consistent direction    1/(1-beta) = 10x at beta=0.9. MEASURED 9.9997 at step 100.
+    amplification, alternating direction   1/(1+beta) = 0.53x. MEASURED -0.5263.
+    the ratio                              19x. This is the mechanism.
+    stability limit           MEASURED 0.038 for momentum against 0.020 for SGD - only 1.9x.
+    convergence, condition 100    MEASURED 754 steps for SGD, 264 for momentum - 2.9x.
+    convergence, condition 1,000+ MEASURED: SGD never converged; momentum took 274.
+    convergence, condition 3-10   MEASURED: SGD 68-69 steps, momentum 230-259. SGD WINS.
+
+THE MISTAKES:
+
+    - Believing momentum is a general speed-up. MEASURED 3.8x SLOWER than plain SGD at condition number
+      3. It fixes ill-conditioning specifically.
+    - "It lets you use a bigger learning rate." MEASURED 1.9x, and Nesterov's limit is LOWER than plain
+      SGD's. The benefit is directional filtering at whatever rate you use.
+    - Raising beta because more inertia sounds better. MEASURED: beta=0.99 took 2,553 steps against 754
+      for beta=0 and 234 for beta=0.5.
+    - Mixing the two conventions. `beta*v + g` and `beta*v + (1-beta)*g` differ by 10x in effective
+      step at beta=0.9, and PyTorch uses the first.
+    - Forgetting that `v` doubles your optimiser memory - and that Adam, with two moments, triples it.
+    - Comparing optimisers at a shared learning rate tuned for one of them. Find each one's own limit
+      by bisection.
+    - Compensating for ill-conditioning instead of FIXING it. Feature scaling, normalisation layers and
+      better initialisation all reduce the condition number directly, which is strictly better than
+      making the optimiser cope.
+    - Confusing momentum with adaptivity. Momentum smooths the DIRECTION; AdaGrad, RMSProp and Adam's
+      second moment rescale each AXIS. Adam does both, and they are separate ideas.
+    - Missing the noise-reduction argument. In stochastic gradient descent every gradient is a noisy
+      estimate, and averaging the last ~10 of them lowers the variance - a benefit that has nothing to
+      do with curvature and applies even on a well-conditioned problem.
+    - Forgetting the zero-initialisation transient. `v` starts at 0 and is biased low for the first
+      tens of steps - the same effect Adam bias-corrects.
+
+THE TAKEAWAY. Momentum's whole mechanism is that an exponentially-weighted average amplifies a
+CONSISTENT direction by `1/(1-beta)` and an ALTERNATING one by `1/(1+beta)` - measured at 10.00 and
+0.5263, a 19x asymmetry - and a narrow valley's two axes are precisely those two cases. So one
+mechanism damps the wasteful zig-zag and accelerates the productive direction at the same time. That
+turns a problem where plain SGD flips sign on 599 of 600 steps and never converges into one that takes
+274. It is not a free speed-up: on a well-conditioned problem it is slower, its learning-rate advantage
+is only 1.9x, and too much of it is worse than none. Know the pathology it treats, and prefer fixing
+the conditioning where you can.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
