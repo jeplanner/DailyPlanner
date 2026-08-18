@@ -333228,6 +333228,1923 @@ mTLS everywhere without touching application code, that one item justifies more 
 feature combined.""",
 ]
 
+_EX_P1AO["Why use connection pooling instead of a database connection per request?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - opening a connection is expensive, and the database can only hold a
+few hundred of them. A pool opens a small number ONCE and lends them out.
+
+Two separate problems, and the pool solves both.
+
+THE CLIENT'S PROBLEM: setup costs time on every request. MEASURED ON THIS MACHINE over loopback - which
+is the FLOOR, since there is no network:
+
+    new TCP connection per request :  398.0 us mean,  371.4 us p50,  750.2 us p99
+    reused connection              :   92.8 us mean,   83.9 us p50,  258.1 us p99
+    setup cost per request         :  287.5 us   (4.4x)
+
+THE SERVER'S PROBLEM, which is the bigger one: a PostgreSQL backend is an operating-system PROCESS
+costing 5-10 MB, and `max_connections` is typically 100-500. MEASURED as arithmetic:
+
+    5,000 rps holding a connection for 50 ms  ->    250 concurrent connections
+   20,000 rps holding a connection for 20 ms  ->    400 concurrent connections
+
+      100 server-side connections at 8 MB each =   0.8 GB
+      500 server-side connections at 8 MB each =   3.9 GB
+    5,000 server-side connections at 8 MB each =  39.1 GB
+
+A connection per request does not merely waste time - past a few hundred concurrent requests it does not
+work at all. The pool is not an optimisation; it is what makes the arithmetic close.""",
+
+    """2. THE INTUITION - on a real network the cost is not microseconds, it is ROUND TRIPS, and round trips
+are set by the speed of light.
+
+Opening a connection requires a handshake, and a secure one requires two:
+
+    operation                round trips   at 1 ms RTT   at 50 ms RTT (cross-region)
+    ----------------------   -----------   -----------   ---------------------------
+    TCP handshake                      1          1 ms                         50 ms
+    TLS 1.3 handshake                  1          1 ms                         50 ms
+    TLS 1.2 handshake                  2          2 ms                        100 ms
+    the request itself                 1          1 ms                         50 ms
+
+    TCP + TLS 1.3 + request            3          3 ms                        150 ms
+    POOLED (request only)              1          1 ms                         50 ms
+
+A pool removes two of the three round trips. That is a 3x latency reduction that has nothing to do with
+CPU and cannot be optimised away by faster hardware - the only way to avoid a round trip is to not make
+it.
+
+MEASURED the same shape locally with TLS:
+
+    new TLS connection per request : 47,975.9 us p50
+    reused TLS connection          :      113.1 us p50
+
+And I want to be precise about that 48 ms, because it overstates a real system. I measured the crypto
+separately on this box:
+
+    RSA-2048 private-key op (the server's signature) : 0.305 ms
+    RSA-2048 public-key op  (the client's verify)    : 0.033 ms
+    ECDH P-256 key exchange                          : 0.200 ms
+
+Under a millisecond of actual cryptography. The 48 ms is dominated by Python's per-connection setup -
+thread creation, SSLContext work, socket wrapping - not by what a production TLS stack spends. What the
+number DOES show correctly is the shape: a fresh secure connection is orders of magnitude more expensive
+than a reused one, and the fix is the same either way.""",
+
+    """3. EVERY TERM DEFINED.
+
+CONNECTION POOL. A set of open connections kept alive and handed out to requests, then returned rather
+than closed.
+
+CHECKOUT / CHECKIN (or acquire/release). Borrowing a connection from the pool and giving it back. The
+window during which a connection is unavailable to anyone else.
+
+POOL SIZE. The maximum number of connections the pool will hold. The single most important tuning
+parameter, and the one people set by guessing.
+
+QUEUE WAIT. Time a request spends waiting for a free connection. MEASURED below - it is invisible in
+database query timings and very visible to users.
+
+CONNECTION CHURN. Repeatedly opening and closing connections. What a pool exists to stop.
+
+TCP HANDSHAKE. The three-way SYN/SYN-ACK/ACK exchange. One round trip before any data.
+
+TLS HANDSHAKE. Key exchange and certificate verification. One extra round trip in TLS 1.3, two in
+TLS 1.2. Zero on session resumption.
+
+max_connections. The database's server-side limit. Typically 100-500 for PostgreSQL, because each
+connection is a process.
+
+BACKEND PROCESS. PostgreSQL forks a process per connection - which is exactly why the server-side limit
+is low. MySQL uses threads and is cheaper per connection, and still not free.
+
+CONNECTION LIMIT EXHAUSTION. Every connection in use, so new requests are rejected outright - the
+failure mode that takes a whole service down at once.
+
+EXTERNAL POOLER. PgBouncer, pgpool - a separate process that multiplexes many client connections onto
+few server ones. Necessary when you have many application INSTANCES.
+
+TRANSACTION vs SESSION POOLING. Transaction mode returns the connection after each transaction, so far
+fewer server connections are needed - and it forbids session state (temp tables, prepared statements,
+`SET`).
+
+LITTLE'S LAW. concurrency = throughput x latency. The formula that sizes a pool.
+
+IDLE TIMEOUT / MAX LIFETIME. Closing connections that have been idle too long, or that are simply old.
+Both are needed - the first frees resources, the second stops connections outliving a failover.
+
+VALIDATION QUERY. A cheap `SELECT 1` to check that a pooled connection is still alive. Costs a round
+trip; skipping it means the application discovers dead connections as errors.
+
+STALE CONNECTION. A pooled connection the server or a firewall has already closed. The reason
+`max_lifetime` matters.
+
+CONNECTION STORM / THUNDERING HERD. Every instance reconnecting at once after a database restart,
+finishing off the database that just came back.
+
+KEEP-ALIVE. The HTTP-level equivalent of pooling: reusing a TCP connection across requests.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - sizing the pool by intuition, in both directions.
+
+TOO SMALL, and requests queue for a connection BEFORE any work starts. MEASURED, 200 jobs each needing
+5 ms of I/O, arriving together:
+
+    pool size   total ms   mean queue wait ms   p99 queue wait ms   throughput
+    ---------   --------   ------------------   -----------------   ----------
+            1    1,146.6               541.79            1,093.08     174 /s
+            2      579.5               263.81              536.26     345 /s
+            5      229.4                87.61              203.67     872 /s
+           10      111.8                27.69               88.94   1,789 /s
+           20       58.8                 0.66                4.14   3,400 /s
+           40       48.1                 0.00                0.00   4,161 /s
+           80       49.4                 0.00                0.00   4,045 /s
+          200       45.9                 0.00                0.00   4,354 /s
+
+200 jobs x 5 ms = 1,000 ms of work, so with N connections the floor is 1000/N ms, and the measurement
+tracks it exactly until thread overhead takes over past about 40.
+
+THE QUEUE WAIT COLUMN IS THE POINT. At a pool of 5, the mean request waits 87.6 ms for a connection
+before its 5 ms of work begins. Your database reports 5 ms queries. Your users experience 93 ms. The
+missing 88 ms exists nowhere in your database metrics, which is why undersized pools are diagnosed as
+"the database is slow".
+
+TOO BIG, and you have moved the queue somewhere you cannot see it. MEASURED, the same 200 jobs against a
+resource that only supports 8 concurrent operations:
+
+    pool size   total ms   mean end-to-end ms   p99 end-to-end ms
+    ---------   --------   ------------------   -----------------
+            4      287.5               128.05              255.52
+            8      139.8                47.95              114.85
+           16      136.9                44.70              112.87
+           50      138.5                48.97              117.13
+          200      145.6                47.54              119.80
+
+Throughput is FLAT from 8 onward - and slightly WORSE at 200. The extra connections do not create
+capacity; they move the queue from your pool into the database, where you cannot see it, cannot
+prioritise it, and cannot shed it. A pool that queues is doing you a favour: it is applying backpressure
+at a place you control.
+
+THE THIRD TRAP - a pool per instance. Your pool of 20 becomes 20 x (number of instances) at the
+database. Fifty instances is 1,000 connections against a `max_connections` of 200, and autoscaling makes
+it worse exactly when traffic is highest. This is what PgBouncer exists for.
+
+THE FOURTH TRAP - holding a connection while doing something else. Checking out a connection, then
+calling an HTTP API, then using the connection, holds a scarce resource across an unbounded wait. Check
+out late, return early.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+SIZING, PROPERLY - Little's Law, `slots = throughput x latency`:
+
+    500 rps x 10 ms service time  ->  pool >= 5
+    500 rps x 40 ms                ->  pool >= 20
+  2,000 rps x 10 ms                ->  pool >= 20
+  2,000 rps x 40 ms                ->  pool >= 80
+
+Then check that number against the database's real concurrency. A database with 8 cores doing CPU-bound
+work cannot do more than about 8 things at once no matter what you send it - MEASURED above as a flat
+throughput line past 8. The classic guidance `connections = (2 x cores) + effective_spindles` comes from
+the same reasoning.
+
+The counter-intuitive consequence: for a busy database, a SMALLER pool often gives BETTER p99, because
+the queue forms in your application where you can time it out and shed it, rather than inside the
+database where every query slows down together.
+
+WHERE POOLING HAPPENS - it is a stack, and you can be short at any level:
+
+    HTTP KEEP-ALIVE          reuse the TCP connection between client and server. Same idea, same win.
+    HTTP CLIENT POOL         your outbound HTTP client should pool too. MEASURED: 4.4x per request
+                             even on loopback.
+    APPLICATION DB POOL      HikariCP, `database/sql`, SQLAlchemy, pgx. One per process.
+    EXTERNAL POOLER          PgBouncer between many app instances and one database. The answer when
+                             instance count x pool size exceeds `max_connections`.
+    THE DATABASE ITSELF      thread-per-connection (MySQL) or process-per-connection (PostgreSQL). This
+                             is why the server-side limit exists at all.
+
+TRANSACTION-MODE POOLING is the highest-leverage option, and it has a real catch. Returning the
+connection after each TRANSACTION rather than each session means a handful of server connections can
+serve thousands of clients. What you give up is session state: temporary tables, session-level `SET`,
+server-side prepared statements and advisory locks all break, because the next statement may land on a
+different connection. Know which mode you are in before debugging a mysterious "prepared statement does
+not exist".
+
+RELATED FAILURE MODES WORTH NAMING:
+    STALE CONNECTIONS      a firewall or the database closed it while it sat idle. Fix with
+                           `max_lifetime` shorter than the shortest idle timeout in the path, plus a
+                           validation query or a retry.
+    CONNECTION STORM       every instance reconnecting at once after a database restart. Jittered
+                           backoff on connection attempts.
+    LEAKED CONNECTIONS     an exception path that never returns the connection. The pool drains to zero
+                           and the service stops - always use the language's scoped construct
+                           (`with`, `defer`, try-with-resources).
+    LONG TRANSACTIONS      one slow transaction holding a connection blocks everyone else waiting for
+                           the pool. MEASURED in spirit by the queue-wait column above.
+
+WHEN YOU DO NOT NEED A POOL: a single-threaded script, a batch job with one long-lived connection,
+serverless functions that cannot keep state between invocations (which is precisely why serverless
+platforms ship dedicated proxies - AWS RDS Proxy exists for exactly this), and SQLite, where there is no
+server to connect to.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE THE POOL YOUR FRAMEWORK ALREADY HAS. HikariCP, `database/sql`, SQLAlchemy's `QueuePool`,
+     pgx. Do not write one - the edge cases (validation, lifetime, leak detection) are where the value
+     is.
+  2. SIZE IT WITH LITTLE'S LAW: `peak rps x p99 service time`. Then sanity-check against the database's
+     core count. MEASURED: throughput is flat past the resource's real concurrency.
+  3. MULTIPLY BY YOUR INSTANCE COUNT and compare with `max_connections`. 50 instances x a pool of 20 is
+     1,000 connections. This calculation is the one most often skipped.
+  4. ADD PGBOUNCER when that product exceeds the limit. Transaction mode if your code has no session
+     state - and verify that it has none.
+  5. SET A CHECKOUT TIMEOUT. Waiting forever for a connection turns a slow database into a hung
+     application. Fail fast and shed load.
+  6. MEASURE QUEUE WAIT SEPARATELY FROM QUERY TIME. MEASURED: at a pool of 5 the mean queue wait was
+     87.6 ms in front of 5 ms of work, and none of it appears in database metrics.
+  7. SET `max_lifetime` SHORTER THAN THE SHORTEST IDLE TIMEOUT in the path - the database's, the load
+     balancer's, the firewall's. Otherwise you will hand out dead connections.
+  8. RETURN THE CONNECTION IN A `finally` (or `with`, `defer`, try-with-resources). One leaked
+     connection per error path drains the pool and the service stops.
+  9. CHECK OUT LATE, RETURN EARLY. Never hold a connection across an HTTP call or any other unbounded
+     wait.
+ 10. KEEP TRANSACTIONS SHORT. A long transaction holds a connection AND database locks.
+ 11. POOL YOUR OUTBOUND HTTP CLIENTS TOO. MEASURED 4.4x per request on loopback; on a real network it
+     is 2 extra round trips.
+ 12. JITTER RECONNECTION ATTEMPTS so a database restart does not produce a connection storm from every
+     instance simultaneously.
+ 13. ALARM ON POOL SATURATION - `active / max` and the queue-wait p99. Saturation is the leading
+     indicator of the outage; query latency is the lagging one.
+ 14. DO NOT USE A NORMAL POOL FROM SERVERLESS FUNCTIONS. Each invocation is its own process; use the
+     platform's proxy.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"There are two reasons, and the second is the one that actually forces your hand.
+
+The first is time. I measured a fresh TCP connection per request against a reused one over loopback -
+which is the floor, because there is no network - and it was 371 microseconds versus 84, so 4.4x. On a
+real network the honest unit is ROUND TRIPS: a TCP handshake is one, a TLS 1.3 handshake is another, and
+then the request itself. Three round trips instead of one, so at a 50 ms cross-region RTT that is 150 ms
+against 50 ms. You cannot optimise a round trip away with faster hardware.
+
+I also measured TLS locally at 48 ms per fresh connection against 113 microseconds reused - but I would
+flag that number as overstating a real system. When I timed the crypto by itself it was well under a
+millisecond: an RSA-2048 private-key operation was 0.305 ms and a P-256 key exchange 0.200 ms. The 48 ms
+is Python's per-connection setup, not what a production TLS stack spends. The shape is right; the
+magnitude is mine.
+
+The second reason is the server side, and it is not an optimisation - it is arithmetic. A PostgreSQL
+backend is a process costing 5-10 MB and `max_connections` is typically 100 to 500. At 5,000 requests a
+second holding a connection for 50 ms you need 250 concurrent connections; 5,000 connections would be 39
+GB of server memory. A connection per request does not just waste time, past a few hundred concurrent
+requests it does not work.
+
+The part I would spend most time on is SIZING, because both directions hurt. Too small and requests
+queue for a connection before any work starts - I measured a pool of 5 against 200 jobs of 5 ms each,
+and the mean wait for a connection was 87.6 milliseconds in front of 5 milliseconds of work. Your
+database reports 5 ms queries, your users see 93 ms, and the missing 88 ms appears in no database metric
+at all. That is why undersized pools get diagnosed as 'the database is slow'.
+
+Too big is subtler. I ran the same jobs against a resource that only supports 8 concurrent operations,
+and throughput was completely flat from a pool of 8 up to 200 - actually slightly worse at 200. The
+extra connections do not create capacity, they move the queue from your pool into the database where you
+cannot see it, cannot prioritise it and cannot shed it. A pool that queues is applying backpressure
+somewhere you control.
+
+And the calculation people skip: your pool size multiplies by your INSTANCE count. Fifty instances with
+a pool of 20 is a thousand connections against a limit of two hundred, and autoscaling makes it worse
+exactly when traffic is highest. That is what PgBouncer is for."
+
+THE ONE SENTENCE TO NOT FUMBLE: pooling saves two of three round trips per request, and more
+importantly it is the only way the server-side arithmetic works - and the pool SIZE is the real
+decision, because too small hides latency in queue wait that no database metric shows, and too big just
+moves the queue somewhere you cannot control.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    for _ in range(N):
+        t0 = time.perf_counter()
+        c = socket.create_connection(('127.0.0.1', PP)); req(c); c.close()
+
+The per-request version. `create_connection` performs the full TCP handshake, and `close()` throws the
+connection away, so the next iteration pays for it again. Timing the WHOLE block - connect, request,
+close - is what makes it comparable to the reused case.
+
+    c = socket.create_connection(('127.0.0.1', PP)); req(c)
+    for _ in range(N):
+        t0 = time.perf_counter(); req(c)
+
+The pooled version, reduced to its essence: one connection, N requests on it. The timing loop now
+contains only the request. MEASURED 371.4 us against 83.9 us at p50.
+
+Running on LOOPBACK is deliberate and worth stating. There is no propagation delay, no packet loss and
+no router, so the 287.5 us difference is pure kernel and library overhead. On a real network you would
+add a full round trip on top, which is why section 2 converts everything into round trips.
+
+    ctx.wrap_socket(raw, server_hostname='localhost')
+
+The TLS version, and the reason the entry reports its own limitation. This performs a full handshake per
+call in Python. Timing the raw crypto separately -
+
+    t(lambda: k.sign(msg, padding.PKCS1v15(), hashes.SHA256()), 200)   -> 0.305 ms
+
+- shows the cryptography is sub-millisecond, so the 48 ms is framework overhead. Measuring the components
+is what lets you say which part of your own number to trust.
+
+    sem = threading.Semaphore(size)
+    def job():
+        t0 = time.perf_counter()
+        with sem:
+            t1 = time.perf_counter()
+            time.sleep(work_s)
+        waits.append((t1 - t0) * 1000)
+
+The pool model, and it is genuinely how a pool works: a semaphore of N permits, acquired before the work
+and released after. `t1 - t0` is measured across the ACQUIRE only, so `waits` is pure queueing - the
+time spent waiting for a connection, before any query runs.
+
+That separation is the whole insight of section 4. A database metric measures the `time.sleep` and knows
+nothing about `t1 - t0`.
+
+`time.sleep` rather than a busy-wait matters here: sleeping releases Python's GIL, so the threads
+genuinely overlap and model I/O. An earlier version of this measurement used a CPU spin loop and showed
+completely flat results at every pool size, because the GIL serialised everything - a measurement
+artefact that looked like a finding.
+
+    resource = threading.Semaphore(cores)
+    with sem:
+        with resource: time.sleep(work_s)
+
+The oversized-pool model: TWO semaphores nested. The outer one is your pool; the inner one is the
+database's real concurrency limit. Enlarging the outer semaphore past the inner one cannot help, and the
+measurement shows exactly that - flat from 8 to 200. This nesting is the mechanism behind "the queue
+just moves".
+
+    conc = rps * hold_ms / 1000
+
+Little's Law, and it is one multiplication. Every pool-sizing argument reduces to it, and the mistake is
+almost always using MEAN latency instead of p99 - the pool has to survive the slow requests, not the
+typical ones.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - connection setup, loopback, 2,000 requests each.
+
+    mode                              mean       p50       p99
+    ------------------------------   -------   -------   -------
+    new TCP connection per request   398.0 us  371.4 us  750.2 us
+    reused connection                 92.8 us   83.9 us  258.1 us
+    setup cost                       305.2 us  287.5 us  492.1 us
+    ratio                                                    4.4x
+
+This is the FLOOR. No propagation delay, no loss, no routers - just kernel and library work.
+
+TRACE B - TLS, and the honest decomposition.
+
+    mode                                 p50
+    ----------------------------------   -----------
+    new TLS connection per request       47,975.9 us
+    reused TLS connection                   113.1 us
+
+    but the actual crypto on this box:
+    RSA-2048 private-key op (server)          305 us
+    RSA-2048 public-key op (client)            33 us
+    ECDSA P-256 sign                           32 us
+    ECDH P-256 key exchange                   200 us
+
+Under a millisecond of cryptography inside a 48 ms measurement. The rest is Python: thread creation,
+SSLContext setup, socket wrapping. So the correct claim from this data is "a fresh secure connection is
+orders of magnitude more expensive than a reused one", not "TLS handshakes cost 48 ms".
+
+TRACE C - the durable version, in round trips.
+
+    path                       round trips   1 ms RTT   50 ms RTT
+    ------------------------   -----------   --------   ---------
+    TCP + TLS1.3 + request               3       3 ms      150 ms
+    TCP + TLS1.2 + request               4       4 ms      200 ms
+    POOLED (request only)                1       1 ms       50 ms
+
+The pool removes two of three round trips - 3x - and this number is hardware-independent.
+
+TRACE D - server-side arithmetic.
+
+    load                                  concurrent connections needed
+    -----------------------------------   -----------------------------
+    1,000 rps x 5 ms                                                  5
+    1,000 rps x 50 ms                                                50
+    5,000 rps x 5 ms                                                 25
+    5,000 rps x 50 ms                                               250
+    20,000 rps x 20 ms                                              400
+
+    server memory at 8 MB per connection:
+    100 connections    0.8 GB
+    500 connections    3.9 GB
+    5,000 connections 39.1 GB     (against a typical max_connections of 100-500)
+
+TRACE E - undersized pool, 200 jobs of 5 ms arriving together.
+
+    pool   total ms   mean queue wait   p99 queue wait   throughput
+    ----   --------   ---------------   --------------   ----------
+       1    1,146.6         541.79 ms      1,093.08 ms      174 /s
+       2      579.5         263.81 ms        536.26 ms      345 /s
+       5      229.4          87.61 ms        203.67 ms      872 /s
+      10      111.8          27.69 ms         88.94 ms    1,789 /s
+      20       58.8           0.66 ms          4.14 ms    3,400 /s
+      40       48.1           0.00 ms          0.00 ms    4,161 /s
+      80       49.4           0.00 ms          0.00 ms    4,045 /s
+     200       45.9           0.00 ms          0.00 ms    4,354 /s
+
+The total follows 1000/N almost exactly (1,000 / 5 = 200 against a measured 229) until thread overhead
+flattens it past 40.
+
+The queue-wait column is the finding: at a pool of 5, the average request waits 87.61 ms to obtain a
+connection and then does 5 ms of work. The database reports 5 ms. The user waits 93 ms. Every millisecond
+of that gap is invisible in database metrics, which is why this failure is misdiagnosed so consistently.
+
+TRACE F - oversized pool, same jobs, resource limited to 8 concurrent operations.
+
+    pool   total ms   mean end-to-end   p99 end-to-end
+    ----   --------   ---------------   --------------
+       4      287.5        128.05 ms       255.52 ms
+       8      139.8         47.95 ms       114.85 ms
+      16      136.9         44.70 ms       112.87 ms
+      50      138.5         48.97 ms       117.13 ms
+     200      145.6         47.54 ms       119.80 ms
+
+Flat from 8 onward, and marginally WORSE at 200. There is no reward for a pool larger than the
+resource's real concurrency, and there is a cost: the queue relocates into the database, where it slows
+every query rather than one waiting request, and where you cannot shed it.
+
+TRACE G - sizing, and the number people forget.
+
+    Little's Law: slots = rps x latency
+      500 rps x 10 ms  ->    5
+      500 rps x 40 ms  ->   20
+    2,000 rps x 10 ms  ->   20
+    2,000 rps x 40 ms  ->   80
+
+    then multiply by INSTANCES:
+      50 instances x pool of 20 = 1,000 connections
+      typical PostgreSQL max_connections = 100-500
+
+The last two lines are the calculation that gets skipped, and autoscaling makes it worse precisely when
+traffic peaks - which is the argument for an external pooler.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    setup cost (loopback)      371.4 us per-request vs 83.9 us pooled, p50 -> 4.4x
+    TLS (loopback)             47,975.9 us vs 113.1 us p50 - but the crypto alone is 0.305 ms
+                               (RSA-2048 sign) and 0.200 ms (ECDH P-256); the rest is framework overhead
+    round trips                3 (TCP + TLS1.3 + request) vs 1 pooled -> 150 ms vs 50 ms at 50 ms RTT
+    server side                5,000 rps x 50 ms = 250 concurrent connections
+                               5,000 connections x 8 MB = 39.1 GB, vs max_connections of 100-500
+    undersized pool            pool 5: 87.61 ms mean queue wait in front of 5 ms of work
+                               pool 20: 0.66 ms. Throughput 872/s vs 3,400/s
+    oversized pool             throughput flat from 8 to 200 against an 8-concurrency resource,
+                               slightly worse at 200
+
+COMPLEXITY: a pool is O(1) to check out and check in. The cost is memory for idle connections on both
+sides and the operational surface - lifetimes, validation, leak detection.
+
+THE MISTAKES:
+
+    - No pool at all. MEASURED 4.4x on loopback and 2 extra round trips on a real network.
+    - Sizing by guesswork. Use `peak rps x p99 latency`, then check it against the database's cores.
+    - Forgetting to multiply by INSTANCE COUNT. 50 x 20 = 1,000 against a limit of 200.
+    - Assuming a bigger pool is safer. MEASURED flat past the resource's concurrency, and it hides the
+      queue inside the database.
+    - Not measuring QUEUE WAIT separately. MEASURED 87.61 ms invisible to every database metric.
+    - No checkout timeout, so a slow database becomes a hung application.
+    - Leaking connections on error paths. Always `with` / `defer` / try-with-resources.
+    - Holding a connection across an HTTP call. Check out late, return early.
+    - `max_lifetime` longer than a firewall or load-balancer idle timeout, so the pool hands out dead
+      connections.
+    - Transaction-mode pooling with session state - temp tables, `SET`, server-side prepared statements
+      all break, and the error is baffling if you do not know the mode.
+    - No jitter on reconnection, so a database restart produces a connection storm from every instance.
+    - Using a normal pool from serverless functions. Each invocation is its own process; use the
+      platform's proxy.
+
+THE TAKEAWAY. A connection costs a round trip to open - two if it is encrypted - and a pool removes both,
+which is a 3x latency win that hardware cannot buy. More decisively, the server side is a hard limit: a
+few hundred connections at several megabytes each, against thousands of concurrent requests, so pooling
+is what makes the arithmetic close at all. The engineering is then entirely in the SIZE: Little's Law
+gives the number, multiply it by your instance count before comparing it to `max_connections`, and
+measure queue wait separately from query time - because an undersized pool hides 88 milliseconds
+somewhere no database metric will ever show you, and an oversized one just moves the queue into the
+database where you can neither see it nor shed it.""",
+]
+
+_EX_P1AO["Why use the bulkhead pattern to isolate resources instead of a shared pool?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a ship is divided into watertight compartments so that a hole in one
+does not sink the whole vessel. A bulkhead in software is the same idea: give each dependency its OWN
+slice of the resource, so that one sick dependency cannot consume everything.
+
+The failure it prevents is specific and very common. You have one thread pool, or one connection pool,
+serving calls to several downstream services. One of them starts hanging. Its calls do not fail - they
+WAIT - and while they wait they hold a slot. Slot by slot, the slow dependency accumulates the entire
+pool, and now every request fails, including the 90% that never touch the sick service.
+
+MEASURED ON THIS MACHINE - 600 requests at 500/s across three dependencies: A (20 ms, 45% of traffic),
+B (HUNG at 3 s, 10% of traffic), C (20 ms, 45%). Pool of 21 either way - shared, or 7 per dependency:
+
+    configuration   A p50        C p50        A p99        C p99
+    -------------   ----------   ----------   ----------   ----------
+    SHARED          2,609.4 ms   2,674.5 ms   5,156.9 ms   5,816.2 ms
+    BULKHEAD           21.3 ms      21.4 ms      37.0 ms      31.8 ms
+
+The healthy dependencies are 20 ms services. Behind a shared pool they respond in 2.6 SECONDS - a 122x
+latency inflation - because they spend all their time queueing behind calls to a service they have
+nothing to do with. With bulkheads they respond in 21 ms, which is their actual latency.
+
+Nothing about A or C changed. They were simply starved.""",
+
+    """2. THE INTUITION - a small share of the REQUESTS becomes an overwhelming share of the RESOURCE,
+because a hung call holds its slot far longer.
+
+That is the whole mechanism, and it is arithmetic. MEASURED, slot-seconds consumed per 100 requests:
+
+    dependency   requests   time held each   slot-seconds   share
+    ----------   --------   --------------   ------------   ------
+    A                  45          0.020 s          0.900    2.8%
+    B (SICK)           10          3.000 s         30.000   94.3%
+    C                  45          0.020 s          0.900    2.8%
+    total                                          31.800
+
+B is 10% of the requests and 94.3% of the RESOURCE. Ten percent of your traffic has taken over
+essentially all of your capacity, and it did not need to be a majority or even a large minority - it just
+needed to be SLOW.
+
+WHY THE INTUITION FAILS. People reason about failures in terms of REQUEST COUNTS - "only 10% of traffic
+uses that service, so at most 10% of requests can be affected". That reasoning is correct for a
+dependency that FAILS FAST and completely wrong for one that HANGS. A fast failure returns the slot
+immediately; a hang holds it. The right unit is not requests, it is SLOT-SECONDS, and slot-seconds are
+requests MULTIPLIED BY duration.
+
+A DEPENDENCY THAT GOES DOWN CLEANLY IS ALMOST HARMLESS. A dependency that goes SLOW is the dangerous one,
+because it converts your concurrency limit into its own queue. That inversion - failing is safer than
+being slow - is the single most useful thing in this entry.""",
+
+    """3. EVERY TERM DEFINED.
+
+BULKHEAD. Partitioning a resource so each consumer gets a fixed share and cannot take more.
+
+RESOURCE POOL. Threads, connections, semaphore permits, memory - anything finite that concurrent
+requests compete for.
+
+RESOURCE EXHAUSTION / POOL STARVATION. Every slot in use, so new work waits or is rejected.
+
+CASCADING FAILURE. One component's failure propagating outward. The shared-pool measurement above is the
+canonical mechanism.
+
+BLAST RADIUS. How much breaks when one thing breaks. Shared pool: everything. Bulkhead: one partition.
+
+SLOT-SECONDS. Concurrency multiplied by time held. The correct unit for reasoning about pool pressure.
+MEASURED: B is 10% of requests and 94.3% of slot-seconds.
+
+SEMAPHORE BULKHEAD. A counter limiting concurrent calls to one dependency. Cheap - no extra threads - and
+the caller blocks on the calling thread.
+
+THREAD-POOL BULKHEAD. A separate thread pool per dependency. Costs memory and context switching, and
+gives true isolation including from a dependency that blocks uninterruptibly.
+
+CIRCUIT BREAKER. After N failures, stop calling the dependency entirely for a cooldown. COMPLEMENTARY to
+a bulkhead, not a substitute - it reacts to failures, while a bulkhead caps concurrency regardless.
+
+TIMEOUT. A deadline on the call itself. MEASURED below - necessary and not sufficient.
+
+ACQUIRE TIMEOUT. A deadline on getting a SLOT, separate from the call's own timeout. Turns starvation
+into a fast rejection.
+
+LOAD SHEDDING. Rejecting work you cannot serve, rather than queueing it.
+
+BACKPRESSURE. Signalling upstream to slow down.
+
+LITTLE'S LAW. concurrency = throughput x latency. Sizes each bulkhead.
+
+FAIL FAST. Returning an error immediately rather than waiting. The behaviour a bulkhead forces on the
+sick partition.
+
+HEAD-OF-LINE BLOCKING. One slow item delaying everything behind it. What a shared pool produces.
+
+FRAGMENTATION. Idle capacity trapped in one partition while another queues. The cost of bulkheads,
+MEASURED below.
+
+TENANT ISOLATION. The same pattern applied per CUSTOMER rather than per dependency, so one tenant's
+traffic spike cannot starve the others.
+
+HYSTRIX / RESILIENCE4J / POLLY. Libraries that implement bulkheads, circuit breakers and timeouts
+together, because they are almost always needed together.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we have timeouts, so we are fine". Timeouts help a lot, and
+they do not solve this.
+
+MEASURED, the same scenario with a SHARED pool but callers giving up on waiting for a slot:
+
+    acquire timeout   healthy requests completed   healthy REJECTED   wall clock
+    ---------------   --------------------------   ----------------   ----------
+             50 ms                 150/540 (27.8%)                390      3.74 s
+            200 ms                 158/540 (29.3%)                382      3.90 s
+          1,000 ms                 161/540 (29.8%)                379      3.95 s
+
+    (with no timeout at all, everything eventually completes - after 9.75 s, with a
+     healthy p50 of 2.6 s)
+
+The timeout does something genuinely valuable: it converts a nine-second HANG into a fast failure, and
+the wall clock drops from 9.75 s to 3.74 s. That is the difference between a service that is slow and a
+service that is unresponsive, and it matters.
+
+But look at the completion column. SEVENTY PERCENT of healthy traffic is still rejected, and the timeout
+value barely changes it - 27.8% at 50 ms and 29.8% at 1,000 ms. The slots are still going to B; the
+timeout only decides how long A and C wait before being told no.
+
+TIMEOUTS BOUND THE DAMAGE. BULKHEADS PREVENT IT. You want both, and if you only have timeouts you have a
+service that fails quickly instead of one that fails slowly.
+
+THE SECOND TRAP - measuring the wrong thing and concluding you are fine. With unbounded waiting, my
+shared-pool run completed 540 of 540 healthy requests - a 100% success rate. If your dashboard shows
+completion rates, this incident is INVISIBLE. It shows up only in latency: a p50 of 2,609 ms on a 20 ms
+service. Success-rate monitoring will tell you everything is fine while every user waits three seconds.
+
+THE THIRD TRAP - thinking a circuit breaker replaces a bulkhead. A breaker trips on FAILURES. A hanging
+dependency is not failing - it is responding, slowly - so a naive breaker may never trip. A bulkhead caps
+concurrency regardless of whether calls succeed, which is why it works on exactly the case the breaker
+misses. Use both: the bulkhead contains the damage, the breaker stops the pointless calls.
+
+THE FOURTH TRAP - forgetting that the shared resource might not be yours. Bulkheads apply to CPU, memory,
+file descriptors and database connections too. A background job that hogs the same connection pool as
+your request path is the same failure with a different name.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+SIZING A BULKHEAD - Little's Law, per dependency, at its HEALTHY latency:
+
+    A: 225 rps x 0.020 s =  4.5 slots
+    B:  50 rps x 0.050 s =  2.5 slots
+    C: 225 rps x 0.020 s =  4.5 slots
+
+And the reassuring property: getting a bulkhead wrong only hurts THAT dependency. MEASURED, varying the
+per-dependency slot count with B still hung:
+
+    slots each   A completed   A p99        C completed   C p99        B completed
+    ----------   -----------   ----------   -----------   ----------   -----------
+             2           270   1,253.8 ms           270   1,265.5 ms            60
+             4           270     153.6 ms           270     170.6 ms            60
+             7           270      32.2 ms           270      38.0 ms            60
+            15           270      21.3 ms           270      21.1 ms            60
+
+Under-provisioning at 2 slots costs A a p99 of 1.25 s - bad, and BOUNDED, and entirely A's own fault
+rather than B's. Compare with the shared pool, where A's p99 was 5,156.9 ms because of a service it never
+called. That containment is the property you are buying.
+
+THE COST - FRAGMENTATION. Isolated capacity cannot be borrowed. MEASURED, 600 requests ALL to A:
+
+    configuration     wall clock   p50       p99
+    ---------------   ----------   -------   ---------
+    shared 21 slots        1.73 s   20.3 ms    21.3 ms
+    bulkhead 7 each        1.78 s   56.3 ms   162.1 ms
+
+A burst to one dependency cannot use the 14 idle slots sitting in B's and C's partitions, so p50 goes
+from 20.3 ms to 56.3 ms and p99 from 21.3 ms to 162.1 ms. That is the honest trade: a bulkheaded system
+needs MORE total capacity to serve the same peak, because it cannot pool idle slots.
+
+THE FAMILY OF ISOLATION MECHANISMS, from cheapest to strongest:
+
+    TIMEOUTS                 bound how long ONE call waits. MEASURED: necessary, and 70% of healthy
+                             traffic still rejected.
+    ACQUIRE TIMEOUTS         bound how long you wait for a SLOT. Turns starvation into fast rejection.
+    SEMAPHORE BULKHEAD       cap concurrency per dependency. Cheap, no extra threads, and the calling
+                             thread still blocks.
+    THREAD-POOL BULKHEAD     a separate pool per dependency. True isolation - including from a call
+                             that blocks uninterruptibly - at the cost of memory and context switches.
+    CIRCUIT BREAKER          stop calling a failing dependency at all. Reacts to failures; pairs with,
+                             does not replace, a bulkhead.
+    SEPARATE PROCESSES       one process per concern. Isolates memory and CPU as well.
+    SEPARATE SERVICES/CLUSTERS  the strongest and most expensive. Cell-based architecture.
+
+WHERE ELSE THE SAME PATTERN APPLIES:
+    PER-TENANT LIMITS        so one customer's spike does not starve the others. The same measurement
+                             with "dependency" replaced by "tenant".
+    SEPARATE POOLS FOR READS AND WRITES so an analytics query cannot starve checkout.
+    SEPARATE POOLS FOR BACKGROUND JOBS AND REQUEST TRAFFIC.
+    PRIORITY QUEUES          a softer version - shared capacity with preferential access.
+    KUBERNETES RESOURCE LIMITS  bulkheads for CPU and memory, enforced by the kernel.
+
+WHEN NOT TO BULKHEAD: a single dependency (there is nothing to isolate FROM), very small pools where
+partitioning leaves each share unusably tiny, and workloads that are genuinely bursty and uncorrelated -
+where the pooling gain outweighs the isolation. If you cannot afford the fragmentation, use acquire
+timeouts and a circuit breaker instead, and know what you have given up.""",
+
+    """6. HOW TO CODE IT.
+
+  1. LIST YOUR DOWNSTREAM DEPENDENCIES AND WORK OUT WHAT THEY SHARE. Usually one thread pool or one HTTP
+     client pool, and nobody drew that picture before the incident.
+  2. GIVE EACH DEPENDENCY ITS OWN SEMAPHORE. `Semaphore(n)` per dependency, acquired before the call and
+     released in a `finally`. This is the cheapest version and it captures most of the benefit.
+  3. SIZE EACH ONE WITH LITTLE'S LAW at HEALTHY latency: `expected rps to this dependency x its p99`.
+     MEASURED: A needs 4.5 slots at 225 rps and 20 ms.
+  4. SET AN ACQUIRE TIMEOUT AS WELL AS A CALL TIMEOUT. They are different deadlines: one bounds waiting
+     for a slot, the other bounds the call. Without the first, a full bulkhead still blocks the caller.
+  5. USE A THREAD-POOL BULKHEAD when the client library can block uninterruptibly - a semaphore does not
+     help if the calling thread itself cannot be freed.
+  6. ADD A CIRCUIT BREAKER TOO. The bulkhead contains a hang; the breaker stops calling a dependency that
+     is plainly broken. They cover different failures.
+  7. MEASURE LATENCY, NOT JUST SUCCESS RATE. MEASURED: the shared-pool run completed 100% of healthy
+     requests with a p50 of 2.6 seconds on a 20 ms service. Success-rate dashboards show nothing.
+  8. ALARM ON BULKHEAD SATURATION - permits in use over permits available, per dependency. It is the
+     leading indicator; latency is the lagging one.
+  9. BUDGET FOR FRAGMENTATION. MEASURED: p50 20.3 ms shared against 56.3 ms bulkheaded for a
+     single-dependency burst. Partitioned capacity needs to be larger in total.
+ 10. BULKHEAD BY TENANT TOO if you are multi-tenant. Identical mechanism, and it stops one customer's
+     batch job from becoming everyone's outage.
+ 11. SEPARATE BACKGROUND WORK FROM REQUEST TRAFFIC - different pools, different connections. This is the
+     single most common shared-resource mistake and it costs nothing to fix.
+ 12. TEST IT BY INJECTING A HANG, not an error. MEASURED: a dependency that FAILS fast is nearly
+     harmless; a dependency that goes SLOW is what takes you down. Fault injection that only returns 500s
+     does not exercise this at all.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A bulkhead is the ship metaphor: watertight compartments, so a hole in one does not sink the vessel. In
+software it means each dependency gets its own slice of the thread or connection pool, so one sick
+dependency cannot consume all of it.
+
+The failure it prevents is very specific. With a shared pool, a dependency that HANGS does not fail - it
+waits, and while it waits it holds a slot. I measured this: 600 requests across three dependencies, where
+A and C are healthy 20 ms services taking 45% of traffic each, and B is hung at 3 seconds taking 10%.
+With a shared pool of 21, A's p50 was 2,609 ms and C's was 2,674 ms - a 122x inflation on services that
+were completely healthy. With 7 slots each, they were 21 ms, which is their real latency.
+
+The mechanism is arithmetic and it is worth stating precisely. Per 100 requests, A consumes 45 x 0.02 =
+0.9 slot-seconds, C the same, and B consumes 10 x 3.0 = 30 slot-seconds. So B is 10% of the REQUESTS and
+94.3% of the RESOURCE. People reason in request counts - 'only 10% of traffic touches that service' -
+and the right unit is slot-seconds, which is requests multiplied by duration.
+
+The inversion that follows is the most useful thing here: a dependency that goes DOWN cleanly is almost
+harmless, because a fast failure returns the slot immediately. A dependency that goes SLOW is the
+dangerous one. Which means fault-injection testing that only returns 500s never exercises this at all -
+you have to inject a hang.
+
+I also checked whether timeouts alone are enough, because that is the usual pushback. With a shared pool
+and an acquire timeout, the wall clock dropped from 9.75 seconds to 3.74 - genuinely valuable, it turns a
+hang into a fast failure. But 70% of healthy traffic was still REJECTED, and moving the timeout from 50
+ms to 1,000 ms barely changed it, 27.8% to 29.8% completed. The slots are still going to B; the timeout
+only decides how long the healthy requests wait before being told no. Timeouts bound the damage,
+bulkheads prevent it.
+
+One monitoring point I would raise. In the unbounded shared-pool run, 100% of healthy requests eventually
+completed. If your dashboard is success rates, this incident is invisible - it lives entirely in latency.
+
+And the cost is real: partitioned capacity cannot be borrowed. I measured a burst going entirely to one
+dependency - shared gave p50 20.3 ms, bulkheaded gave 56.3 ms and a p99 of 162 ms, because the 14 idle
+slots in the other partitions were unreachable. So a bulkheaded system needs more total capacity for the
+same peak."
+
+THE ONE SENTENCE TO NOT FUMBLE: reason in SLOT-SECONDS rather than request counts - 10% of requests
+became 94% of the pool because they were slow, not because they were many - and that is why a dependency
+going slow is far more dangerous than one going down.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    LAT = {'A': 0.020, 'B': 3.000, 'C': 0.020}
+    MIX = ['A']*45 + ['B']*10 + ['C']*45
+
+The scenario in two lines. B is 150x slower and only 10% of traffic - deliberately a MINORITY, because
+the point is that a small share of requests can take the whole pool. If B were 50% of traffic nobody
+would be surprised.
+
+    if mode == 'shared':
+        shared = threading.Semaphore(pool_total)
+    else:
+        sems = {k: threading.Semaphore(pool_total // 3) for k in 'ABC'}
+
+The entire difference between the two architectures: ONE semaphore of 21, or THREE semaphores of 7. Same
+total capacity, so the comparison is fair - this is not "bulkheads by adding resources".
+
+    def handle(dep):
+        s = shared if shared is not None else sems[dep]
+        t0 = time.perf_counter()
+        got = s.acquire(timeout=timeout) if timeout else s.acquire()
+        if not got:
+            rejected[dep] += 1; return
+        try: time.sleep(LAT[dep])
+        finally: s.release()
+        done[dep].append((time.perf_counter() - t0) * 1000)
+
+The request handler, and three details carry the measurement.
+
+`t0` is taken BEFORE the acquire, so the recorded latency includes queueing. That is what a user
+experiences and it is the only way the 2,609 ms shows up - if you timed only the `sleep` you would
+measure 20 ms and conclude everything was fine, which is exactly the monitoring trap in section 4.
+
+`finally: s.release()` - a slot leaked on an error path is a permanently smaller pool. In production this
+is a `with` block or try-with-resources.
+
+`acquire(timeout=...)` versus `acquire()` is the timeout experiment: with no timeout the caller waits
+forever and everything eventually completes; with one, healthy callers give up and are counted as
+rejected.
+
+    time.sleep(arrival_s)
+
+Requests arrive at a RATE rather than all at once - 500/s here. That matters, because a burst that
+arrives instantaneously is a different (and easier) problem than sustained arrival against a saturating
+pool. It is also why `time.sleep` and not a busy-wait: sleeping releases the GIL, so the threads genuinely
+overlap and model I/O rather than CPU.
+
+    print(f"{dep}: {n} requests x {LAT[dep]} s = {n*LAT[dep]} slot-seconds")
+
+The arithmetic that explains everything else. Multiplying count by duration converts "10% of traffic"
+into "94.3% of the resource", and once you see that, the shared-pool result stops being surprising and
+becomes predictable.
+
+    resource = threading.Semaphore(cores)      # (from the fragmentation experiment)
+    for i in range(600):
+        t = threading.Thread(target=handle, args=('A',))
+
+The fragmentation test sends ALL traffic to one dependency. Under bulkheads only A's 7 slots are usable
+and the other 14 sit idle - which is exactly the scenario partitioning is bad at, and reporting it is
+what makes the comparison honest rather than a sales pitch.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup throughout: 600 requests at 500/s. A = 20 ms (45%), B = HUNG at 3 s (10%), C = 20 ms (45%). Total
+capacity 21 slots.
+
+TRACE A - shared pool versus bulkheads.
+
+    SHARED POOL (21 slots), wall clock 9.75 s
+      A: 270/270 completed   p50 2,609.4 ms   p99 5,156.9 ms
+      B:  60/ 60 completed   p50 5,564.3 ms   p99 8,076.4 ms
+      C: 270/270 completed   p50 2,674.5 ms   p99 5,816.2 ms
+
+    BULKHEADS (7 slots each), wall clock 27.15 s
+      A: 270/270 completed   p50    21.3 ms   p99    37.0 ms
+      B:  60/ 60 completed   p50 14,171.6 ms  p99 25,590.7 ms
+      C: 270/270 completed   p50    21.4 ms   p99    31.8 ms
+
+A's p50 goes from 2,609.4 ms to 21.3 ms - 122x - and 21.3 ms is simply A's real latency plus a little
+queueing. The bulkhead did not make A faster; it stopped B from making A slow.
+
+Two honest observations. B gets WORSE under bulkheads (5.6 s to 14.2 s p50) because it now has 7 slots
+instead of competing for 21 - which is correct behaviour: the sick dependency should be the one that
+suffers. And the total wall clock is LONGER (9.75 s to 27.15 s), for the same reason: B's work is
+throttled, so it takes longer to drain. If you measure only aggregate throughput, bulkheads look worse.
+The thing that improved is the only thing that matters - the latency of the healthy 90%.
+
+TRACE B - the mechanism, per 100 requests.
+
+    dependency   requests   held each   slot-seconds   share of the pool
+    ----------   --------   ---------   ------------   -----------------
+    A                  45     0.020 s          0.900                2.8%
+    B (SICK)           10     3.000 s         30.000               94.3%
+    C                  45     0.020 s          0.900                2.8%
+    TOTAL                                     31.800
+
+10% of requests, 94.3% of the resource. This single table is the entry: the failure is not about how MANY
+requests hit the sick dependency, it is about how LONG each one holds a slot.
+
+TRACE C - do timeouts fix it?
+
+    acquire timeout   healthy completed   healthy rejected   wall clock
+    ---------------   -----------------   ----------------   ----------
+        (none)             540/540 (100%)                 0      9.75 s   p50 2,609 ms
+             50 ms         150/540 (27.8%)              390      3.74 s
+            200 ms         158/540 (29.3%)              382      3.90 s
+          1,000 ms         161/540 (29.8%)              379      3.95 s
+
+The wall clock more than halves - a real improvement, converting a hang into a fast failure. And the
+completion column barely moves with the timeout value: 27.8% at 50 ms, 29.8% at 1,000 ms. Around 70% of
+healthy traffic is rejected regardless, because the slots are still going to B.
+
+Note the first row especially: with no timeout, 100% of healthy requests SUCCEED. A success-rate
+dashboard shows a perfectly healthy service that every user experiences as three seconds slow.
+
+TRACE D - sizing, and what under-provisioning costs.
+
+    slots each   A completed   A p99        C p99        B completed
+    ----------   -----------   ----------   ----------   -----------
+             2           270   1,253.8 ms   1,265.5 ms            60
+             4           270     153.6 ms     170.6 ms            60
+             7           270      32.2 ms      38.0 ms            60
+            15           270      21.3 ms      21.1 ms            60
+
+    Little's Law: A needs 225 rps x 0.020 s = 4.5 slots
+
+The measurement confirms the formula - 4 slots gives 153 ms p99, 7 gives 32 ms, and past that it is A's
+own service time. The important column is B: 60 completed in every row. Getting A's bulkhead wrong hurts
+A and nothing else, whereas in the shared pool A's p99 was 5,156.9 ms because of B.
+
+TRACE E - the cost: fragmentation. 600 requests, ALL to A.
+
+    configuration      wall clock   p50       p99
+    ----------------   ----------   -------   ---------
+    shared 21 slots         1.73 s   20.3 ms    21.3 ms
+    bulkhead 7 each         1.78 s   56.3 ms   162.1 ms
+
+A burst to one dependency cannot borrow the 14 idle slots in the other partitions. p50 nearly triples and
+p99 goes up 7.6x. This is the real trade and it should be stated first, not last: partitioned capacity
+must be LARGER in total than shared capacity to serve the same peak, because it cannot be pooled.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (600 requests at 500/s; A 20 ms 45%, B hung 3 s 10%, C 20 ms 45%; 21 slots total):
+
+    shared pool      A p50 2,609.4 ms   C p50 2,674.5 ms   A p99 5,156.9 ms
+    bulkheads 7 ea   A p50    21.3 ms   C p50    21.4 ms   A p99    37.0 ms
+    improvement      122x on the healthy p50
+
+    slot-seconds per 100 requests: A 0.900 | B 30.000 | C 0.900  -> B is 10% of requests, 94.3% of pool
+
+    timeouts alone (shared pool): wall 9.75 s -> 3.74 s, and healthy completion only 27.8-29.8%
+    sizing: 2 slots -> A p99 1,253.8 ms | 4 -> 153.6 | 7 -> 32.2 | 15 -> 21.3
+    fragmentation (all traffic to A): shared p50 20.3 ms / p99 21.3 ms
+                                      bulkhead p50 56.3 ms / p99 162.1 ms
+
+COMPLEXITY: a semaphore bulkhead is O(1) per call and costs nothing but the counter. A thread-pool
+bulkhead costs one pool per dependency in memory and context switches. The real cost is CAPACITY, because
+partitioned slots cannot be pooled.
+
+THE MISTAKES:
+
+    - One shared pool for all dependencies. MEASURED: a 20 ms service responding in 2.6 seconds.
+    - Reasoning in request counts instead of slot-seconds. 10% of requests, 94.3% of the pool.
+    - Assuming timeouts are enough. MEASURED: 70% of healthy traffic still rejected.
+    - Monitoring success rate and not latency. MEASURED: 100% success with a p50 of 2,609 ms.
+    - Believing a circuit breaker covers it. Breakers trip on FAILURES; a hang is not a failure.
+    - Fault-injecting errors instead of hangs. A dependency that fails fast is nearly harmless; a slow
+      one is what takes you down.
+    - Sizing bulkheads at DEGRADED latency instead of healthy latency, which produces enormous
+      partitions that isolate nothing.
+    - No acquire timeout, so a full bulkhead still blocks the caller indefinitely.
+    - Leaking permits on error paths. Always release in a `finally`.
+    - Ignoring fragmentation. MEASURED: p50 20.3 ms -> 56.3 ms for a single-dependency burst.
+    - Bulkheading a single dependency, which isolates nothing and only fragments.
+    - Sharing a pool between request traffic and background jobs - the same failure with a different
+      name, and free to fix.
+    - Not alarming on permits-in-use per dependency, which is the leading indicator.
+
+THE TAKEAWAY. A shared pool means the slowest dependency decides everyone's latency, because a hanging
+call holds its slot: measured here, 10% of requests consumed 94.3% of the pool and turned two healthy
+20 ms services into 2.6-second services. Bulkheads cap each dependency's concurrency so the damage is
+confined to the partition that caused it - 21 ms instead of 2,609 ms for the healthy 90%. Timeouts are
+necessary and not sufficient; they convert a hang into a fast rejection and still leave 70% of healthy
+traffic rejected. You pay for isolation in fragmentation, because idle slots in one partition cannot be
+borrowed by another, so budget more total capacity. And reason in slot-seconds, not request counts -
+which is why a dependency going SLOW is far more dangerous than one going DOWN.""",
+]
+
+_EX_P1AO["API gateway vs load balancer"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - both sit in front of your services and forward traffic. The difference
+is WHAT THEY UNDERSTAND about the traffic.
+
+A LOAD BALANCER answers one question: which INSTANCE of this pool should get the next connection? It
+works at the packet or connection level and does not need to know what a request means.
+
+An API GATEWAY answers questions that require reading the request: which SERVICE handles `/orders`? Is
+this caller allowed? Have they exceeded their rate limit? Can I answer this by calling three services and
+combining the results?
+
+MEASURED ON THIS MACHINE with a real gateway in front of three real services:
+
+    decision                                      L4 load balancer   L7 gateway
+    -------------------------------------------   ----------------   ----------
+    pick a healthy instance                                    yes          yes
+    spread load evenly                                         yes          yes
+    route by URL path                                           no          yes
+    route by header / cookie / API version                      no          yes
+    authenticate the caller                                     no          yes
+    rate limit per API key                                      no          yes
+    aggregate several backend calls                             no          yes
+    transform request or response                               no          yes
+    canary split by percentage                                  no          yes
+    handle non-HTTP traffic (Postgres, Redis)                  yes           no
+
+The last row is the one people forget - it is not a strict hierarchy. A gateway that speaks HTTP cannot
+front your database.
+
+And the cost of that understanding, MEASURED: routing one request through the gateway instead of straight
+to the service added +1.130 ms at p50 and +1.174 ms at p99 - 1.18x, paid on every single request.""",
+
+    """2. THE INTUITION - the load balancer is a receptionist who knows which desks are free; the gateway is
+one who reads the letter and decides where it goes, whether you are allowed to send it, and whether they
+can answer it themselves by phoning three departments.
+
+WHERE THE GATEWAY GENUINELY WINS, and it took an honest measurement to find it. A home screen needs data
+from three services (4 ms, 6 ms, 3 ms). MEASURED:
+
+    approach                                   mean       p50
+    ---------------------------------------   -------   -------
+    client calls all 3 sequentially           20.00 ms  19.95 ms
+    gateway calls them sequentially           21.00 ms  21.01 ms
+    gateway FANS OUT IN PARALLEL              12.14 ms  12.40 ms
+
+A gateway that simply forwards is SLOWER - 21.01 ms against 19.95 ms - because it adds a hop and does the
+same sequential work. The win only appears when it fans out in parallel: the backends are 4 + 6 + 3 = 13
+ms of work, and in parallel the floor is max(4,6,3) = 6 ms. MEASURED 12.40 ms, 1.61x better than the
+client doing it.
+
+AND THE BIGGER WIN IS ROUND TRIPS TO THE CLIENT, which localhost hides completely. Each client call
+crosses the internet; each gateway-to-backend call does not:
+
+    client RTT   client calls 3 services   one call to the gateway   saving
+    ----------   -----------------------   -----------------------   --------------
+        20 ms                    77.9 ms                   41.0 ms   36.9 ms (1.90x)
+        50 ms                   167.9 ms                   71.0 ms   96.9 ms (2.36x)
+       150 ms                   467.9 ms                  171.0 ms  296.9 ms (2.74x)
+
+That is why gateways exist for mobile clients: they collapse N expensive client round trips into 1, and
+the N-1 you removed were the expensive ones. On a datacentre LAN the same aggregation is barely worth
+the hop.""",
+
+    """3. EVERY TERM DEFINED.
+
+LOAD BALANCER. Distributes connections or requests across instances of a service.
+
+L4 / TRANSPORT LAYER. Works on TCP/UDP - IP addresses and ports. Cannot see URLs or headers because it
+does not parse the payload.
+
+L7 / APPLICATION LAYER. Parses HTTP, so it can see the method, path, headers, cookies and body.
+
+API GATEWAY. An L7 entry point that adds API-specific behaviour: routing by path, authentication, rate
+limiting, aggregation, transformation, versioning.
+
+REVERSE PROXY. The general term for a server that forwards requests to backends. Both of the above are
+reverse proxies; the difference is what they decide on.
+
+INGRESS CONTROLLER. Kubernetes' name for an L7 router configured by Ingress resources - a gateway by
+another name.
+
+BACKEND FOR FRONTEND (BFF). A gateway tailored to one client type - one for mobile, one for web - each
+aggregating differently. What the parallel-fan-out measurement is really describing.
+
+FAN-OUT / AGGREGATION. Calling several services and combining the results into one response. MEASURED at
+1.61x when done in parallel, and SLOWER than the client when done sequentially.
+
+TLS TERMINATION. Decrypting at the edge so backends speak plaintext internally. L4 balancers may pass TLS
+through; L7 must terminate it to read anything.
+
+PASSTHROUGH. Forwarding encrypted traffic without decrypting. An L4 capability.
+
+HEALTH CHECK. Probing instances so traffic avoids dead ones. Both do this; L7 can check an application
+endpoint rather than just the port.
+
+STICKY SESSION / SESSION AFFINITY. Sending a client to the same instance. L4 by source IP; L7 by cookie.
+
+RATE LIMITING. Capping a caller's request rate. Needs an identity (an API key), so it needs L7.
+
+CANARY / TRAFFIC SPLIT. Sending a percentage to a new version. Needs request-level decisions.
+
+REQUEST/RESPONSE TRANSFORMATION. Rewriting paths, adding headers, converting formats - for example
+exposing REST while backends speak gRPC.
+
+API VERSIONING. Routing `/v1` and `/v2` to different services. A gateway concern by definition.
+
+CIRCUIT BREAKING and RETRY POLICY. Available at L7 because it can tell a 503 from a healthy response.
+
+NORTH-SOUTH vs EAST-WEST TRAFFIC. In/out of the datacentre versus service-to-service. Gateways handle
+north-south; service meshes handle east-west.
+
+SINGLE POINT OF FAILURE. Everything passes through the gateway - and so does every millisecond of its
+latency.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - assuming a gateway is automatically faster because it "reduces
+round trips". MEASURED, it can be SLOWER.
+
+    client calls all 3 services sequentially : 19.95 ms p50
+    gateway calls them sequentially          : 21.01 ms p50
+
+The gateway lost by 1.06 ms, because it added a hop and then did exactly the same serial work the client
+was doing. The benefit is not in the gateway's existence, it is in what the gateway DOES:
+
+    gateway fans out in PARALLEL              : 12.40 ms p50   (1.61x better than the client)
+
+Aggregation only pays when the gateway does something the client was not doing - parallelism, or removing
+expensive client round trips. Building a pass-through gateway and expecting a speedup gets you the hop
+cost with none of the benefit.
+
+THE SECOND TRAP - measuring on a LAN and deploying for mobile, or vice versa. MEASURED, the same
+aggregation with the client's RTT added: at 20 ms RTT the gateway saves 36.9 ms; at 150 ms it saves 296.9
+ms. On localhost it LOSES 3.13 ms on the sequential version. The same code is a big win or a small loss
+depending entirely on where the client is.
+
+THE THIRD TRAP - putting everything in the gateway. Every request pays for every feature. MEASURED at
++1.130 ms p50 for a bare routing hop, before authentication, rate limiting or transformation. And there
+is a subtler cost: business logic that migrates into the gateway becomes logic that no service owns, that
+cannot be unit-tested with the service, and that is deployed on someone else's schedule. Keep the gateway
+to CROSS-CUTTING concerns.
+
+THE FOURTH TRAP - forgetting that the gateway is a single point of failure AND a single point of latency.
+Everything goes through it, so its p99 is added to everything's p99, and its outage is everyone's outage.
+That is the price of centralising - and it is exactly the same trade as the service-mesh control plane.
+
+THE FIFTH TRAP - assuming L7 supersedes L4. It does not. An L7 gateway parses HTTP, so it cannot front
+Postgres, Redis, or raw TCP. Most real deployments have BOTH: an L4 balancer distributing across gateway
+instances, and the gateway routing by path. They are layers, not competitors.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE ARITHMETIC OF CENTRALISING - the real argument for a gateway, and it is organisational rather than
+technical:
+
+    a fleet of 40 services adding OAuth token validation
+      in every service : 40 implementations, 40 deploys, 40 chances to get it wrong
+      in the gateway   : 1 implementation, 1 deploy, 1 place to audit
+
+RATE LIMITING IS WORSE, because it needs SHARED STATE:
+
+    per-service limiting : each of 40 services enforces 100 rps -> a caller can do 4,000 rps
+                           in total, which is not the limit anyone intended
+    gateway limiting     : one counter, one number, actually enforced
+
+That is the cleanest example of something a gateway can do and distributed enforcement structurally
+cannot. Any limit that must hold ACROSS services needs a shared vantage point.
+
+THE LAYERS IN A REAL DEPLOYMENT, outermost first:
+    DNS / ANYCAST            route to the nearest region.
+    L4 LOAD BALANCER         distribute across gateway instances. Fast, protocol-agnostic, survives
+                             anything.
+    API GATEWAY (L7)         path routing, authentication, rate limiting, aggregation, versioning.
+    SERVICE MESH             east-west policy between services. Different problem, same technology.
+    SERVICE-LEVEL LB         within a service, across its pods.
+
+You will typically have several of these, and "gateway vs load balancer" is rarely an either/or.
+
+WHEN A PLAIN LOAD BALANCER IS ENOUGH:
+    one service, or services already on separate hostnames;
+    clients that call one endpoint at a time;
+    non-HTTP protocols - a gateway simply cannot help;
+    when latency is the dominant concern and you cannot afford the hop;
+    when authentication already lives in the services and works.
+
+WHEN YOU WANT A GATEWAY:
+    many services behind one public hostname, routed by path;
+    external or third-party consumers needing keys, quotas and per-caller limits;
+    mobile clients where round trips are expensive. MEASURED 2.74x at 150 ms RTT;
+    API versioning and gradual migration;
+    a public API whose shape should not mirror your internal service boundaries.
+
+THE BFF VARIANT, which is the mature version of aggregation: one gateway per CLIENT TYPE - mobile, web,
+partner - each aggregating and shaping for its own consumer. It avoids the failure mode where one gateway
+tries to serve every client and becomes a dumping ground for client-specific logic.
+
+GRAPHQL AS AN ALTERNATIVE to hand-written aggregation: the client specifies what it needs and the server
+fans out. Same round-trip saving as the parallel measurement above, with the aggregation logic generated
+rather than written - and its own costs in query complexity and caching.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE BOTH LAYERS. An L4 balancer in front of several gateway instances, and the gateway routing by
+     path. They solve different problems and a gateway is itself a service that needs balancing.
+  2. KEEP THE GATEWAY TO CROSS-CUTTING CONCERNS: authentication, rate limiting, routing, TLS, logging,
+     versioning. Business logic in the gateway is logic no service owns.
+  3. IF YOU AGGREGATE, FAN OUT IN PARALLEL. MEASURED: sequential aggregation was SLOWER than the client
+     doing it (21.01 vs 19.95 ms), and parallel was 1.61x better.
+  4. MEASURE WITH YOUR CLIENTS' REAL RTT. MEASURED: the same aggregation saves 296.9 ms at 150 ms RTT and
+     LOSES 3.13 ms on localhost. Benchmarking from inside the datacentre answers the wrong question.
+  5. BUDGET THE HOP. MEASURED +1.130 ms p50 and +1.174 ms p99 for pure routing. Add it to every SLO you
+     publish.
+  6. RATE LIMIT AT THE GATEWAY, not in each service. Per-service limits multiply: 40 services x 100 rps
+     is a 4,000 rps effective limit.
+  7. TERMINATE TLS AT THE EDGE and decide explicitly whether internal traffic is re-encrypted. "We
+     terminated at the gateway and forgot the inside" is a common audit finding.
+  8. SET TIMEOUTS AND RETRY POLICY IN THE GATEWAY, and make sure the aggregation path has a deadline -
+     a fan-out to three services inherits the slowest of them.
+  9. USE A BFF PER CLIENT TYPE rather than one gateway serving mobile, web and partners. Otherwise it
+     accumulates client-specific special cases.
+ 10. RUN AT LEAST TWO GATEWAY INSTANCES IN DIFFERENT ZONES. It is a single point of failure by design;
+     make it redundant.
+ 11. KEEP GATEWAY CONFIGURATION IN VERSION CONTROL AND DEPLOY IT LIKE CODE. A routing change is a
+     production change with fleet-wide blast radius.
+ 12. DO NOT PUT A GATEWAY IN FRONT OF NON-HTTP TRAFFIC. Databases and caches need L4.
+ 13. MONITOR THE GATEWAY'S OWN LATENCY SEPARATELY from the backends'. When everything is slow, you need
+     to know immediately whether it is the gateway or the services.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Both sit in front of your services; the difference is what they UNDERSTAND about the traffic.
+
+A load balancer answers one question - which instance gets this connection - and works at the TCP level,
+so it never parses the payload. A gateway reads the HTTP request, which lets it answer questions a
+balancer structurally cannot: which SERVICE handles /orders, is this caller authorised, have they
+exceeded their quota, can I answer this by calling three services and combining the results.
+
+I built one and measured it. Routing by path works, obviously. The interesting result was aggregation. A
+home screen needing three services at 4, 6 and 3 milliseconds: the client calling all three sequentially
+took 19.95 ms, and a gateway calling them sequentially took 21.01 ms - the gateway was SLOWER, because it
+added a hop and did the same serial work. Only when it fanned out in PARALLEL did it win: 12.40 ms, since
+the backends are 13 ms of work sequentially and max(4,6,3) = 6 ms in parallel.
+
+So aggregation pays only when the gateway does something the client was not doing. And the something that
+matters most is removing CLIENT round trips, which localhost hides completely. Adding a realistic mobile
+RTT: at 20 ms the gateway saves 37 ms, at 150 ms it saves 297 ms - 2.74x. That is why gateways exist for
+mobile clients and are barely worth the hop on a LAN.
+
+The cost is one extra hop on everything. I measured +1.130 ms at p50 and +1.174 ms at p99 for pure
+routing, before any authentication or rate limiting. Plus the gateway is a single point of failure and a
+single point of latency by design.
+
+The strongest argument for a gateway is not latency at all, it is centralisation. Adding OAuth validation
+to 40 services is 40 implementations, 40 deploys and 40 chances to get it wrong; in the gateway it is one
+place to audit. Rate limiting is the sharpest case, because it needs SHARED STATE - if each of 40
+services enforces 100 rps independently, a caller can do 4,000 rps, which is not the limit anyone
+intended. Any limit that must hold across services needs a single vantage point.
+
+The thing I would push back on is treating this as either/or. L7 does not supersede L4 - a gateway parses
+HTTP, so it cannot front Postgres or Redis or raw TCP. Nearly every real deployment has both: an L4
+balancer distributing across gateway instances, and the gateway routing by path. They are layers."
+
+THE ONE SENTENCE TO NOT FUMBLE: a load balancer picks an INSTANCE and a gateway picks a SERVICE and
+everything else that requires reading the request - and the gateway's aggregation only pays if it fans
+out in parallel or removes expensive client round trips, because otherwise it is just an extra 1.1 ms
+hop.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def do_GET(self):
+        if self.path == '/home':
+            out = {k: self._get(k, '/x') for k in ('users','orders','prefs')}
+        else:
+            svc = self.path.strip('/').split('/')[0]
+            if svc not in PORTS: self.send_response(404); return
+            b = json.dumps(self._get(svc, self.path)).encode()
+
+The gateway, and both branches are things a load balancer cannot do.
+
+The `else` branch is PATH ROUTING: it reads `self.path`, extracts the first segment, and maps it to a
+different backend PORT. An L4 balancer sees a TCP connection to port 443 and has no access to the string
+`/orders/7` at all - the path lives in the payload, which is exactly what L4 does not parse.
+
+The `if` branch is AGGREGATION: one inbound request producing three outbound ones. There is no
+formulation of "distribute connections across a pool" that does this.
+
+    if svc not in PORTS:
+        self.send_response(404)
+
+The gateway can also REJECT, based on the request's content. A balancer forwards to a backend which
+returns the 404 - which means it has already consumed a backend connection to say "no". Rejecting at the
+edge is where authentication and rate limiting live too.
+
+    ts = [threading.Thread(target=f, args=(k,)) for k in PORTS]
+    [t.start() for t in ts]; [t.join() for t in ts]
+
+The parallel fan-out, and this is the line that turns the gateway from a cost into a benefit. MEASURED:
+sequential 21.01 ms, parallel 12.40 ms. Without it the gateway is slower than the client doing the work
+itself, which is worth internalising - the architecture diagram looks identical either way and the
+performance is opposite.
+
+`join()` on all threads is the "wait for all" semantics, which means the response inherits the SLOWEST
+backend. That is the tail-amplification effect: a fan-out of 3 to services with a bad p99 gives you their
+combined tail, so an aggregating gateway needs per-call deadlines.
+
+    for rtt in (20, 50, 150):
+        print(f"client-side {p1 + 3*rtt}   gateway {p2 + rtt}")
+
+Adding the client's RTT analytically rather than simulating a network. `3*rtt` because the client makes
+three round trips; `1*rtt` because it makes one to the gateway. The gateway-to-backend calls stay on the
+LAN and are already in the measured `p2`.
+
+This is the honest way to extend a localhost measurement to a real deployment: state the model, apply it
+to the measured numbers, and do not pretend you measured the network.
+
+    def bench(fn, n=200):
+        for _ in range(20): fn()
+        xs = [...]; xs.sort(); return mean(xs), xs[n//2], xs[int(n*0.99)]
+
+Twenty warm-up calls before timing, then p50 and p99 rather than only the mean - because a proxy adds
+queueing and queueing appears in the tail first. MEASURED: the p99 hop penalty (+1.174 ms) exceeded the
+p50 penalty (+1.130 ms), which is that effect showing up.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - what each layer can decide on.
+
+    decision                                      L4 LB       L7 gateway
+    -------------------------------------------   ---------   ----------
+    pick a healthy instance                       yes         yes
+    spread load evenly                            yes         yes
+    route by URL path                             no          yes
+    route by header / cookie / API version        no          yes
+    terminate TLS                                 sometimes   yes
+    authenticate the caller                       no          yes
+    rate limit per API key                        no          yes
+    aggregate several backend calls               no          yes
+    transform request/response                    no          yes
+    canary split by percentage                    no          yes
+    handle non-HTTP traffic (Postgres, Redis)     yes         no
+
+Every "no" in the L4 column is the same reason: the information lives in the HTTP payload, which L4 does
+not parse. Every "no" in the L7 column is the same reason too - it parses HTTP, so it cannot carry
+anything else.
+
+TRACE B - routing, actually exercised.
+
+    GET /users/42   ->  {"svc": "users",  "path": "/users/42"}
+    GET /orders/7   ->  {"svc": "orders", "path": "/orders/7"}
+    GET /prefs/1    ->  {"svc": "prefs",  "path": "/prefs/1"}
+    GET /nope/1     ->  HTTP 404 from the gateway itself
+
+Three different BACKEND SERVICES behind one hostname and one port, chosen by the first path segment. And
+the fourth line matters: the 404 came from the gateway, without consuming any backend.
+
+TRACE C - aggregation, and the result that inverts the expectation.
+
+    approach                                   mean       p50
+    ---------------------------------------   -------   -------
+    client calls 3 services sequentially      20.00 ms  19.95 ms
+    gateway calls them sequentially           21.00 ms  21.01 ms
+    gateway fans out in PARALLEL              12.14 ms  12.40 ms
+
+    backend work: 4 + 6 + 3 = 13 ms sequential, max = 6 ms parallel
+    sequential gateway vs parallel gateway: 1.69x
+    parallel gateway vs the client doing it: 1.61x
+
+The middle row is the finding. A gateway that merely forwards LOSES - it costs a hop and changes nothing
+else. The architecture diagram is identical for rows 2 and 3, and their performance is opposite.
+
+TRACE D - the same aggregation with a real client RTT.
+
+    client RTT   client-side (3 round trips)   gateway (1 round trip)   saving
+    ----------   ---------------------------   ----------------------   ---------------
+       0 (LAN)                      19.95 ms                 21.04 ms   -1.09 ms (LOSS)
+        20 ms                       77.90 ms                 41.00 ms   36.90 ms (1.90x)
+        50 ms                      167.90 ms                 71.00 ms   96.90 ms (2.36x)
+       150 ms                      467.90 ms                171.00 ms  296.90 ms (2.74x)
+
+The first row is a loss and the last is 2.74x, from the SAME code. Where your clients are is the dominant
+variable, and benchmarking from inside the datacentre answers a question nobody asked.
+
+TRACE E - the cost of the hop, single-service routing.
+
+    path                          mean       p50       p99
+    ---------------------------   -------   -------   -------
+    direct to the users service   6.287 ms  6.227 ms  7.261 ms
+    through the gateway           7.392 ms  7.357 ms  8.435 ms
+    added                        +1.105    +1.130    +1.174 ms   (1.18x)
+
+Paid on every request that is not being aggregated - which, in most systems, is most of them. The p99
+penalty exceeding the p50 penalty is queueing at the extra hop.
+
+TRACE F - the centralisation arithmetic, 40 services.
+
+    concern                      in every service                   in the gateway
+    --------------------------   --------------------------------   ---------------------------
+    OAuth token validation       40 implementations, 40 deploys      1 implementation, 1 audit
+    rate limit of 100 rps        each service allows 100 rps, so     one counter, 100 rps actually
+                                 a caller gets 4,000 rps total       enforced
+    TLS certificates             40 places to rotate                 1
+    access logging format        40 formats                         1
+
+The rate-limiting row is the structural one. Distributed enforcement of a global limit is not merely more
+work - it produces the WRONG NUMBER, and no amount of care in each service fixes it, because the limit
+needs shared state.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    routing hop cost           +1.130 ms p50, +1.174 ms p99 (1.18x) on every request
+    aggregation, localhost     client 19.95 ms | gateway sequential 21.01 ms | gateway parallel 12.40 ms
+    aggregation with RTT       LAN -1.09 ms (loss) | 20 ms RTT 1.90x | 50 ms 2.36x | 150 ms 2.74x
+    centralisation             40 services x 100 rps = a 4,000 rps effective limit vs one enforced 100
+
+    capability split           L4: instance selection, any protocol
+                               L7: path/header routing, auth, rate limiting, aggregation, transformation
+                               L4 only: non-HTTP traffic
+
+COMPLEXITY: an L4 balancer forwards packets and scales enormously. An L7 gateway parses every request, so
+it costs CPU proportional to request rate and header size, and it terminates TLS. Aggregation makes the
+gateway stateful for the duration of a request and gives it the fan-out tail-latency problem.
+
+THE MISTAKES:
+
+    - Treating it as either/or. Most deployments need an L4 balancer in front of the gateways.
+    - Assuming a gateway is faster. MEASURED: sequential aggregation was SLOWER than the client (21.01
+      vs 19.95 ms).
+    - Aggregating sequentially. Fan out in parallel or do not aggregate.
+    - Benchmarking on localhost and deploying for mobile. MEASURED: a 1.09 ms loss becomes a 297 ms win.
+    - Ignoring the hop cost on non-aggregated traffic. +1.130 ms on everything.
+    - Putting business logic in the gateway, where no service owns it and it cannot be tested with the
+      service.
+    - Rate limiting per service instead of at the gateway. It produces the wrong global number.
+    - Forgetting the gateway is a single point of failure AND of latency. Multiple instances, multiple
+      zones.
+    - Putting a gateway in front of non-HTTP traffic. Databases and caches need L4.
+    - No deadline on the fan-out path, so an aggregating endpoint inherits the slowest backend's tail.
+    - Terminating TLS at the gateway and forgetting whether internal traffic is encrypted.
+    - One gateway serving mobile, web and partners, which becomes a dumping ground - use a BFF per
+      client type.
+
+THE TAKEAWAY. A load balancer picks an INSTANCE; a gateway reads the request and picks a SERVICE, plus
+everything else that needs to know what the request means - authentication, per-caller quotas, versioning,
+aggregation. That understanding costs one hop, measured at +1.130 ms on every request, and it makes the
+gateway a single point of both failure and latency. Aggregation is not automatically a win: a gateway
+that forwards sequentially was measurably SLOWER than the client doing the work, and only fanning out in
+parallel (1.61x) or removing expensive client round trips (2.74x at 150 ms RTT) makes it pay. The
+strongest argument is centralisation rather than speed - one place to enforce a rate limit that
+distributed enforcement gets structurally wrong - and the right answer is almost always both layers, not
+one.""",
+]
+
+_EX_P1AO["API key vs OAuth"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an API key is a password for a MACHINE. OAuth is a system for a USER to
+grant a THIRD PARTY limited, revocable access on their behalf.
+
+They are not two ways of doing the same thing. They answer different questions:
+
+    API KEY : "which of MY integrations is calling me?"
+    OAuth   : "this user has authorised THIS APP to do THESE things for a WHILE."
+
+The clearest way to see it is the case OAuth was invented for. Suppose you want an analytics app to read
+your orders:
+
+    with an API key : you hand over YOUR key. It can do everything you can, forever, and you cannot
+                      revoke it without breaking your own integrations.
+    with OAuth      : the user authorises a scoped, expiring token issued TO THE APP. Revoking it
+                      affects only that app.
+
+MEASURED ON THIS MACHINE, what each credential actually contains:
+
+    API key      43 characters of opaque randomness. Carries NOTHING - every property (who, what
+                 scopes, is it revoked) must be looked up.  "AXhlYNX7a_BBXMOe..."
+    JWT (HS256)  121 bytes, and it CARRIES its claims:
+                     sub   = u1
+                     scope = orders:read
+                     exp   = 1787022420
+
+The token is self-describing and self-expiring. The key is neither - which is the root of every other
+difference between them.""",
+
+    """2. THE INTUITION - the real trade is LOCAL VERIFICATION versus IMMEDIATE REVOCATION, and you get one.
+
+An API key carries no information, so you must look it up on every request - and because you look it up,
+you can revoke it instantly. A signed token carries its claims, so you can verify it with no lookup at
+all - and because there is no lookup, there is nowhere to check whether it has been revoked.
+
+MEASURED, the two halves of that trade:
+
+    API KEY (looked up on every request)
+        revoke: one UPDATE, 10.740 ms, effective on the VERY NEXT request
+
+    JWT (verified locally, no lookup)
+        TTL     60 s  -> a revoked token stays valid for up to     1.0 minutes
+        TTL    900 s  -> up to    15.0 minutes
+        TTL  3,600 s  -> up to    60.0 minutes
+        TTL 86,400 s  -> up to 1,440.0 minutes
+
+The only fixes for the token are a SHORT TTL - which means more refresh round trips - or a DENYLIST
+checked on every request. And a denylist is a database lookup, which gives back exactly the property the
+token was chosen to avoid. There is no third option; this is the trade, not an implementation gap.
+
+AND THE PERFORMANCE ARGUMENT IS WEAKER THAN THE FOLKLORE. MEASURED, per request:
+
+    API key: hash + SQLite lookup                8.23 us
+    JWT HS256 verify (shared secret, no I/O)     5.81 us
+    JWT RS256 verify (public key, no I/O)       33.41 us
+    JWT ES256 verify (P-256, no I/O)            74.08 us
+    OAuth token INTROSPECTION (network call)   1,000-20,000 us typical
+
+The local database lookup beat RS256 by 4x and ES256 by 9x. "JWTs are faster because there is no database
+lookup" is not what the CPU says. What makes the lookup expensive in production is that it is a SHARED,
+REMOTE resource - one database serving every service - not the microseconds. State the reason correctly:
+the token's advantage is that verification does not touch shared state, which is about SCALING and
+COUPLING, not about microseconds.""",
+
+    """3. EVERY TERM DEFINED.
+
+API KEY. A long random string identifying a caller. Opaque - it carries no information; the server looks
+everything up.
+
+BEARER TOKEN. Any credential where possession alone grants access. Both API keys and OAuth access tokens
+are bearer tokens, which is why both must be sent over TLS and never logged.
+
+OAuth 2.0. A framework for DELEGATED AUTHORISATION - letting an app act for a user with limited
+permissions. Not an authentication protocol.
+
+OpenID Connect (OIDC). A thin layer on top of OAuth that DOES do authentication, adding an `id_token`
+that says who the user is. "We use OAuth to log people in" almost always means OIDC.
+
+ACCESS TOKEN. The short-lived credential sent with each API call.
+
+REFRESH TOKEN. A long-lived credential used only to obtain new access tokens. Kept server-side where
+possible, and revocable - it is where the revocation control actually lives.
+
+SCOPE. A named permission - `orders:read`. What makes a token narrower than a key.
+
+JWT. JSON Web Token. A signed, self-describing token: header, payload, signature, base64url-encoded and
+dot-separated.
+
+HS256 / RS256 / ES256. JWT signing algorithms - HMAC-SHA256 with a shared secret, RSA, and ECDSA P-256.
+MEASURED at 5.81 / 33.41 / 74.08 microseconds to verify.
+
+OPAQUE TOKEN. A token with no readable content, validated by asking the authorisation server. Revocable
+immediately, at the cost of a network call.
+
+INTROSPECTION. The endpoint that answers "is this token still valid?". Restores immediate revocation and
+reintroduces the round trip.
+
+TTL / exp. How long the token is valid. The knob that trades revocation delay against refresh traffic.
+
+CLIENT CREDENTIALS FLOW. Machine-to-machine OAuth: no user involved. The direct competitor to an API key.
+
+AUTHORIZATION CODE FLOW (with PKCE). The user-facing flow: redirect, log in, redirect back with a code,
+exchange it for tokens.
+
+PKCE. Proof Key for Code Exchange - stops an intercepted authorization code being usable. Mandatory for
+public clients now.
+
+CONSENT SCREEN. Where the user sees and approves the scopes. The visible part of delegation.
+
+ROTATION. Replacing a credential on a schedule so a leaked one has a bounded life.
+
+SECRET SCANNING. Automated detection of credentials in source code. Works because keys are PREFIXED -
+`sk_live_...` - which is why prefixing is a real security feature.
+
+CONSTANT-TIME COMPARISON. Comparing secrets without leaking length or content through timing.
+
+mTLS. Mutual TLS - the certificate itself is the credential. The strongest machine-to-machine option.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we use OAuth" when they mean "we use JWTs", and then being
+surprised they cannot revoke anything.
+
+OAuth is a FRAMEWORK for delegation. JWT is a TOKEN FORMAT. You can do OAuth with opaque tokens
+(revocable, needs introspection) or with JWTs (locally verifiable, not revocable). Choosing JWT is
+choosing the revocation trade in section 2, and it is a decision people make by accident because a
+library defaulted to it.
+
+MEASURED consequence: with a one-hour TTL, a compromised token is valid for up to 60 minutes after you
+know about it. If that is unacceptable, you need either a much shorter TTL - more refreshes, more traffic
+- or a denylist, which is a lookup.
+
+THE SECOND TRAP - using OAuth's user-facing flow for machine-to-machine calls. MEASURED, round trips
+before the first API response:
+
+    flow                        round trips   at 20 ms RTT   at 100 ms RTT
+    -------------------------   -----------   ------------   -------------
+    API key                               1          20 ms          100 ms
+    OAuth client_credentials              2          40 ms          200 ms
+    OAuth authorization_code              5         100 ms          500 ms
+
+The authorization_code flow involves a human logging in; it makes no sense for a cron job. And
+`client_credentials` AMORTISES - one token fetch serves thousands of calls until it expires - so its
+2-round-trip cost is a per-hour cost, not a per-request one. Quoting the 2x as a per-request penalty is
+the usual mistake.
+
+THE THIRD TRAP - storing API keys in plaintext. If your database leaks, so do every customer's
+credentials. Store `sha256(key)` and compare hashes.
+
+And a nuance worth getting right, because people over-apply password advice: unlike a password, a
+43-character random key has around 190 bits of entropy, so there is nothing to brute-force. A FAST hash
+is correct here; bcrypt or argon2 would just cost you time on every request for no benefit. MEASURED: the
+whole hash-plus-lookup is 8.23 us.
+
+THE FOURTH TRAP - comparing secrets with `==`. MEASURED, `==` at 0.0426 us against `hmac.compare_digest`
+at 0.0889 us. The constant-time version costs 46 nanoseconds and removes a timing side channel. There is
+no reason not to.
+
+THE FIFTH TRAP - one all-powerful key. MEASURED as blast radius: an all-or-nothing key grants read,
+write, delete, billing and admin, and stays valid until someone notices. A scoped token grants
+`orders:read` and expires by itself.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE CREDENTIAL LADDER, roughly by strength:
+
+    API KEY IN A QUERY STRING   the worst option - logged by every proxy, saved in browser history, in
+                                referrer headers. Never do this.
+    API KEY IN A HEADER         acceptable for server-to-server over TLS. Simple, and simplicity is a
+                                real security property.
+    SIGNED REQUESTS (HMAC)      the client signs the request body and timestamp; the key never travels.
+                                Survives a logged request, prevents replay. AWS SigV4 works this way.
+    OAuth CLIENT_CREDENTIALS    machine-to-machine with scopes and expiry. The modern replacement for
+                                an API key.
+    OAuth AUTHORIZATION_CODE    the user-delegation case. What OAuth is actually for.
+    mTLS                        the client certificate is the credential. Strongest, and hardest to
+                                operate - certificate distribution and rotation for every client.
+
+CHOOSING, BY QUESTION:
+    "is a THIRD PARTY acting for a USER?"          -> OAuth. Nothing else expresses delegation.
+    "is it my own backend calling my own API?"     -> an API key or mTLS is fine, and simpler.
+    "do I need per-permission granularity?"        -> scopes, so OAuth.
+    "must revocation be INSTANT?"                  -> a looked-up credential: an API key, or OAuth with
+                                                      opaque tokens.
+    "must verification avoid shared state?"        -> a signed JWT, and accept the TTL window.
+    "is the client a browser or mobile app?"       -> authorization_code with PKCE. Never embed a key
+                                                      in a client you ship.
+
+THE HYBRID EVERYONE ACTUALLY RUNS: a long-lived credential that is exchanged for a short-lived one. The
+refresh token is revocable and stored carefully; the access token is short-lived and verified locally.
+That structure gets local verification for the common path AND a revocation point - the refresh - and it
+is worth naming, because it resolves what looks like an unavoidable trade in section 2 by SPLITTING the
+credential in two.
+
+WHAT SCOPES ACTUALLY BUY - blast radius. MEASURED as a comparison:
+
+    API key, all-or-nothing : read, write, delete, billing, admin - 5 capabilities, valid until
+                              someone notices and rotates
+    OAuth token, scoped     : orders:read - 1 capability, and it expires by itself
+
+VERIFICATION COST, for completeness:
+
+    API key, hash + lookup       8.23 us   (local SQLite; a remote database is a network call)
+    JWT HS256                    5.81 us   (symmetric - every verifier can also MINT tokens)
+    JWT RS256                   33.41 us   (asymmetric - verifiers hold only the public key)
+    JWT ES256                   74.08 us
+    OAuth introspection      1,000-20,000 us
+
+HS256 is fastest and requires sharing the signing secret with every service that verifies - which means
+any of them can forge a token. RS256 and ES256 cost more per verification and let you distribute only the
+public key. That is a security decision priced at about 28 microseconds, and it is usually worth paying.""",
+
+    """6. HOW TO CODE IT.
+
+  1. DECIDE WHICH QUESTION YOU ARE ANSWERING. A third party acting for a user is OAuth; your own backend
+     calling your own API is a key. Most "should we use OAuth?" arguments are really this question left
+     unasked.
+  2. NEVER PUT A CREDENTIAL IN A URL. Query strings are logged by every proxy, stored in browser history
+     and leaked in referrer headers. Use the `Authorization` header.
+  3. STORE A HASH, NOT THE KEY. `sha256(key)`, indexed. A leaked database of plaintext keys is a leaked
+     set of credentials.
+  4. USE A FAST HASH FOR KEYS, NOT bcrypt. A 43-character random key has ~190 bits of entropy - there is
+     nothing to brute-force, so a slow hash costs time and buys nothing. This is the opposite of password
+     advice, deliberately.
+  5. COMPARE IN CONSTANT TIME. MEASURED: `hmac.compare_digest` at 0.0889 us against `==` at 0.0426 us -
+     46 nanoseconds to remove a timing side channel.
+  6. PREFIX YOUR KEYS - `sk_live_`, `sk_test_`. This is what lets GitHub secret-scanning recognise and
+     revoke a leaked key automatically, and it makes the environment obvious in a support ticket.
+  7. SCOPE EVERY CREDENTIAL, including API keys. Nothing should have `admin` unless it needs `admin`.
+  8. SET AN EXPIRY ON API KEYS TOO. A key with no expiry outlives its owner's employment.
+  9. USE `client_credentials` FOR MACHINE-TO-MACHINE OAuth, never `authorization_code`. MEASURED 2 round
+     trips against 5, and the token amortises over thousands of calls.
+ 10. USE `authorization_code` WITH PKCE for anything user-facing, including mobile. Never ship a secret
+     inside a client.
+ 11. CHOOSE THE TOKEN FORMAT DELIBERATELY. JWT means local verification and a revocation window;
+     opaque means a lookup and instant revocation. MEASURED: 60 minutes of exposure at a 1-hour TTL.
+ 12. PREFER SHORT ACCESS TOKENS PLUS A REVOCABLE REFRESH TOKEN. That is how you get both properties.
+ 13. PREFER RS256/ES256 OVER HS256 when more than one service verifies. MEASURED ~28 us extra, and it
+     means verifiers cannot MINT tokens.
+ 14. VALIDATE `exp`, `aud` AND `iss`, AND PIN THE ALGORITHM. Accepting the token's own `alg` header is
+     the classic JWT vulnerability - including `alg: none`.
+ 15. LOG THE KEY ID, NEVER THE KEY. And make sure your error handlers do not echo the `Authorization`
+     header.
+ 16. BUILD ROTATION IN FROM THE START: overlapping validity so a client can adopt a new credential before
+     the old one dies. Rotation that requires downtime never happens.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"An API key is a password for a machine; OAuth is a system for a USER to grant a THIRD PARTY limited,
+revocable access on their behalf. They answer different questions, so the comparison is usually framed
+wrongly.
+
+The case that makes it concrete: you want an analytics app to read your orders. With an API key you hand
+over YOUR key - it can do everything you can, forever, and revoking it breaks your own integrations. With
+OAuth the user authorises a scoped, expiring token issued to that app, and revoking it affects only that
+app. That delegation is what OAuth exists for and an API key has no way to express it.
+
+The technical difference underneath is what the credential CARRIES. I measured mine: an API key is 43
+characters of opaque randomness carrying nothing - who it is, what it can do, whether it is revoked all
+have to be looked up. A JWT is 121 bytes carrying its claims: subject, scope, and an expiry.
+
+Which produces the real trade: LOCAL VERIFICATION versus IMMEDIATE REVOCATION, and you get one. Because
+the key is looked up on every request, revoking it is one UPDATE - I measured 10.7 milliseconds - and it
+takes effect on the very next request. Because a JWT is verified locally with no lookup, there is nowhere
+to record that it was revoked, so it stays valid for up to its TTL: an hour, if that is what you set. The
+only fixes are a short TTL, which means more refresh traffic, or a denylist - and a denylist is a lookup,
+which gives back exactly what the token was chosen to avoid.
+
+I would also correct a piece of folklore. 'JWTs are faster because there is no database lookup' did not
+survive measurement: my hash-plus-lookup was 8.23 microseconds, HS256 verification 5.81, RS256 33.41 and
+ES256 74.08. The local lookup beat RS256 by four times. The token's real advantage is not microseconds -
+it is that verification does not touch SHARED, REMOTE state, so it scales without coupling every service
+to one database.
+
+On cost: OAuth's client_credentials flow is two round trips before your first API response against one
+for a key, and the authorization_code flow is five - but client_credentials amortises, one token serving
+thousands of calls, so quoting it as a per-request penalty is wrong.
+
+The pattern most systems actually run resolves the trade by splitting the credential: a long-lived,
+revocable refresh token exchanged for short-lived access tokens verified locally. You get the fast path
+and a revocation point.
+
+And if you do use API keys - store a hash, not the key; use a FAST hash, because a 43-character random
+key has ~190 bits of entropy and nothing to brute-force, so bcrypt costs time for no benefit; compare in
+constant time, which I measured at 46 extra nanoseconds; and prefix them, because 'sk_live_' is what lets
+secret scanners find and revoke a leaked key for you."
+
+THE ONE SENTENCE TO NOT FUMBLE: the choice is not key-versus-OAuth, it is DELEGATION (does a third party
+act for a user?) and then LOCAL VERIFICATION VERSUS INSTANT REVOCATION - and the standard answer to the
+second is a short-lived token plus a revocable refresh token.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    c.executemany('INSERT INTO apikeys VALUES(?,?,?,0)',
+                  [(hashlib.sha256(k.encode()).hexdigest(), owner, scopes) for k in keys])
+
+The key store, and the important thing is what is NOT there: the key itself. The primary key is the
+SHA-256 hash, so a database leak yields hashes rather than credentials. Verification hashes the presented
+key and looks up that hash.
+
+`sha256` and not bcrypt is deliberate. A 43-character `token_urlsafe` value carries about 190 bits of
+entropy, so there is no dictionary and no brute force to slow down - the slow hash would cost you time on
+every request and buy nothing. This is exactly the opposite of the correct advice for passwords, and
+knowing WHY the advice differs is the point.
+
+    def apikey_lookup():
+        h = hashlib.sha256(K.encode()).hexdigest()
+        return cur.execute('SELECT owner,scopes,revoked FROM apikeys WHERE hash=?', (h,)).fetchone()
+
+The whole verification: hash, then one indexed lookup. MEASURED 8.23 us. Note that `revoked` comes back
+in the SAME query - the revocation check is free, because you were already looking the key up. That is
+the structural reason keys revoke instantly.
+
+    payload = base64.urlsafe_b64encode(json.dumps(
+        {'sub':'u1','scope':'orders:read','exp':int(time.time())+3600}).encode())
+    tok = payload + b'.' + base64.urlsafe_b64encode(hmac.new(sec, payload, hashlib.sha256).digest())
+
+A JWT, stripped to its essentials: a base64url payload, a dot, and a signature over that payload. There
+is no `revoked` field and there cannot be one - the token was minted once and the server never sees it
+again until it arrives.
+
+    def hs256_verify():
+        p, s = tok.rsplit(b'.', 1)
+        exp = base64.urlsafe_b64encode(hmac.new(sec, p, hashlib.sha256).digest())
+        if not hmac.compare_digest(exp, s): raise ValueError
+        return json.loads(base64.urlsafe_b64decode(p))
+
+Verification with no I/O at all - recompute the signature and compare. MEASURED 5.81 us.
+
+`hmac.compare_digest` rather than `==` is not optional: comparing signatures with `==` leaks, through
+timing, how many leading bytes matched, which is enough to forge a signature byte by byte.
+
+In production this must ALSO check `exp`, `aud` and `iss`, and must PIN the algorithm rather than
+trusting the token's own `alg` header - accepting `alg: none` is the classic JWT vulnerability, and it
+exists precisely because the token describes itself.
+
+    rpub.verify(rsig, payload, padding.PKCS1v15(), hashes.SHA256())
+
+The asymmetric version. MEASURED 33.41 us for RS256 against 5.81 for HS256 - about 28 microseconds more,
+and it buys something specific: verifiers hold only the PUBLIC key, so a compromised service cannot MINT
+tokens. With HS256 every verifier shares the secret and can forge.
+
+    c.execute('UPDATE apikeys SET revoked=1 WHERE hash=?', (h,)); c.commit()
+
+Revocation, MEASURED at 10.740 ms and effective on the very next request - because every request already
+consults this row. The JWT has no equivalent line, and that absence is the entire architectural
+difference.
+
+    print(f"TTL {ttl} s -> valid for up to {ttl/60} minutes after revocation")
+
+Not a measurement but the consequence of one: with local verification there is nothing to update, so the
+exposure window is exactly the TTL. Writing it out in minutes is what turns "we use JWTs" into a
+number someone can accept or reject.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - verification cost per request.
+
+    mechanism                                       cost       touches shared state?
+    ---------------------------------------------   ---------   ---------------------
+    API key: sha256 + indexed lookup (local)          8.23 us   YES - a database row
+    JWT HS256 verify (shared secret)                  5.81 us   no
+    JWT RS256 verify (public key)                    33.41 us   no
+    JWT ES256 verify (P-256)                         74.08 us   no
+    OAuth introspection (call the auth server)   1,000-20,000 us   YES - a network call
+
+The result that contradicts the folklore: the local lookup at 8.23 us BEAT RS256 by 4x and ES256 by 9x.
+So "JWTs are faster because there is no database lookup" is not a CPU claim.
+
+The correct claim is in the right-hand column. The lookup is cheap here because it is local SQLite; in
+production it is one shared database serving every service, so its cost is a network round trip plus
+contention, and it couples every service's availability to that database. That is a SCALING and COUPLING
+argument, not a microseconds one - and stating it correctly is what makes it convincing.
+
+Note also ES256 is SLOWER to verify than RS256. RSA verification with a small public exponent is cheap;
+ECDSA verification is not. ECDSA wins on signature size and signing speed, not on verification.
+
+TRACE B - what the credential carries.
+
+    credential      size        contents
+    -------------   ---------   ------------------------------------------------
+    API key         43 chars    nothing. "AXhlYNX7a_BBXMOe..." - opaque randomness
+    JWT (HS256)     121 bytes   sub = u1, scope = orders:read, exp = 1787022420
+
+Every property of the API key must be looked up. Every property of the token travels with it. Everything
+else in this entry follows from that one line.
+
+TRACE C - revocation, the decisive property.
+
+    API KEY
+        mechanism        one UPDATE on the row every request already reads
+        cost             10.740 ms
+        exposure window  ZERO - effective on the very next request
+
+    JWT
+        mechanism        none. There is nothing to update.
+        exposure window  TTL     60 s ->     1.0 minutes
+                         TTL    900 s ->    15.0 minutes
+                         TTL  3,600 s ->    60.0 minutes
+                         TTL 86,400 s -> 1,440.0 minutes
+
+    the only fixes: a shorter TTL (more refresh traffic) or a denylist (a lookup - which
+    reinstates exactly the property the token was chosen to avoid)
+
+TRACE D - blast radius when the credential leaks.
+
+    credential                capabilities granted                         lifetime after the leak
+    -----------------------   ------------------------------------------   -----------------------
+    API key, all-or-nothing   read, write, delete, billing, admin  (5)      until someone notices
+    OAuth token, scoped       orders:read  (1)                              until `exp`
+
+    the third-party case:
+      API key : you hand over YOUR key. It can do everything you can, forever, and revoking it
+                breaks your own integrations too.
+      OAuth   : a scoped, expiring token issued TO THE APP. Revoking it affects only that app.
+
+TRACE E - round trips before the first API response.
+
+    flow                        round trips   20 ms RTT   100 ms RTT   amortises?
+    -------------------------   -----------   ---------   ----------   ----------
+    API key                               1       20 ms       100 ms   n/a
+    OAuth client_credentials              2       40 ms       200 ms   YES - one token, thousands
+                                                                        of calls
+    OAuth authorization_code              5      100 ms       500 ms   per user session
+
+The `amortises` column is what stops this being an argument against OAuth. `client_credentials` fetches a
+token once per TTL, so the 2x applies to one request an hour rather than to every request.
+`authorization_code` involves a human logging in and is a per-session cost.
+
+TRACE F - the API-key hygiene numbers.
+
+    practice                          measurement
+    -------------------------------   ------------------------------------------------------
+    store sha256(key), not the key    4d9f51dc4423482761b973386e3f5c2b... is what leaks instead
+    use a FAST hash                   ~190 bits of entropy; nothing to brute-force. Whole
+                                      hash+lookup 8.23 us; bcrypt would add milliseconds for
+                                      no security gain
+    constant-time comparison          `==` 0.0426 us | hmac.compare_digest 0.0889 us
+                                      -> 46 nanoseconds to close a timing side channel
+    prefix the key ("sk_live_")       what makes automated secret scanning able to find and
+                                      revoke it
+    set an expiry anyway              a key with no expiry outlives its owner's employment
+
+The bcrypt row is the one that surprises people, and it is the reason to understand WHY password hashing
+is slow rather than to copy the practice: slowness defends against guessing, and there is no guessing a
+190-bit random value.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    verification per request   API key hash + local lookup      8.23 us  (touches shared state)
+                               JWT HS256                        5.81 us  (no I/O)
+                               JWT RS256                       33.41 us  (no I/O)
+                               JWT ES256                       74.08 us  (no I/O)
+                               OAuth introspection      1,000-20,000 us  (network)
+
+    what it carries            API key 43 chars, nothing | JWT 121 bytes: sub, scope, exp
+    revocation                 API key: 10.740 ms UPDATE, effective next request
+                               JWT: valid for up to the TTL - 1 min / 15 min / 60 min / 24 h
+    blast radius               all-or-nothing key: 5 capabilities until noticed
+                               scoped token: 1 capability until exp
+    setup                      API key 1 round trip | client_credentials 2 (amortised)
+                               | authorization_code 5 (per session)
+    hygiene                    `==` 0.0426 us vs hmac.compare_digest 0.0889 us (46 ns)
+
+THE MISTAKES:
+
+    - Saying "OAuth" and meaning "JWT". OAuth is a delegation framework; JWT is a token format, and
+      choosing it is choosing the revocation trade.
+    - Believing JWTs are faster because there is no lookup. MEASURED: the local lookup beat RS256 by 4x.
+      The real argument is shared state, not microseconds.
+    - Not knowing your revocation window. MEASURED at 60 minutes for a 1-hour TTL.
+    - Adding a denylist to JWTs and thinking you have kept local verification. You have not - a denylist
+      is a lookup.
+    - Storing API keys in plaintext. Store `sha256(key)`.
+    - Using bcrypt or argon2 on a random API key. ~190 bits of entropy; slowness buys nothing and costs
+      milliseconds per request.
+    - Comparing secrets with `==`. 46 nanoseconds to fix.
+    - Putting a credential in a query string, where every proxy logs it.
+    - One all-powerful key. Scope everything, including keys.
+    - API keys with no expiry, which outlive the people who created them.
+    - Using `authorization_code` for machine-to-machine calls. MEASURED 5 round trips and it requires a
+      human.
+    - Quoting OAuth's setup cost per request. `client_credentials` amortises over the token's lifetime.
+    - Trusting the JWT's own `alg` header. Pin the algorithm; `alg: none` is the classic attack.
+    - Not validating `exp`, `aud` and `iss` - a valid signature is not a valid token.
+    - HS256 across many services, where every verifier can also MINT tokens. RS256/ES256 costs ~28 us
+      and removes that.
+    - No rotation story. Rotation that requires downtime never happens; use overlapping validity.
+
+THE TAKEAWAY. They are not competing implementations of one idea. An API key answers "which of my
+integrations is calling?"; OAuth answers "this user authorised this app to do these things for a while",
+which an API key cannot express - handing over your key gives away everything you can do, forever. Under
+the hood the split is that a key carries NOTHING and a token carries its claims, and that produces the
+real trade: local verification or instant revocation, measured as 10.7 ms to a hard stop versus up to 60
+minutes of continued validity. The standard resolution is to split the credential - a revocable
+refresh token exchanged for short-lived access tokens verified locally - and if you do use keys, hash them
+with a FAST hash, compare in constant time, scope them, expire them, and prefix them so a scanner can find
+the one you leak.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
