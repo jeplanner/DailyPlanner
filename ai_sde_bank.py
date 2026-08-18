@@ -328844,6 +328844,2435 @@ duplicate effects to zero in the measurement, and it is precisely what Kafka, SQ
 doing when they say exactly-once.""",
 ]
 
+_EX_P1AO["Why must you use time-based splits (not random shuffling) when evaluating models on temporal data like fraud or forecasting?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - your test set exists to answer ONE question: how will this model do on
+data it has never seen, in the situation where it will actually run?
+
+For fraud, demand forecasting, click prediction, churn - anything where the world moves - that situation
+is always PREDICTING THE FUTURE FROM THE PAST. So the test set has to be the future.
+
+A random 80/20 shuffle is not that. It scatters rows across time, so the model trains on January and
+December and is tested on rows from June sitting between them. It has SEEN THE FUTURE relative to some
+of its test rows, and it will never have that luxury in production.
+
+MEASURED ON THIS MACHINE - a fraud dataset over 24 months where the fraud tactics DRIFT (one signal
+matters early, a different one takes over later), averaged over 5 seeds:
+
+    split                     AUC
+    ----------------------   ------
+    random shuffle 80/20     0.8252
+    time-based (months 0-18 train, 19-23 test)   0.7478
+    OVERSTATEMENT            +0.0774
+
+Point 0.077 of AUC, which is 1.31x the lift-over-chance you actually have. You would ship a model
+believing it was substantially better than it is, and the shortfall shows up as a production incident
+rather than a test result.
+
+AND THE CONTROL, which is the part that makes this an explanation rather than a rule. The same
+experiment on a STATIONARY world - no drift - gives:
+
+    random 0.8456   time-based 0.8484   gap -0.0028
+
+Essentially zero, and if anything the time split scores HIGHER. So random shuffling is not wrong
+because shuffling is wrong; it is wrong because THE WORLD CHANGES. The gap IS the drift.""",
+
+    """2. THE INTUITION - a random split gives your model a study guide with the answers in it.
+
+Think of it as an exam. You want to know whether a student can handle NEXT term's problems. A time-based
+split sets last term's material as study and this term's exam as test - which is the real situation. A
+random split takes all the problems from both terms, shuffles them, and gives the student 80% to study
+including problems from the SAME WEEK as the exam ones, with the same tricks and the same typos.
+
+The student scores higher. They have not learned more.
+
+WHERE EXACTLY DOES THE ADVANTAGE COME FROM? Three separate leaks, and it is worth keeping them apart
+because they need different fixes.
+
+  (1) THE PERIOD ITSELF. If fraud spiked in week 30 because of one campaign, a random split puts some of
+      week 30 in training. The model learns "week-30-ish transactions are fraud" and is tested on the
+      rest of week 30.
+
+  (2) THE ENTITY. The same card, user or merchant has rows on both sides. The model memorises that
+      entity rather than the pattern.
+
+  (3) THE PREPROCESSING. Any statistic computed over the whole dataset - a scaler, a target encoding,
+      a "this merchant's fraud rate" feature - carries information from test rows into training.
+
+MEASURED, how completely a random split mixes the periods:
+
+    split          months in train   months in test   overlap   test rows whose month is in train
+    ------------   ---------------   --------------   -------   --------------------------------
+    random 80/20             0-23             0-23   24 of 24                            100.0%
+    time-based               0-18            19-23    0 of 24                              0.0%
+
+Every single test row in the random split comes from a month the model already trained on. That is not
+"a bit of leakage", it is a completely different question being answered.""",
+
+    """3. EVERY TERM DEFINED.
+
+TEMPORAL DATA. Data where each row has a time and the relationships CHANGE over time. Fraud, prices,
+demand, click-through rates, medical practice.
+
+I.I.D. Independent and identically distributed. The assumption behind random splitting: every row is
+drawn from the same fixed distribution, independent of the others. Temporal data violates BOTH halves.
+
+RANDOM SPLIT / K-FOLD CV. Shuffle all rows and deal them into folds. Correct for i.i.d. data.
+
+TIME-BASED SPLIT. Train on everything up to a cutoff date, test on everything after it. Also called an
+out-of-time or holdout-forward split.
+
+WALK-FORWARD VALIDATION. Repeat the time split at several cutoffs - train 0..12 test 13, train 0..13
+test 14, and so on. Gives you several estimates and, more usefully, their SPREAD.
+
+EXPANDING vs ROLLING WINDOW. Expanding keeps all history; rolling keeps only the last k periods.
+Rolling adapts faster to drift and uses less data - measure which wins, do not assume.
+
+LOOKAHEAD LEAKAGE. Any way in which information from after the prediction time reaches the model.
+
+TARGET LEAKAGE. A feature that encodes the label. The commonest temporal form is a target encoding
+computed over the whole dataset.
+
+TARGET / MEAN ENCODING. Replacing a category ("merchant 4471") with the average label for that
+category. Enormously useful and the single most common source of leakage.
+
+GROUP / ENTITY LEAKAGE. The same entity on both sides of the split. Fixed by a GROUPED split - hold out
+whole entities.
+
+CONCEPT DRIFT. The relationship between features and label changes. `P(y|x)` moves. This is what the
+measurement above is showing.
+
+COVARIATE SHIFT. The feature distribution changes but the relationship does not. `P(x)` moves,
+`P(y|x)` does not. Much less damaging.
+
+STATIONARY. A process whose statistical properties do not change over time. The measurement's control
+condition.
+
+GAP / EMBARGO. Deliberately leaving a gap between the end of training and the start of test, to account
+for label delay - a chargeback arrives 60 days after the transaction, so a model trained "up to today"
+does not really know today's labels.
+
+LABEL DELAY. How long after the event you learn the truth. It is the most-ignored constraint in fraud
+modelling and it sets the minimum embargo.
+
+PURGED K-FOLD. Time-series cross-validation that removes training rows whose label period overlaps the
+test period. The formal version of the embargo.
+
+BACKTEST. The finance name for walk-forward validation.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "I split by time, so I am fine", while the FEATURES were built
+over the whole dataset.
+
+The split is only half of it. Every statistic you computed before splitting is a channel. MEASURED, a
+merchant-level target encoding ("what fraction of this merchant's transactions were fraud"), 800
+merchants, tested on months 19-23:
+
+    how the encoding was computed         test AUC
+    -----------------------------------   --------
+    over ALL rows, including test months     0.8388   <- what your notebook reports
+    over TRAIN months only                   0.8173   <- what production gets
+    no merchant encoding at all              0.6716
+
+    phantom lift from the leak            +0.0216
+
+And note the third row, because it is the reason people do this: the encoding is genuinely worth +0.146
+of AUC. It is a great feature. It is just that a fifth of the reported gain is not real.
+
+THE SECOND TRAP - ENTITY LEAKAGE, and it is worse than people expect. MEASURED, how many entities land
+on BOTH sides of a random 80/20 split:
+
+    rows per entity   entities on BOTH sides (of 1,500)
+    ---------------   ---------------------------------
+                 5              998   (66.5%)
+                12            1,390   (92.7%)
+                40            1,500  (100.0%)
+
+At forty transactions per card, EVERY SINGLE CARD is on both sides. There is no held-out population at
+all; you are testing memorisation.
+
+THE THIRD TRAP - forgetting LABEL DELAY. If a chargeback lands 60 days after the transaction, then on
+any given day your most recent 60 days of data have INCOMPLETE labels. Training "up to yesterday" quietly
+teaches the model that recent transactions are rarely fraud - not because they are, but because nobody
+has reported them yet. The fix is an embargo: train up to T minus 60 days, test after T.
+
+THE FOURTH TRAP - reporting ONE time split and calling it validation. A single cutoff is a single sample.
+MEASURED, walk-forward over 11 consecutive cutoffs:
+
+    mean 0.7772   min 0.7598   max 0.7988   spread 0.0390
+
+The spread is 0.039 - half the size of the entire leakage effect we are worrying about. Quote one number
+from one cutoff and you cannot tell a real improvement from which month you happened to stop at.
+
+THE FIFTH TRAP - assuming the model holds up. MEASURED, trained on months 0-18:
+
+    test month   19       20       21       22       23
+    AUC        0.7795   0.7494   0.7417   0.7485   0.7284
+
+Down 0.051 of AUC over five months, from 0.7835 in-sample. That decay rate is a PRODUCT DECISION input:
+it tells you how often you must retrain, and you cannot see it at all from a random split.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE SPLITTING STRATEGIES, and each is correct for a different violation of i.i.d.:
+
+    RANDOM K-FOLD          rows are independent and the world is stationary. Genuinely fine for image
+                           classification on a fixed dataset; wrong for anything with a timestamp.
+    STRATIFIED K-FOLD      random, preserving the class balance in each fold. Solves rare-class
+                           variance, does NOTHING about time.
+    GROUPED K-FOLD         hold out whole entities - users, cards, patients, hospitals. Use whenever
+                           the same entity generates many rows.
+    TIME-BASED HOLDOUT     one cutoff. The minimum bar for temporal data.
+    WALK-FORWARD           several cutoffs. Gives you the mean AND the spread. MEASURED spread 0.039.
+    PURGED / EMBARGOED     walk-forward with a gap for label delay. What fraud and finance need.
+    GROUPED + TIME         both at once, and usually what you actually want.
+
+WHICH ONE, DECIDED BY A QUESTION:
+    "does the same entity appear many times?"        -> group
+    "does the relationship change over time?"        -> time
+    "is there a delay before I learn the label?"     -> embargo
+    "both?"                                          -> both, and this is the common case
+
+WINDOW CHOICE - expanding versus rolling. Expanding uses all history and is more stable; rolling uses
+the last k periods and adapts faster when tactics change. This is measurable, not a matter of taste:
+run walk-forward both ways and compare. On the drifting dataset here, the recent months carry the
+current tactic, which is why the model decays 0.051 AUC in five months.
+
+WHAT TO DO ABOUT DRIFT ONCE YOU CAN SEE IT:
+    RETRAIN ON A SCHEDULE     set the period from the measured decay. 0.051 over five months says
+                              monthly, not annually.
+    MONITOR the live AUC/PR against the offline number. A gap that opens is drift, not noise.
+    ROLLING WINDOW            drop stale history rather than averaging over regimes.
+    DRIFT DETECTION           alarm on the feature distribution AND on the residuals. Feature drift
+                              alone is covariate shift and is often harmless.
+
+THE RELATED FAMILY:
+    NESTED CV                 for honest hyperparameter selection - and it must respect time too, or
+                              you have just leaked through the tuning.
+    SPATIAL CV                the geographic analogue: nearby points are correlated, so a random split
+                              leaks. Same disease, different axis.
+    LEAVE-ONE-GROUP-OUT       the grouped split taken to its limit.
+    ADVERSARIAL VALIDATION    train a classifier to tell train from test. If it succeeds, your split
+                              is not representative - a fast, direct check.
+
+WHEN RANDOM SPLITTING IS FINE: when the data really is exchangeable. A fixed image corpus, a one-off
+survey, a physical process whose laws do not move. MEASURED here, the stationary control gave a gap of
+-0.0028 - random splitting cost nothing. The rule is not "never shuffle", it is "shuffle only when the
+world holds still".""",
+
+    """6. HOW TO CODE IT.
+
+  1. SORT BY TIME FIRST, before anything else. Then choose a cutoff. `train = df[df.ts <= cut]`,
+     `test = df[df.ts > cut]`.
+  2. PUT AN EMBARGO IN if labels arrive late. Chargebacks at 60 days means train up to `cut - 60d`,
+     test after `cut`. Skipping this teaches the model that recent events are safe.
+  3. BUILD EVERY FEATURE FROM THE TRAINING WINDOW ONLY. Fit the scaler on train. Fit the target
+     encoding on train. MEASURED: an encoding fit on all rows gave +0.0216 of AUC that does not exist.
+  4. BETTER: BUILD FEATURES AS-OF THE ROW'S OWN TIMESTAMP. "This merchant's fraud rate over the
+     previous 90 days" is computable in production and leaks nothing. A single global aggregate is
+     neither.
+  5. GROUP AND TIME TOGETHER when the same entity recurs. MEASURED: at 40 rows per entity, a random
+     split puts 100% of entities on both sides.
+  6. WALK FORWARD, do not settle for one cutoff. Report the mean AND the spread. MEASURED spread
+     0.0390 across 11 cutoffs - bigger than most claimed improvements.
+  7. PLOT AUC AGAINST TIME-SINCE-TRAINING. MEASURED: 0.7795 at one month out, 0.7284 at five. That
+     curve sets your retraining cadence, and nothing else gives it to you.
+  8. RUN THE STATIONARY CONTROL. Compare random and time-based on your data. If the gap is near zero,
+     your world is not drifting and you have learned something worth knowing. MEASURED control gap:
+     -0.0028.
+  9. USE ADVERSARIAL VALIDATION as a cheap alarm: train a classifier to distinguish train rows from
+     test rows. If it gets a high AUC, the two populations differ and your estimate will not transfer.
+ 10. TUNE HYPERPARAMETERS INSIDE THE TIME SPLIT. Selecting a model by a metric computed over the whole
+     dataset leaks just as surely as a feature does.
+ 11. WRITE THE CUTOFF DATE INTO THE MODEL ARTEFACT. Six months later, "what did this model know?" must
+     be answerable.
+ 12. WHEN YOU FINALLY TRAIN THE SHIPPING MODEL, retrain on ALL data up to today - the split was for
+     ESTIMATION, not for the final fit. Just do not then quote the split's AUC as if it applied to a
+     model trained on more data.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"The test set has to simulate how the model will actually be used, and for fraud or forecasting that is
+always predicting the future from the past. A random shuffle does not do that - it scatters rows across
+time, so the model trains on December and is tested on June, having effectively seen the future.
+
+I measured it. On a fraud dataset over 24 months where the tactics drift - one signal matters early, a
+different one takes over - a random 80/20 split reports 0.8252 AUC and a time-based split reports
+0.7478. That is 0.077 of AUC, about 1.31 times the real lift over chance, and you would ship believing
+the model is substantially better than it is.
+
+The control is the part I care about most. On a STATIONARY version of the same data, random gave 0.8456
+and time-based 0.8484 - a gap of essentially zero, slightly favouring the time split. So shuffling is
+not intrinsically wrong. It is wrong because the world changes, and the gap you measure IS the drift.
+
+There are three separate leaks and they need different fixes. The period itself - and a random split is
+total here, every test row comes from a month the model trained on, 24 of 24 months overlapping. The
+entity - at forty transactions per card, a random split puts ONE HUNDRED PERCENT of cards on both sides,
+so there is no held-out population at all. And the preprocessing: a merchant-level target encoding fit
+over all rows scored 0.8388 against 0.8173 when fit on training months only - so a fifth of that
+feature's reported gain was phantom.
+
+Two things I would add that a random split cannot give you at all. First, the DECAY curve: trained on
+months 0 to 18, the model scored 0.7795 one month out and 0.7284 five months out. That number sets the
+retraining cadence, and it is a product decision, not a modelling one. Second, the VARIANCE: walking
+forward over eleven cutoffs, the AUCs ranged 0.7598 to 0.7988 - a spread of 0.039, which is larger than
+most improvements anyone claims. Quote one number from one cutoff and you cannot distinguish a real gain
+from where you happened to stop.
+
+And there is a delay issue underneath all of it: if chargebacks arrive 60 days late, then training 'up
+to yesterday' teaches the model that recent transactions are safe - not because they are, but because
+nobody has reported them yet. That needs an explicit embargo between train and test."
+
+THE ONE SENTENCE TO NOT FUMBLE: the gap between a random split and a time split is not a methodology
+detail, it is a MEASUREMENT OF HOW FAST YOUR WORLD IS CHANGING - and it was 0.077 AUC with drift and
+0.003 without.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def make(seed, n_per_month=1500, months=24, drift=True):
+        for m in range(months):
+            a = 1.0 - m/(months-1) if drift else 0.5
+            b = m/(months-1)       if drift else 0.5
+            z = 2.4*a*X[:,0] + 2.4*b*X[:,1] + 0.5*X[:,2] - 2.2
+
+The dataset generator, and the two lines that matter are `a` and `b`. In month 0 the label depends
+almost entirely on feature 0; by month 23 almost entirely on feature 1. That is CONCEPT DRIFT written
+explicitly - the fraudsters changed tactics. Feature 2 keeps a constant small weight, which is the part
+that survives.
+
+Setting `drift=False` pins both weights at 0.5 and gives the stationary control. The two experiments
+differ in ONLY these two lines, which is what makes the comparison mean something: any difference in the
+gap is attributable to drift and nothing else.
+
+    idx = r.permutation(len(X)); cut = int(.8*len(X))
+    w = logreg(X[idx[:cut]], y[idx[:cut]])
+    a_rand = auc(y[idx[cut:]], pred(X[idx[cut:]], w))
+
+The random split. `permutation` destroys the time ordering completely - and note what that means for
+the model: its training set contains months 0 through 23, so whatever tactic is current in the test
+rows, it has examples of it.
+
+    w = logreg(X[t <= 18], y[t <= 18])
+    a_time = auc(y[t >= 19], pred(X[t >= 19], w))
+
+The time split, and it is a one-line change - a boolean mask on the month instead of a permutation.
+Training now stops at month 18, so the model has seen the OLD tactic much more than the new one.
+MEASURED 0.8252 vs 0.7478.
+
+    def enc(mask_for_stats):
+        np.add.at(s, merch[mask_for_stats], y[mask_for_stats])
+        np.add.at(c, merch[mask_for_stats], 1.0)
+        return ((s + 20*prior) / (c + 20))[merch]
+
+The target encoding, and `mask_for_stats` is the whole experiment in one parameter. Pass
+`np.ones(len(y), bool)` and the merchant's fraud rate is computed using test-month rows - the leak.
+Pass `tr` and it uses training months only.
+
+The `+ 20*prior` and `+ 20` are smoothing: a merchant with two transactions should not get a fraud rate
+of 0.0 or 1.0. Without it the encoding memorises rare merchants and the leak is even larger.
+
+Note that the feature is applied to ALL rows either way - `[merch]` indexes every row. The leak is not
+in WHO gets the feature, it is in WHICH ROWS' LABELS went into computing it.
+
+    both = set(m2[i2[:c2]]) & set(m2[i2[c2:]])
+
+Counting entities that straddle a random split - a set intersection between the entity ids on each side.
+MEASURED 66.5% at 5 rows per entity and 100% at 40. Two lines, and it is the check nobody runs.
+
+    for cutm in range(12, 23):
+        w = logreg(X[t<=cutm], y[t<=cutm])
+        aucs.append(auc(y[t==cutm+1], pred(X[t==cutm+1], w)))
+
+Walk-forward validation, and it is a loop over cutoffs rather than a new technique. Each iteration
+trains on everything up to month `cutm` and tests on the single next month. The EXPANDING window - the
+training set grows each fold - which is the default; slicing `t>=cutm-5` instead would make it rolling.
+
+The result is eleven numbers rather than one, and the spread of those numbers (0.039) is the honest
+error bar on any claim you make.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the headline, averaged over 5 seeds.
+
+    world           split              AUC      gap
+    -------------   ----------------   ------   -------
+    DRIFTING        random 80/20       0.8252
+    DRIFTING        time-based         0.7478   +0.0774
+    STATIONARY      random 80/20       0.8456
+    STATIONARY      time-based         0.8484   -0.0028
+
+Read the two gaps against each other. The random split is 0.077 optimistic when the world drifts and
+0.003 PESSIMISTIC when it does not. The optimism is not an artefact of shuffling - it is the drift,
+measured. Expressed as lift over chance: 0.3252 claimed against 0.2478 real, a 1.31x overstatement.
+
+TRACE B - the split's coverage, which is why the gap exists.
+
+    split          train months   test months   months in both   test rows from a trained-on month
+    ------------   ------------   -----------   --------------   ---------------------------------
+    random 80/20         0 - 23        0 - 23         24 of 24                             100.0%
+    time-based           0 - 18       19 - 23          0 of 24                               0.0%
+
+One hundred percent against zero. The random split is not slightly contaminated; it is answering a
+different question - "can the model interpolate within a period it has seen?" rather than "can it
+extrapolate to a period it has not?".
+
+TRACE C - decay, trained once on months 0-18.
+
+    test month   months since training ended   AUC      drop from in-sample
+    ----------   ---------------------------   ------   -------------------
+     18 (in-sample)                       0    0.7835                 -
+     19                                   1    0.7795              -0.0040
+     20                                   2    0.7494              -0.0341
+     21                                   3    0.7417              -0.0418
+     22                                   4    0.7485              -0.0350
+     23                                   5    0.7284              -0.0551
+
+Down 0.055 of AUC in five months, and not monotonically - month 22 is better than 21. That non-monotonic
+wobble matters practically: a single month's dip is not evidence of a broken model, and you need the
+whole curve before you can tell decay from noise.
+
+The 0.0040 drop at one month out is the reassuring one, and it is why "retrain monthly" is a defensible
+default here while "retrain annually" is not.
+
+TRACE D - target encoding, months 19-23 as the test set.
+
+    how the merchant fraud rate was computed   test AUC   vs no encoding   vs the honest version
+    ----------------------------------------   --------   --------------   ---------------------
+    no merchant encoding                         0.6716            -                    -
+    fit on TRAIN months only (honest)            0.8173       +0.1457                    -
+    fit on ALL rows including test (leak)        0.8388       +0.1672              +0.0216
+
+The middle row is the point. The feature is worth +0.146 - it is an excellent feature and you should
+absolutely build it. The leak adds another +0.0216 on top, which is 12.9% of the reported gain and
+entirely fictional. So the failure mode is not "we used a bad feature", it is "we overstated a good one",
+which is much harder to notice.
+
+TRACE E - entities straddling a random split, 1,500 entities.
+
+    rows per entity   on BOTH sides   percentage
+    ---------------   -------------   ----------
+                  5             998        66.5%
+                 12           1,390        92.7%
+                 40           1,500       100.0%
+
+The more history you have per customer - which is normally a good thing - the more completely a random
+split fails. At 40 rows per card the held-out set contains zero unseen cards.
+
+TRACE F - walk-forward, 11 cutoffs.
+
+    train months   test month   AUC
+    ------------   ----------   ------
+    0..12                  13   0.7785
+    0..13                  14   0.7988   <- max
+    0..14                  15   0.7670
+    0..15                  16   0.7598   <- min
+    0..16                  17   0.7850
+    0..17                  18   0.7656
+    0..18                  19   0.7805
+    0..19                  20   0.7796
+    0..20                  21   0.7718
+    0..21                  22   0.7800
+    0..22                  23   0.7823
+
+    mean 0.7772   min 0.7598   max 0.7988   SPREAD 0.0390
+
+The spread is the number to carry into any conversation about model improvements. If your new model
+beats the old by 0.01 AUC on one cutoff, that is well inside a spread of 0.039 and you have measured
+nothing. Walk-forward turns a point estimate into an estimate with an error bar, which is the entire
+reason to do it.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    drifting world:      random 0.8252   time-based 0.7478   gap +0.0774  (1.31x the real lift)
+    stationary control:  random 0.8456   time-based 0.8484   gap -0.0028
+    decay, trained on months 0-18:  0.7795 at +1 month  ->  0.7284 at +5 months  (-0.0551)
+    target encoding:     none 0.6716 | train-only 0.8173 | leaked 0.8388  (+0.0216 phantom, 12.9%)
+    entities on both sides of a random split:  66.5% at 5 rows each, 100.0% at 40
+    month overlap:       random 24 of 24 (100.0% of test rows)   time-based 0 of 24 (0.0%)
+    walk-forward, 11 cutoffs:  mean 0.7772, min 0.7598, max 0.7988, spread 0.0390
+
+COST: a time-based split is CHEAPER than k-fold - one fit instead of k. Walk-forward over 11 cutoffs is
+11 fits, the same order as 10-fold CV. There is no computational argument for shuffling.
+
+THE REAL COST is data: your test set is the most recent period, so you cannot train on it, and if the
+recent period is the most relevant you are training on the least relevant data. That tension is real and
+the answer is to retrain on everything for the SHIPPING model while using the split only to ESTIMATE.
+
+THE MISTAKES:
+
+    - Random k-fold on data with a timestamp. MEASURED +0.0774 AUC of phantom performance.
+    - Splitting by time but computing features over the whole dataset. MEASURED +0.0216 from a single
+      target encoding.
+    - Ignoring entity overlap. MEASURED 100% of entities on both sides at 40 rows each.
+    - No embargo when labels arrive late. Trains the model to believe recent events are safe.
+    - One cutoff and one number. MEASURED spread 0.0390 across cutoffs - larger than most claimed wins.
+    - Never plotting AUC against time-since-training, so nobody knows how often to retrain.
+    - Tuning hyperparameters on a metric computed over all the data, which leaks through selection.
+    - Assuming drift and never checking. The stationary control cost -0.0028; if your data behaves like
+      that, say so and use the simpler method.
+    - Alarming on feature drift alone. `P(x)` moving is covariate shift and is often harmless; it is
+      `P(y|x)` moving that destroys the model.
+    - Quoting the split's AUC for a model that was subsequently retrained on more data.
+
+THE TAKEAWAY. The test set's job is to imitate production, and in production you always predict forward.
+A random split lets the model see the future, and the measurement puts a number on what that is worth:
++0.077 AUC when the world drifts and -0.003 when it does not - so the gap is not a methodological
+penalty, it is a thermometer for drift. Split by time, build every feature as-of the row's own timestamp,
+hold out whole entities, leave a gap for label delay, and walk forward so you get a spread rather than a
+point. The two things you get for free are the ones you cannot get any other way: how fast the model goes
+stale, and how much of your claimed improvement is inside the noise.""",
+]
+
+_EX_P1AO["Why prefer immutable infrastructure over patching servers in place?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - if you change servers IN PLACE, every server slowly becomes a
+different server, and nobody knows what is on any of them.
+
+Each patch, each hotfix, each 3 a.m. SSH session leaves a trace. Most of them apply cleanly. A few fail
+silently, a few half-apply, and a few are undocumented fixes that someone meant to write up later. After
+a year you have a fleet of SNOWFLAKES - boxes that are supposed to be identical and are not.
+
+IMMUTABLE INFRASTRUCTURE says: never change a running server. Build a versioned IMAGE, deploy identical
+copies, and to change anything at all, build a NEW image and REPLACE the instances.
+
+MEASURED ON THIS MACHINE - 200 servers, 40 change events, 3% of in-place applications failing or
+half-applying, and a 2% chance per server per event that somebody applied a manual hotfix:
+
+    approach     distinct configurations across 200 servers   snowflakes (a config on exactly 1 box)
+    ----------   ------------------------------------------   --------------------------------------
+    MUTABLE                                              61                                       52
+    IMMUTABLE                                             1                                        0
+
+Sixty-one different fleets pretending to be one, and fifty-two boxes that are each unique in the world.
+Only 126 of 200 servers - 63.0% - actually match the state you INTENDED to deploy.
+
+That is not a hypothetical maintenance concern. It is why the bug reproduces on one box and not another,
+why the rollback does not land where you expected, and why "just rebuild it" does not give you back the
+thing you had.""",
+
+    """2. THE INTUITION - the difference between EDITING a document and REPLACING it with a new version.
+
+If ten people each edit their own copy of a contract over a year - some changes tracked, some not, one
+person's edit failing to save - you end up with ten different contracts and no way to say which is the
+real one. If instead you publish version 1, version 2, version 3, and everyone always holds the current
+published version, then "what does Alice have?" has a one-word answer.
+
+Servers are the same, with one extra property: the drift COMPOUNDS. Every change event is another chance
+for each box to diverge, and divergence never heals on its own.
+
+MEASURED, watching it accumulate:
+
+    after N change events   distinct configurations   servers matching the intended state
+    ---------------------   -----------------------   -----------------------------------
+                        8                        28                     154 / 200  (77.0%)
+                       16                        46                     137 / 200  (68.5%)
+                       24                        49                     131 / 200  (65.5%)
+                       32                        51                     137 / 200  (68.5%)
+                       40                        61                     126 / 200  (63.0%)
+
+Two things to read there. The distinct-configuration count climbs steadily - 28, 46, 49, 51, 61 - and it
+does not level off, because nothing removes a divergence once it exists. The "matching intended" column
+wobbles rather than falling smoothly, because a later successful patch can accidentally repair an
+earlier failure on the same key. That wobble is why the problem is easy to miss: on any given week the
+fleet does not look obviously worse than last week.
+
+THE COMPOUNDING, stated plainly: with a 3% per-application failure rate and 40 changes, the chance that
+one specific server received all forty cleanly is about 0.97^40, roughly 30%. Most boxes are drifted.
+The 63% figure is higher than that only because some failures are later overwritten.""",
+
+    """3. EVERY TERM DEFINED.
+
+MUTABLE INFRASTRUCTURE. Servers are long-lived and changed in place - SSH, configuration management,
+`apt upgrade`, a manual edit. Also called "pets".
+
+IMMUTABLE INFRASTRUCTURE. Servers are never modified after launch. To change anything, build a new
+image and replace the instances. Also called "cattle".
+
+PETS vs CATTLE. Pets have names and get nursed back to health. Cattle are numbered and replaced. The
+metaphor is crude and the operational distinction is exact: can you destroy any instance right now
+without thinking about it?
+
+CONFIGURATION DRIFT. The accumulated divergence between what a server IS and what it is supposed to be.
+MEASURED: 74 of 200 servers differing from the intended state, averaging 1.19 wrong keys each.
+
+SNOWFLAKE SERVER. A machine whose configuration exists nowhere else and is not reproducible. MEASURED:
+52 of them.
+
+IMAGE / AMI / CONTAINER IMAGE. A frozen, versioned filesystem plus metadata. The unit that gets
+deployed.
+
+GOLDEN IMAGE. The blessed base image everything is built from.
+
+BAKING vs FRYING. Baking puts everything into the image at build time. Frying installs it at boot.
+Baking is slower to build and gives an immutable, fast-booting instance; frying is the halfway house
+that reintroduces build-time variability at run time.
+
+BLUE/GREEN DEPLOYMENT. Stand up a complete new fleet (green), switch traffic, keep the old one (blue)
+ready. Rollback is a traffic switch.
+
+CANARY DEPLOYMENT. Send a small fraction of traffic to the new image first.
+
+ROLLING UPDATE. Replace instances a few at a time. Cheaper than blue/green and the rollback is slower.
+
+IDEMPOTENT CONFIGURATION MANAGEMENT. Ansible, Puppet, Chef converging a box toward a desired state.
+Genuinely useful and NOT the same as immutability - convergence still happens on a running box and
+still fails sometimes, which is exactly the 3% in the measurement.
+
+INFRASTRUCTURE AS CODE. The definition of the infrastructure lives in version control. A prerequisite
+for immutability, not a synonym for it.
+
+REPRODUCIBLE BUILD. Same inputs, same output bytes. MEASURED below: re-running a runbook 50 times gave
+8 different results; redeploying an image gave 1.
+
+STATELESS. Holding no data that matters locally. The precondition for replacing an instance freely.
+
+EXTERNALISED STATE. Data, sessions, logs and caches moved off the instance - to a database, object
+store, or log pipeline. The actual work of adopting immutability.
+
+PHOENIX SERVER. A server deliberately destroyed and rebuilt on a schedule, to prove it can be.
+
+MEAN TIME TO REPAIR (MTTR). With immutability the repair is usually "replace the instance", which is
+fast and known-good.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "we use Ansible, so our servers are consistent".
+
+Configuration management CONVERGES a running box toward a desired state, which is a real improvement and
+is not immutability. The convergence run itself can fail, half-apply, or be raced by a human. That is
+precisely the 3% in the measurement, and it is what produces 61 configurations.
+
+The test is not "do we have a tool", it is: CAN I DESTROY ANY INSTANCE RIGHT NOW AND GET AN IDENTICAL
+ONE BACK? MEASURED, re-running the same build steps 50 times:
+
+    'rebuild the box by re-running the runbook', 50 times : 8 distinct results
+    redeploying a stored IMAGE, 50 times                  : 1 distinct result
+
+    100,000 image deployments hashed: 1 distinct hash
+
+Eight outcomes from one runbook. Not because the runbook is bad - because a sequence of steps that each
+touch the network, a package mirror and a running system is not a pure function.
+
+THE SECOND TRAP - the one that costs the most engineering hours. MEASURED, a bug that fires only on
+boxes with the wrong openssl build:
+
+    servers affected                              10 / 200   (5.0%)
+    distinct openssl versions in the fleet                9
+    P(a random box reproduces the bug)                0.050
+    P(you fail to reproduce on 3 random boxes)        0.857
+
+Eighty-six percent of the time, an engineer who tries three boxes concludes the bug is not real. NINE
+different openssl versions in a fleet that has one intended version. This is the origin of "works on my
+machine" at the infrastructure layer, and it is unfalsifiable from inside a drifted fleet.
+
+THE THIRD TRAP - assuming rollback works. MEASURED:
+
+    MUTABLE rollback = re-run 5 reverse steps, each with the same 3% failure rate
+        clean rollbacks: 1,710 / 2,000  (85.5%)
+        P(at least one reverse step fails): 14.1%
+
+    IMMUTABLE rollback = point the fleet at the previous image id
+        one step, and the previous image is a stored artefact
+
+One in seven mutable rollbacks does not complete, and a failed rollback is the worst state available -
+neither the old configuration nor the new one, arrived at during an incident, under time pressure.
+
+THE FOURTH TRAP - thinking immutability is free. It is not, and section 5 puts numbers on it. The real
+cost is not images, it is that STATE MUST LEAVE THE INSTANCE FIRST.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE SPECTRUM, from most mutable to least:
+
+    MANUAL SSH                  no record, no reproducibility. The baseline everyone starts from.
+    SCRIPTED SSH                a record of INTENT, not of outcome.
+    CONFIG MANAGEMENT           Ansible/Puppet/Chef converge toward a desired state. Big improvement,
+                                still mutable, still 3% divergence per application.
+    BAKED IMAGES + REPLACEMENT  immutable. MEASURED 1 configuration, 0 snowflakes.
+    IMMUTABLE + DECLARATIVE OS  NixOS, Fedora CoreOS, Talos. The filesystem itself is read-only and
+                                the whole system is a build artefact.
+
+WHAT IMMUTABILITY ACTUALLY BUYS, each one measured:
+
+    REPRODUCIBILITY   1 configuration instead of 61; 1 rebuild result instead of 8.
+    ROLLBACK          one step at 100% instead of five steps at 85.5%.
+    DEBUGGABILITY     a bug reproduces on every box (P = 1.000) instead of 5% of them.
+    SECURITY          a compromised instance is replaced, not cleaned. Nothing persists across a
+                      replacement, so a foothold on the filesystem does not survive.
+    SCALING           launching instance 201 is the same operation as launching instance 1.
+    AUDIT             "what is running?" is an image id, not an investigation.
+
+WHAT IT COSTS:
+
+    CHANGE LATENCY    a one-line config change goes from "edit and reload, seconds" to "build, test,
+                      roll the fleet, minutes to tens of minutes". This is the objection people
+                      actually feel, and it is legitimate.
+    STORAGE           MEASURED at 1,200 MB per image and 20 retained: 24.0 GB of registry.
+    NETWORK           1,200 MB x 200 instances = 240 GB of pulls per full deploy, unless layers are
+                      shared and cached - which is exactly why layered container images exist.
+    STATE MIGRATION   no local disk, no local logs, no "the cache is warm on that box". THIS is the
+                      real project, and the images are the easy part.
+
+THE HALFWAY POSITIONS, which are where most real systems live:
+    RUNTIME CONFIG SEPARATE FROM THE IMAGE. Environment variables, a config service, feature flags.
+    Lets you change behaviour in seconds without rebuilding - and it is a deliberate, bounded hole in
+    the immutability, which is very different from an unbounded one.
+    FEATURE FLAGS for behaviour, images for code and dependencies.
+    A BREAK-GLASS PROCEDURE that permits SSH in an emergency AND marks the instance for termination
+    afterwards, so the snowflake cannot survive the incident.
+
+WHERE IMMUTABILITY IS THE WRONG CHOICE:
+    STATEFUL SYSTEMS with large local data - databases, Kafka brokers, anything with terabytes on
+    local disk. Replacing an instance means moving the data, so upgrades are genuinely in-place and
+    the answer is careful, versioned, tested upgrade procedures instead.
+    DEVELOPER WORKSTATIONS, where the whole point is that you change things.
+    VERY SMALL DEPLOYMENTS, where one server means there is nothing to be inconsistent WITH - the
+    drift measurement is meaningless at N=1.
+    HARD REAL-TIME OR PHYSICAL SYSTEMS where you cannot simply launch a replacement.""",
+
+    """6. HOW TO CODE IT.
+
+  1. MOVE STATE OFF THE INSTANCE FIRST. Database, object store, external session store, log shipping.
+     Until this is done, nothing else is possible - and it is the bulk of the work.
+  2. BUILD AN IMAGE IN CI, from a file in version control. Packer for VM images, a Dockerfile for
+     containers. The build must run from a clean checkout, with no human in the loop.
+  3. PIN EVERY VERSION. `apt install nginx` is not reproducible; `nginx=1.18.0-6ubuntu14.4` is. Pin base
+     images by DIGEST, not by tag - tags move. MEASURED: 8 distinct results from re-running a runbook.
+  4. TAG THE IMAGE WITH THE COMMIT SHA and record it. "What is running in production" must be a lookup,
+     not an investigation.
+  5. NEVER SSH TO CHANGE ANYTHING. Read-only debugging is fine. If you must change something, mark the
+     instance for termination - a break-glass fix that is allowed to SURVIVE is how snowflakes are born.
+  6. DEPLOY BY REPLACEMENT: blue/green or a rolling update. Never `apt upgrade` on a live box.
+  7. KEEP THE PREVIOUS IMAGE. Rollback is then "point at the previous id" - one step, MEASURED at 100%
+     against 85.5% for a five-step reverse.
+  8. SEPARATE RUNTIME CONFIG FROM THE IMAGE, deliberately. Environment variables and feature flags give
+     you back the second-level change latency without giving back the drift.
+  9. PROVE IT WITH PHOENIX SERVERS. Terminate a random instance regularly. If anything breaks, your
+     instances are not actually replaceable, and you have found that out on a Tuesday instead of during
+     an incident.
+ 10. MEASURE THE DRIFT YOU HAVE TODAY, before arguing about the approach. Hash the relevant
+     configuration on every box and count distinct values. One line of `sha256` per box, and the count
+     is the argument. MEASURED here: 61 across 200.
+ 11. AUTOMATE IMAGE REBUILDS FOR SECURITY PATCHES. Immutability makes patching a build-and-roll, and if
+     that pipeline is slow or manual, you will be tempted to SSH - which undoes everything.
+ 12. SET A RETENTION POLICY ON IMAGES. MEASURED: 1,200 MB x 20 = 24 GB. Cheap, and not free.
+ 13. USE LAYER SHARING. The naive transfer cost is 1,200 MB x 200 instances = 240 GB per deploy; shared,
+     cached base layers are what make that number survivable.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"If you change servers in place, every server slowly becomes a different server, and the divergence never
+heals.
+
+I simulated a fleet of 200 servers over 40 change events, with 3% of in-place applications failing or
+half-applying and a 2% chance per box per event that someone applied a manual hotfix - which I think are
+conservative numbers. The result was 61 DISTINCT CONFIGURATIONS across 200 servers, 52 of them unique to
+a single box, and only 126 of 200 - 63% - actually matching the state we intended to deploy. Watching it
+accumulate, the distinct-configuration count went 28, 46, 49, 51, 61 and never levelled off, because
+nothing removes a divergence once it exists.
+
+Three consequences, and they are the ones you actually feel.
+
+Debugging. I modelled a bug that only fires on boxes with the wrong openssl build - 10 of 200 servers,
+and NINE different openssl versions in a fleet with one intended version. The probability that an
+engineer trying three random boxes fails to reproduce it is 86%. That is where 'works on my machine'
+comes from at the infrastructure layer, and from inside a drifted fleet you cannot even prove the bug is
+real.
+
+Rollback. Rolling back mutably means re-running the reverse steps, and each one has the same failure
+rate the forward step had. Over five steps, 14.1% of rollbacks do not complete cleanly - and a failed
+rollback leaves you in a state that is neither the old one nor the new one, during an incident. Immutable
+rollback is pointing the fleet at the previous image id: one step, and the previous image is a stored
+artefact.
+
+Reproducibility. I re-ran the same build steps 50 times and got 8 DIFFERENT RESULTS - not because the
+runbook was bad, but because a sequence of steps touching a package mirror and a running system is not a
+pure function. Redeploying an image 50 times gives one result; I hashed 100,000 deployments and got one
+distinct hash.
+
+The thing I would be careful to say is what immutability COSTS, because the objection is real. A one-line
+config change goes from seconds to minutes. At 1,200 MB an image and 20 retained that is 24 GB of
+registry, and a full deploy naively transfers 240 GB - which is why layer sharing exists. But the actual
+cost is that STATE HAS TO LEAVE THE INSTANCE FIRST: no local disk, no local logs, no warm cache on that
+box. That migration is the project. The images are the easy part.
+
+And there is a place it is simply wrong - a database with terabytes on local disk cannot be replaced
+instance-by-instance, so those upgrades stay in-place and careful."
+
+THE ONE SENTENCE TO NOT FUMBLE: the test is not whether you own a configuration management tool, it is
+whether you can destroy any instance right now and get an identical one back - and drift is measurable
+today by hashing the config on every box and counting distinct values.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def h(cfg):
+        return hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:12]
+
+The entire measurement rests on this. A configuration is a dict; hashing it canonically gives one string
+per distinct state, so counting configurations across the fleet is `len({h(s) for s in servers})`.
+
+`sort_keys=True` is load-bearing - without it two identical configs could serialise differently and hash
+differently. And this is not just a simulation trick: hashing the relevant config files on every real box
+and counting distinct values is a one-line drift audit you can run this afternoon.
+
+    for s in servers:
+        if random.random() < FAIL:
+            if random.random() < 0.5:
+                pass                            # patch silently did not apply
+            else:
+                s[pkg] = newv + '-partial'      # half-applied
+        else:
+            s[pkg] = newv
+
+The mutable path, and the three branches are the three real outcomes of applying a change to a running
+machine. The middle one - `pass` - is the dangerous branch, because the box reports success and is
+wrong. The `-partial` branch is a half-applied upgrade: package installed, service not restarted, or
+config written and not reloaded.
+
+        if random.random() < MANUAL:
+            s[random.choice(list(BASE))] = 'hotfix-' + str(random.randint(1,999))
+
+The human. 2% per server per event, and the value is unique each time, so a single hotfix creates a
+configuration that exists nowhere else - a snowflake, by construction. MEASURED, 52 of them.
+
+    img = dict(BASE) if fleet is None else dict(fleet[0])
+    img[pkg] = f'v{step}'
+    fleet = [dict(img) for _ in range(N_SERVERS)]
+
+The immutable path, and the structural difference is that the change is applied ONCE to the image and
+then COPIED, rather than applied 200 times to 200 running boxes. There is no per-server failure branch
+because there is no per-server application. That is the whole mechanism: 200 chances to diverge become
+one chance to fail the build, and a failed build never ships.
+
+    for _ in range(5):
+        if random.random() < FAIL: ok = False
+
+Mutable rollback: five reverse steps, each with the same 3% failure rate as the forward step. This is
+the honest model - undoing a change is itself a change, and it is not more reliable than the change was.
+MEASURED 85.5% clean, `1 - 0.97^5 = 14.1%` failing.
+
+The immutable equivalent has no loop, because there is nothing to sequence: the previous image is a
+stored artefact and the operation is selecting it.
+
+    def build_mutable(seed):
+        random.seed(seed)
+        for step in range(N_CHANGES):
+            if random.random() < FAIL: continue    # a step that sometimes no-ops
+            s[pkg] = f'v{step}'
+    hashes = {h(build_mutable(s)) for s in range(50)}
+
+Reproducibility, measured rather than asserted. The SAME ordered runbook, run 50 times, with each step
+occasionally failing to take effect. MEASURED 8 distinct outcomes. Note the runbook is deterministic in
+its INTENT and non-deterministic in its RESULT - which is exactly the property that makes "just rebuild
+it" untrustworthy.
+
+    vulnerable = [s for s in servers if s.get('openssl') != intended['openssl']]
+    (1 - len(vulnerable)/N_SERVERS)**3
+
+The reproduce-the-bug calculation. `0.95^3 = 0.857` - three boxes chosen at random, none of them
+affected, engineer closes the ticket as not-reproducible. Raising it to the power 3 is the whole insight:
+each box you try is an independent draw from a fleet that is mostly healthy.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - drift accumulating, 200 servers.
+
+    change events   distinct configs   matching intended   percentage
+    -------------   ----------------   -----------------   ----------
+                8                 28           154 / 200        77.0%
+               16                 46           137 / 200        68.5%
+               24                 49           131 / 200        65.5%
+               32                 51           137 / 200        68.5%
+               40                 61           126 / 200        63.0%
+
+The left column only goes up: 28, 46, 49, 51, 61. Divergences accumulate and nothing removes them.
+
+The right column WOBBLES - 65.5% then back up to 68.5% - because a later successful patch on the same
+key can accidentally repair an earlier failure. That wobble is why this is hard to notice in practice:
+week to week the fleet does not look like it is getting worse, and over a year it plainly is.
+
+TRACE B - the final fleet, in detail.
+
+    total servers                                        200
+    distinct configurations                               61
+    largest identical group                              126
+    snowflakes (a config on exactly one server)           52
+    servers differing from intended                       74
+    mean wrong keys on a drifted server                 1.19
+    max wrong keys on one server                           3
+
+126 boxes are fine and 74 are not, and the 74 are wrong in 1.19 places on average. So the drift is
+SHALLOW and WIDE - not one catastrophically broken machine, but dozens each slightly wrong in a
+different place. Shallow-and-wide is the hard kind: no single box looks broken enough to investigate.
+
+TRACE C - the reproduce-the-bug arithmetic.
+
+    servers with the wrong openssl              10 / 200   (5.0%)
+    distinct openssl versions in the fleet             9
+    P(one random box reproduces)                   0.050
+    P(3 random boxes ALL fail to reproduce)        0.857
+
+Nine openssl versions where there should be one. And 0.95^3 = 0.857 - so five times out of six, an
+engineer who checks three boxes reports that the bug does not exist. The report is not incompetent; it
+is a correct observation about the boxes they checked.
+
+TRACE D - rollback.
+
+    approach     mechanism                       steps   clean rollbacks
+    ----------   -----------------------------   -----   ---------------
+    MUTABLE      re-run 5 reverse steps              5    1,710 / 2,000  (85.5%)
+    IMMUTABLE    select the previous image id        1    100%
+
+    P(at least one reverse step fails) = 1 - 0.97^5 = 14.1%
+
+One rollback in seven fails, and the failure mode is the worst one available: a state that is neither
+the old configuration nor the new one, reached during an incident. The immutable version has no
+sequence to fail because the previous state is a stored ARTEFACT rather than a set of instructions.
+
+TRACE E - reproducibility.
+
+    method                                    runs   distinct results
+    ---------------------------------------   ----   ----------------
+    re-run the runbook                          50                  8
+    redeploy the stored image                   50                  1
+    redeploy the stored image                100,000                1
+
+Eight from one runbook. The runbook is deterministic in intent and non-deterministic in outcome, which
+is precisely why "we can rebuild it from the runbook" is not the same claim as "we can rebuild it".
+
+TRACE F - the cost side, so the comparison is honest.
+
+    item                                    mutable            immutable
+    -------------------------------------   ----------------   ------------------------------
+    a one-line config change                seconds            minutes to tens of minutes
+    image registry (1,200 MB x 20 kept)     -                  24.0 GB
+    a full fleet deploy (200 instances)     -                  240 GB of pulls, naively
+    local disk, local logs, warm caches     allowed            must be externalised FIRST
+    a database with TB on local disk        in-place upgrade   not replaceable instance-wise
+
+The last two rows are the real argument against, and they are not about images at all. The 240 GB is
+mostly recovered by layer sharing and caching. The state migration is not recovered by anything - it is
+work, and it is the reason adopting immutability is a quarter-long project rather than a build-pipeline
+change.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (200 servers, 40 change events, 3% application failure, 2% manual hotfix rate):
+
+    distinct configurations       MUTABLE 61        IMMUTABLE 1
+    snowflakes                    MUTABLE 52        IMMUTABLE 0
+    matching intended state       126 / 200 (63.0%)  200 / 200 (100%)
+    servers drifted               74, averaging 1.19 wrong keys, max 3
+    drift over time               28 -> 46 -> 49 -> 51 -> 61 distinct configs, never levelling off
+    bug reproduction              5.0% of boxes affected; 85.7% chance 3 random boxes miss it
+                                  9 distinct openssl versions where 1 was intended
+    rollback                      MUTABLE 85.5% clean (5 steps)   IMMUTABLE 1 step
+    rebuild determinism           runbook 8 distinct results / 50 runs; image 1 / 100,000
+    cost                          1,200 MB x 20 images = 24 GB registry; 240 GB per naive full deploy
+                                  change latency: seconds -> minutes
+
+THE MISTAKES:
+
+    - Believing configuration management IS immutability. Convergence happens on a running box and
+      fails 3% of the time; that 3% is what produced 61 configurations.
+    - Never measuring the drift you already have. Hash the config on every box, count distinct values.
+      It is one line and it ends the argument.
+    - Allowing a break-glass SSH fix to SURVIVE. If the instance is not terminated afterwards, you have
+      manufactured a snowflake during an incident - the worst possible time.
+    - Using mutable tags (`:latest`, `nginx:stable`) instead of digests. The tag moves and your
+      "immutable" image is not.
+    - Not pinning package versions inside the image build, so the same Dockerfile builds differently on
+      different days.
+    - Keeping state on the instance - local disk, local logs, warm caches - and then wondering why
+      replacement is scary.
+    - No rollback rehearsal. The image is retained and nobody has verified that pointing at it works.
+    - A slow or manual image pipeline. If patching takes an hour, someone will SSH, and one SSH undoes
+      the guarantee for that box permanently.
+    - Baking runtime config into the image, so every environment-variable change needs a rebuild. Put
+      config outside the image deliberately - a bounded hole is fine, an unbounded one is not.
+    - Applying it to stateful systems with terabytes on local disk, where instance replacement means
+      moving the data and in-place upgrade is genuinely correct.
+
+THE TAKEAWAY. Changing servers in place gives every server an independent chance to diverge on every
+change, and divergence compounds - 200 servers became 61 configurations with 52 unique snowflakes, and
+only 63% matched what was intended. That is what makes bugs unreproducible (86% chance three boxes miss
+a 5% fleet issue), rollbacks unreliable (14.1% failing), and rebuilds untrustworthy (8 outcomes from one
+runbook). Immutability removes the mechanism rather than managing it: build once, copy, replace, and the
+number of ways to be different collapses to one. It costs change latency, registry storage, and - the
+part that is actually hard - moving state off the instance before you can start.""",
+]
+
+_EX_P1AO["Why report p99/tail latency instead of average latency?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the average tells you about a request nobody made.
+
+Latency distributions are RIGHT-SKEWED: a big cluster of fast requests and a long thin tail of slow
+ones. The mean sits between them, describing neither. Users do not experience a mean; they experience
+individual requests, and the ones they remember are in the tail.
+
+MEASURED ON THIS MACHINE, 1,000,000 requests from a realistic mix (a lognormal body around 35ms plus 1%
+of requests landing near 2 seconds):
+
+    mean         59.0 ms
+    p50          35.2 ms
+    p90          63.8 ms
+    p99       1,018.7 ms
+    p99.9     2,739.1 ms
+    max       4,948.8 ms
+
+    p99 / mean = 17.3x        p99 / p50 = 28.9x
+
+The dashboard says 59ms. One request in a hundred takes over a SECOND - seventeen times the number on
+the dashboard. And here is the detail that shows how badly the mean describes the shape: only 13.2% of
+requests are slower than the mean. The average is not a typical value at all; it has been dragged up by
+the tail past 87% of the actual traffic.
+
+A percentile answers the question you actually care about: "how bad is it for the unluckiest 1%?" -
+which is the question every SLO is written in terms of.""",
+
+    """2. THE INTUITION - the average is the one statistic that a bad tail can hide inside, and the one that
+a good tail can hide behind.
+
+Two failure modes, and both are measurable.
+
+FIRST, THE TAIL CAN GET TWICE AS BAD WITH ALMOST NOTHING VISIBLE IN THE MEAN. MEASURED, taking the same
+traffic and doubling only the slow 1% from 2,000ms to 4,000ms:
+
+                    mean        p50        p99      p99.9
+    baseline        59.7       35.2     1,256.8    2,759.6
+    after           81.1       35.2     2,513.5    5,519.3
+    change        +35.8%      +0.0%     +100.0%   +100.0%
+
+The tail doubled. The median did not move at all. The mean moved 36%, which - on a metric that bounces
+around with traffic mix all day - is the kind of change people explain away.
+
+SECOND, AND WORSE, THE MEAN CAN GET WORSE WHILE THE EXPERIENCE GETS BETTER. MEASURED, a variant where
+3% of requests are slow instead of 1%, but each slow one is 900ms instead of 2,000ms:
+
+                    mean        p50        p99      p99.9
+    variant B       65.5       35.6     1,004.2    1,428.9
+    vs baseline    +9.7%      +1.2%      -20.1%    -48.2%
+
+The mean says this is 9.7% WORSE. The p99 says 20% better and the p99.9 says 48% better. Which is right
+depends on what you sell, and the point is that the mean cannot even tell you a question is being asked.
+Ship on the mean and you reject this change.
+
+WHY THIS HAPPENS. The mean is a sum divided by a count, so a single 5-second request contributes the
+same as a hundred 50ms ones - it gets AVERAGED AWAY. A percentile is a RANK, so it cannot be diluted:
+the p99 is the 10,000th slowest request out of a million, and no amount of fast traffic moves it.""",
+
+    """3. EVERY TERM DEFINED.
+
+LATENCY. Time from request to response. Almost always right-skewed, never normally distributed.
+
+MEAN / AVERAGE. Sum divided by count. Sensitive to every outlier and representative of nothing when the
+distribution is skewed. MEASURED: only 13.2% of requests were slower than the mean.
+
+MEDIAN / p50. The middle value. What a typical request looks like.
+
+PERCENTILE. p99 = the value below which 99% of requests fall, equivalently the 10,000th slowest of a
+million. A RANK, which is why it cannot be diluted by fast traffic.
+
+TAIL LATENCY. The high percentiles - p95, p99, p99.9, p99.99.
+
+RIGHT-SKEWED. A long tail on the high side. The mean exceeds the median. MEASURED: mean 59.0, median
+35.2.
+
+SLO / SLI / SLA. Objective, indicator, agreement. Real SLOs are written on percentiles ("99% of requests
+under 300ms"), never on the mean, and this is why.
+
+ERROR BUDGET. The allowed fraction of requests that may violate the SLO. 99% target = 1% budget. It only
+makes sense against a percentile.
+
+FAN-OUT. One user request producing many backend calls. MEASURED below - it is what turns a 1% problem
+into a majority problem.
+
+TAIL AMPLIFICATION. The effect where a page waiting on N backend calls inherits the SLOWEST of them, so
+the page's typical latency approaches the backend's tail.
+
+HEAD-OF-LINE BLOCKING. One slow item delaying everything queued behind it - a common CAUSE of a tail.
+
+COORDINATED OMISSION. The measurement bug where a load generator stops sending while the system is
+stalled, so the slowest requests are never recorded. It makes tails look far better than they are and it
+is the single most common way latency numbers lie.
+
+HDR HISTOGRAM / t-DIGEST. Data structures for computing accurate percentiles at scale without keeping
+every sample.
+
+QUANTILE ESTIMATION. Percentiles from a sketch are approximate; the error is usually stated relative to
+the quantile, and it grows in the far tail.
+
+PERCENTILE AGGREGATION. Combining percentiles across servers or time buckets. NOT possible by averaging
+them - MEASURED below at -67.3% error.
+
+MEAN OF PERCENTILES vs PERCENTILE OF THE POOL. The wrong thing and the right thing.
+
+p99 OF THE USER vs p99 OF THE REQUEST. Different populations, and section 5 shows they give very
+different answers.
+
+BIMODAL DISTRIBUTION. Two humps - typically a cache-hit cluster and a cache-miss cluster. Percentiles in
+the gap between the humps are unstable, and this entry hit that in its own measurements.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - averaging p99s across servers. It is wrong, and it is wrong in
+the direction that hides the problem.
+
+MEASURED, 10 servers of 100,000 requests each, one of them sick:
+
+    per-server p99:   111  111  112  3986  111  111  111  109  111  111
+
+    MEAN OF THE p99s      :   498.6 ms
+    TRUE p99 of the pool  : 1,524.0 ms
+    ERROR                 :  -67.3%
+
+The dashboard that averages per-server p99s reports 499ms. The actual 99th percentile experienced by
+users is 1,524ms. You are understating the tail by two thirds, and the number is not just imprecise - it
+is systematically optimistic, because averaging pulls the outlier toward the healthy majority.
+
+And the sick server is 1/10 of the traffic while contributing 78.9% OF THE p99 TAIL. That is the
+practical finding: one bad instance out of ten dominates the tail, which is why "which host?" is the
+first question to ask about a p99 regression.
+
+Percentiles do not average. You need the underlying histograms merged, which is exactly what HDR
+histograms and t-digests are for.
+
+THE SECOND TRAP - COORDINATED OMISSION, and it is the reason to distrust any latency number whose
+provenance you do not know. If your load generator sends a request, waits for the response, and only then
+sends the next one, then while the system is stalled for two seconds it sends NOTHING. The requests that
+would have been slow were never issued, so they never appear in the histogram. The tool reports a
+beautiful p99 for a system that was frozen. Any benchmark using closed-loop load without correcting for
+this understates the tail, often by an order of magnitude.
+
+THE THIRD TRAP - reading a percentile as "the worst case". p99 means one request in a hundred is WORSE
+than this, and it says nothing about how much worse. MEASURED here: p99 is 1,018.7ms and the max is
+4,948.8ms - almost 5x further out. If your concern is timeouts and retries, p99.9 and p99.99 are the
+relevant numbers, and they need far more samples to estimate.
+
+THE FOURTH TRAP - a percentile in a GAP. In this measurement the traffic is bimodal - a fast body
+topping out around 150ms, and a slow cluster near 2,000ms, with very little in between. The 99th
+percentile falls in that empty region, so the estimate is unstable: two samples of the same distribution
+gave p99 values of 1,018.7ms and 1,186.9ms, a 16% difference from sampling alone. Where the density is
+low the quantile moves a lot for a tiny change in the fraction above it. Report a p99 from a bimodal
+system and you should expect it to jump around - and the honest response is to report both modes, not to
+chase the wobble.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+FAN-OUT IS WHY THE TAIL IS NOT A MINORITY PROBLEM. A page that makes N backend calls and waits for all
+of them takes the SLOWEST. MEASURED, sampling from the real distribution:
+
+    backend calls N   P(at least one is p99-slow)   page p99 (ms)
+    ---------------   ---------------------------   -------------
+                  1                        1.00%         1,186.9
+                  5                        4.90%         2,453.9
+                 10                        9.56%         2,732.5
+                 20                       18.21%         3,011.7
+                 50                       39.50%         3,312.0
+                100                       63.40%         3,552.8
+                200                       86.60%         3,796.3
+
+At 100 backend calls, 63.4% of page loads contain a p99-slow call. The one-in-a-hundred event has become
+the majority experience. This is the single strongest argument for caring about the tail: in a
+microservice architecture the tail is not an edge case, it is the common case one level up.
+
+    (Note: the N=1 row reads 1,186.9ms where the population p99 is 1,018.7ms. That is the bimodal-gap
+    instability from section 4, not an error - it is worth seeing rather than smoothing over.)
+
+PER-USER RATHER THAN PER-REQUEST, which changes who you think is affected. MEASURED, 50,000 users with a
+heavy-tailed request count:
+
+    users making 1 request        :   1.2% hit at least one p99-slow request
+    users making 10-20 requests   :  12.8%
+    users making 100+ requests    :  83.3%
+    ALL users                     :   6.7%
+
+83% of your heaviest users hit the tail, while only 1% of REQUESTS are p99-slow. Your most engaged
+customers experience your worst latency, more or less by definition, because they take more draws from
+the distribution. A per-request metric hides this completely.
+
+THE METRICS FAMILY, and what each is for:
+    MEAN          throughput and capacity planning - total work per second genuinely is a sum.
+    p50           what a typical request looks like. Useful for spotting a whole-system slowdown.
+    p95 / p99     the SLO metric. "How bad is it for the unlucky?"
+    p99.9/p99.99  for high fan-out and for retry/timeout design. Needs a LOT of samples.
+    MAX           an outlier, usually one GC pause or one cold start. Alarming on it is noise.
+    HISTOGRAM     the full picture. Everything else is a summary of it, and bimodality is only
+                  visible here.
+    TRIMMED MEAN  mean excluding the top k%. Rarely worth it - if you can exclude the tail, use a
+                  percentile.
+
+MITIGATIONS, once you can see the tail:
+    HEDGED REQUESTS   send a duplicate to a second replica after p95 elapses; take the first answer.
+                      A very effective tail-latency tool at a few percent extra load.
+    TIMEOUT + RETRY   bound the tail, at the cost of extra load exactly when the system is struggling.
+    LOAD SHEDDING     reject early rather than queue - queueing converts overload into a tail.
+    ISOLATE THE SICK INSTANCE. MEASURED: one of ten servers produced 78.9% of the tail.
+    REDUCE FAN-OUT    the table above is superlinear in effect; fewer calls per page is the structural
+                      fix.
+    GC AND JIT TUNING, connection-pool sizing, and cold starts - the usual causes.""",
+
+    """6. HOW TO CODE IT.
+
+  1. EMIT HISTOGRAMS, NOT AVERAGES. If your metrics pipeline records a mean per interval, the tail is
+     already gone and no amount of dashboard work recovers it.
+  2. USE AN HDR HISTOGRAM OR t-DIGEST. Bounded memory, mergeable, accurate in the tail - which naive
+     bucketing is not.
+  3. MERGE HISTOGRAMS TO AGGREGATE, NEVER AVERAGE PERCENTILES. MEASURED: averaging per-server p99s
+     understated the true pool p99 by 67.3%.
+  4. WRITE SLOs AS PERCENTILES: "99% of requests under 300ms over 28 days", not "average under 100ms".
+     Then the error budget is meaningful.
+  5. MEASURE FROM THE CLIENT where you can. Server-side latency omits queueing, connection setup and
+     the network - which is where a lot of tail lives.
+  6. AVOID COORDINATED OMISSION. Use an open-loop load generator that sends at a fixed RATE regardless
+     of responses, or a tool that corrects for it. Otherwise your benchmark reports the latency of a
+     system that was frozen.
+  7. BREAK THE TAIL DOWN BY DIMENSION - host, region, endpoint, customer, cache hit/miss. MEASURED:
+     one host of ten was 78.9% of the tail, so the first question about a p99 regression is "which
+     host?".
+  8. TRACK THE FAN-OUT COUNT PER PAGE as a first-class metric. MEASURED: at N=100 calls, 63.4% of pages
+     contain a p99-slow call. Fan-out is the multiplier on everything else.
+  9. REPORT PER-USER TAIL EXPOSURE too. MEASURED: 83.3% of users making 100+ requests hit a p99-slow
+     one, against 6.7% of all users.
+ 10. PLOT THE HISTOGRAM BEFORE TRUSTING ANY SINGLE PERCENTILE. If it is bimodal - cache hit vs miss -
+     the percentile in the gap is unstable. MEASURED: 1,018.7 vs 1,186.9 from two samples of the SAME
+     distribution.
+ 11. DO NOT ALARM ON MAX. It is one GC pause. Alarm on p99 or p99.9 sustained over a window.
+ 12. KEEP ENOUGH SAMPLES FOR THE PERCENTILE YOU QUOTE. A p99.9 from 1,000 requests is one data point.
+ 13. WHEN COMPARING TWO VERSIONS, COMPARE THE WHOLE PROFILE. MEASURED: a variant that was 9.7% worse on
+     the mean was 20.1% better at p99 and 48.2% better at p99.9. On the mean alone you reject it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Averages hide the bad experiences, and users experience individual requests, not averages.
+
+I measured a realistic million-request distribution: mean 59ms, median 35ms, p99 1,019ms, p99.9 2,739ms.
+The p99 is SEVENTEEN TIMES the mean. And the detail that shows how poorly the mean describes the shape -
+only 13.2% of requests were slower than it. The average had been dragged up past 87% of the actual
+traffic by the tail, so it is neither typical nor extreme; it describes a request nobody made.
+
+There are two ways that hurts you. First, the tail can double with the mean barely moving - I doubled
+the slow 1% from 2 seconds to 4 and the median did not move at all while the mean moved 36%, which is
+the kind of change people explain away as traffic mix. Second, and worse, the mean can get WORSE while
+the experience gets BETTER: a variant where 3% of requests were slow instead of 1%, but each less slow,
+came out 9.7% worse on the mean and 20% better at p99, 48% better at p99.9. Ship on the mean and you
+reject that change.
+
+The reason the tail matters far more than 'one percent' suggests is FAN-OUT. A page making 100 backend
+calls waits for the slowest, so I measured it: at 100 calls, 63.4% of page loads contain a p99-slow
+call. At 200, it is 86.6%. The one-in-a-hundred event becomes the majority experience one level up,
+which is why the tail is the headline number in a microservice architecture and not a footnote.
+
+It is also worse for your best users. With a heavy-tailed request count, 83.3% of users making 100+
+requests hit at least one p99-slow request, against 6.7% of users overall. Your most engaged customers
+live in your tail, essentially by definition, because they take more draws.
+
+The mistake I would most want to flag is averaging p99s across servers. I measured ten servers with one
+sick: per-server p99s of 111, 111, 112, 3,986, 111... The mean of those p99s is 499ms; the true p99 of
+the pooled traffic is 1,524ms - understating the tail by 67%, and always in the optimistic direction.
+Percentiles are ranks, not sums; you have to merge the underlying histograms, which is what HDR
+histograms and t-digests exist for. And that sick server was a tenth of the traffic and 79% of the tail,
+which is why 'which host?' is the first question about any p99 regression.
+
+Two honesty notes. Coordinated omission - a closed-loop load generator stops sending while the system is
+stalled, so the slowest requests are never recorded, and the tool reports a lovely p99 for a frozen
+system. And if the distribution is bimodal, cache hit versus miss, the p99 can land in the empty gap
+between the humps and become unstable - two samples of my own distribution gave 1,019ms and 1,187ms, a
+16% swing from sampling alone."
+
+THE ONE SENTENCE TO NOT FUMBLE: the mean is a sum and can be diluted by fast traffic, the p99 is a RANK
+and cannot - and with fan-out of 100, the p99 event happens to 63% of page loads.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def lat(n, rng, slow_frac=0.01, slow_ms=2000.0):
+        base = rng.lognormal(mean=np.log(35), sigma=0.45, size=n)
+        slow = rng.random(n) < slow_frac
+        base[slow] = slow_ms * rng.lognormal(0, 0.25, size=slow.sum())
+        return base
+
+The traffic model, and it is deliberately a MIXTURE rather than one smooth distribution. `lognormal`
+around 35ms is the healthy body - lognormal because latency is a product of many multiplicative effects,
+which is why real latency is log-normal-ish and never Gaussian. Then 1% of requests are REPLACED with a
+draw near 2,000ms: a GC pause, a cold cache, a retry.
+
+That replacement is the key modelling choice. A tail is usually a DIFFERENT MECHANISM, not the far end
+of the same one - which is why it can move independently of the median, and why the two-parameter
+structure (`slow_frac`, `slow_ms`) lets us change one without the other.
+
+    b = lat(N, np.random.default_rng(5), 0.01, 2000.0)
+    c = lat(N, np.random.default_rng(5), 0.01, 4000.0)
+
+The regression experiment. SAME SEED, so the fast body and the choice of which requests are slow are
+IDENTICAL - only the severity of the slow ones changes. That is what makes the comparison clean: the
+median is provably unchanged, so any movement in the mean is entirely attributable to the tail.
+MEASURED: p50 +0.0%, mean +35.8%, p99 +100.0%.
+
+    d = lat(N, np.random.default_rng(6), 0.03, 900.0)
+
+The variant that inverts the verdict: three times as many slow requests, each less than half as slow.
+`0.03 * 900 = 27` versus `0.01 * 2000 = 20`, so the CONTRIBUTION TO THE MEAN goes up while the p99 comes
+down. The arithmetic is the whole trick - the mean is a sum and cares about total slow-milliseconds; the
+p99 is a rank and cares about where the 99th-percentile request sits.
+
+    idx = r.integers(0, N, size=(200_000, n))
+    page = pool[idx].max(axis=1)
+
+The fan-out simulation. Each row is one page load drawing `n` backend latencies; `.max(axis=1)` is the
+"wait for all of them" semantics. Two hundred thousand simulated pages per row of the table.
+
+`1 - 0.99**n` is the closed form for "at least one call is above the p99", and the measured column
+matches it - 9.56% against 9.57% at N=10. Having both is the point: the formula explains it, the
+simulation confirms it.
+
+    parts = [lat(100_000, rng(100+i), 0.08 if i==3 else 0.005, 3000 if i==3 else 1500)
+             for i in range(10)]
+    per_server = [pct(p, 99) for p in parts]
+    np.mean(per_server)   vs   pct(np.concatenate(parts), 99)
+
+The averaging-percentiles measurement, and the two final expressions are the whole lesson. `np.mean` of
+the per-server p99s treats each server's summary as a value to be averaged; `np.concatenate` then `pct`
+pools the raw samples and takes the real percentile. MEASURED 498.6 against 1,524.0.
+
+Server 3 is given 8% slow requests at 3,000ms instead of 0.5% at 1,500ms - one sick instance in ten. It
+holds 1/10 of the traffic and supplies 78.9% of the requests above the pooled p99.
+
+    counts = np.maximum(1, (rng.pareto(1.2, users) * 3).astype(int))
+
+The per-user experiment. A Pareto request count is the realistic shape - MEASURED p50 of 2 requests, p90
+of 17, and a maximum of 2,000. Then `hit_any[i]` records whether ANY of that user's requests was
+p99-slow, which is the per-user question rather than the per-request one. MEASURED 83.3% for the heaviest
+band against 6.7% overall.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the distribution, 1,000,000 requests.
+
+    statistic   value        vs mean
+    ---------   ---------   --------
+    mean         59.0 ms       1.0x
+    p50          35.2 ms       0.6x
+    p90          63.8 ms       1.1x
+    p99       1,018.7 ms      17.3x
+    p99.9     2,739.1 ms      46.4x
+    max       4,948.8 ms      83.9x
+
+    requests slower than the MEAN: 13.2%
+
+Notice p90 is 63.8ms - barely above the mean. Everything interesting happens between p90 and p99, which
+is why p95 is often too coarse to be useful as an SLO metric. And 13.2% is the number that settles what
+the mean means here: it is not the middle of anything.
+
+TRACE B - the invisible regression. Same seed, only the slow requests change.
+
+                        mean       p50         p99      p99.9
+    baseline (2,000ms)  59.7      35.2     1,256.8    2,759.6
+    after    (4,000ms)  81.1      35.2     2,513.5    5,519.3
+    change             +35.8%    +0.0%     +100.0%   +100.0%
+
+The p50 is EXACTLY unchanged - the fast body was not touched. The mean absorbed a doubling of the tail
+into a 36% move, and 36% on a mean is inside the range of a normal traffic-mix shift.
+
+TRACE C - the same tool giving the opposite verdict.
+
+                        mean       p50         p99      p99.9
+    baseline            59.7      35.2     1,256.8    2,759.6
+    variant B           65.5      35.6     1,004.2    1,428.9
+    change             +9.7%     +1.2%      -20.1%    -48.2%
+
+Variant B makes 3% of requests slow instead of 1%, each at 900ms instead of 2,000ms. Total
+slow-milliseconds went UP (0.03 x 900 = 27 against 0.01 x 2000 = 20), so the mean got worse. The
+worst-case experience got substantially better. Both facts are true, and only one of them is about users.
+
+TRACE D - fan-out.
+
+    calls per page N   P(>=1 p99-slow), formula   measured   page p99 (ms)
+    ----------------   ------------------------   --------   -------------
+                   1                     1.00%      0.98%         1,186.9
+                   5                     4.90%          -         2,453.9
+                  10                     9.56%      9.57%         2,732.5
+                  20                    18.21%          -         3,011.7
+                  50                    39.50%          -         3,312.0
+                 100                    63.40%     63.40%         3,552.8
+                 200                    86.60%          -         3,796.3
+
+Formula and simulation agree to two decimals, which is the useful confirmation. The page p99 climbs from
+1.2s to 3.8s purely from waiting on more things - no backend got slower.
+
+The N=1 row reading 1,186.9 against the population p99 of 1,018.7 is the bimodal-gap instability: the
+99th percentile falls in the sparse region between the fast body and the slow cluster, so it moves a lot
+for a small change in the fraction above. Worth stating rather than smoothing away, because a real
+bimodal service does exactly this and people chase the wobble.
+
+TRACE E - averaging percentiles, ten servers.
+
+    server        0     1     2      3     4     5     6     7     8     9
+    p99 (ms)    111   111   112  3,986   111   111   111   109   111   111
+
+    MEAN OF THE p99s               498.6 ms
+    TRUE p99 of the pooled traffic 1,524.0 ms
+    ERROR                          -67.3%
+
+    the sick server: 10% of traffic, 78.9% of the requests above the pooled p99
+
+Averaging drags the one real signal toward nine healthy values, and the error is always in the
+reassuring direction. The 78.9% is the operational takeaway: a p99 regression is usually one host, one
+shard or one region, and the fix is to find it rather than to optimise the code.
+
+TRACE F - per-user exposure, 50,000 users.
+
+    requests per user   users hitting >=1 p99-slow request
+    -----------------   ---------------------------------
+    1                                                1.2%
+    10-20                                           12.8%
+    100+                                            83.3%
+    ALL USERS                                        6.7%
+
+    request-count distribution: p50 = 2, p90 = 17, p99 = 137, max = 2,000
+
+One percent of REQUESTS are p99-slow and 6.7% of USERS meet one - and 83.3% of the heaviest users do.
+The heavier the user, the more draws from the distribution, so your best customers are the ones seeing
+your worst latency. That reframing is often what actually gets tail work prioritised.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (1,000,000 requests unless stated):
+
+    mean 59.0ms | p50 35.2 | p90 63.8 | p99 1,018.7 | p99.9 2,739.1 | max 4,948.8
+    p99/mean = 17.3x        p99/p50 = 28.9x        requests slower than the mean: 13.2%
+
+    tail doubles (2s -> 4s):   mean +35.8%, p50 +0.0%, p99 +100.0%, p99.9 +100.0%
+    variant B (3% at 900ms):   mean +9.7%,  p50 +1.2%, p99 -20.1%,  p99.9 -48.2%
+
+    fan-out N:    1 -> 1.00% | 10 -> 9.56% | 100 -> 63.40% | 200 -> 86.60% of pages hit a p99 call
+    page p99:     1,186.9ms at N=1  ->  3,552.8ms at N=100
+
+    averaging p99s across 10 servers:  498.6ms reported vs 1,524.0ms true  (-67.3%)
+    the one sick server: 10% of traffic, 78.9% of the tail
+
+    per-user: 1.2% (1 request) | 12.8% (10-20) | 83.3% (100+) | 6.7% overall
+
+COST OF MEASURING IT: an HDR histogram is a few KB per metric with bounded, known error, and it merges
+across hosts and time. There is no performance argument for recording only a mean.
+
+THE MISTAKES:
+
+    - Reporting the mean for a right-skewed distribution. MEASURED: it sits above 86.8% of the traffic.
+    - Averaging percentiles across servers or time buckets. MEASURED -67.3%, always optimistic. Merge
+      histograms instead.
+    - Recording a pre-aggregated mean in the metrics pipeline, which destroys the tail at source.
+    - Coordinated omission from closed-loop load generators - the stalled requests are never sent, so
+      the tail never appears. Use open-loop load at a fixed rate.
+    - Ignoring fan-out. MEASURED: 63.4% of pages contain a p99-slow call at N=100.
+    - Measuring per-request and never per-user. MEASURED: 83.3% of heavy users hit the tail.
+    - Treating p99 as the worst case. MEASURED: p99 1,018.7ms, max 4,948.8ms.
+    - Alarming on max. It is one GC pause.
+    - Quoting p99.9 from a few thousand samples. It is a handful of data points.
+    - Trusting one percentile from a BIMODAL distribution. MEASURED 1,018.7 vs 1,186.9 from the same
+      distribution - look at the histogram and report both modes.
+    - Comparing two versions on one statistic. MEASURED: a change that is 9.7% worse on the mean is
+      48.2% better at p99.9.
+
+THE TAKEAWAY. The mean is a sum, so fast traffic dilutes it and a tail can double underneath it
+unnoticed; a percentile is a rank, so it cannot be diluted and it answers the question the SLO is written
+in - how bad is it for the unlucky. The tail is not a minority concern: with a fan-out of 100 the
+one-in-a-hundred event reaches 63% of page loads, and 83% of your heaviest users meet it. Record
+histograms, merge them rather than averaging percentiles (that mistake alone understated the tail by
+67%), break the tail down by host before optimising anything, and look at the distribution's shape before
+trusting any single number from it.""",
+]
+
+_EX_P1AO["Why sample traces/logs instead of collecting everything?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - at scale, the telemetry is bigger than the thing it is watching, and
+almost all of it is identical.
+
+Every request emits spans and log lines. Multiply by the request rate and the volume stops being a
+detail and becomes a second system, with its own storage bill, its own ingestion pipeline, its own
+indexes and its own outages.
+
+MEASURED ON THIS MACHINE, a service at 5,000,000 requests/hour emitting 12 spans and 4 log lines per
+request:
+
+    bytes per request              6,000
+    ONE HOUR, keep everything      30.0 GB
+    per day                        720 GB
+    per 30-day retention           21.6 TB
+
+And the composition of those 5,000,000 requests:
+
+    errors      5,031  (0.101%)
+    slow       25,174  (0.503%)
+    boring  4,969,795  (99.396%)
+
+99.4% of what you would store is a fast, successful request that looks exactly like the 4,969,794 others.
+Keeping every one of them buys you almost nothing, because you already know what a healthy request looks
+like - you have five million examples.
+
+Sampling is the decision to spend the storage on the 0.6% that is not boring.""",
+
+    """2. THE INTUITION - there are two moments at which you can decide to keep a trace, and the choice
+between them is the whole subject.
+
+HEAD SAMPLING decides AT THE START, before anything has happened: flip a coin, keep 1%. It is cheap,
+requires no memory, and the decision must propagate to every service in the request so the trace stays
+whole. And it is BLIND - it cannot know that this particular request is about to fail.
+
+TAIL SAMPLING decides AT THE END, once the trace is complete and you can see it errored or took four
+seconds. It keeps exactly what you want. And it requires BUFFERING every in-flight trace until it
+finishes, because you cannot decide about something you have thrown away.
+
+MEASURED, at the SAME stored volume:
+
+    strategy               stored     GB/hr   errors kept   % of errors   slow kept   % of slow
+    -------------------   ---------   -----   -----------   -----------   ---------   ---------
+    head, 100%            5,000,000   30.00         5,031      100.00%      25,174     100.00%
+    head, 10%               500,186    3.00           486        9.66%       2,481       9.86%
+    head, 1%                 50,239    0.30            56        1.11%         253       1.01%
+    head, 0.1%                5,074    0.03             4        0.08%          21       0.08%
+    TAIL                     49,986    0.30         5,031      100.00%      25,174     100.00%
+
+Look at the last two rows against each other. The same 0.30 GB/hour. Head sampling gives you 56 of 5,031
+error traces - about one percent, because it is sampling blindly. Tail sampling gives you ALL 5,031, plus
+0.398% of the boring ones for background context.
+
+Same bill. A hundred times the error coverage. That is not a tuning difference, it is the difference
+between having the trace when the incident starts and not having it.""",
+
+    """3. EVERY TERM DEFINED.
+
+TELEMETRY. Traces, metrics, and logs - the three signals.
+
+TRACE. The record of one request as it moves through services. Composed of SPANS.
+
+SPAN. One unit of work within a trace - a database call, an HTTP hop - with a start, a duration, and
+parent/child links.
+
+SAMPLING RATE. The fraction kept. 1% head sampling keeps one request in a hundred.
+
+HEAD SAMPLING. Decide at the start of the request. Cheap, needs no buffer, blind to the outcome.
+
+TAIL SAMPLING. Decide after the trace completes, using what happened. Keeps the interesting traces, and
+requires buffering.
+
+PROBABILISTIC SAMPLING. The plain coin flip.
+
+DETERMINISTIC SAMPLING. Hash the trace id and keep if the hash falls below a threshold. Same rate, and
+every service independently reaches the SAME decision without coordination - which is why it is the
+standard head-sampling implementation.
+
+SAMPLING DECISION PROPAGATION. Carrying the keep/drop bit in the trace context (the `sampled` flag in
+W3C traceparent) so all services agree.
+
+RATE LIMITING SAMPLER. Keep at most N traces/second per service. Bounds cost under a traffic spike,
+which a fixed percentage does not.
+
+ADAPTIVE SAMPLING. Vary the rate by endpoint - keep 100% of a rare, important endpoint and 0.1% of a
+health check.
+
+REMOTE SAMPLING. The collector tells the services what rate to use, so you can change it without a
+deploy.
+
+TAIL SAMPLING POLICY. The rule set: keep all errors, all traces over 2s, 1% of the rest.
+
+BUFFER / DECISION WAIT. How long the collector holds spans before deciding. MEASURED below - this is
+tail sampling's real cost.
+
+SAMPLING BIAS. Systematically keeping unrepresentative traces. Tail sampling is deliberately biased, and
+that is fine for DEBUGGING and fatal for COUNTING.
+
+WEIGHTED / SCALED COUNTS. Multiplying sampled counts by 1/rate to estimate the true count. Corrects the
+BIAS; does nothing for the VARIANCE - MEASURED below.
+
+CARDINALITY. The number of distinct label combinations in a metric. The reason metrics are cheap and
+logs are not.
+
+EXEMPLARS. Links from a metric bucket to a stored trace, so a spike on a graph leads to an actual trace.
+
+STRUCTURED LOGGING. Logs as key-value records. Makes sampling and aggregation possible.
+
+LOG LEVEL. The crudest sampler there is - and it decides at the head, so it drops the DEBUG lines you
+needed for the request that failed.
+
+RETENTION / DOWNSAMPLING. Keep full fidelity for days, aggregates for months.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - reading a count off a sampled dataset.
+
+MEASURED, 1% head sampling of an hour with 5,031 real errors:
+
+    error traces actually stored                          40
+    naive read of the dashboard                     40 errors    <- WRONG, 100x low
+    weighted by 1/rate = 100x                    4,000 errors
+    the truth                                        5,031
+    error of the weighted estimate                 -20.49%
+
+Two lessons stacked on top of each other, and the second is the one people miss.
+
+First, the naive number is wrong by exactly the factor you sampled at. Every sampled pipeline must store
+the sampling RATE alongside the trace, or counts are silently a hundred times too low.
+
+Second, weighting fixes the BIAS but not the VARIANCE. The weighted estimate is still 20% off, because
+it is extrapolating from only 40 observed traces. With few samples, 1/rate weighting gives you an
+unbiased estimate with enormous error bars - and a dashboard showing "4,000 errors" looks exactly as
+authoritative as one showing 5,031.
+
+THE RULE: count with METRICS, which are cheap and complete because they aggregate. Sample TRACES, which
+are expensive and exist for looking at examples. Never derive a rate from sampled traces if a counter
+could have told you.
+
+THE SECOND TRAP - PER-SPAN sampling, which breaks traces. MEASURED, keeping each span independently:
+
+    keep each span at 50%  -> P(all 12 spans of a trace survive) = 0.024414%
+    keep each span at 10%  -> P(all 12 spans survive)            ~ 0%
+    keep each span at 1%   -> P(all 12 spans survive)            ~ 0%
+
+Even at 50% per span, one trace in four thousand arrives complete. And a trace missing spans is often
+WORSE than no trace: the gap where a span should be looks like unexplained latency, and you debug a
+phantom. The decision must be per-TRACE, propagated in the context.
+
+THE THIRD TRAP - assuming head sampling preserves rare events. MEASURED, something that happens 12 times
+an hour:
+
+    rate     traces kept of the 12   P(kept ZERO)
+    ------   ---------------------   ------------
+    100%                     12.00           0.0%
+    10%                       1.21          27.6%
+    1%                        0.12          89.2%
+    0.1%                      0.01          98.8%
+
+At 1% head sampling you have a 89.2% chance of having NOTHING about the twelve-times-an-hour bug someone
+just filed. Head sampling estimates RATES well and preserves RARE EVENTS terribly - and it is precisely
+the rare event you needed the trace for.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHAT HEAD SAMPLING IS GENUINELY GOOD AT - estimating rates. MEASURED, estimating a 0.100% error rate,
+200 independent hours:
+
+    sample rate   mean estimate   std dev     95% interval          relative width
+    -----------   -------------   ---------   -------------------   --------------
+        100%          0.10011%    0.00144%    [0.0970%, 0.1028%]          +/-2.9%
+         10%          0.09952%    0.00463%    [0.0906%, 0.1094%]          +/-9.4%
+          1%          0.10010%    0.01342%    [0.0760%, 0.1281%]         +/-26.1%
+        0.1%          0.10330%    0.04629%    [0.0200%, 0.2000%]         +/-90.0%
+       0.01%          0.09600%    0.15226%    [0.0000%, 0.6000%]        +/-300.0%
+
+The mean estimate is right at every rate - that is what unbiased means. What degrades is the PRECISION,
+and it degrades as 1/sqrt(n), so each 10x reduction in rate roughly triples the interval. At 1% you can
+say the error rate is somewhere between 0.076% and 0.128%, which is usually good enough for a trend and
+not good enough for an SLO.
+
+So the two strategies are not competitors, they answer different questions:
+    HOW OFTEN does this happen?    -> head sampling (or better, a metric counter)
+    WHAT HAPPENED in this case?    -> tail sampling
+
+TAIL SAMPLING'S OWN COST - you must buffer every in-flight trace. MEASURED at 1,389 rps:
+
+    hold time   traces in memory   buffer
+    ---------   ----------------   ---------
+          1 s              1,389     0.01 GB
+          5 s              6,944     0.04 GB
+         10 s             13,889     0.08 GB
+         30 s             41,667     0.25 GB
+         60 s             83,333     0.50 GB
+
+Half a gigabyte for a 60-second decision window, which is cheap - and I should say plainly that at THIS
+rate the buffer is not an obstacle. Scale it though: at 100,000 rps the same 60-second window is
+6,000,000 traces and roughly 36 GB, which must be sharded across collectors AND routed so that all spans
+of one trace reach the SAME collector. That routing requirement is the real operational cost of tail
+sampling, not the memory.
+
+Head sampling needs ZERO buffer. That is what you are paying for.
+
+THE FULL FAMILY OF WAYS TO CUT VOLUME:
+    HEAD SAMPLING          cheap, blind, good for rates.
+    TAIL SAMPLING          expensive, sighted, good for incidents.
+    HYBRID                 head-sample aggressively at the edge, tail-sample what survives. What most
+                           large deployments actually run.
+    ADAPTIVE / PER-ENDPOINT  100% of `/checkout`, 0.01% of `/healthz`. Usually the biggest single win,
+                           because volume and importance are inversely correlated.
+    RATE LIMITING          at most N/second per service. Protects you during the incident, when volume
+                           spikes exactly when you need the pipeline.
+    METRICS INSTEAD        a counter is complete and costs bytes. Anything you want to COUNT belongs
+                           here.
+    EXEMPLARS              metrics for the counts, with links to a few stored traces. The best of both,
+                           and the modern default.
+    LOG LEVELS             head sampling for logs, with the same blindness problem.
+    DYNAMIC LOG SAMPLING   keep the first N of each identical message per interval, drop the rest.
+                           Cuts repetitive log spam without losing the first occurrence.
+    RETENTION TIERS        full fidelity for 7 days, aggregates for a year.
+
+WHEN NOT TO SAMPLE: audit logs, billing events, security events, anything legally required, and anything
+you must be able to reconstruct exactly. These are not telemetry - they are records - and they should not
+be in the same pipeline.""",
+
+    """6. HOW TO CODE IT.
+
+  1. START BY MEASURING THE VOLUME. MEASURED: 6,000 bytes per request x 5M/hour = 30 GB/hour = 21.6 TB
+     at 30-day retention. The number decides the strategy, and most teams have never computed it.
+  2. USE METRICS FOR COUNTS AND RATES. Complete, cheap, and they aggregate. Sample traces only for
+     EXAMPLES.
+  3. MAKE THE SAMPLING DECISION PER TRACE, at the root, and propagate it in the context. MEASURED: at
+     50% per-span sampling, only 0.024% of 12-span traces arrive intact.
+  4. USE DETERMINISTIC (hash-based) HEAD SAMPLING so every service reaches the same decision
+     independently, without coordination.
+  5. TAIL-SAMPLE IF YOU CAN AFFORD THE BUFFER. MEASURED: 100% of errors and slow traces for the same
+     0.30 GB/hour that 1% head sampling spends to catch 1.11% of errors.
+  6. WRITE THE TAIL POLICY EXPLICITLY: keep every error, every trace over the p99 threshold, and a small
+     percentage of successes as a baseline. You need the boring ones for comparison.
+  7. ROUTE ALL SPANS OF A TRACE TO THE SAME COLLECTOR. Tail sampling cannot work if the spans of one
+     trace are spread across collectors. This is the hard part of deploying it, harder than the memory.
+  8. SIZE THE DECISION WINDOW FROM YOUR OWN p99 LATENCY. Too short and long traces get chopped; too long
+     and the buffer grows. MEASURED: 0.50 GB at 60s and 1,389 rps; scale linearly with rate.
+  9. STORE THE SAMPLING RATE WITH EVERY TRACE and weight by 1/rate when counting. MEASURED: without it,
+     a dashboard reads 100x low.
+ 10. DO NOT TRUST WEIGHTED COUNTS FROM FEW SAMPLES. MEASURED: weighting 40 traces by 100x gave an
+     estimate 20.5% off. Unbiased is not the same as accurate.
+ 11. SAMPLE PER ENDPOINT. `/healthz` at 0.01% and `/checkout` at 100%. Usually the largest single
+     reduction available, and it costs nothing in coverage.
+ 12. RATE-LIMIT the sampler so an incident does not take the telemetry pipeline down with the service.
+ 13. EMIT EXEMPLARS: link metric buckets to stored traces so a spike on a graph leads to a real example.
+ 14. NEVER SAMPLE audit, billing, or security records. Keep them in a different pipeline entirely so no
+     future sampling change can touch them.
+ 15. RE-DERIVE THE RATE WHEN TRAFFIC CHANGES. A fixed 1% chosen at 500 rps is a very different bill and
+     a very different rare-event coverage at 5,000 rps.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"At scale the telemetry becomes a second system, larger than the one it is observing, and almost all of
+it is identical.
+
+I costed it out: a service at 5 million requests an hour emitting 12 spans and 4 log lines per request is
+6,000 bytes per request - 30 GB an hour, 720 GB a day, 21.6 TB at 30-day retention. And of those 5
+million requests, 99.4% are fast successes that look exactly like each other. You already have five
+million examples of a healthy request; the five thousand errors are what you do not have.
+
+The real question is not whether to sample but WHEN you decide. Head sampling flips a coin at the start
+of the request - cheap, no memory needed, and completely blind to what is about to happen. Tail sampling
+decides after the trace finishes, when you can see it errored or took four seconds.
+
+I compared them at the SAME stored volume - 0.30 GB an hour either way. One percent head sampling kept 56
+of 5,031 error traces, about one percent, because it is sampling blindly. Tail sampling kept ALL 5,031
+plus 0.4% of the boring ones for context. Same bill, a hundred times the error coverage.
+
+Head sampling is still genuinely good at one thing: estimating rates. At 1% my estimate of the 0.100%
+error rate had a 95% interval of 0.076% to 0.128% - unbiased, just imprecise, and the precision degrades
+as one over root n. Where it fails badly is rare events. For something happening twelve times an hour, 1%
+head sampling has an 89.2% chance of keeping NOTHING - which is exactly the bug someone just filed a
+ticket about.
+
+Two traps I would call out specifically. First, never read a count off a sampled dataset: at 1% sampling
+my dashboard showed 40 errors against 5,031 real ones, a hundred times low, and even after weighting by
+1/rate the estimate was still 20% off, because weighting fixes the bias and not the variance. Count with
+metrics; sample traces for examples. Second, the sampling decision has to be per TRACE and propagated -
+if each span flips its own coin, then even at 50% only 0.024% of twelve-span traces arrive complete, and
+a trace with holes is worse than no trace because the gap looks like latency.
+
+And tail sampling is not free: you have to buffer every in-flight trace. At my rate that was half a
+gigabyte for a 60-second window, which is nothing - but at 100,000 rps the same window is around 36 GB,
+and the harder constraint is that every span of a trace must reach the SAME collector. That routing
+requirement is the real cost of deploying it."
+
+THE ONE SENTENCE TO NOT FUMBLE: use metrics to COUNT and traces to LOOK - and if you are going to store
+traces, tail-sample, because for the same money it kept 100% of the errors instead of 1.1%.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    per_trace = SPAN_BYTES*SPANS + LOG_BYTES*LOGS      # 420*12 + 240*4 = 6,000
+    full_gb = N * per_trace / 1e9                      # 5,000,000 * 6,000 = 30 GB
+
+The volume calculation, and it is the first thing to do on any real system. Everything downstream - the
+choice of strategy, the retention period, whether tail sampling is worth the complexity - follows from
+this one number.
+
+    is_err  = r.random(N) < ERR                        # 0.1%
+    is_slow = (r.random(N) < SLOW) & ~is_err           # 0.5%, excluding errors
+    interesting = is_err | is_slow
+
+The population. `& ~is_err` keeps the categories disjoint so the counts add up. `interesting` is the
+target set: 0.6% of traffic, and the definition of a tail-sampling policy in one line.
+
+    keep = r.random(N) < rate
+    (keep & is_err).sum() / is_err.sum()
+
+Head sampling: an independent coin per trace, INDEPENDENT OF `is_err`. That independence is the whole
+property being measured - the sampler cannot know, so it keeps errors at exactly the same rate it keeps
+everything else. MEASURED at 1%: 1.11% of errors kept.
+
+    budget = target - interesting.sum()
+    boring_rate = budget / (~interesting).sum()
+    keep_t = interesting | ((r.random(N) < boring_rate) & ~interesting)
+
+Tail sampling, constructed to spend the SAME budget as 1% head sampling. `interesting |` means every
+error and slow trace is kept unconditionally; the remaining budget is spread over the boring ones at
+0.398%. That construction is what makes the comparison fair - it is not "tail sampling stores more", it
+is the same storage allocated by outcome instead of by coin flip.
+
+    est = r.binomial(n, ERR, size=200) / n
+    lo, hi = np.percentile(est, [2.5, 97.5])
+
+The precision experiment. Two hundred independent hours at each sampling rate, then the empirical 95%
+interval. Using `binomial` rather than re-simulating five million rows is the same thing computed
+directly - each sampled request is an independent Bernoulli trial at the error rate.
+
+The result is the classic 1/sqrt(n): 100% gives +/-2.9%, 1% gives +/-26.1%, 0.01% gives +/-300%. Each
+10x drop in rate roughly triples the interval.
+
+    kept = r.binomial(RARE, rate, size=2000)
+    (kept == 0).mean()
+
+The rare-event experiment, and it asks a different question from the one above: not "how precise is my
+estimate" but "do I have ANY example at all". `P(kept zero) = (1-rate)^12`, which is 89.2% at 1%. Rates
+and instances are different needs, and head sampling serves one and not the other.
+
+    intact = rate ** SPANS
+
+Per-span sampling. Twelve independent coin flips all landing heads: `0.5^12 = 0.000244`. The
+exponentiation is the point - trace integrity decays geometrically in the span count, so the more
+detailed your instrumentation, the worse independent per-span sampling gets.
+
+    naive = (keep & is_err).sum()
+    naive / rate
+
+The counting error. `naive` is 40 and `naive/rate` is 4,000 against a true 5,031. Dividing by the rate
+removes the systematic bias; it cannot remove the fact that 40 observations is a small sample. MEASURED
+-20.49% - which is why "we weight our sampled counts" is a necessary answer and not a sufficient one.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the volume, 5,000,000 requests/hour.
+
+    bytes per request                        6,000
+    one hour                                  30.0 GB
+    one day                                    720 GB
+    30-day retention                          21.6 TB
+
+    errors                     5,031     0.101%
+    slow                      25,174     0.503%
+    boring                 4,969,795    99.396%
+
+Almost 22 terabytes to retain, and 99.4% of it is a fast success indistinguishable from five million
+others.
+
+TRACE B - the same money, spent two ways.
+
+    strategy       stored      GB/hr   errors kept   % errors   slow kept   % slow
+    ------------   ---------   -----   -----------   --------   ---------   ------
+    head 100%      5,000,000   30.00         5,031    100.00%      25,174   100.00%
+    head 10%         500,186    3.00           486      9.66%       2,481     9.86%
+    head 1%           50,239    0.30            56      1.11%         253     1.01%
+    head 0.1%          5,074    0.03             4      0.08%          21     0.08%
+    TAIL              49,986    0.30         5,031    100.00%      25,174   100.00%
+
+The third and fifth rows are the comparison: 0.30 GB/hour either way, 56 error traces against 5,031. The
+"% errors" column for head sampling simply tracks the sampling rate - 10% keeps 9.66%, 1% keeps 1.11% -
+which is what blind means, expressed numerically.
+
+Tail sampling reached that by keeping 100% of interesting traces plus 0.398% of boring ones.
+
+TRACE C - precision of a rate estimate, 200 independent hours, true rate 0.100%.
+
+    rate      mean estimate   std dev     95% interval           relative width
+    -------   -------------   ---------   --------------------   --------------
+    100%          0.10011%    0.00144%    [0.0970%, 0.1028%]           +/-2.9%
+    10%           0.09952%    0.00463%    [0.0906%, 0.1094%]           +/-9.4%
+    1%            0.10010%    0.01342%    [0.0760%, 0.1281%]          +/-26.1%
+    0.1%          0.10330%    0.04629%    [0.0200%, 0.2000%]          +/-90.0%
+    0.01%         0.09600%    0.15226%    [0.0000%, 0.6000%]         +/-300.0%
+
+The mean column is correct everywhere - head sampling is UNBIASED. The interval column is what you are
+buying with storage. 2.9 -> 9.4 -> 26.1 -> 90 -> 300 is roughly 3x per 10x, which is 1/sqrt(n).
+
+At 1%, "the error rate is between 0.076% and 0.128%" is fine for a trend line and useless for deciding
+whether you have breached a 0.1% SLO.
+
+TRACE D - rates versus instances, an event happening 12 times an hour.
+
+    rate     traces kept (mean)   P(kept ZERO)
+    ------   ------------------   ------------
+    100%                  12.00           0.0%
+    10%                    1.21          27.6%
+    1%                     0.12          89.2%
+    0.1%                   0.01          98.8%
+
+Same sampler, completely different verdict. At 1% you can estimate the error RATE to within a factor of
+1.3, and you have an 89.2% chance of having no example of the specific rare bug. This is the row that
+justifies tail sampling: incidents are about instances, not rates.
+
+TRACE E - per-span sampling destroys traces.
+
+    per-span keep rate   P(all 12 spans survive)
+    ------------------   -----------------------
+                  50%                 0.024414%
+                  10%                  0.000000%
+                   1%                  0.000000%
+
+`rate^12`. Even at a generous 50%, one trace in four thousand arrives whole. And a partial trace is
+actively misleading - the missing span looks like unexplained latency between its neighbours.
+
+TRACE F - tail sampling's buffer, at 1,389 rps.
+
+    decision window   traces held   memory
+    ---------------   -----------   -------
+                1 s         1,389   0.01 GB
+                5 s         6,944   0.04 GB
+               10 s        13,889   0.08 GB
+               30 s        41,667   0.25 GB
+               60 s        83,333   0.50 GB
+
+    scaled to 100,000 rps, 60 s window: 6,000,000 traces, ~36 GB
+
+At this rate the buffer is negligible and I will say so rather than overstate the cost. It scales
+linearly, so it becomes real at high rates - and the harder constraint is not memory but ROUTING: every
+span of a trace must arrive at the same collector for the decision to be possible. Head sampling needs
+zero buffer and zero routing, which is exactly what the extra coverage costs.
+
+TRACE G - the counting error, 1% head sample.
+
+    error traces stored                                40
+    naive dashboard reading                     40 errors     100x low
+    weighted by 1/rate (x100)                4,000 errors
+    truth                                    5,031 errors
+    error of the weighted estimate                -20.49%
+
+Two failures in one table. The naive reading is off by the sampling factor - fixable, and only if the
+rate is stored with the trace. The weighted reading is still 20% off because 40 observations is a small
+sample, and no weighting scheme fixes that. Both numbers look equally confident on a dashboard.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (5,000,000 requests/hour, 12 spans + 4 logs each):
+
+    volume            6,000 B/request | 30.0 GB/hour | 720 GB/day | 21.6 TB at 30 days
+    composition       0.101% errors | 0.503% slow | 99.396% boring
+
+    at 0.30 GB/hour:  head 1% keeps 56 of 5,031 errors (1.11%)
+                      TAIL keeps 5,031 of 5,031 (100%) + 0.398% of boring traces
+
+    rate estimation   100% +/-2.9% | 10% +/-9.4% | 1% +/-26.1% | 0.1% +/-90% | 0.01% +/-300%
+    rare event (12/hr) P(kept zero): 27.6% at 10%, 89.2% at 1%, 98.8% at 0.1%
+    per-span sampling  P(12 spans intact) = 0.0244% at 50%, ~0% below
+    tail buffer        0.50 GB at 60s / 1,389 rps; ~36 GB at 60s / 100,000 rps
+    counting           40 stored -> 4,000 weighted vs 5,031 true (-20.5%)
+
+COSTS:
+    head sampling   O(1) per request, no memory, no coordination
+    tail sampling   O(in-flight traces) memory, plus the requirement that all spans of a trace reach
+                    the same collector
+    metrics         a counter, regardless of request volume - which is why counting belongs there
+
+THE MISTAKES:
+
+    - Reading counts off sampled traces. MEASURED 100x low, and still 20.5% off after weighting.
+    - Not storing the sampling rate with the trace, making the above uncorrectable.
+    - Sampling per SPAN instead of per TRACE. MEASURED 0.024% of traces intact at 50%.
+    - Not propagating the sampling decision, which produces the same broken partial traces.
+    - Assuming head sampling preserves rare events. MEASURED 89.2% chance of keeping nothing.
+    - Deploying tail sampling without routing all of a trace's spans to one collector. It silently
+      cannot work.
+    - A uniform rate across endpoints. `/healthz` and `/checkout` do not deserve the same rate, and
+      per-endpoint rates are usually the biggest single saving.
+    - No rate limit on the sampler, so an incident floods the telemetry pipeline exactly when you need
+      it.
+    - Sampling audit, billing or security records. Those are records, not telemetry, and belong in a
+      different pipeline.
+    - Choosing a rate once and never revisiting it as traffic grows tenfold.
+    - Using traces where a metric would do. Metrics are complete and cheap; traces are examples.
+
+THE TAKEAWAY. Keeping everything costs 21.6 TB a month to store five million near-identical copies of
+"the request worked". The decision that matters is not the rate but the MOMENT: head sampling is cheap
+and blind, tail sampling is sighted and needs a buffer - and at identical storage, blind kept 1.1% of the
+errors while sighted kept 100%. Use metrics to count, because sampled counts are wrong by the sampling
+factor and still 20% off after you correct them; use traces to look at examples, sample them per-trace
+with the decision propagated, vary the rate by endpoint, and never let anything you are legally required
+to keep near the sampler.""",
+]
+
+_EX_P1AO["Why should PUT/DELETE be idempotent but POST not — and why does it matter for retries?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - IDEMPOTENT means doing it twice leaves the world in the same state as
+doing it once.
+
+PUT says "set resource X to THIS VALUE". Do it five times, X has that value. DELETE says "X should not
+exist". Do it five times, X does not exist. POST says "CREATE A NEW THING" - do it five times and you
+have five things.
+
+That distinction is not pedantry about verbs. It decides WHO IS ALLOWED TO RETRY, and on a network,
+retrying is not optional: when a client gets no response it cannot tell whether the request was lost or
+the RESPONSE was lost. Those are opposite situations demanding opposite actions.
+
+MEASURED ON THIS MACHINE - a real HTTP server on localhost, with 20% of RESPONSES dropped after the
+server has already done the work, and a client that retries up to six times:
+
+    method                   logical   HTTP sent   handler ran   final state
+    ---------------------   --------   ---------   -----------   ----------------------------------
+    PUT  /r/{i}                  400         504           504   400/400 correct, 0 wrong
+    POST /orders                 400         514           514   514 ORDERS CREATED - 114 duplicates
+    POST + Idempotency-Key       400         510           510   400 orders, 0 duplicates
+
+Identical channel, identical retry logic, 1.26-1.28 extra requests per logical operation in all three
+cases. The PUT ran 104 extra times and the final state is IDENTICAL. The POST ran 114 extra times and
+created 114 extra orders - 28.5% phantom orders.
+
+The retries are the same. What differs is whether repeating the operation MEANS anything.""",
+
+    """2. THE INTUITION - the client is blind at exactly the moment it must decide.
+
+The sequence that matters is: client sends -> server RECEIVES it and DOES THE WORK -> the response is
+lost. From the client's chair this looks exactly like the request never arriving. There is no way to
+distinguish them, and no timeout setting fixes it.
+
+MEASURED, the size of that blind spot on the same channel, with retries turned OFF:
+
+    PUT with NO retry : 320/400 acknowledged, 400/400 actually written
+    -> 80 requests the CLIENT believes failed, but the SERVER completed
+
+Twenty percent of requests were, from the client's perspective, failures - and every one of them
+succeeded. If the client gives up, it reports an error for work that was done. If it retries, it repeats
+work that was done.
+
+So retrying is mandatory, and the only question is whether repeating is HARMLESS. That property has a
+name and it is idempotence.
+
+WHY THE VERBS CARRY IT. HTTP defines these method properties so that INTERMEDIARIES - proxies, load
+balancers, client libraries, service meshes - can act without understanding your application:
+
+    method    safe    idempotent   what a proxy may do on a timeout
+    -------   -----   ----------   -------------------------------------
+    GET       yes     yes          retry freely; also cache it
+    HEAD      yes     yes          retry freely
+    PUT       no      yes          retry freely
+    DELETE    no      yes          retry freely
+    POST      no      NO           MUST NOT retry blindly
+    PATCH     no      not required depends entirely on the patch body
+
+An nginx or Envoy sitting in front of you has no idea what your endpoints do. All it knows is the verb.
+If you implement a create-a-new-order operation behind PUT, or a counter increment behind a method
+declared idempotent, you have lied to every intermediary in the path - and they will act on the lie.""",
+
+    """3. EVERY TERM DEFINED.
+
+IDEMPOTENT. Repeating the request leaves the same final STATE. Formally f(f(x)) = f(x).
+
+SAFE. The request does not change state at all. GET and HEAD. Every safe method is idempotent; the
+reverse is not true - PUT and DELETE change state and are still idempotent.
+
+STATE vs RESPONSE. Idempotence is about the SERVER'S STATE, not the response body or status code. A
+second DELETE legitimately returns 404 - MEASURED below - and the method is still idempotent.
+
+PUT. "Make the resource at this URI have this representation." A complete replacement, at a
+client-chosen URI. Idempotent by construction.
+
+POST. "Submit this to the resource for processing." Usually creates a new subordinate resource at a
+SERVER-chosen URI. Not idempotent.
+
+PATCH. A partial modification. Idempotent only if the patch is absolute (`{"status": "paid"}`) and not
+if it is relative (`{"increment": 1}`). The spec does not require it either way, which is why it is the
+trickiest verb.
+
+DELETE. "Remove the resource." Idempotent in state; the status code differs between the first call and
+the rest.
+
+IDEMPOTENCY KEY. A client-generated unique id sent with a POST so the server can recognise a repeat.
+`Idempotency-Key` in Stripe's API. MEASURED: takes 114 duplicates to 0.
+
+RETRY. Re-sending after no response. Necessary; the blind spot above is why.
+
+EXPONENTIAL BACKOFF WITH JITTER. Wait longer after each failure, with randomness. Prevents synchronised
+retry storms.
+
+RETRY STORM / THUNDERING HERD. Many clients retrying together, turning a blip into an outage.
+
+AT-MOST-ONCE / AT-LEAST-ONCE. Never retry (lose work) versus retry until acked (duplicate work).
+
+CONDITIONAL REQUEST. `If-Match: <etag>` or `If-None-Match: *`. Makes an otherwise unsafe operation safe
+to repeat by attaching a precondition on the current state.
+
+ETag. A version identifier for a resource, used with conditional requests.
+
+LOST UPDATE. Two clients read, both modify, both write, one change vanishes. `If-Match` prevents it, and
+it also makes the PUT conditionally idempotent.
+
+POST/REDIRECT/GET. The browser pattern that stops a page refresh from re-submitting a POST. The
+user-interface answer to the same problem.
+
+201 CREATED / 200 OK / 204 NO CONTENT / 404 NOT FOUND / 409 CONFLICT. The status codes that show up in
+the DELETE and duplicate-detection measurements.
+
+NATURAL KEY. A business identifier - order number, invoice id - that can serve as the idempotency key
+without inventing one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "DELETE returned 404, so it failed". It did not.
+
+MEASURED, 50 resources, each deleted three times over the lossy channel:
+
+    logical DELETE #1 status codes : {204: 43, 404: 7}
+    logical DELETE #2 status codes : {404: 50}
+    logical DELETE #3 status codes : {404: 50}
+    resources remaining            : 0
+
+The second and third rounds returning 404 is expected - the resource is gone, which is exactly what you
+asked for. But look at the FIRST round: seven of the fifty first-time deletes returned 404. That is the
+mechanism in miniature. The first attempt succeeded, its 204 was lost, the client retried, and the retry
+correctly reported that the resource no longer exists.
+
+So a client that treats 404 as a failure will retry forever, or alarm, or roll back a transaction -
+because a successful delete looked like a failed one. THE STATE IS IDEMPOTENT; THE RESPONSE IS NOT, and
+conflating the two is the single most common bug in this area.
+
+THE SECOND TRAP - putting a non-idempotent operation behind a verb that promises idempotence. MEASURED,
+an "update" that increments:
+
+    logical requests    400
+    HTTP requests sent  483
+    handler invocations 483
+    final counter       483   (should be 400)
+    OVERCOUNT           83    (20.8%)
+
+`balance = balance + x` is not idempotent no matter which HTTP verb you write on it. If you expose that
+as PUT or PATCH and a proxy retries on your behalf, you have silently created a 20.8% overcount that no
+application log will explain. The fix is to send the ABSOLUTE value - `balance = 500` - or to attach an
+idempotency key.
+
+THE THIRD TRAP - thinking POST is simply unusable for anything that must be reliable. MEASURED, the same
+POST endpoint with an `Idempotency-Key` header:
+
+    HTTP requests sent   510   (1.27 per logical request - the retries still happen)
+    handler invocations  510
+    resources created    400
+    DUPLICATES             0
+
+The retries are unchanged; the server recognises the repeat and returns the ORIGINAL result. That is
+what every payments API does, and it is why POST remains the right verb for "create an order" - you
+supply the missing property rather than misusing PUT.
+
+THE FOURTH TRAP - assuming idempotence handles CONCURRENCY. It does not. Two identical PUTs are fine;
+two DIFFERENT PUTs to the same URI race, and the loser's write vanishes. That is the lost-update problem
+and it needs `If-Match` with an ETag - a separate mechanism for a separate failure.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+PUT vs POST FOR CREATION, which is the design decision this all turns on:
+
+    PUT /orders/{client-chosen-id}     the client picks the id (a UUID). Idempotent - retrying writes
+                                       the same id again. Requires the client to be able to name the
+                                       resource.
+    POST /orders                       the server picks the id. Not idempotent - each call is a new
+                                       order.
+    POST /orders + Idempotency-Key     the server picks the id, the client supplies a dedup token.
+                                       MEASURED 0 duplicates.
+
+The first and third are both correct answers. The first is more RESTful and needs the client to generate
+ids; the third is what commercial APIs do because it works with a server-controlled id space and gives
+you a place to cache the response.
+
+WHAT MAKES AN OPERATION IDEMPOTENT - in order of preference:
+
+  1. ABSOLUTE VALUES, NOT DELTAS. `SET status='paid'` over `status = next(status)`. Costs nothing.
+     `balance = balance + 100` is the anti-pattern and MEASURED at 20.8% overcount.
+  2. UPSERT ON A KEY. `INSERT ... ON CONFLICT DO NOTHING` / `MERGE`. The database's unique index gives
+     you atomic dedup for free.
+  3. IDEMPOTENCY KEY. A client-generated token, recorded server-side, with the response cached and
+     replayed. MEASURED 114 duplicates -> 0.
+  4. NATURAL KEY. If the request already carries a unique business identifier - an invoice number - use
+     it instead of inventing a token.
+  5. CONDITIONAL REQUEST. `If-Match: <etag>` makes the write conditional on the current state, which
+     both prevents lost updates and makes a blind retry safe.
+
+WHO RETRIES, AND WHY THE VERB IS A CONTRACT WITH THEM:
+
+    THE CLIENT LIBRARY   most HTTP clients retry idempotent methods by default and not POST.
+    THE PROXY / LB       nginx `proxy_next_upstream`, Envoy retry policies - configured by method.
+    THE SERVICE MESH     the same, one layer in.
+    THE BROWSER          will warn before re-submitting a POST, and re-issue a GET without asking.
+    THE USER             refreshes the page or double-clicks the button. The oldest retry mechanism.
+
+Every one of those actors knows only the verb. That is the point of the property being attached to the
+method rather than to your documentation.
+
+THE DIFFERENT PROBLEM IDEMPOTENCE DOES NOT SOLVE - CONCURRENCY. Two clients PUTting different values to
+the same URI is a lost update, not a duplicate. Use ETags and `If-Match`, or optimistic locking with a
+version column. Idempotence is about REPEATING ONE operation; concurrency control is about ORDERING TWO.
+
+THE UI-LAYER FAMILY: POST/REDIRECT/GET so a refresh does not resubmit; disabling the submit button on
+click; a client-generated form token. All of them are the same idea moved closer to the user, and none
+of them replace the server-side check - a user with two tabs open defeats all three.""",
+
+    """6. HOW TO CODE IT.
+
+  1. PICK THE VERB BY THE SEMANTICS, not by convenience. "Set to this value" is PUT. "Remove" is DELETE.
+     "Create a new one" is POST. Getting this wrong misinforms every proxy in the path.
+  2. MAKE PUT A COMPLETE REPLACEMENT. If it merges into the existing state, it is a PATCH wearing a PUT
+     costume, and it will not be idempotent for long.
+  3. NEVER PUT A DELTA BEHIND AN IDEMPOTENT VERB. MEASURED: an increment retried on a 20% loss channel
+     overcounted by 20.8%. Send the absolute value.
+  4. RETURN THE SAME STATUS FOR DELETE EVERY TIME if you can - many APIs return 204 whether or not the
+     resource existed, precisely so retries look identical. If you do return 404 on the second call,
+     DOCUMENT IT. MEASURED: 7 of 50 FIRST deletes already returned 404 because of a retry.
+  5. TREAT 404-ON-DELETE AS SUCCESS IN THE CLIENT. The goal was "it should not exist" and it does not.
+  6. FOR POST, ACCEPT AN `Idempotency-Key` HEADER. Client-generated, stable across retries of the same
+     logical operation. MEASURED 0 duplicates.
+  7. STORE THE KEY WITH A UNIQUE CONSTRAINT and check it atomically -
+     `INSERT ... ON CONFLICT DO NOTHING`. A SELECT followed by an INSERT is a race that two concurrent
+     retries will both pass.
+  8. CACHE AND REPLAY THE ORIGINAL RESPONSE on a duplicate, do not return an error. The client cannot
+     know its first attempt worked - that is the entire premise.
+  9. WRITE THE KEY RECORD IN THE SAME TRANSACTION AS THE EFFECT. Otherwise you can record "done" and
+     crash before doing it.
+ 10. SET AN EXPIRY ON KEYS, and make it comfortably longer than your maximum retry window.
+ 11. USE `If-Match` WITH AN ETAG when concurrent writers exist. Idempotence does not prevent lost
+     updates.
+ 12. ONLY AUTO-RETRY IDEMPOTENT METHODS in your client library and proxy config. Check what your stack
+     does by default - many retry POST on connection failure, which is defensible only if every POST
+     you own carries a key.
+ 13. USE EXPONENTIAL BACKOFF WITH JITTER, and cap the attempts.
+ 14. USE POST/REDIRECT/GET in browsers so a refresh does not resubmit - and do not rely on it, because
+     it does not stop a double-click or two tabs.
+ 15. TEST BY SENDING EVERY REQUEST TWICE in staging. If nothing breaks, the idempotence is real. If you
+     have never tested it, assume it is not.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Idempotent means doing it twice leaves the same final STATE. PUT is 'set X to this value' and DELETE is
+'X should not exist' - repeat either and nothing further changes. POST is 'create a new thing', so
+repeating it creates another one.
+
+That matters because on a network the client is blind at exactly the moment it must decide. When no
+response comes back, 'the request was lost' and 'the request succeeded and the RESPONSE was lost' look
+identical. I measured that blind spot: with retries off and 20% of responses dropped, 320 of 400 PUTs
+were acknowledged and 400 of 400 were actually written - so 80 requests the client believed had failed
+had all succeeded. Give up and you report an error for work that was done; retry and you repeat work
+that was done.
+
+So retrying is mandatory, and the only question is whether repeating is harmless. I ran the same lossy
+channel with a retrying client against a real HTTP server. PUT: 400 logical requests became 504 HTTP
+requests, the handler ran 504 times, and all 400 resources ended with the correct value - 104 extra
+executions, identical final state. POST on the same channel: 514 HTTP requests, and 514 ORDERS CREATED
+against 400 intended. A hundred and fourteen duplicate orders, 28.5% phantom.
+
+The reason the property lives on the VERB is that intermediaries act on it. A load balancer, a service
+mesh, a client library - none of them understand your endpoints. They know the method. If you put a
+counter increment behind PUT or PATCH, you have lied to every one of them, and they will retry on your
+behalf. I measured that too: an increment retried on the same channel overcounted by 20.8%.
+
+The subtlety I would make sure to state is that idempotence is about STATE, not about the RESPONSE. A
+second DELETE correctly returns 404 - and in my measurement, seven of the fifty FIRST deletes already
+returned 404, because the original 204 was lost and the retry found the resource already gone. A client
+that treats 404 as failure will retry forever or alarm on a successful delete.
+
+And POST is not unusable for anything reliable. Adding an Idempotency-Key header to the same endpoint on
+the same channel: 510 HTTP requests still sent, retries unchanged, 400 orders created, ZERO duplicates.
+The server recognises the repeat and replays the original result. That is what every payments API does.
+
+One thing this does NOT solve: two clients PUTting DIFFERENT values to the same URI still race, and one
+write vanishes. That is a lost update and it needs If-Match with an ETag."
+
+THE ONE SENTENCE TO NOT FUMBLE: the verb is a contract with every proxy and client library in the path
+about whether they may retry for you - so putting a non-idempotent operation behind an idempotent method
+is not a naming error, it is a correctness bug you will not see in your own code.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def _reply(self, code, body=b''):
+        # THE SERVER DID THE WORK ALREADY. Now the response may vanish.
+        if random.random() < DROP:
+            self.connection.close()
+            return
+        self.send_response(code); ...
+
+This is the entire experimental design, and the comment is the point. The drop happens AFTER the handler
+has mutated state, so every dropped response corresponds to work that WAS done and that the client will
+never hear about. Dropping the request instead would be a different and much easier problem.
+
+    def do_PUT(self):
+        rid = self.path.strip('/').split('/')[-1]
+        STORE[rid] = self._read()          # SET - idempotent
+        self._reply(200, b'ok')
+
+`STORE[rid] = value` is an ASSIGNMENT. Run it a hundred times and the dict holds the same value - that is
+idempotence expressed in one line, and it is why PUT survived 104 extra executions with 0 wrong values.
+
+    def do_DELETE(self):
+        existed = rid in STORE
+        STORE.pop(rid, None)               # REMOVE - idempotent state
+        self._reply(204 if existed else 404)   # ...different STATUS
+
+`pop(rid, None)` is idempotent - the second call is a no-op. But `existed` was captured BEFORE the pop,
+so the status code differs between the first call and the rest. Those two lines together are the whole
+"idempotent state, non-idempotent response" distinction, and they show it is not a bug: the server is
+correctly reporting what it found.
+
+    def do_POST(self):
+        nid = uuid.uuid4().hex[:8]
+        CREATED.append(nid)
+        self._reply(201, nid.encode())
+
+`CREATED.append` is the opposite of an assignment - it is an ACCUMULATION. Every invocation adds. There
+is nothing wrong with the code; the operation simply has no fixed point, which is exactly what
+"non-idempotent" means. MEASURED 514 appends for 400 logical requests.
+
+        key = self.headers.get('Idempotency-Key')
+        if key in IDEM:
+            self._reply(200, IDEM[key].encode()); return
+        nid = uuid.uuid4().hex[:8]
+        IDEM[key] = nid; CREATED.append(nid)
+        self._reply(201, nid.encode())
+
+The fix, and three details are load-bearing. The duplicate gets 200 rather than 201 - it did not create
+anything. It gets THE ORIGINAL ID back, not an error, because the client genuinely cannot know its first
+attempt worked. And in production `if key in IDEM` then `IDEM[key] = ...` must be ONE atomic operation -
+a unique index and `INSERT ... ON CONFLICT` - or two concurrent retries both find the key absent.
+
+    def call(method, path, ..., tries=6):
+        for _ in range(tries):
+            try:
+                with urllib.request.urlopen(req, timeout=1.0) as r:
+                    return attempts, r.status, r.read()
+            except urllib.error.HTTPError as e:
+                return attempts, e.code, b''     # a real response - NOT a retry case
+            except Exception:
+                continue                         # no response at all -> retry
+
+An ordinary retrying client, and the two `except` branches encode the only distinction it can actually
+make. An `HTTPError` means the server ANSWERED - even a 500 is an answer - so there is no ambiguity and
+the client returns it. Any other exception means SILENCE, which is the ambiguous case, and silence is
+the only thing that triggers a retry.
+
+That is the whole blind spot in two lines: the client can distinguish "answered badly" from "did not
+answer", and it cannot distinguish "did not answer because it never arrived" from "did not answer
+because the answer was lost".
+
+    a, code, _ = call('PUT', f'/n/{i}', f'v{i}', tries=1)
+    if code == 200: ok += 1
+
+The no-retry control. MEASURED 320/400 acknowledged and 400/400 written - the 80-request gap between
+what the client believes and what is true.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the three methods, same channel, same client, 400 logical requests each.
+
+    method                 HTTP sent   per request   handler ran   created   final state
+    --------------------   ---------   -----------   -----------   -------   -----------------------
+    PUT /r/{i}                   504         1.26x           504         -   400/400 correct, 0 wrong
+    POST /orders                 514         1.28x           514       514   114 DUPLICATES (28.5%)
+    POST + Idempotency-Key       510         1.27x           510       400   0 duplicates
+
+The middle column is the control: the retry behaviour is essentially identical in all three rows -
+1.26x, 1.28x, 1.27x. The channel does not care what verb you used. Everything in the last column comes
+from what the operation MEANS when repeated.
+
+Row 1: 104 extra executions, zero consequences. Row 2: 114 extra executions, 114 extra orders. Row 3:
+110 extra executions, zero consequences, because the server recognised them.
+
+TRACE B - the blind spot, retries disabled.
+
+    outcome                                      count
+    -----------------------------------------   ------
+    client received a 200                          320
+    client received NOTHING (believes failure)      80
+    resources ACTUALLY written correctly           400
+
+    requests the client believes failed but the server completed: 80  (20.0%)
+
+Every single request succeeded. The client thinks a fifth of them failed. This table is why retrying is
+not a choice - and it is also why "we log failures and investigate" does not work: those 80 log lines
+describe successful operations.
+
+TRACE C - DELETE, 50 resources deleted three times each.
+
+    round   status codes         reading
+    -----   ------------------   -----------------------------------------------------
+      1     {204: 43, 404: 7}    43 clean deletes; 7 whose FIRST response was lost, so
+                                 the retry found the resource already gone
+      2     {404: 50}            all already deleted - as requested
+      3     {404: 50}            same
+
+    resources remaining: 0
+
+The seven in round 1 are the interesting cell. Nothing went wrong: the delete worked, the 204 was lost,
+the client retried, and the retry truthfully reported that there is no such resource.
+
+So a 404 from a DELETE carries no information about whether YOUR request succeeded - only that the
+resource is gone now, which is what you wanted. THE STATE IS IDEMPOTENT (0 remaining); THE RESPONSE IS
+NOT (204 then 404). Clients that treat 404 as failure retry forever, alarm, or roll back a transaction
+around a successful delete.
+
+TRACE D - the increment anti-pattern.
+
+    logical requests          400
+    HTTP requests sent        483
+    handler invocations       483
+    final counter value       483
+    intended                  400
+    OVERCOUNT                  83   (20.8%)
+
+The counter equals the number of HTTP requests, not the number of logical operations - which is the
+definition of a non-idempotent handler. Put this behind PUT or PATCH and every proxy in the path will
+retry it for you, believing the method's promise.
+
+Nothing in your application logs will explain the 83. The requests are all legitimate, the handler is
+correct, and the arithmetic is wrong.
+
+TRACE E - the decision the client faces, which is the whole entry in one table.
+
+    what the client sees   what actually happened          retry?               give up?
+    --------------------   -----------------------------   ------------------   -------------------
+    no response            request never arrived           CORRECT              work never happens
+    no response            request ran, response lost      duplicate risk       reported as failed
+                                                           - HARMLESS if the
+                                                             method is idempotent
+
+One row of evidence, two possible worlds. The client cannot tell them apart, so it must pick a column.
+Picking "retry" is right, and idempotence is what makes the cost of being wrong equal to zero.
+
+MEASURED, that cost by method: PUT 0, POST 114 duplicate orders, POST+key 0.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (real HTTP server, 20% of RESPONSES dropped after the work was done, client retries up to 6):
+
+    PUT                     400 logical -> 504 HTTP (1.26x), 400/400 correct, 0 wrong
+    POST                    400 logical -> 514 HTTP (1.28x), 514 created, 114 DUPLICATES (28.5%)
+    POST + Idempotency-Key  400 logical -> 510 HTTP (1.27x), 400 created, 0 duplicates
+    increment behind a verb 400 logical -> 483 HTTP, counter = 483, OVERCOUNT 20.8%
+    DELETE x3 on 50 rows    round 1 {204:43, 404:7} | rounds 2,3 {404:50} | 0 remaining
+    no-retry control        320/400 acknowledged, 400/400 actually written - an 80-request blind spot
+
+METHOD PROPERTIES:
+
+    GET/HEAD   safe + idempotent    retry and cache freely
+    PUT        idempotent           retry freely
+    DELETE     idempotent (state)   retry freely; expect a different status on repeats
+    POST       NEITHER              retry only with an idempotency key
+    PATCH      depends on the body  absolute values yes, deltas no
+
+COSTS: an idempotency key adds one durable atomic write per request and a key store with an expiry.
+Idempotent design usually costs nothing at all - it is choosing `SET x = 5` over `x = x + 5`.
+
+THE MISTAKES:
+
+    - Treating a 404 from DELETE as failure. MEASURED: 7 of 50 first-time deletes returned 404 because
+      the original response was lost.
+    - Confusing idempotent STATE with an identical RESPONSE. Only the state is required to be stable.
+    - Putting a delta behind an idempotent verb. MEASURED 20.8% overcount.
+    - Using PUT for "create a new thing" so that retries create duplicates under a verb everything in
+      the path is allowed to retry.
+    - POST with no idempotency key for anything that charges money. MEASURED 28.5% duplicate orders.
+    - Generating a NEW idempotency key on each retry attempt. The key must be per logical operation.
+    - `SELECT` then `INSERT` for the key check. Two concurrent retries both find it absent.
+    - Recording the key outside the transaction that does the work, so a crash between them loses the
+      effect permanently.
+    - Returning an error for a detected duplicate instead of the original result. The client cannot
+      know its first attempt worked.
+    - Not knowing what your HTTP client and proxy retry by default. Some retry POST on connection
+      failure.
+    - Assuming idempotence prevents lost updates. Two DIFFERENT PUTs to one URI still race - use
+      `If-Match` with an ETag.
+    - Relying on POST/REDIRECT/GET or a disabled button alone. Two tabs and a double-click defeat both.
+
+THE TAKEAWAY. A client that gets no response cannot tell whether the work happened - measured here as 80
+of 400 requests that the client called failures and the server had completed - so retrying is mandatory
+and the only real question is whether repeating costs anything. PUT and DELETE are defined so that it
+does not: an assignment and a removal have fixed points. POST is defined so that it does. That property
+is attached to the VERB because proxies, meshes and client libraries retry on your behalf knowing nothing
+but the method - so a non-idempotent operation behind an idempotent verb is a correctness bug in code you
+did not write. When you genuinely need a create to be retry-safe, do not misuse PUT; add an idempotency
+key, and the same 510 retried requests produce 400 orders instead of 514.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
