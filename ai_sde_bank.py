@@ -324677,6 +324677,2071 @@ and neither it nor SOP is a substitute for authentication, because both of them 
 moment the client is not a browser.""",
 ]
 
+_EX_P1AO["Why does the median minimize total absolute distance while the mean minimizes squared distance?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - pick ONE number `c` to represent a list. Which number is "best"
+depends entirely on how you charge for being wrong.
+
+    if the cost is SUM OF ABSOLUTE distances,  `sum |x - c|`, the best c is the MEDIAN
+    if the cost is SUM OF SQUARED distances,   `sum (x - c)^2`, the best c is the MEAN
+
+These are not two competing opinions about the centre. They are the exact answers to two different
+questions, and each is wrong for the other question.
+
+MEASURED ON THIS MACHINE - 20,000 random arrays, brute-forcing `c` over a fine grid:
+
+    the grid minimiser of `sum (x-c)^2` equalled the MEAN in 20,000/20,000 arrays (100.00%)
+    the grid minimiser of `sum |x-c|`   equalled numpy's median in 11,635/20,000 (58.17%)
+
+The second number needs explaining and it is instructive: for an EVEN-length array the L1 minimiser is
+not a single point but ANY VALUE IN THE MIDDLE INTERVAL, and the grid picks an end while `numpy.median`
+reports the midpoint. VERIFIED on 4,844 such arrays: the L1 cost at the lower middle value, the upper
+middle value and their midpoint were ALL EXACTLY EQUAL.
+
+So the precise statement is: the median is A minimiser of L1 always, and THE unique minimiser only when
+the middle is unambiguous. The mean is always the unique minimiser of L2.
+
+AND THE INTUITION IN ONE EXAMPLE - `[1, 2, 100]`:
+
+    at the MEDIAN (2):   L1 = 99.0     L2 = 9,605.0
+    at the MEAN (34.3):  L1 = 131.3    L2 = 6,468.7
+
+Each centre wins under its own cost and loses under the other. Neither is "the" centre.""",
+
+    """2. THE INTUITION - differentiate each cost and look at what survives.
+
+FOR THE SQUARED COST, the derivative of `sum (x_i - c)^2` with respect to c is `2 * sum (c - x_i)`.
+Setting it to zero gives `n*c = sum x_i`, so `c = mean`. Notice that each point contributes `(c - x_i)`
+- ITS DISTANCE - so a far-away point pulls hard. That is exactly why the mean is outlier-sensitive.
+
+FOR THE ABSOLUTE COST, the derivative of `|x_i - c|` is `+1` if `c > x_i` and `-1` if `c < x_i`. So the
+derivative of the whole sum is:
+
+    d/dc = (number of points BELOW c) - (number of points ABOVE c)
+
+DISTANCE DOES NOT APPEAR. Every point contributes exactly ±1 regardless of how far away it is. The
+derivative is zero when the COUNTS balance - which is the definition of the median.
+
+MEASURED, that derivative made visible on `[1, 2, 100]`:
+
+    c        points BELOW c   points ABOVE c   d(L1)/dc = below - above   L1 cost
+    -----   --------------   --------------   ------------------------   -------
+      0.0                0                3                         -3     103.0
+      1.0                0                2                         -2     100.0
+      1.5                1                2                         -1      99.5
+      2.0                1                1                          0      99.0   <- the MEDIAN
+      2.5                2                1                         +1      99.5
+     10.0                2                1                         +1     107.0
+     34.0                2                1                         +1     131.0   <- the MEAN
+    100.0                2                0                         +2     197.0
+
+Read the fourth column: it goes -3, -2, -1, 0, +1, +1, +1, +2. It changes only when `c` crosses a data
+point, and it is zero exactly at the balance point. Between 2 and 100 the derivative is a constant +1 -
+the cost rises at a fixed rate of one unit per unit, no matter how far the outlier is.
+
+THAT IS THE WHOLE STORY. Under L1 a point at 100 and a point at 1,000,000 are both just "one point
+above". Under L2 they are wildly different. The cost's SHAPE dictates the centre:
+
+    L1 (absolute) counts POINTS   ->  median  ->  robust
+    L2 (squared)  counts DISTANCE ->  mean    ->  sensitive""",
+
+    """3. EVERY TERM DEFINED.
+
+L1 NORM / ABSOLUTE ERROR / MANHATTAN DISTANCE. `sum |x_i - c|`. Also called the taxicab distance,
+because you move along a grid rather than in a straight line.
+
+L2 NORM / SQUARED ERROR / EUCLIDEAN DISTANCE. `sum (x_i - c)^2`. The straight-line distance, squared.
+
+MEDIAN. The middle value in sorted order. For even n, conventionally the midpoint of the two middle
+values - and MEASURED above, any point in that interval minimises L1 equally.
+
+MEAN. The arithmetic average.
+
+MODE. The most frequent value, and the third member of the family: it minimises the count of NONZERO
+errors, i.e. the L0 "norm" - "be exactly right as often as possible". Worth naming, because it
+completes the pattern L0 -> mode, L1 -> median, L2 -> mean.
+
+SUBGRADIENT. `|x|` is not differentiable at 0, so L1 has no derivative where `c` equals a data point.
+It has a SUBGRADIENT - a whole interval of valid slopes - which is precisely why the minimiser can be
+an interval rather than a point. This is also why L1 optimisation needs different algorithms.
+
+BREAKDOWN POINT. The fraction of data you must corrupt before the estimator becomes arbitrarily wrong.
+The median's is 50%; the mean's is 0% - one point suffices. See the scaling entry for the same idea
+applied to min-max versus standardisation.
+
+ROBUST STATISTIC. One with a high breakdown point. The median, the interquartile range, the trimmed
+mean.
+
+LEAST SQUARES / ORDINARY LEAST SQUARES (OLS). Regression minimising L2. Has a closed form, is
+differentiable everywhere, and is the reason L2 dominates classical statistics.
+
+QUANTILE REGRESSION / LEAST ABSOLUTE DEVIATIONS (LAD). Regression minimising L1, which fits the
+CONDITIONAL MEDIAN rather than the conditional mean - and generalises to any quantile.
+
+HUBER LOSS. Squared near zero, absolute far away. A deliberate compromise: differentiable everywhere
+like L2, robust in the tail like L1.
+
+MAE vs MSE vs RMSE. The same distinction as evaluation metrics. Optimising MAE targets the median of
+your predictive distribution; optimising MSE targets the mean. If your target is skewed, those are
+different numbers and your model will systematically differ depending on which you chose.
+
+VARIANCE. The mean squared deviation FROM THE MEAN - and the reason it uses the mean is exactly this
+minimisation. `mean` is the value that makes variance as small as possible.
+
+L1 REGULARISATION (LASSO) vs L2 (RIDGE). The same shapes applied to WEIGHTS instead of residuals. L1's
+constant-slope property is why it drives coefficients to exactly zero and produces sparsity; L2's
+proportional slope shrinks them without ever reaching zero. Same geometry, different application.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - "the mean is the average, so it is the natural centre". It is
+natural only if your cost is squared, and most real costs are not.
+
+MEASURED, the robustness gap. 999 values uniform in [0,100], plus ONE outlier:
+
+    outlier            median   mean          median moved by   mean moved by
+    ---------------   -------   -----------   ---------------   -------------
+                100    49.980           49.4             0.031             0.1
+              1,000    49.980           50.3             0.031             1.0
+             10,000    49.980           59.3             0.031            10.0
+          1,000,000    49.980        1,049.3             0.031         1,000.0
+      1,000,000,000    49.980    1,000,049.3             0.031     1,000,000.0
+
+The median column is CONSTANT. Not "roughly stable" - identical to three decimal places across seven
+orders of magnitude of outlier. It moved by 0.031 in total, which is the effect of adding one more
+value to the sorted order, and it would be the same 0.031 for an outlier of any size.
+
+The mean moved by exactly `outlier / n`, without limit.
+
+The mechanism is the derivative from section 2: the median's optimality condition counts points and the
+mean's weighs distances, so the median literally cannot see how far away the outlier is.
+
+THE SECOND TRAP - assuming the median is "the safe default". It is not, for two reasons.
+
+    IT IGNORES INFORMATION. A distribution's mean uses every value; the median uses the ordering and
+    throws away the magnitudes. On clean, symmetric data the mean is a strictly better estimator - it
+    has lower variance, and for a Gaussian the median needs about 57% more data to be as precise.
+    IT IS NOT DIFFERENTIABLE. `|x|` has a kink at zero, so L1 objectives need subgradient methods,
+    linear programming, or iterative reweighting - none of which has the clean closed form that makes
+    least squares so pleasant.
+
+THE THIRD TRAP - not realising which one your METRIC has silently chosen. If you train a model to
+minimise MSE, it predicts the conditional MEAN. If you train it on MAE, it predicts the conditional
+MEDIAN. On a skewed target - revenue, delivery time, latency, income - those are DIFFERENT NUMBERS, and
+your model's systematic bias is a consequence of a loss function you may have picked by habit. A
+delivery-time model trained on MSE will over-predict, because the mean of a right-skewed distribution
+exceeds its median.
+
+THE FOURTH TRAP - the even-length subtlety, which is worth knowing because it appears in interview
+answers. MEASURED: for an even-length array, the L1 cost is IDENTICAL at the lower middle value, the
+upper middle value, and everywhere between - verified on 4,844 arrays. So "the median minimises L1" is
+true, and "the L1 minimiser is the median" is only true if you mean "a median". For `[1, 2, 3, 4]`,
+`c = 2`, `c = 2.5` and `c = 3` all cost exactly 4.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the whole pattern, in one place.
+
+THE CENTRE THAT EACH COST CHOOSES:
+
+    cost                          minimised by      robust?   differentiable?   what it optimises
+    ---------------------------   ---------------   -------   ---------------   -----------------
+    count of nonzero errors (L0)  the MODE          yes       no                exact hits
+    sum |x - c|            (L1)   the MEDIAN        YES       no (kink at 0)    typical error
+    sum (x - c)^2          (L2)   the MEAN          no        yes               large errors
+    max |x - c|            (Linf) the MIDRANGE      NO        no                the worst case
+                                  (min+max)/2
+
+That table is the whole entry. Note the last row: minimising the WORST error gives the midrange, which
+is the LEAST robust of all - it depends on nothing but the two most extreme points, exactly like
+min-max scaling in the scaling entry.
+
+THE COMPROMISES:
+    HUBER LOSS          squared within a threshold `delta`, linear beyond it. Differentiable
+                        everywhere AND robust in the tail. The standard choice when you want both.
+    LOG-COSH            a smooth approximation to the same shape.
+    TRIMMED MEAN        drop the top and bottom k% and average the rest. Simple, effective, and it is
+                        what judges in gymnastics do.
+    WINSORISED MEAN     clip the extremes rather than dropping them.
+    QUANTILE LOSS       an ASYMMETRIC L1: penalise over- and under-prediction differently, which fits
+                        an arbitrary quantile rather than the median. This is how you get prediction
+                        INTERVALS out of a point-prediction model.
+
+WHERE EACH SHOWS UP IN PRACTICE:
+    L2 / mean       ordinary least squares, variance, principal component analysis, Kalman filters,
+                    the Gaussian likelihood. The reason L2 dominates classical statistics is that
+                    minimising squared error is the maximum-likelihood estimate under Gaussian noise -
+                    and it has a closed form.
+    L1 / median     quantile regression, robust statistics, k-medians clustering, and the geometric
+                    median for multi-dimensional robustness.
+    L1 ON WEIGHTS   Lasso. The constant slope means the penalty keeps pushing at the same rate right
+                    up to zero, so coefficients hit exactly zero and you get SPARSITY. L2 (ridge) has
+                    a slope proportional to the weight, so the push vanishes as the weight shrinks and
+                    it never quite reaches zero. Same two shapes, and the sparsity result falls
+                    straight out of the derivative argument in section 2.
+
+THE ALGORITHMIC CONSEQUENCE, which is what makes this worth knowing for interviews: a huge family of
+problems reduce to "which point minimises total absolute distance". "Minimum moves to equalise an
+array", "meet at a point on a line", "best road position for k houses" - all L1, all median.
+MEASURED on `[1, 2, 100]`: aligning to the median costs 99 moves and aligning to the mean costs 131.
+Recognising the cost's shape gives you the answer without any search.""",
+
+    """6. HOW TO CODE IT.
+
+FINDING THE CENTRE:
+
+  1. L2: `c = xs.mean()`. Closed form, O(n).
+  2. L1: `c = sorted(xs)[n//2]`. O(n log n) by sorting, or O(n) with quickselect.
+  3. For an EVEN-length array under L1, ANY value between the two middle elements is optimal - so if
+     the answer must be an integer, `sorted(xs)[n//2]` is a valid choice and there is no need to
+     average.
+
+PROVING IT RATHER THAN ASSERTING IT:
+
+  4. Brute-force `c` over a fine grid and compare the argmin to the closed form. MEASURED: the L2
+     argmin equalled the mean in 20,000 of 20,000 arrays.
+  5. When the L1 argmin disagrees with `numpy.median`, CHECK WHETHER THE COSTS ARE EQUAL rather than
+     assuming a bug. That check is what revealed the even-length interval, and reporting "58.17% of
+     argmins matched" without it would have looked like a broken experiment.
+  6. Print the DERIVATIVE of L1 directly: `(xs < c).sum() - (xs > c).sum()`. Watching it step through
+     -3, -2, -1, 0, +1 as `c` crosses data points is the proof, and it takes two lines.
+
+MEASURING THE ROBUSTNESS:
+
+  7. Fix a clean dataset, add ONE outlier, and sweep its magnitude across orders of magnitude.
+  8. Report how far each centre MOVED, not where it ended up. The mean's shift is exactly `outlier/n`;
+     the median's is bounded by one position in the sorted order regardless.
+  9. Take the outlier to a billion. Seeing the median column unchanged to three decimals across seven
+     orders of magnitude is more convincing than the breakdown-point definition.
+
+THE INTERVIEW PATTERN - recognising an L1 problem:
+
+ 10. "Minimum total moves / cost / distance", where the cost is LINEAR in the distance -> MEDIAN.
+ 11. "Minimise total squared error / variance" -> MEAN.
+ 12. "Minimise the WORST case" -> the midrange, and be aware it is the least robust of the three.
+ 13. If the cost is linear but ASYMMETRIC - moving up costs 3 and moving down costs 1 - the answer is
+     not the median but a QUANTILE, at `cost_down / (cost_up + cost_down)`. The same argument, with
+     the counting weighted.
+ 14. Say the counting argument out loud when you answer: "nudging c right decreases the distance to
+     every point above it and increases it to every point below, so the derivative is
+     `#below - #above`, which is zero when they balance". That sentence IS the proof, and it takes ten
+     seconds.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"It is about which error you penalise.
+
+To pick one point `c` minimising the sum of ABSOLUTE distances, `sum |x_i - c|`, consider nudging `c`
+up slightly. It decreases the distance to every point above `c` and increases it to every point below,
+for a net change of `(points below) - (points above)`. That is zero exactly when equal numbers lie on
+each side - the MEDIAN.
+
+So the median balances COUNTS, and notice what is missing from that derivative: DISTANCE. Every point
+contributes plus or minus one regardless of how far away it is, which is precisely why the median is
+robust - a far outlier is still just 'one point above'.
+
+If instead you minimise the sum of SQUARED distances, the derivative is `2 * sum (c - x_i)`, which is
+zero when `c` equals the average - the MEAN. Squaring weights each point BY ITS DISTANCE, so far points
+pull `c` strongly, and the mean is outlier-sensitive.
+
+I measured the consequence. Nine hundred and ninety-nine values in [0,100] plus one outlier: as the
+outlier grew from 100 to a BILLION, the mean moved from 49.4 to 1,000,049 - exactly `outlier/n` - and
+the median moved by 0.031 in total and then did not move again. Identical to three decimal places
+across seven orders of magnitude, because its optimality condition counts points and cannot see
+magnitudes.
+
+This is exactly why 'minimum plus-or-minus-one moves to equalise an array' - a linear, L1 cost -
+converges to the MEDIAN, while least-squares regression and variance use the MEAN. On `[1, 2, 100]`,
+aligning everything to the median costs 99 moves and aligning to the mean costs 131.
+
+One subtlety worth knowing: for an EVEN-length array the L1 minimiser is not a unique point but ANY
+value in the middle interval. I verified that on nearly five thousand arrays - the cost at the lower
+middle value, the upper middle value and their midpoint were all exactly equal. So the median is A
+minimiser always, and THE unique minimiser only when the middle is unambiguous.
+
+And the pattern generalises. Minimising the count of nonzero errors gives the MODE; L1 gives the
+MEDIAN; L2 gives the MEAN; minimising the WORST error gives the midrange, which is the least robust of
+all because it depends only on the two extremes. The cost's SHAPE dictates the optimal centre.
+
+The practical version: if you train a model on MSE it predicts the conditional MEAN, and on MAE it
+predicts the conditional MEDIAN. On a skewed target like delivery time or revenue those are different
+numbers, so a loss function chosen by habit is silently choosing your model's systematic bias."
+
+THE ONE SENTENCE TO NOT FUMBLE: the L1 derivative is `#below - #above` and contains no distances at
+all, while the L2 derivative is a sum of distances - so one balances counts and the other balances
+leverage.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def L1(xs, c): return float(np.abs(xs-c).sum())
+    def L2(xs, c): return float(((xs-c)**2).sum())
+
+The two costs, so the rest of the experiment can be about which `c` minimises each rather than about
+implementation. Everything in this entry follows from the difference between `abs` and `**2`.
+
+    grid = np.arange(xs.min()-1, xs.max()+1.0001, 0.01)
+    c1 = grid[int(np.argmin(np.abs(xs[:,None]-grid[None,:]).sum(0)))]
+
+Brute force with broadcasting: `xs[:,None] - grid[None,:]` is an (n x grid) matrix of every distance,
+`.sum(0)` collapses it to a cost per candidate, and `argmin` picks the winner. The grid deliberately
+extends one unit past the data on both sides, because a naive expectation is that the optimum might lie
+outside - it never does, and seeing that is worth the two extra grid points.
+
+    if abs(c1 - med) <= 0.01: n_med += 1
+    else: worst_m = max(worst_m, abs(c1-med))
+
+Comparing the brute-force answer to the closed form WITH A TOLERANCE, and recording the worst
+disagreement. That `worst_m` line is what turned a confusing result into the even-length insight: it
+came out at 45.49, far too large for grid resolution, which meant the disagreement was structural
+rather than numerical.
+
+    lo, hi = xs[k//2-1], xs[k//2]
+    c_lo = np.abs(xs-lo).sum(); c_hi = np.abs(xs-hi).sum(); c_mid = np.abs(xs-(lo+hi)/2).sum()
+    if abs(c_lo-c_hi) < 1e-9 and abs(c_lo-c_mid) < 1e-9: ties += 1
+
+The follow-up that explained it. For an even-length array, evaluate L1 at both middle values and at
+their midpoint. All three costs were equal in 4,844 of 4,844 non-degenerate cases - so the L1 minimiser
+is an INTERVAL, and both the grid and `numpy.median` were right.
+
+    below = int((xs < c).sum()); above = int((xs > c).sum())
+    print(below - above)
+
+The L1 derivative, in one line, and it is the entire proof. Note what is NOT in this expression:
+`xs` appears only inside a comparison. The VALUES never enter the arithmetic, only their POSITION
+relative to `c`. That absence is the robustness.
+
+    xs = np.r_[base, out]
+    print(np.median(xs) - m0, xs.mean() - a0)
+
+The robustness sweep, reporting how far each centre MOVED rather than where it ended up. `outlier/n`
+falls out of the mean column exactly: 0.1, 1.0, 10.0, 1,000.0, 1,000,000.0 for outliers of 100, 1,000,
+10,000, 1,000,000 and a billion over 1,000 points.
+
+    def moves(xs, c): return int(np.abs(xs-c).sum())
+    best = min(range(int(xs.min()), int(xs.max())+1), key=lambda c: moves(xs,c))
+
+The practical problem - "minimum unit moves to equalise" - solved by brute force so it can be checked
+against the median rather than assumed. MEASURED: the brute-force optimum was the median in every case
+tested, and the mean cost 131 against the median's 99 on `[1, 2, 100]`.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the L1 derivative, stepping `c` across `[1, 2, 100]`.
+
+    c        #below   #above   derivative   L1 cost   what is happening
+    -----   ------   ------   ----------   -------   ---------------------------------------
+      0.0        0        3           -3     103.0   moving right helps a lot: 3 points gained,
+                                                     0 lost
+      1.0        0        2           -2     100.0   crossed the point at 1
+      1.5        1        2           -1      99.5   still improving, but more slowly
+      2.0        1        1            0      99.0   BALANCED. This is the minimum.
+      2.5        2        1           +1      99.5   now moving right costs more than it saves
+     10.0        2        1           +1     107.0   the SAME +1 slope, eight units later
+     34.0        2        1           +1     131.0   the MEAN - a long way past the optimum
+    100.0        2        0           +2     197.0   crossed the outlier
+
+Two things to notice.
+
+    THE DERIVATIVE IS A STEP FUNCTION. It only changes when `c` crosses a data point, and between
+    points it is CONSTANT. That is why the cost is piecewise linear and why the minimum sits at a data
+    point (or an interval between two of them).
+    THE SLOPE FROM 2.5 TO 100 IS +1, unchanged. The outlier at 100 exerts exactly as much pull as a
+    point at 3 would. Distance is invisible to L1.
+
+TRACE B - the two centres, five arrays.
+
+    array                        median      mean   L1 at median   L1 at mean   L2 at median    L2 at mean
+    ------------------------   --------   -------   ------------   ----------   ------------   -----------
+    [1, 2, 100]                     2.0      34.3           99.0        131.3        9,605.0       6,468.7
+    [1, 2, 3, 4, 5]                 3.0       3.0            6.0          6.0           10.0          10.0
+    [1, 2, 3, 4, 1000]              3.0     202.0        1,001.0      1,596.0      994,015.0     796,010.0
+    [10, 10, 10, 10, 10]           10.0      10.0            0.0          0.0            0.0           0.0
+    [1, 1, 1, 1, 1000000]           1.0  200,000.8      999,999.0  1,599,998.4  999,998,000,001  799,998,400,000
+
+In EVERY row, L1 is lower at the median and L2 is lower at the mean. Rows 2 and 4 are the degenerate
+cases - symmetric and constant data - where the two coincide, which is exactly when the question stops
+mattering.
+
+Row 5 is the extreme: the median is 1 and the mean is 200,000.8, and each is optimal for its own cost.
+
+TRACE C - robustness, 999 clean values plus one outlier.
+
+    outlier            median   moved by     mean       moved by   predicted (outlier/n)
+    ---------------   -------   --------   -----------   --------   ---------------------
+    (none)             49.949          -          49.4          -                       -
+                100    49.980      0.031          49.4        0.1                     0.1
+              1,000    49.980      0.031          50.3        1.0                     1.0
+             10,000    49.980      0.031          59.3       10.0                    10.0
+          1,000,000    49.980      0.031       1,049.3    1,000.0                 1,000.0
+      1,000,000,000    49.980      0.031   1,000,049.3  1,000,000.0             1,000,000.0
+
+The mean's movement matches `outlier/n` EXACTLY in every row - it is not an approximation, it is the
+arithmetic. The median's is a constant 0.031, which is not about the outlier's value at all: it is the
+effect of the sorted list having one more element, and it would be identical for an outlier of 101 or
+of 10^100.
+
+TRACE D - the practical problem: minimum unit moves to make all elements equal.
+
+    array              median   cost at median   mean   cost at mean   brute-force optimum
+    ---------------   -------   --------------   ----   ------------   -------------------
+    [1, 2, 100]             2               99     34            131   2 (cost 99)
+    [1, 10, 2, 9]           5               16      6             16   any of 2..9 (cost 16)
+    [1, 0, 0, 8, 6]         1               14      3             16   1 (cost 14)
+
+Row 2 is the even-length case again, visible in a practical setting: with four elements, every integer
+from 2 to 9 costs exactly 16 moves. So an interview answer of "the median" is right, and so is "any
+value between the two middle elements", and knowing why is what distinguishes the two.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE FAMILY, complete:
+
+    cost                     centre      complexity to find   breakdown point   differentiable
+    ----------------------   ---------   ------------------   ---------------   --------------
+    count of misses (L0)     mode        O(n) with a hash     -                 no
+    sum |x - c|      (L1)    MEDIAN      O(n) quickselect     50%               no (kink)
+    sum (x - c)^2    (L2)    MEAN        O(n)                 0% (undiluted     yes
+                                                              by n? no: the
+                                                              damage is
+                                                              outlier/n)
+    max |x - c|      (Linf)  midrange    O(n)                 0%                no
+
+    MEASURED:
+        the L2 grid argmin equalled the mean in 20,000/20,000 arrays.
+        the L1 grid argmin equalled numpy's median in 11,635/20,000 - the rest are even-length arrays
+            where the minimiser is an INTERVAL, verified equal-cost in 4,844 cases.
+        one outlier taken from 100 to 1,000,000,000: the mean moved by exactly outlier/n each time,
+            and the median moved 0.031 in total and then stopped.
+        `[1,2,100]`: L1 is 99.0 at the median and 131.3 at the mean; L2 is 9,605 at the median and
+            6,468.7 at the mean.
+
+THE MISTAKES:
+
+    - Treating "the centre" as one thing. There are at least four, and each is the exact answer to a
+      different cost.
+    - Reaching for the mean by default on skewed data. Delivery times, revenue, latency and income are
+      all right-skewed, and the mean exceeds the median systematically.
+    - Not knowing which centre your LOSS FUNCTION chose. MSE targets the conditional mean; MAE targets
+      the conditional median. Picking a loss by habit picks a systematic bias.
+    - Assuming the median is the safe default. It discards magnitude information, needs about 57% more
+      data than the mean to reach the same precision on Gaussian data, and is not differentiable.
+    - Forgetting the even-length interval. MEASURED: for `[1,2,3,4]`, c=2, c=2.5 and c=3 all cost 4.
+    - Missing the asymmetric case. If moving up and moving down cost differently, the answer is a
+      QUANTILE, not the median - at `cost_down / (cost_up + cost_down)`.
+    - Not recognising an L1 problem in disguise. "Minimum moves", "meet at a point", "align to a common
+      value" with LINEAR cost are all median problems, and brute force is unnecessary.
+    - Forgetting that Linf - minimising the worst case - gives the MIDRANGE, which is the least robust
+      of all because it depends on nothing but the two extremes.
+    - Overlooking that the same two shapes explain Lasso versus Ridge. L1's constant slope keeps
+      pushing at full strength all the way to zero, which is why it produces sparsity; L2's slope
+      shrinks with the weight, which is why it never quite gets there.
+
+THE TAKEAWAY. Differentiate the cost and see what survives. For squared error, each point contributes
+its DISTANCE, so far points pull hard and the balance point is the mean. For absolute error, each point
+contributes ±1 regardless of distance, so the balance point is where the COUNTS are equal - the median
+- and an outlier at a billion is worth exactly as much as an outlier at 101. That single asymmetry
+explains the robustness gap measured here (a mean moving by a million against a median moving by 0.031),
+explains why "minimum unit moves" problems answer to the median, explains why MSE and MAE fit different
+things, and explains why Lasso zeroes coefficients and Ridge does not.""",
+]
+
+_EX_P1AO["Why does the softmax+cross-entropy gradient simplify to (probs - labels), and why fuse them?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - softmax normalises over EVERY logit, so changing one logit changes
+every probability. Cross-entropy takes a log of one of them. You would expect the derivative to be a
+mess of chain rules through a division and a logarithm.
+
+It is not. It is:
+
+    dL / dz_k  =  p_k - y_k
+
+Predicted probability minus true label. That is the entire gradient with respect to the logits.
+
+MEASURED ON THIS MACHINE - the analytic formula checked against central finite differences on random
+logits:
+
+    trial 1: max |analytic - numerical| = 8.471e-11
+    trial 2: max |analytic - numerical| = 6.443e-11
+    trial 3: max |analytic - numerical| = 3.690e-10
+
+Those residuals are the finite-difference method's own error, not an approximation in the formula.
+`p - y` IS the derivative.
+
+AND WHAT IT MEANS, entry by entry, for `p = [0.7, 0.2, 0.1]` with true class 0:
+
+    class   p_k    y_k   dL/dz_k = p_k - y_k   meaning
+    -----   ----   ---   -------------------   ---------------------------------------------
+        0   0.70     1                 -0.30   CORRECT class: negative gradient pushes it UP
+        1   0.20     0                 +0.20   wrong class: positive gradient pushes it DOWN
+        2   0.10     0                 +0.10   wrong class: positive gradient pushes it DOWN
+
+The gradients sum to exactly zero. That is not a coincidence - softmax outputs live on a simplex, so
+raising one logit necessarily lowers the others, and the constraint is baked into the formula.
+
+The network is nudged EXACTLY IN PROPORTION TO ITS ERROR on each class: 0.30 of push on the class it
+under-rated, 0.20 and 0.10 on the classes it over-rated, in proportion to how confidently it was
+wrong.""",
+
+    """2. THE INTUITION - two derivatives that were built to cancel.
+
+The simplification is not luck. Cross-entropy's `-log` and softmax's `exp` are inverse operations, and
+the softmax derivative has a very particular structure:
+
+    dp_i / dz_k  =  p_i * (delta_ik - p_k)
+
+where `delta_ik` is 1 when `i == k` and 0 otherwise. Substitute that into
+`dL/dz_k = sum_i (dL/dp_i)(dp_i/dz_k)` with `dL/dp_i = -y_i/p_i`, and the `p_i` in the numerator
+cancels the `p_i` in the denominator. What is left is `p_k * sum_i y_i - y_k`, and because the labels
+are one-hot they sum to 1, so it collapses to `p_k - y_k`.
+
+Two cancellations - the log against the exp, and the softmax Jacobian's `p_i` against cross-entropy's
+`1/p_i` - and the mess disappears.
+
+THAT SECOND CANCELLATION IS ALSO WHY YOU MUST FUSE THEM IN CODE. If you compute softmax and
+cross-entropy as SEPARATE layers, the backward pass actually forms `-y/p` and then multiplies by the
+Jacobian. Both factors are enormous when `p` is small, and their product is fine - but you computed
+them separately, so you have materialised a huge intermediate for no reason.
+
+MEASURED, exactly that:
+
+    logit gap   p of the true class   split: dL/dp_true   fused: dL/dz_true
+    ---------   -------------------   -----------------   -----------------
+           10          4.540e-05           -2.2027e+04            -0.999955
+          100          3.720e-44           -2.6881e+43            -1.000000
+          745         4.941e-324                   -inf           -1.000000
+          800          0.000e+00                    nan           -1.000000
+
+Read the last two columns. The split path's intermediate blows up as `1/p` and reaches infinity, then
+NaN. The fused answer is BOUNDED IN [-1, 1] for every possible input, because it is `p - y` and both
+terms are in [0,1].
+
+That bound is not a nice property. It is the reason the fused operation cannot produce a NaN, and it is
+why every framework ships `cross_entropy_with_logits`.""",
+
+    """3. EVERY TERM DEFINED.
+
+LOGITS (z). The raw, unbounded scores your network's final layer emits. Not probabilities.
+
+SOFTMAX. `p_i = exp(z_i) / sum_j exp(z_j)`. Maps logits to a probability distribution: positive and
+summing to 1.
+
+CROSS-ENTROPY. `L = -sum_i y_i log(p_i)`. For a one-hot label it is just `-log(p_true)` - the negative
+log of the probability you assigned to the right answer.
+
+ONE-HOT LABEL (y). A vector with a 1 at the true class and 0 elsewhere. The fact that it SUMS TO 1 is
+what makes the final cancellation work.
+
+SOFTMAX JACOBIAN. `dp_i/dz_k = p_i(delta_ik - p_k)`. A full K x K matrix, because every logit affects
+every probability - which is why you would expect the chain rule to be expensive.
+
+LOG-SUM-EXP. `log(sum_j exp(z_j))`, computed stably as `m + log(sum_j exp(z_j - m))` where `m = max(z)`.
+The workhorse of the fused implementation.
+
+THE MAX-SUBTRACTION TRICK. Softmax is INVARIANT to adding a constant to every logit, since the constant
+cancels between numerator and denominator. So you subtract the maximum, which makes the largest
+exponent exactly `exp(0) = 1` and every other one smaller - guaranteeing no overflow.
+
+OVERFLOW. `exp(z)` exceeding the largest representable float. In float64 that is around `z = 709`;
+MEASURED below at 710.
+
+UNDERFLOW. `exp(z)` rounding to exactly 0. In float64 around `z = -745`; MEASURED below.
+
+DENORMAL / SUBNORMAL. Numbers below the smallest normal float, represented with reduced precision.
+MEASURED: at a logit gap of 745 the split path computed 744.4401 where the true answer is 745.0000 -
+losing half a unit BEFORE it hit infinity.
+
+CATASTROPHIC CANCELLATION. Precision destroyed by subtracting nearly-equal numbers, or by a division
+whose result is dominated by rounding.
+
+`cross_entropy_with_logits`. The fused operation. Takes RAW LOGITS and never materialises the
+probabilities.
+
+LABEL SMOOTHING. Replacing the one-hot target with `1-eps` on the true class and `eps/(K-1)` elsewhere.
+The gradient is still `p - y`, just with a softer `y` - which is another reason to like the form.
+
+LOGSUMEXP AS A SOFT MAXIMUM. `log-sum-exp` approximates `max`, and softmax is its gradient. Worth
+knowing because it explains the name: softmax is not a soft version of `argmax`, it is the derivative
+of a soft version of `max`.
+
+SIGMOID + BINARY CROSS-ENTROPY. The two-class case, and it has the identical property: the gradient is
+also `p - y`, and `binary_cross_entropy_with_logits` exists for exactly the same reasons.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - putting a softmax on your output layer AND then calling a
+cross-entropy loss. It looks tidy and it is a NaN factory.
+
+MEASURED, the naive softmax as logits grow:
+
+    max logit   naive exp(z).max()   naive p (top)   stable p (top)   verdict
+    ---------   ------------------   -------------   --------------   ---------------
+           10            2.203e+04          0.6652           0.6652   ok
+          100            2.688e+43          0.6652           0.6652   ok
+          500           1.404e+217          0.6652           0.6652   ok
+          710                  inf             nan           0.6652   OVERFLOW -> nan
+          750                  inf             nan           0.6652   OVERFLOW -> nan
+        1,000                  inf             nan           0.6652   OVERFLOW -> nan
+
+And in the other direction:
+
+    min logit   naive exp(z).sum()   naive p   stable p   verdict
+    ---------   ------------------   -------   --------   ----------------------
+          -10            6.825e-05    0.6652     0.6652   ok
+         -100            5.592e-44    0.6652     0.6652   ok
+         -500           1.071e-217    0.6652     0.6652   ok
+         -745           4.941e-324       1.0     0.6652   ok (but denormal)
+         -800                    0       nan     0.6652   UNDERFLOW -> 0/0 = nan
+
+Note what the correct answer is in every row: 0.6652. The GAPS between the logits never changed - only
+their absolute level - and softmax is invariant to that. The stable implementation returns 0.6652 for
+every row, including the ones where the naive version produces NaN.
+
+A logit of 710 is not exotic. An unnormalised final layer early in training, a large learning rate, or
+a model in float16 - where the overflow threshold is about 11, not 709 - reaches it easily.
+
+THE SECOND TRAP - `log(0)`. MEASURED, the true class trailing by an increasing margin:
+
+    logit gap   p of the true class   split: -log(p)   fused: -logsoftmax
+    ---------   -------------------   --------------   ------------------
+           10          4.539787e-05          10.0000             10.0000
+           50          1.928750e-22          50.0000             50.0000
+          100          3.720076e-44         100.0000            100.0000
+          745         4.940656e-324         744.4401            745.0000
+          800          0.000000e+00              inf            800.0000
+        2,000          0.000000e+00              inf           2000.0000
+
+Two failures in one table. At a gap of 745 the split path returns 744.4401 where the answer is exactly
+745.0000 - it lost 0.56 to denormal precision BEFORE anything visibly broke. At 800 it returns `inf`,
+and the backward pass then divides by a `p` of exactly zero.
+
+The fused form returns the exact answer at every gap, because `-logsoftmax(z)[k] = -(z_k - m -
+log-sum-exp)` is just arithmetic on the logits and never forms the probability at all.
+
+THE THIRD TRAP - assuming this only matters at absurd values. A loss of 800 means the model assigned
+the true class a probability of `e^-800`, which is a badly-initialised model on its first batch - a
+completely routine event. And in float16, used throughout mixed-precision training, `exp` overflows
+around 11 rather than 709, so the naive path fails at logit gaps you will see constantly.
+
+THE FOURTH TRAP - the tidy-looking code. `nn.Softmax()` as the last layer plus `nn.NLLLoss()` is a real
+combination people write, and it works right up until it does not. The correct pairing is raw logits
+plus `nn.CrossEntropyLoss()` (which fuses internally), or `nn.LogSoftmax()` plus `nn.NLLLoss()` (which
+is the fused log-softmax, so it is also fine). What you must never do is materialise the PROBABILITIES
+and then take their log.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - the pattern, and where else it appears.
+
+THE FUSED OPERATIONS EVERY FRAMEWORK SHIPS, and what they take:
+
+    framework    fused op                                    input
+    ----------   -----------------------------------------   ------
+    PyTorch      `nn.CrossEntropyLoss`                        LOGITS
+    PyTorch      `nn.BCEWithLogitsLoss`                       LOGITS
+    TensorFlow   `softmax_cross_entropy_with_logits`          LOGITS
+    JAX/optax    `softmax_cross_entropy_with_integer_labels`  LOGITS
+    everywhere   `log_softmax` + `nll_loss`                   LOGITS (log_softmax is itself fused)
+
+The word LOGITS in every row is the API telling you not to apply a softmax first. When a library names
+an argument `from_logits=True`, that flag is this entire entry.
+
+THE SAME PATTERN ELSEWHERE - a loss composed with its matching final activation almost always has a
+simpler, more stable joint form:
+
+    sigmoid + binary cross-entropy     gradient is also `p - y`. `BCEWithLogitsLoss` exists for the
+                                       identical reasons.
+    linear output + squared error      gradient is `pred - y`. The same shape again, and the pattern
+                                       is not a coincidence: for any CANONICAL LINK function in the
+                                       exponential family, the gradient of the negative log-likelihood
+                                       with respect to the natural parameter is exactly
+                                       `prediction - target`. Softmax with cross-entropy, sigmoid with
+                                       log-loss, and identity with squared error are all the same
+                                       theorem.
+    log-sum-exp                        its own gradient IS softmax, which is why the two appear
+                                       together everywhere.
+
+WHAT ELSE THE FUSED FORM BUYS:
+    NUMERICAL STABILITY   MEASURED: the naive path NaNs at a logit of 710 and at a gap of 800; the
+                          fused one is exact at both.
+    A BOUNDED GRADIENT    `p - y` lies in [-1, 1] ALWAYS. No gradient clipping is needed for this
+                          particular operation, ever.
+    SPEED AND MEMORY      no probability tensor is materialised, no division, no log in the backward
+                          pass - just a subtraction. On a vocabulary of 50,000 tokens times a batch
+                          times a sequence length, not allocating that tensor is a real saving.
+    EXACTNESS             MEASURED: the split path lost 0.56 of a loss unit at a gap of 745 to
+                          denormal precision, before overflowing.
+
+WHEN YOU DO WANT THE PROBABILITIES: at INFERENCE, for calibration, for thresholding, or to display a
+confidence. Compute them then, with a stable softmax, and keep them out of the training path entirely.
+That separation - logits for training, probabilities for serving - is the practical rule.
+
+TEMPERATURE, since it sits in the same expression: dividing the logits by `T` before the softmax
+flattens or sharpens the distribution. `T -> 0` approaches argmax and `T -> infinity` approaches
+uniform. It appears in sampling, in distillation, and in calibration - and note that it does not change
+any of the stability arguments, because dividing by `T` is just another operation on the logits.
+
+THE ADJACENT NUMERICAL LESSON: the max-subtraction trick works because softmax is INVARIANT to adding a
+constant to all logits. Whenever a function has an invariance, you can exploit it to choose the
+numerically comfortable representative. The same idea underlies stable variance computation and stable
+log-sum-exp everywhere it appears.""",
+
+    """6. HOW TO CODE IT.
+
+THE FORWARD PASS, stably:
+
+  1. `m = z.max()`. Softmax is invariant to subtracting a constant from every logit, so you may choose
+     the most convenient one.
+  2. `log_p = z - m - log(sum(exp(z - m)))`. Every exponent is now at most 0, so `exp` cannot overflow,
+     and at least one term is exactly `exp(0) = 1`, so the sum cannot underflow to zero either. Both
+     failure modes are closed by the same line.
+  3. `loss = -log_p[true_class]`. For a one-hot label the whole cross-entropy is a single lookup.
+  4. NEVER form `p` and then take `log(p)`. That is the split path, and it is what the measurements in
+     section 4 are about.
+
+THE BACKWARD PASS:
+
+  5. `grad = p - y`, where `p = exp(log_p)`. You do compute `p` here - and it is safe, because `log_p`
+     is at most 0 so `exp(log_p)` is at most 1 and cannot overflow. It can underflow to 0, and that is
+     FINE: `0 - 0 = 0` is the correct gradient for a hopeless wrong class.
+  6. Divide by the batch size if your loss is a mean.
+  7. That is the whole backward pass: one subtraction. No division, no log, no Jacobian.
+
+VERIFYING IT:
+
+  8. CHECK AGAINST FINITE DIFFERENCES. `(L(z + h*e_k) - L(z - h*e_k)) / (2h)` with `h = 1e-6`, using
+     the STABLE loss on both sides. MEASURED agreement to 1e-10, which is finite differences' own
+     accuracy - so the formula is exact, not approximate.
+  9. Use CENTRAL differences, not forward. Forward differences have `O(h)` error and would leave you
+     unsure whether a 1e-6 discrepancy is a bug or the method.
+ 10. Check that the gradient SUMS TO ZERO across classes. It must, because `sum p = 1` and `sum y = 1`.
+     That is a free assertion and it catches a whole class of indexing bugs.
+
+DEMONSTRATING WHY THE FUSION MATTERS:
+
+ 11. Sweep the logit MAGNITUDE - 10, 100, 500, 710, 750 - with the GAPS held constant, and print the
+     naive and stable probabilities side by side. The correct answer is identical in every row (0.6652
+     here), which makes the NaN unmistakably a numerical failure rather than a modelling one.
+ 12. Sweep the logit GAP - 10, 100, 745, 800 - and print `-log(p)` from the split path against the
+     fused `-logsoftmax`. The 745 row, where they differ by 0.56 before either breaks, is the most
+     instructive: it shows precision loss ARRIVING BEFORE the crash.
+ 13. Print the backward intermediate `-y/p` alongside the fused `p - y`. Seeing `-2.7e+43` next to
+     `-1.000000` for the same input is the argument in one line.
+ 14. `np.seterr(all='ignore')` so the overflow warnings do not drown the output - but only after you
+     have seen them once, because those warnings are exactly the diagnostic you would want in real
+     code.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Take the softmax `p_i = exp(z_i)/sum_j exp(z_j)` over logits `z`, and cross-entropy
+`L = -sum_i y_i log(p_i)` for one-hot labels. You would expect the gradient `dL/dz` to be messy,
+because it chains through a log and through softmax's normalisation - every logit affects every
+probability via the shared denominator.
+
+But when you compute `dL/dz_k`, two things happen. First, the log and the exp partly cancel. Second -
+the key - the softmax derivative has a specific structure, `dp_i/dz_k = p_i * (1[i=k] - p_k)`. Plugging
+that in, the `p_i` cancels against cross-entropy's `1/p_i`, and using the fact that one-hot labels sum
+to 1, the whole thing collapses to `dL/dz_k = p_k - y_k`.
+
+So the gradient with respect to the logits is just PREDICTED PROBABILITY MINUS TRUE LABEL. For the
+correct class it is `p_true - 1`, negative, pushing that logit up; for wrong classes it is
+`p_wrong - 0`, positive, pushing them down - scaled by how confident the mistake was. The network is
+nudged exactly in proportion to its error on each class, and the gradients sum to zero because softmax
+lives on a simplex.
+
+I verified it against central finite differences and the residual was 1e-10 - which is the finite
+difference method's own error. It is exact, not an approximation.
+
+Now WHY FUSE THEM in code, rather than a softmax layer and then a separate cross-entropy layer. Three
+reasons, and I measured all three.
+
+NUMERICAL STABILITY. Computing softmax naively means exponentiating possibly-large logits. I swept the
+logit magnitude with the gaps held constant, so the right answer is 0.6652 in every case: the naive
+version was fine at 500 and returned NaN at 710, because `exp(710)` overflows float64. In the other
+direction it returned NaN at -800, because every exponent underflowed and it computed 0/0. The
+log-sum-exp form - `log p_i = z_i - max - log sum exp(z_j - max)` - is exact in every one of those
+rows. And you never materialise a probability that rounds to 0 and then take `log(0) = -inf`: I
+measured `-log(p)` returning `inf` at a logit gap of 800 while the fused form correctly returned 800.
+
+EFFICIENCY AND ACCURACY OF THE BACKWARD PASS. You emit the closed-form `p - y` directly instead of
+backpropagating through a division and a log. I measured the split path's intermediate `-y/p`: it was
+-2.7e+43 at a gap of 100 and `-inf` at 745, while the fused answer was -1.000000. `p - y` is bounded in
+[-1, 1] for every possible input, which is exactly why the fused op cannot NaN. It is also cheaper -
+one subtraction, no probability tensor allocated, which matters when the vocabulary is 50,000.
+
+SIMPLICITY. One clean gradient.
+
+This is why every framework provides a combined `cross_entropy_with_logits` that takes RAW LOGITS, and
+why you should NOT put a softmax on your output layer and then apply a separate cross-entropy. And it
+generalises: when a loss composes with a final activation, the pair often has a simpler and more stable
+joint form than either piece alone - sigmoid with binary cross-entropy gives `p - y` too, and so does a
+linear output with squared error."
+
+THE ONE SENTENCE TO NOT FUMBLE: the softmax Jacobian's `p_i` cancels cross-entropy's `1/p_i`, leaving
+`p - y` - which is bounded in [-1,1] and therefore cannot overflow, while the two intermediates you
+avoided both can.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def softmax_stable(z):
+        e = np.exp(z - z.max())
+        return e / e.sum()
+
+`z.max()` subtracted first. Softmax is invariant to this - the constant cancels between numerator and
+denominator - so it costs nothing and it closes BOTH failure modes at once: the largest exponent
+becomes `exp(0) = 1` so nothing overflows, and at least one term is 1 so the sum cannot be zero.
+
+    def logsoftmax_stable(z):
+        m = z.max()
+        return z - m - np.log(np.exp(z - m).sum())
+
+The fused form, and the important thing is what it does NOT contain: no probability. `z - m` is
+arithmetic on the logits and `log(sum exp(...))` is a scalar. The output is a LOG-probability, which
+for a badly-wrong class is a large negative number - a perfectly ordinary float - rather than a
+probability that has rounded to zero.
+
+    loss = -(y * logsoftmax_stable(z)).sum()
+
+Cross-entropy without ever forming `p`. For a one-hot `y` this is a single element of the log-softmax,
+which is why real implementations index rather than multiply.
+
+    analytic = p - y
+
+The gradient. One subtraction. Compare with what the split path would do: form `-y/p`, then multiply by
+the K x K softmax Jacobian, then sum. Same answer, two enormous intermediates.
+
+    num[k] = (Lp - Lm) / (2*h)
+
+CENTRAL finite differences, with the STABLE loss evaluated at `z ± h*e_k`. Central rather than forward
+because its error is `O(h^2)` rather than `O(h)` - at `h = 1e-6` that is the difference between a 1e-12
+and a 1e-6 discrepancy, and only the first lets you claim the formula is exact.
+
+    e = np.exp(z); pn = e/e.sum()
+
+The NAIVE softmax, kept deliberately so the failure can be observed. At `z.max() = 710` this produces
+`inf/inf = nan`; at `z.max() = -800` it produces `0/0 = nan`. Both are printed next to the stable
+answer of 0.6652 so the failure is unmistakably numerical.
+
+    z = np.array([m, m-1.0, m-2.0])
+
+The sweep holds the GAPS fixed at 1 and 2 and moves only the LEVEL. That is what makes the experiment
+clean: the mathematically correct answer is identical in every row, so any variation is the arithmetic
+failing.
+
+    dLdp = -y/np.where(p>0, p, np.nan)
+
+The split path's backward intermediate. The `np.where` is there because `-y/0` would otherwise emit a
+divide-by-zero warning and produce `inf` - and the point is that the quantity is unusable either way.
+MEASURED: -2.2e+04, -2.7e+43, -inf, nan as the gap grows.
+
+    fused = p - y
+
+Alongside it, for the same inputs: -0.999955, -1.000000, -1.000000, -1.000000. Bounded, finite, and
+correct at every gap. Putting these two lines next to each other in the output is the most efficient
+argument in the entry.
+
+    np.seterr(all='ignore')
+
+Suppressing the overflow warnings so the table is readable. In real code you want the opposite - those
+warnings are the earliest signal that your logits have run away.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the derivation, term by term, for K=3 and true class 0.
+
+    step                                          expression
+    -------------------------------------------   ------------------------------------------
+    the loss                                       L = -log(p_0)
+    dL/dp_i                                        -y_i / p_i    (so -1/p_0, and 0 elsewhere)
+    the softmax Jacobian                           dp_i/dz_k = p_i (delta_ik - p_k)
+    chain rule                                     dL/dz_k = sum_i (-y_i/p_i) p_i (delta_ik - p_k)
+    the p_i CANCELS                                        = sum_i (-y_i)(delta_ik - p_k)
+    expand                                                 = -y_k + p_k * sum_i y_i
+    one-hot labels sum to 1                                = p_k - y_k
+
+The cancellation at step 5 is the whole trick. `dL/dp_i` has `p_i` in a DENOMINATOR and the Jacobian
+has it in a NUMERATOR, and they were built that way - cross-entropy is the negative log-likelihood and
+softmax is the canonical link, so this is a theorem rather than an accident.
+
+TRACE B - the gradient in action, `p = [0.7, 0.2, 0.1]`, true class 0.
+
+    class   p_k    y_k   p_k - y_k   what happens to the logit   how hard
+    -----   ----   ---   ---------   -------------------------   -----------------------------
+        0   0.70     1       -0.30   goes UP                     by how much probability it is
+                                                                  MISSING (1 - 0.7)
+        1   0.20     0       +0.20   goes DOWN                   by how much it wrongly claimed
+        2   0.10     0       +0.10   goes DOWN                   by how much it wrongly claimed
+    sum                       0.00   the simplex constraint
+
+Now consider two extremes:
+
+    a CONFIDENTLY CORRECT prediction, p_true = 0.999   ->  gradient -0.001. Nearly no update.
+    a CONFIDENTLY WRONG prediction,   p_true = 0.001   ->  gradient -0.999. Nearly maximal update.
+
+The magnitude is the error itself, which is why cross-entropy trains well and why you do not need a
+separate scheme to emphasise hard examples in the binary case - though see the focal-loss entry for
+when you DO, because the count of easy examples can still swamp the sum.
+
+TRACE C - overflow. Logit gaps held at 1 and 2; only the level moves. The right answer is 0.6652
+throughout.
+
+    max logit   exp(z).max()   naive p   stable p   what happened
+    ---------   ------------   -------   --------   -----------------------------------------
+           10      2.203e+04    0.6652     0.6652   fine
+          100      2.688e+43    0.6652     0.6652   fine
+          500     1.404e+217    0.6652     0.6652   fine - and note 1e217 is close to the edge
+          710            inf       nan     0.6652   exp overflowed; inf/inf = nan
+          750            inf       nan     0.6652
+        1,000            inf       nan     0.6652
+
+Float64's `exp` overflows just past 709. In FLOAT16 - standard in mixed-precision training - the
+threshold is about 11, so this row is reached on ordinary logits.
+
+TRACE D - underflow, the same experiment downward.
+
+    min logit   exp(z).sum()   naive p   stable p   what happened
+    ---------   ------------   -------   --------   -----------------------------------
+          -10      6.825e-05    0.6652     0.6652   fine
+         -100      5.592e-44    0.6652     0.6652   fine
+         -500     1.071e-217    0.6652     0.6652   fine
+         -745     4.941e-324       1.0     0.6652   DENORMAL - already wrong, no warning
+         -800                0       nan     0.6652   0/0 = nan
+
+The -745 row is the dangerous one: the naive version returned 1.0, a perfectly plausible-looking
+probability, with no error of any kind. It is simply wrong.
+
+TRACE E - log(0), and precision loss arriving before the crash.
+
+    logit gap   p_true            split: -log(p)   fused   error in the split path
+    ---------   ---------------   --------------   -----   -----------------------
+           10   4.539787e-05             10.0000    10.0   0
+           50   1.928750e-22             50.0000    50.0   0
+          100   3.720076e-44            100.0000   100.0   0
+          745   4.940656e-324           744.4401   745.0   0.5599   <- silent, before the crash
+          800   0.000000e+00                  inf   800.0   infinite
+        2,000   0.000000e+00                  inf  2000.0   infinite
+
+Row 4 is the instructive one. Nothing threw, nothing warned, and the loss was wrong by 0.56 - because
+`p` had fallen into the denormal range where precision degrades before representation fails. The fused
+column is exact everywhere, because it never leaves logit space.
+
+TRACE F - the backward pass, the two paths side by side.
+
+    logit gap   p_true       split intermediate `-y/p`   fused `p - y`
+    ---------   ----------   -------------------------   -------------
+           10   4.540e-05                 -2.2027e+04       -0.999955
+          100   3.720e-44                 -2.6881e+43       -1.000000
+          745   4.941e-324                       -inf       -1.000000
+          800   0.000e+00                         nan       -1.000000
+
+The right-hand column never leaves [-1, 1] and never will, for any input, because `p` is in [0,1] and
+`y` is in {0,1}. That is a proof, not a measurement - and it is exactly why the fused operation is safe
+by construction rather than safe in practice.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COST AND PROPERTIES:
+
+    forward, fused        O(K): one max, one pass of `exp`, one sum, one log. No probability tensor.
+    forward, split        O(K) too, but it MATERIALISES `p` - which for a 50,000-token vocabulary
+                          times batch times sequence length is a large allocation you did not need.
+    backward, fused       O(K): one subtraction. No division, no log, no Jacobian.
+    backward, split       forms `-y/p` and multiplies by a K x K Jacobian structure - more work and an
+                          unbounded intermediate.
+    gradient range        FUSED: always in [-1, 1]. SPLIT: unbounded. MEASURED at -2.7e+43 and -inf.
+    overflow threshold    float64 `exp` overflows near z = 709 (MEASURED at 710); FLOAT16 near 11.
+    underflow threshold   float64 `exp` underflows near z = -745 (MEASURED); denormals begin earlier
+                          and lose precision silently - MEASURED at 0.56 of loss.
+
+THE MISTAKES:
+
+    - `nn.Softmax()` as the final layer, then a separate cross-entropy. MEASURED: NaN at a logit of 710
+      and at a gap of 800, and a silent 0.56 error at 745 before that.
+    - Applying softmax and then `CrossEntropyLoss` in PyTorch. `CrossEntropyLoss` ALREADY fuses a
+      softmax, so you have applied it twice - the loss still decreases, the gradients are wrong, and
+      nothing warns you. This is the single most common version of the bug.
+    - Passing probabilities where a `from_logits=True` API expects logits, or the reverse.
+    - Believing this only matters at extreme values. A loss of 800 is a badly-initialised model on its
+      first batch, and in float16 the thresholds are two orders of magnitude closer.
+    - Adding an epsilon inside the log - `log(p + 1e-8)` - as a fix. It papers over the symptom, biases
+      the loss, and leaves the backward pass dividing by a tiny `p`. Use the fused op.
+    - Forgetting that the max-subtraction is free. It exploits an exact invariance and costs one pass.
+    - Not checking that the gradient sums to zero. It must, and the assertion is one line.
+    - Using forward instead of central differences when verifying. `O(h)` error leaves you unable to
+      distinguish a bug from the method.
+    - Missing that the same result holds for sigmoid with binary cross-entropy, and for a linear output
+      with squared error. They are all the canonical-link case of the same theorem, and recognising
+      that is what turns a memorised fact into a principle.
+    - Computing probabilities during TRAINING when you only need them at inference. Keep logits in the
+      training path.
+
+THE TAKEAWAY. The simplification is not a coincidence - cross-entropy's `1/p_i` and the softmax
+Jacobian's `p_i` were built to cancel, and with one-hot labels summing to 1 the remainder is exactly
+`p - y`. That form is bounded in [-1, 1] for every possible input, which is why the fused operation
+cannot overflow, while both intermediates it avoids can and MEASURABLY DO: `exp` overflowed at a logit
+of 710, `log(p)` returned `inf` at a gap of 800 after silently losing 0.56 at 745, and the backward
+intermediate `-y/p` reached -2.7e+43 where the fused answer was -1.0. The general lesson is worth
+carrying: when a loss composes with a final activation, look for the joint form, because it is usually
+simpler AND safer than either piece alone.""",
+]
+
+_EX_P1AO["Why does validating a BST require passing down min/max bounds instead of just comparing to children?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the naive validator checks, at each node, that
+`node.left.val < node.val < node.right.val`. It compares a node only to its DIRECT CHILDREN.
+
+That is wrong, because the BST property is GLOBAL, not local. It requires that EVERY value in a node's
+entire LEFT SUBTREE is less than the node, and every value in its entire RIGHT SUBTREE is greater - not
+merely the immediate children.
+
+THE SMALLEST COUNTEREXAMPLE IS THREE NODES:
+
+        10
+          \\
+          15
+         /
+        6
+
+    the local checks:   15 > 10 ?  True        6 < 15 ?  True     ->  naive says VALID
+    the violation:      6 sits in 10's RIGHT subtree, so it must be > 10.   6 > 10 ?  False
+    with bounds:        node 6 is validated against the range (10, 15)      ->  correctly REJECTED
+    in-order walk:      [10, 6, 15]  ->  not sorted                          ->  correctly REJECTED
+
+The naive check never compares 6 with its GRANDPARENT, and there is no fixed number of levels that
+would fix that - the violated ancestor can be arbitrarily far away.
+
+MEASURED, why this bug survives testing. On 20,000 RANDOM trees the naive check disagreed with the
+correct one only 151 times - 0.76%. But on trees where every parent-child pair is ALREADY CORRECT - the
+population where the bug can actually fire - the naive check accepted 20,000 of 20,000, and 16,489 of
+those were NOT VALID BSTS.
+
+    EIGHTY-TWO POINT FOUR PERCENT WRONG on the inputs that matter, and 0.76% wrong on random ones.""",
+
+    """2. THE INTUITION - a node's constraint comes from EVERY ANCESTOR, not from its parent.
+
+Walk down from the root to some node. Every time you go LEFT, you have promised to stay below that
+ancestor's value. Every time you go RIGHT, you have promised to stay above it. By the time you arrive,
+you are carrying a whole stack of promises - and they collapse into exactly two numbers: the tightest
+lower bound and the tightest upper bound.
+
+    go LEFT from a node with value v   ->  everything below must be < v   ->  upper bound becomes v
+    go RIGHT from a node with value v  ->  everything below must be > v   ->  lower bound becomes v
+
+A node is valid if and only if `low < node.val < high`, with the range tightened at each step. Two
+numbers threaded down the recursion carry all the ancestor constraints that pure child comparisons
+throw away.
+
+In the three-node example, node 6 is reached by going RIGHT at 10 (so `low = 10`) and then LEFT at 15
+(so `high = 15`). It is validated against `(10, 15)`, and 6 is not greater than 10, so it fails.
+
+WHY NO LOCAL CHECK CAN EVER WORK - the offending node can be arbitrarily deep. MEASURED, a family of
+trees where the violating node sits at increasing distance from the ancestor it violates:
+
+    left-descents below the right child   naive   bounds   in-order
+    -----------------------------------   -----   ------   --------
+                                      1    True    False      False
+                                      2    True    False      False
+                                      3    True    False      False
+                                      5    True    False      False
+                                      8    True    False      False
+
+The naive check says True in every row. Deepening the tree does not help it, and neither would checking
+grandchildren, or great-grandchildren, or any fixed depth - because you can always push the violation
+one level further down. The constraint has to be CARRIED, not re-derived locally.
+
+THE SECOND CORRECT METHOD, which encodes the same global property a different way: an IN-ORDER
+TRAVERSAL of a valid BST yields SORTED output. So walk the tree in order and verify the values are
+strictly increasing; any out-of-order adjacent pair reveals a violation, however distant. MEASURED: the
+bounds method and the in-order method disagreed on 0 of 50,000 trees.
+
+Both work for the same reason - each encodes the GLOBAL ordering constraint rather than a local one.""",
+
+    """3. EVERY TERM DEFINED.
+
+BINARY SEARCH TREE (BST). A binary tree where, for every node, all values in its left subtree are less
+than it and all values in its right subtree are greater. Note "all values in the SUBTREE", which is the
+entire content of this entry.
+
+LOCAL vs GLOBAL PROPERTY. A local property can be checked by looking at a node and its immediate
+neighbours. A global one cannot. The BST invariant looks local and is not.
+
+ANCESTOR. Any node on the path from the root down to a given node. The BST constraint on a node comes
+from ALL of them.
+
+BOUNDS / RANGE (low, high). The open interval a node's value must lie in, accumulated from the
+ancestors. Initialised to `(-infinity, +infinity)` at the root.
+
+TIGHTENING. Narrowing the range as you descend. Going left sets the upper bound to the current value;
+going right sets the lower bound. Only ONE end changes at each step, which is worth noticing - the
+other is inherited unchanged.
+
+IN-ORDER TRAVERSAL. Visit left subtree, then the node, then right subtree. For a valid BST this emits
+the values in sorted order, which is the BST's defining behavioural property.
+
+STRICTLY INCREASING. The in-order check must use `<`, not `<=`, unless duplicates are permitted - and
+see below, because "permitted" is not a fact about BSTs, it is a decision.
+
+SENTINEL BOUNDS. `float('-inf')` and `float('inf')` in Python, or `None` with a null check, or
+`LONG_MIN`/`LONG_MAX` in a language with fixed-width integers. Using `INT_MIN`/`INT_MAX` is a real bug
+if a node can legitimately hold those values.
+
+MORRIS TRAVERSAL. An in-order traversal in O(1) space, using temporary "threads" from a subtree's
+rightmost node back to its successor. The answer to "can you do it without recursion or a stack".
+
+DUPLICATE HANDLING. Whether equal values are allowed, and on which side. NOT a property of "BST" - it
+is a convention you must state. MEASURED below: the same three-node tree is valid under one convention
+and invalid under another.
+
+EARLY EXIT / SHORT-CIRCUIT. Returning False as soon as a violation is found, rather than traversing the
+whole tree. Both correct methods support it.
+
+BALANCED BST. AVL, red-black. Balance is a separate property from the ordering invariant; a valid BST
+can be a degenerate linked list.
+
+THE INTERVAL, NOT THE VALUE. The recursion's state is a RANGE, and this generalises: the same
+"thread constraints down the recursion" pattern is how you validate interval trees, verify heap
+properties with bounds, and prune search spaces in branch-and-bound.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the naive check PASSES YOUR TESTS. That is the whole problem,
+and it is measurable.
+
+MEASURED, on 20,000 RANDOM trees:
+
+    disagreements between naive and correct:                      151  (0.76%)
+    trees the naive check ACCEPTED:                             6,454
+    of those accepted trees, actually INVALID:                    151  (2.3%)
+
+Under one percent. If you write the naive validator, generate a few random trees, and check the answers,
+you will very likely see no failure at all - because most random trees are so obviously broken that even
+a local check catches them. The bug cannot fire on a tree whose parent-child relations are already
+wrong.
+
+NOW THE POPULATION WHERE IT CAN FIRE. Trees constructed so that every PARENT-CHILD pair is correct -
+which is exactly what a plausible hand-built test case looks like:
+
+    the naive check ACCEPTED:                      20,000 of 20,000
+    of those, NOT actually valid BSTs:             16,489  =  82.4%
+
+Eighty-two percent. The same code, the same bug, and a failure rate that moved by a factor of 36
+depending only on which inputs you fed it.
+
+THIS IS THE GENERAL LESSON ABOUT TESTING, not just about BSTs: measure on the population where the bug
+CAN fire, not on random input. A 0.76% figure would tell you this is a rare edge case. It is not - it
+is the normal case, restricted to the trees anyone would actually write down.
+
+THE SECOND TRAP - `INT_MIN` and `INT_MAX` as the initial bounds. In C++ or Java, `validate(root,
+INT_MIN, INT_MAX)` with a strict `low < val < high` comparison REJECTS a perfectly valid tree whose root
+is `INT_MIN`. Use `long`, or `nullptr`/`Optional` sentinels with an explicit null check. In Python
+`float('-inf')` is safe, which is why the bug is invisible when you prototype there.
+
+THE THIRD TRAP - DUPLICATES, and this one has no correct answer until you ask. MEASURED, four tiny
+trees under three conventions:
+
+    tree                     in-order     strict   dups LEFT   dups RIGHT
+    ---------------------   ----------   -------   ---------   ----------
+    5 with LEFT child 5         [5, 5]     False        True        False
+    5 with RIGHT child 5        [5, 5]     False       False         True
+    5, left 3, right 5       [3, 5, 5]     False       False         True
+    5, left 5, right 7       [5, 5, 7]     False        True        False
+
+The SAME tree is valid under one convention and invalid under another. "Is this a BST?" is not a
+well-posed question until duplicates are specified, and three-node trees are enough to expose it. Say
+which convention you are using before you write a line - and note that the strict `<` version rejects
+all four, which is the most common interview convention.
+
+THE FOURTH TRAP - a subtly wrong "fix". Some people patch the naive check by comparing a node to its
+grandparent as well. MEASURED in the depth sweep above: that catches depth 1 and fails at depth 2. Any
+fixed lookback fails at one level deeper, because the constraint is not bounded in distance.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - three correct methods, and what each costs.
+
+THE THREE THAT WORK:
+
+    1. BOUNDS (min/max threaded down)
+       Thread `(low, high)` through the recursion, tightening one end at each step.
+       Time O(n), space O(h) for the call stack. EARLY EXIT on the first violation.
+       Best when: you want the standard answer, and when you might later want to know WHICH node
+       failed and against which bound.
+
+    2. IN-ORDER TRAVERSAL, checking sorted
+       Walk left-node-right and verify strictly increasing. You do NOT need to materialise the list -
+       keep only the PREVIOUS value, which reduces space to O(h).
+       Time O(n), space O(h). Early exit on the first out-of-order pair.
+       Best when: you want the shortest correct code, and it doubles as an explanation of what a BST
+       IS.
+
+    3. MORRIS IN-ORDER TRAVERSAL
+       The same check in O(1) extra space, by temporarily threading a subtree's rightmost node to its
+       successor and undoing the thread on the way back.
+       Time O(n) (each edge is traversed at most twice), space O(1).
+       Best when: the interviewer asks for constant space. It MUTATES the tree during traversal and
+       restores it, which is worth stating explicitly.
+
+MEASURED: bounds and in-order disagreed on 0 of 50,000 trees, random and locally-consistent alike. They
+are the same predicate computed two ways.
+
+WHAT DOES NOT WORK, and why:
+    parent-child comparison only        MEASURED 82.4% wrong on locally-consistent trees.
+    comparing to the grandparent too    fails at one level deeper. MEASURED in the depth sweep.
+    checking min(right subtree) > node  correct, and O(n) per node, so O(n^2) overall - or O(n) if you
+      and max(left subtree) < node      return (min, max, valid) UP the recursion instead, which is a
+                                        genuine fourth method and a nice alternative answer.
+    counting nodes, checking height     unrelated properties.
+
+THE RETURN-TRIPLE METHOD is worth naming as the fourth option, because it is the natural one if you
+think bottom-up: each call returns `(is_valid, subtree_min, subtree_max)`, and a node is valid if both
+children are valid and `left.max < node.val < right.min`. Same O(n), same O(h) space, and it
+generalises nicely to problems where you need the subtree's extremes for another reason - largest BST
+subtree, for instance.
+
+THE PATTERN THAT GENERALISES - THREADING CONSTRAINTS DOWN A RECURSION. It appears whenever a local
+check is insufficient:
+    validating a heap with bounds, rather than just parent >= child
+    range queries in a segment tree, where each node knows the interval it covers
+    branch-and-bound and alpha-beta pruning, where the bounds ARE the algorithm
+    type checking with an expected type threaded down the syntax tree
+    parsing with a precedence level passed into the recursive descent
+In each case the question "is this piece valid?" cannot be answered without context from above, so you
+carry the context.""",
+
+    """6. HOW TO CODE IT.
+
+THE BOUNDS METHOD:
+
+  1. `def valid(node, low=-inf, high=+inf):`
+  2. `if node is None: return True` - an empty tree is a valid BST, and this is also the base case that
+     terminates the recursion.
+  3. `if not (low < node.val < high): return False` - STRICT inequalities, assuming duplicates are
+     forbidden. Python's chained comparison reads exactly like the mathematical statement.
+  4. `return valid(node.left, low, node.val) and valid(node.right, node.val, high)`.
+  5. Note which bound changes on each side: going LEFT replaces the HIGH bound with the node's value
+     and INHERITS the low bound unchanged; going right does the mirror. Getting this backwards is the
+     usual implementation slip, and it produces a validator that accepts everything.
+  6. Use `float('-inf')` / `float('inf')`, or `None` with an explicit check. NOT `INT_MIN`/`INT_MAX` in
+     a fixed-width language, or a legitimate node holding that value is rejected.
+  7. `and` short-circuits, so the recursion stops at the first violation.
+
+THE IN-ORDER METHOD:
+
+  8. Keep only the PREVIOUS visited value, not the whole list. `prev = None` in an enclosing scope or
+     as a mutable single-element list.
+  9. Traverse left, then compare `prev < node.val` (returning False if not), then set `prev =
+     node.val`, then traverse right.
+ 10. Materialising the full list first also works and is easier to explain, at O(n) space instead of
+     O(h). Say which you are doing.
+
+TESTING IT - and this is the part worth taking away:
+
+ 11. DO NOT test on random trees. MEASURED: the naive check is wrong on only 0.76% of them, so a
+     random-input test will very likely pass a broken validator.
+ 12. GENERATE THE POPULATION WHERE THE BUG CAN FIRE: build trees so that every parent-child pair is
+     correct by construction - pick a root value, and give each child a value offset in the right
+     direction from its PARENT only. That is exactly what a plausible hand-written test looks like, and
+     MEASURED, 82.4% of them are invalid BSTs that the naive check accepts.
+ 13. The specific test everyone should have: `10 -> right 15 -> left 6`. Three nodes, and it separates
+     the two implementations.
+ 14. Cross-check TWO correct implementations against each other on many random inputs. MEASURED: bounds
+     and in-order agreed on 50,000 of 50,000, which is a strong signal that both are right and neither
+     is a transcription of the other.
+ 15. Test the DEPTH sweep: push the violating node 1, 2, 3, 5 and 8 levels below the ancestor it
+     violates. It proves no fixed-depth local check can work, and it takes six lines to generate.
+ 16. Test DUPLICATES explicitly, and state your convention.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A naive BST validator checks, at each node, that `node.left.val < node.val < node.right.val` -
+comparing a node only to its DIRECT children. This is wrong, because the BST property is GLOBAL, not
+local: it requires that EVERY value in a node's entire left subtree is less than the node, and every
+value in its entire right subtree is greater - not merely the immediate children.
+
+A tree can satisfy every parent-child comparison and still violate the BST invariant because of a
+DISTANT descendant. The classic counterexample is three nodes: root 10, with right child 15, and 15 has
+a left child 6. Locally, 15 > 10 is fine and 6 < 15 is fine - but 6 is in the RIGHT subtree of 10, so it
+must be greater than 10, and it is not. The local check never compares 6 against its grandparent 10, so
+it misses the violation.
+
+The fix is to thread down an ALLOWED RANGE `(low, high)` that every node must fall strictly within,
+tightening as you descend. Going LEFT from a node with value v means the whole left subtree must be
+less than v, so the new upper bound is v - the range becomes `(low, v)`. Going RIGHT means everything
+must exceed v, so the range becomes `(v, high)`. A node is valid if and only if `low < node.val < high`
+AND both children are valid under their tightened ranges. In the example, node 6 is validated against
+`(10, 15)` - inherited from having gone right at 10 and then left at 15 - and correctly rejected. The
+bounds carry the ancestor constraints that pure child comparisons lose.
+
+I measured why this bug reaches production. On 20,000 RANDOM trees, the naive check disagreed with the
+correct one only 0.76% of the time - because most random trees are so broken that even a local check
+catches them. But on trees where every parent-child pair is ALREADY correct - which is exactly what a
+hand-written test case looks like - the naive check accepted all 20,000, and 82.4% OF THEM WERE NOT
+VALID BSTS. The same bug, and a failure rate 36 times higher, depending only on which population you
+test.
+
+I also checked that no fixed-depth local check can help: I built trees where the violating node sits
+1, 2, 3, 5 and 8 levels below the ancestor it violates, and the naive check returned True in every
+case. Comparing to the grandparent as well would catch depth 1 and fail at depth 2.
+
+Two implementation notes. Use STRICT inequalities - a BST typically forbids duplicates, or you must
+decide a consistent side for them - and use plus and minus infinity as the initial bounds, not INT_MIN
+and INT_MAX, which reject a legitimate root.
+
+An elegant alternative that also captures the global property is an IN-ORDER traversal, verifying the
+visited values are strictly increasing - because an in-order walk of a valid BST yields sorted output,
+any out-of-order adjacent pair reveals a violation, distant or not. I cross-checked the two methods on
+50,000 trees and they agreed on all of them. Both work precisely because they encode the global
+ordering constraint rather than a local one."
+
+THE ONE SENTENCE TO NOT FUMBLE: the constraint on a node comes from EVERY ancestor, not from its
+parent - so you either carry the accumulated bounds down, or you check the global consequence, which is
+that an in-order walk must be sorted.""",
+
+    """8. THE CODE LINE BY LINE.
+
+THE BOUNDS METHOD:
+
+    def bounds(n, lo=float('-inf'), hi=float('inf')):
+        if not n: return True
+        if not (lo < n.v < hi): return False
+        return bounds(n.l, lo, n.v) and bounds(n.r, n.v, hi)
+
+Four lines, and every parameter matters.
+
+    `lo=-inf, hi=+inf`   the root is unconstrained. Use infinities, not `INT_MIN`/`INT_MAX` - in a
+                         fixed-width language a legitimate root holding `INT_MIN` would be rejected by
+                         the strict `<`.
+    `if not n: return True`   an empty subtree satisfies everything vacuously, and this is also what
+                         terminates the recursion at the leaves.
+    `lo < n.v < hi`      STRICT on both sides, so duplicates are forbidden. Python's chained comparison
+                         reads as the mathematical statement, which is why this is the language people
+                         write the answer in.
+    `bounds(n.l, lo, n.v)`   going LEFT: the HIGH bound becomes this node's value; the LOW bound is
+                         INHERITED unchanged. Only one end moves.
+    `bounds(n.r, n.v, hi)`   going RIGHT: the mirror image.
+    `and`                short-circuits, so the traversal stops at the first violation.
+
+The line to stare at is the recursion: `lo` is passed through untouched on the left and `hi` on the
+right. That inheritance is how a constraint from a distant ancestor survives all the way down, and
+swapping the two arguments produces a validator that accepts almost everything.
+
+THE NAIVE VERSION, for comparison:
+
+    def naive(n):
+        if not n: return True
+        if n.l and n.l.v >= n.v: return False
+        if n.r and n.r.v <= n.v: return False
+        return naive(n.l) and naive(n.r)
+
+It has no parameters other than the node. That is the bug, expressed structurally: with no state
+threaded down, there is nowhere for an ancestor's constraint to live.
+
+THE IN-ORDER VERSION:
+
+    def inorder(n, out=None):
+        out = [] if out is None else out
+        if n: inorder(n.l, out); out.append(n.v); inorder(n.r, out)
+        return out
+    def inorder_ok(n):
+        v = inorder(n)
+        return all(v[i] < v[i+1] for i in range(len(v)-1))
+
+Left, node, right - the order IS the definition. Materialising the list costs O(n) space; keeping only
+the previous value reduces it to O(h) and is what you would write in production. `<` and not `<=`, for
+the same duplicate reason.
+
+THE TEST GENERATOR THAT MATTERS:
+
+    def locally_consistent(r, depth):
+        def build(d, v):
+            n = N(v)
+            if d > 1:
+                if r.random() < 0.75: n.l = build(d-1, v - r.randint(1,30))
+                if r.random() < 0.75: n.r = build(d-1, v + r.randint(1,30))
+            return n
+        return build(depth, 50)
+
+This is the most important function in the measurement. Each child's value is offset from its PARENT
+only - so every parent-child pair is correct by construction, and nothing enforces the grandparent
+relation. That is exactly the shape of a hand-written test case, and MEASURED, 82.4% of the trees it
+produces are invalid BSTs that the naive check accepts.
+
+Compare with a purely random generator, on which the naive check was wrong only 0.76% of the time. The
+generator, not the checker, is what decides whether your test finds the bug.
+
+    def chain_counterexample(depth):
+        leaf = N(50)
+        node = leaf
+        for k in range(depth-1): node = N(150+k, node, None)
+        return N(100, None, N(150+depth, node, None)), leaf
+
+The depth sweep: root 100, go RIGHT once (so everything below must exceed 100), then LEFT repeatedly,
+ending at a leaf of 50. Every parent-child pair is correct and the leaf violates an ancestor `depth`
+levels above it. MEASURED: naive returns True for depth 1, 2, 3, 5 and 8.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the three-node counterexample, both methods, node by node.
+
+    tree:      10
+                 \\
+                 15
+                /
+               6
+
+    NAIVE:
+    node   its children      check                       result
+    ----   ---------------   -------------------------   ------
+    10     right = 15        15 > 10 ?                    pass
+    15     left = 6          6 < 15 ?                     pass
+    6      none              -                            pass
+                                                          -> VALID (wrong)
+
+    BOUNDS:
+    node   arrived by         range carried    check                  result
+    ----   ----------------   --------------   --------------------   ------
+    10     (root)             (-inf, +inf)     -inf < 10 < +inf       pass
+    15     right from 10      (10, +inf)       10 < 15 < +inf         pass
+    6      left from 15       (10, 15)         10 < 6 ?  NO           FAIL
+                                                                      -> INVALID (correct)
+
+The whole difference is the third row's middle column. The naive check has no such column - it has no
+state at all - so the constraint `> 10`, established two levels up, simply does not exist by the time
+it reaches node 6.
+
+    IN-ORDER:  [10, 6, 15]  ->  10 < 6 is False  ->  INVALID (correct)
+
+TRACE B - the failure rate depends entirely on which trees you test.
+
+    population                                    naive accepted   of those, invalid   failure rate
+    -------------------------------------------   --------------   -----------------   ------------
+    20,000 RANDOM trees                                    6,454                 151          2.3%
+    20,000 LOCALLY-CONSISTENT trees                       20,000              16,489         82.4%
+
+    overall disagreement on random trees: 151 / 20,000 = 0.76%
+
+A factor of 36 between the two populations, from the same code. The random generator produces mostly
+trees whose parent-child relations are already broken, so the naive check catches them for the wrong
+reason and looks correct.
+
+TRACE C - the violation can be arbitrarily far away.
+
+    tree shape: 100 -> right (150+d) -> left ... left -> leaf 50
+    left-descents   every parent-child pair correct?   naive   bounds   in-order
+    -------------   --------------------------------   -----   ------   --------
+                1   yes                                 True    False      False
+                2   yes                                 True    False      False
+                3   yes                                 True    False      False
+                5   yes                                 True    False      False
+                8   yes                                 True    False      False
+
+No fixed lookback survives this. Checking grandchildren catches row 1 and fails row 2. Checking
+great-grandchildren catches row 2 and fails row 3. The only thing that works is carrying the constraint,
+which is a constant amount of state regardless of depth.
+
+TRACE D - the two correct methods, cross-checked.
+
+    trees tested                            disagreements
+    ------------------------------------   -------------
+    50,000 (random and locally-consistent)              0
+
+Two independent formulations of the same predicate, agreeing everywhere. That is a much stronger signal
+than either one passing a hand-written test suite.
+
+TRACE E - duplicates, where "correct" depends on a convention you must state.
+
+    tree                     in-order     strict (< <)   dups LEFT (< <=)   dups RIGHT (<= <)
+    ---------------------   ----------   ------------   ----------------   -----------------
+    5 with LEFT child 5         [5, 5]          False               True               False
+    5 with RIGHT child 5        [5, 5]          False              False                True
+    5, left 3, right 5       [3, 5, 5]          False              False                True
+    5, left 5, right 7       [5, 5, 7]          False               True               False
+
+Every row has at least one True and at least one False. The tree has not changed; the question has. In
+an interview the right move is to ask, or to state your assumption - "I will treat duplicates as
+invalid, using strict inequalities; if they are allowed on the left, the upper bound becomes
+inclusive" - which takes five seconds and demonstrates you know the ambiguity exists.
+
+Note also that the in-order column matches the STRICT column exactly, which is a consequence rather
+than a coincidence: `all(v[i] < v[i+1])` is precisely the strict convention.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    method                          time     space    early exit   constant space?
+    -----------------------------   ------   ------   ----------   ---------------
+    bounds (min/max threaded)       O(n)     O(h)     yes          no
+    in-order, keeping only `prev`   O(n)     O(h)     yes          no
+    in-order, materialising a list  O(n)     O(n)     no           no
+    Morris in-order                 O(n)     O(1)     yes          YES (mutates and restores)
+    return (min, max, valid) upward O(n)     O(h)     yes          no
+    naive parent-child              O(n)     O(h)     -            - and WRONG
+    min/max of each subtree at
+      each node, recomputed         O(n^2)   O(h)     -            correct but quadratic
+
+`h` is the tree's height - O(log n) if balanced, O(n) for a degenerate chain, which is worth stating
+because the recursion can stack-overflow on a linked-list-shaped tree.
+
+    MEASURED:
+        naive vs correct on 20,000 RANDOM trees:              151 disagreements (0.76%)
+        of the trees naive ACCEPTED there:                    2.3% were invalid
+        naive on 20,000 LOCALLY-CONSISTENT trees:             accepted all 20,000
+        of those:                                             82.4% were invalid
+        depth sweep, violation 1 to 8 levels below:           naive returned True in every case
+        bounds vs in-order on 50,000 trees:                   0 disagreements
+
+THE MISTAKES:
+
+    - Comparing only to direct children. MEASURED 82.4% wrong on the trees where it can fire.
+    - Testing on random trees and concluding the validator works. MEASURED 0.76% failure there - a
+      random-input test will very likely pass a broken implementation.
+    - "Fixing" it by also checking grandparents. MEASURED to fail one level deeper; any fixed lookback
+      does.
+    - `INT_MIN` / `INT_MAX` as sentinel bounds in a fixed-width language. A legitimate root holding
+      that value is rejected by the strict comparison. Use `long`, or nullable bounds.
+    - Non-strict inequalities without deciding a duplicate convention. MEASURED: the same three-node
+      tree is valid under one convention and invalid under another.
+    - Passing the WRONG bound down. Going left must replace `high` and inherit `low`; swapping them
+      produces a validator that accepts nearly everything and passes the counterexample.
+    - Materialising the entire in-order list when you only need the previous value. O(n) space for no
+      reason, and it also loses the early exit.
+    - Forgetting that `h` can be `n`. A degenerate tree overflows the recursion stack; an iterative
+      traversal or Morris avoids it.
+    - Confusing the ordering invariant with BALANCE. A valid BST can be a chain.
+    - Not stating the duplicate convention out loud. It costs five seconds and it is the difference
+      between answering the question and answering a question.
+
+THE TAKEAWAY. The BST invariant LOOKS local and is GLOBAL: a node's constraint is set by every ancestor
+on the path to it, and a parent-child comparison discards all of that. The measurement is what makes
+this concrete rather than a warning - the naive check is wrong on only 0.76% of random trees and on
+82.4% of the trees anyone would actually construct as a test case, which is precisely why the bug
+survives review. Both correct fixes work by encoding the global property: thread the accumulated
+`(low, high)` down the recursion so the constraint travels with you, or check the global consequence
+directly by verifying that an in-order walk is sorted. And the pattern generalises far beyond trees -
+whenever a local check is insufficient, carry the context down.""",
+]
+
+_EX_P1AO["Why is Bayes' theorem so counterintuitive with rare events?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a test is "99% accurate". You test positive. How worried should you
+be?
+
+Almost everyone answers "99%". The correct answer, for a disease affecting 1 in 1,000, is NINE PERCENT.
+
+The reason is that intuition ignores the BASE RATE - how rare the thing is to begin with. Count it out
+rather than reasoning about it, over a million people:
+
+    group                                          people
+    -------------------------------------------   --------
+    actually sick (1 in 1,000)                       1,000
+       of whom test POSITIVE (true positives)          990
+       of whom test negative (missed)                   10
+    actually healthy                               999,000
+       of whom test POSITIVE (FALSE positives)        9,990
+       of whom test negative                        989,010
+
+    TOTAL POSITIVES: 10,980, of which only 990 are actually sick
+
+    P(sick | positive) = 990 / 10,980 = 9.02%
+
+MEASURED, by simulating 5,000,000 individual people rather than computing it: 4,929 true positives and
+50,049 false positives, giving 8.97% - which matches the arithmetic.
+
+The false positives outnumber the true ones 10.1 to 1, and the reason is pure counting: there are 999
+times as many healthy people, so the test's 1% error rate has 999 times as many opportunities to fire.
+A 1% mistake on a huge group beats a 99% success on a tiny one.""",
+
+    """2. THE INTUITION - the test's accuracy tells you nothing until you know how many candidates there
+are.
+
+Two urns. The first holds 1,000 balls and one of them is red. The second holds 999,000 balls and none
+are red. Now a machine that is right 99% of the time points at a ball and says "red".
+
+It will correctly identify about 990 of the red-ish balls in the first urn - but it will also wrongly
+flag 1% of the second urn, which is 9,990 balls. Almost everything it flags comes from the enormous
+group where it was WRONG, simply because that group is enormous.
+
+THE ARITHMETIC IN ONE SENTENCE: false positives scale with the size of the HEALTHY population, and true
+positives scale with the size of the SICK population. When the healthy outnumber the sick a thousand to
+one, a small error rate on the big group swamps a large success rate on the small one.
+
+MEASURED, the same 99%/99% test at different prevalences - the test never changes:
+
+    prevalence          true positives   false positives   P(sick | positive)
+    ----------------   --------------   ---------------   ------------------
+    1 in 1,000,000                 10           100,000                0.01%
+    1 in 100,000                   99            99,999                0.10%
+    1 in 10,000                   990            99,990                0.98%
+    1 in 1,000                  9,900            99,900                9.02%
+    1 in 100                   99,000            99,000               50.00%
+    1 in 10                   990,000            90,000               91.67%
+    1 in 2                  4,950,000            50,000               99.00%
+
+Read the last column: 0.01% to 99.00%, from the SAME TEST. The number people quote as "the accuracy" -
+99% - happens to be the right answer only in the bottom row, where the condition is a coin flip.
+
+Look at the 1-in-100 row: exactly 50%, because at that prevalence the true and false positives are
+equal in number. That row is a useful anchor - a 99%-specific test breaks even at a 1% prevalence, and
+below that most positives are wrong.
+
+THE ODDS FORM, which is how to do this in your head:
+
+    posterior odds  =  prior odds  x  likelihood ratio,   where LR = sensitivity / (1 - specificity)
+
+Here the LR is `0.99 / 0.01 = 99`. Prior odds of 1-in-999 become `99/999`, which is about 1 in 10 -
+9%. The test multiplies your odds by 99, and 99 times "very unlikely" is still "fairly unlikely".""",
+
+    """3. EVERY TERM DEFINED.
+
+BASE RATE / PRIOR / PREVALENCE. How common the thing is BEFORE any evidence. The number intuition
+throws away.
+
+BASE RATE FALLACY. Ignoring it. The single most reliable failure of human probabilistic reasoning, and
+it is what makes this question interesting.
+
+SENSITIVITY / TRUE POSITIVE RATE / RECALL. `P(positive | sick)`. Of the sick, how many does the test
+catch.
+
+SPECIFICITY / TRUE NEGATIVE RATE. `P(negative | healthy)`. Of the healthy, how many does it correctly
+clear.
+
+FALSE POSITIVE RATE. `1 - specificity`. The number that actually drives this problem, and the one
+nobody asks for.
+
+"99% ACCURATE". Ambiguous and usually useless. It might mean sensitivity, specificity, both, or overall
+accuracy. And overall accuracy is a trap here: a test that says "negative" to everyone is 99.9%
+accurate on a 1-in-1,000 disease. Always ask which number is being quoted.
+
+PPV (positive predictive value). `P(sick | positive)` - the thing you actually want to know. MEASURED
+at 9.02%. NOT a property of the test alone; it depends on the prevalence.
+
+NPV (negative predictive value). `P(healthy | negative)`. MEASURED at 99.9991% - a negative result IS
+strongly informative, which is the flip side people also miss.
+
+BAYES' THEOREM. `P(A|B) = P(B|A) P(A) / P(B)`. The formula. The COUNTING version - draw a table of
+1,000,000 people - is far easier to reason about and gives the same answer.
+
+NATURAL FREQUENCIES. Expressing everything as counts of people rather than as probabilities.
+Gigerenzer's research showed this dramatically improves people's accuracy on exactly this problem, and
+it is why section 1 leads with a table.
+
+LIKELIHOOD RATIO. `sensitivity / (1 - specificity)`. How much the test MULTIPLIES your odds. Here 99.
+It is a property of the test alone, which makes it the right way to summarise one.
+
+ODDS vs PROBABILITY. Odds `p/(1-p)`. Bayes is a MULTIPLICATION in odds space, which is why the odds
+form is the one to use mentally.
+
+PROSECUTOR'S FALLACY. Confusing `P(evidence | innocent)` with `P(innocent | evidence)`. The same error
+in a courtroom, and it has produced real wrongful convictions.
+
+SCREENING vs DIAGNOSTIC TEST. Screening is applied to a whole low-prevalence population, so PPV is
+poor by construction. A diagnostic test is applied to people who already have symptoms - a much higher
+prior - which is why the same test is useful there and not in mass screening.
+
+CONFIRMATORY TESTING. A second, independent test. Its power comes from the first test having RAISED THE
+PRIOR - see section 5.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - which of the two error rates actually matters. Almost everyone
+focuses on sensitivity, and for a rare event it is nearly irrelevant.
+
+MEASURED, prevalence 1 in 1,000, changing one number at a time:
+
+    sensitivity   specificity   P(sick | positive)   what changed
+    -----------   -----------   ------------------   ---------------------------------
+        99.00%        99.00%                9.02%    the baseline
+        90.00%        99.00%                8.26%    sensitivity 99% -> 90%
+        50.00%        99.00%                4.77%    sensitivity 99% -> 50%
+        99.00%        99.90%               49.77%    specificity 99% -> 99.9%
+        99.00%        99.99%               90.83%    specificity 99% -> 99.99%
+        50.00%        99.99%               83.35%    BAD sensitivity, GREAT specificity
+
+HALVING THE SENSITIVITY - throwing away half of all true cases - moved the answer from 9.02% to 4.77%.
+Adding two nines to the SPECIFICITY moved it from 9.02% to 90.83%.
+
+And the last row is the striking one: a test that MISSES HALF THE SICK PEOPLE but almost never produces
+a false alarm gives a positive predictive value of 83.35% - nine times better than the "99% accurate"
+test everyone would prefer.
+
+The reason follows from section 2: false positives are drawn from the enormous healthy population and
+true positives from the tiny sick one, so the FALSE POSITIVE RATE is the lever. For a rare condition,
+you should ask about specificity first - and it is the number that never appears in the headline.
+
+THE SECOND TRAP - "99% accurate" is not a specification. It could mean sensitivity, specificity, or
+overall accuracy - and overall accuracy is actively misleading here. A test that returns NEGATIVE for
+everybody is 99.9% accurate on a 1-in-1,000 disease, misses every case, and is worthless. Whenever
+someone quotes a single accuracy number for a rare event, the useful response is "of what?".
+
+THE THIRD TRAP - concluding the test is useless. It is not, and the odds form shows why: it multiplied
+your odds by 99, taking you from 0.1% to 9.02%. That is a NINETY-FOLD increase in your probability of
+being sick, which is a very substantial update. It is simply not enough to get you past 50% starting
+from that far away.
+
+And the NEGATIVE result is enormously informative. MEASURED by simulation: `P(healthy | negative)` =
+99.9991%, against a prior of 99.9%. A negative rules the condition out almost completely - which is
+exactly what a screening test is FOR. Screening is designed to be a cheap filter that clears the vast
+majority, not to be a diagnosis.
+
+THE FOURTH TRAP - forgetting this applies far outside medicine. Any rare-event classifier has the same
+structure, and the false-positive count scales with the size of the negative class:
+
+    fraud detection        a 99.9%-specific model on a million transactions with 0.1% fraud produces
+                           1,000 false alarms and 999 true ones - a 50% PPV at three nines.
+    security alerting      why analysts drown in alerts, and why alert fatigue is a base-rate problem
+                           rather than a tooling one.
+    spam and moderation    a small false-positive rate on legitimate content is a large absolute number
+                           of wrongly-removed posts.
+    DNA and forensic matching   the prosecutor's fallacy, with real wrongful convictions behind it.
+    rare-disease ML models   the offline-versus-online entry's warning about AUC applies here too:
+                           a model can look excellent and have a useless PPV.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY - what to do about it, and why a second test works.
+
+WHY A CONFIRMATORY TEST IS SO EFFECTIVE, measured. Two INDEPENDENT 99%/99% tests, prevalence 1 in
+1,000:
+
+    before any test:          P(sick) =  0.1000%
+    after ONE positive:       P(sick) =  9.02%
+    after TWO positives:      P(sick) = 90.75%
+    after THREE positives:    P(sick) = 99.90%
+
+The first test did not "fail". It raised your probability NINETY-FOLD, from 0.1% to 9%. That is exactly
+what makes the second test decisive: it starts from a prior of 9% rather than 0.1%, and the same 99x
+likelihood ratio now lands you at 90.75%.
+
+In ODDS, which is the clean way to see it: `0.001001 -> 0.0991 -> 9.81`. Each test multiplies the odds
+by 99, so two tests multiply by 9,801. Bayes is multiplication in odds space, and the "surprising" first
+result is just the first factor.
+
+THE CAVEAT that matters clinically: the tests must be INDEPENDENT. Running the same assay twice on the
+same sample largely repeats the same error, so the second test's likelihood ratio is far below 99. Real
+confirmatory testing uses a DIFFERENT method for exactly this reason.
+
+WAYS TO GET A USABLE POSITIVE PREDICTIVE VALUE:
+    RAISE THE PRIOR         test people with symptoms or risk factors rather than everybody. This is
+                            the difference between SCREENING and DIAGNOSIS, and it moves you down the
+                            prevalence table in section 2 - a 1-in-100 prior gives a 50% PPV with the
+                            same test.
+    RAISE THE SPECIFICITY   MEASURED as the strongest lever: two extra nines took 9.02% to 90.83%.
+    CONFIRM                 an independent second test. MEASURED 9.02% -> 90.75%.
+    ACCEPT AND MANAGE IT    a screening programme with a 9% PPV is still worth running if the follow-up
+                            is cheap and the disease is serious - you have narrowed a million people to
+                            eleven thousand. The cost is 9,990 people who were frightened for nothing,
+                            and that harm is real and belongs in the decision.
+
+THE SAME MACHINERY ELSEWHERE:
+    PRECISION AND RECALL    PPV is exactly PRECISION and sensitivity is exactly RECALL. Every warning
+                            in this entry is the machine-learning warning about precision on imbalanced
+                            data, in different vocabulary - see the focal-loss entry, where a model
+                            with an AUC of 0.9933 had a recall of zero in the top 200.
+    ROC vs PRECISION-RECALL CURVES   ROC is insensitive to prevalence, which is exactly why it flatters
+                            models on rare classes. Use a precision-recall curve when the positive class
+                            is rare.
+    A/B TESTING             a p-value is `P(data | no effect)`, not `P(no effect | data)`. If most of
+                            the hypotheses you test are duds - a low base rate of real effects - then
+                            most of your "significant" results are false, which is the replication
+                            crisis stated in this entry's terms.
+    SPAM FILTERS            naive Bayes, applying this literally.
+    THE MONTY HALL PROBLEM  the same failure of intuition about conditioning.
+
+THE MENTAL TOOL that actually works: NATURAL FREQUENCIES. Do not manipulate probabilities - imagine
+1,000 or 1,000,000 people and count them into four boxes. Gigerenzer's research found this transforms
+people's accuracy on precisely this problem, including among doctors, and it is why section 1 leads
+with a table of people rather than with the formula.""",
+
+    """6. HOW TO CODE IT.
+
+THE CALCULATION, as counts rather than probabilities:
+
+  1. Pick a population size big enough that every cell is a whole number - 1,000,000 for a 1-in-1,000
+     prevalence.
+  2. `sick = N * prevalence`, `well = N - sick`.
+  3. `true_pos = sick * sensitivity`, `false_neg = sick - true_pos`.
+  4. `true_neg = well * specificity`, `false_pos = well - true_neg`.
+  5. `PPV = true_pos / (true_pos + false_pos)`, `NPV = true_neg / (true_neg + false_neg)`.
+  6. That is the whole thing - four cells and two ratios, and no Bayes' theorem appears anywhere. The
+     formula and the table give the same answer, and the table is the one you can explain to a
+     non-specialist.
+
+SANITY-CHECKING BY SIMULATION, which is worth doing once:
+
+  7. Loop over N individuals. Draw `sick = random() < prevalence`. If sick, draw `positive =
+     random() < sensitivity`; if healthy, draw `negative = random() < specificity`.
+  8. Tally the four outcomes and compute the same ratios. MEASURED at N = 5,000,000: 8.97% against the
+     arithmetic's 9.02%.
+  9. The point is not that you doubted the arithmetic. It is that the simulation contains no
+     conditional-probability reasoning at all - just counting - and it produces the same number. That
+     is the strongest possible statement that the counterintuitive answer is simply what happens.
+
+THE SWEEPS THAT PRODUCE THE INSIGHT:
+
+ 10. SWEEP THE PREVALENCE with the test held fixed. MEASURED 0.01% to 99.00%. This is the experiment
+     that shows PPV is not a property of the test.
+ 11. SWEEP SENSITIVITY AND SPECIFICITY SEPARATELY, one at a time. Doing them together hides which one
+     matters. MEASURED: halving sensitivity moved the answer by 4 points and adding two nines to
+     specificity moved it by 82.
+ 12. INCLUDE THE ROW where sensitivity is bad and specificity is excellent - 50% and 99.99% giving a
+     PPV of 83.35%. That single row overturns the intuition that "catching the sick" is what matters.
+ 13. CHAIN THE TESTS: feed the posterior of the first test in as the prior of the second. MEASURED
+     0.1% -> 9.02% -> 90.75% -> 99.90%. The chaining makes it obvious that the first test worked
+     exactly as it should have.
+ 14. REPORT NPV TOO. MEASURED 99.9991%, which reframes the whole result: the test is excellent at what
+     screening is for, and the "failure" is only a failure against a question it was never designed to
+     answer.
+
+PRESENTING IT:
+
+ 15. Lead with the TABLE OF PEOPLE, not the formula. A hundred years of research says natural
+     frequencies work and probability notation does not.
+ 16. Give the ODDS version as the mental shortcut: multiply your prior odds by
+     `sensitivity / (1 - specificity)`. Here that is 99, and "99 times a 1-in-1,000 chance is about
+     1 in 10" is a calculation you can do while talking.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Because intuition IGNORES THE BASE RATE.
+
+A '99% accurate' test for a disease affecting 1 in 1,000 sounds definitive. But count it out: among a
+million people, about 1,000 are sick and 999,000 are healthy. The test catches 990 of the sick - and it
+also produces a false positive for 1% of the 999,000 healthy people, which is 9,990. So there are
+10,980 positives in total and only 990 of them are real.
+
+P(sick | positive) is 990 divided by 10,980 - NINE POINT ZERO TWO PERCENT. The false alarms outnumber
+the true ones ten to one, purely because there are 999 times as many healthy people for a 1% error rate
+to act on.
+
+I verified that by simulating five million individual people rather than computing it: 4,929 true
+positives and 50,049 false ones, giving 8.97%. No conditional-probability reasoning in the simulation
+at all - just counting - and the same answer.
+
+The RARITY of the event matters as much as the test's accuracy, and I measured how much. Holding the
+test fixed at 99%/99% and varying only the prevalence, the answer runs from 0.01% at one in a million
+to 99% at one in two. The '99%' people quote as the answer is correct only when the condition is
+essentially a coin flip.
+
+Two things I'd add that usually surprise people.
+
+FIRST, IT IS THE SPECIFICITY THAT MATTERS, not the sensitivity. Halving the sensitivity from 99% to
+50% - missing half of all true cases - moved the answer only from 9.02% to 4.77%. Adding two nines to
+the specificity moved it from 9.02% to 90.83%. And a test with 50% sensitivity and 99.99% specificity
+gives a PPV of 83% - nine times better than the '99% accurate' test, while missing half the cases.
+Because false positives are drawn from the huge healthy group and true positives from the tiny sick
+one, the FALSE-POSITIVE RATE is the lever - and it is the number nobody asks about.
+
+SECOND, THE TEST DID NOT FAIL. In odds terms it multiplied your odds by
+`sensitivity / (1 - specificity)` = 99, taking you from 0.1% to 9% - a ninety-fold increase. That is
+exactly why a confirmatory second test is so effective: it starts from a 9% prior instead of 0.1%, and
+I measured the chain as 0.1% -> 9.02% -> 90.75% -> 99.90%. The tests must be INDEPENDENT, which is why
+real confirmatory testing uses a different method rather than repeating the same assay.
+
+And the negative result is excellent: I measured P(healthy | negative) at 99.9991%. Screening is
+designed to be a cheap filter that clears almost everybody, and it does that superbly.
+
+So: always weigh the prior before trusting a scary-sounding positive - and the same arithmetic governs
+fraud detection, security alerting, content moderation and every rare-class classifier, where it is
+usually called the precision problem on imbalanced data."
+
+THE ONE SENTENCE TO NOT FUMBLE: false positives scale with the size of the NEGATIVE population and true
+positives with the POSITIVE one, so when negatives outnumber positives a thousand to one, a 1% error
+rate beats a 99% success rate.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def counts(N, prev, sens, spec):
+        sick = N*prev
+        well = N-sick
+        tp = sick*sens
+        fn = sick-tp
+        tn = well*spec
+        fp = well-tn
+        ppv = tp/(tp+fp)
+        npv = tn/(tn+fn)
+
+Eight lines, and NOT ONE OF THEM IS BAYES' THEOREM. It is a 2x2 table of people, and that is the point:
+the counterintuitive answer falls out of counting, with no conditional-probability manipulation at all.
+
+    `tp = sick*sens`     sensitivity applies to the SICK group only.
+    `fp = well-tn`       false positives come from the WELL group - and `well` is 999 times larger,
+                         which is the whole result in one line.
+    `ppv = tp/(tp+fp)`   the answer, and note it mixes a number scaled by `sick` with one scaled by
+                         `well`. That mixing is why PPV depends on prevalence and the test's own
+                         published rates do not.
+
+    for prev in (0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5):
+        c = counts(10_000_000, prev, 0.99, 0.99)
+
+The prevalence sweep with `sens` and `spec` FIXED. Holding the test constant is what makes the
+conclusion unambiguous: nothing about the instrument changed, and the answer moved by four orders of
+magnitude.
+
+    for sens, spec in [(0.99,0.99), (0.90,0.99), (0.50,0.99), (0.99,0.999), (0.99,0.9999),
+                       (0.50,0.9999)]:
+
+Sweeping ONE AT A TIME. Changing both together would show that "better tests give better answers" and
+hide the finding, which is that the two knobs are worth wildly different amounts. The last pair -
+deliberately bad sensitivity with excellent specificity - is the row that overturns the intuition, and
+it exists only because the sweep was designed to include it.
+
+    post1 = counts(10_000_000, prev, 0.99, 0.99)['ppv']
+    c2 = counts(10_000_000, post1, 0.99, 0.99)
+
+CHAINING: the first test's POSTERIOR becomes the second test's PRIOR. That one substitution is Bayes'
+theorem applied twice, and it makes the sequential logic visible without any algebra. It is also where
+the independence assumption lives - passing `post1` in as a prior assumes the second test's errors are
+unrelated to the first's, which is exactly the assumption that fails when you rerun the same assay.
+
+    sick = r.random() < prev
+    if sick:
+        if r.random() < sens: tp += 1
+        else: fn += 1
+    else:
+        if r.random() < spec: tn += 1
+        else: fp += 1
+
+The simulation, five million times. Two coin flips per person: is this person sick, and did the test get
+it right. There is no probability theory in these six lines - and they produce 8.97% against the
+arithmetic's 9.02%.
+
+That agreement is the most persuasive artefact in the entry, because it removes the suspicion that the
+surprising answer is a trick of the formula. It is not a trick. It is what happens when you count
+5,000,000 people.
+
+    print(f"P(healthy | negative) = {100*tn/(tn+fn):.4f}%")
+
+Reporting the NPV alongside, and it changes the reading of everything above: 99.9991%. Report only the
+PPV and the test looks broken; report both and it looks like what it is - an excellent filter and a
+poor diagnosis.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the 2x2 table, one million people, prevalence 1 in 1,000, sensitivity and specificity both
+99%.
+
+                          test POSITIVE   test negative        total
+    -------------------   -------------   -------------   ----------
+    actually SICK                   990              10        1,000
+    actually HEALTHY              9,990         989,010      999,000
+    -------------------   -------------   -------------   ----------
+    total                        10,980         989,020    1,000,000
+
+    P(sick | positive) = 990 / 10,980       =  9.02%
+    P(healthy | negative) = 989,010/989,020 = 99.999%
+
+Read ACROSS the top row and the test looks superb: 990 of 1,000 sick people caught. Read DOWN the
+positive column and it looks useless: 990 of 10,980. Both readings are correct, and they answer
+different questions - which is precisely the confusion.
+
+The single cell that does all the damage is 9,990: one percent of a very large number.
+
+TRACE B - prevalence sweep, the test never changing.
+
+    prevalence          true pos   false pos   PPV       ratio false:true
+    ----------------   ---------   ---------   -------   ----------------
+    1 in 1,000,000            10     100,000     0.01%          10,000 : 1
+    1 in 100,000              99      99,999     0.10%           1,010 : 1
+    1 in 10,000              990      99,990     0.98%             101 : 1
+    1 in 1,000             9,900      99,900     9.02%            10.1 : 1
+    1 in 100              99,000      99,000    50.00%               1 : 1
+    1 in 10              990,000      90,000    91.67%            0.09 : 1
+    1 in 2             4,950,000      50,000    99.00%            0.01 : 1
+
+The FALSE POSITIVE column is nearly constant near 100,000 in the top four rows - because it is 1% of a
+population that is nearly all healthy, whatever the prevalence. The TRUE POSITIVE column scales
+directly with prevalence. The ratio between them IS the answer.
+
+And note the 1-in-100 row: exactly 50%, the break-even. A 99%-specific test is a coin flip at a 1%
+prevalence, and worse below it. That is a useful number to carry.
+
+TRACE C - which knob matters. Prevalence 1 in 1,000.
+
+    change                                sensitivity   specificity      PPV   change in PPV
+    -----------------------------------   -----------   -----------   ------   -------------
+    baseline                                   99.00%        99.00%    9.02%               -
+    sensitivity 99% -> 90%                     90.00%        99.00%    8.26%          -0.76
+    sensitivity 99% -> 50%                     50.00%        99.00%    4.77%          -4.25
+    specificity 99% -> 99.9%                   99.00%        99.90%   49.77%         +40.75
+    specificity 99% -> 99.99%                  99.00%        99.99%   90.83%         +81.81
+    BAD sensitivity, GREAT specificity         50.00%        99.99%   83.35%         +74.33
+
+HALVING the sensitivity costs 4.25 points. Adding two nines to the specificity gains 81.81. That is a
+factor of nineteen between the two levers, and it inverts the intuition that catching the sick is what
+matters.
+
+The last row is the one to remember: a test that MISSES HALF THE CASES gives a PPV of 83.35% - nine
+times better than the "99% accurate" test - because it almost never raises a false alarm.
+
+TRACE D - sequential testing, and why the "failed" first test was essential.
+
+    stage                        P(sick)   odds        multiplied by
+    -------------------------   --------   ---------   -------------
+    before any test              0.1000%   0.001001    -
+    after ONE positive           9.02%     0.0991      x99
+    after TWO positives          90.75%    9.81        x99
+    after THREE positives        99.90%    971         x99
+
+In ODDS space each test multiplies by the same likelihood ratio, `sens/(1-spec) = 99`. The apparently
+disappointing first result - only 9% - is exactly one factor of 99 applied to a very small starting
+number, and it is what makes the second test land at 90.75%.
+
+The caveat: this arithmetic assumes the two tests fail INDEPENDENTLY. Repeating the same assay on the
+same sample largely repeats the same error, so the second likelihood ratio is much smaller than 99 -
+which is why confirmatory testing uses a different method.
+
+TRACE E - simulated rather than computed. 5,000,000 people, one at a time.
+
+    quantity                         simulated       arithmetic
+    ------------------------------   -------------   ----------
+    sick                                     4,975        5,000
+    healthy                              4,995,025    4,995,000
+    true positives                           4,929        4,950
+    FALSE positives                         50,049       49,950
+    P(sick | positive)                       8.97%        9.02%
+    P(healthy | negative)                 99.9991%      99.999%
+
+Two random draws per person and a tally. No Bayes, no conditional probabilities, no formula - and the
+same answer. Whatever intuition says, this is simply what happens to five million people.
+
+And the last row is the reframing: a negative result takes you from 99.9% confident you are healthy to
+99.9991% confident. The test is superb at ruling out. It is only "counterintuitive" because we asked
+it the other question.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE ARITHMETIC, in one place:
+
+    true positives  = N x prevalence x sensitivity
+    false positives = N x (1 - prevalence) x (1 - specificity)
+    PPV = TP / (TP + FP)
+    NPV = TN / (TN + FN)
+    posterior odds = prior odds x sensitivity/(1-specificity)
+
+    MEASURED, prevalence 1 in 1,000 with a 99%/99% test:
+        PPV                                  9.02%   (simulated on 5,000,000 people: 8.97%)
+        NPV                              99.9991%
+        false:true positive ratio           10.1 : 1
+        likelihood ratio                          99
+    MEASURED, the same test at other prevalences:  0.01% at 1-in-a-million, 99.00% at 1-in-2
+    MEASURED, sensitivity 99% -> 50%:      9.02% -> 4.77%   (-4.25 points)
+    MEASURED, specificity 99% -> 99.99%:   9.02% -> 90.83%  (+81.81 points)
+    MEASURED, two positives:               9.02% -> 90.75%; three: 99.90%
+
+THE MISTAKES:
+
+    - Answering "99%" to "you tested positive, how likely are you to be sick". MEASURED 9.02%.
+    - Accepting "99% accurate" as a specification. It could be sensitivity, specificity, or overall
+      accuracy - and a test that says "negative" to everybody is 99.9% accurate on this disease.
+    - Optimising sensitivity for a rare condition. MEASURED: halving it cost 4.25 points and two extra
+      nines of specificity gained 81.81.
+    - Concluding the test is useless. MEASURED: it multiplied the odds by 99, from 0.1% to 9%, and its
+      NPV is 99.9991%.
+    - Treating PPV as a property of the test. It depends on the prevalence, and MEASURED it ranges from
+      0.01% to 99.00% for one unchanged test.
+    - Forgetting the independence assumption when chaining tests. Rerunning the same assay repeats the
+      same error and the second likelihood ratio is far below 99.
+    - Reasoning in probabilities rather than NATURAL FREQUENCIES. Count 1,000,000 people into four
+      boxes; the research says it works and the algebra does not.
+    - Confusing `P(evidence | innocent)` with `P(innocent | evidence)` - the prosecutor's fallacy, with
+      real wrongful convictions behind it.
+    - Using ROC/AUC to evaluate a rare-class model. ROC is insensitive to prevalence, which is exactly
+      why it flatters these models - see the focal-loss entry, where a model with an AUC of 0.9933 had
+      zero recall in its top 200.
+    - Reading a p-value as `P(no effect | data)`. It is `P(data | no effect)`, and if most tested
+      hypotheses are duds then most "significant" findings are false - the replication crisis, stated
+      as a base-rate problem.
+
+THE TAKEAWAY. The answer is counterintuitive because intuition compares two RATES and the arithmetic
+compares two COUNTS: false positives scale with the size of the negative population and true positives
+with the positive one. When negatives outnumber positives 999 to 1, a 1% error rate produces ten times
+as many alarms as a 99% success rate - measured at 9,990 against 990. Everything else follows: PPV is a
+property of the POPULATION rather than of the test, the specificity is the lever that matters and the
+sensitivity mostly is not, the "disappointing" 9% is a ninety-fold update that makes a confirmatory
+test decisive, and the same structure governs fraud detection, security alerting and every rare-class
+classifier you will ever ship.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
