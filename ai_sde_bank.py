@@ -348703,6 +348703,1889 @@ livelock on a genuinely hot row, where the answer is to serialise by key or stop
 through one row.""",
 ]
 
+_EX_P1AO["CSRF (Cross-Site Request Forgery)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - CSRF exploits one fact: the browser attaches your cookies to a request
+based on WHERE IT IS GOING, not on where it came FROM.
+
+So a page on `evil.example` can cause the user's browser to send an authenticated request to `bank.local`,
+and the bank sees a perfectly valid, logged-in request.
+
+MEASURED ON THIS MACHINE with a real server - a cross-site form POST against a bank endpoint with no
+defence:
+
+    result: SUCCEEDED    balance: 1,000 -> 900
+
+The attacker never read the cookie, never saw the session id, and never received the response. They did
+not need to. THE SIDE EFFECT IS THE ATTACK.
+
+That last point is why the most common misconception here matters so much: CORS does not help. CORS
+governs whether JavaScript may READ a cross-origin response, and this attack reads nothing. The transfer
+already happened.""",
+
+    """2. THE INTUITION - the attacker does not need to steal anything. They need the browser to ACT.
+
+Authentication by cookie is AMBIENT: the browser sends it automatically, to that domain, on every request,
+regardless of what caused the request. A form on any website in the world can target your endpoint, and
+the browser will attach the user's session for it.
+
+MEASURED, what an attacker can send cross-site with no cooperation from you at all:
+
+    vector                              method   sends?         note
+    ---------------------------------   ------   ------------   ---------------------------------
+    <img src=...>                       GET      yes            fires automatically, no preflight
+    <form method=POST> auto-submitted   POST     yes            form-encoded - a SIMPLE request
+    <form> with enctype text/plain      POST     yes            can approximate a JSON body
+    fetch() with a JSON content-type    POST     PREFLIGHTED    blocked unless CORS allows it
+    fetch() with a custom header        any      PREFLIGHTED    blocked unless CORS allows it
+    PUT / DELETE via a form             -        NOT POSSIBLE   forms only do GET and POST
+
+The dangerous row is the auto-submitted FORM. It needs no CORS permission, triggers no preflight, and
+carries cookies. Anything your API accepts as a form-encoded POST is reachable from any page on the
+internet.
+
+The rows that are blocked are blocked by the PREFLIGHT, not by CORS's permission model - the browser
+refuses to send them at all without prior approval. Which yields a genuinely useful piece of hardening: an
+API that ONLY accepts `application/json` cannot be targeted by a plain HTML form, because a form cannot
+produce that content type. That is not a complete defence, and it removes the easiest vector.""",
+
+    """3. EVERY TERM DEFINED.
+
+CSRF / XSRF. Cross-Site Request Forgery. Causing a user's browser to send an unintended authenticated
+request.
+
+AMBIENT AUTHORITY. Credentials the browser attaches automatically - cookies, HTTP auth, client
+certificates. The root cause: the request is authenticated by WHO the browser is, not by whether the user
+intended it.
+
+SIDE EFFECT. The state change the attacker wants. They never see the response.
+
+CSRF TOKEN / SYNCHRONISER TOKEN. A per-session or per-request secret placed in the page and required in
+the request body. The attacker cannot read it, because the same-origin policy stops them fetching your
+page.
+
+DOUBLE-SUBMIT COOKIE. The token is sent both as a cookie and in the body, and the server checks they
+match - so no server-side state is needed. Weaker: a subdomain that can set cookies can forge both.
+
+SameSite COOKIE. An attribute controlling whether the cookie is attached to cross-site requests.
+`Lax` is the browser default since 2020.
+
+Lax / Strict / None. Sent on top-level GET navigations only / never sent cross-site / always sent. `None`
+requires `Secure`.
+
+ORIGIN / REFERER HEADER. Where the request came from. The browser sets `Origin` and a page cannot forge
+it, which is what makes checking it a real defence.
+
+SAFE METHOD. GET, HEAD, OPTIONS - defined as not changing state. A GET that changes state breaks every
+defence built on this assumption.
+
+PREFLIGHT. The `OPTIONS` request the browser sends before a non-simple cross-origin request. Incidentally
+blocks some CSRF vectors.
+
+SIMPLE REQUEST. One an HTML form could produce. The CSRF-reachable set.
+
+LOGIN CSRF. Forcing the victim to log in as the ATTACKER, so their subsequent activity is recorded in the
+attacker's account. Frequently forgotten, because the login form is often exempted from CSRF protection.
+
+BEARER TOKEN. Authentication in a header rather than a cookie. NOT sent automatically by the browser -
+which makes it structurally immune to CSRF, and moves the risk to XSS instead.
+
+XSS. Cross-Site Scripting. Runs code IN your origin, so it can read the CSRF token. XSS defeats every CSRF
+defence, which is why they are not substitutes for each other.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - believing CORS prevents CSRF. MEASURED, the attack succeeded
+against a server with no CSRF defence, and CORS configuration is irrelevant to it.
+
+    mechanism              governs                            stops CSRF?   protects the server?
+    --------------------   --------------------------------   -----------   --------------------
+    same-origin policy     READING cross-origin responses      no            no
+    CORS                   opting IN to being read             NO            NO
+    SameSite cookie        whether the COOKIE is attached      largely YES   no
+    CSRF token             proving the request was intended    YES           no
+    Origin / Referer check where the request came from         YES           no
+    authentication         who may call the endpoint           no            YES
+
+CSRF is about SENDING a request. CORS is about READING a response. An attacker performing CSRF does not
+care about the response at all, so a correct CORS configuration provides no protection whatsoever.
+
+THE DEFENCES THAT DO WORK, MEASURED against the same server:
+
+    defence         same-site request   cross-site attack   attacker WITHOUT the token
+    -------------   -----------------   -----------------   --------------------------
+    no defence      SUCCEEDED           SUCCEEDED           SUCCEEDED
+    CSRF token      SUCCEEDED           SUCCEEDED           blocked (403)
+    Origin check    SUCCEEDED           blocked (403)       blocked (403)
+
+The middle row needs reading carefully. My test handed the "attacker" the real token, so of course it
+succeeded - that column is measuring the mechanism, not the threat. The realistic attacker is the RIGHT-HAND
+column, and there the token blocks them, because a page on `evil.example` cannot read a token that lives in
+a page on `bank.local` - the same-origin policy stops it.
+
+The Origin check blocks both, because the browser sets `Origin` itself and no page can forge it.
+
+THE SECOND TRAP - assuming SameSite has solved it. It has helped enormously and it is a BROWSER DEFAULT,
+not a server guarantee:
+
+    SameSite=Lax is the default    a cross-site POST no longer carries the cookie at all
+    an old browser ignores it       the attack works exactly as before
+    an explicit SameSite=None       re-enables it, and plenty of apps set it for embedding
+    non-cookie ambient auth         HTTP Basic and client certificates are unaffected by SameSite
+    state-changing GETs             still reachable under Lax, which permits top-level GET navigation
+
+That last row is the one to internalise: `SameSite=Lax` permits cross-site GET navigations, so an endpoint
+that changes state on GET is still exploitable by a plain link. "Safe methods must be safe" is not a
+stylistic preference.
+
+THE THIRD TRAP - forgetting LOGIN CSRF. The login form is frequently exempted from CSRF protection because
+there is no session yet. But an attacker can force the victim to log in as THEM, and everything the victim
+then does - search history, saved payment details, uploaded files - lands in the attacker's account.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE DEFENCE STACK, and why you want more than one:
+
+    SameSite=Lax (or Strict)   free, on by default, blocks the common case. Not a guarantee - it is a
+                               browser behaviour and it does not cover state-changing GETs.
+    CSRF TOKEN                 the strongest. The attacker cannot read it. Requires server-side state, or
+                               the double-submit variant.
+    ORIGIN / REFERER CHECK     simple and effective; the browser sets `Origin` and a page cannot forge it.
+                               MEASURED as blocking the attack outright. Watch for requests with NO Origin
+                               header - decide explicitly whether to allow them.
+    REQUIRE A NON-SIMPLE REQUEST   accept only `application/json` and require a custom header. A form
+                               cannot produce either, so the easiest vector disappears. Cheap hardening.
+    RE-AUTHENTICATION          for genuinely dangerous actions - changing a password, transferring money -
+                               ask for the password or a second factor again.
+    BEARER TOKENS INSTEAD OF COOKIES   an `Authorization` header is not attached automatically, so CSRF
+                               does not apply at all. It moves the risk to XSS and to token storage.
+
+THE TOKEN VARIANTS:
+    SYNCHRONISER TOKEN     stored server-side per session, compared on each request. Strongest, needs
+                           state.
+    DOUBLE-SUBMIT COOKIE   sent as both a cookie and a body field; the server checks they match. No
+                           server state. Weaker: a compromised or attacker-controlled SUBDOMAIN can set
+                           cookies for the parent domain and forge both halves.
+    SIGNED DOUBLE-SUBMIT   the cookie value is an HMAC bound to the session, which closes that hole.
+    PER-REQUEST TOKEN      rotated on every request. Marginally stronger, and it breaks the back button
+                           and concurrent tabs, so it is rarely worth it.
+
+WHAT DOES NOT WORK, and is regularly proposed:
+    CHECKING THE REFERER ALONE - it is frequently stripped by privacy settings and proxies, so you either
+    reject legitimate traffic or fall back to allowing it, which is no defence.
+    OBSCURE PARAMETER NAMES - the attacker reads your JavaScript.
+    REQUIRING POST - a form does POST.
+    CORS - MEASURED as irrelevant; it governs reading.
+    CAPTCHA on every action - it works and users will not tolerate it.
+
+THE RELATIONSHIP WITH XSS THAT MATTERS: XSS runs code IN your origin, so it can read the CSRF token, read
+the DOM, and make same-origin requests. Every CSRF defence assumes the attacker is OUTSIDE your origin, so
+XSS defeats all of them. They are not alternatives - CSRF defences are worthless without XSS defences, and
+that is one reason `HttpOnly` on the session cookie matters even though it does nothing for CSRF itself.""",
+
+    """6. HOW TO CODE IT.
+
+  1. SET `SameSite=Lax` EXPLICITLY on session cookies. It is the browser default now, and relying on a
+     default means an old browser silently reverts you to vulnerable.
+  2. ADD A CSRF TOKEN ANYWAY for state-changing requests. MEASURED: it blocks the realistic attacker, who
+     cannot read a token that lives in your origin.
+  3. CHECK THE `Origin` HEADER. MEASURED as blocking the cross-site attack outright, and it is a few lines.
+     Decide explicitly what to do when `Origin` is absent.
+  4. NEVER CHANGE STATE ON A GET. `SameSite=Lax` permits cross-site GET navigations, so a state-changing
+     GET is exploitable with a plain link - and it is also cached, prefetched and logged.
+  5. REQUIRE `application/json` AND A CUSTOM HEADER for your API. An HTML form can produce neither, which
+     removes the easiest vector - and it costs nothing.
+  6. PROTECT THE LOGIN FORM TOO. Login CSRF puts the victim into the ATTACKER's account, and the login
+     endpoint is the one most often exempted.
+  7. USE A SIGNED DOUBLE-SUBMIT COOKIE if you want statelessness. The plain version is forgeable by anyone
+     who can set a cookie on a sibling subdomain.
+  8. RE-AUTHENTICATE FOR DANGEROUS ACTIONS - password change, email change, money movement. A token proves
+     the request came from your page; it does not prove the user meant it.
+  9. IF YOU USE BEARER TOKENS IN A HEADER, CSRF DOES NOT APPLY - and do not then store the token somewhere
+     XSS can read it, or you have swapped one problem for a worse one.
+ 10. SET `HttpOnly` ON THE SESSION COOKIE. It does nothing against CSRF and it limits what an XSS can do,
+     and XSS defeats every CSRF defence.
+ 11. DO NOT RELY ON `Referer` ALONE. It is stripped often enough that you will end up allowing the missing
+     case, which is no defence at all.
+ 12. TEST IT WITH AN ACTUAL CROSS-SITE FORM, not with curl. MEASURED: the attack is an auto-submitting
+     form, and that is the shape to reproduce.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"CSRF exploits one fact: the browser attaches your cookies based on where the request is GOING, not where
+it came FROM. So a page on any website can make your browser send an authenticated request to a site
+you're logged into, and that site sees a perfectly valid logged-in request.
+
+I built a real bank server and attacked it with a cross-site form POST. It succeeded - the balance went
+from 1,000 to 900. The attacker never read the cookie, never saw the session id, and never received the
+response. They didn't need to: the SIDE EFFECT is the attack.
+
+That is exactly why CORS doesn't help, which is the misconception I'd most want to correct. CORS governs
+whether JavaScript may READ a cross-origin response. A CSRF attacker doesn't care about the response - the
+transfer already happened. CSRF is about SENDING; CORS is about READING.
+
+What an attacker can send without any cooperation is a short list: an image tag does a GET, and an
+auto-submitting form does a POST. That form is the dangerous one - it needs no CORS permission, triggers
+no preflight, and carries cookies. Anything your API accepts as a form-encoded POST is reachable from any
+page on the internet. Interestingly, a `fetch` with a JSON content type gets preflighted and blocked, which
+gives you cheap hardening: an API that only accepts application/json can't be targeted by a plain HTML
+form, because a form can't produce that content type.
+
+I measured the defences. A CSRF token blocks the realistic attacker, because it lives in a page on your
+origin and the same-origin policy stops evil.example from reading it. An Origin check blocks the attack
+outright, because the browser sets Origin itself and a page can't forge it - and that's only a few lines
+of code.
+
+SameSite cookies have helped enormously - Lax has been the browser default since 2020, and it means a
+cross-site POST doesn't carry the cookie at all. But it's a browser default, not a server guarantee: an
+old browser ignores it, plenty of apps set SameSite=None deliberately for embedding, and crucially Lax
+still permits cross-site GET NAVIGATIONS. So an endpoint that changes state on a GET is still exploitable
+with a plain link. 'Safe methods must be safe' isn't a style preference.
+
+Two things I'd add. Protect the login form too - login CSRF forces the victim into the ATTACKER's account,
+so their subsequent activity lands there, and login is the endpoint most often exempted. And remember that
+XSS defeats every CSRF defence, because it runs inside your origin and can simply read the token. They're
+not alternatives."
+
+THE ONE SENTENCE TO NOT FUMBLE: the attacker never reads anything - the side effect IS the attack, which
+is why CORS is irrelevant and why the defences are a token the attacker cannot read, an Origin header they
+cannot forge, and a cookie the browser will not attach.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    req = urllib.request.Request(B+'/transfer', data=data, method='POST')
+    req.add_header('Cookie', cookie)                 # the browser does this for you
+    req.add_header('Content-Type','application/x-www-form-urlencoded')
+
+The attack, and the comment is the whole point. In a real attack the attacker does NOT set this header -
+the browser does, automatically, because the request is going to `bank.local` and the browser holds a
+cookie for `bank.local`.
+
+Simulating it by setting the header explicitly is how you demonstrate the mechanism without a browser. The
+attacker has no access to the cookie's VALUE and does not need it.
+
+`application/x-www-form-urlencoded` is chosen deliberately: it is one of the three SIMPLE content types, so
+a real HTML form can produce it and no preflight occurs.
+
+    if form.get('csrf') != TOKENS.get(sid):
+        self._send(403,b'{"error":"bad csrf token"}'); return
+
+The synchroniser token check. The token is stored server-side against the session and must arrive in the
+request BODY - not in a cookie, because cookies are exactly what the attacker gets for free.
+
+The security property is not that the token is unguessable in isolation; it is that reading it requires
+fetching a page from your origin, which the same-origin policy forbids.
+
+    if origin and origin != 'http://bank.local':
+        self._send(403,b'{"error":"bad origin"}'); return
+
+The Origin check - three lines, and MEASURED as blocking the attack outright.
+
+The subtlety is the leading `if origin`: when the header is ABSENT this code allows the request. That is a
+deliberate choice with a real consequence, and every implementation has to make it. Rejecting absent
+Origins is safer and breaks some legitimate clients; allowing them leaves a gap for anything that can
+suppress the header.
+
+    cookie = f'session={sid}; Path=/; HttpOnly; SameSite={Bank.samesite}'
+
+`HttpOnly` stops JavaScript reading the cookie - which does NOTHING for CSRF, because the attack never
+reads it. It matters for XSS, and XSS defeats CSRF defences, so it belongs here anyway.
+
+`SameSite` is the parameter that would stop the attack at the browser. My test client is not a browser and
+therefore ignores it entirely - which is itself the demonstration that SameSite is a browser behaviour
+rather than a server-enforced rule.
+
+    same  = attack(cookie,'http://bank.local',  token if d=='token' else None)
+    cross = attack(cookie,'http://evil.example', token if d=='token' else None)
+    notoken = attack(cookie2,'http://evil.example', 'guessed-wrong' if d=='token' else None)
+
+Three scenarios per defence, and the THIRD is the realistic one. The second hands the attacker the correct
+token, which no real attacker has - it is there to show the token check is not simply rejecting everything
+cross-site.
+
+Reporting all three is what keeps the table honest: without the third column, "CSRF token: cross-site
+SUCCEEDED" would read as a failure of the defence rather than as an artefact of the simulation.
+
+    BAL[user] -= int(form.get('amount','0'))
+
+The side effect, executed before any response is written. This is the line that makes CORS irrelevant: by
+the time a browser would have inspected response headers, the balance has already changed.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the attack, against a real server.
+
+    step                                          result
+    ------------------------------------------   -----------------------------------
+    user logs in at bank.local                    session cookie set
+    user visits evil.example                      the attacker's page loads
+    the page auto-submits a form to bank.local     browser attaches the bank cookie
+    server checks the session                      valid - it IS the user
+    server executes the transfer                   balance 1,000 -> 900
+    browser may block the response                 IRRELEVANT, the transfer happened
+
+    measured result: SUCCEEDED, balance 1,000 -> 900
+
+Every step is normal behaviour. Nothing was stolen, nothing was decrypted, and no bug was exploited - the
+browser did exactly what it is specified to do.
+
+TRACE B - what an attacker can send cross-site.
+
+    vector                              method   sent?          why
+    ---------------------------------   ------   ------------   ------------------------------
+    <img src=...>                       GET      yes            no preflight, fires on load
+    <form method=POST> auto-submitted   POST     yes            SIMPLE request, no preflight
+    <form enctype=text/plain>           POST     yes            can approximate a JSON body
+    fetch() with JSON content-type      POST     PREFLIGHTED    blocked without CORS approval
+    fetch() with a custom header        any      PREFLIGHTED    blocked without CORS approval
+    PUT / DELETE via a form             -        IMPOSSIBLE     forms do GET and POST only
+
+Rows 1-3 are reachable from any website. Rows 4-5 are blocked by the PREFLIGHT - not by CORS permissions,
+but because the browser will not send them at all without prior approval.
+
+That gives a cheap hardening rule: accept only `application/json` and require a custom header, and rows
+1-3 can no longer reach you.
+
+TRACE C - the defences, measured.
+
+    defence         same-site   cross-site (with token)   REALISTIC attacker (no token)
+    -------------   ---------   -----------------------   -----------------------------
+    none            SUCCEEDED   SUCCEEDED                 SUCCEEDED
+    CSRF token      SUCCEEDED   SUCCEEDED                 blocked (403)
+    Origin check    SUCCEEDED   blocked (403)             blocked (403)
+
+The third column is the one that matters. The second column hands the attacker a valid token, which is not
+a threat model - it is there to confirm the check is not simply rejecting all cross-site traffic.
+
+Both real defences leave the legitimate same-site request working, which is the other half of the
+requirement.
+
+TRACE D - SameSite, and its gaps.
+
+    mode      cookie attached on                         blocks a cross-site POST?   caveat
+    -------   ----------------------------------------   -------------------------   ---------------
+    None      every cross-site request                    NO                          the old behaviour
+    Lax       top-level GET navigations only              YES                         the DEFAULT now
+    Strict    never cross-site                            YES                         breaks email links
+
+    what Lax does NOT cover:
+      an old browser that ignores the attribute
+      an app that sets SameSite=None deliberately (embedding, third-party widgets)
+      HTTP Basic auth and client certificates - unaffected by SameSite entirely
+      a state-changing GET - Lax permits top-level GET navigation
+
+The last row is the practical one. `SameSite=Lax` blocks cross-site POSTs and permits cross-site GET
+navigations, so `GET /account/delete` remains exploitable by a link. The defence assumes your GETs are
+safe.
+
+TRACE E - the mechanisms, and which problem each solves.
+
+    mechanism               governs                            stops CSRF   protects server
+    ---------------------   --------------------------------   ----------   ---------------
+    same-origin policy      READING cross-origin responses      no           no
+    CORS                    opting IN to being read             NO           NO
+    SameSite cookie         whether the COOKIE is attached      largely      no
+    CSRF token              proving the request was intended    YES          no
+    Origin / Referer check  where the request came from         YES          no
+    authentication          who may call the endpoint           no           YES
+
+Only the bottom row protects the server; only the middle three stop CSRF; and CORS does neither. Reaching
+for CORS is the specific mistake this table exists to prevent.
+
+TRACE F - why XSS breaks all of it.
+
+    attacker position          can read the CSRF token?   can send same-origin requests?   defences left
+    ------------------------   ------------------------   -----------------------------   -------------
+    a page on evil.example     NO (same-origin policy)     no                              token, Origin,
+                                                                                            SameSite all work
+    XSS running IN your page   YES                         YES                             NONE
+
+Every CSRF defence assumes the attacker is OUTSIDE your origin. XSS puts them inside it, where they can
+read the token from the DOM and issue requests that are same-origin by definition.
+
+So CSRF and XSS defences are not alternatives, and an application with an XSS hole has no working CSRF
+protection regardless of how carefully the tokens are implemented.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE MEASUREMENTS:
+
+    the attack        a cross-site form POST against an undefended server SUCCEEDED,
+                      balance 1,000 -> 900, with the attacker reading nothing
+    reachable vectors <img> GET and auto-submitted form POST need no permission and no preflight;
+                      JSON and custom-header requests are PREFLIGHTED and blocked
+    defences          no defence: cross-site SUCCEEDED
+                      CSRF token: realistic attacker blocked (403)
+                      Origin check: cross-site blocked (403)
+                      both leave the legitimate same-site request working
+
+COST: a synchroniser token is one server-side value per session and one hidden field. An Origin check is
+three lines. SameSite is one cookie attribute. None of this is expensive - the cost is remembering to do
+it on every state-changing endpoint.
+
+THE MISTAKES:
+
+    - Believing CORS prevents CSRF. It governs READING; the attack never reads anything.
+    - Relying on SameSite alone. It is a browser DEFAULT, not a server guarantee, and it permits
+      cross-site GET navigations.
+    - Changing state on a GET. Still reachable under `SameSite=Lax` via a plain link.
+    - Exempting the login form. Login CSRF puts the victim into the ATTACKER's account.
+    - Plain double-submit cookies, which a sibling subdomain can forge. Sign them.
+    - Checking `Referer` alone - it is stripped often enough that you will end up allowing the empty case.
+    - Allowing requests with no `Origin` header without deciding that deliberately.
+    - Putting the CSRF token in a cookie only. The attacker gets cookies for free; it must be in the body
+      or a header.
+    - Thinking a token proves INTENT. It proves the request came from your page - dangerous actions need
+      re-authentication.
+    - Assuming bearer tokens make you safe overall. They remove CSRF and move the risk to XSS and token
+      storage.
+    - Ignoring XSS because CSRF is handled. XSS runs inside your origin and defeats every CSRF defence.
+    - Accepting form-encoded bodies on an API that only needs JSON, which keeps the easiest vector open
+      for no reason.
+
+THE TAKEAWAY. CSRF works because cookie authentication is AMBIENT - the browser attaches credentials based
+on the destination, not on who initiated the request - so any page on the internet can cause an
+authenticated request to your server. Measured against a real server, an undefended endpoint transferred
+money from a cross-site form while the attacker read nothing at all, which is precisely why CORS is
+irrelevant: the side effect IS the attack. The defences that measured as working are a TOKEN the attacker
+cannot read (blocked with 403), an ORIGIN header they cannot forge (blocked with 403), and a SameSite
+cookie the browser will not attach - and you want all three, because SameSite is a browser default rather
+than a server guarantee and it still permits state-changing GETs. Finally, none of it survives XSS, which
+runs inside your origin and can simply read the token.""",
+]
+
+_EX_P1AO["CUPED (variance reduction)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - most of the variation in an A/B test metric has nothing to do with your
+experiment. Heavy users were always heavy users. CUPED subtracts the part you could already have predicted
+from BEFORE the experiment started.
+
+Less noise means a smaller sample for the same confidence, which means a shorter test.
+
+MEASURED ON THIS MACHINE - the variance reduction against the correlation between a user's pre-experiment
+behaviour and their in-experiment metric:
+
+    corr(pre, post)   metric variance      after CUPED   reduction   rho^2
+    ---------------   ----------------   ------------   ---------   -----
+               0.00              98.53          98.53        0.0%    0.0%
+               0.30              98.21          89.66        8.7%    9.0%
+               0.50              98.22          73.90       24.8%   25.0%
+               0.70              98.52          50.25       49.0%   49.0%
+               0.90              99.27          18.72       81.1%   81.0%
+               0.95              99.56           9.61       90.4%   90.2%
+
+The reduction is EXACTLY rho-squared, to within a rounding error at every level.
+
+That is unusually useful, because it means you can predict the benefit BEFORE running anything: take last
+month's data, correlate a user's pre-period metric against their next-period metric, square it, and that
+is the variance reduction you will get.""",
+
+    """2. THE INTUITION - you already know a lot about each user before the experiment starts, and the standard
+analysis throws that knowledge away.
+
+If Alice spent 200 dollars a month for the last six months and Bob spent 5, then observing Alice spend 210
+and Bob spend 6 tells you almost nothing about your treatment - it tells you Alice is Alice. CUPED
+subtracts each user's PREDICTABLE component and analyses what is left.
+
+The mechanism is one line: `adjusted = post - theta * (pre - mean(pre))`, where theta is the regression
+coefficient of post on pre. It is a covariate adjustment, and the covariate is the user's own past.
+
+WHAT THAT BUYS, and it is the part that matters commercially. Required sample size scales with VARIANCE, so
+an 81% variance reduction is an 81% reduction in the users you need:
+
+    corr   variance reduction   sample needed vs plain   a 14-day test becomes
+    ----   ------------------   ---------------------   ---------------------
+    0.00                 0.0%                  100.0%              14.0 days
+    0.30                 9.0%                   91.0%              12.7 days
+    0.50                25.0%                   75.0%              10.5 days
+    0.70                49.0%                   51.0%               7.1 days
+    0.80                64.0%                   36.0%               5.0 days
+    0.90                81.0%                   19.0%               2.7 days
+    0.95                90.2%                    9.8%               1.4 days
+
+At a correlation of 0.9 - which is entirely realistic for engagement or spend metrics, where a user's past
+strongly predicts their future - you need 19% of the users, or the same users for 19% of the time. A
+two-week test becomes under three days.
+
+That is the whole product argument: the same decision, five times sooner, at no cost in rigour.""",
+
+    """3. EVERY TERM DEFINED.
+
+CUPED. Controlled-experiment Using Pre-Experiment Data. A variance-reduction method for randomised
+experiments.
+
+COVARIATE. A variable measured on each unit that is correlated with the outcome. Here, the user's own
+pre-experiment metric.
+
+PRE-PERIOD / PRE-EXPERIMENT WINDOW. The time before randomisation from which the covariate is computed.
+Typically 1-4 weeks.
+
+theta. The adjustment coefficient - `cov(post, pre) / var(pre)`, which is the regression slope of the
+outcome on the covariate.
+
+VARIANCE REDUCTION. MEASURED as exactly rho^2, the squared correlation between covariate and outcome.
+
+STATISTICAL POWER. The probability of detecting a real effect. MEASURED below as rising by up to 45
+percentage points.
+
+MINIMUM DETECTABLE EFFECT (MDE). The smallest effect your test can reliably detect. Falls with the
+standard deviation, so CUPED lowers it by a factor of sqrt(1 - rho^2).
+
+UNBIASED. The estimate is centred on the truth. MEASURED below - CUPED reduces variance WITHOUT shifting
+the estimate, which is the property that makes it acceptable at all.
+
+PRE-TREATMENT. Measured strictly before randomisation, so the treatment cannot have influenced it. The
+condition that makes CUPED valid - see section 4.
+
+POST-TREATMENT VARIABLE. A covariate influenced by the treatment. Using one is the classic and severe
+error.
+
+REGRESSION ADJUSTMENT / ANCOVA. The general statistical framework CUPED is a special case of.
+
+STRATIFICATION. Splitting users into groups and analysing within them. An older, coarser variance
+reduction.
+
+VARIANCE-WEIGHTED / TRIGGERED ANALYSIS. Restricting analysis to users who could actually be affected.
+Another route to the same goal, and often larger than CUPED's.
+
+WINSORISATION / CAPPING. Clipping extreme values. Reduces variance and introduces bias, unlike CUPED.
+
+NOVELTY EFFECT. A short-term behaviour change from a feature being new. A reason the pre-period must not
+be adjacent to a previous experiment on the same users.
+
+SRM (sample ratio mismatch). Assignment not splitting as intended. Unrelated to CUPED and the first thing
+to check in any experiment.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - using a covariate that the treatment can influence. It looks like
+a better covariate, and it destroys the estimate.
+
+MEASURED, with a TRUE effect of 0.50 and a covariate progressively contaminated by the treatment:
+
+    covariate contamination   mean estimate error   what you would conclude
+    -----------------------   -------------------   ----------------------------------
+                        0.0                +0.0003   correct: the effect is 0.50
+                        0.3                -2.0675   the feature is HARMFUL
+                        0.6                -3.8882   the feature is severely harmful
+
+Read the second and third rows. The true effect is +0.50. With a contaminated covariate the estimate is
+-2.07 and -3.89 - not merely attenuated toward zero, but driven far PAST zero into strongly negative
+territory.
+
+So you would ship a rollback of a feature that was working. And nothing in the output signals it: the
+confidence interval is tight, the p-value is small, the analysis runs cleanly.
+
+The mechanism is simple once stated. CUPED subtracts `theta * (covariate - mean)`. If the treatment
+RAISED the covariate, then treated users have a larger subtraction applied, and the adjustment removes the
+very effect you are measuring - and then keeps going.
+
+THE RULE: THE COVARIATE MUST COME FROM STRICTLY BEFORE RANDOMISATION. Not "before the feature was
+visible", not "early in the experiment" - before the user was assigned. Anything computed during the
+experiment window is disqualified, however predictive it looks.
+
+THE SECOND TRAP - assuming any variance reduction technique is as safe as this one. It is not. MEASURED,
+the false-positive rate with NO true effect present, which should sit at the nominal 5%:
+
+    n       corr   false positives PLAIN   false positives CUPED
+    -----   ----   ---------------------   ---------------------
+    2,000   0.50                    5.0%                    4.4%
+    2,000   0.90                    4.6%                    4.5%
+    5,000   0.90                    3.9%                    5.0%
+
+Both hover around 5%. CUPED is UNBIASED - it reduces variance without shifting the estimate or inflating
+the error rate - because the covariate is fixed before randomisation and is therefore balanced between the
+arms in expectation.
+
+Compare that with capping or winsorising outliers, which also reduces variance and DOES bias the estimate,
+or with removing "anomalous" users post hoc, which biases it badly and invisibly.
+
+THE THIRD TRAP - expecting CUPED to help when there is no history. It gives exactly zero benefit at
+correlation 0, which means it does nothing for new users, for a metric nobody had before the experiment,
+or for a first-session conversion rate. MEASURED: 0.0% reduction at rho = 0.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+DOES IT ACTUALLY IMPROVE DECISIONS? MEASURED as power - the probability of detecting a real effect -
+across simulated A/B tests:
+
+    n       corr   true effect   power PLAIN   power CUPED   improvement
+    -----   ----   -----------   -----------   -----------   -----------
+    2,000   0.70          0.40         15.0%         27.0%     +12.0 pp
+    2,000   0.70          0.60         25.8%         48.2%     +22.5 pp
+    2,000   0.90          0.40         18.2%         55.0%     +36.8 pp
+    5,000   0.70          0.30         16.0%         30.2%     +14.2 pp
+    5,000   0.90          0.30         20.5%         65.8%     +45.2 pp
+
+At a correlation of 0.9, power went from 20.5% to 65.8% on the same data - a three-fold improvement in the
+chance of detecting a real effect, with no extra users and no extra time.
+
+Note the shape: the benefit is largest where the plain test is WEAKEST. A test with 90% power gains
+little; a test with 20% power - which is where most real experiments sit - gains enormously.
+
+THE VARIANCE-REDUCTION FAMILY, and what each costs:
+
+    CUPED                       uses a PRE-period covariate. Unbiased. MEASURED reduction = rho^2.
+                                Needs history, so it does nothing for new users.
+    CUPAC                       CUPED with a MACHINE-LEARNED covariate - predict the outcome from many
+                                pre-period features instead of one. Higher rho, therefore more
+                                reduction, at the cost of a model to maintain.
+    STRATIFICATION / BLOCKING   randomise within groups (country, platform, decile of past activity).
+                                Coarser than CUPED, and it works at assignment time rather than analysis
+                                time.
+    TRIGGERED ANALYSIS          analyse only users who could actually have been affected. Frequently the
+                                LARGEST single win available, because untriggered users contribute pure
+                                noise - and it changes the population you are describing, which must be
+                                stated.
+    VARIANCE-WEIGHTED ESTIMATORS  weight users by their precision.
+    WINSORISATION / CAPPING     clip extreme values. Reduces variance and INTRODUCES BIAS, unlike
+                                everything above.
+    SWITCHBACK / PAIRED DESIGNS for marketplace and network effects, where user-level randomisation is
+                                invalid anyway.
+    LONGER TESTS                the option CUPED is competing with - and it costs calendar time, which is
+                                usually the scarcest resource.
+
+CHOOSING: apply CUPED first because it is unbiased, cheap, and mechanical. Then consider triggering,
+which is often larger. Reach for CUPAC when a single covariate leaves rho well below what a model could
+achieve. Avoid capping unless you can justify the bias.
+
+WHERE THE CORRELATION COMES FROM, in practice:
+    the SAME metric in the pre-period is usually the best single covariate;
+    a longer pre-window raises rho up to a point, then stops - user behaviour drifts;
+    heavy-tailed metrics (revenue, sessions) have high rho and benefit most;
+    binary and rare metrics (conversion, signup) have low rho and benefit least;
+    metrics with no pre-period value at all - first-session behaviour - get nothing.""",
+
+    """6. HOW TO CODE IT.
+
+  1. THE ADJUSTMENT IS TWO LINES:
+         theta = cov(post, pre) / var(pre)
+         adjusted = post - theta * (pre - pre.mean())
+     Then analyse `adjusted` exactly as you would have analysed `post`.
+  2. COMPUTE theta ON THE POOLED DATA (both arms together), not per arm. Estimating it separately lets the
+     treatment influence the adjustment.
+  3. THE COVARIATE MUST BE STRICTLY PRE-RANDOMISATION. MEASURED: contamination turned a true +0.50 effect
+     into an estimate of -2.07. Not "early in the experiment" - before assignment.
+  4. PREDICT THE BENEFIT BEFORE YOU RUN. Correlate the pre-period metric against the next period on
+     historical data and square it. MEASURED as exactly rho^2, so this estimate is reliable.
+  5. USE THE SAME METRIC AS THE COVARIATE where possible - a user's past revenue for a revenue metric. It
+     usually gives the highest correlation for the least effort.
+  6. HANDLE USERS WITH NO PRE-PERIOD DATA explicitly. Assign them the population mean (which contributes
+     zero adjustment) rather than dropping them - dropping changes the population and can bias the result.
+  7. CHECK THE COVARIATE IS BALANCED across arms as a sanity check. A large imbalance means your
+     randomisation is broken, and CUPED will not fix that.
+  8. VERIFY IT IS UNBIASED ON YOUR OWN DATA with an A/A test. MEASURED at a 4.4-5.0% false-positive rate
+     against a nominal 5%.
+  9. DO NOT EXPECT IT TO HELP NEW USERS. MEASURED at 0.0% reduction with no correlation.
+ 10. CONSIDER TRIGGERED ANALYSIS TOO - restricting to users who could have been affected is often a larger
+     win than CUPED, and the two compose.
+ 11. REPORT THE VARIANCE REDUCTION ACHIEVED alongside the result. It tells the reader how much of your
+     confidence came from the adjustment.
+ 12. DO NOT CAP OR WINSORISE AS A SUBSTITUTE. That reduces variance by introducing bias; CUPED does not.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Most of the variation in an A/B test metric has nothing to do with your experiment - heavy users were
+always heavy users. CUPED subtracts the part of each user's metric you could have predicted from their
+behaviour BEFORE the experiment started, and analyses what is left.
+
+The mechanism is one line: adjusted equals post minus theta times pre-minus-its-mean, where theta is the
+regression slope of the outcome on the covariate.
+
+I measured the variance reduction against the correlation between a user's pre-period and in-experiment
+metric, and it comes out at exactly rho-squared - 49.0% measured at a correlation of 0.7, 81.1% at 0.9. That
+is unusually useful, because it means you can predict the benefit before running anything: correlate last
+month against this month on historical data, square it, and that is what you will get.
+
+And since required sample size scales with variance, an 81% variance reduction is an 81% reduction in the
+users you need. At a correlation of 0.9 - realistic for engagement or spend, where a user's past strongly
+predicts their future - you need 19% of the sample. A fourteen-day test becomes under three days.
+
+I checked it actually improves decisions rather than just looking good on paper. Simulating A/B tests with
+a real effect present, power went from 20.5% to 65.8% at a correlation of 0.9 - roughly tripling the chance
+of detecting a real effect on the same data. And the benefit is largest where the plain test is weakest,
+which is where most real experiments sit.
+
+The critical property is that it is UNBIASED. I ran it with no true effect present and the false-positive
+rate stayed at 4.4 to 5.0% against a nominal 5%. It reduces variance without shifting the estimate, because
+the covariate is fixed before randomisation and is therefore balanced between the arms in expectation. That
+distinguishes it from capping outliers, which also reduces variance and does bias the result.
+
+The failure mode I would emphasise is using a covariate the treatment can influence. I simulated that with
+a true effect of plus 0.50, and a contaminated covariate produced an estimate of MINUS 2.07 - not just
+attenuated, but driven far past zero. You would roll back a feature that was working, with a tight
+confidence interval and a small p-value and nothing at all signalling the problem. The rule is that the
+covariate must come from strictly before randomisation - not early in the experiment, before assignment.
+
+And it does nothing when there is no history - zero reduction at zero correlation - so it does not help
+with new users or first-session metrics."
+
+THE ONE SENTENCE TO NOT FUMBLE: the variance reduction is exactly rho-squared, so you can predict it from
+historical data before running anything - and the covariate must be strictly pre-randomisation, because a
+contaminated one turned a true +0.50 effect into a measured -2.07.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def cuped(pre, post):
+        theta = np.cov(post, pre, ddof=1)[0,1] / np.var(pre, ddof=1)
+        return post - theta*(pre - pre.mean())
+
+The entire method. `theta` is `cov(post, pre)/var(pre)`, which is exactly the least-squares slope of post
+regressed on pre - so this is a regression adjustment written out by hand.
+
+The `- pre.mean()` is what keeps it UNBIASED. Subtracting a centred covariate leaves the overall mean of
+the adjusted metric unchanged, so the estimate of the treatment effect is not shifted - only its variance
+falls.
+
+Note theta is computed on the POOLED data, both arms together. Estimating it separately per arm would let
+the treatment influence the adjustment and reintroduce bias.
+
+    vr = 1 - np.var(adj, ddof=1)/np.var(post, ddof=1)
+
+Variance reduction as a ratio, compared directly against `rho**2` in the output. Printing the theoretical
+prediction NEXT TO the measurement is what turns "CUPED reduces variance" into "CUPED reduces variance by
+exactly rho-squared, confirmed at six correlation levels".
+
+    post = rho*pre/np.std(pre) + np.sqrt(max(0,1-rho**2))*e
+
+The data generator, constructing a post-period metric with a SPECIFIED correlation to the pre-period. The
+`sqrt(1-rho^2)` weight on the independent noise is what makes the resulting correlation exactly `rho`
+rather than approximately it - which matters because the whole result is a comparison against `rho^2`.
+
+    assign = rng.random(n) < 0.5
+    y = post + assign*effect
+
+Randomisation and the treatment effect. Crucially `assign` is drawn AFTER `pre` is generated and does not
+influence it - which is the valid case. Section E deliberately breaks this.
+
+    bad = pre + corr_with_effect*assign*10
+
+The contamination. The covariate now contains a term proportional to `assign`, which is exactly what
+happens when you use a metric measured DURING the experiment.
+
+CUPED then computes theta against this contaminated covariate and subtracts `theta*(bad - mean)` - and
+since `bad` is larger for treated users, the subtraction is larger for treated users, removing the effect
+and overshooting. MEASURED at -2.07 against a true +0.50.
+
+    if abs(a.mean()-b.mean())/se > 1.96: hits += 1
+
+The significance test, applied identically to the plain and adjusted metrics. Using the SAME test on both
+is what makes the power comparison fair - the only difference between the two arms of the comparison is
+which metric was fed in.
+
+    p, c = run_trials(n_, rho, 0.0, trials=800)
+
+The A/A check: the same machinery with `effect=0.0`. If CUPED were biased or if it inflated the error
+rate, this would show up as a false-positive rate above 5%. MEASURED at 4.4-5.0%, which is the evidence
+that the method is safe to use, not merely effective.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - variance reduction equals rho-squared.
+
+    corr    variance before   variance after   reduction   rho^2    difference
+    -----   ---------------   --------------   ---------   -----   ----------
+    0.00              98.53            98.53        0.0%    0.0%       0.0 pp
+    0.30              98.21            89.66        8.7%    9.0%      -0.3 pp
+    0.50              98.22            73.90       24.8%   25.0%      -0.2 pp
+    0.70              98.52            50.25       49.0%   49.0%       0.0 pp
+    0.90              99.27            18.72       81.1%   81.0%      +0.1 pp
+    0.95              99.56             9.61       90.4%   90.2%      +0.2 pp
+
+Agreement to within 0.3 percentage points at every level. This is a theorem confirmed rather than an
+empirical regularity, and it is what makes the benefit predictable in advance.
+
+The top row matters too: at zero correlation the reduction is exactly zero. CUPED cannot manufacture
+information that the covariate does not contain.
+
+TRACE B - what the reduction buys.
+
+    corr   variance reduction   sample size needed   14-day test   speed-up
+    ----   ------------------   ------------------   -----------   --------
+    0.00                 0.0%               100.0%     14.0 days       1.0x
+    0.30                 9.0%                91.0%     12.7 days       1.1x
+    0.50                25.0%                75.0%     10.5 days       1.3x
+    0.70                49.0%                51.0%      7.1 days       2.0x
+    0.80                64.0%                36.0%      5.0 days       2.8x
+    0.90                81.0%                19.0%      2.7 days       5.3x
+    0.95                90.2%                 9.8%      1.4 days      10.2x
+
+Sample size scales with variance, so the second and third columns are the same number. The curve is sharply
+non-linear: correlation 0.5 buys 1.3x, and 0.9 buys 5.3x - because the benefit is rho^2 rather than rho.
+
+That non-linearity is why it is worth investing in a BETTER covariate (CUPAC, a longer pre-window) rather
+than settling for a mediocre one.
+
+TRACE C - measured power, with a real effect present.
+
+    n       corr   effect   power PLAIN   power CUPED   improvement   relative
+    -----   ----   ------   -----------   -----------   -----------   --------
+    2,000   0.70     0.40         15.0%         27.0%      +12.0 pp      1.80x
+    2,000   0.70     0.60         25.8%         48.2%      +22.5 pp      1.87x
+    2,000   0.90     0.40         18.2%         55.0%      +36.8 pp      3.02x
+    5,000   0.70     0.30         16.0%         30.2%      +14.2 pp      1.89x
+    5,000   0.90     0.30         20.5%         65.8%      +45.2 pp      3.21x
+
+The relative column clusters by correlation: about 1.85x at rho=0.7 and about 3.1x at rho=0.9, regardless
+of n or effect size. That consistency is the theory showing through - the improvement depends on the
+variance ratio, not on the specifics.
+
+Every row starts from LOW plain power (15-26%), which is deliberate and realistic: most experiments are
+underpowered, and that is exactly where a 3x improvement changes decisions.
+
+TRACE D - the unbiasedness check, with NO true effect.
+
+    n       corr   false positives PLAIN   false positives CUPED   nominal
+    -----   ----   ---------------------   ---------------------   -------
+    2,000   0.50                    5.0%                    4.4%      5.0%
+    2,000   0.90                    4.6%                    4.5%      5.0%
+    5,000   0.90                    3.9%                    5.0%      5.0%
+
+Both columns sit at the nominal rate. CUPED buys variance reduction without buying false positives, which
+is the property that makes it acceptable in a decision-making process at all.
+
+This is the check that distinguishes it from outlier capping, which also narrows the distribution and does
+shift the estimate.
+
+TRACE E - the failure, and how severe it is.
+
+    covariate contamination   mean estimate error   estimate    true effect   conclusion
+    -----------------------   -------------------   ---------   -----------   ----------------
+                        0.0               +0.0003      0.5003          0.50   correct
+                        0.3               -2.0675     -1.5675          0.50   "harmful"
+                        0.6               -3.8882     -3.3882          0.50   "very harmful"
+
+The estimate does not merely shrink toward zero - it crosses zero and lands strongly negative. A team
+reading row 2 would roll back a feature that was delivering a +0.50 improvement.
+
+And the analysis gives no warning: the interval is narrow, the p-value is small, and the code runs
+cleanly. The only defence is the discipline of using a strictly pre-randomisation covariate.
+
+TRACE F - where the correlation comes from, and therefore where CUPED helps.
+
+    metric type                        typical rho   CUPED benefit
+    -------------------------------   -----------   -------------
+    revenue / spend per user               high      large - past spend predicts future spend
+    sessions / engagement                  high      large
+    time on site                           medium    moderate
+    conversion rate (binary, frequent)     low-med   modest
+    signup / first purchase (rare)         very low  little
+    anything for a BRAND-NEW user          0         NONE - measured at 0.0% reduction
+
+The bottom row is the structural limit. CUPED uses the user's own past; a user with no past contributes no
+adjustment. So it is most valuable exactly where experimentation is hardest - heavy-tailed engagement and
+revenue metrics - and useless for first-session behaviour.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    variance reduction   EXACTLY rho^2, confirmed within 0.3 pp at six correlation levels
+                         (49.0% measured at rho=0.7, 81.1% at rho=0.9, 0.0% at rho=0)
+    sample size          scales with variance, so rho=0.9 needs 19.0% of the users
+                         -> a 14-day test becomes 2.7 days (5.3x)
+    power                20.5% -> 65.8% at rho=0.9 (3.21x); 15.0% -> 27.0% at rho=0.7 (1.80x)
+    unbiasedness         false-positive rate 4.4-5.0% against a nominal 5%, matching the plain test
+    the failure          a treatment-contaminated covariate turned a true +0.50 effect into an
+                         estimate of -1.57 (error -2.07) and -3.39 (error -3.89)
+
+COMPLEXITY: two lines and one pass over the data - a covariance and a variance. The cost is entirely in the
+DATA PIPELINE: you need each user's pre-period metric joined to their experiment record, which is usually
+the actual work.
+
+THE MISTAKES:
+
+    - Using a covariate the treatment can influence. MEASURED: a true +0.50 effect estimated at -1.57,
+      with no warning in the output.
+    - Computing theta per arm instead of pooled, which lets the treatment affect the adjustment.
+    - Dropping users with no pre-period data. Assign them the mean instead - dropping changes the
+      population.
+    - Expecting a benefit where there is no history. MEASURED at 0.0% reduction for rho=0.
+    - Not predicting the benefit first. It is exactly rho^2 from historical data, so there is no reason to
+      be surprised.
+    - Substituting capping or winsorising, which reduce variance by introducing bias.
+    - Removing "anomalous" users after seeing the results. Badly and invisibly biasing.
+    - Assuming CUPED fixes a broken randomisation. Check the covariate is balanced across arms; if it is
+      not, the problem is upstream.
+    - Using a pre-window that overlaps a previous experiment on the same users, so the covariate carries a
+      prior treatment effect.
+    - Never running an A/A test to confirm the false-positive rate on your own data.
+    - Reporting the result without the variance reduction achieved, so the reader cannot tell how much of
+      the confidence came from the adjustment.
+    - Reaching for CUPED before triggered analysis, which is frequently the larger win.
+
+THE TAKEAWAY. CUPED removes the part of an experiment metric you could already have predicted from the
+user's own past, and the variance reduction is exactly the SQUARED correlation between the two - measured
+at 49.0% for rho=0.7 and 81.1% for rho=0.9, matching theory to within 0.3 percentage points. Because
+sample size scales with variance, that is a direct reduction in users or in calendar time: at rho=0.9 you
+need 19% of the sample, so a fourteen-day test finishes in under three days, and measured power tripled
+from 20.5% to 65.8%. Crucially it is UNBIASED - the false-positive rate stayed at the nominal 5% - which
+is what separates it from capping outliers. The one rule that must not be broken is that the covariate
+comes from strictly BEFORE randomisation: a contaminated one turned a genuine +0.50 improvement into a
+measured -1.57, and nothing in the analysis warns you.""",
+]
+
+_EX_P1AO["Cache stampede"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - when a popular cache key expires, EVERY request that arrives in the next
+few milliseconds misses at once, and they all recompute the same value simultaneously.
+
+The cache was absorbing all of that load a moment earlier. At the instant of expiry it absorbs none of it,
+and the full request rate lands on the database.
+
+MEASURED ON THIS MACHINE with real threads - 400 requests/second on ONE hot key, a 1-second TTL, and 80 ms
+to recompute:
+
+    strategy            requests   DB calls   peak concurrent   p99 ms
+    -----------------   --------   --------   ---------------   ------
+    naive TTL cache         1,200         99                33     80.4
+    single-flight (lock)    1,200          3                 1     59.5
+
+The naive cache made 99 database calls in 3 seconds for a single key. The ideal is 3 - one per TTL
+expiry. So a 33x amplification, with up to 33 identical queries running at the same instant.
+
+And nothing is broken. The cache is working exactly as designed; the TTL expired and the requests missed.
+That is the whole failure mode.""",
+
+    """2. THE INTUITION - the expiry is a SYNCHRONISATION EVENT. It converts independent requests into a
+simultaneous herd.
+
+The size of the herd is not a property of your cache. It is (request rate) x (time to recompute) - every
+request that arrives between the first miss and the first successful repopulation also misses.
+
+MEASURED as arithmetic:
+
+    request rate   recompute time   requests that miss before the first one finishes
+    ------------   --------------   -----------------------------------------------
+          10 /s             10 ms                                                 0
+          10 /s             80 ms                                                 1
+          10 /s            500 ms                                                 5
+         100 /s             10 ms                                                 1
+         100 /s             80 ms                                                 8
+         100 /s            500 ms                                                50
+         400 /s             80 ms                                                32
+       2,000 /s             10 ms                                                20
+       2,000 /s            500 ms                                             1,000
+
+That table explains why this problem APPEARS SUDDENLY. At 10 requests per second against a 10 ms query,
+the herd is 0.1 requests - it does not exist. At 2,000 requests per second against a 500 ms query it is
+1,000 simultaneous identical queries, which is an outage.
+
+Both numbers come from the same code. Nothing changed except traffic and query time, and the failure mode
+switched on. That is why cache stampedes tend to arrive during a traffic spike, on the most popular key,
+at the worst moment - all three factors point the same way.
+
+And the cruel part: the MORE effective your cache is, the worse the stampede, because a high hit rate means
+the database has been sized for the cached load and has no headroom for the uncached burst.""",
+
+    """3. EVERY TERM DEFINED.
+
+CACHE STAMPEDE. Many concurrent requests missing the same key and all recomputing it. Also called dog-piling
+or a thundering herd on cache.
+
+THUNDERING HERD. The general phenomenon of many waiters waking simultaneously.
+
+TTL. Time to live. How long an entry stays valid, and the thing whose expiry synchronises the herd.
+
+HERD SIZE. (request rate) x (recompute time). MEASURED as up to 1,000 at realistic numbers.
+
+SINGLE-FLIGHT / REQUEST COALESCING. Only one request recomputes; the others wait for it or serve stale.
+MEASURED as reducing 99 database calls to 3.
+
+MUTEX / LOCK-ON-MISS. The implementation of single-flight. Needs to be distributed if you have many
+application servers.
+
+DISTRIBUTED LOCK. A lock in the cache itself (`SET key NX EX`), so coalescing works across processes. The
+local version only prevents a stampede from ONE server.
+
+PROBABILISTIC EARLY EXPIRATION / XFetch. Each request independently decides to refresh slightly before the
+TTL, with a probability that rises as expiry approaches. No lock, no synchronisation point.
+
+STALE-WHILE-REVALIDATE. Serve the expired value immediately and refresh in the background. Nobody waits.
+
+STALE-IF-ERROR. Serve stale data when the recompute FAILS. Different and complementary.
+
+JITTERED TTL. Randomising each key's TTL so keys populated together do not expire together. MEASURED
+below - the fix for the multi-key version.
+
+CACHE PENETRATION. Requests for keys that do NOT exist, so the cache never helps. Fixed by caching the
+negative result or by a Bloom filter.
+
+CACHE AVALANCHE. Many keys expiring at once, or the cache restarting empty. The multi-key stampede.
+
+COLD CACHE / CACHE WARMING. Populating before taking traffic. What prevents an avalanche after a deploy.
+
+NEGATIVE CACHING. Caching "this does not exist" so a missing key does not hit the database repeatedly.
+
+BACKGROUND REFRESH. Recomputing on a schedule rather than on demand. Removes expiry-driven misses
+entirely, at the cost of refreshing keys nobody asked for.
+
+HOT KEY. A single key receiving a disproportionate share of traffic. The prerequisite for a stampede.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - fixing the single-key stampede and leaving the multi-key one,
+which is bigger.
+
+The stampede above is ONE key expiring. The other failure is MANY keys expiring together, which happens
+whenever they were POPULATED together - after a deploy, after a cache flush, after a restart, or after any
+cold start.
+
+MEASURED, 10,000 keys populated at the same moment:
+
+    TTL policy         keys expiring in the same 1-second window
+    ----------------   ----------------------------------------
+    fixed 300 s                                          10,000
+    300 s +/- 10%                                           167
+    300 s +/- 50%                                            33
+
+With a fixed TTL, all 10,000 keys expire in the same second - and then again 300 seconds later, and again,
+forever. The population never de-synchronises on its own, because every repopulation happens at the same
+instant too.
+
+Adding +/-10% jitter spreads them over a 60-second window and takes the peak from 10,000 to 167 - a 60x
+reduction for the cost of one random number at insert time.
+
+THE SECOND TRAP - assuming single-flight is free. MEASURED, what each fix actually costs:
+
+    strategy                     DB calls   peak   stale served   what you give up
+    --------------------------   --------   ----   ------------   -----------------------------
+    naive TTL cache                    99     33              0   nothing
+    single-flight (lock)                3      1             64   the waiting requests BLOCK
+    probabilistic early expiry          5      1              1   slightly more DB calls
+    stale-while-revalidate              3      1             66   users may see stale data
+
+Single-flight is EXACT - three recomputes for three expiries - and the requests that lose the race have to
+wait for the winner, so their latency includes the full recompute time. Under a heavy stampede you have
+converted 33 concurrent queries into 33 concurrent WAITERS, which is better for the database and not free
+for the user.
+
+Probabilistic early expiry avoids the synchronisation point entirely: each request independently decides
+to refresh a little early, so the refresh is spread out and no lock is needed. It costs slightly more
+database calls (5 rather than 3) and it never has a moment where everyone misses at once.
+
+Stale-while-revalidate never makes anyone wait, at the cost of serving data up to one recompute old.
+
+THE THIRD TRAP - a lock that is only LOCAL. A mutex inside one process prevents that process from
+stampeding. With twenty application servers you get twenty concurrent recomputes instead of one - better
+than 400, and still twenty times more than necessary. Coalescing across servers needs the lock to live in
+the shared cache.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE FIXES, and when each is right:
+
+    SINGLE-FLIGHT (lock)          exact, simple, and the losers WAIT. Right when the recompute is fast and
+                                  serving stale data is unacceptable. MEASURED: 99 calls -> 3.
+    STALE-WHILE-REVALIDATE        nobody waits, everyone gets an answer immediately, and some of them get
+                                  slightly old data. Usually the best default for read-heavy web content.
+                                  MEASURED: 3 calls, 66 stale responses.
+    PROBABILISTIC EARLY EXPIRY    no lock, no synchronisation point, spreads refreshes naturally.
+                                  MEASURED: 5 calls. Elegant, and the least-known of the three.
+    JITTERED TTL                  the fix for the MULTI-key version. MEASURED: 10,000 simultaneous
+                                  expiries -> 167. Costs one random number.
+    BACKGROUND REFRESH            recompute on a schedule, never expire on read. Removes expiry-driven
+                                  misses completely, and refreshes keys nobody is asking for.
+    LOCK + SERVE STALE            combine: one request recomputes, everyone else gets the old value
+                                  immediately. The practical best of both.
+
+THE PROBABILISTIC METHOD IS WORTH KNOWING because it is the only one with no coordination at all. Each
+request computes whether to refresh early using `now - delta * beta * ln(random())`, where `delta` is the
+recompute cost - so expensive-to-compute keys refresh earlier, and the decision is independent per
+request. No lock, no distributed coordination, no synchronised moment.
+
+THE RELATED CACHE FAILURES, which are frequently confused with this one:
+
+    CACHE STAMPEDE       one hot key expires, everyone recomputes it. This entry.
+    CACHE AVALANCHE      many keys expire together, or the cache restarts empty. Fixed by JITTER and by
+                         warming, not by single-flight.
+    CACHE PENETRATION    requests for keys that do not exist, so the cache never helps and every request
+                         reaches the database. Fixed by caching the negative result, or a Bloom filter -
+                         see its own entry, where the economics measured 50x at a 99% absent rate.
+    HOT KEY              one key with disproportionate traffic, overloading a single cache shard. Fixed by
+                         local caching in front of the shared cache, or by key splitting.
+    CACHE POISONING      a wrong value cached and served repeatedly. A correctness problem, not a load one.
+
+WHEN NOT TO CACHE AT ALL: if the recompute is cheap and the hit rate is low, the cache adds a network hop
+and a consistency problem for nothing. MEASURED in the herd table - at 10 requests per second against a
+10 ms query the stampede does not exist, and neither does the benefit.
+
+AND THE ARCHITECTURAL POINT worth carrying: a cache that absorbs 99% of your load means your database has
+been sized for 1% of it. That is a coupling, not just an optimisation - the database's capacity is now a
+function of the cache's hit rate, and anything that drops the hit rate suddenly (an expiry, a flush, a
+restart, a deploy) is an instant multi-fold load increase. Sizing the database so it can survive a cold
+cache is expensive; knowing that you have NOT done so is the important part.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE SINGLE-FLIGHT ON HOT KEYS. Go's `singleflight`, a `SET key NX EX` lock in Redis, or a per-key
+     mutex. MEASURED: 99 database calls down to 3.
+  2. MAKE THE LOCK DISTRIBUTED if you have more than one application server. A local mutex gives you one
+     recompute PER SERVER, which is 20 instead of 1 on a 20-server fleet.
+  3. JITTER EVERY TTL. `ttl * (0.9 + 0.2*random())`. MEASURED: 10,000 simultaneous expiries down to 167,
+     for one random number at insert time. This is the highest value-per-line fix in the entry.
+  4. PREFER STALE-WHILE-REVALIDATE for read-heavy content. Nobody waits, and the data is at most one
+     recompute old. MEASURED at 3 database calls with 66 stale responses served.
+  5. CONSIDER PROBABILISTIC EARLY EXPIRY when you want no coordination at all. MEASURED at 5 calls with no
+     lock and no synchronisation point.
+  6. SET THE LOCK'S OWN TTL so a crashed holder does not block every other request forever. This is the
+     bug that turns a stampede fix into an outage.
+  7. CACHE NEGATIVE RESULTS with a short TTL, or a request for a non-existent key reaches the database
+     every single time.
+  8. WARM THE CACHE BEFORE TAKING TRAFFIC after a deploy or a restart - otherwise every key is a miss at
+     once, which is the avalanche rather than the stampede.
+  9. COMPUTE YOUR HERD SIZE: request rate times recompute time. MEASURED as ranging from 0 to 1,000 across
+     realistic parameters, which tells you whether you have a problem at all.
+ 10. ALARM ON THE CACHE MISS RATE, not just on database load. A rising miss rate is the leading indicator;
+     database saturation is the lagging one.
+ 11. KNOW WHAT A COLD CACHE COSTS. If the cache absorbs 99% of reads, a flush is a 100x load spike, and
+     that number should be written down somewhere before it happens.
+ 12. DO NOT ADD A CACHE WHERE THE HERD IS SMALL AND THE QUERY IS CHEAP. It buys a consistency problem and
+     a new failure mode for very little.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A cache stampede is what happens when a popular key expires and every request that arrives in the next
+few milliseconds misses at once, so they all recompute the same value simultaneously.
+
+I measured it with real threads: 400 requests a second on one hot key, a one-second TTL, 80 milliseconds
+to recompute. The naive cache made 99 database calls in three seconds for a single key, with up to 33 of
+them running at the same instant. The ideal is three - one per expiry. So a 33x amplification, and nothing
+is broken; the cache is doing exactly what it was configured to do.
+
+The key insight is that the expiry is a SYNCHRONISATION EVENT. It turns independent requests into a
+simultaneous herd, and the herd size is just request rate times recompute time - every request arriving
+between the first miss and the first repopulation also misses. At 10 requests a second against a 10
+millisecond query that is 0.1 requests, so the problem does not exist. At 2,000 a second against a 500
+millisecond query it is 1,000 simultaneous identical queries. Same code, and the failure mode switches on
+purely from traffic and query time - which is why stampedes arrive suddenly, during a spike, on the most
+popular key.
+
+There's a cruel aspect: the more effective your cache, the worse the stampede, because a 99% hit rate means
+the database has been sized for 1% of the load and has no headroom for the uncached burst.
+
+The fixes each cost something different. Single-flight - one request recomputes, the rest wait - is exact:
+99 calls down to 3. But the losers WAIT, so you have converted 33 concurrent queries into 33 concurrent
+waiters, which is better for the database and not free for the user. Stale-while-revalidate never makes
+anyone wait, at the cost of serving data up to one recompute old. And probabilistic early expiry avoids
+the synchronisation point entirely - each request independently decides to refresh slightly early - which
+costs a couple of extra database calls and needs no lock at all.
+
+The thing I'd flag hardest is that fixing the single-key stampede leaves the bigger problem. If 10,000
+keys were populated together - after a deploy, a flush or a restart - then with a fixed TTL all 10,000
+expire in the same second, and again 300 seconds later, forever. Jittering the TTL by plus or minus 10%
+takes that peak from 10,000 to 167. One random number at insert time, and it is the highest value-per-line
+fix here.
+
+And a practical warning: if the lock has no TTL of its own, a crashed holder blocks everyone permanently -
+which turns your stampede fix into an outage."
+
+THE ONE SENTENCE TO NOT FUMBLE: the herd size is request rate times recompute time, so a stampede switches
+on suddenly as traffic grows - and single-flight fixes ONE key (99 calls to 3) while only jittered TTLs fix
+many keys expiring together (10,000 to 167).""",
+
+    """8. THE CODE LINE BY LINE.
+
+    expired = (v is None) or (now >= exp)
+    if not expired:
+        return                      # a hit
+
+The naive cache in two lines, and there is nothing wrong with it. Every request independently checks the
+expiry, and at the instant `now` crosses `exp` they ALL take the miss branch together.
+
+That is the entire bug - it is not an error, it is a design that has no mechanism for the second, third and
+thirty-third simultaneous miss.
+
+    if single.acquire(blocking=False):
+        try:
+            be.compute()
+            cache['val']=1; cache['exp']=time.perf_counter()+TTL
+        finally: single.release()
+    else:
+        if v is not None: stale_served += 1
+        else:
+            with single: pass       # no stale value: WAIT for the winner
+
+Single-flight. `acquire(blocking=False)` means exactly one request wins the race and recomputes; the rest
+take the `else`.
+
+The `else` branch shows the real design decision. If a stale value exists, serve it - nobody waits. If
+there is nothing at all (a genuinely cold key), the only options are to wait for the winner (`with single:
+pass`) or to fail. That cold-key case is why single-flight alone does not remove all latency.
+
+`finally: single.release()` matters more than it looks: if the recompute throws, the lock must still be
+released or every subsequent request blocks forever. In a DISTRIBUTED lock the equivalent is a TTL on the
+lock key, because a crashed process cannot run a `finally`.
+
+    if now - cache['delta']*beta*math.log(random.random()) >= exp:
+        expired = True
+
+Probabilistic early expiration (XFetch). `log(random())` is negative, so this SUBTRACTS a random amount
+from `now` - equivalently, it pretends the current time is slightly later, with a random offset scaled by
+`delta`, the recompute cost.
+
+Two properties fall out. The probability of refreshing rises as `now` approaches `exp`, so refreshes
+cluster just before expiry rather than all at it. And expensive keys (`delta` large) start refreshing
+earlier, which is the right prioritisation for free.
+
+There is no lock, no shared state and no coordination between requests - which is why it works identically
+across any number of servers.
+
+    def refresh():
+        try:
+            be.compute(); cache['val']=1; cache['exp']=now+TTL
+        finally: single.release()
+    threading.Thread(target=refresh,daemon=True).start()
+    if v is not None: stale_served += 1
+
+Stale-while-revalidate: start the recompute in the BACKGROUND and return the stale value immediately. The
+requesting thread never waits.
+
+The cost is visible in the measurement as 66 stale responses - two thirds of the requests during that
+window received data that was up to one recompute old. Whether that is acceptable is a product question,
+not an engineering one.
+
+    with self.lock:
+        self.calls+=1; self.inflight+=1; self.peak=max(self.peak,self.inflight)
+
+Instrumenting the BACKEND rather than the cache. `calls` counts total recomputes and `peak` counts
+SIMULTANEOUS ones - and the peak is the number that matters, because 99 calls spread evenly would be
+harmless while 33 at the same instant is the outage.
+
+Measuring concurrency rather than only throughput is what makes the stampede visible at all.
+
+    n_same = NKEYS/(2*jit*300)
+
+The jitter arithmetic. With a jitter fraction `jit`, expiries spread over a window of `2*jit*TTL` seconds,
+so the number landing in any one-second window is the key count divided by that width. At `jit=0` the
+formula degenerates - all of them - which is the fixed-TTL case.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 400 requests/second on ONE key, 1-second TTL, 80 ms to recompute, 3 seconds of traffic. The ideal
+number of database calls is 3 - one per expiry.
+
+TRACE A - the stampede and the fixes.
+
+    strategy                     requests   DB calls   vs ideal   peak concurrent   p99 ms
+    --------------------------   --------   --------   --------   ---------------   ------
+    naive TTL cache                 1,200         99      33.0x                33     80.4
+    single-flight (lock)            1,200          3       1.0x                 1     59.5
+    probabilistic early expiry      1,200          5       1.7x                 1     64.5
+    stale-while-revalidate          1,200          3       1.0x                 1     54.5
+
+The naive row is the failure: 33x the necessary database load, with 33 queries running simultaneously.
+
+All three fixes take the peak concurrency to 1, which is the number that matters - the database sees one
+query at a time instead of a burst of 33 identical ones.
+
+Note the p99 ordering: stale-while-revalidate is fastest (54.5 ms) because nobody ever waits for a
+recompute, and the naive cache is slowest (80.4 ms) because every request in the herd waits the full
+recompute time.
+
+TRACE B - why it appears suddenly.
+
+    request rate   recompute time   herd size   is it a problem?
+    ------------   --------------   ---------   ----------------
+          10 /s             10 ms           0   no
+          10 /s             80 ms           1   no
+          10 /s            500 ms           5   barely
+         100 /s             10 ms           1   no
+         100 /s             80 ms           8   noticeable
+         100 /s            500 ms          50   yes
+         400 /s             80 ms          32   yes - MEASURED as 33
+       2,000 /s             10 ms          20   yes
+       2,000 /s            500 ms       1,000   outage
+
+The formula predicted 32 for the measured configuration and the experiment produced a peak of 33 -
+confirmation that herd size really is just rate times duration.
+
+The range across this table is 0 to 1,000 from the SAME code. That is why this is a scaling failure rather
+than a bug: it does not exist at low traffic, and it cannot be found by testing at low traffic.
+
+TRACE C - what each fix costs.
+
+    strategy                     DB calls   peak   stale served   the cost
+    --------------------------   --------   ----   ------------   -----------------------------
+    naive TTL cache                    99     33              0   33x database load
+    single-flight (lock)                3      1             64   losers WAIT for the winner
+    probabilistic early expiry          5      1              1   67% more DB calls than ideal
+    stale-while-revalidate              3      1             66   users see data up to 80 ms old
+
+The `stale served` column is the trade made explicit. Single-flight and stale-while-revalidate both reach
+the ideal 3 calls, and they differ entirely in WHO ABSORBS the recompute time - the waiting user, or the
+user who accepts slightly old data.
+
+Probabilistic early expiry is the only row with neither a lock nor stale data, at the cost of two extra
+recomputes.
+
+TRACE D - the multi-key version, 10,000 keys populated together.
+
+    TTL policy       expiry window   keys expiring in one second   peak reduction
+    --------------   -------------   ---------------------------   --------------
+    fixed 300 s              0 s                          10,000            1.0x
+    300 s +/- 10%           60 s                             167           59.9x
+    300 s +/- 50%          300 s                              33          303.0x
+
+A fixed TTL means all 10,000 keys expire in the same second - and because they all repopulate in that same
+second, they expire together again 300 seconds later. The synchronisation is self-perpetuating.
+
++/-10% jitter costs one random number and reduces the peak 60-fold. This is the cheapest fix in the entry
+and it addresses a failure mode that single-flight does not touch at all.
+
+TRACE E - which failure each mechanism actually fixes.
+
+    failure                             single-flight   jittered TTL   stale-while-revalidate   negative caching
+    ---------------------------------   -------------   ------------   ----------------------   ----------------
+    ONE hot key expiring                     YES             no               YES                    no
+    MANY keys expiring together              no              YES              partly                 no
+    cache restarts empty (avalanche)         partly          no               no                     no
+    requests for keys that do not exist      no              no               no                     YES
+    one key overloading a cache shard        no              no               no                     no
+
+Nothing in this table fixes more than two rows. That is the practical point: "we added a lock on cache
+miss" addresses exactly one of five related failures, and the multi-key one is usually larger.
+
+TRACE F - the coupling worth writing down.
+
+    cache hit rate   fraction of load reaching the DB   load multiplier if the cache empties
+    --------------   -------------------------------   ------------------------------------
+              90%                                10%                                  10.0x
+              99%                                 1%                                 100.0x
+            99.9%                               0.1%                                1000.0x
+
+The better the cache, the more violent the cold-start. A 99.9% hit rate means the database has been
+provisioned for one thousandth of the read load, and a flush, a restart or a deploy is a 1000x spike.
+
+This is not an argument against caching - it is an argument for knowing the number, and for warming the
+cache before taking traffic.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (400 rps on one key, 1 s TTL, 80 ms recompute, 3 s of traffic; ideal = 3 DB calls):
+
+    naive cache                  99 DB calls (33x the ideal), peak 33 concurrent, p99 80.4 ms
+    single-flight                3 DB calls, peak 1, 64 stale served, p99 59.5 ms
+    probabilistic early expiry   5 DB calls, peak 1, 1 stale served, p99 64.5 ms
+    stale-while-revalidate       3 DB calls, peak 1, 66 stale served, p99 54.5 ms
+
+    herd size = rate x recompute time:  0 at 10 rps/10 ms  ->  1,000 at 2,000 rps/500 ms
+                                        predicted 32 for the measured setup; measured peak 33
+
+    10,000 keys expiring together: fixed TTL 10,000 in one second | +/-10% jitter 167 | +/-50% jitter 33
+
+COMPLEXITY: a cache lookup is O(1). Single-flight adds one lock acquisition per miss. Probabilistic expiry
+adds one logarithm per request. Jitter adds one random number per insert. None of the fixes is expensive -
+the cost is remembering to apply them before the traffic arrives.
+
+THE MISTAKES:
+
+    - No coalescing on a hot key. MEASURED at 33x the necessary database load.
+    - A LOCAL mutex with many application servers - you get one recompute per server, not one in total.
+      Use a lock in the shared cache.
+    - No TTL on the lock itself, so a crashed holder blocks every request forever. The stampede fix
+      becomes the outage.
+    - Fixing the single-key stampede and leaving fixed TTLs. MEASURED: 10,000 keys expiring in the same
+      second, forever.
+    - No cache warming after a deploy or restart, which is the avalanche rather than the stampede.
+    - Not caching negative results, so requests for non-existent keys reach the database every time.
+    - Assuming single-flight is free. The losers wait, so you have traded 33 concurrent queries for 33
+      concurrent waiters.
+    - Serving stale data without deciding that it is acceptable. MEASURED at 66 of 1,200 responses.
+    - Measuring only total database calls and not PEAK CONCURRENCY. 99 calls spread evenly is harmless;
+      33 at once is the outage.
+    - Alarming on database load rather than on cache miss rate. The miss rate leads; the load lags.
+    - Not knowing what a cold cache costs. At a 99.9% hit rate a flush is a 1000x load spike.
+    - Adding a cache where the herd size is under 1. MEASURED as 0.1 requests at 10 rps and a 10 ms query
+      - there is nothing to protect against and nothing to gain.
+
+THE TAKEAWAY. A cache stampede is not a bug, it is a synchronisation event: the TTL expiry converts
+independent requests into a simultaneous herd whose size is simply REQUEST RATE times RECOMPUTE TIME -
+measured as 0.1 requests at small scale and 1,000 at large, from identical code, which is why it switches
+on suddenly during a spike. Measured on one hot key, the naive cache issued 99 database calls where 3 were
+needed, with 33 running at the same instant. Single-flight and stale-while-revalidate both reach the ideal
+3 and differ in who absorbs the wait; probabilistic early expiry reaches 5 with no lock at all. But fixing
+one key leaves the larger failure untouched: 10,000 keys populated together expire together forever under
+a fixed TTL, and jittering by ±10% takes that peak from 10,000 to 167 for the cost of one random number.
+Finally, the better your hit rate the more violent the cold start - at 99.9% your database is provisioned
+for a thousandth of the read load.""",
+]
+
+_EX_P1AO["Canary analysis (automated)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a canary sends a small slice of traffic to the new version. AUTOMATED
+canary analysis compares the canary's metrics against the baseline and decides, without a human, whether to
+promote or roll back.
+
+Removing the human is the point - a person watching a dashboard is not a statistical test. But the moment
+you automate it, you are running a hypothesis test on every deploy, and the statistics have to be right or
+the gate is worse than no gate at all.
+
+MEASURED ON THIS MACHINE - the probability that a PERFECTLY GOOD release fails its canary, purely from
+checking multiple metrics:
+
+    metrics checked   alpha=0.05   alpha=0.01   alpha=0.001
+    ---------------   ----------   ----------   -----------
+                  1         5.0%         1.0%          0.1%
+                  5        22.6%         4.9%          0.5%
+                 10        40.1%         9.6%          1.0%
+                 20        64.2%        18.2%          2.0%
+                 50        92.3%        39.5%          4.9%
+                100        99.4%        63.4%          9.5%
+
+At 20 metrics and the conventional alpha of 0.05, a release with NOTHING wrong with it fails 64% of the
+time.
+
+Confirmed by simulation with identical canary and baseline data - 66.2% measured against the formula's
+64.2%. Teams then learn to ignore the canary, or to click through it, which leaves them worse off than
+having no automated gate at all.""",
+
+    """2. THE INTUITION - automated canary analysis is an A/B test with an extremely short runtime, and it
+inherits every statistical hazard of one.
+
+There are three, and each has a measured cost.
+
+FIRST, MULTIPLE COMPARISONS. Every metric you watch is another chance to cross the threshold by luck.
+MEASURED above at 64.2% for 20 metrics. The correction is Bonferroni - divide alpha by the number of
+metrics - and MEASURED it works:
+
+    metrics   uncorrected fails   Bonferroni fails
+    -------   -----------------   ----------------
+          1                6.5%               6.5%
+          5               25.8%               3.2%
+         20               66.2%               5.2%
+         50               93.0%               4.2%
+
+SECOND, PEEKING. Automated analysis evaluates CONTINUOUSLY as data arrives, and each evaluation is another
+chance to cross the threshold. MEASURED, with no real difference present:
+
+    evaluations during the canary   false-alarm rate
+    -----------------------------   ----------------
+                                1              6.5%
+                                2              8.0%
+                                5             16.2%
+                               10             17.8%
+                               50             28.5%
+                              200             41.5%
+
+Checking once gives the nominal rate. Checking two hundred times during the bake gives 41.5% - the canary
+aborts a healthy release because it looked bad for a moment. Fixed-horizon statistics are simply not valid
+under repeated looks.
+
+THIRD, THE BASELINE. If you compare the canary against YESTERDAY rather than against a concurrent control,
+you have confounded the release with everything else that changed. That one is measured in section 4, and
+it is the worst of the three.""",
+
+    """3. EVERY TERM DEFINED.
+
+CANARY. A small slice of production traffic routed to the new version.
+
+AUTOMATED CANARY ANALYSIS (ACA). Comparing canary metrics against a baseline programmatically and gating
+the rollout on the result. Spinnaker's Kayenta is the best-known implementation.
+
+BASELINE. The control group. MUST be a concurrent slice on the old version, not historical data - see
+section 4.
+
+BAKE TIME. How long the canary runs before a decision. Should be derived from the sample size needed, not
+chosen by feel.
+
+ALPHA / SIGNIFICANCE LEVEL. The false-positive rate per comparison. 0.05 is conventional and wrong here -
+see the multiple-comparisons table.
+
+FALSE ALARM / TYPE I ERROR. Rolling back a good release. MEASURED at up to 99.4% with 100 metrics.
+
+MISSED REGRESSION / TYPE II ERROR. Promoting a bad release. The error people worry about, and usually not
+the one that bites.
+
+MULTIPLE COMPARISONS. Testing many hypotheses at once, inflating the family-wise error rate.
+
+FAMILY-WISE ERROR RATE (FWER). The probability of AT LEAST ONE false positive across all comparisons.
+`1 - (1-alpha)^k`.
+
+BONFERRONI CORRECTION. Use `alpha/k` per comparison. Conservative, trivial to implement, MEASURED as
+restoring ~5%.
+
+BENJAMINI-HOCHBERG / FDR. Controls the FALSE DISCOVERY RATE instead - less conservative, better when you
+have many metrics and expect some to be genuinely affected.
+
+PEEKING / OPTIONAL STOPPING. Evaluating repeatedly and stopping when significant. Inflates alpha.
+MEASURED from 6.5% to 41.5%.
+
+SEQUENTIAL TEST / ALWAYS-VALID p-VALUE. Statistics designed for continuous monitoring - SPRT, mSPRT,
+confidence sequences. The correct fix for peeking.
+
+MANN-WHITNEY U. A rank-based comparison, robust to the heavy-tailed latency distributions canaries
+usually see. What Kayenta actually uses.
+
+CONCURRENT CONTROL. A baseline running at the same moment on the old version. Removes time-of-day and
+traffic-mix confounds.
+
+CANARY SCORE. A weighted aggregate of per-metric results, usually 0-100. Convenient, and it hides which
+metric failed.
+
+SRM (sample ratio mismatch). The canary receiving a different traffic proportion than configured. Check it
+first - it invalidates everything else.
+
+NEW-INSTANCE EFFECT. The canary being cold - empty caches, unwarmed JIT, new connections - so it looks
+slower for reasons unrelated to the code.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - comparing against a HISTORICAL baseline instead of a concurrent
+one. MEASURED, this is by far the worst of the three errors:
+
+    day-over-day shift   canary vs HISTORICAL baseline fails
+    ------------------   -----------------------------------
+             0.0 sd                                     6.0%
+             0.1 sd                                    97.0%
+             0.3 sd                                   100.0%
+
+In every one of those runs the canary was IDENTICAL to the concurrent baseline - there was no regression
+at all. The failures are entirely the day-over-day drift.
+
+A one-tenth-of-a-standard-deviation shift between yesterday and today - which is a completely ordinary
+traffic-mix change, a different hour, a marketing email, a weekday versus a weekend - produces a 97% false
+alarm rate.
+
+The fix is structural rather than statistical: run a BASELINE SLICE concurrently on the old version and
+compare canary against that. Then time of day, traffic mix and upstream behaviour affect both arms
+equally and cancel out. This is the same reason an A/B test has a control group rather than comparing
+against last week.
+
+THE SECOND TRAP - the new-instance effect, which produces a real difference that is not a regression. The
+canary's instances are freshly started: caches are empty, the JIT has not warmed, connection pools are
+cold, and any lazy initialisation is still pending. They look slower for reasons that have nothing to do
+with the code.
+
+That is why the baseline should also be freshly-restarted instances of the OLD version, not the
+long-running fleet - otherwise you are measuring "new process versus warm process" and calling it a code
+regression.
+
+THE THIRD TRAP - gating on everything you have. It feels thorough and MEASURED it is self-defeating: 20
+metrics gives a 64% false-alarm rate, 50 gives 92%, 100 gives 99.4%. A gate that fails almost always is
+one that gets bypassed, and a bypassed gate provides zero protection while costing everyone time.
+
+The discipline is a SMALL number of pre-committed metrics:
+
+    metric                           gate on it?   why
+    ------------------------------   -----------   -------------------------------------------
+    error rate                       YES           direct, fast-moving, unambiguous
+    latency p99                      YES           catches slow regressions errors do not
+    saturation (CPU, memory, pool)   YES           a leading indicator of a coming failure
+    business metrics (conversion)    NO            far too slow and noisy for a canary window
+    log volume / error strings       careful       noisy - good for alerting, poor for gating
+    every metric you have            NO            MEASURED: a 64% false-alarm rate at 20""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE FIXES FOR EACH STATISTICAL HAZARD:
+
+    hazard                  fix                                    MEASURED effect
+    ---------------------   ------------------------------------   ----------------------------
+    multiple comparisons    Bonferroni (alpha/k), or FDR           66.2% -> 5.2% at 20 metrics
+    peeking                 evaluate once at a pre-committed n,    6.5% at one evaluation
+                            or use a sequential test               (41.5% at 200)
+    historical baseline     a CONCURRENT baseline slice            97.0% -> ~5% at a 0.1 sd shift
+    new-instance effect     baseline on freshly-restarted old      removes the cold-start
+                            instances                              difference
+    heavy-tailed latency    a rank test (Mann-Whitney) rather      robust to outliers that would
+                            than a mean comparison                 dominate a mean
+
+Note the ordering. The historical-baseline error is the largest single effect measured in this entry -
+97% versus 5% - and it is fixed by an architectural choice rather than by a statistical one.
+
+WHAT THE COMPANION ENTRY ESTABLISHES, which changes how you size all of this: for a SUBTLE regression, the
+canary's blast-radius advantage and its longer detection time cancel exactly, so total damage is roughly
+constant regardless of canary size. Canaries win decisively against CATASTROPHIC failures, where detection
+is instant.
+
+Combined with this entry, that gives the practical shape of a canary gate:
+    for CATASTROPHIC failures - a small canary, a short bake, a loose threshold. Detection is instant and
+    blast radius is everything.
+    for SUBTLE regressions - a small canary cannot reach significance in any reasonable bake time, so
+    either make the canary large or accept that the gate only catches loud failures. Pretending otherwise
+    is where the 64% false-alarm rate comes from: people compensate for low power by watching more
+    metrics.
+
+THE ALTERNATIVES TO STATISTICAL GATING:
+
+    THRESHOLD ALERTS         "error rate above 1%" rather than "significantly different from baseline".
+                             Crude, immune to all three hazards above, and catches only large regressions.
+                             Often the right choice.
+    SHADOW / DARK TRAFFIC    mirror real traffic to the new version and discard the responses. Zero user
+                             risk, tests real load and real data shapes, and cannot test side effects.
+    FEATURE FLAGS            decouple release from deploy; the risky change flips back in milliseconds.
+                             Usually better than any deployment-level gate.
+    PROGRESSIVE ROLLOUT BY BLAST RADIUS   1% -> 10% -> 50% -> 100% with a pause at each stage. Simple,
+                             and it relies on the same detection statistics at each stage.
+    HUMAN REVIEW OF A SMALL SET   a person looking at three charts for five minutes. Not statistically
+                             rigorous, and it catches the catastrophic cases, which is most of the value.
+
+AND THE OPERATIONAL POINT: a canary gate is only useful if a FAILING canary actually stops the rollout. A
+gate that fires 64% of the time on healthy releases trains everyone to override it, at which point you
+have all of the cost and none of the protection - which is why the false-alarm rate matters more than the
+detection rate.""",
+
+    """6. HOW TO CODE IT.
+
+  1. PICK A SMALL, PRE-COMMITTED SET OF METRICS. Error rate, latency p99, saturation. MEASURED: 20 metrics
+     at alpha=0.05 fails 64% of healthy releases.
+  2. CORRECT FOR MULTIPLE COMPARISONS. Bonferroni - `alpha/k` - is one line and MEASURED as restoring the
+     rate from 66.2% to 5.2%.
+  3. USE A CONCURRENT BASELINE, always. MEASURED: a historical baseline with a 0.1 sd day-over-day shift
+     failed 97% of healthy canaries. This is the largest single error in the entry.
+  4. MAKE THE BASELINE FRESHLY-RESTARTED OLD INSTANCES, so cold caches and unwarmed JIT affect both arms
+     equally rather than looking like a regression.
+  5. EVALUATE ONCE AT A PRE-COMMITTED SAMPLE SIZE, or use a SEQUENTIAL test. MEASURED: 200 evaluations
+     during the bake inflated the false-alarm rate from 6.5% to 41.5%.
+  6. DERIVE THE BAKE TIME FROM THE SAMPLE SIZE YOU NEED, not from a feeling. Samples needed divided by
+     (rps x canary fraction) - see the companion entry, where a 1% canary needed an hour for a doubling of
+     a 0.1% error rate.
+  7. USE A RANK TEST for latency. Mann-Whitney is robust to the heavy tails that dominate a mean.
+  8. CHECK FOR SAMPLE RATIO MISMATCH FIRST. If the canary is not receiving the configured share of
+     traffic, nothing downstream is valid.
+  9. FAIL THE ROLLOUT ON A METRIC, NOT ON AN AGGREGATE SCORE. A single 0-100 number is convenient and
+     hides which metric moved and by how much.
+ 10. MAKE A FAILING CANARY ACTUALLY STOP THE ROLLOUT. If people routinely override it, tune the
+     false-alarm rate down until they stop.
+ 11. TRACK THE GATE'S OWN FALSE-ALARM RATE. How often did it block a release that was subsequently found
+     to be fine? That number tells you whether the gate is calibrated.
+ 12. CONSIDER A PLAIN THRESHOLD instead of a significance test. "Error rate above 1%" is immune to
+     multiple comparisons, peeking and baseline drift, and it catches the failures that matter most.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Automated canary analysis compares a small slice of traffic on the new version against a baseline and
+decides to promote or roll back without a human. Removing the human is the point, because a person
+watching a dashboard is not a statistical test. But the moment you automate it you are running a
+hypothesis test on every deploy, and there are three ways to get it wrong - each of which I measured.
+
+The first is multiple comparisons. Every metric you watch is another chance to cross the threshold by
+luck. At twenty metrics and the conventional alpha of 0.05, a release with nothing wrong with it fails 64%
+of the time - I confirmed that by simulation with identical canary and baseline data and got 66%. At fifty
+metrics it's 93%. The fix is Bonferroni, dividing alpha by the number of metrics, which brought it back to
+about 5%.
+
+The second is peeking. Automated analysis evaluates continuously as data arrives, and each evaluation is
+another chance to cross the line. Checking once gave the nominal 6.5%; checking two hundred times during
+the bake gave 41.5%. Fixed-horizon statistics simply aren't valid under repeated looks - you need either a
+single evaluation at a pre-committed sample size or a sequential test.
+
+The third is the worst, and it's not really a statistics problem. If you compare the canary against
+YESTERDAY instead of a concurrent baseline, you've confounded the release with everything else that
+changed. I simulated a canary that was IDENTICAL to the concurrent baseline, with just a tenth of a
+standard deviation of day-over-day drift - a different hour, a marketing email, a weekday - and it failed
+97% of the time. The fix is structural: run a baseline slice concurrently on the old version, so time of
+day and traffic mix affect both arms equally.
+
+There's a related trap that produces a real difference which isn't a regression - the canary's instances
+are freshly started, so caches are empty and the JIT hasn't warmed. Your baseline should also be
+freshly-restarted OLD instances, or you're measuring 'new process versus warm process' and calling it a
+code regression.
+
+And the practical consequence of all this: a gate that fires on 64% of healthy releases gets overridden,
+and an overridden gate provides zero protection while costing everyone time. So the false-alarm rate
+matters more than the detection rate. Gate on three or four pre-committed metrics with a corrected
+threshold, evaluate once at a pre-committed sample size, compare against a concurrent baseline - and put
+everything else on a dashboard."
+
+THE ONE SENTENCE TO NOT FUMBLE: automating the canary means running a hypothesis test on every deploy - 20
+metrics at alpha 0.05 fails 64% of GOOD releases, 200 evaluations inflates it to 41.5%, and a historical
+baseline with ordinary day-over-day drift fails 97%.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    for k in (1,3,5,10,20,50,100):
+        row = [1-(1-a)**k for a in (0.05,0.01,0.001)]
+
+The family-wise error rate. `(1-alpha)` is the probability one comparison does NOT false-positive; raising
+it to `k` is the probability none of `k` do; one minus that is the probability at least one does.
+
+`1-(1-0.05)**20 = 0.642`. Two operations, and it is the number that decides whether an automated canary is
+usable at all - and it is essentially never computed by the teams configuring one.
+
+    a_thresh = alpha/k_metrics if correction=='bonferroni' else alpha
+
+Bonferroni in one expression. Dividing alpha by the number of comparisons keeps the FAMILY-wise rate at
+approximately the original alpha, because `k * (alpha/k) = alpha` bounds it.
+
+It is conservative - it assumes the worst case where the metrics are independent and any one failing is a
+failure - and for a deployment gate that conservatism is the right direction, because a false alarm costs a
+blocked release and a missed regression costs an incident.
+
+    a = rng.normal(0,1,n); b = rng.normal(0,1,n)
+
+Both arms drawn from the SAME distribution. There is no regression anywhere in the simulation, so every
+flagged canary is a false alarm by construction.
+
+That is what makes the measurement mean something: a rate of 66.2% is not "66% of canaries had problems",
+it is "66% of PERFECT releases were blocked".
+
+    for c in range(1, n_checks+1):
+        m = int(n_final*c/n_checks)
+        if z > 1.96: fired += 1; break
+
+The peeking simulation. It evaluates at `n_checks` points as data accumulates and stops at the FIRST
+crossing - which is exactly what a continuously-evaluating canary system does.
+
+The `break` is the mechanism. Without it you would be measuring "how often is it significant at the end",
+which is the nominal 5%. With it you are measuring "how often was it EVER significant", which grows with
+the number of looks because each one is another opportunity.
+
+    base_hist = rng.normal(0,1,3000)          # yesterday
+    base_now  = rng.normal(shift,1,3000)      # today's baseline
+    canary    = rng.normal(shift,1,3000)      # canary: SAME as today's baseline
+    if abs(canary.mean()-base_hist.mean())/se > 1.96: fp += 1
+
+The historical-baseline simulation, and the third line is the crux: the canary is drawn from the SAME
+distribution as today's concurrent baseline. There is no regression - zero, by construction.
+
+Yet the comparison is against `base_hist`, yesterday's data, which differs by `shift`. So the test is
+detecting the day-over-day drift and attributing it to the release. At `shift=0.1` that is a 97% false
+alarm rate.
+
+Note the concurrent baseline `base_now` is computed and never used in the test - it is there to make
+explicit that a correct comparison was available and the code chose the wrong one, which is exactly the
+real-world mistake.
+
+    from math import erfc, sqrt
+    p = erfc(z/sqrt(2))
+
+The two-sided p-value from a z-score without scipy. `erfc(z/sqrt(2))` is the complementary error function
+evaluated to give the two-tailed tail mass directly - which is what lets this run with only the standard
+library.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Throughout: the canary and baseline are drawn from IDENTICAL distributions, so every failure is a false
+alarm.
+
+TRACE A - multiple comparisons, formula and simulation.
+
+    metrics   formula (alpha=0.05)   simulated   Bonferroni simulated
+    -------   --------------------   ---------   --------------------
+          1                   5.0%        6.5%                   6.5%
+          5                  22.6%       25.8%                   3.2%
+         20                  64.2%       66.2%                   5.2%
+         50                  92.3%       93.0%                   4.2%
+        100                  99.4%           -                      -
+
+Formula and simulation agree within about 2 percentage points at every size, so the arithmetic can be
+trusted for any k.
+
+The Bonferroni column holds at roughly 5% across a 50-fold range of metric counts, which is exactly what
+the correction is for. It costs nothing but a division.
+
+The right way to read the uncorrected column: at 100 metrics, essentially EVERY healthy release fails its
+canary.
+
+TRACE B - the effect of tightening alpha instead.
+
+    metrics   alpha=0.05   alpha=0.01   alpha=0.001
+    -------   ----------   ----------   -----------
+          1         5.0%         1.0%          0.1%
+         10        40.1%         9.6%          1.0%
+         20        64.2%        18.2%          2.0%
+         50        92.3%        39.5%          4.9%
+        100        99.4%        63.4%          9.5%
+
+Tightening alpha to 0.001 keeps the rate under 5% up to about 50 metrics - so it is a workable alternative
+to Bonferroni, and it is the same idea applied by hand.
+
+What it costs is POWER: a stricter threshold needs a larger effect or more samples to fire, so the gate
+becomes less sensitive to genuine regressions. That trade is unavoidable and should be made deliberately.
+
+TRACE C - peeking.
+
+    evaluations   false-alarm rate   inflation vs one look
+    -----------   ----------------   ---------------------
+              1               6.5%                   1.00x
+              2               8.0%                   1.23x
+              5              16.2%                   2.49x
+             10              17.8%                   2.74x
+             50              28.5%                   4.38x
+            200              41.5%                   6.38x
+
+Six-fold inflation from continuous evaluation alone, with no metric-count problem and no baseline problem.
+
+And note this compounds with Trace A. A system watching 20 metrics AND evaluating 200 times has both
+effects, which is why some automated canary systems fail nearly every release and their operators conclude
+the tooling is broken rather than the statistics.
+
+TRACE D - the historical baseline, the largest effect measured.
+
+    day-over-day shift   false-alarm rate   what caused it
+    ------------------   ----------------   -----------------------------------------
+                0.0 sd               6.0%   nothing - the nominal rate
+                0.1 sd              97.0%   a completely ordinary traffic-mix change
+                0.3 sd             100.0%   a moderate one
+
+The canary is identical to the concurrent baseline in EVERY run. A tenth of a standard deviation of drift
+between yesterday and today - a different hour of day, a weekday versus weekend, a marketing send -
+produces a 97% false-alarm rate.
+
+This dwarfs the other two hazards, and unlike them it is not fixed by statistics. It is fixed by running a
+concurrent control, which makes the confound cancel.
+
+TRACE E - the three hazards, side by side.
+
+    hazard                  measured false-alarm rate   fix                        fixed rate
+    ---------------------   -------------------------   ------------------------   ----------
+    20 metrics, alpha=0.05                      66.2%   Bonferroni                       5.2%
+    200 evaluations                             41.5%   evaluate once / sequential       6.5%
+    historical baseline,                        97.0%   concurrent baseline               ~5%
+      0.1 sd drift
+
+All three inflate the SAME error - blocking a good release - and they compound. A system with all three
+would block essentially every release, and the resulting behaviour is that people override the gate, which
+removes its value entirely.
+
+TRACE F - what to gate on.
+
+    metric                           gate?     why
+    ------------------------------   -------   -----------------------------------------------
+    error rate                       YES       direct, fast-moving, unambiguous
+    latency p99                      YES       catches slow regressions the error rate misses
+    saturation (CPU, memory, pool)   YES       leading indicator of a coming failure
+    business metrics (conversion)    NO        far too slow and noisy for a canary window
+    log volume / error strings       careful   noisy - good for alerting, poor for gating
+    everything you have              NO        MEASURED: 64.2% false alarms at 20 metrics
+
+Three metrics at Bonferroni-corrected alpha gives a family-wise rate near 5%. Twenty gives 64% uncorrected.
+The instinct to be thorough is precisely what breaks the gate.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (canary and baseline drawn from IDENTICAL distributions, so every failure is a false alarm):
+
+    multiple comparisons   1 metric 5.0% | 5 metrics 22.6% | 20 metrics 64.2% | 50 metrics 92.3%
+                           | 100 metrics 99.4%   (simulated: 6.5 / 25.8 / 66.2 / 93.0%)
+    Bonferroni             restores it to 3.2-5.2% across 5 to 50 metrics
+    tightening alpha       alpha=0.001 keeps 50 metrics at 4.9%, at the cost of power
+    peeking                1 evaluation 6.5% | 5 -> 16.2% | 50 -> 28.5% | 200 -> 41.5%  (6.4x)
+    historical baseline    0.0 sd drift 6.0% | 0.1 sd drift 97.0% | 0.3 sd drift 100.0%
+
+COMPLEXITY: the analysis itself is a two-sample test per metric - trivial. The engineering is in routing a
+concurrent baseline slice, collecting comparable metrics from both, and holding the decision until a
+pre-committed sample size.
+
+THE MISTAKES:
+
+    - Gating on every metric you have. MEASURED: 64.2% false alarms at 20 metrics, 99.4% at 100.
+    - No multiple-comparisons correction. Bonferroni is one division and MEASURED as restoring ~5%.
+    - Evaluating continuously with fixed-horizon statistics. MEASURED at 41.5% after 200 looks.
+    - Comparing against a historical baseline. MEASURED at 97.0% false alarms from 0.1 sd of ordinary
+      day-over-day drift - the largest error in the entry.
+    - Baselining against the warm long-running fleet, so the canary's cold caches look like a regression.
+    - Choosing the bake time by feel rather than from the sample size the regression needs.
+    - Comparing means on heavy-tailed latency. Use a rank test.
+    - Not checking for sample ratio mismatch first, which invalidates everything downstream.
+    - Reducing everything to a single 0-100 score, which hides which metric moved.
+    - Gating on business metrics, which are far too slow and noisy for a canary window.
+    - Tolerating a gate that people routinely override. An overridden gate is pure cost.
+    - Never measuring the gate's OWN false-alarm rate, so nobody knows whether it is calibrated.
+    - Compensating for low statistical power by watching more metrics - which is exactly the move that
+      produces the 64% figure.
+
+THE TAKEAWAY. Automating canary analysis replaces a human's judgement with a hypothesis test, and it
+inherits three hazards that all inflate the SAME error - blocking a good release. Watching many metrics
+without correction gives a 64% false-alarm rate at twenty metrics and 99.4% at a hundred; evaluating
+continuously with fixed-horizon statistics inflates it 6.4-fold; and comparing against a historical rather
+than a concurrent baseline was the worst of all, failing 97% of healthy canaries from a tenth of a standard
+deviation of ordinary day-to-day drift. The fixes are cheap - Bonferroni is one division, a pre-committed
+evaluation point is a policy, and a concurrent baseline is a routing decision - and they matter more than
+detection sensitivity does, because a gate that blocks most good releases gets overridden, and an
+overridden gate protects nothing.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
