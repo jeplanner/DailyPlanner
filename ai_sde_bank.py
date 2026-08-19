@@ -344970,6 +344970,1849 @@ guarding against the loud failures. And neither strategy survives an irreversibl
 why expand/migrate/contract is the control that actually makes rollback true.""",
 ]
 
+_EX_P1AO["Blue-green vs rolling deployment"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - both replace a running version with a new one without taking the service
+down. They differ in whether the switch is ATOMIC.
+
+    ROLLING      replace instances a few at a time, inside one environment. No extra hardware, and for
+                 the whole rollout BOTH versions are serving live traffic.
+    BLUE-GREEN   stand up a complete second environment, verify it, then switch all traffic at once.
+                 No mixed-version window, and you are paying for two full fleets.
+
+MEASURED ON THIS MACHINE as a deployment model - 60 instances, 45 seconds for a new instance to boot and
+pass health checks:
+
+    strategy               batch size   rounds   rollout time   mixed-version window
+    --------------------   ----------   ------   ------------   --------------------
+    rolling, 1 at a time            1       60        2,700 s              2,700 s
+    rolling, 10%                    6       10          450 s                450 s
+    rolling, 25%                   15        4          180 s                180 s
+    rolling, 50%                   30        2           90 s                 90 s
+    blue-green                     60        1           45 s                  0 s
+
+The last column is the entire distinction. Blue-green's mixed-version window is ZERO because the cutover
+is a single routing change. Rolling one instance at a time gives you a 45-MINUTE window in which two
+different versions of your code are both answering production requests.""",
+
+    """2. THE INTUITION - during a rolling deploy your service is not running version N or version N+1. It is
+running BOTH, and a given user's request lands on whichever it happens to hit.
+
+That is fine if the two versions are fully compatible, and every incompatibility becomes a live bug for
+the duration:
+
+    change made in the new version           what happens during the mixed window
+    --------------------------------------   ------------------------------------------------
+    a new API field the old version rejects   every request routed to an OLD instance fails
+    a changed cache key format                the two versions poison each other's cache entries
+    a changed message or queue schema         old consumers cannot parse new producers' messages
+    a session format change                   a user bouncing between versions is logged out
+    a DB column the new version writes        old instances read rows they do not understand
+    a changed default in shared config        behaviour depends on which instance you hit
+
+Every one of those is intermittent, affects a fraction of requests that CHANGES EVERY ROUND, and
+disappears when the rollout finishes - which is close to the worst possible debugging experience. "It
+failed for about 20% of users for four minutes and now I cannot reproduce it" is the signature.
+
+The requirement this imposes is absolute: with a rolling deploy, version N and version N+1 must be
+mutually compatible, always, for every change. Blue-green needs that compatibility too - but only
+momentarily, at the switch, and only for shared state like the database and caches rather than for
+in-flight request routing.""",
+
+    """3. EVERY TERM DEFINED.
+
+ROLLING UPDATE. Replace instances incrementally within one environment. The Kubernetes default.
+
+BLUE-GREEN. Two complete environments, one live. Deploy to the idle one, verify, switch.
+
+BATCH SIZE / SURGE. How many instances are replaced per round. The knob that trades rollout time against
+capacity.
+
+maxUnavailable. How many instances may be down at once during a rolling update. Accepting reduced
+capacity.
+
+maxSurge. How many EXTRA instances may exist during the rollout. Paying for capacity instead of losing it.
+
+MIXED-VERSION WINDOW. The period during which both versions serve traffic. MEASURED at 2,700 s for
+one-at-a-time and 0 for blue-green.
+
+ATOMIC CUTOVER. All traffic moves at one instant. Blue-green's defining property.
+
+CUTOVER MECHANISM. A load-balancer target-group swap, a DNS change, or a service-mesh route update. DNS is
+the worst of the three because of TTL caching.
+
+DRAINING / CONNECTION DRAIN. Letting in-flight requests finish on an instance before terminating it.
+Without it, a rolling update drops live connections every round.
+
+READINESS PROBE. The health check that decides when a new instance may receive traffic. If it returns
+healthy too early, the rollout serves errors from instances that are not ready.
+
+WARM / COLD. Whether an instance has populated caches, JIT-compiled code and established connection pools.
+Blue-green's rollback target is warm because it never stopped running.
+
+BAKE TIME. How long you observe before proceeding. Rolling gives you this per round almost for free;
+blue-green needs it before the switch.
+
+EXPAND / MIGRATE / CONTRACT. The three-phase schema-change pattern that keeps both versions working
+against one database. What actually makes rollback possible - see section 4.
+
+BACKWARDS AND FORWARDS COMPATIBILITY. Old code tolerating new data, and new code tolerating old data.
+Rolling requires both, continuously.
+
+CANARY. A cousin of rolling where the first batch is deliberately small and gated on metrics. See its own
+entry - the statistics of detection are the interesting part there.
+
+IMMUTABLE INFRASTRUCTURE. Replacing instances rather than mutating them. Both strategies here assume it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - rolling's rollback is ANOTHER ROLLING DEPLOY, and it takes just as
+long.
+
+MEASURED:
+
+    strategy        rollback mechanism         time to full rollback
+    -------------   ------------------------   ---------------------
+    blue-green      flip the router back       seconds (both fleets warm)
+    rolling, 50%    redeploy old, 2 rounds     90 s
+    rolling, 10%    redeploy old, 6 rounds     270 s
+    rolling, 1      redeploy old, 60 rounds    2,700 s = 45 min
+
+And the part people do not think about until it is happening: DURING the rollback, the bad version is
+still live on every instance you have not reached yet. MEASURED as bad-version request-seconds at 2,000
+rps:
+
+    batch size   rollback time   bad-version request-seconds
+    ----------   -------------   ---------------------------
+             1       2,700 s                       2,700,000
+             6         450 s                         450,000
+            15         180 s                         180,000
+            30          90 s                          90,000
+    blue-green           ~5 s                          10,000
+
+A 270x difference between a cautious one-at-a-time rolling deploy and blue-green. The caution that made
+the ROLLOUT safe makes the ROLLBACK slow, and the rollback is the operation you perform under pressure.
+
+THE SECOND TRAP - assuming blue-green's atomic switch means you can skip compatibility work. It does not,
+because the DATABASE IS SHARED. Both environments read and write the same rows, so:
+
+    schema change step                reversible by a traffic switch?
+    -------------------------------   ------------------------------
+    add a nullable column              yes
+    backfill data                      yes-ish
+    start WRITING the new column       yes
+    start READING the new column       yes
+    DROP the old column                NO
+
+A routing flip cannot un-drop a column. If the new version's migration removed something the old version
+needs, your "instant rollback" is a fiction - and you find that out mid-incident.
+
+Both strategies need expand/migrate/contract: make schema changes in backwards-compatible steps so both
+versions work against one schema, and only contract in a LATER release once the old version is gone for
+good. Neither deployment strategy substitutes for it.
+
+THE THIRD TRAP - forgetting the capacity arithmetic. MEASURED:
+
+    batch   with maxUnavailable   with maxSurge
+    -----   -------------------   -------------------------
+        1     98.3% capacity       100%, +1 extra instance
+        6     90.0% capacity       100%, +6 extra instances
+       15     75.0% capacity       100%, +15 extra instances
+       30     50.0% capacity       100%, +30 extra instances
+    blue-green                      100%, +60 (a whole second fleet)
+
+You either accept reduced capacity during the rollout or pay for surge instances. A 50% batch at
+maxUnavailable means running at half capacity - which is fine at 3 a.m. and an outage at peak. Blue-green
+is simply the extreme of surge: 100% extra, for the whole deployment.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE COMPARISON, assembled:
+
+    property                          rolling                  blue-green
+    -------------------------------   ----------------------   -----------------------
+    extra infrastructure              0%                       100%
+    mixed-version window              the whole rollout        NONE
+    capacity during deploy            reduced, or surge        full
+    rollback mechanism                another rolling deploy   a routing flip
+    rollback time                     minutes                  seconds
+    exposure before you know          grows with each round    100% instantly
+    both versions must be compatible  YES, continuously        only at the switch
+    smoke test on real infrastructure no                       YES, before any traffic
+    DB migration safety               same problem             same problem
+
+Note row 6 cuts the other way from row 2. Rolling's gradual exposure means a bad release reaches users
+progressively, so you have a chance to stop it - which is the canary idea. Blue-green's atomic switch
+means a bad release reaches EVERYONE at once, and you are relying entirely on the pre-switch verification.
+
+So they trade against each other rather than one dominating: blue-green gives you an atomic switch and a
+fast rollback but no gradual exposure; rolling gives you gradual exposure but a slow rollback and a long
+mixed window.
+
+THE FAMILY, cheapest to most expensive:
+
+    RECREATE      stop everything, deploy, start. Downtime, and genuinely correct for batch jobs,
+                  cron workers and internal tools where a two-minute gap costs nothing.
+    ROLLING       the default. No extra infrastructure, mixed-version window, slow rollback.
+    CANARY        rolling with the first batch deliberately small and metric-gated. Adds detection
+                  discipline; the statistics of what a small canary can detect are covered in its own
+                  entry.
+    BLUE-GREEN    atomic switch, instant rollback, 2x infrastructure.
+    FEATURE FLAGS orthogonal to all of the above and often better: ship the code dark in a normal
+                  rolling deploy, then enable the behaviour with a flag. The risky change becomes a flag
+                  flip that reverts in milliseconds with no deployment at all.
+
+WHEN EACH IS RIGHT:
+    ROLLING       stateless services, changes that are compatible by construction, and any environment
+                  where 100% extra capacity is not affordable. This is most of the time.
+    BLUE-GREEN    when the mixed-version window is genuinely unsafe (a protocol change, a cache format
+                  change), when you need a full smoke test on real infrastructure before any user
+                  traffic, and when rollback speed matters more than infrastructure cost.
+    RECREATE      batch and offline systems.
+    FEATURE FLAGS whenever the change is behavioural rather than structural, which is more often than
+                  people assume.
+
+AND THE PRACTICAL COMBINATION: rolling deploys for the artefact, feature flags for the behaviour. That
+gets you rolling's cost profile with a rollback that is faster than blue-green's - because flipping a flag
+does not require replacing anything.""",
+
+    """6. HOW TO CODE IT.
+
+  1. MAKE EVERY CHANGE COMPATIBLE WITH THE PREVIOUS VERSION. With rolling this is not optional - MEASURED
+     as a mixed-version window lasting the whole rollout, up to 45 minutes.
+  2. USE EXPAND / MIGRATE / CONTRACT FOR SCHEMA CHANGES. Add nullable, backfill, dual-write, switch
+     reads, and drop the old column in a LATER release. MEASURED as the only step that is not reversible.
+  3. CHOOSE THE BATCH SIZE FROM YOUR CAPACITY HEADROOM. MEASURED: a 50% batch at maxUnavailable runs the
+     service at half capacity, which is fine at 3 a.m. and an outage at peak.
+  4. PREFER maxSurge OVER maxUnavailable if you can afford the instances. Full capacity throughout, at
+     the cost of batch-size extra instances rather than a whole fleet.
+  5. SET READINESS PROBES THAT ACTUALLY MEAN READY - dependencies reachable, caches warm enough,
+     connection pools established. A probe that returns healthy too early makes every round serve errors.
+  6. ENABLE CONNECTION DRAINING. Without it, every round drops in-flight requests, and the failures look
+     like an application bug rather than a deployment artefact.
+  7. REMEMBER ROLLBACK IS A ROLLING DEPLOY. MEASURED at 2,700,000 bad-version request-seconds for
+     one-at-a-time against 10,000 for blue-green - a 270x difference on the operation you do under
+     pressure.
+  8. IF YOU USE BLUE-GREEN, KEEP THE OLD FLEET WARM AND RUNNING. That warmth is the entire thing you are
+     paying 100% extra for; letting it scale to zero discards it.
+  9. DO NOT CUT OVER WITH DNS. TTL caching means "atomic" becomes "over the next several minutes, or
+     hours for badly-behaved resolvers". Use a load balancer or a service mesh.
+ 10. SMOKE-TEST THE GREEN ENVIRONMENT ON REAL INFRASTRUCTURE BEFORE THE SWITCH. That capability is
+     blue-green's other genuine advantage and it is frequently unused.
+ 11. TEST THE ROLLBACK ON A SCHEDULE. An instant rollback that has never been exercised is a hypothesis.
+ 12. USE FEATURE FLAGS FOR BEHAVIOUR CHANGES. A flag flip reverts faster than any deployment strategy and
+     needs no infrastructure at all.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Both keep the service up while replacing a version. Rolling replaces instances a few at a time inside one
+environment; blue-green stands up a complete second environment and switches all traffic at once.
+
+The difference that matters is whether the switch is ATOMIC. I modelled 60 instances taking 45 seconds
+each to boot and pass health checks. Blue-green's mixed-version window is zero - the cutover is one
+routing change. Rolling one instance at a time gives a 45-minute window in which both versions are
+answering production requests, and even 10% batches give 450 seconds.
+
+During that window your service is not running version N or N+1, it is running both, and a request lands
+on whichever it hits. So any incompatibility - a new API field the old version rejects, a changed cache
+key format, a changed message schema - is a live bug for the whole rollout, affecting a fraction of
+requests that changes every round. 'It failed for about 20% of users for four minutes and now I cannot
+reproduce it' is exactly that.
+
+The thing people underestimate is rollback. Rolling's rollback is another rolling deploy, so it takes as
+long as the rollout did - 45 minutes at one instance at a time. And during that rollback the bad version
+is still live on every instance you have not reached. I costed it at 2,000 requests a second: 2.7 million
+bad-version request-seconds for a cautious one-at-a-time rolling deploy, against about 10,000 for
+blue-green. A 270-fold difference, on the operation you perform under pressure. The caution that made the
+rollout safe makes the rollback slow.
+
+But I would push back on treating blue-green as strictly better, for two reasons. First, its atomic switch
+means a bad release reaches 100% of users instantly - there is no gradual exposure, so you are relying
+entirely on pre-switch verification. Rolling at least fails progressively. Second, it costs 100% extra
+infrastructure, and the old fleet has to stay warm and running or you have not bought anything.
+
+And neither solves the real rollback problem, which is the database. Both environments share it. A routing
+flip cannot un-drop a column, so if the migration removed something the old version needs, the instant
+rollback is fiction. That is what expand/migrate/contract is for - make schema changes in
+backwards-compatible steps and only contract in a later release.
+
+In practice I would use rolling deploys for the artefact and feature flags for the behaviour. A flag flip
+reverts in milliseconds without replacing anything, which beats both strategies."
+
+THE ONE SENTENCE TO NOT FUMBLE: rolling has no extra infrastructure and a mixed-version window lasting the
+whole rollout, blue-green has zero mixed window and an instant rollback for 100% extra fleet - measured as
+2,700,000 versus 10,000 bad-version request-seconds during a rollback.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    rounds = math.ceil(N/bs)
+    t = rounds * BOOT
+    mixed = 0 if bs == N else t
+
+The model in three lines, and the third is the whole entry. `bs == N` means every instance is replaced in
+one round - which IS blue-green - so there is no moment when the two versions coexist. Any smaller batch
+means `mixed == t`: the mixed window is not part of the rollout, it IS the rollout.
+
+`BOOT` is the boot-plus-health-check time, and it is the parameter that dominates everything. A service
+that takes 45 seconds to become healthy has a 45-minute one-at-a-time rollout; one that takes 3 seconds
+has a 3-minute one. Reducing startup time shortens every row in the table simultaneously.
+
+    reqsec = RPS * t * 0.5
+
+Bad-version exposure during a rollback. The `0.5` is because the bad version's share decays linearly from
+100% to 0 as instances are replaced, so the average over the rollback is half - the integral of a linear
+ramp.
+
+That factor is worth being explicit about rather than quoting the peak: a rollback is not "45 minutes at
+full badness", it is 45 minutes averaging half badness, which is still 2.7 million request-seconds.
+
+    for bs in (1,6,15,30):
+        print(f"{100*(N-bs)/N:.1f}% capacity   0 extra   (maxUnavailable)")
+    for bs in (1,6,15,30):
+        print(f"100.0% capacity   {bs} extra   (maxSurge)")
+
+The same batch sizes printed twice under the two Kubernetes policies, because they are the same decision
+expressed as either lost capacity or extra cost. Printing both makes the trade explicit instead of
+implicit in a config field nobody reads.
+
+Note blue-green appearing at the bottom of the surge table with `+60`: it is not a different mechanism, it
+is maxSurge taken to 100%.
+
+    cases=[("a new API field the old version rejects", "..."), ...]
+
+Section B is a table rather than a measurement, and it is deliberately concrete. The general statement
+"both versions must be compatible" is easy to nod at and hard to act on; a list of six specific
+incompatibilities is something you can check a diff against.
+
+    ("DB migration safety","same problem","same problem")
+
+The row that refuses to declare a winner. Every other row in that comparison distinguishes the two
+strategies; this one deliberately does not, because the most common cause of an un-rollbackable deploy is
+orthogonal to both. Leaving it out would have made the comparison look more decisive and less useful.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 60 instances, 45 s for a new instance to boot and pass health checks, 2,000 requests/second.
+
+TRACE A - rollout time and the mixed-version window.
+
+    strategy               batch   rounds   rollout time   mixed window   window as % of rollout
+    --------------------   -----   ------   ------------   ------------   ----------------------
+    rolling, 1 at a time       1       60        2,700 s        2,700 s                    100%
+    rolling, 10%               6       10          450 s          450 s                    100%
+    rolling, 25%              15        4          180 s          180 s                    100%
+    rolling, 50%              30        2           90 s           90 s                    100%
+    blue-green                60        1           45 s            0 s                      0%
+
+The last column is 100% for every rolling configuration. The mixed window is not a phase of a rolling
+deploy - it is the entire deploy. Only the atomic case escapes it.
+
+Note also that the safest-looking rolling configuration (one at a time) has the LONGEST window. Caution
+and exposure duration move together.
+
+TRACE B - capacity, the same decision two ways.
+
+    batch   maxUnavailable: capacity   maxSurge: extra instances
+    -----   ------------------------   -------------------------
+        1                     98.3%                          +1
+        6                     90.0%                          +6
+       15                     75.0%                         +15
+       30                     50.0%                         +30
+       60                     0.0% (recreate)               +60 (blue-green)
+
+Reading down the right column, blue-green is simply the last row of maxSurge. There is no architectural
+discontinuity between "rolling with surge" and "blue-green" - only the surge percentage.
+
+The left column is the one that causes incidents: a 50% batch means running at half capacity for the
+duration, which is invisible in testing and an outage at peak traffic.
+
+TRACE C - rollback, the operation that matters under pressure.
+
+    strategy       mechanism                  rollback time   bad-version request-seconds
+    ------------   ------------------------   -------------   ---------------------------
+    blue-green     flip the router             ~5 s                                10,000
+    rolling, 50%   redeploy old, 2 rounds      90 s                                90,000
+    rolling, 25%   redeploy old, 4 rounds      180 s                              180,000
+    rolling, 10%   redeploy old, 6 rounds      450 s                              450,000
+    rolling, 1     redeploy old, 60 rounds     2,700 s                          2,700,000
+
+    blue-green vs rolling one-at-a-time: 270x
+
+Two things. Rolling's rollback duration EQUALS its rollout duration, because it is the same operation
+run backwards - there is no fast path. And the exposure integral punishes the cautious configuration
+hardest: the batch size that minimises rollout risk maximises rollback damage.
+
+Blue-green's 10,000 is 5 seconds of full traffic, which is a routing change and a DNS-free load-balancer
+swap.
+
+TRACE D - what the mixed window actually breaks.
+
+    change                                   failure during the window        detectability
+    --------------------------------------   ------------------------------   -------------
+    new API field the old version rejects     requests to old instances fail   intermittent
+    changed cache key format                  versions poison each other        very hard
+    changed message/queue schema              old consumers cannot parse        delayed
+    session format change                     users randomly logged out         user reports
+    new DB column old instances misread       silent wrong reads                worst case
+    changed default in shared config          behaviour depends on instance     unreproducible
+
+The right-hand column is why this matters more than the duration suggests. Every one of these is
+INTERMITTENT and affects a fraction that changes each round, so the classic symptoms are "some users, for
+a few minutes, and it stopped on its own".
+
+TRACE E - the assembled trade.
+
+    property                          rolling                  blue-green   who wins
+    -------------------------------   ----------------------   ----------   ------------
+    extra infrastructure              0%                       100%         rolling
+    mixed-version window              whole rollout            none         blue-green
+    capacity during deploy            reduced, or surge        full         blue-green
+    rollback time                     minutes                  seconds      blue-green
+    bad-version exposure on rollback  up to 2,700,000 req-s    10,000       blue-green
+    gradual exposure of a bad release yes                      NO           ROLLING
+    smoke test on real infra          no                       yes          blue-green
+    DB migration safety               same problem             same problem neither
+
+Six rows to blue-green, one to rolling, one to neither - and the single row rolling wins is not minor.
+Blue-green moves 100% of users onto an unverified version in one instant, so all of its safety comes from
+pre-switch testing. Rolling fails progressively, which is why the canary variant exists.
+
+The cost row is also decisive in practice: 100% extra fleet is a real budget line, and it is why rolling
+remains the default almost everywhere.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (60 instances, 45 s boot, 2,000 rps):
+
+    rollout time        rolling 1-at-a-time 2,700 s | 10% batches 450 s | blue-green 45 s
+    mixed window        equals the rollout time for EVERY rolling config; 0 for blue-green
+    capacity            maxUnavailable at 50% batches = 50% capacity;
+                        maxSurge = full capacity at +batch instances; blue-green = +60
+    rollback time       blue-green ~5 s | rolling 50% 90 s | rolling 1-at-a-time 2,700 s
+    rollback exposure   10,000 bad-version request-seconds (blue-green)
+                        vs 2,700,000 (rolling, one at a time) - 270x
+    infrastructure      rolling 0% extra | blue-green 100% extra
+
+THE MISTAKES:
+
+    - Shipping a change that is not backwards-compatible with a rolling deploy. MEASURED: the mixed
+      window is 100% of the rollout, up to 45 minutes.
+    - Forgetting that rollback is another rolling deploy. MEASURED at 270x the exposure of a routing flip.
+    - Choosing the smallest batch size for safety. It maximises both the mixed window and the rollback
+      duration.
+    - Using maxUnavailable at a large batch size and running at reduced capacity through peak traffic.
+    - Readiness probes that return healthy before the instance really is. Every round then serves errors.
+    - No connection draining, so each round drops in-flight requests and it looks like an app bug.
+    - Assuming blue-green's atomic switch removes the compatibility requirement. The DATABASE is shared.
+    - Dropping a column in the same release that stops using it, which makes rollback impossible for
+      both strategies.
+    - Cutting over with DNS. TTL caching turns "atomic" into "eventually".
+    - Paying for blue-green and letting the idle fleet go cold or scale to zero - that warmth is the
+      product.
+    - Never smoke-testing the green environment, which is blue-green's other real advantage.
+    - Never testing the rollback path at all.
+    - Treating blue-green as strictly safer. It exposes 100% of users instantly; rolling fails
+      progressively.
+
+THE TAKEAWAY. Rolling and blue-green differ on one axis - whether the cutover is ATOMIC - and everything
+else follows. Rolling costs no extra infrastructure and, measured here, spends 100% of its rollout with
+two versions serving live traffic, which turns every incompatibility into an intermittent bug affecting a
+fraction of users that changes each round. Blue-green eliminates that window entirely and makes rollback a
+routing flip - 10,000 bad-version request-seconds against 2,700,000 for a cautious rolling deploy, a 270x
+difference on the operation you perform under pressure - in exchange for running two complete fleets. The
+row rolling wins is real too: blue-green moves everyone at once, so it has no gradual exposure and all its
+safety is pre-switch. And neither strategy survives an irreversible schema change, which is why
+expand/migrate/contract is the control that actually makes rollback true, and why feature flags - which
+revert in milliseconds without replacing anything - often beat both.""",
+]
+
+_EX_P1AO["Bootstrap (sampling)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the bootstrap creates new datasets by drawing rows from your existing
+dataset WITH REPLACEMENT. Some rows appear twice or three times, some do not appear at all.
+
+That sounds like it should not work, and the reason it does is that your sample is the best available
+stand-in for the population. Resampling from it simulates "what if I had collected a different sample?"
+without collecting one.
+
+(This entry is about the MECHANISM and its use in BAGGING. The companion entry on bootstrap sampling
+covers uncertainty estimation and confidence intervals.)
+
+THE FACT THAT MAKES IT USEFUL FOR MACHINE LEARNING - a resample of size n leaves about 36.8% of the
+original rows OUT. MEASURED ON THIS MACHINE:
+
+    n         distinct originals appearing in a resample   1 - 1/e
+    -------   ------------------------------------------   -------
+         10                                       0.6528    0.6321
+         50                                       0.6358    0.6321
+        200                                       0.6308    0.6321
+      1,000                                       0.6322    0.6321
+     10,000                                       0.6322    0.6321
+
+It converges to 1 - 1/e = 0.6321 almost immediately. Each row has a (1 - 1/n)^n chance of never being
+picked, which tends to 1/e.
+
+So every bootstrap resample comes with a free held-out set of about 37% of the data - the OUT-OF-BAG rows
+- that the model trained on that resample has never seen. That is a validation set that costs no data at
+all, and it is the foundation of random forests.""",
+
+    """2. THE INTUITION - if you train many models on many resamples and AVERAGE them, the errors that depend
+on the particular sample cancel out while the real signal survives.
+
+That is bagging - bootstrap AGGREGATING - and it is a variance-reduction machine. Each model sees a
+slightly different dataset, so each makes slightly different mistakes; averaging keeps what they agree on.
+
+MEASURED, bagging depth-3 regression trees on 200 training points:
+
+    trees   test MSE   out-of-bag MSE
+    -----   --------   --------------
+        1     0.2477           0.2319
+        3     0.1894           0.2324
+       10     0.1893           0.1748
+       30     0.1848           0.1543
+      100     0.1850           0.1530
+      300     0.1847           0.1515
+
+One tree: 0.2477. Three trees: 0.1894 - a 24% reduction, almost all of the benefit. Thirty trees: 0.1848.
+Three hundred trees: 0.1847, which is indistinguishable from thirty.
+
+Two things follow. Bagging works, and it saturates fast - the first handful of models capture nearly the
+whole gain, and past a few dozen you are spending compute for the fourth decimal place.
+
+WHY IT SATURATES: averaging k models with independent errors reduces variance by a factor of k, so the
+improvement from 100 to 300 trees is the difference between 1/100 and 1/300 of the original variance -
+already negligible. And the errors are NOT independent, because every resample comes from the same
+underlying data, so the reduction is bounded well before 1/k.
+
+That bound is why random forests add a second source of randomness - choosing a random subset of FEATURES
+at each split - on top of the bootstrap. The bootstrap alone does not decorrelate the trees enough.""",
+
+    """3. EVERY TERM DEFINED.
+
+BOOTSTRAP. Resampling your data WITH REPLACEMENT to simulate drawing new samples from the population.
+
+WITH REPLACEMENT. After picking a row, it goes back in the pool, so it can be picked again. This is what
+makes each resample different.
+
+RESAMPLE / BOOTSTRAP SAMPLE. One dataset drawn this way, conventionally the same size n as the original.
+
+B. The number of resamples. Hundreds for bagging, thousands for confidence intervals.
+
+OUT-OF-BAG (OOB). The rows NOT selected in a given resample. MEASURED at 36.8%, converging to 1/e.
+
+OOB ERROR ESTIMATE. Evaluating each model on its own out-of-bag rows and averaging. A validation estimate
+requiring no held-out split.
+
+.632 / 1 - 1/e. The fraction of distinct originals in a resample. MEASURED at 0.6322 for n >= 1,000.
+
+BAGGING (Bootstrap AGGregating). Train a model per resample and average their predictions. Reduces
+variance.
+
+RANDOM FOREST. Bagging decision trees PLUS random feature subsets at each split. The extra randomness
+decorrelates the trees further.
+
+FEATURE SUBSAMPLING / mtry. How many features each split may consider. The second randomness source.
+
+VARIANCE REDUCTION. Averaging k models with independent errors divides the variance by k. Bagging's
+mechanism.
+
+BIAS. Unchanged by bagging - averaging models from the same family cannot escape that family's systematic
+error. Which is why bagging an underfitting model does nothing.
+
+DECORRELATION. Making the ensemble members disagree more, so averaging helps more. The bootstrap does
+some; feature subsampling does more.
+
+BOOSTING. The contrast. Fits models SEQUENTIALLY to the previous models' residuals, reducing BIAS rather
+than variance. Not a bootstrap method.
+
+SUBSAMPLING (m out of n, without replacement). A relative - used by stochastic gradient boosting and by
+extremely randomised trees.
+
+PASTING. Bagging with sampling WITHOUT replacement.
+
+BALANCED BOOTSTRAP. Ensuring each original row appears the same number of times across all resamples.
+Reduces the resampling noise slightly.
+
+BLOCK BOOTSTRAP. Resampling contiguous blocks rather than individual rows, for dependent data. See the
+companion entry.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - expecting bagging to fix a model that is UNDERFITTING. It cannot,
+because averaging does not change bias.
+
+Bagging reduces the variance of an estimator. If your models are all wrong in the SAME direction - too
+simple to represent the pattern - then their average is wrong in that direction too. A hundred averaged
+straight lines are a straight line.
+
+That is why bagging is paired with HIGH-VARIANCE, LOW-BIAS base models. A fully grown decision tree
+overfits wildly on its own and is exactly what you want in a bag; a depth-1 stump is not. MEASURED above
+with depth-3 trees, the single-tree MSE of 0.2477 fell to 0.1847 - the gap between those numbers is the
+variance, and it is what got averaged away. Whatever remains at 300 trees is bias plus irreducible noise,
+and no number of trees touches it.
+
+THE SECOND TRAP - treating the out-of-bag estimate as a free, unbiased test set. MEASURED:
+
+    trees   true test MSE   OOB MSE   OOB error relative to test
+    -----   -------------   -------   --------------------------
+        1          0.2477    0.2319                     6.4% off
+        3          0.1894    0.2324                    22.7% off
+       10          0.1893    0.1748                     7.7% off
+       30          0.1848    0.1543                    16.5% off
+      100          0.1850    0.1530                    17.3% off
+      300          0.1847    0.1515                    18.0% off
+
+The OOB estimate is in the right region and it is not the same number - it settles about 18% below the
+true test error here, and the gap is systematic rather than shrinking.
+
+It is genuinely useful: it tracks the shape of the curve, it costs nothing, and it tells you when adding
+trees has stopped helping. It is not a substitute for a held-out test set when you need an accurate
+number, and it is definitely not one when you have used it to select hyperparameters - at that point it
+has become a validation set and carries the usual selection optimism.
+
+THE THIRD TRAP - assuming more resamples always help. MEASURED: 3 trees captured 24% improvement, 30 trees
+got to 0.1848, and 300 trees reached 0.1847. Going from 30 to 300 - ten times the compute and ten times
+the inference cost - bought 0.0001.
+
+The useful diagnostic is to plot the metric against the number of models and stop where it flattens.
+Random forests are usually run with a few hundred trees not because it helps but because it is cheap and
+removes the question.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHY THE BOOTSTRAP IS NOT ENOUGH ON ITS OWN. Bagging's variance reduction is limited by how CORRELATED the
+models are. Every resample comes from the same n rows, so two bootstrap-trained trees see roughly 63% of
+the same data and make similar mistakes.
+
+Random forests add feature subsampling for exactly this reason: at each split, only a random subset of
+features may be considered, so two trees can end up using completely different variables even on similar
+data. The bootstrap decorrelates by ROWS; feature subsampling decorrelates by COLUMNS; you need both.
+
+MEASURED indirectly in the saturation above - the ensemble stopped improving at around 30 trees, far
+earlier than independent errors would predict, and that early plateau IS the correlation.
+
+THE ENSEMBLE FAMILY, and what each attacks:
+
+    BAGGING            train independently on resamples, average. Reduces VARIANCE. Parallelisable.
+                       MEASURED: 0.2477 to 0.1847.
+    RANDOM FOREST      bagging + feature subsampling. More decorrelation, better variance reduction.
+    EXTRA TREES        random SPLIT THRESHOLDS as well as random features. Even more decorrelated,
+                       slightly more biased, much faster to train.
+    PASTING            sampling without replacement. Useful when n is very large and you want smaller
+                       subsets.
+    BOOSTING           SEQUENTIAL, each model fitting the previous ensemble's residuals. Reduces BIAS.
+                       Not parallelisable across models, and generally stronger on tabular data.
+    STACKING           train a meta-model on the base models' predictions. Can beat both, and is
+                       fiddly and leak-prone.
+
+THE DECISION, stated simply: bagging if your base model overfits, boosting if it underfits. That follows
+directly from variance versus bias, and it is why bagged deep trees and boosted shallow trees are the two
+standard configurations.
+
+OTHER PLACES THE BOOTSTRAP MECHANISM APPEARS:
+    OOB FEATURE IMPORTANCE   permute one feature in the out-of-bag rows and measure the accuracy drop.
+                             Uses the free validation set that falls out of resampling.
+    BOOTSTRAP AGGREGATED PREDICTIONS   the spread across the ensemble's predictions for one input is a
+                             cheap uncertainty estimate.
+    BALANCED / STRATIFIED BOOTSTRAP    preserving class proportions in each resample, for imbalanced
+                             data.
+    THE COMPANION USE        confidence intervals for arbitrary statistics - covered in the bootstrap
+                             sampling entry, along with the cases where it silently fails.
+
+WHEN NOT TO BOOTSTRAP AT ALL:
+    DEPENDENT DATA - time series, grouped or clustered observations. Resampling rows destroys the
+    dependence structure. Use a block bootstrap or a grouped split.
+    VERY SMALL n - there is not enough information in the sample to resample from.
+    EXTREME STATISTICS - the maximum, or a far-tail quantile. The resample cannot contain a value larger
+    than the largest you observed.""",
+
+    """6. HOW TO CODE IT.
+
+  1. THE RESAMPLE IS ONE LINE: `idx = rng.integers(0, n, n)` then `X[idx], y[idx]`. Size n, with
+     replacement. That is the entire mechanism.
+  2. TRACK THE OUT-OF-BAG ROWS: `oob = np.setdiff1d(np.arange(n), np.unique(idx))`. MEASURED at 36.8% of
+     the data, free with every resample.
+  3. USE HIGH-VARIANCE BASE MODELS. Fully grown trees, not stumps. Bagging removes variance and cannot
+     remove bias, so give it something with variance to remove.
+  4. ADD FEATURE SUBSAMPLING if you are bagging trees. The bootstrap alone leaves the trees too
+     correlated - use a random forest rather than plain bagging.
+  5. PLOT THE METRIC AGAINST THE NUMBER OF MODELS AND STOP WHERE IT FLATTENS. MEASURED: 3 trees captured
+     most of the gain, 30 essentially all of it, and 300 added 0.0001.
+  6. USE THE OOB ESTIMATE FOR MODEL SELECTION AND A HELD-OUT SET FOR THE FINAL NUMBER. MEASURED at 18%
+     off the true test error - useful for shape, not for reporting.
+  7. DO NOT REPORT AN OOB SCORE THAT YOU TUNED AGAINST. Once you select on it, it carries selection
+     optimism like any validation set.
+  8. FOR DEPENDENT DATA, USE A BLOCK BOOTSTRAP - resample contiguous blocks so local structure survives.
+     Row-wise resampling of a time series is silently wrong.
+  9. FOR IMBALANCED CLASSES, STRATIFY THE RESAMPLE so a rare class does not vanish from some bags
+     entirely.
+ 10. SEED EACH RESAMPLE REPRODUCIBLY. `rng.integers` with a derived seed per model makes an ensemble you
+     can rebuild exactly.
+ 11. PARALLELISE IT. Bagging's members are INDEPENDENT, which is its practical advantage over boosting -
+     n models on n cores.
+ 12. IF THE MODEL UNDERFITS, DO NOT BAG IT. Averaging identical mistakes changes nothing; you want
+     boosting or a bigger model.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"The bootstrap creates new datasets by drawing rows from your existing dataset with replacement - so some
+rows appear two or three times and some do not appear at all. The justification is that your sample is the
+best available stand-in for the population, so resampling from it simulates collecting a different sample
+without actually collecting one.
+
+The fact that makes it useful in machine learning is what gets left out. A resample of size n from n rows
+contains about 63.2% of the distinct originals - I measured 0.6322 at n = 1,000 and above, converging to
+one minus one over e almost immediately. So 36.8% of the data is OUT of every bag, and the model trained on
+that resample has never seen it. That is a free validation set that costs no data, and it is the basis of
+random forests' out-of-bag error.
+
+The other use is bagging - bootstrap aggregating. Train a model on each resample and average them. Each
+sees slightly different data, so each makes slightly different mistakes, and averaging keeps what they
+agree on. I measured it on depth-3 regression trees: one tree gave a test MSE of 0.2477, three trees gave
+0.1894, thirty gave 0.1848 and three hundred gave 0.1847.
+
+So it works, and it saturates fast. Three models captured a 24% improvement; going from thirty to three
+hundred - ten times the compute and ten times the inference cost - bought 0.0001. The plateau arrives much
+earlier than independent errors would predict, and that early plateau IS the correlation between the
+models: every resample comes from the same rows, so two bagged trees see about 63% of the same data and
+make similar mistakes. That is exactly why random forests add a second randomness source, choosing a
+random subset of FEATURES at each split - the bootstrap decorrelates by rows and feature subsampling
+decorrelates by columns, and you need both.
+
+Two cautions. First, bagging reduces VARIANCE and does nothing to bias, so bagging an underfitting model
+is pointless - a hundred averaged straight lines are a straight line. That is why you bag deep trees,
+which overfit on their own, and why boosting rather than bagging is the answer when the model is too
+simple.
+
+Second, I would not report the out-of-bag number as a test score. I measured it against a real test set
+and it settled about 18% below - systematically, not shrinking with more trees. It is genuinely useful for
+seeing when adding trees has stopped helping, and it is not an accurate estimate, and it is certainly not
+one after you have tuned against it."
+
+THE ONE SENTENCE TO NOT FUMBLE: a resample leaves out 36.8% of the rows - measured at 1 - 1/e - which
+gives every bagged model a free validation set, and bagging reduces VARIANCE only, saturating after about
+thirty models because the resamples overlap.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    idx = rng.integers(0, n, n)
+
+The bootstrap, complete. `n` draws from `[0, n)` WITH replacement - `integers` samples independently, so
+duplicates are not merely allowed, they are the point. Using `rng.permutation(n)` instead would produce a
+shuffle, which contains every row exactly once and has no bootstrap property at all.
+
+    len(set(idx.tolist()))/n
+
+Counting DISTINCT originals in the resample. The theoretical value is `1 - (1 - 1/n)^n`, which tends to
+1 - 1/e = 0.6321. MEASURED at 0.6528 for n=10 and 0.6322 by n=1,000 - it converges from above and
+converges fast, which is why the 63.2% figure is quoted without caveats.
+
+    oob = np.setdiff1d(np.arange(n), np.unique(idx))
+
+The out-of-bag rows in one line: every index not chosen. This is the free validation set, and it is
+different for every resample - which is what lets the OOB error be averaged over models.
+
+    oob_pred[oob] += predict_tree(tr, X[oob])
+    oob_cnt[oob] += 1
+
+Accumulating out-of-bag predictions PER ROW across the ensemble. Each row is predicted only by the trees
+that did not train on it, and `oob_cnt` records how many those were.
+
+The subtlety worth stating: a row's OOB prediction averages roughly 37% of the trees, not all of them. So
+the OOB estimate is evaluating a SMALLER ensemble than the one you will deploy - which is part of why it
+does not match the test error exactly.
+
+    ok = oob_cnt > 0
+    oob_mse = np.mean((oob_pred[ok]/oob_cnt[ok] - y[ok])**2)
+
+The guard matters at small ensemble sizes: with one tree, about 63% of rows have no OOB prediction at all,
+and dividing by zero would poison the result. With 300 trees essentially every row has one.
+
+    for q in np.percentile(xs, [10,25,50,75,90]):
+        L = xs <= q
+        e = ((y[L]-y[L].mean())**2).sum() + ((y[~L]-y[~L].mean())**2).sum()
+
+The tree's split search, kept deliberately simple - five candidate thresholds and the squared-error
+criterion. It is a weak learner by design, because the entry is measuring what BAGGING does rather than
+how good a tree is.
+
+Note it considers ALL features (there is only one here). A random forest would restrict this to a random
+subset, which is the decorrelation step the bootstrap alone does not provide.
+
+    pred = np.mean([predict_tree(t, Xte) for t in trees], axis=0)
+
+The aggregation: a plain mean over the ensemble. For classification this becomes a majority vote or an
+average of predicted probabilities - the latter is usually better, because it keeps the confidence
+information that a hard vote discards.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the 63.2%, and how fast it converges.
+
+    n         measured distinct fraction   1 - 1/e   difference
+    -------   --------------------------   -------   ----------
+         10                       0.6528    0.6321      +0.0207
+         50                       0.6358    0.6321      +0.0037
+        200                       0.6308    0.6321      -0.0013
+      1,000                       0.6322    0.6321      +0.0001
+     10,000                       0.6322    0.6321      +0.0001
+
+Converges from above and is essentially exact by n = 200. The n=10 case is 2 percentage points high, which
+matters only if you are bagging on genuinely tiny datasets.
+
+The complement - 36.8% out-of-bag - is the number to remember, because it is the size of the free
+validation set.
+
+TRACE B - bagging depth-3 trees on 200 training points.
+
+    trees   test MSE   improvement vs 1 tree   marginal gain per tree added
+    -----   --------   ---------------------   ---------------------------
+        1     0.2477                       -                             -
+        3     0.1894                  23.5%                     0.0194/tree
+       10     0.1893                  23.6%                     0.0000/tree
+       30     0.1848                  25.4%                     0.0002/tree
+      100     0.1850                  25.3%                    -0.0000/tree
+      300     0.1847                  25.4%                     0.0000/tree
+
+The entire benefit arrives by 3 trees. Everything after that moves the third decimal place, and the
+100-tree row is fractionally WORSE than the 30-tree row, which is sampling noise rather than a real
+effect.
+
+Independent errors would predict variance falling as 1/k, so 300 trees should be far better than 30. It is
+not - and that gap between prediction and measurement is the CORRELATION between bagged models, which is
+the argument for random forests' feature subsampling.
+
+TRACE C - the out-of-bag estimate against the truth.
+
+    trees   true test MSE   OOB MSE   OOB - test   relative error
+    -----   -------------   -------   ----------   --------------
+        1          0.2477    0.2319      -0.0158           6.4%
+        3          0.1894    0.2324      +0.0430          22.7%
+       10          0.1893    0.1748      -0.0145           7.7%
+       30          0.1848    0.1543      -0.0305          16.5%
+      100          0.1850    0.1530      -0.0320          17.3%
+      300          0.1847    0.1515      -0.0332          18.0%
+
+The OOB estimate tracks the SHAPE correctly - it falls when the test error falls and flattens when it
+flattens - and it settles about 18% low and stays there. The bias is systematic, not noise.
+
+Part of the reason is structural: each row's OOB prediction is an average over only ~37% of the trees, so
+OOB is scoring a smaller ensemble. The rest is that the training and test sets have different noise
+realisations.
+
+The practical reading: use OOB to decide WHEN TO STOP adding trees, and a held-out set to report a number.
+
+TRACE D - what bagging can and cannot fix.
+
+    quantity                            what bagging does
+    ---------------------------------   -----------------------------------------
+    variance (models disagree)          REDUCES it - the 0.2477 to 0.1847 gap
+    bias (all models wrong the same way) unchanged
+    irreducible noise                   unchanged
+
+    so: bag a model that OVERFITS (deep trees)     -> large gain
+        bag a model that UNDERFITS (stumps)        -> no gain at all
+        bag a model that is already right          -> no gain
+
+The 0.1847 floor at 300 trees is bias plus irreducible noise. No number of additional models touches it,
+which is the practical statement of "bagging reduces variance only".
+
+TRACE E - the two randomness sources.
+
+    method              rows                columns              decorrelation
+    -----------------   -----------------   ------------------   -------------
+    single tree         all                 all                  none
+    bagging             bootstrap (63%)     all                  partial
+    random forest       bootstrap (63%)     random subset        much more
+    extra trees         bootstrap or all    random subset        most - split
+                                            + random thresholds  thresholds too
+
+Bagging alone decorrelates only by rows, and Trace B shows that is not enough - the ensemble plateaued at
+30 trees. Each row down this table adds another axis of disagreement between the members, and more
+disagreement means averaging removes more variance.
+
+TRACE F - bagging against its opposite.
+
+    property                bagging                   boosting
+    ---------------------   -----------------------   -------------------------
+    models trained          independently             sequentially on residuals
+    reduces                 VARIANCE                  BIAS
+    base model wants to be  high-variance (deep)      high-bias (shallow)
+    parallelisable          YES - fully               no, inherently sequential
+    overfits with more
+      models                barely                    yes - needs early stopping
+    typical use             random forests            gradient-boosted trees
+
+The clean decision rule: bag when your model overfits, boost when it underfits. And bagging's
+parallelism is a real operational advantage - 300 independent trees train on 300 cores, while a boosted
+ensemble cannot.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    out-of-bag fraction   36.8% left out of every resample; distinct fraction measured at 0.6322
+                          for n >= 1,000 against a theoretical 1 - 1/e = 0.6321
+    bagging               1 tree 0.2477 | 3 trees 0.1894 (23.5% better) | 30 trees 0.1848
+                          | 300 trees 0.1847
+                          -> saturates by ~30 models; 30 to 300 bought 0.0001
+    OOB estimate          settles ~18% BELOW the true test error, systematically
+
+COMPLEXITY: generating a resample is O(n). Bagging k models costs k times the training time and k times
+the inference time, fully parallelisable. Memory is k models. The OOB estimate is free - it reuses
+predictions you already computed.
+
+THE MISTAKES:
+
+    - Bagging an underfitting model. Averaging reduces variance and leaves bias untouched.
+    - Using shallow stumps as bagging base models. Give it something with variance to remove.
+    - Reporting the OOB score as a test score. MEASURED at 18% off, systematically.
+    - Tuning against the OOB score and then reporting it. It has become a validation set.
+    - Using hundreds of models expecting hundreds of models' worth of improvement. MEASURED: saturation
+      by 30, because the resamples overlap by ~63%.
+    - Plain bagging of trees instead of a random forest. The bootstrap alone leaves them too correlated.
+    - Bootstrapping dependent data - time series or grouped observations - row by row. Use a block
+      bootstrap.
+    - Not stratifying resamples for imbalanced classes, so a rare class disappears from some bags.
+    - Forgetting to guard rows with zero OOB predictions at small ensemble sizes.
+    - Not parallelising, when independence across members is bagging's main practical advantage.
+    - Sampling WITHOUT replacement and calling it a bootstrap. That is subsampling, and it has different
+      properties.
+    - Expecting bagging to help a model that is already at the noise floor.
+
+THE TAKEAWAY. The bootstrap resamples your data with replacement so that each resample looks like a fresh
+draw from the population, and the mechanically important consequence is that 36.8% of rows are left out
+every time - measured at exactly 1 - 1/e - which hands every bagged model a validation set for free.
+Bagging turns that into variance reduction by averaging models trained on different resamples, measured as
+0.2477 to 0.1847 on depth-3 trees. But it reduces VARIANCE ONLY, so it does nothing for an underfitting
+model, and it saturates after about thirty members because every resample overlaps every other by roughly
+63% - which is precisely why random forests add random feature subsets on top, decorrelating by columns
+where the bootstrap decorrelates by rows.""",
+]
+
+_EX_P1AO["Bootstrap sampling"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you computed a number from your data. How uncertain is it?
+
+For a MEAN there is a textbook formula. For a median, a 90th percentile, a correlation, an AUC, or the
+ratio of two quantiles, there usually is not - or the derivation is hard and rests on assumptions you
+cannot check.
+
+The bootstrap gives you all of them the same way: resample your data with replacement a thousand times,
+recompute the statistic on each resample, and look at the spread.
+
+(This entry is about UNCERTAINTY ESTIMATION. The companion entry on the bootstrap covers the resampling
+mechanism itself and its use in bagging.)
+
+MEASURED ON THIS MACHINE - 300 draws from a skewed distribution, 2,000 resamples per statistic:
+
+    statistic          point estimate   95% bootstrap CI       CI width
+    ----------------   --------------   --------------------   --------
+    mean                       1.5642   [ 1.3107,  1.8723]       0.5616
+    median                     0.9827   [ 0.8003,  1.0935]       0.2932
+    90th percentile            3.0451   [ 2.5971,  3.9273]       1.3302
+    std dev                    2.5604   [ 1.3544,  3.8009]       2.4465
+    IQR                        1.3151   [ 1.0795,  1.5771]       0.4976
+    p90/p50 ratio              3.0987   [ 2.7300,  4.0524]       1.3225
+
+Not one of those needed a distributional assumption or a derivation. That is the entire selling point:
+ONE procedure for any statistic you can write as a function of the data.""",
+
+    """2. THE INTUITION - you cannot collect a hundred more datasets, so you fake it by resampling the one you
+have.
+
+The logic is: the true sampling distribution of your statistic comes from repeatedly drawing samples from
+the POPULATION. You cannot do that. But your sample IS an estimate of the population, so drawing from it
+approximates drawing from the population - and the spread of the statistic across those draws
+approximates its real sampling variability.
+
+AND HERE IS THE HONEST PART, which is usually left out. For the MEAN, where a formula already exists, the
+bootstrap is NOT better. MEASURED, coverage of a nominal 95% interval over 600 trials:
+
+    distribution      n     bootstrap coverage   normal-theory coverage
+    ---------------   ---   ------------------   ----------------------
+    normal(0,1)        20                92.3%                    93.3%
+    normal(0,1)       200                95.0%                    94.7%
+    lognormal          20                82.8%                    82.5%
+    lognormal         200                92.8%                    92.2%
+    exponential(1)     20                91.2%                    91.5%
+    exponential(1)    200                93.8%                    94.3%
+    heavy tail t(3)    20                92.3%                    93.8%
+    heavy tail t(3)   200                93.0%                    94.5%
+
+The two columns are the same to within a percentage point everywhere. The bootstrap did not rescue the
+skewed cases - BOTH methods covered only 82.8% and 82.5% on lognormal data at n=20, when both claimed 95%.
+
+So the bootstrap's value is NOT that it gives better intervals for things you could already compute. It is
+that it gives intervals AT ALL for the things you could not - the median, the IQR, the p90/p50 ratio in
+section 1. And that on hard distributions with small samples, NEITHER method delivers its advertised
+coverage, which is worth knowing before you quote a confidence interval.""",
+
+    """3. EVERY TERM DEFINED.
+
+BOOTSTRAP CONFIDENCE INTERVAL. An interval derived from the spread of a statistic across resamples.
+
+PERCENTILE INTERVAL. Take the 2.5th and 97.5th percentiles of the bootstrap distribution. The simplest
+method, and what was measured here.
+
+BASIC / REVERSE PERCENTILE INTERVAL. Reflects the bootstrap distribution around the point estimate.
+Corrects some bias the percentile method misses.
+
+BCa (bias-corrected and accelerated). Adjusts for bias and skewness in the bootstrap distribution. The
+best general-purpose method, and more expensive.
+
+STUDENTISED BOOTSTRAP. Bootstraps a t-like pivot. Most accurate when it applies; needs a variance
+estimate at each resample.
+
+COVERAGE. The fraction of the time a nominal 95% interval actually contains the truth. What section 2
+measured, and what nobody checks.
+
+NOMINAL vs ACTUAL coverage. What the interval CLAIMS versus what it DELIVERS. MEASURED at 95% claimed and
+82.8% delivered on lognormal data at n=20.
+
+SAMPLING DISTRIBUTION. The distribution of a statistic over repeated samples from the population. What the
+bootstrap approximates.
+
+B. The number of resamples. 1,000-2,000 for an interval; more only reduces MONTE CARLO noise, never the
+underlying statistical uncertainty.
+
+PLUG-IN PRINCIPLE. Using the empirical distribution in place of the unknown true one. The bootstrap's
+justification in one phrase.
+
+EXCHANGEABILITY. The assumption that rows are interchangeable. What autocorrelated data violates -
+MEASURED below as coverage collapsing to 35.5%.
+
+BLOCK BOOTSTRAP. Resampling contiguous BLOCKS instead of rows, so local dependence survives. The fix for
+time series.
+
+CLUSTER BOOTSTRAP. Resampling whole GROUPS (patients, sessions, users) rather than rows, when
+observations within a group are correlated.
+
+PARAMETRIC BOOTSTRAP. Fit a distribution, then simulate from it. Uses more assumptions and needs less
+data.
+
+JACKKNIFE. Leave-one-out resampling. Older, cheaper, and worse for non-smooth statistics like the median.
+
+PERMUTATION TEST. Shuffling labels to test a null hypothesis. A relative that answers a different
+question - significance rather than uncertainty.
+
+SMOOTH vs NON-SMOOTH STATISTIC. The bootstrap works well for smooth functionals (mean, correlation) and
+badly for extremes (max, min) - MEASURED below at 0.0% coverage.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the bootstrap fails SILENTLY. It always returns an interval, and
+nothing about the output tells you the interval is wrong.
+
+FAILURE 1: EXTREME STATISTICS. A resample cannot contain a value larger than the largest you observed, so
+the bootstrap distribution of the maximum is bounded above by the sample maximum. MEASURED, uniform(0,10)
+data with n=60:
+
+    true maximum = 10.0
+    95% bootstrap CI covered it 0.0% of the time
+
+Zero. Not "poor coverage" - it is structurally impossible for the interval to reach the truth, and the
+procedure gives no hint. The same applies to minima and far-tail quantiles.
+
+FAILURE 2: DEPENDENT DATA. The bootstrap assumes rows are exchangeable. Autocorrelated data resampled row
+by row has its dependence destroyed, which makes the resamples look far more variable than the real
+process - so the interval comes out too NARROW. MEASURED:
+
+    autocorrelation rho   coverage of a nominal 95% CI
+    -------------------   ----------------------------
+                    0.0                         94.0%
+                    0.5                         71.5%
+                    0.9                         35.5%
+
+At rho = 0.9 a "95% confidence interval" contains the truth about a third of the time. This is the most
+dangerous failure in the entry, because time series, user sessions, repeated measures and clustered
+observations are extremely common and the code runs perfectly.
+
+The fix is a BLOCK bootstrap - resample contiguous blocks so the local dependence survives - or a CLUSTER
+bootstrap that resamples whole groups.
+
+FAILURE 3: SMALL SAMPLES. MEASURED, coverage of a 95% interval for the mean on normal data:
+
+    n      coverage
+    ----   --------
+       5      80.5%
+       8      89.0%
+      15      91.7%
+      30      91.3%
+     100      95.3%
+
+At n=5 a 95% interval delivers 80.5%. The bootstrap cannot manufacture information that is not in the
+sample - if five points do not pin down the distribution, resampling those five points does not either.
+
+THE PRACTICAL RULE: the bootstrap is excellent for SMOOTH statistics on INDEPENDENT observations with a
+reasonable n. Outside that, it still runs, still returns a tidy interval, and is quietly wrong.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHEN TO USE WHICH INTERVAL METHOD:
+
+    PERCENTILE          take the 2.5th and 97.5th percentiles of the bootstrap distribution. Simple,
+                        what was measured here, and biased when the bootstrap distribution is skewed.
+    BASIC / REVERSE     reflects around the point estimate. Corrects some of that bias.
+    BCa                 corrects for bias AND skewness. The best default, roughly 2x the compute.
+    STUDENTISED         most accurate when you can estimate a variance per resample, which often means a
+                        nested bootstrap.
+    NORMAL-THEORY       when a formula exists and the assumptions hold. MEASURED as indistinguishable
+                        from the bootstrap for the mean - so use the formula, it is free.
+
+THE COMPARISON THAT DECIDES IT: if a closed form exists AND its assumptions hold, use the closed form.
+MEASURED, they agreed within a percentage point on every distribution and sample size tried. The bootstrap
+is for the cases where no closed form exists.
+
+THE FAMILY OF RESAMPLING METHODS:
+
+    BOOTSTRAP            resample rows WITH replacement. Estimates uncertainty.
+    JACKKNIFE            leave one out at a time. Older, cheaper, and unreliable for non-smooth
+                         statistics like the median.
+    PERMUTATION TEST     shuffle labels to build a null distribution. Answers "is this difference real?"
+                         rather than "how uncertain is this number?".
+    CROSS-VALIDATION     resampling for MODEL evaluation rather than statistic uncertainty.
+    BLOCK BOOTSTRAP      contiguous blocks, for time series. MEASURED as the fix for the 35.5% collapse.
+    CLUSTER BOOTSTRAP    whole groups, for repeated measures and nested data.
+    PARAMETRIC BOOTSTRAP fit a distribution and simulate from it. Stronger assumptions, works with less
+                         data, and can extrapolate beyond the observed range - which is exactly what
+                         fixes the maximum-statistic failure.
+    BAYESIAN POSTERIOR   a different framework that also yields intervals, with an explicit prior. Often
+                         the better answer when n is genuinely small.
+
+CHOOSING B, THE NUMBER OF RESAMPLES: 1,000-2,000 is standard for an interval. More reduces only the MONTE
+CARLO noise of the procedure, never the statistical uncertainty in the data - so B=100,000 gives you a
+very precise estimate of a possibly wrong interval. If your interval changes materially between B=2,000
+and B=10,000, that is a signal your statistic is unstable, not that you need more resamples.
+
+AND THE THING TO DO BEFORE TRUSTING ANY OF IT: run a COVERAGE SIMULATION on data resembling yours, where
+you know the truth. That is what section 2 and section 4 are. It takes twenty lines, and it is the only
+way to find out that your 95% interval is a 71.5% interval.""",
+
+    """6. HOW TO CODE IT.
+
+  1. THE WHOLE PROCEDURE IS FOUR LINES:
+         idx = rng.integers(0, n, (B, n))
+         vals = np.array([stat(x[i]) for i in idx])
+         lo, hi = np.percentile(vals, [2.5, 97.5])
+     Resample, recompute, take percentiles.
+  2. RESAMPLE THE WHOLE ROW, not each column independently. Resampling columns separately destroys the
+     correlations between them, which is usually the thing you were trying to measure.
+  3. USE B = 1,000-2,000. More only reduces Monte Carlo noise. If the interval moves between B=2,000 and
+     B=10,000, your statistic is unstable.
+  4. USE BCa IF YOUR BOOTSTRAP DISTRIBUTION IS SKEWED. The plain percentile method is biased there, and
+     skew is the normal case for ratios and tail statistics.
+  5. IF A CLOSED FORM EXISTS AND ITS ASSUMPTIONS HOLD, USE IT. MEASURED as equivalent for the mean, and
+     it is free.
+  6. RUN A COVERAGE CHECK ON SIMULATED DATA THAT RESEMBLES YOURS. MEASURED: nominal 95% delivered 82.8%
+     on skewed data at n=20 and 35.5% on autocorrelated data. Twenty lines, and it is the only way to
+     find out.
+  7. FOR TIME SERIES, USE A BLOCK BOOTSTRAP. Row-wise resampling of dependent data is silently wrong -
+     MEASURED at 35.5% coverage.
+  8. FOR REPEATED MEASURES OR GROUPED DATA, RESAMPLE THE GROUPS, not the rows. Users, patients, sessions.
+  9. DO NOT BOOTSTRAP THE MAXIMUM, MINIMUM, OR A FAR-TAIL QUANTILE. MEASURED at 0.0% coverage - the
+     resample cannot exceed the observed range. Use a parametric method or extreme value theory.
+ 10. BE CAREFUL BELOW n = 30. MEASURED at 80.5% coverage for n=5.
+ 11. BOOTSTRAP THE WHOLE PIPELINE if the statistic comes out of one. If you fit a model and then compute
+     a metric, the resample must go through BOTH steps - otherwise you have measured the metric's
+     variability and not the model's.
+ 12. REPORT THE INTERVAL AND THE METHOD. "95% percentile bootstrap CI, B=2,000" is reproducible;
+     "95% CI" is not.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"You computed a number and you want to know how uncertain it is. For a mean there is a formula. For a
+median, a 90th percentile, a correlation, an AUC, or the ratio of two quantiles, there generally is not.
+
+The bootstrap gives you all of them identically: resample your data with replacement a couple of thousand
+times, recompute the statistic each time, and take the 2.5th and 97.5th percentiles of the results. The
+justification is the plug-in principle - you cannot draw more samples from the population, but your sample
+is an estimate of the population, so drawing from it approximates that.
+
+I want to lead with the honest part, because it changed how I would describe this. For the MEAN, where a
+formula already exists, the bootstrap is NOT better. I ran a coverage simulation over four distributions
+and two sample sizes: bootstrap coverage and normal-theory coverage agreed within about a percentage
+point everywhere. And on lognormal data at n=20, BOTH delivered about 82.5% coverage while claiming 95%.
+So the bootstrap does not rescue a hard case; it just does not need a derivation.
+
+Its actual value is that it works for statistics that have no formula. I computed intervals for the median,
+the 90th percentile, the standard deviation, the IQR and the p90/p50 ratio with the same three lines of
+code. That is the selling point - one procedure for anything you can compute.
+
+The thing I would emphasise most is that it fails SILENTLY. It always returns a tidy interval and nothing
+in the output tells you it is wrong.
+
+Three failures, measured. The maximum: a resample cannot contain a value larger than the largest you
+observed, so the interval is bounded below the truth - I measured 0.0% coverage. Small samples: at n=5, a
+95% interval delivered 80.5%. And the dangerous one, dependent data - the bootstrap assumes rows are
+exchangeable, so resampling an autocorrelated series destroys the dependence and produces intervals that
+are far too narrow. At an autocorrelation of 0.9, my 95% interval covered the truth 35.5% of the time.
+That matters because time series, user sessions and repeated measures are everywhere, and the code runs
+perfectly.
+
+The fix for that one is a block bootstrap - resample contiguous blocks so the local dependence survives -
+or resample whole groups for clustered data.
+
+And the practice I would actually recommend: before trusting any interval, run a coverage simulation on
+data resembling yours where you know the truth. It is twenty lines, and it is the only way to discover
+that your 95% interval is a 71.5% interval."
+
+THE ONE SENTENCE TO NOT FUMBLE: the bootstrap's value is giving intervals for statistics with NO formula -
+it measured no better than normal theory for the mean - and it fails silently on extremes (0.0% coverage),
+tiny samples (80.5%) and dependent data (35.5%).""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def boot_ci(x, stat, B=2000, alpha=0.05):
+        n = len(x)
+        idx = rng.integers(0, n, (B, n))
+        vals = np.array([stat(x[i]) for i in idx])
+        return np.percentile(vals, [100*alpha/2, 100*(1-alpha/2)])
+
+The entire method. `(B, n)` generates all B resamples at once as a matrix of indices - each ROW is one
+resample of size n, drawn with replacement.
+
+`stat(x[i])` is the key generality: `stat` is any function of a data array. Passing `np.median`,
+`lambda a: np.percentile(a,90)/np.median(a)`, or a whole model-fitting pipeline all work identically. That
+is what "one procedure for any statistic" means concretely.
+
+The final line is the PERCENTILE method: sort the B values and take the empirical 2.5th and 97.5th. Simple,
+and it is the version that is biased when the bootstrap distribution is skewed - BCa exists to correct
+exactly that.
+
+    def normal_ci(x, alpha=0.05):
+        m = x.mean(); se = x.std(ddof=1)/np.sqrt(len(x))
+        return m-1.96*se, m+1.96*se
+
+The control, and having it is what turned this entry's headline from an assertion into a measurement.
+Without a closed-form comparison, "the bootstrap gives good intervals" is unfalsifiable; with it, the
+answer is "the same as the formula, so use the formula when you have one".
+
+    for _ in range(TRIALS):
+        x = sampler(n)
+        lo, hi = boot_ci(x, lambda a: a.mean(), B=600)
+        if lo <= truth <= hi: cb += 1
+
+The COVERAGE simulation, which is the measurement nobody runs. Generate a fresh sample from a KNOWN
+distribution, build the interval, and check whether it contains the true value. Repeat 600 times and count.
+
+This only works because `truth` is known - `0.0` for a standard normal, `exp(mu + sigma^2/2)` for a
+lognormal. That is why the check has to be done on SIMULATED data resembling yours, not on your real data
+where the truth is what you were trying to estimate.
+
+    lo, hi = boot_ci(x, lambda a: a.max(), B=400)
+    if lo <= 10.0 <= hi: cov += 1
+
+The maximum-statistic failure, and it is worth seeing why it is structural rather than statistical. Every
+resample is drawn from `x`, so `a.max()` can never exceed `x.max()`, which is itself below the true
+maximum of 10.0 with probability 1. The entire bootstrap distribution therefore sits below the truth and
+the interval CANNOT contain it - hence exactly 0.0%, not "low coverage".
+
+    e = rng.normal(0,1,300); s[0] = e[0]
+    for t in range(1,300): s[t] = rho*s[t-1] + e[t]
+
+An AR(1) series - each value depends on the previous one. Resampling its rows independently shuffles that
+dependence away completely, so the resamples behave like independent noise, which has far LESS variance
+than the real autocorrelated process - and the interval comes out too narrow.
+
+Sweeping `rho` from 0.0 to 0.9 and watching coverage fall from 94.0% to 35.5% is what makes this a
+measured failure rather than a warning in a footnote.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the bootstrap against normal theory, coverage of a nominal 95% interval, 600 trials each.
+
+    distribution      n     bootstrap   normal theory   difference   shortfall vs 95%
+    ---------------   ---   ---------   -------------   ----------   ----------------
+    normal(0,1)        20       92.3%           93.3%        -1.0pp             -2.7pp
+    normal(0,1)       200       95.0%           94.7%        +0.3pp             +0.0pp
+    lognormal          20       82.8%           82.5%        +0.3pp            -12.2pp
+    lognormal         200       92.8%           92.2%        +0.6pp             -2.2pp
+    exponential(1)     20       91.2%           91.5%        -0.3pp             -3.8pp
+    exponential(1)    200       93.8%           94.3%        -0.5pp             -1.2pp
+    heavy tail t(3)    20       92.3%           93.8%        -1.5pp             -2.7pp
+    heavy tail t(3)   200       93.0%           94.5%        -1.5pp             -2.0pp
+
+The `difference` column never exceeds 1.5 percentage points. For the mean, the two methods are
+interchangeable - which is the honest negative, and it reframes what the bootstrap is for.
+
+The `shortfall` column is the finding nobody expects: on lognormal data at n=20, BOTH methods delivered
+about 82.5% while claiming 95%. Skewness plus a small sample breaks both, and neither warns you.
+
+TRACE B - what it can do that formulas cannot. n=300, B=2,000.
+
+    statistic          estimate   95% CI                 width    closed form exists?
+    ----------------   --------   --------------------   ------   -------------------
+    mean                 1.5642   [ 1.3107,  1.8723]     0.5616   yes
+    median               0.9827   [ 0.8003,  1.0935]     0.2932   awkward
+    90th percentile      3.0451   [ 2.5971,  3.9273]     1.3302   no
+    std dev              2.5604   [ 1.3544,  3.8009]     2.4465   assumes normality
+    IQR                  1.3151   [ 1.0795,  1.5771]     0.4976   no
+    p90/p50 ratio        3.0987   [ 2.7300,  4.0524]     1.3225   no
+
+Four of six have no usable closed form, and all six came from the same three lines.
+
+Note the asymmetry in the tail statistics: the p90 interval runs from -0.45 to +0.88 around the estimate.
+That skew is real and it is why the plain percentile method is the wrong choice here - BCa exists for it.
+
+TRACE C - failure 1, the maximum. uniform(0,10), n=60, 500 trials.
+
+    true maximum                      10.0
+    95% bootstrap CI covered it        0.0%
+
+Structurally impossible, not merely poor. Every resample draws from the observed values, so the bootstrap
+distribution of the max is bounded above by the sample max, which is below 10.0 with probability 1.
+
+TRACE D - failure 2, small samples. Normal data, mean, 600 trials each.
+
+    n      coverage   shortfall
+    ----   --------   ---------
+       5      80.5%     -14.5pp
+       8      89.0%      -6.0pp
+      15      91.7%      -3.3pp
+      30      91.3%      -3.7pp
+     100      95.3%      +0.3pp
+
+Only reaches nominal coverage at n=100. At n=5 a "95%" interval is an 80% interval, because five points do
+not determine a distribution and resampling them cannot invent the missing information.
+
+TRACE E - failure 3, dependent data. AR(1), n=300, 400 trials.
+
+    autocorrelation rho   coverage   shortfall   what happened
+    -------------------   --------   ---------   -----------------------------------
+                    0.0      94.0%      -1.0pp   works correctly
+                    0.5      71.5%     -23.5pp   dependence destroyed by resampling
+                    0.9      35.5%     -59.5pp   interval is far too narrow
+
+This is the most dangerous row in the entry. At rho=0.9 a 95% interval is a 35.5% interval, and the code
+runs without error, the interval looks reasonable, and nothing signals the problem.
+
+The mechanism: resampling rows independently produces resamples that look like white noise, and white
+noise has much less variance in its mean than an autocorrelated series does. So the bootstrap
+UNDERESTIMATES the variability and the interval is too tight.
+
+The fix is a block bootstrap - resample contiguous runs of, say, 20 observations - so the within-block
+dependence survives into the resample.
+
+TRACE F - the decision, assembled.
+
+    situation                                  use                        why
+    ----------------------------------------   ------------------------   ------------------------
+    a mean, formula assumptions hold           the closed form            MEASURED as equivalent
+    a median, IQR, ratio, AUC                  bootstrap                  no formula exists
+    a skewed bootstrap distribution            BCa, not percentile        percentile is biased
+    a time series                              BLOCK bootstrap            35.5% -> corrected
+    repeated measures / grouped data           CLUSTER bootstrap          resample groups
+    the maximum or a far-tail quantile         parametric / EVT           0.0% coverage
+    n < 30                                     be sceptical of any of it  80.5% at n=5
+    any of the above, before trusting it       a coverage simulation      the only real check""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    vs normal theory   bootstrap and closed form agreed within 1.5 percentage points on every
+                       distribution and sample size tried - the bootstrap is NOT better for the mean
+    both undercover    lognormal at n=20: 82.8% bootstrap, 82.5% normal, against a nominal 95%
+    what it enables    intervals for the median, p90, std dev, IQR and the p90/p50 ratio - four of the
+                       six have no usable closed form
+    failure: extremes  maximum of uniform(0,10): 0.0% coverage, structurally
+    failure: small n   n=5 gives 80.5% | n=15 gives 91.7% | n=100 gives 95.3%
+    failure: dependence  rho=0.0 gives 94.0% | rho=0.5 gives 71.5% | rho=0.9 gives 35.5%
+
+COMPLEXITY: O(B x cost of the statistic). At B=2,000 with a statistic costing O(n), that is O(2,000n) -
+trivial for a percentile, expensive if the statistic is a model fit, which is why bootstrapping a whole
+pipeline is sometimes impractical.
+
+THE MISTAKES:
+
+    - Using the bootstrap where a closed form applies. MEASURED as equivalent, and the formula is free.
+    - Never running a coverage check. MEASURED: nominal 95% delivered anywhere from 35.5% to 95.3%
+      depending on the situation, and none of it is visible from the output.
+    - Bootstrapping dependent data row by row. MEASURED at 35.5% coverage - the most common serious
+      error, because time series and repeated measures are everywhere.
+    - Bootstrapping a maximum, minimum or far-tail quantile. MEASURED at 0.0%.
+    - Bootstrapping with n below about 30 and quoting the result confidently. MEASURED at 80.5% for n=5.
+    - Using the plain percentile method on a skewed bootstrap distribution. Use BCa.
+    - Resampling columns independently, which destroys the correlations between them.
+    - Raising B to fix a wide interval. B controls Monte Carlo noise only; the statistical uncertainty is
+      in the data.
+    - Bootstrapping the metric but not the model fit, when the statistic comes out of a pipeline.
+    - Resampling rows when the data is grouped. Resample the GROUPS.
+    - Reporting "95% CI" without saying which bootstrap method or what B. It is not reproducible.
+    - Assuming a tidy interval means a valid one. It always returns something.
+
+THE TAKEAWAY. The bootstrap estimates uncertainty by resampling your data with replacement and looking at
+how much the statistic moves - one procedure for the median, the IQR, an AUC or a quantile ratio, none of
+which have usable closed forms. What it is NOT is a better interval for things you could already compute:
+measured against normal theory for the mean it agreed within 1.5 percentage points everywhere, and on
+skewed data at n=20 both delivered 82.5% coverage while claiming 95%. And its real danger is that it fails
+SILENTLY and always returns a tidy answer - 0.0% coverage for a maximum, 80.5% at n=5, and 35.5% on
+autocorrelated data, which is the one that will actually bite because time series and repeated measures
+are everywhere. The habit worth forming is a twenty-line coverage simulation on data resembling yours,
+because it is the only way to discover that your 95% interval is a 71.5% interval.""",
+]
+
+_EX_P1AO["Buffered vs direct I/O"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - when your program reads a file, the data normally passes through the
+operating system's PAGE CACHE: a copy is kept in RAM, so the next read of the same bytes never touches the
+disk.
+
+DIRECT I/O (`O_DIRECT`) skips that entirely and transfers straight between your buffer and the device.
+
+MEASURED ON THIS MACHINE with a real 256 MB file:
+
+    read method                          time        throughput
+    ---------------------------------   --------   -----------
+    buffered, COLD (cache dropped)      206.2 ms    1,301.9 MB/s
+    buffered, WARM (second read)         37.7 ms    7,128.0 MB/s
+    buffered, WARM (third read)          28.5 ms    9,419.9 MB/s
+    O_DIRECT, first read                252.4 ms    1,063.5 MB/s
+    O_DIRECT, second read               239.0 ms    1,123.4 MB/s
+
+The buffered read got 5.5x faster on repeat. The direct read got 1.06x faster - which is to say, not at
+all.
+
+That single contrast is the whole topic. Buffered I/O has a cache and direct I/O does not, and everything
+else follows from it: who manages memory, who decides what stays resident, and who controls when data
+actually reaches the disk.""",
+
+    """2. THE INTUITION - the page cache is free RAM that the kernel manages on your behalf, and giving it up
+is only sensible if you intend to do the job better yourself.
+
+Buffered I/O also gives you READ-AHEAD: the kernel notices sequential access and fetches ahead of you.
+MEASURED, varying the block size the application asks for:
+
+    block size   cold buffered   warm buffered
+    ----------   -------------   -------------
+         4 KB       809.2 MB/s     4,083.8 MB/s
+        64 KB       660.7 MB/s     7,270.0 MB/s
+     1,024 KB     1,347.4 MB/s     6,901.2 MB/s
+     8,192 KB     1,364.6 MB/s     5,229.9 MB/s
+
+The COLD column barely doubles across a 2,000x range of request sizes, because the kernel is reading ahead
+regardless of how much you asked for. Reading 4 KB at a time still gets 809 MB/s from a cold cache -
+which would be impossible without read-ahead.
+
+That is the second thing `O_DIRECT` gives up. With direct I/O, a 4 KB request is a 4 KB device operation,
+and you must do your own prefetching.
+
+AND WHERE THE CACHE STOPS HELPING. MEASURED, 4,000 random 4 KB reads over the same file:
+
+    cold : 728.8 ms   182.2 us per read
+    warm :   4.6 ms     1.2 us per read   (157.6x)
+
+157x, because the whole 256 MB fits in RAM. On a file LARGER than memory, the hit rate collapses and the
+two converge - and that regime is precisely where a database stops wanting the kernel's cache and starts
+wanting its own.""",
+
+    """3. EVERY TERM DEFINED.
+
+BUFFERED I/O. The default. Reads and writes pass through the kernel's page cache.
+
+PAGE CACHE. The kernel's cache of file pages in RAM. Uses all otherwise-free memory and is evicted under
+pressure.
+
+O_DIRECT. An open flag that bypasses the page cache, transferring between your buffer and the device.
+
+ALIGNMENT. `O_DIRECT` requires the buffer address, the file offset and the length to be aligned - typically
+to 512 bytes or the page size. Getting it wrong returns EINVAL, which is why the measurement here used
+`mmap` to obtain page-aligned memory.
+
+READ-AHEAD. The kernel prefetching subsequent blocks when it detects sequential access. MEASURED as the
+reason 4 KB reads still reach 809 MB/s cold.
+
+WRITE-BACK. Dirty pages being written to disk later, by the kernel, on its own schedule.
+
+DIRTY PAGE. Modified in cache and not yet on disk.
+
+fsync / fdatasync. Force this file's dirty pages to durable storage. Returns when the device confirms.
+MEASURED below - this is where the real cost is.
+
+O_SYNC / O_DSYNC. Make every write behave as if followed by fsync.
+
+DOUBLE CACHING. The same data held in both the application's cache and the page cache. The main argument
+for `O_DIRECT` in databases.
+
+BUFFER POOL. A database's own page cache. The thing that makes the kernel's redundant.
+
+WRITE-AHEAD LOG (WAL). A durability log that must reach disk BEFORE the data pages it describes. Requires
+control over write ORDERING, which the page cache does not give you.
+
+posix_fadvise. Advice to the kernel about access patterns - `DONTNEED` evicts a file's pages, `WILLNEED`
+prefetches, `RANDOM` disables read-ahead. A middle ground between buffered and direct.
+
+DIRECT vs SYNCHRONOUS. Orthogonal. `O_DIRECT` bypasses the cache; it does NOT guarantee durability. You
+still need fsync unless you also opened with `O_SYNC`.
+
+io_uring / AIO. Asynchronous I/O interfaces, usually paired with `O_DIRECT` so the application controls
+queue depth.
+
+ZERO-COPY. Avoiding the extra memory copy between kernel and user buffers. One of `O_DIRECT`'s smaller
+benefits.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - `write()` returning does not mean the data is on disk. MEASURED,
+writing 64 MB:
+
+    write() returns after            22.7 ms   2,955.7 MB/s
+    fsync() completes after         197.2 ms     340.2 MB/s
+    the fsync cost the other        174.5 ms
+
+The apparent write throughput of 2,955 MB/s is a measurement of `memcpy` into the page cache. The real
+figure - the one where a power cut cannot lose your data - is 340 MB/s, 8.7x slower.
+
+Any benchmark that writes and does not fsync is measuring memory bandwidth. Any application that assumes a
+successful `write()` means durability will lose data on power loss, and will do so rarely enough that the
+bug survives for years.
+
+MEASURED, the durability-throughput trade directly:
+
+    fsync every N MB   total time   effective throughput
+    ----------------   ----------   --------------------
+                  1 MB   381.7 ms           175.8 MB/s
+                  4 MB   211.9 ms           316.7 MB/s
+                 16 MB   128.1 ms           524.1 MB/s
+                 64 MB   149.2 ms           449.8 MB/s
+
+Syncing every megabyte costs 3x the throughput of syncing every sixteen. That one knob is what a database's
+commit policy is choosing between - and it is why `innodb_flush_log_at_trx_commit` and its equivalents
+exist. (The 64 MB row being slower than 16 MB is run-to-run noise; the trend across the first three rows
+is the signal.)
+
+THE SECOND TRAP - assuming `O_DIRECT` is faster. MEASURED, it was SLOWER even on a cold cache: 252.4 ms
+against 206.2 ms buffered, and 1,063 MB/s against 1,302. You lose read-ahead and you gain nothing on a
+single sequential pass.
+
+`O_DIRECT` is not a performance flag. It is a CONTROL flag. What it buys is:
+    - no double caching, so the memory you allocated is the memory you have
+    - no surprise eviction, so latency is predictable
+    - no kernel write-back reordering your writes behind your back
+
+Those are worth a great deal to a database and nothing at all to an application that has no cache of its
+own.
+
+THE THIRD TRAP - the alignment rules. `O_DIRECT` requires aligned buffers, offsets and lengths. A normal
+Python `bytearray` or a malloc'd buffer will usually fail with EINVAL. This measurement used `mmap` to get
+page-aligned memory, which is the standard workaround - and it is a real reason `O_DIRECT` code is fiddly
+and rarely worth writing unless you are building storage software.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHY DATABASES USE O_DIRECT, and it is not speed:
+
+    DOUBLE CACHING          an 8 GB buffer pool plus an 8 GB page cache means up to 8 GB of RAM holding
+                            each hot page TWICE. You bought memory and used half of it on a redundant
+                            copy.
+    EVICTION KNOWLEDGE      the database knows an index root is worth keeping and a scanned page is not.
+                            The kernel's LRU knows only recency, so one large table scan can evict the
+                            entire working set.
+    WRITE ORDERING          a write-ahead log must reach disk BEFORE the pages it describes. The kernel
+                            writes back dirty pages whenever it likes, so the database must fsync to
+                            force ordering anyway - and `O_DIRECT` makes the ordering explicit.
+    PREDICTABLE LATENCY     page-cache eviction is invisible. A query that hit memory yesterday can hit
+                            disk today for reasons nothing in the database can see.
+
+All four are about CONTROL. And the trade is honest: you give up free caching and read-ahead, and you only
+come out ahead if you actually implement a better cache. An application that opens `O_DIRECT` and then
+reads the same block twice has simply made itself slower - MEASURED as 1.06x on repeat, against 5.5x
+buffered.
+
+THE FULL SPECTRUM, from most kernel help to least:
+
+    BUFFERED (default)           page cache, read-ahead, write-back. Best for almost everything.
+    BUFFERED + posix_fadvise     keep the cache, and advise the kernel. `WILLNEED` to prefetch,
+                                 `DONTNEED` to evict after a one-pass scan, `RANDOM` to disable
+                                 read-ahead. Most of `O_DIRECT`'s benefits with none of its difficulty,
+                                 and badly under-used.
+    mmap                         map the file into your address space; the page cache IS your memory.
+                                 Elegant, and page faults are hard to control and I/O errors arrive as
+                                 SIGBUS.
+    O_DIRECT                     no cache, no read-ahead, alignment rules, full control.
+    O_DIRECT + io_uring          direct I/O with asynchronous submission and application-controlled
+                                 queue depth. What modern storage engines actually use.
+    RAW BLOCK DEVICE             skip the filesystem too. Rare now; the filesystem overhead is small
+                                 compared to what you give up.
+
+WHEN TO USE WHICH:
+    ORDINARY APPLICATIONS        buffered. The kernel's cache is free, well-tuned, and shared across
+                                 processes.
+    ONE-PASS SCANS OF HUGE FILES buffered plus `fadvise(DONTNEED)` after each chunk, so you do not evict
+                                 everyone else's hot pages with data you will never read again.
+    DATABASES AND STORAGE ENGINES `O_DIRECT` with your own buffer pool - if and only if you have one.
+    LOG WRITERS                  buffered writes plus a deliberate fsync policy. The fsync CADENCE is the
+                                 decision, not the cache.
+    LARGE SEQUENTIAL WRITES      buffered, and fsync at the end. MEASURED at 8.7x the apparent speed once
+                                 you count the sync.
+
+THE UNDER-USED MIDDLE GROUND is `posix_fadvise`. `DONTNEED` after a big sequential scan solves the
+"my backup job evicted the database's working set" problem without any of `O_DIRECT`'s alignment pain - and
+it is what this measurement used to drop the cache between runs.""",
+
+    """6. HOW TO CODE IT.
+
+  1. USE BUFFERED I/O UNLESS YOU HAVE YOUR OWN CACHE. MEASURED: `O_DIRECT` was slower even cold (252.4 vs
+     206.2 ms) and got no repeat benefit at all.
+  2. CALL fsync AND MEAN IT. MEASURED: `write()` returned in 22.7 ms and fsync completed at 197.2 ms.
+     Until fsync returns, a power cut loses the data.
+  3. BENCHMARK WITH fsync INCLUDED. MEASURED at 2,955 MB/s without and 340 MB/s with - any write benchmark
+     that omits it is measuring memcpy.
+  4. CHOOSE AN fsync CADENCE DELIBERATELY. MEASURED: every 1 MB gives 175.8 MB/s, every 16 MB gives 524.1.
+     That is the durability-throughput knob, and it should be a decision rather than a default.
+  5. DROP THE CACHE BETWEEN BENCHMARK RUNS with `posix_fadvise(DONTNEED)`. MEASURED: the difference
+     between a cold and warm read was 5.5x, so a benchmark that skips this measures RAM.
+  6. USE `fadvise(DONTNEED)` AFTER ONE-PASS SCANS so a backup or an export does not evict the working set
+     that everything else depends on.
+  7. USE `fadvise(RANDOM)` when access genuinely is random, so the kernel stops reading ahead into data
+     you will not use.
+  8. IF YOU USE `O_DIRECT`, ALIGN EVERYTHING - buffer address, file offset and length. Get an aligned
+     buffer from `mmap` or `posix_memalign`; a plain allocation returns EINVAL.
+  9. REMEMBER `O_DIRECT` IS NOT DURABLE. It bypasses the cache and does not guarantee the device has
+     committed. You still need fsync, or `O_SYNC`.
+ 10. PAIR `O_DIRECT` WITH ASYNCHRONOUS I/O. Without read-ahead you must build your own queue depth -
+     io_uring or libaio - or you will be slower than buffered on every sequential workload.
+ 11. SIZE THE DATABASE BUFFER POOL AGAINST TOTAL RAM, NOT AGAINST THE PAGE CACHE. If you are buffered, the
+     kernel is caching the same pages, so a pool sized at "all the RAM" double-caches everything.
+ 12. MEASURE COLD AND WARM SEPARATELY AND REPORT BOTH. They differ by 5.5x sequential and 157.6x random,
+     so a single number is meaningless without saying which one it is.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"When you read a file normally, the data goes through the kernel's page cache - a copy stays in RAM, so
+reading the same bytes again never touches the disk. Direct I/O, O_DIRECT, skips that and transfers
+straight between your buffer and the device.
+
+I measured it on a real 256 MB file. Buffered: 206 milliseconds cold, then 37.7 on the second read - 5.5
+times faster, because the second read came from RAM. O_DIRECT: 252 milliseconds first, 239 second. A
+factor of 1.06, which is to say no cache at all. That contrast is the whole topic.
+
+The surprising part is that O_DIRECT was SLOWER even on the cold read - 252 against 206 milliseconds -
+because buffered I/O also gives you read-ahead. I varied the block size and found that reading 4 KB at a
+time still reached 809 MB/s from a cold cache, which is only possible because the kernel is prefetching
+regardless of how much I asked for. O_DIRECT gives that up too, so a 4 KB request becomes a 4 KB device
+operation.
+
+So O_DIRECT is not a performance flag, it is a CONTROL flag. What databases actually buy with it is: no
+double caching, because an 8 GB buffer pool plus an 8 GB page cache means up to 8 GB of RAM holding every
+hot page twice; eviction decisions made by something that knows an index root matters more than a scanned
+page, which the kernel's LRU does not; and control over write ordering, because a write-ahead log has to
+reach disk before the pages it describes. All four reasons are about control, and none of them help an
+application that has no cache of its own.
+
+The thing I would make sure to say is about writes. write() returning does not mean the data is on disk. I
+measured writing 64 megabytes: write() returned after 22.7 milliseconds, apparently 2,955 MB/s - and fsync
+did not complete until 197 milliseconds, so the real durable throughput was 340 MB/s. Eight point seven
+times slower. The fast number is a measurement of memcpy into the page cache. Any write benchmark without
+fsync is measuring memory bandwidth, and any application that treats a successful write() as durability
+will lose data on power loss rarely enough that the bug survives for years.
+
+And that knob is tunable: syncing every megabyte gave 176 MB/s, every sixteen megabytes gave 524. That is
+exactly what a database's commit policy is choosing between.
+
+The option people forget is the middle ground - posix_fadvise. DONTNEED after a big one-pass scan stops
+your backup job evicting the database's working set, without any of O_DIRECT's alignment rules. It is what
+I used to drop the cache between these measurements."
+
+THE ONE SENTENCE TO NOT FUMBLE: buffered I/O got 5.5x faster on re-read and O_DIRECT got 1.06x - so
+O_DIRECT is not a speed flag but a control flag, bought by databases to avoid double-caching and to own
+eviction and write ordering.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    fd = os.open(PATH, os.O_RDONLY)
+    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+
+Dropping this file's pages from the cache WITHOUT root. `echo 3 > /proc/sys/vm/drop_caches` is the usual
+recipe and it needs privileges and evicts everything on the machine; `DONTNEED` with offset 0 and length 0
+means "the whole file" and affects only this file.
+
+This is the line that makes every cold measurement in the entry honest. Without it the second run reads
+from RAM and reports a disk benchmark that never touched the disk.
+
+    O_DIRECT = getattr(os, 'O_DIRECT', 0o40000)
+    fd = os.open(PATH, os.O_RDONLY | O_DIRECT)
+    buf = mmap.mmap(-1, bs)
+    got = os.preadv(fd, [buf], n)
+
+Direct I/O, and the `mmap` is not decoration. `O_DIRECT` requires the destination buffer to be aligned -
+typically to the page size - and a Python `bytearray` is not. `mmap.mmap(-1, bs)` allocates anonymous
+page-aligned memory, which satisfies the requirement.
+
+`preadv` reads at an explicit offset into that buffer. Using `os.read` into a normal bytes object would
+return EINVAL - and that error, appearing only when someone enables a flag, is a large part of why
+`O_DIRECT` code is rarely written by hand.
+
+    t0=time.perf_counter(); read_buffered(); t_cold=...
+    t0=time.perf_counter(); read_buffered(); t_warm=...
+    t0=time.perf_counter(); read_buffered(); t_warm2=...
+
+Three reads, not two. The third (28.5 ms, faster than the second's 37.7) shows the cache still warming -
+the second read is populating as well as serving. Reporting only "cold vs warm" from two runs would have
+understated the warm case by 25%.
+
+    t0=time.perf_counter(); written=0
+    while written<W: os.write(fd,data); written+=bs
+    t_w = time.perf_counter()-t0
+    os.fsync(fd)
+    t_f = time.perf_counter()-t0
+
+The write measurement, and the two timestamps are the entire point. `t_w` is when `write()` finished -
+22.7 ms, which is a memcpy rate. `t_f` is when the data is actually durable - 197.2 ms.
+
+Taking both from the same `t0` means `t_f` includes the writes, so the difference `t_f - t_w` is the fsync
+cost in isolation: 174.5 ms, or 8.7x the apparent write time.
+
+    if fsync_every and (written//bs) % fsync_every == 0: os.fsync(fd)
+
+The durability cadence sweep. Every N megabytes, force a sync. This is a direct model of a commit policy -
+sync per transaction, per group, or per interval - and MEASURED it spans 175.8 to 524.1 MB/s, a 3x range
+from one parameter.
+
+    offs=[random.randrange(0,SIZE-BS)//BS*BS for _ in range(NREAD)]
+
+Random offsets ALIGNED to the block size. Unaligned random reads would straddle two blocks and each
+request would fetch two pages instead of one, so the measurement would conflate alignment cost with random
+access cost.
+
+    print(f"{SIZE/t_cold/1e6:8.1f} MB/s")
+
+Reporting throughput as well as time. The time answers "how long did this take"; the throughput is what
+lets you compare a 256 MB read against a 64 MB write, and what makes 2,955 MB/s recognisable as
+implausible for a disk - which is the clue that it was measuring memory.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: a real 256 MB file on this machine. `posix_fadvise(DONTNEED)` used to drop the cache between cold
+measurements.
+
+TRACE A - the page cache, and its absence.
+
+    method                        time       throughput      vs its own cold read
+    ---------------------------   --------   -------------   --------------------
+    buffered, cold                206.2 ms   1,301.9 MB/s                   1.00x
+    buffered, warm (2nd)           37.7 ms   7,128.0 MB/s                   5.47x
+    buffered, warm (3rd)           28.5 ms   9,419.9 MB/s                   7.23x
+    O_DIRECT, 1st                 252.4 ms   1,063.5 MB/s                   1.00x
+    O_DIRECT, 2nd                 239.0 ms   1,123.4 MB/s                   1.06x
+
+The last column is the finding: 5.47x and 7.23x for buffered, 1.06x for direct. Direct I/O has no cache,
+and the measurement shows it rather than asserting it.
+
+Note also that O_DIRECT was slower on the FIRST read too - 252.4 against 206.2 ms. Even with nothing
+cached, the kernel's read-ahead beat a bare sequential direct read.
+
+TRACE B - read-ahead, measured by varying request size.
+
+    block size   cold buffered   warm buffered   cold vs 4 KB
+    ----------   -------------   -------------   ------------
+         4 KB       809.2 MB/s     4,083.8 MB/s          1.00x
+        64 KB       660.7 MB/s     7,270.0 MB/s          0.82x
+     1,024 KB     1,347.4 MB/s     6,901.2 MB/s          1.67x
+     8,192 KB     1,364.6 MB/s     5,229.9 MB/s          1.69x
+
+A 2,000-fold increase in request size changed cold throughput by 1.69x, and 4 KB requests still achieved
+809 MB/s. Without read-ahead, 4 KB requests would be limited by per-request latency and could not reach
+anything like that.
+
+The 64 KB row being lower than 4 KB is run noise; the useful reading is that the column is FLAT, which is
+the signature of the kernel prefetching independently of what you asked for.
+
+TRACE C - random access, where the cache matters most and eventually stops mattering.
+
+    4,000 random 4 KB reads over 256 MB
+    cold : 728.8 ms   182.2 us per read
+    warm :   4.6 ms     1.2 us per read     157.6x
+
+157x, far larger than the 5.5x sequential gap, because random access has no read-ahead to help it cold and
+becomes a pure memory lookup warm.
+
+The caveat that matters: the whole 256 MB fits in RAM here, so the warm case is a 100% hit rate. On a
+working set LARGER than memory the hit rate falls and the two rows converge - and that is exactly the
+regime where a database prefers to manage its own cache, because it can choose WHICH pages stay.
+
+TRACE D - writes, and the lie in the fast number.
+
+    stage                          elapsed    apparent throughput
+    ----------------------------   --------   -------------------
+    write() returns                 22.7 ms          2,955.7 MB/s
+    fsync() completes              197.2 ms            340.2 MB/s
+    fsync alone                    174.5 ms                      -
+
+    ratio: 8.7x
+
+2,955 MB/s is not a disk speed - it is memcpy into the page cache. The durable number is 340 MB/s.
+
+The practical statement: between 22.7 ms and 197.2 ms, the application believes the write succeeded and a
+power cut loses it.
+
+TRACE E - the durability knob.
+
+    fsync every   total time   effective throughput   vs syncing every 16 MB
+    -----------   ----------   --------------------   ----------------------
+          1 MB      381.7 ms             175.8 MB/s                    0.34x
+          4 MB      211.9 ms             316.7 MB/s                    0.60x
+         16 MB      128.1 ms             524.1 MB/s                    1.00x
+         64 MB      149.2 ms             449.8 MB/s                    0.86x
+
+A 3x throughput range from one parameter. Syncing more often is strictly more durable and strictly slower,
+which is precisely the choice a database commit policy makes.
+
+The 64 MB row being slower than 16 MB is run-to-run noise rather than a real effect - flagged because
+reporting it as a genuine optimum would be reading signal into a single measurement.
+
+TRACE F - why a database gives up the page cache.
+
+    reason                  what buffered I/O does           what O_DIRECT gives back
+    ---------------------   ------------------------------   ---------------------------------
+    double caching          hot pages held in BOTH caches    the memory you allocated is yours
+    eviction policy         kernel LRU, knows only recency   you keep index roots, drop scans
+    write ordering          kernel writes back whenever      you control WAL-before-data
+    latency predictability  invisible eviction               no surprise disk hits
+    read-ahead              free, and effective              LOST - you must prefetch yourself
+    caching on repeat       5.47x measured                   1.06x measured - LOST
+
+The first four rows are what you buy; the last two are what you pay. And the payment is only worth making
+if you have a buffer pool that beats the kernel's - an application with no cache of its own that opens
+`O_DIRECT` has bought all of the costs and none of the benefits.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (real 256 MB file, this machine):
+
+    page cache          buffered cold 206.2 ms / 1,301.9 MB/s -> warm 37.7 ms / 7,128.0 MB/s (5.47x)
+                        third read 28.5 ms / 9,419.9 MB/s (7.23x)
+    O_DIRECT            252.4 ms first, 239.0 ms second - 1.06x, i.e. no cache
+                        and SLOWER than buffered even cold (252.4 vs 206.2 ms)
+    read-ahead          4 KB requests still reach 809.2 MB/s cold; 2,000x more request size
+                        changes cold throughput by only 1.69x
+    random reads        182.2 us cold vs 1.2 us warm - 157.6x
+    writes              write() returns at 22.7 ms (2,955.7 MB/s apparent);
+                        fsync completes at 197.2 ms (340.2 MB/s real) - 8.7x
+    fsync cadence       every 1 MB 175.8 MB/s | every 4 MB 316.7 | every 16 MB 524.1
+
+COMPLEXITY: buffered I/O costs one extra memory copy and uses otherwise-free RAM. `O_DIRECT` removes the
+copy and the cache, and imposes alignment on the buffer, offset and length. fsync latency is a property of
+the device, not of your code.
+
+THE MISTAKES:
+
+    - Believing `write()` means durable. MEASURED: 22.7 ms to return, 197.2 ms to be safe.
+    - Benchmarking writes without fsync. MEASURED at 8.7x too fast - it is a memcpy benchmark.
+    - Benchmarking reads without dropping the cache. MEASURED at 5.5x too fast sequentially and 157.6x
+      random.
+    - Reaching for `O_DIRECT` for speed. MEASURED as slower cold AND warm.
+    - Using `O_DIRECT` without your own cache, which buys every cost and no benefit.
+    - Using `O_DIRECT` without asynchronous I/O, so you lose read-ahead and have nothing replacing it.
+    - Forgetting the alignment rules - buffer, offset and length - and getting EINVAL.
+    - Assuming `O_DIRECT` implies durability. It bypasses the cache; the device may still be caching.
+    - Sizing a database buffer pool as though the page cache did not exist, and double-caching everything.
+    - Never using `posix_fadvise`. `DONTNEED` after a one-pass scan is the fix for "the backup job evicted
+      the working set", and it needs none of `O_DIRECT`'s difficulty.
+    - Reporting one I/O number without saying whether it is cold or warm. They differ by up to 157x.
+    - Reading run-to-run noise as a finding - the 64 MB fsync row was slower than 16 MB, and that is
+      noise, not an optimum.
+
+THE TAKEAWAY. The page cache is the entire difference: buffered reads got 5.5x faster on repeat and direct
+reads got 1.06x, which is to say not at all. And buffered I/O was faster even COLD, because the kernel's
+read-ahead let 4 KB requests reach 809 MB/s. So `O_DIRECT` is not a performance flag - it is a control
+flag, and what databases buy with it is the elimination of double caching, ownership of eviction decisions,
+and control over write ordering for the write-ahead log. None of that helps an application without a
+buffer pool of its own. The separate and more universally useful fact is that `write()` returning is not
+durability: it returned in 22.7 ms and fsync did not complete until 197.2, so the honest write throughput
+was 8.7x lower than the apparent one, and the fsync cadence is a 3x throughput knob that every durable
+system is tuning whether or not it says so.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
