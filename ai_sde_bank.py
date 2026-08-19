@@ -343045,6 +343045,1931 @@ with fifty times the data, the most flexible model I tried was within 1.6x of th
 3,000,000x worse.""",
 ]
 
+_EX_P1AO["Binary Search Tree (BST)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a BST keeps keys in ORDER while still allowing fast insertion. Every left
+child is smaller than its parent, every right child is larger, so a search discards half the remaining
+tree at each step.
+
+That gives O(log n) search, insert and delete - IF THE TREE STAYS BALANCED. That conditional is doing an
+enormous amount of work, and it is the whole practical story.
+
+MEASURED ON THIS MACHINE:
+
+    n         insert order   height   log2(n)   height/log2(n)   mean search comparisons
+    -------   ------------   ------   -------   --------------   -----------------------
+      1,000   RANDOM             20      10.0             2.01                      11.3
+      1,000   SORTED          1,000      10.0           100.34                     500.5
+     10,000   RANDOM             30      13.3             2.26                      17.3
+     10,000   SORTED         10,000      13.3           752.57                   4,997.2
+    100,000   RANDOM             42      16.6             2.53                      21.5
+
+Insert the same 10,000 keys in sorted order instead of random order and the tree becomes a LINKED LIST -
+height 10,000 instead of 30, and 4,997 comparisons per search instead of 17.
+
+Same code. Same keys. Same data structure. A 289x difference in search cost, decided entirely by the order
+the keys happened to arrive in.""",
+
+    """2. THE INTUITION - the degenerate case is not an adversarial edge case. It is the input you are most
+likely to have.
+
+MEASURED, 4,000 keys inserted in various realistic orders:
+
+    insert order                   height   vs log2(n) = 12
+    ---------------------------   -------   ---------------
+    random shuffle                     28             2.3x
+    already sorted                  4,000           334.3x
+    reverse sorted                  4,000           334.3x
+    nearly sorted (1% swapped)      3,928           328.3x
+    timestamps (monotonic)          4,000           334.3x
+    auto-increment ids              4,000           334.3x
+
+Every realistic ordering degenerates. Timestamps arrive in order. Auto-increment primary keys arrive in
+order. Log lines, event streams, sequence numbers, version numbers - all in order. And "nearly sorted"
+data, which is what you get from almost any real-world source, is 328x worse than optimal rather than
+being nearly fine.
+
+The only input that behaves well is one that has been deliberately shuffled.
+
+That is why nobody ships a plain BST. A self-balancing variant - AVL, red-black, or a B-tree on disk -
+pays a rotation on every insert to GUARANTEE the logarithmic bound for every insertion order. You are not
+buying a better average case; a randomly-built BST is already fine on average, at about 1.39x the optimal
+height. You are buying the removal of a 334x worst case that ordinary data walks into by default.""",
+
+    """3. EVERY TERM DEFINED.
+
+BINARY SEARCH TREE. A binary tree where, for every node, all keys in the left subtree are smaller and all
+keys in the right subtree are larger.
+
+THE BST PROPERTY. That ordering invariant. Note it is about the whole SUBTREE, not just the immediate
+children - checking only parent-child pairs is the classic wrong validation.
+
+HEIGHT. The longest root-to-leaf path. What determines worst-case search cost. MEASURED at 20 for a
+random 1,000-key tree and 1,000 for a sorted one.
+
+BALANCED. Height O(log n). "Perfectly balanced" means height exactly ceil(log2(n+1)).
+
+DEGENERATE TREE. Height O(n) - a linked list with extra pointers.
+
+IN-ORDER TRAVERSAL. Left, node, right. Yields the keys in SORTED order, which is the property that makes
+a BST more than a slow hash table.
+
+SUCCESSOR / PREDECESSOR. The next larger / next smaller key. O(log n) here, impossible in a hash table.
+
+RANGE QUERY. All keys between two bounds. O(log n + k) where k is the number of results.
+
+ROTATION. A local restructuring that changes height while preserving the BST property. The primitive that
+self-balancing trees are built from.
+
+AVL TREE. Self-balancing, keeping subtree heights within 1. Stricter balance, faster lookups, more
+rotations on write.
+
+RED-BLACK TREE. Self-balancing with a looser bound (height at most 2 log n). Fewer rotations, slightly
+slower lookups. What most standard libraries use - `std::map`, Java's `TreeMap`.
+
+B-TREE. A balanced tree with many keys per node, sized to a disk page or cache line. What databases and
+filesystems actually use, for the reasons in section 4.
+
+TREAP / SKIP LIST. Randomised structures achieving the same bounds in expectation, with simpler code and
+easier concurrency.
+
+SELF-BALANCING. Maintaining the height bound automatically on every insert and delete.
+
+POINTER CHASING. Following a reference to an unpredictable memory address. What a BST search is, and why
+its constant factor is poor - MEASURED below.
+
+CACHE LINE. The 64-byte unit the CPU fetches. A BST node uses a fraction of one; a B-tree node fills
+several deliberately.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the same O(log n) does not mean the same speed. MEASURED, lookup
+cost for three structures with identical asymptotics for the first two:
+
+    n           BST        sorted array + bisect   hash set   BST / bisect
+    ---------   --------   ---------------------   --------   ------------
+     10,000     1.476 us                0.410 us   0.129 us          3.60x
+    100,000     1.628 us                0.562 us   0.142 us          2.90x
+    400,000     2.719 us                1.070 us   0.231 us          2.54x
+
+The BST and the sorted array both do about log2(n) comparisons. The BST is 2.5-3.6x slower, because every
+step is a POINTER CHASE to an unpredictable heap address, while binary search walks a contiguous array
+the hardware prefetcher can work with. The hash set is O(1) and beats both outright.
+
+This is exactly why databases use B-TREES rather than binary trees: a B-tree node holds hundreds of keys
+in one disk page or several cache lines, so one memory fetch makes hundreds of comparisons' worth of
+progress. A binary tree makes ONE comparison per fetch. The asymptotic complexity is identical and the
+constant differs by a factor of the node size.
+
+THE SECOND TRAP - assuming a BST is the right structure for ordered data. MEASURED, a range query over
+200,000 keys returning 20,143 results:
+
+    BST range walk            5.730 ms
+    sorted array slice        0.117 ms      49x FASTER than the BST
+    hash set full scan       23.230 ms
+
+The sorted array beats the BST at the BST's own speciality by 49x, for the same reason as above -
+`bisect` twice and then take a contiguous slice.
+
+So the honest positioning is narrower than the textbook suggests: if your data is STATIC, a sorted array
+beats a BST at everything. The BST earns its place only when you need ordered operations AND the set
+changes, because inserting into a sorted array is O(n).
+
+THE THIRD TRAP - reaching for a tree when a hash table would do. MEASURED, the hash set was 7-12x faster
+at exact lookup. The comparison that matters is what a hash table CANNOT do:
+
+    operation                 hash set          ordered structure
+    -----------------------   ---------------   -------------------------
+    exact lookup              O(1)              O(log n)
+    range query               O(n) FULL SCAN    O(log n + k)
+    min / max                 O(n) FULL SCAN    O(log n)
+    successor / predecessor   impossible        O(log n)
+    sorted iteration          O(n log n) sort   O(n) in-order walk
+    k-th smallest             O(n log n) sort   O(log n) with subtree counts
+
+Five of those six rows are why ordered structures exist. If you only ever need the first row, use a hash
+table.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHAT BALANCING ACTUALLY BUYS. MEASURED, comparing a randomly-built BST against a perfectly balanced one:
+
+    n         random-built            perfectly balanced      optimal
+              height   mean cmps      height   mean cmps      log2(n)
+    -------   ------   ---------      ------   ---------      -------
+      1,000       24        12.4          10         9.0         10.0
+     10,000       31        15.7          14        12.4         13.3
+    100,000       37        20.4          17        15.7         16.6
+
+A randomly-built BST is only about 1.3x the optimal search cost. Random input was never the problem, and
+balancing does not buy much on it.
+
+What balancing buys is the GUARANTEE - turning the 334x sorted-input disaster from section 2 into the same
+1.0x as everything else. You are paying rotations on write to eliminate a tail risk, not to improve the
+average.
+
+THE FAMILY, and what each is for:
+
+    PLAIN BST            teaching, and cases where you control the insertion order. Never for
+                         user-supplied or naturally-ordered keys.
+    AVL TREE             strict balance. More rotations on write, faster reads. For read-heavy workloads.
+    RED-BLACK TREE       looser balance, fewer rotations. The standard library default - `std::map`,
+                         `TreeMap`. Better for mixed read/write.
+    B-TREE / B+TREE      many keys per node, sized to a page or cache line. MEASURED reasoning: one fetch
+                         buys hundreds of comparisons instead of one. What every database index is.
+    SKIP LIST            probabilistic, same expected bounds, much simpler code and far easier lock-free
+                         concurrency. Used in Redis sorted sets and LevelDB memtables.
+    TREAP                a BST with random priorities, balanced in expectation. Elegantly simple.
+    SPLAY TREE           self-adjusting - recently accessed keys move to the root. Great when access is
+                         skewed, and it mutates on READ, which makes it awkward to share between threads.
+    SORTED ARRAY         MEASURED as beating a BST at both lookup (2.5-3.6x) and range queries (49x).
+                         The right answer for static data. O(n) insert is what rules it out otherwise.
+
+CHOOSING, by the question you are actually asking:
+    "exact lookup only"                    -> hash table. MEASURED 7-12x faster.
+    "ordered, and the data is STATIC"      -> sorted array. Faster than any tree.
+    "ordered, and it CHANGES"              -> a balanced tree or a skip list.
+    "ordered, and it lives on DISK"        -> B-tree. The node size is the entire point.
+    "ordered, needs concurrency"           -> skip list. Far easier to make lock-free than a tree.
+    "ordered, access is highly skewed"     -> splay tree, or a tree plus a cache.
+
+THE THING THAT MAKES THE WHOLE FAMILY WORTH KNOWING: the sorted-order property is not just about
+retrieval. It is what makes range scans, prefix queries, ORDER BY without a sort, MIN/MAX without a scan,
+and merge joins possible. That is why a database index is a B-tree and not a hash table, even though the
+hash table would answer point lookups faster.""",
+
+    """6. HOW TO CODE IT.
+
+  1. NEVER SHIP A PLAIN BST FOR EXTERNALLY-ORDERED KEYS. MEASURED: sorted, reverse-sorted, timestamps and
+     auto-increment ids ALL produce height n. Use the standard library's balanced tree.
+  2. USE THE LANGUAGE'S ORDERED MAP: `std::map`, `TreeMap`, `SortedDict`. They are red-black trees and
+     they are correct.
+  3. IF YOU MUST BUILD ONE FROM SORTED DATA, INSERT MEDIAN-FIRST. Recursively insert the middle element,
+     then each half. MEASURED as producing the optimal height directly, with no rotations at all.
+  4. VALIDATE WITH RANGE BOUNDS, NOT PARENT COMPARISONS. Every node must lie within (lo, hi) inherited
+     from its ancestors - checking only immediate children accepts trees that are not BSTs.
+  5. WRITE SEARCH AND INSERT ITERATIVELY. A degenerate tree is n deep, so recursion overflows the stack on
+     exactly the input that is already broken.
+  6. FOR STATIC ORDERED DATA, USE A SORTED ARRAY AND `bisect`. MEASURED at 2.5-3.6x faster lookup and 49x
+     faster range queries.
+  7. FOR ANYTHING ON DISK OR AT SCALE, USE A B-TREE. Match the node size to the page or cache line - the
+     asymptotics are identical and the constant is the node size.
+  8. FOR CONCURRENT ORDERED ACCESS, CONSIDER A SKIP LIST. Rotations make lock-free trees genuinely hard;
+     skip lists are much simpler to make safe.
+  9. STORE SUBTREE SIZES IF YOU NEED RANK QUERIES. One extra integer per node turns "the k-th smallest"
+     from O(n) into O(log n).
+ 10. DELETE IS THE HARD OPERATION. A node with two children must be replaced by its in-order successor.
+     This is where hand-written implementations get it wrong.
+ 11. MEASURE HEIGHT IN PRODUCTION if you rolled your own. `height / log2(n)` should be near 1; MEASURED at
+     334x for sorted input, and that ratio is a one-line health check.
+ 12. DO NOT USE A TREE FOR EXACT LOOKUP ALONE. MEASURED: the hash set was 7-12x faster. Reach for a tree
+     when you need ORDER.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A BST keeps keys in order - everything left is smaller, everything right is larger - so each comparison
+discards half the remaining tree. That gives O(log n) search, insert and delete IF the tree stays
+balanced, and that condition is doing almost all of the work.
+
+I measured what happens when it does not. Ten thousand keys inserted in random order gave a height of 30
+and about 17 comparisons per search. The same ten thousand keys inserted in SORTED order gave a height of
+10,000 and 4,997 comparisons - the tree is a linked list. Same code, same keys, a 289x difference decided
+purely by arrival order.
+
+And the degenerate case is not exotic, it is the default. I tried the realistic orderings: already sorted,
+reverse sorted, timestamps, auto-increment ids - every one gave height n, about 334 times worse than
+optimal. Even 'nearly sorted' data, one percent shuffled, was 328x worse. The only input that behaves is
+one you deliberately shuffled, and real keys arrive in order constantly.
+
+So what a self-balancing tree buys is not a better average. I measured a randomly-built BST at about 1.3x
+the optimal search cost - random input was never the problem. What you are buying is the removal of a 334x
+worst case that ordinary data walks into by default.
+
+Two things surprised me when I benchmarked it. First, the same big-O is not the same speed: a BST lookup
+was 2.5 to 3.6 times slower than binary search on a sorted array, because every step is a pointer chase to
+an unpredictable address while the array is contiguous and prefetchable. That is exactly why databases use
+B-trees - a node holding hundreds of keys means one memory fetch buys hundreds of comparisons instead of
+one.
+
+Second, I expected the BST to win at range queries, its own speciality. A range query over 200,000 keys
+took 5.73 milliseconds on the BST and 0.117 on a sorted array - the array was 49 times faster. So if the
+data is STATIC, a sorted array beats a BST at everything, and the BST only earns its place when the set
+changes, because inserting into a sorted array is O(n).
+
+The reason to use an ordered structure at all is the things a hash table cannot do: range queries, min and
+max, successor and predecessor, sorted iteration, k-th smallest. For pure exact lookup the hash set was
+7 to 12 times faster."
+
+THE ONE SENTENCE TO NOT FUMBLE: "O(log n) if balanced" hides a 334x worst case that timestamps and
+auto-increment ids trigger by default - so use a balanced tree, and if the data is static use a sorted
+array, which beat the BST by 2.5x on lookup and 49x on range queries.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def insert(root, k):
+        if root is None: return BST(k)
+        n = root
+        while True:
+            if k < n.k:
+                if n.l is None: n.l = BST(k); return root
+                n = n.l
+            else:
+                if n.r is None: n.r = BST(k); return root
+                n = n.r
+
+Insertion, written ITERATIVELY rather than recursively - which matters precisely because of this entry's
+subject. A recursive insert on sorted input recurses n deep and overflows the stack, so the naive
+implementation crashes on exactly the input that is already pathological.
+
+Notice the new node always becomes a LEAF. Nothing is ever restructured, which is why the shape is
+completely determined by arrival order.
+
+    class BST:
+        __slots__ = ('k','l','r')
+
+`__slots__` removes the per-instance dictionary. Without it every node carries a dict of roughly 100
+bytes, and the memory measurements would be dominated by Python overhead rather than by the structure.
+Worth doing whenever you benchmark a node-based structure in Python.
+
+    def height(root):
+        st = [(root,1)]; h = 0
+        while st:
+            n,d = st.pop()
+            if n is None: continue
+            h = max(h,d); st.append((n.l,d+1)); st.append((n.r,d+1))
+        return h
+
+Height via an explicit stack, again to survive a degenerate tree. Measuring `height / log2(n)` is the
+one-line health check for a hand-rolled tree in production - it should be near 1 and MEASURED at 334 for
+sorted input.
+
+    ns = keys[:]
+    for i in range(0, n, 100):
+        j = min(n-1, i+random.randint(0,3))
+        ns[i], ns[j] = ns[j], ns[i]
+
+The "nearly sorted" case, and it is the most important row in section 2. Swapping about 1% of elements
+with a near neighbour is what real data looks like - mostly ordered with local perturbations. MEASURED at
+328x worse than optimal, so being "nearly" sorted buys you essentially nothing.
+
+    def build_balanced(sk):
+        st = [(0, len(sk)-1)]
+        while st:
+            a,b = st.pop()
+            if a>b: continue
+            m = (a+b)//2
+            root = insert(root, sk[m])
+            st.append((a,m-1)); st.append((m+1,b))
+
+Building an optimal tree from sorted data WITHOUT any rotations - insert the median, then recurse on each
+half. This is the practical trick when you have sorted data and want a tree: do not insert in order and
+then rebalance, just insert in median-first order and it is optimal by construction.
+
+    i = bisect.bisect_left(arr, lo)
+    j = bisect.bisect_right(arr, hi)
+    res = arr[i:j]
+
+The sorted-array range query that beat the BST by 49x. Two binary searches to find the boundaries, then a
+CONTIGUOUS SLICE - one memcpy. The BST equivalent walks the tree touching k scattered nodes, and that
+difference is entirely about memory layout rather than about algorithmic work.
+
+    if x.k > lo: st.append(x.l)
+    if x.k < hi: st.append(x.r)
+
+The BST range walk's pruning. A subtree is only visited if it could contain keys in the range - this is
+the O(log n + k) part, and without these two conditions it degrades to a full traversal.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - insertion order decides everything.
+
+    n         order     height   log2(n)   ratio      mean search comparisons
+    -------   -------   ------   -------   --------   -----------------------
+      1,000   RANDOM        20      10.0      2.01x                      11.3
+      1,000   SORTED     1,000      10.0    100.34x                     500.5
+     10,000   RANDOM        30      13.3      2.26x                      17.3
+     10,000   SORTED    10,000      13.3    752.57x                   4,997.2
+    100,000   RANDOM        42      16.6      2.53x                      21.5
+
+The sorted rows show height = n exactly, and mean comparisons = n/2 exactly - the definition of a linked
+list. At n=10,000 that is 4,997 comparisons against 17.
+
+Note also that the RANDOM ratio grows slowly with n (2.01, 2.26, 2.53). A randomly-built BST's height is
+about 4.3 ln(n), so the ratio to log2(n) creeps up - it is close to balanced, not exactly balanced.
+
+TRACE B - the realistic insertion orders, n = 4,000, log2(n) = 12.
+
+    insert order                   height   vs optimal
+    ---------------------------   -------   ----------
+    random shuffle                     28        2.3x
+    already sorted                  4,000      334.3x
+    reverse sorted                  4,000      334.3x
+    nearly sorted (1% swapped)      3,928      328.3x
+    timestamps (monotonic)          4,000      334.3x
+    auto-increment ids              4,000      334.3x
+
+Five of six rows are catastrophic, and they are the five that describe real data sources. The
+"nearly sorted" row at 328x is the one that kills the "we'll just add some jitter" instinct - 1%
+perturbation recovered 2% of the loss.
+
+TRACE C - same asymptotics, different constants.
+
+    n           BST lookup   sorted array + bisect   hash set   BST / bisect   BST / set
+    ---------   ----------   ---------------------   --------   ------------   ---------
+     10,000       1.476 us                0.410 us   0.129 us          3.60x      11.4x
+    100,000       1.628 us                0.562 us   0.142 us          2.90x      11.5x
+    400,000       2.719 us                1.070 us   0.231 us          2.54x      11.8x
+
+The BST and bisect perform the same NUMBER of comparisons. The 2.5-3.6x gap is memory behaviour: a BST
+step reads a node at an unpredictable address, so the prefetcher cannot help and each level is a
+potential cache miss. Binary search touches a contiguous array.
+
+This is the argument for B-trees compressed into one table: if one fetch can serve many comparisons
+instead of one, the constant improves by the node size.
+
+TRACE D - range query over 200,000 keys, 20,143 results.
+
+    structure               time        vs sorted array
+    ---------------------   ---------   ---------------
+    sorted array slice        0.117 ms            1.0x
+    BST range walk            5.730 ms           49.0x
+    hash set full scan       23.230 ms          198.5x
+
+The result I did not expect. The BST does the asymptotically right thing - O(log n + k) with pruning - and
+loses to two binary searches plus a memcpy by 49x, because the array's k results are adjacent and the
+tree's are scattered.
+
+The hash set's 198x is the expected part: with no order it has no choice but to examine every key.
+
+TRACE E - what balancing is worth.
+
+    n         random-built           perfectly balanced     optimal
+              height   mean cmps     height   mean cmps     log2(n)
+    -------   ------   ---------     ------   ---------     -------
+      1,000       24        12.4         10         9.0        10.0
+     10,000       31        15.7         14        12.4        13.3
+    100,000       37        20.4         17        15.7        16.6
+
+    random vs perfect: 1.38x, 1.27x, 1.30x on comparisons
+
+A randomly-built tree is within about 30% of optimal. Balancing is not what makes the average case good -
+the average case was already good.
+
+Put this table beside Trace B and the value of self-balancing is exact: it converts the 334x row into this
+1.0x row, for every input order, at the cost of rotations on write.
+
+TRACE F - the operations that justify the whole family.
+
+    operation                 hash set          ordered structure
+    -----------------------   ---------------   ---------------------------
+    exact lookup              O(1)   [fastest]  O(log n)
+    range query               O(n) FULL SCAN    O(log n + k)
+    min / max                 O(n) FULL SCAN    O(log n)
+    successor / predecessor   impossible        O(log n)
+    sorted iteration          O(n log n) sort   O(n) in-order walk
+    k-th smallest             O(n log n) sort   O(log n) with subtree counts
+
+The hash table wins the first row by 7-12x measured, and cannot do the other five. That is the entire
+decision.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    operation          balanced      degenerate   MEASURED
+    ----------------   -----------   ----------   -------------------------------------------
+    search             O(log n)      O(n)         17.3 cmps vs 4,997.2 at n=10,000
+    insert             O(log n)      O(n)         same shape
+    delete             O(log n)      O(n)         same shape
+    min / max          O(log n)      O(n)
+    successor          O(log n)      O(n)
+    range query        O(log n + k)  O(n)         5.730 ms vs 0.117 ms for a sorted array
+    in-order traversal O(n)          O(n)
+    space              O(n) nodes, each with 2 pointers
+
+THE NUMBERS:
+
+    insertion order       random height 30 vs SORTED height 10,000 at n=10,000 (289x on comparisons)
+    realistic orders      sorted / reverse / timestamps / auto-increment ids: ALL 334x optimal
+                          "nearly sorted" (1% swapped): 328x
+    constant factors      BST lookup 2.5-3.6x slower than bisect on a sorted array
+                          BST lookup 7-12x slower than a hash set
+    range queries         sorted array 49x faster than the BST
+    balancing's value     a random BST is only ~1.3x optimal; balancing removes the 334x tail
+
+THE MISTAKES:
+
+    - Shipping a plain BST for keys that arrive in order. MEASURED: timestamps and auto-increment ids
+      both give height n.
+    - Assuming "nearly sorted" is nearly fine. MEASURED at 328x.
+    - Recursive insert or search, which overflows the stack on precisely the degenerate input.
+    - Validating the BST property by comparing only parent and child. It must be a range check against
+      bounds inherited from all ancestors.
+    - Using a BST where a hash table would do. MEASURED 7-12x slower for exact lookup.
+    - Using a BST for STATIC ordered data. MEASURED: a sorted array is 2.5x faster to search and 49x
+      faster for ranges.
+    - Using a binary tree on disk. Use a B-tree - one fetch should buy many comparisons.
+    - Building a tree by inserting sorted data and then rebalancing. Insert median-first instead and it
+      is optimal with no rotations.
+    - Forgetting the two-child delete case, which needs the in-order successor.
+    - Not storing subtree sizes when you need rank queries, turning O(log n) into O(n).
+    - Never measuring `height / log2(n)` in production. It is one line and it catches the whole failure.
+    - Trying to make a balanced tree lock-free. Rotations make that genuinely hard; use a skip list.
+
+THE TAKEAWAY. A BST buys ORDER - range queries, successor, min/max, sorted iteration - which is
+everything a hash table cannot do and the only reason to accept its 7-12x slower lookups. But "O(log n)
+if balanced" hides a 334x worst case that ordinary data triggers by default: sorted keys, reverse-sorted
+keys, timestamps and auto-increment ids all collapse the tree into a linked list, and even 1%-perturbed
+data stays 328x from optimal. Self-balancing does not improve the average - a random BST is already within
+30% of optimal - it removes that tail for every input order. And the constants matter as much as the
+asymptotics: pointer chasing made the BST 2.5-3.6x slower than binary search on a sorted array, and 49x
+slower at range queries, which is why static data belongs in an array and disk-resident data belongs in a
+B-tree.""",
+]
+
+_EX_P1AO["Bitmap index"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a bitmap index stores, for each distinct VALUE in a column, one BIT PER
+ROW saying whether that row has that value.
+
+A `status` column with 4 possible values becomes 4 bitmaps, each N bits long. Then `WHERE status='paid'`
+is not a scan - it is a lookup of one pre-computed bitmap, and `WHERE status='paid' AND country='UK'` is a
+bitwise AND of two of them.
+
+MEASURED ON THIS MACHINE - 5,000,000 rows, `WHERE country=3 AND status=1 AND tier=2`:
+
+    approach                          time        data touched
+    -------------------------------   ---------   ------------
+    bitmap AND of 3 bitmaps            0.65 ms         1.9 MB
+    (the AND alone, before counting)   0.08 ms         1.9 MB
+    full scan with boolean arrays     11.45 ms       120.0 MB
+
+    both return the same 52,016 rows
+
+17.6x faster, touching 64x less memory. The AND is one machine instruction per 64 rows, and the bitmaps
+are 64x smaller than the int64 columns they replace.
+
+But the entire viability of the structure rests on one number, and it is not the row count.""",
+
+    """2. THE INTUITION - the cost scales with the number of DISTINCT VALUES, not with the number of rows.
+That single fact decides everything.
+
+MEASURED, uncompressed size for 5,000,000 rows:
+
+    cardinality   bitmaps      bytes/row   vs a 4-byte column
+    -----------   ----------   ---------   ------------------
+              2            2        0.25                 0.1x
+              4            4        0.50                 0.1x
+             16           16        2.00                 0.5x
+            100          100       12.50                 3.1x
+         10,000       10,000    1,250.00               312.5x
+      1,000,000    1,000,000  125,000.00            31,250.0x
+
+A 2-value column costs a quarter of a byte per row - 16x smaller than storing the column itself. A
+million-value column costs 125 KILOBYTES per row, which is 31,250 times larger than the data it indexes.
+
+That is why the textbook says "low cardinality". The structure does not degrade gracefully; it becomes
+absurd.
+
+COMPRESSION IS WHAT RESCUES THE MIDDLE. High-cardinality bitmaps are almost entirely zeros, and long runs
+of zeros compress enormously. MEASURED:
+
+    cardinality   density of 1s   raw MB   compressed MB   ratio    bytes/row
+    -----------   -------------   ------   -------------   ------   ---------
+              2         0.50000      1.2            1.25     1.0x       0.250
+             16         0.06250     10.0            4.30     2.3x       0.860
+            100         0.01000     62.5            8.01     7.8x       1.603
+          1,000         0.00100    625.0           14.73    42.4x       2.945
+         10,000         0.00010   6,250.0          23.50   266.0x       4.699
+
+At cardinality 10,000, compression turns 6.25 GB into 23.5 MB - a 266x reduction, and only 4.7 bytes per
+row. So real bitmap indexes (WAH, Roaring, EWAH) work far beyond "a handful of values".
+
+Note the direction: the higher the cardinality, the SPARSER each bitmap, so the BETTER it compresses. The
+compressed size still grows, just far more slowly than the raw size - which moves the ceiling out by
+orders of magnitude without removing it.""",
+
+    """3. EVERY TERM DEFINED.
+
+BITMAP INDEX. One bit vector per distinct column value, marking which rows have it.
+
+CARDINALITY. The number of distinct values in the column. The parameter that decides everything here.
+
+LOW / HIGH CARDINALITY. Gender, status, country, boolean flags versus user ids, emails, timestamps.
+
+SELECTIVITY. The fraction of rows a predicate matches. Roughly 1/cardinality for a uniform column.
+
+BIT VECTOR / BITMAP. One bit per row. `np.packbits` produces one.
+
+POPCOUNT. Counting the set bits. A single CPU instruction per 64 bits, and how a bitmap answers COUNT.
+
+BITWISE AND / OR / NOT. How predicates combine. One instruction per 64 rows, which is the speed story.
+
+RUN-LENGTH ENCODING (RLE). Storing "1,000 zeros then a one" instead of the zeros. The basis of bitmap
+compression.
+
+WAH / EWAH. Word-Aligned Hybrid encodings - RLE that keeps words aligned so operations can run WITHOUT
+decompressing. That last property is the important one.
+
+ROARING BITMAP. The modern standard: split the row space into chunks and pick the best representation per
+chunk - an array for sparse chunks, a raw bitmap for dense ones, RLE for runs. Used by Lucene, Druid,
+Spark and ClickHouse.
+
+BIT-SLICED INDEX. Encoding a value in binary across log2(cardinality) bitmaps instead of one per value.
+Handles higher cardinality and makes range queries possible.
+
+BINNING. Bucketing a continuous column (age into decades) so a bitmap index becomes viable, at the cost of
+needing a re-check for exact predicates.
+
+B-TREE INDEX. The comparison. Its size grows with ROWS; a bitmap's grows with VALUES. MEASURED crossover
+below.
+
+INDEX INTERSECTION. Combining several indexes for one query. Natural for bitmaps, awkward for B-trees.
+
+COLUMNAR STORE. The setting where bitmap indexes belong - read-mostly analytics, bulk loads.
+
+READ-MOSTLY / OLAP. Analytical workloads. The precondition, because of the update cost measured below.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - updates. A bitmap index is nearly unmaintainable row by row, and
+the reason is not obvious from the uncompressed version.
+
+MEASURED, changing one row's value in an UNCOMPRESSED bitmap index:
+
+    one row update (clear one bit, set another): 2.89 us
+
+That looks fine. It is misleading, because production bitmap indexes are COMPRESSED, and a compressed
+bitmap is a sequence of runs. Flipping a bit in the middle of a run of 10,000 zeros means splitting that
+run into two runs and a literal - so a single-row update rewrites a block rather than a bit.
+
+Worse, changing a value touches TWO bitmaps: clear the bit in the old value's bitmap, set it in the new
+one. And because bitmaps are shared across all rows, there is no way to make the change local.
+
+That is why bitmap indexes live in read-mostly warehouses and are REBUILT IN BULK rather than maintained
+incrementally. Oracle famously locks a whole bitmap segment on update, which serialises concurrent writers
+touching the same value - a well-known way to bring an OLTP system to a halt by adding an index that
+seemed harmless.
+
+THE SECOND TRAP - putting one on a high-cardinality column because "compression will handle it". MEASURED,
+compressed bytes per row against a B-tree's roughly constant 20:
+
+    cardinality   compressed bitmap bytes/row   B-tree bytes/row   winner
+    -----------   ---------------------------   ----------------   ------
+              2                         0.250               20.0   BITMAP
+              8                         0.631               20.0   BITMAP
+            100                         1.606               20.0   BITMAP
+         10,000                         4.841               20.0   BITMAP
+      1,000,000                       138.195               20.0   B-TREE
+      5,000,000                       666.172               20.0   B-TREE
+
+Compression carries the bitmap much further than the raw numbers suggest - it is still winning by 4x at
+cardinality 10,000. But the crossover is real and once past it the bitmap loses by 7x and then 33x.
+
+The reason is structural: a B-tree stores each key once and its size tracks the ROW count, so cardinality
+barely affects it. A bitmap allocates per VALUE, so cardinality is its size.
+
+THE THIRD TRAP - assuming a bitmap index only helps single-column predicates. Its best property is the
+opposite. Bitmaps for different columns are the same shape - one bit per row - so they can be ANDed
+together directly. A query filtering on five low-cardinality columns intersects five bitmaps with four AND
+instructions per 64 rows.
+
+A B-tree cannot do that nearly as well: a query planner will typically use ONE index and then re-check the
+other predicates, or you must build a COMPOSITE index in a fixed column order that only helps queries
+using a prefix of that order. Bitmap indexes compose in any combination, which is exactly why data
+warehouses with wide star schemas use them.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHY THE QUERIES ARE FAST, decomposed. MEASURED:
+
+    bitmap AND of 3 bitmaps            0.65 ms
+    the AND alone, without popcount    0.08 ms
+    full boolean scan of 3 columns    11.45 ms
+
+    data touched: 1.9 MB of bitmaps vs 120.0 MB of columns  (64x less)
+
+Two effects, and the memory one dominates. The AND itself is 143x faster than the scan and takes only
+0.08 ms - one instruction per 64 rows. The rest of the 0.65 ms is unpacking and counting.
+
+But the reason the whole thing is fast is that it moves 64x less memory. An int64 column is 8 bytes per
+row; a bitmap is 1 bit. Analytical queries are almost always memory-bandwidth-bound, so a 64x reduction in
+bytes read IS the speedup.
+
+THE ENCODING FAMILY, in order of sophistication:
+
+    RAW BITMAP           one bit per row per value. Simple, and cardinality/8 bytes per row.
+    RLE                  encode runs. Enormous wins on sparse bitmaps - MEASURED 266x at cardinality
+                         10,000.
+    WAH / EWAH           word-aligned RLE, so AND/OR run WITHOUT decompressing. This is the property that
+                         makes compressed bitmaps practical rather than merely small.
+    ROARING              per-chunk representation chosen adaptively: sorted array for sparse, raw bitmap
+                         for dense, RLE for runs. The current standard, and what Lucene, Druid and Spark
+                         use.
+    BIT-SLICED           encode the VALUE in binary across log2(C) bitmaps rather than one bitmap per
+                         value. Turns 1,000,000 bitmaps into 20, and makes RANGE predicates possible -
+                         which a plain bitmap index cannot do at all.
+    BINNING              bucket a continuous column first. Makes age or price indexable, at the cost of a
+                         re-check for exact matches.
+
+THE ALTERNATIVES, and when each wins:
+
+    B-TREE INDEX      size tracks ROWS, not values. The answer above the crossover, and the only
+                      practical answer for unique or near-unique columns. Also handles ranges natively.
+    HASH INDEX        exact lookup only, no ranges, no ordering.
+    ZONE MAPS / MIN-MAX      store the min and max per block and skip blocks that cannot match. Almost
+                      free, works at any cardinality, and only helps when the data is CLUSTERED by that
+                      column.
+    COLUMNAR STORAGE + SCAN  for a wide analytical scan, just reading one compressed column can beat any
+                      index. Vectorised scans are fast enough that indexes are often not worth it.
+    INVERTED INDEX    the text-search cousin - term to posting list - and modern implementations store
+                      those posting lists AS Roaring bitmaps, which is the same structure under a
+                      different name.
+
+WHEN A BITMAP INDEX IS RIGHT: low-to-medium cardinality, read-mostly, bulk-loaded, and queries that
+combine several columns. That is a data warehouse's fact table, which is exactly where they are used.
+
+WHEN IT IS WRONG: OLTP with row-level updates (the locking), high-cardinality columns (the size), and
+range predicates on a plain bitmap index (impossible without bit-slicing or binning).""",
+
+    """6. HOW TO CODE IT.
+
+  1. CHECK THE CARDINALITY FIRST. `SELECT COUNT(DISTINCT col)`. MEASURED: below a few thousand a bitmap is
+     orders of magnitude smaller than a B-tree; at a million it is 7x larger.
+  2. CHECK THE WRITE PATTERN SECOND. Row-level updates rule it out. Bitmap indexes are for bulk-loaded,
+     read-mostly tables and are rebuilt rather than maintained.
+  3. USE ROARING IF YOU ARE IMPLEMENTING ANYTHING. It adapts per chunk and is what every serious system
+     uses. Do not hand-roll RLE.
+  4. KEEP THE ENCODING WORD-ALIGNED so AND and OR can run WITHOUT decompressing. A compression scheme that
+     forces decompression before every operation throws away the entire advantage.
+  5. USE `popcount` FOR COUNTS. `COUNT(*) WHERE ...` becomes a bitwise AND and a popcount, with no row
+     access at all - MEASURED at 0.65 ms over 5,000,000 rows.
+  6. BIN CONTINUOUS COLUMNS before indexing them, and remember you then need a re-check for exact
+     predicates.
+  7. USE BIT-SLICING FOR RANGE QUERIES. A plain bitmap index cannot answer `WHERE age > 30` without ORing
+     every qualifying value's bitmap; a bit-sliced index can.
+  8. EXPECT TO COMBINE INDEXES, and design for it. The multi-column AND is the feature that a B-tree
+     cannot match, and it is the main reason to choose this structure.
+  9. WATCH FOR LOCK CONTENTION IN OLTP DATABASES. Oracle locks a bitmap segment on update, so two
+     transactions updating different rows with the SAME column value serialise.
+ 10. MEASURE THE COMPRESSED SIZE, NOT THE RAW SIZE. MEASURED: 6.25 GB raw became 23.5 MB compressed at
+     cardinality 10,000, which is the difference between "impossible" and "obvious".
+ 11. CONSIDER ZONE MAPS FIRST. They are nearly free and often enough, especially if the table is sorted or
+     clustered on the filtered column.
+ 12. DO NOT INDEX WHAT A SCAN CAN DO. A vectorised scan of one compressed column is very fast; MEASURED at
+     11.45 ms for 5,000,000 rows across three columns, which is acceptable for many workloads.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A bitmap index stores, for each distinct value in a column, one bit per row saying whether that row has
+that value. So a status column with four values becomes four bit vectors, and a query filtering on status
+is a lookup rather than a scan.
+
+The reason it is fast is that predicates become bitwise operations. I measured a three-column filter over
+five million rows: 0.65 milliseconds with bitmaps against 11.45 with a full boolean scan, so about 17x.
+And the AND itself was only 0.08 milliseconds - one machine instruction per 64 rows.
+
+But the real driver is memory. The bitmaps were 1.9 megabytes against 120 for the columns - 64 times less
+data moved. Analytical queries are memory-bandwidth-bound, so a 64x reduction in bytes read IS the
+speedup.
+
+The thing that decides whether you can use one at all is CARDINALITY - the number of distinct values - not
+the number of rows. Uncompressed, the cost is cardinality over eight bytes per row. For a two-value column
+that is a quarter of a byte, sixteen times smaller than the column itself. For a million-value column it
+is 125 kilobytes per row, thirty thousand times larger than the data it indexes. It does not degrade
+gracefully, it becomes absurd.
+
+Compression rescues the middle, and by more than I expected. High-cardinality bitmaps are almost all
+zeros, so at cardinality 10,000 compression took 6.25 gigabytes down to 23.5 megabytes - a 266-fold
+reduction, under five bytes a row. So real implementations work far past 'a handful of values'. I measured
+the crossover against a B-tree at somewhere between 10,000 and a million distinct values.
+
+Two things I would flag. First, updates. Changing one row's value clears a bit in one bitmap and sets it
+in another, which looks cheap - but in a COMPRESSED bitmap that bit is in the middle of a run of ten
+thousand zeros, so the run has to be split and the block re-encoded. That is why bitmap indexes live in
+read-mostly warehouses and are rebuilt in bulk, and why adding one to an OLTP table can serialise your
+writers.
+
+Second, the property that is actually unique: because every bitmap is the same shape, one bit per row,
+indexes on DIFFERENT columns can be ANDed together directly. A B-tree query plan typically uses one index
+and re-checks the rest, or needs a composite index in a fixed column order. Bitmaps compose in any
+combination, which is why star-schema warehouses use them."
+
+THE ONE SENTENCE TO NOT FUMBLE: the cost scales with the number of DISTINCT VALUES rather than rows -
+0.25 bytes/row at cardinality 2 and 125,000 at cardinality 1,000,000 - and compression moves that ceiling
+out by 266x without removing it.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    bm_c = np.packbits(col_country == 3)
+
+The index itself, in one line. `col_country == 3` produces a boolean array of one BYTE per row;
+`np.packbits` squeezes it to one BIT per row. That 8x is before any compression - it is just not wasting
+seven bits.
+
+This is also the build step: constructing a bitmap index is one comparison pass per distinct value, which
+is why bulk-building is cheap and incremental maintenance is not.
+
+    np.count_nonzero(np.unpackbits(bm_c & bm_s & bm_t))
+
+The whole query. `&` is a bitwise AND over packed bytes - the CPU does 64 rows per instruction - and
+`count_nonzero` is the popcount.
+
+Timing the AND separately (0.08 ms) from the full expression (0.65 ms) shows where the cost really is: the
+boolean logic is nearly free and the unpacking and counting dominate. A production implementation keeps
+everything packed and uses a hardware popcount, avoiding the unpack entirely.
+
+    np.count_nonzero((col_country==3)&(col_status==1)&(col_tier==2))
+
+The scan being compared against, and it is a fair comparison - numpy's vectorised boolean operations are
+fast C loops, not a Python loop. So the 17.6x is against a genuinely good scan, not a straw man.
+
+The data volumes explain the gap: three int64 columns of 5,000,000 rows is 120 MB, and three bitmaps is
+1.9 MB.
+
+    tot_c += len(zlib.compress(bm.tobytes(), 6))
+
+Compression measured with zlib as a stand-in for WAH or Roaring. It is not what a database uses, and it
+captures the property that matters - sparse bitmaps have long runs of zeros and compress enormously
+(266x at cardinality 10,000).
+
+The important difference in a real system: WAH and Roaring are designed so AND and OR run WITHOUT
+decompressing. zlib would force a decompress before every operation, which would give the space saving
+and lose the speed.
+
+    sample_vals = range(card) if card<=100 else rng.choice(card, 100, replace=False)
+    scale = card/nvals
+
+Sampling 100 of the distinct values and extrapolating, rather than building all 10,000 bitmaps. Each
+bitmap is statistically identical here because the column is uniform, so the estimate is sound - and it is
+worth stating, because on SKEWED data this shortcut would be wrong: a few common values would produce
+dense, poorly-compressing bitmaps and the average would be off.
+
+    byte, bit = i//8, 7-(i%8)
+    bms[old][byte] &= ~np.uint8(1<<bit)
+    bms[new][byte] |= np.uint8(1<<bit)
+
+The update, and the two lines are the point: changing one row's value touches TWO bitmaps. The `7-(i%8)`
+is packbits' bit ordering (most significant bit first).
+
+At 2.89 us this looks cheap, and it is measuring the UNCOMPRESSED case. The entry says so explicitly,
+because reporting this number without that caveat would be the most misleading thing in the file.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 5,000,000 rows. Columns generated uniformly at the stated cardinality.
+
+TRACE A - the query, three low-cardinality predicates.
+
+    approach                            time        data touched   speedup
+    ---------------------------------   ---------   ------------   -------
+    bitmap AND + popcount                0.65 ms         1.9 MB      17.6x
+    bitwise AND alone                    0.08 ms         1.9 MB     143.1x
+    vectorised boolean scan             11.45 ms       120.0 MB       1.0x
+
+    both approaches return 52,016 rows
+
+The middle row is the informative one: the actual boolean logic is 143x faster than the scan and takes 80
+microseconds for 5,000,000 rows across 3 columns. The remaining 0.57 ms is unpacking and counting, which a
+production implementation avoids by staying packed.
+
+64x less memory moved, 17.6x faster overall - close to the memory-bandwidth ratio, which is what you
+expect for a bandwidth-bound operation.
+
+TRACE B - the cost is cardinality, uncompressed.
+
+    cardinality   bytes/row   total for 5M rows   vs a 4-byte column
+    -----------   ---------   -----------------   ------------------
+              2        0.25             1.25 MB                 0.1x
+              4        0.50             2.50 MB                 0.1x
+             16        2.00            10.00 MB                 0.5x
+            100       12.50            62.50 MB                 3.1x
+         10,000    1,250.00             6.25 GB               312.5x
+      1,000,000  125,000.00           625.00 GB            31,250.0x
+
+The formula is exactly cardinality/8 bytes per row. Below 32 distinct values the index is smaller than the
+column it indexes; above that it grows without limit.
+
+TRACE C - compression, and how far it moves the ceiling.
+
+    cardinality   density of 1s   raw MB     compressed MB   ratio    bytes/row
+    -----------   -------------   --------   -------------   ------   ---------
+              2         0.50000        1.2            1.25     1.0x       0.250
+              4         0.25000        2.5            2.10     1.2x       0.419
+             16         0.06250       10.0            4.30     2.3x       0.860
+            100         0.01000       62.5            8.01     7.8x       1.603
+          1,000         0.00100      625.0           14.73    42.4x       2.945
+         10,000         0.00010    6,250.0           23.50   266.0x       4.699
+
+The compression ratio and the cardinality move TOGETHER, which is the elegant part: the higher the
+cardinality, the sparser each bitmap, the better it compresses.
+
+At cardinality 2 the bitmaps are half ones and compression achieves nothing (1.0x). At 10,000 they are one
+part in ten thousand and compression achieves 266x. The compressed cost per row grows from 0.25 to 4.70
+bytes across a 5,000x cardinality increase - sublinear by a wide margin.
+
+TRACE D - the crossover against a B-tree.
+
+    cardinality   compressed bitmap bytes/row   B-tree bytes/row   winner   margin
+    -----------   ---------------------------   ----------------   ------   ------
+              2                         0.250               20.0   BITMAP     80x
+              8                         0.631               20.0   BITMAP     32x
+            100                         1.606               20.0   BITMAP     12x
+         10,000                         4.841               20.0   BITMAP      4x
+      1,000,000                       138.195               20.0   B-TREE      7x
+      5,000,000                       666.172               20.0   B-TREE     33x
+
+The B-tree column is constant because its size tracks ROWS - each row contributes a key and a pointer
+regardless of how many distinct values exist. The bitmap column tracks VALUES.
+
+The crossover sits between 10,000 and 1,000,000 distinct values. Below it the bitmap wins by up to 80x;
+above it it loses by up to 33x, and keeps losing.
+
+TRACE E - updates, and why the measured number is misleading.
+
+    one row update, UNCOMPRESSED bitmaps: 2.89 us
+      - clear one bit in the old value's bitmap
+      - set one bit in the new value's bitmap
+
+Two bitmaps touched per single-column update. In an uncompressed index this is two byte writes.
+
+In a COMPRESSED index the bit sits inside a run - at cardinality 10,000 the average run of zeros is about
+10,000 long - so setting it splits that run into a run, a literal word, and another run, and the
+surrounding block must be re-encoded. The cost is a block rewrite, not a bit flip.
+
+That is the mechanism behind bitmap indexes being warehouse structures: they are rebuilt in bulk, not
+maintained per row, and in an OLTP database the segment locking serialises writers who touch different
+rows with the same column value.
+
+TRACE F - the property no size table shows.
+
+    query                                     bitmap index          B-tree
+    ---------------------------------------   -------------------   -------------------------
+    WHERE a=1                                 1 bitmap lookup       index scan
+    WHERE a=1 AND b=2                         1 AND                 one index + re-check
+    WHERE a=1 AND b=2 AND c=3                 2 ANDs                one index + re-check
+    WHERE a=1 AND b=2 AND c=3 AND d=4         3 ANDs                one index + re-check,
+                                                                    or a composite index in a
+                                                                    FIXED column order
+    COUNT(*) WHERE ...                        AND + popcount,       must visit rows
+                                              no row access
+
+Every bitmap is the same shape - one bit per row - so indexes on different columns intersect directly. A
+B-tree's keys are column-specific, so a planner uses one and re-checks the rest, or you commit to a
+composite index that only serves queries using a prefix of its column order.
+
+That composability is why star-schema warehouses with many low-cardinality dimension columns are the
+canonical use.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (5,000,000 rows):
+
+    query          bitmap AND + popcount 0.65 ms vs boolean scan 11.45 ms  (17.6x)
+                   the AND alone: 0.08 ms  (143x)
+                   data touched: 1.9 MB vs 120.0 MB  (64x less)
+    size, raw      cardinality/8 bytes per row: 0.25 at C=2, 12.50 at C=100,
+                   1,250 at C=10,000, 125,000 at C=1,000,000
+    compression    1.0x at C=2 | 7.8x at C=100 | 42.4x at C=1,000 | 266.0x at C=10,000
+    vs B-tree      bitmap wins 80x at C=2 and 4x at C=10,000; loses 7x at C=1,000,000
+                   and 33x at C=5,000,000
+    updates        2.89 us uncompressed - and a block rewrite when compressed
+
+COMPLEXITY: a point predicate is O(1) - a bitmap lookup. Combining k predicates is k-1 bitwise operations
+over N/64 words, so O(N/64) rather than O(N). COUNT is a popcount with no row access. Space is
+O(cardinality x rows / 8) raw, far less compressed. Build is one pass per distinct value; update is two
+bitmap modifications, each potentially a block re-encode.
+
+THE MISTAKES:
+
+    - Indexing a high-cardinality column. MEASURED: 125,000 bytes per row at a million distinct values.
+    - Adding one to an OLTP table. Compressed updates are block rewrites, and segment locking serialises
+      writers with the same column value.
+    - Judging viability from the RAW size. MEASURED: compression is 266x at cardinality 10,000, which
+      moves the ceiling by orders of magnitude.
+    - Using a compression scheme that must decompress before AND/OR. That keeps the space saving and
+      discards the speed - which is the whole reason WAH and Roaring are word-aligned.
+    - Hand-rolling RLE instead of using Roaring, which adapts its representation per chunk.
+    - Expecting range queries to work. A plain bitmap index must OR every qualifying value's bitmap; use
+      bit-slicing or binning.
+    - Not binning continuous columns, which makes their cardinality equal to the row count.
+    - Forgetting that a single-column update touches TWO bitmaps.
+    - Estimating compression from a uniform column when the real data is SKEWED - common values give
+      dense, poorly-compressing bitmaps.
+    - Reaching for an index when a vectorised scan would do. MEASURED at 11.45 ms for 5,000,000 rows
+      across three columns.
+    - Overlooking zone maps, which are nearly free and often sufficient when the table is clustered on the
+      filtered column.
+
+THE TAKEAWAY. A bitmap index turns predicates into bitwise operations - measured at 17.6x faster than a
+vectorised scan, with the AND itself 143x faster, driven mostly by moving 64x less memory. Its viability
+is decided by CARDINALITY rather than row count, because the cost is cardinality/8 bytes per row: a
+quarter of a byte for a boolean column and 125 kilobytes for a unique one. Compression rescues the middle
+by an enormous margin - 266x at ten thousand distinct values, taking 6.25 GB to 23.5 MB - and the crossover
+against a B-tree still arrives somewhere past ten thousand values, after which the B-tree wins by 7x and
+then 33x. The disqualifier is writes, because a compressed bitmap update is a block re-encode rather than
+a bit flip, which is why these belong in read-mostly warehouses. And the property that justifies them
+there is composability: every bitmap is one bit per row, so indexes on different columns AND together
+directly, which no B-tree arrangement can match.""",
+]
+
+_EX_P1AO["Bloom filter"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a Bloom filter answers "is x in the set?" using a tiny amount of memory,
+by being allowed to say YES when the answer is no. It is never allowed to say NO when the answer is yes.
+
+That asymmetry is the entire design. "Definitely not present" is exact; "probably present" is a guess.
+
+MEASURED ON THIS MACHINE - 50,000 keys inserted into 400,000 bits (8 bits per key) with 5 hash functions:
+
+    FALSE NEGATIVES (inserted, reported absent)      : 0
+    FALSE POSITIVES (never inserted, reported present): 1,111  (2.222%)
+
+The zero is not luck, it is structural. Adding a key only ever sets bits from 0 to 1, and a lookup only
+returns "absent" when it finds a 0. Nothing in the data structure can ever un-set a bit, so a key that was
+inserted can never be reported missing.
+
+That one-sided guarantee is what makes it useful: you can put a Bloom filter in front of an expensive
+lookup and skip the lookup entirely whenever it says "no", knowing you will never skip a real hit.""",
+
+    """2. THE INTUITION - k hash functions, one bit array, and a bet that the bits you check are not all set by
+accident.
+
+Insert: hash the key k ways, set those k bits. Look up: hash the same k ways, and if ANY of those bits is
+0 the key was definitely never inserted. If all k are 1, either it was inserted or k other keys happened
+to set exactly those bits.
+
+The false-positive rate is not empirical - it is designed. `(1 - e^(-kn/m))^k`, and MEASURED it holds:
+
+    bits/key   k    predicted FP   measured FP   bits set
+    --------   --   ------------   -----------   --------
+           4    3      14.6892%      14.6160%      52.8%
+           6    4       5.6057%       5.3760%      48.7%
+           8    6       2.1577%       2.1900%      52.8%
+          10    7       0.8194%       0.9020%      50.3%
+          12    8       0.3142%       0.2880%      48.7%
+          16   11       0.0459%       0.0520%      49.8%
+          20   14       0.0067%       0.0060%      50.3%
+
+Prediction and measurement agree at every size. You choose the error rate you can tolerate and the
+structure delivers it - which makes this a designed component rather than a heuristic.
+
+Look at the last column: at every optimal configuration, almost exactly HALF the bits are set. That is not
+a coincidence. A bit array carries the most information when it is half full - each bit is then maximally
+uncertain - and that is where `k = (m/n) ln 2` comes from.
+
+MEASURED, sweeping k at a fixed 8 bits per key:
+
+    k     predicted FP   measured FP   bits set
+    ---   ------------   -----------   --------
+      1       11.7503%      11.8120%      11.7%
+      3        3.0579%       3.0260%      31.3%
+      5        2.1679%       2.2220%      46.5%
+      6        2.1577%       2.1900%      52.8%
+      8        2.5492%       2.5600%      63.3%
+     14        6.9085%       6.8380%      82.6%
+
+Too few hashes and each lookup checks too little evidence. Too many and the array saturates, so everything
+looks present. The optimum (k = 5.55 here) is exactly where the fill reaches 50%.""",
+
+    """3. EVERY TERM DEFINED.
+
+BLOOM FILTER. A probabilistic set membership structure with no false negatives and a tunable false-positive
+rate.
+
+FALSE POSITIVE. Reports present, was never inserted. Allowed, and its rate is designed.
+
+FALSE NEGATIVE. Reports absent, was inserted. IMPOSSIBLE by construction. MEASURED at 0.
+
+m. The number of bits in the array.
+
+n. The number of keys inserted.
+
+k. The number of hash functions.
+
+BITS PER KEY (m/n). The space knob. MEASURED: 8 bits/key gives about 2%, 16 gives about 0.05%.
+
+FILL RATIO. The fraction of bits set. MEASURED at ~50% at every optimal configuration - that is the
+signature of a correctly-sized filter.
+
+OPTIMAL k. `(m/n) ln 2`, which is what drives the fill to one half.
+
+FALSE-POSITIVE FORMULA. `(1 - e^(-kn/m))^k`. MEASURED to match at seven different sizes.
+
+DOUBLE HASHING. Deriving k indices from two independent hashes as `a + i*b`, instead of computing k
+separate hashes. Standard, and statistically adequate.
+
+SATURATION. Inserting so many keys that most bits are set and the false-positive rate approaches 1. A
+Bloom filter has no way to signal this - it just quietly gets worse.
+
+COUNTING BLOOM FILTER. Small counters instead of bits, so deletion works. Roughly 4x the space.
+
+CUCKOO FILTER. Stores small fingerprints in a cuckoo hash table. Supports deletion and beats Bloom's space
+at low false-positive rates.
+
+SCALABLE BLOOM FILTER. A chain of filters with geometrically tightening error rates, so the structure can
+grow without knowing n in advance.
+
+QUOTIENT FILTER. Cache-friendlier, resizable, mergeable.
+
+LSM-TREE. Log-structured merge tree. Each on-disk level gets a Bloom filter so a read can skip levels that
+definitely lack the key - the canonical production use.
+
+NEGATIVE CACHING. Remembering that something does NOT exist, so you avoid re-asking. What a Bloom filter
+does structurally.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - assuming a Bloom filter is always worth adding. It only pays when
+MOST QUERIES ARE FOR THINGS THAT DO NOT EXIST.
+
+The filter eliminates the expensive lookup for definite absences, and it adds its own cost to EVERY query.
+MEASURED as an economic model - a 1 microsecond Bloom check in front of a 5 millisecond disk lookup, with a
+1% false-positive rate:
+
+    fraction of queries that are ABSENT   without filter   with filter   speedup
+    -----------------------------------   --------------   -----------   -------
+                                     1%         5,000 us      4,952 us      1.0x
+                                    10%         5,000 us      4,506 us      1.1x
+                                    50%         5,000 us      2,526 us      2.0x
+                                    90%         5,000 us        546 us      9.2x
+                                    99%         5,000 us        101 us     49.8x
+
+At 1% absent it saves nothing - you still perform the disk read on virtually every query, and you have
+added work. At 99% absent it is a 50x reduction.
+
+So the question to ask before adding one is not "how big is the set?" but "what fraction of my lookups are
+for keys that are not there?". In an LSM-tree checking six levels for a key that lives in one, five of the
+six checks are absences - which is exactly why every LSM engine has Bloom filters and why they are so
+effective there.
+
+THE SECOND TRAP - forgetting the filter cannot be resized or drained. MEASURED implicitly by the formula:
+the false-positive rate depends on n/m, so inserting twice as many keys as you planned roughly squares the
+error rate. And there is no way to detect it from inside - the structure has no idea how many keys it
+holds unless you count separately.
+
+Worse, you cannot rebuild it larger without the ORIGINAL KEYS, which a Bloom filter does not store. If you
+no longer have them, the only option is to keep the badly-performing filter.
+
+THE THIRD TRAP - trying to delete. Bits are SHARED between keys, so clearing a key's bits would clear bits
+that other keys depend on, creating false NEGATIVES and destroying the only guarantee the structure
+offers. MEASURED as the mechanism:
+
+    k1 hashes to indices [1458, 6589, 3720, ...]
+    k7 hashes to indices [4385,  390, 4395, ...]
+
+Any overlap between two keys' index sets makes removal unsafe, and with a 50% fill ratio overlap is the
+normal case rather than the exception. The fixes are a COUNTING Bloom filter (counters instead of bits,
+about 4x the space) or a CUCKOO filter (fingerprints, supports deletion, better space at low error rates).
+
+THE FOURTH TRAP - what it cannot do at all: it cannot count, and it cannot enumerate its members. There are
+no keys stored anywhere in the structure. If you need to know WHAT is in the set, this is the wrong tool
+entirely.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+THE SPACE SAVING, which is the reason it exists. MEASURED against an exact set:
+
+    keys           key size   target FP   Bloom size   exact set   smaller by
+    ------------   --------   ---------   ----------   ---------   ----------
+    1,000,000          16 B      10.00%      0.60 MB     65.0 MB       108.5x
+    1,000,000          16 B       1.00%      1.20 MB     65.0 MB        54.3x
+    1,000,000          16 B       0.10%      1.80 MB     65.0 MB        36.2x
+    1,000,000          64 B       1.00%      1.20 MB    113.0 MB        94.3x
+    100,000,000        16 B       1.00%    119.81 MB  6,500.0 MB        54.3x
+
+The critical property is in the fourth row: the Bloom size is IDENTICAL for 16-byte and 64-byte keys -
+1.20 MB either way - because a Bloom filter stores no keys at all, only bits. The exact set quadruples.
+
+So the saving grows with key size, which is why Bloom filters are used for URLs, file paths, email
+addresses and content hashes - long keys where the only question is "is it worth looking?".
+
+And note the cost of precision: going from 10% to 0.1% false positives triples the space (0.60 to 1.80 MB).
+Each additional order of magnitude of accuracy costs a fixed number of bits per key - about 4.8 - which is
+why 1% is such a common choice.
+
+THE FAMILY, and what each fixes:
+
+    BLOOM FILTER       no deletion, no counting, no resizing, no enumeration. Smallest and simplest.
+    COUNTING BLOOM     4-bit counters instead of bits. Supports DELETE. About 4x the space.
+    CUCKOO FILTER      stores short fingerprints in a cuckoo table. Supports delete, better space than
+                       Bloom below about 3% false positives, and it can FAIL to insert when full.
+    QUOTIENT FILTER    cache-friendly, resizable, mergeable. More complex.
+    SCALABLE BLOOM     a chain of filters with tightening error rates. Grows without knowing n up front.
+    XOR / BINARY FUSE FILTERS   ~20% smaller than Bloom at the same error rate, and IMMUTABLE - built
+                       once from the full key set. Ideal for static sets like an LSM-tree level.
+    HYPERLOGLOG        answers "how many DISTINCT?" rather than "is this present?". Different question,
+                       same family of tricks.
+    EXACT HASH SET     when the memory fits, this is simply correct - no false positives, supports
+                       delete, counting and enumeration. MEASURED at 36-189x more memory.
+
+WHERE THEY ARE ACTUALLY USED, and why the fit is good:
+    LSM-TREES (RocksDB, Cassandra, LevelDB)   one filter per SSTable so a read skips files that cannot
+                       contain the key. Most level checks are absences - exactly the 90-99% regime where
+                       MEASURED savings were 9-50x.
+    CDN AND CACHE LAYERS   avoid a backend fetch for content that does not exist.
+    CHROME'S SAFE BROWSING   check a URL against a huge blocklist locally; a positive triggers a real
+                       server check, so a false positive costs a round trip and not a wrong answer.
+    DISTRIBUTED JOINS   send a filter instead of a key set to skip rows that cannot join.
+    DUPLICATE DETECTION in crawlers and streams, where a rare false positive means skipping one item.
+
+THE COMMON SHAPE: every one of these tolerates a false positive gracefully - it triggers a slower exact
+check - and would be broken by a false negative. That is the criterion for whether a Bloom filter fits at
+all.""",
+
+    """6. HOW TO CODE IT.
+
+  1. SIZE IT FROM THE ERROR RATE YOU CAN TOLERATE. `m = -n ln(p) / (ln 2)^2` and `k = (m/n) ln 2`. Both
+     formulas, and MEASURED to hold to within a few percent at seven sizes.
+  2. USE DOUBLE HASHING. One 128-bit hash split into `a` and `b`, then index `i` is `(a + i*b) mod m`.
+     Statistically adequate and far cheaper than k independent hashes.
+  3. KNOW n BEFORE YOU BUILD. The error rate depends on n/m, so under-estimating n degrades it silently -
+     and you cannot resize without the original keys, which the filter does not store.
+  4. IF n IS UNKNOWN, USE A SCALABLE BLOOM FILTER - a chain of filters with geometrically tightening error
+     rates.
+  5. CHECK THE ABSENT FRACTION BEFORE ADDING ONE. MEASURED: at 1% absent it saves nothing; at 99% it is
+     50x. This is the calculation people skip.
+  6. MONITOR THE FILL RATIO IN PRODUCTION. It should be near 50%. MEASURED at 50.3% for a correctly-sized
+     filter - a fill well above that means you have inserted more keys than you planned and the error rate
+     has degraded.
+  7. NEVER DELETE FROM A PLAIN BLOOM FILTER. Bits are shared; clearing them creates false negatives and
+     destroys the only guarantee. Use a counting or cuckoo filter.
+  8. DO NOT USE IT WHERE A FALSE POSITIVE IS HARMFUL. It must trigger a slower EXACT check, never a
+     decision.
+  9. USE A CUCKOO OR XOR FILTER for a static set. XOR filters are about 20% smaller at the same error rate
+     and are built once from the complete key set - ideal for an immutable SSTable.
+ 10. PUT THE FILTER WHERE THE EXPENSIVE THING IS. In front of a disk read or a network call it is
+     transformative; in front of an in-memory hash lookup it is slower than just doing the lookup.
+ 11. REMEMBER IT CANNOT ENUMERATE OR COUNT. If you need to know what is in the set, this is the wrong
+     structure.
+ 12. HASH THE KEY ONCE, not k times. A single blake2b or xxhash split into two 64-bit halves gives you all
+     k indices - the hashing is usually the dominant cost of a lookup.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A Bloom filter answers 'is x in the set?' in a tiny amount of memory, by being allowed to say yes when the
+answer is no. It is never allowed to say no when the answer is yes.
+
+That asymmetry is structural, not statistical. Inserting a key only ever sets bits from zero to one, and a
+lookup only reports 'absent' when it finds a zero - so nothing in the structure can ever un-set a bit and
+a key that was inserted can never be reported missing. I verified it: fifty thousand keys, zero false
+negatives, and 2.222% false positives.
+
+The mechanism is k hash functions and one bit array. Insert sets k bits; lookup checks those k bits, and
+any zero means definitely absent. The false-positive rate is designed rather than discovered - the formula
+is one minus e to the minus kn over m, all to the k - and I measured it against the prediction at seven
+sizes and it matched every time. Eight bits per key gives about 2%, sixteen gives about 0.05%.
+
+A detail I like: at every optimal configuration, almost exactly half the bits are set. That is not a
+coincidence - a bit array carries the most information when it is half full, and that is precisely where k
+equals m over n times ln 2 comes from. I swept k and confirmed it: the minimum false-positive rate sat
+exactly where the fill hit 50%.
+
+The thing people skip is whether it is worth adding at all. It eliminates the expensive lookup for definite
+absences and adds its own cost to EVERY query. I modelled a 1 microsecond check in front of a 5 millisecond
+disk read: at 1% of queries being for absent keys it saves essentially nothing, at 50% it is 2x, and at 99%
+it is 50x. So the question is not 'how big is the set' but 'what fraction of my lookups are for things that
+are not there'. In an LSM-tree checking six levels for a key that lives in one, five of six checks are
+absences - which is exactly why every LSM engine ships them.
+
+On space: a million 16-byte keys at 1% error is 1.2 megabytes against about 65 for an exact set. And the
+Bloom size is IDENTICAL for 64-byte keys, because it stores no keys at all - only bits. That is why they
+are used for URLs and file paths.
+
+Three things it cannot do. It cannot delete, because bits are shared between keys and clearing them would
+create false negatives. It cannot count. And it cannot enumerate its members, because there are none
+stored - so it cannot even be rebuilt larger without the original keys."
+
+THE ONE SENTENCE TO NOT FUMBLE: the guarantee is one-sided by construction - no false negatives ever,
+because bits are only ever set - and it only pays when most of your lookups are for things that do not
+exist, measured at 1.0x when 1% of queries are absent and 50x when 99% are.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def _idx(self, key):
+        h = hashlib.blake2b(key, digest_size=16).digest()
+        a = int.from_bytes(h[:8],'little'); b = int.from_bytes(h[8:],'little')
+        return [(a + i*b) % self.m for i in range(self.k)]
+
+DOUBLE HASHING - the standard implementation trick. One 128-bit hash is split into two 64-bit values, and
+the k indices are `a + i*b`. This is provably as good as k independent hashes for Bloom filter purposes,
+and it costs ONE hash computation instead of k.
+
+That matters more than it looks: hashing is usually the dominant cost of a lookup, so computing k separate
+hashes would make the filter several times slower for no accuracy benefit.
+
+    def add(self, key):
+        for i in self._idx(key): self.bits[i] = True
+
+The insert, and this line is the whole guarantee. Bits go from 0 to 1 and NEVER the other way. There is no
+code path anywhere in the structure that clears a bit.
+
+    def __contains__(self, key):
+        return all(self.bits[i] for i in self._idx(key))
+
+The lookup. `all` short-circuits, so the common case - a key that is absent - typically exits on the first
+or second bit rather than checking all k. At a 50% fill ratio the expected number of bits examined for an
+absent key is about 2, not k.
+
+And the asymmetry is right here: returning False requires finding a zero, which only happens if this key
+was never inserted. Returning True is the guess.
+
+    fn = sum(1 for k in present if k not in bf)
+
+The false-negative check, and it is worth running even though the answer is provably zero. A measurement
+that confirms a structural guarantee is how you catch an implementation bug - if this had printed anything
+other than 0, the bug would be in `add` or `_idx`, not in the theory.
+
+    pred = (1 - math.exp(-k*N/m))**k
+    meas = sum(1 for key in absent if key in b)/N
+
+Prediction against measurement, side by side. `(1 - e^(-kn/m))` is the probability a given bit is still
+zero after n insertions of k bits each; raising it to the k is the probability all k checked bits are set.
+
+Printing both columns is what makes this a verified design rather than an assertion - and they agreed to
+within a few percent at every one of seven sizes.
+
+    fill = b.bits.mean()
+
+The fill ratio, and it is the most useful operational metric here. MEASURED at 46.5-52.8% across every
+optimal configuration, and it is the one number that reveals a filter which has been over-filled: it has
+no other way to tell you.
+
+    absent = [f"nope-{i}".encode() for i in range(N)]
+
+The false-positive test set, generated with a DIFFERENT prefix so no key can accidentally collide with an
+inserted one. Testing false positives with keys that might actually be in the set would silently inflate
+the measured rate.
+
+    m = -n*math.log(fp)/(math.log(2)**2)
+
+The sizing formula, inverted from the false-positive equation. Note it depends only on n and the target
+rate - the KEY SIZE never appears, which is the mathematical statement of why a Bloom filter's size is
+independent of how large the keys are.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the one-sided guarantee. 50,000 keys, 400,000 bits, k=5.
+
+    false negatives (inserted, reported absent)       0
+    false positives (never inserted, reported present) 1,111  (2.222%)
+
+Zero is structural. Bits are only ever set, and "absent" requires finding an unset bit.
+
+TRACE B - the false-positive rate is designed, not discovered.
+
+    bits/key   k    predicted FP   measured FP   ratio    bits set
+    --------   --   ------------   -----------   ------   --------
+           4    3      14.6892%      14.6160%     0.995      52.8%
+           6    4       5.6057%       5.3760%     0.959      48.7%
+           8    6       2.1577%       2.1900%     1.015      52.8%
+          10    7       0.8194%       0.9020%     1.101      50.3%
+          12    8       0.3142%       0.2880%     0.917      48.7%
+          16   11       0.0459%       0.0520%     1.133      49.8%
+          20   14       0.0067%       0.0060%     0.896      49.8%
+
+Measured over predicted stays between 0.90 and 1.13 across a 2,000-fold range of error rates. The
+deviations grow at the smallest rates simply because 0.006% of 50,000 keys is 3 events - sampling noise,
+not model error.
+
+The fill column is the striking one: 48.7% to 52.8% at every single size. A correctly-configured Bloom
+filter is always half full.
+
+TRACE C - choosing k, at 8 bits per key. Optimal k = 8 x ln2 = 5.55.
+
+    k     predicted   measured   bits set   note
+    ---   ---------   --------   --------   -----------------------------
+      1    11.7503%   11.8120%      11.7%   too little evidence per lookup
+      2     4.8929%    4.8420%      22.1%
+      3     3.0579%    3.0260%      31.3%
+      4     2.3969%    2.4300%      39.4%
+      5     2.1679%    2.2220%      46.5%   near the optimum
+      6     2.1577%    2.1900%      52.8%   THE MINIMUM
+      8     2.5492%    2.5600%      63.3%   array saturating
+     10     3.4191%    3.4420%      71.4%
+     14     6.9085%    6.8380%      82.6%   worse than k=2
+
+The curve is a clean U with its minimum at k=6, straddling the theoretical 5.55. And the fill at the
+minimum is 52.8% - as close to half as the discreteness of k allows.
+
+At k=14 the filter is worse than at k=2, which is the counter-intuitive part: more hash functions is not
+more evidence, it is more bits set, and past the optimum the saturation dominates.
+
+TRACE D - space, and the property that makes it distinctive.
+
+    keys          key size   target FP   Bloom      exact set    smaller by
+    -----------   --------   ---------   --------   ----------   ----------
+    1,000,000        16 B      10.00%     0.60 MB      65.0 MB       108.5x
+    1,000,000        16 B       1.00%     1.20 MB      65.0 MB        54.3x
+    1,000,000        16 B       0.10%     1.80 MB      65.0 MB        36.2x
+    1,000,000        64 B      10.00%     0.60 MB     113.0 MB       188.6x
+    1,000,000        64 B       1.00%     1.20 MB     113.0 MB        94.3x
+    100,000,000      16 B       1.00%   119.81 MB   6,500.0 MB        54.3x
+
+Rows 2 and 5 are the point: the same 1.20 MB for 16-byte and 64-byte keys, while the exact set goes from
+65 MB to 113 MB. The filter stores no keys.
+
+And the cost of precision is linear in bits: 0.60, 1.20, 1.80 MB for 10%, 1%, 0.1% - about 4.8 extra bits
+per key per order of magnitude, forever. That is why nobody targets 0.0001%.
+
+TRACE E - the economics. 1 us filter check, 5 ms disk lookup, 1% false-positive rate.
+
+    absent fraction   without   with filter   speedup   what is happening
+    ---------------   -------   -----------   -------   ---------------------------------
+                 1%   5000 us       4952 us      1.0x   almost every query still hits disk
+                10%   5000 us       4506 us      1.1x
+                50%   5000 us       2526 us      2.0x   half the disk reads eliminated
+                90%   5000 us        546 us      9.2x
+                99%   5000 us        101 us     49.8x   only false positives reach disk
+
+The speedup is essentially `1/(1 - absent_fraction)` until the false-positive rate becomes the floor. At
+99% absent, the residual 101 us is 1 us of filter plus the 1% of queries that are genuinely present plus
+the 1% of absences that false-positive through.
+
+This table is the one to run before adding a Bloom filter anywhere.
+
+TRACE F - what it cannot do, and why.
+
+    operation      possible?   reason
+    ------------   ---------   ---------------------------------------------------------
+    lookup         yes         the whole point
+    insert         yes         set k bits
+    DELETE         NO          bits are SHARED; clearing them creates false negatives
+    COUNT          NO          no per-key state exists
+    ENUMERATE      NO          no keys are stored anywhere
+    RESIZE         NO          indices depend on m; rebuilding needs the original keys
+    MERGE (same m, k)  yes     bitwise OR of the two arrays - a genuinely useful property
+
+    two keys' index sets:  k1 -> [1458, 6589, 3720, ...]   k7 -> [4385, 390, 4395, ...]
+    at a 50% fill ratio, overlap between key index sets is the normal case
+
+The MERGE row is worth noting because it is the one thing on this list that works: two filters over the
+same parameters OR together into a filter of the union, which is why they are used in distributed joins
+and in merging LSM levels.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+COMPLEXITY:
+
+    operation   cost
+    ---------   ------------------------------------------------------------
+    insert      O(k) bit sets, one hash computation with double hashing
+    lookup      O(k) worst case; ~2 bit reads on average for an absent key,
+                because `all` short-circuits at a 50% fill ratio
+    space       m = -n ln(p) / (ln 2)^2 bits, INDEPENDENT of key size
+    delete      not supported
+    merge       O(m) bitwise OR, for filters with identical m and k
+
+THE NUMBERS:
+
+    guarantee        0 false negatives; 2.222% false positives at 8 bits/key, k=5
+    designed rate    predicted vs measured within 0.90-1.13x across a 2,000x range of error rates
+    fill ratio       48.7%-52.8% at every optimal configuration - the signature of correct sizing
+    choosing k       at m/n=8: k=1 gives 11.75%, k=6 gives 2.16% (minimum), k=14 gives 6.91%
+    space            1M keys at 1% FP: 1.20 MB vs ~65 MB exact (54x)
+                     identical 1.20 MB for 64-byte keys, where the exact set is 113 MB
+    precision cost   0.60 / 1.20 / 1.80 MB for 10% / 1% / 0.1% - about 4.8 bits per key per decade
+    economics        1% absent 1.0x | 50% absent 2.0x | 90% absent 9.2x | 99% absent 49.8x
+
+THE MISTAKES:
+
+    - Adding one without checking the ABSENT fraction. MEASURED at 1.0x when only 1% of queries are for
+      missing keys.
+    - Under-estimating n. The error rate depends on n/m and degrades silently, with no way for the
+      structure to warn you.
+    - Never monitoring the fill ratio. MEASURED at ~50% when correct; it is the only available signal
+      that the filter is over-full.
+    - Trying to delete. Bits are shared, so it creates false negatives and destroys the guarantee.
+    - Expecting to resize. The indices depend on m, and rebuilding needs the original keys, which are not
+      stored.
+    - Using it where a false positive causes a wrong ANSWER rather than a slower check.
+    - Computing k independent hashes instead of double hashing. k times the cost for no benefit.
+    - Choosing k too large. MEASURED: k=14 was worse than k=2 at 8 bits per key.
+    - Putting it in front of something cheap. In front of an in-memory hash lookup it is slower than the
+      lookup.
+    - Using a plain Bloom filter for a STATIC set. XOR and binary fuse filters are ~20% smaller at the
+      same error rate.
+    - Expecting it to count or enumerate. It stores no keys at all.
+    - Testing false positives with keys that might be in the set, which inflates the measured rate.
+
+THE TAKEAWAY. A Bloom filter trades exactness in ONE DIRECTION for enormous space savings: it can say
+"probably present" when it should say no, and it can never say "absent" about something you inserted -
+measured as 0 false negatives, which is structural because bits are only ever set. The error rate is
+designed rather than observed, matching `(1 - e^(-kn/m))^k` across a 2,000-fold range, and the optimal
+configuration always lands where half the bits are set. It stores no keys, so its size is independent of
+key length - 1.2 MB for a million keys at 1% error, whether those keys are 16 bytes or 64. And the
+calculation people skip is the economic one: it eliminates work only for keys that are ABSENT, so it is
+worth 1.0x when 1% of your lookups miss and 50x when 99% do, which is precisely the LSM-tree situation it
+was made famous by.""",
+]
+
+_EX_P1AO["Blue-green vs canary deployment"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - both are ways to ship a new version without a big-bang cutover that you
+cannot undo. They differ in WHO SEES THE NEW VERSION FIRST.
+
+    BLUE-GREEN   run two complete environments. Deploy to the idle one, test it, then switch ALL traffic
+                 at once. Rollback is switching the router back.
+    CANARY       send a small percentage of live traffic to the new version, watch the metrics, and ramp
+                 up gradually. Rollback is shifting the weights back.
+
+The obvious argument for canaries is blast radius. MEASURED at 2,000 requests/second with a release that
+fails every request it receives:
+
+    strategy                       traffic on the new version   failed requests per minute
+    ----------------------------   --------------------------   --------------------------
+    blue-green (instant cutover)                         100%                      120,000
+    canary 50%                                            50%                       60,000
+    canary 10%                                            10%                       12,000
+    canary 1%                                              1%                        1,200
+
+A 1% canary exposes a hundredth of the users. That is the easy half of the argument, and it is the half
+everyone makes.
+
+The hard half is that a smaller canary takes LONGER TO NOTICE, and once you measure both together the
+conclusion is much less obvious than "smaller is safer".""",
+
+    """2. THE INTUITION - detecting a regression is a STATISTICS problem, and a small canary gives you fewer
+samples per second.
+
+To distinguish a 0.1% baseline error rate from a degraded 0.2% with confidence, you need a certain number
+of requests ON THE CANARY. That is fixed by the statistics; how long it takes depends entirely on how much
+traffic you are sending.
+
+MEASURED, samples needed and the time to accumulate them at 2,000 rps total:
+
+    canary size   traffic to the canary   samples needed   time to detect
+    -----------   ---------------------   --------------   --------------
+        1%                      20 rps            72,949         1.0 hours
+        5%                     100 rps            72,949        12.2 min
+       10%                     200 rps            72,949         6.1 min
+       25%                     500 rps            72,949         2.4 min
+       50%                   1,000 rps            72,949         1.2 min
+      100%                   2,000 rps            72,949         0.6 min
+
+A 1% canary needs FIFTY TIMES longer than a 50% canary to reach the same confidence. So the small canary
+that limits your blast radius also extends the window during which the bug is live.
+
+Those two effects point in opposite directions, and they very nearly cancel. MEASURED, the total damage -
+blast radius multiplied by detection time - for that same 0.1% to 0.2% regression:
+
+    strategy       traffic   detect time   extra failed requests
+    ------------   -------   -----------   ---------------------
+    blue-green        100%       0.6 min                      73
+    canary 50%         50%       1.2 min                      73
+    canary 25%         25%       2.4 min                      73
+    canary 10%         10%       6.1 min                      73
+    canary 5%           5%      12.2 min                      73
+    canary 1%           1%      60.8 min                      73
+
+THE LAST COLUMN IS CONSTANT. Not approximately - identically. Damage equals error rate times traffic times
+time, and halving the traffic exactly doubles the detection time, so the product does not move.
+
+For a SUBTLE regression, canary size does not reduce the harm at all. It only changes whether you find out
+before you give up waiting.""",
+
+    """3. EVERY TERM DEFINED.
+
+BLUE-GREEN DEPLOYMENT. Two complete production environments. One serves traffic (blue), you deploy to the
+other (green), verify, then switch all traffic. The old one stays running as the rollback target.
+
+CANARY DEPLOYMENT. Route a small fraction of live traffic to the new version, watch, then ramp.
+
+ROLLING UPDATE. Replace instances a few at a time. The Kubernetes default. Cheapest, and rollback means
+redeploying the old version rather than flipping a switch.
+
+RECREATE. Stop everything, deploy, start. Involves downtime, and is still correct for some batch systems.
+
+BLAST RADIUS. How many users a bad release reaches. MEASURED as the traffic fraction.
+
+CUTOVER. The moment traffic moves.
+
+TRAFFIC SPLITTING / WEIGHTS. The routing mechanism a canary needs - a load balancer or service mesh that
+can send x% to one version.
+
+BAKE TIME. How long you leave the canary running before ramping. MEASURED as being set by statistics, not
+by intuition.
+
+STATISTICAL POWER. The probability of detecting a regression that is really there. Requires enough
+samples, which requires enough traffic AND enough time.
+
+AUTOMATED CANARY ANALYSIS (ACA). Comparing canary metrics against the baseline automatically and
+promoting or aborting. Spinnaker's Kayenta is the well-known implementation.
+
+SLI / GOLDEN SIGNALS. Error rate, latency, traffic, saturation. What the canary analysis watches.
+
+FEATURE FLAG. Decoupling RELEASE from DEPLOY - the code ships dark and is enabled separately. Often a
+better tool than either strategy here.
+
+DARK LAUNCH / SHADOW TRAFFIC. Send a copy of production traffic to the new version and discard the
+responses. Tests real load with zero user risk, and it cannot test anything with side effects.
+
+EXPAND / MIGRATE / CONTRACT. The three-phase pattern for schema changes that keeps both versions working
+against one schema. The thing that makes rollback actually possible.
+
+BACKWARDS COMPATIBILITY. Both versions running against the same data and APIs simultaneously - required by
+canary by definition, and by blue-green during the switch.
+
+STICKY SESSIONS. Keeping a user on one version. Prevents a user seeing inconsistent behaviour mid-session.
+
+MTTD / MTTR. Mean time to detect and to recover. MEASURED here as the two halves of total damage.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - assuming a smaller canary is always safer. MEASURED above, for a
+subtle regression the total damage is IDENTICAL at every canary size.
+
+But that is only true when detection is statistics-limited. MEASURED, the same comparison for a
+CATASTROPHIC release that fails 100% of its requests, where detection is essentially instant:
+
+    strategy       detect in   failing at   failed requests
+    ------------   ---------   ----------   ---------------
+    blue-green         ~5.0 s    2,000 rps          10,000
+    canary 10%         ~5.0 s      200 rps           1,000
+    canary 1%          ~5.0 s       20 rps             100
+
+Here the canary wins by exactly its traffic fraction - 100x for a 1% canary - because detection time no
+longer depends on sample size. One second of 100% errors is unmistakable at any traffic level.
+
+So the two strategies are good at DIFFERENT FAILURE MODES:
+
+    CATASTROPHIC (crash loop, 100% errors, total outage)
+        -> canary wins enormously. Detection is instant, so only blast radius matters. 100x measured.
+    SUBTLE (error rate 0.1% -> 0.2%, latency +15ms, a conversion drop)
+        -> canary size does not reduce total damage at all, and a 1% canary may need an HOUR to reach
+           significance. In practice teams ramp before then, which means they promoted without evidence.
+
+THE PRACTICAL CONSEQUENCE: a 1% canary is close to security theatre for subtle problems. If your bake time
+is ten minutes and your canary is 1% of 2,000 rps, you have 12,000 samples where you needed 73,000 - you
+cannot detect a doubling of a 0.1% error rate, and you will promote anyway.
+
+Either make the canary big enough that the statistics work, or accept that it is only protecting you
+against loud failures - which is a legitimate choice, just not the one people think they are making.
+
+THE SECOND TRAP - believing rollback is instant because the traffic switch is. MEASURED as a table of what
+is actually reversible:
+
+    schema change step                 reversible?
+    -------------------------------   -----------------
+    add a nullable column              yes
+    backfill data                      yes-ish
+    start WRITING the new column       yes
+    start READING the new column       yes
+    DROP the old column                NO
+
+A traffic switch cannot un-drop a column. If the new version's migration removed something the old version
+needs, your instant rollback is a lie - and you discover this during an incident.
+
+That is what the expand/migrate/contract pattern is for: make schema changes in backwards-compatible steps
+so BOTH versions run against the same schema, and only contract once the old version is permanently gone.
+Neither blue-green nor canary solves this, and both are undermined by it.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHAT BLUE-GREEN IS ACTUALLY BUYING, which is not the deployment:
+
+    strategy      rollback mechanism            typical time         infra cost
+    -----------   ---------------------------   ------------------   -------------------
+    blue-green    switch the router back        seconds              2x (both live)
+    canary        shift traffic weights back    seconds              1x + a little
+    rolling       redeploy the old version      minutes              1x
+    recreate      stop all, deploy old, start   minutes + downtime   1x
+
+Blue-green's product is the ROLLBACK. The old environment is still running and warm, so reverting is a
+routing change rather than a deployment - no image pull, no cold start, no cache warm-up. You pay 2x
+infrastructure for that property.
+
+Canary gets nearly the same rollback speed for nearly 1x cost, which is why canary has largely displaced
+blue-green where the routing infrastructure exists.
+
+THE FULL FAMILY, and what each is for:
+
+    RECREATE            downtime, simplest. Fine for batch jobs and internal tools.
+    ROLLING             the default. Gradual replacement, no extra infrastructure, slow rollback.
+    BLUE-GREEN          instant rollback, 2x infrastructure, all-or-nothing exposure.
+    CANARY              gradual exposure with metric gating. Needs traffic splitting AND good monitoring.
+    A/B TEST            looks like a canary and answers a different question - which version is BETTER for
+                        a business metric, not which is BROKEN. Runs for days, needs randomised assignment.
+    SHADOW / DARK       mirror real traffic to the new version and discard the responses. Zero user risk,
+                        tests real load and real data shapes. Cannot test anything with side effects, and
+                        doubles backend load.
+    FEATURE FLAGS       decouple DEPLOY from RELEASE. Ship the code dark, enable per-user, disable
+                        instantly without a deploy at all.
+
+THE COMBINATION MOST MATURE TEAMS ACTUALLY USE: rolling deploys for the binary, feature flags for the
+behaviour, and canary analysis on the flag rollout. That way the risky change is the flag - which flips
+back in milliseconds with no deployment - rather than the artefact.
+
+WHEN TO PREFER EACH:
+    BLUE-GREEN   when you cannot split traffic by percentage, when the versions cannot run
+                 simultaneously against the same data, when a full pre-production smoke test on real
+                 infrastructure is the main risk reduction you want, and when 2x infrastructure is
+                 affordable.
+    CANARY       when you have traffic splitting and real monitoring, when failures are more likely to be
+                 gradual than catastrophic, and when the traffic volume is high enough for the statistics
+                 to work - MEASURED as the constraint people ignore.
+    NEITHER      when the real risk is a schema change, in which case expand/migrate/contract is the
+                 control that matters and the deployment strategy is secondary.""",
+
+    """6. HOW TO CODE IT.
+
+  1. COMPUTE YOUR BAKE TIME FROM YOUR TRAFFIC. `samples needed / (rps x canary fraction)`. MEASURED:
+     detecting a 0.1% to 0.2% regression needs ~73,000 canary requests, which is an hour at 1% of 2,000
+     rps. Guessing "ten minutes" is how you promote without evidence.
+  2. SIZE THE CANARY SO THE STATISTICS WORK. If a 1% canary cannot reach significance inside your
+     acceptable bake time, use 10% or 25%. A canary too small to detect anything only protects against
+     loud failures.
+  3. DECIDE WHICH FAILURE MODE YOU ARE DEFENDING AGAINST. MEASURED: canary size gives 100x for
+     catastrophic failures and 1.0x for subtle ones.
+  4. AUTOMATE THE ANALYSIS. Compare canary against baseline on error rate, latency percentiles and
+     saturation, and abort automatically. A human watching a dashboard is not statistical power.
+  5. COMPARE AGAINST A CONCURRENT BASELINE, not against yesterday. Traffic mix, time of day and upstream
+     behaviour all shift; the control must run at the same moment.
+  6. MAKE SCHEMA CHANGES EXPAND/MIGRATE/CONTRACT. Add nullable, backfill, dual-write, switch reads, and
+     only drop the old column in a LATER release. MEASURED as the one step that is not reversible.
+  7. VERIFY BOTH VERSIONS CAN RUN SIMULTANEOUSLY. A canary requires it by definition; blue-green requires
+     it during the switch. Shared caches, message formats and database rows all have to tolerate both.
+  8. USE STICKY SESSIONS so a user does not bounce between versions mid-session and see inconsistent
+     behaviour.
+  9. KEEP THE OLD VERSION WARM if you are doing blue-green - that warmth is what you are paying 2x for.
+ 10. PREFER FEATURE FLAGS FOR BEHAVIOUR CHANGES. Flipping a flag is faster and safer than rolling back a
+     deployment, and it decouples release from deploy entirely.
+ 11. TEST THE ROLLBACK, on a schedule. An instant rollback that has never been exercised is a hypothesis.
+ 12. SHADOW-TEST WHERE SIDE EFFECTS ALLOW. Mirroring real traffic tests real load and real data shapes at
+     zero user risk.
+ 13. MEASURE MTTD SEPARATELY FROM MTTR. MEASURED: total damage is blast radius times DETECTION time, and
+     detection is usually the larger term.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Both are ways to ship without an irreversible big-bang cutover. Blue-green runs two complete environments
+and switches all traffic at once, so rollback is switching the router back. Canary sends a small
+percentage of live traffic to the new version and ramps up while watching metrics.
+
+The obvious argument for canaries is blast radius. At 2,000 requests a second with a completely broken
+release, blue-green exposes 120,000 failed requests a minute and a 1% canary exposes 1,200. That is the
+half of the argument everyone makes.
+
+The half people miss is that detection is a STATISTICS problem. To tell a 0.1% error rate from a degraded
+0.2% you need about 73,000 requests on the canary, and that is fixed - what varies is how long they take
+to arrive. At 1% of 2,000 rps that is an hour. At 50% it is 1.2 minutes. So the small canary that limits
+your exposure also extends the window in which the bug is live, by exactly the same factor.
+
+I multiplied the two together and the result surprised me: total damage - blast radius times detection
+time - came out at 73 extra failed requests for EVERY canary size from 1% to 100%. Identically constant.
+It has to be: damage is rate times traffic times time, and halving the traffic doubles the time. So for a
+SUBTLE regression, canary size does not reduce the harm at all. It only changes whether you notice.
+
+Where canaries genuinely win is CATASTROPHIC failure. If the release fails 100% of requests you detect it
+in seconds regardless of traffic, so detection time drops out and only blast radius matters - a 1% canary
+sees about 100 failed requests where blue-green sees 10,000. A hundredfold difference.
+
+So the two are good at different failure modes, and the practical consequence is uncomfortable: a 1%
+canary with a ten-minute bake time gives you about 12,000 samples where you needed 73,000. You cannot
+detect a doubling of a small error rate, and you will promote anyway. Either make the canary big enough
+that the statistics work, or accept that it is only defending against loud failures.
+
+On blue-green, I'd say its real product is not the deployment, it is the rollback - the old environment is
+still running and warm, so reverting is a routing change rather than a deploy, with no cold start. You pay
+2x infrastructure for that.
+
+And the thing neither solves is schema changes. A traffic switch cannot un-drop a column, so if your
+migration removed something the old version needs, your instant rollback is a lie. That is what
+expand/migrate/contract is for - make changes in backwards-compatible steps so both versions run against
+the same schema."
+
+THE ONE SENTENCE TO NOT FUMBLE: blast radius and detection time move in OPPOSITE directions, so for a
+subtle regression the total damage is constant at every canary size (73 failed requests from 1% to 100%) -
+canaries win 100x on catastrophic failures and nothing at all on quiet ones.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def n_needed(p0, p1, alpha=0.001, power=0.95):
+        pbar = (p0+p1)/2
+        return ((za*sqrt(2*pbar*(1-pbar)) + zb*sqrt(p0*(1-p0)+p1*(1-p1)))/abs(p1-p0))**2
+
+The two-proportion sample-size formula - the standard normal approximation for detecting a change from
+`p0` to `p1`.
+
+The structure worth reading is the denominator: `abs(p1-p0)` SQUARED, because the whole expression is
+squared. Halving the effect you want to detect quadruples the samples needed. That is why detecting a 0.1%
+to 0.2% change needs 72,949 samples while 0.1% to 1.0% needs only 3,285 - a 22x difference from moving the
+target.
+
+`alpha=0.001` rather than the usual 0.05 because a deployment gate runs constantly; at 5% you would abort
+one good release in twenty on noise alone.
+
+    t = n / (RPS * frac)
+
+The line that produces the whole finding. Samples needed divided by samples per second. `n` does not depend
+on `frac` at all - the statistics do not care how you are splitting traffic - so detection time is
+inversely proportional to canary size.
+
+    extra = (0.002 - 0.001) * RPS * frac * t
+
+Total damage: the extra error rate, times the traffic on the canary, times the duration. Substituting
+`t = n/(RPS*frac)` makes `RPS*frac` cancel completely, leaving `(p1-p0)*n`.
+
+That cancellation IS the result. The measurement did not discover an empirical near-coincidence; it made a
+mathematical identity visible, and printing the column across six canary sizes is what turns "these two
+effects trade off" into "they cancel exactly".
+
+    t = max(5.0, n_needed(0.001, 1.0)/(RPS*frac))
+
+The catastrophic-failure case, and the `max(5.0, ...)` is the important part. The statistical requirement
+for detecting a jump from 0.1% to 100% is trivially small - a handful of requests - so the binding
+constraint becomes your monitoring interval, not sampling. Five seconds is a scrape interval.
+
+Once detection is a CONSTANT rather than proportional to 1/traffic, the cancellation in the previous
+measurement stops applying and blast radius is the only term left. That is why the same two strategies
+give 1.0x on one failure mode and 100x on the other.
+
+    for nm, frac in (("blue-green",1.00), ("canary 50%",0.50), ...):
+
+Modelling blue-green as "canary at 100%" rather than as a separate mechanism. That is deliberate: for the
+purposes of blast radius and detection they ARE the same model with different parameters, and treating
+them uniformly is what allows the damage column to be compared directly.
+
+The genuine differences between them - rollback warmth, infrastructure cost, whether both versions run
+simultaneously - are not captured by this model at all, which is why section 5 handles them as a separate
+table rather than pretending one number decides it.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+Setup: 2,000 requests/second. Baseline error rate 0.1%. Detection requires distinguishing it from the
+regressed rate at 99.9% confidence with 95% power.
+
+TRACE A - blast radius, the easy half.
+
+    strategy                       traffic   failed req/min   vs blue-green
+    ----------------------------   -------   --------------   -------------
+    blue-green (instant cutover)      100%          120,000            1.0x
+    canary 50%                         50%           60,000            2.0x
+    canary 10%                         10%           12,000           10.0x
+    canary 5%                           5%            6,000           20.0x
+    canary 1%                           1%            1,200          100.0x
+
+Exactly proportional to the traffic fraction, which is the whole and only content of this table.
+
+TRACE B - how much evidence a regression needs.
+
+    baseline   regressed to   samples needed   time at 1% of 2,000 rps
+    --------   ------------   --------------   -----------------------
+      0.10%          0.20%            72,949                 1.0 hours
+      0.10%          0.50%             9,101                  7.6 min
+      0.10%          1.00%             3,285                  2.7 min
+      1.00%          2.00%             7,193                  6.0 min
+      1.00%          5.00%               882                  0.7 min
+      5.00%         10.00%             1,348                  1.1 min
+
+Two patterns. Detecting a DOUBLING gets much easier as the baseline rises - 72,949 samples at 0.1% and
+1,348 at 5% - because the absolute difference is what matters, not the ratio. And a larger effect is
+dramatically cheaper: 0.1% to 1.0% needs 22x fewer samples than 0.1% to 0.2%, from the squared term in the
+denominator.
+
+TRACE C - the same regression, different canary sizes.
+
+    canary size   canary rps   samples needed   detection time   vs 100%
+    -----------   ----------   --------------   --------------   -------
+             1%          20            72,949        1.0 hours     50.0x
+             5%         100            72,949        12.2 min      10.0x
+            10%         200            72,949         6.1 min       5.0x
+            25%         500            72,949         2.4 min       2.0x
+            50%       1,000            72,949         1.2 min       1.0x
+           100%       2,000            72,949         0.6 min       0.5x
+
+The samples column never changes - the statistics are indifferent to your deployment strategy. Only the
+arrival rate changes, so time is exactly inversely proportional to canary size.
+
+TRACE D - the two effects multiplied. THIS is the finding.
+
+    strategy       traffic   detect time   extra failed requests
+    ------------   -------   -----------   ---------------------
+    blue-green        100%       0.6 min                      73
+    canary 50%         50%       1.2 min                      73
+    canary 25%         25%       2.4 min                      73
+    canary 10%         10%       6.1 min                      73
+    canary 5%           5%      12.2 min                      73
+    canary 1%           1%      60.8 min                      73
+
+Identical, not approximately identical. `damage = (p1-p0) x RPS x frac x n/(RPS x frac)` and the traffic
+terms cancel, leaving `(p1-p0) x n` - a quantity with no canary size in it at all.
+
+The practical reading: choosing a 1% canary over blue-green for a subtle regression does not reduce harm.
+It converts a 36-second incident affecting everyone into a 61-minute incident affecting one percent, for
+the same number of failed requests.
+
+TRACE E - the catastrophic case, where the cancellation breaks.
+
+    strategy       detect in   failing at   failed requests   vs blue-green
+    ------------   ---------   ----------   ---------------   -------------
+    blue-green        ~5.0 s    2,000 rps            10,000            1.0x
+    canary 10%        ~5.0 s      200 rps             1,000           10.0x
+    canary 1%         ~5.0 s       20 rps               100          100.0x
+
+Detection time is now a CONSTANT - set by the monitoring scrape interval rather than by sample
+accumulation - so it no longer scales with 1/traffic and cannot cancel the blast radius. The canary's
+advantage returns in full.
+
+Comparing Trace D and Trace E side by side is the entire entry: same two strategies, 1.0x on one failure
+mode and 100x on the other.
+
+TRACE F - what the strategies actually differ on, beyond the damage model.
+
+    property                       blue-green            canary
+    ----------------------------   -------------------   ---------------------------
+    rollback mechanism             switch the router     shift traffic weights
+    rollback time                  seconds               seconds
+    old version state              running and WARM      running and warm
+    infrastructure cost            2x                    1x + a little
+    needs traffic splitting        no                    YES
+    needs good monitoring          less                  ESSENTIAL
+    exposure before you know       100%                  the canary fraction
+    full pre-prod smoke test       yes, on real infra     no
+
+Blue-green needs no traffic-splitting infrastructure and costs 2x. Canary needs the routing layer and real
+metric analysis, and costs almost nothing extra. Where the routing exists, canary dominates - which is why
+it has largely displaced blue-green in environments that have a service mesh.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS (2,000 rps, 0.1% baseline error rate):
+
+    blast radius        120,000 failed req/min at 100% vs 1,200 at 1% - exactly proportional
+    detection           72,949 canary samples to detect 0.1% -> 0.2%
+                        1.0 hours at a 1% canary | 1.2 min at 50% | 0.6 min at 100%
+    TOTAL DAMAGE        73 extra failed requests at EVERY canary size from 1% to 100% - identical,
+                        because damage = (p1-p0) x RPS x frac x n/(RPS x frac) and the traffic cancels
+    catastrophic case   ~5 s detection at any size, so 100 failed requests at 1% vs 10,000 at 100% (100x)
+    effect size         0.1%->0.2% needs 72,949 samples; 0.1%->1.0% needs 3,285 (22x fewer)
+    infrastructure      blue-green 2x; canary 1x plus traffic splitting
+
+THE MISTAKES:
+
+    - Assuming a smaller canary is always safer. MEASURED: identical total damage at every size for a
+      subtle regression.
+    - Choosing the bake time by intuition. MEASURED: a 1% canary needs an hour for a doubling of a 0.1%
+      error rate; ten minutes gives you 12,000 of the 73,000 samples required.
+    - Running a canary too small to detect anything and believing you are protected. It defends against
+      loud failures only - a legitimate choice, and not the one people think they are making.
+    - Comparing the canary against yesterday's baseline instead of a concurrent one. Traffic mix and time
+      of day move.
+    - Using a canary without automated analysis. A human watching a dashboard is not statistical power.
+    - Setting alpha at 0.05 on a gate that runs on every deploy - one good release in twenty aborted on
+      noise.
+    - Believing the traffic switch makes rollback complete. MEASURED as a table: dropping a column is not
+      reversible by routing.
+    - Skipping expand/migrate/contract for schema changes, which invalidates rollback for both strategies.
+    - Not verifying both versions can run simultaneously against the same data, caches and message
+      formats.
+    - No sticky sessions, so users bounce between versions mid-session.
+    - Paying for blue-green's 2x infrastructure and then letting the old environment go cold, which
+      discards the exact property you bought.
+    - Never testing the rollback. An untested instant rollback is a hypothesis.
+    - Using a canary to answer "is this version BETTER?". That is an A/B test - different question,
+      different duration, different statistics.
+
+THE TAKEAWAY. Blue-green and canary both exist to make a release reversible, and they differ in who sees
+the new version first. The canary's blast-radius advantage is real and exactly proportional to its traffic
+fraction - and it is cancelled, precisely, by the fact that a smaller canary takes proportionally longer
+to reach statistical significance. Measured, the total damage from a subtle regression was 73 extra failed
+requests at every canary size from 1% to 100%, because the traffic term cancels out of the arithmetic.
+What canaries genuinely buy is protection against CATASTROPHIC failures, where detection is instant and
+only exposure matters - 100 failed requests instead of 10,000. So size the canary from the statistics
+rather than from a feeling: work out how many samples your smallest interesting regression needs, divide
+by your canary's request rate, and if that number is longer than your bake time, your canary is only
+guarding against the loud failures. And neither strategy survives an irreversible schema change, which is
+why expand/migrate/contract is the control that actually makes rollback true.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
