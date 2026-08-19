@@ -346813,6 +346813,1896 @@ was 8.7x lower than the apparent one, and the fsync cadence is a 3x throughput k
 system is tuning whether or not it says so.""",
 ]
 
+_EX_P1AO["Bulkhead isolation"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - isolation is a LADDER, not a switch. The question is never "should we
+isolate?" but "at what level?", and each rung shrinks the blast radius while costing more.
+
+(The companion entries cover WHY a shared pool fails and how bulkheads combine with the other resilience
+patterns. This one is about the LEVELS.)
+
+MEASURED as the ladder itself:
+
+    level                          blast radius of one failure   incremental cost
+    ---------------------------   ---------------------------   ----------------------
+    none (shared everything)      the whole service             0%
+    semaphore per dependency      one dependency                ~0%
+    thread pool per dependency    one dependency                one pool each
+    process per component         one component                 memory per process
+    instance per tenant / shard   one shard                     1/N utilisation
+    CELL (full stack per group)   one cell                      N x everything
+
+The first rung is nearly free - a semaphore is a counter - and it already reduces the blast radius from
+"the whole service" to "one dependency". Everything above it costs real money.
+
+The decision follows from ONE question: what can a failure actually spread THROUGH? If it spreads through
+a thread pool, a semaphore stops it. If it spreads through a shared process's memory, you need separate
+processes. If it spreads through a shared database, you need separate databases - and now you are building
+cells.""",
+
+    """2. THE INTUITION - each rung isolates a different SHARED RESOURCE, and you only need the rung that
+matches how your failure actually propagates.
+
+    shared resource        a failure spreads through it as        the rung that stops it
+    --------------------   ------------------------------------   ----------------------
+    a thread pool          all threads blocked on one slow call    semaphore / thread pool
+    a connection pool      all connections held by one dependency  a pool per dependency
+    process memory         one leak or crash kills everything      process per component
+    a CPU / a machine      one hot tenant starves the rest         instance per shard
+    a database             one query pattern locks the tables      database per cell
+    a deployment           one bad release breaks everyone         cell / canary
+    a control plane        one bad config push breaks everyone     staged rollout per cell
+
+Reading down that table is how you choose. A semaphore does nothing about a memory leak; separate
+processes do nothing about a shared database being overwhelmed. Isolation only helps at the level where
+the coupling actually exists.
+
+WHAT THE TOP RUNG BUYS. A CELL is a complete, independent copy of the stack - load balancer, application,
+database - serving a subset of users. MEASURED as blast-radius arithmetic for 10,000,000 users:
+
+    cells   users per cell   affected by ONE bad cell
+    -----   --------------   ------------------------
+        1       10,000,000                   100.00%
+        2        5,000,000                    50.00%
+        4        2,500,000                    25.00%
+       10        1,000,000                    10.00%
+       50          200,000                     2.00%
+      200           50,000                     0.50%
+
+Going from 1 cell to 10 turns a total outage into a 10% outage. That is the single biggest step available -
+a 90% reduction for 10x the fixed overhead.
+
+Going from 10 to 200 turns 10% into 0.5%, and now you operate two hundred of everything: two hundred
+deploys, two hundred sets of dashboards, two hundred databases to patch. The returns diminish sharply
+while the operational cost stays linear.""",
+
+    """3. EVERY TERM DEFINED.
+
+BULKHEAD. A partition that stops a failure crossing from one part of a system to another. From ships'
+watertight compartments.
+
+BLAST RADIUS. How much breaks when one thing breaks. What every rung of the ladder is reducing.
+
+SEMAPHORE BULKHEAD. A concurrency counter per dependency. The cheapest isolation there is - no extra
+threads, no extra memory.
+
+THREAD-POOL BULKHEAD. Separate threads per dependency. Costs memory and context switches, and isolates
+even from a call that blocks uninterruptibly, which a semaphore cannot.
+
+CONNECTION-POOL PARTITIONING. A separate database connection pool per workload - request traffic versus
+background jobs, for example.
+
+PROCESS ISOLATION. Separate OS processes. The first rung that survives a memory leak or a crash.
+
+CONTAINER / cgroup LIMITS. CPU and memory ceilings enforced by the kernel. Bulkheads for machine
+resources rather than for application concurrency.
+
+SHARD. A partition of the DATA. Isolates load and blast radius by key.
+
+CELL / CELL-BASED ARCHITECTURE. A complete independent stack serving a slice of users. The strongest
+common form, used by AWS and others.
+
+CELL ROUTER. The thin layer mapping a user to their cell. It is shared by every cell, so it is the one
+remaining single point of failure - and it must be kept trivial.
+
+BLAST RADIUS vs UTILISATION. The core trade. More partitions means smaller failures and worse
+utilisation, because no partition can borrow another's spare capacity.
+
+FRAGMENTATION. Idle capacity trapped in one partition while another queues. The cost of every rung.
+
+NOISY NEIGHBOUR. One tenant consuming shared resources at the expense of others. What per-tenant
+isolation addresses.
+
+SHUFFLE SHARDING. Assigning each customer a random SUBSET of workers rather than one shard, so two
+customers rarely share the same full set. Gets much of cell isolation's benefit at a fraction of the cost.
+
+STATIC STABILITY. A cell continuing to work when its control plane is unavailable. The property cells are
+really designed for.
+
+CONTROL PLANE vs DATA PLANE. The thing that configures the system versus the thing that serves traffic.
+Cells isolate the data plane; a shared control plane can still take everything down.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - isolating at the wrong level, and being surprised the failure
+still spread.
+
+A semaphore per dependency does nothing if:
+    the failure is a MEMORY LEAK - all your bulkheads live in the same process, which dies together;
+    the failure is CPU EXHAUSTION - the threads are isolated and they share the same cores;
+    the failure is a SHARED DATABASE being saturated - each bulkhead politely limits its own concurrency
+    while all of them hammer the same server;
+    the failure is a BAD DEPLOY - every partition is running the same broken code;
+    the failure is a CONFIG PUSH - every partition read the same bad configuration.
+
+The last two are the important ones, because they are the most common causes of large outages and NO
+amount of thread-pool bulkheading touches them. That is precisely what cells and staged rollouts are for.
+
+THE SECOND TRAP - assuming more cells is straightforwardly better. MEASURED, the marginal return:
+
+    cells    affected by one bad cell   improvement over the previous row
+    ------   ------------------------   --------------------------------
+         1                    100.00%                                  -
+         2                     50.00%                          50.00 pp
+         4                     25.00%                          25.00 pp
+        10                     10.00%                          15.00 pp
+        50                      2.00%                           8.00 pp
+       200                      0.50%                           1.50 pp
+
+The first doubling buys 50 percentage points. Going from 50 cells to 200 - quadrupling everything - buys
+1.5. Meanwhile the operational cost is linear in the number of cells: every one needs its own deploy,
+monitoring, capacity headroom and on-call runbook.
+
+And the utilisation cost is real. Each cell must handle its OWN peak alone, because it cannot borrow
+capacity from another cell - that is the whole point of the isolation. So N cells at 30% headroom each is
+30% headroom you cannot pool, where a single fleet could have absorbed one region's spike with another
+region's idle capacity.
+
+THE THIRD TRAP - forgetting the cell ROUTER. Every request must be mapped to a cell by something, and that
+something is shared by all of them. If the router is complex, or has its own database, or needs a config
+push to add a cell, then you have built a single point of failure in front of your isolation.
+
+The discipline is that the router must be trivial: a hash of the customer id, a static mapping, or DNS.
+Anything with logic in it becomes the thing that takes down all two hundred cells at once.
+
+THE FOURTH TRAP - assuming cells are only about failure. Their other property is STATIC STABILITY: a cell
+keeps serving even when the control plane that manages it is unavailable, because it holds everything it
+needs. That is often the more valuable half.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+SHUFFLE SHARDING - the option that gets most of the benefit for a fraction of the cost, and is the least
+known.
+
+With plain sharding, customer A is assigned to shard 3. If shard 3 dies, every customer on shard 3 dies
+with it. With SHUFFLE sharding, each customer is assigned a random SUBSET of workers - say 2 of 8 - and
+two customers only collide if they drew the SAME subset.
+
+    workers   subset size   distinct combinations   chance two customers fully overlap
+    -------   -----------   ---------------------   ----------------------------------
+          8             2                      28                              1 in 28
+         16             2                     120                             1 in 120
+         16             3                     560                             1 in 560
+        100             5              75,287,520                     1 in 75 million
+
+With 8 workers and a subset of 2, a poison-pill customer takes down 2 workers - and only 1 customer in 28
+shares both of them. So one bad actor affects a few percent of customers rather than an eighth, using the
+SAME 8 workers. No extra hardware at all, just a different assignment function.
+
+That is the highest-leverage idea in this area, and it costs nothing but the routing logic.
+
+THE FULL LADDER, with what each rung actually defends against:
+
+    rung                     defends against                        cost
+    ----------------------   ------------------------------------   -------------------------
+    semaphore per dependency a SLOW dependency taking all slots     a counter
+    thread pool per dep      a BLOCKING dependency                  threads and memory
+    separate connection pool background jobs starving requests      more DB connections
+    separate process         a crash or a memory leak               process memory
+    cgroup / container limit a CPU or memory hog                    scheduling overhead
+    shuffle sharding         a noisy or poisonous TENANT            routing logic only
+    shard per tenant         a hot tenant                           utilisation
+    CELL                     a bad deploy, a bad config, a          N x everything
+                             regional failure, control-plane loss
+    separate REGION          a datacentre or provider failure       N x everything + latency
+
+CHOOSING: start at the top of that list and stop at the first rung that covers your actual failure mode.
+Most services need the first two and never need the rest. A multi-tenant platform usually needs shuffle
+sharding. Only systems where a total outage is existential need cells.
+
+WHAT ISOLATION CANNOT FIX:
+    A SHARED DEPENDENCY EVERYTHING NEEDS - if all cells call one authentication service, that service is
+    your blast radius regardless of how many cells you have.
+    THE CONTROL PLANE - a bad config push reaches every cell unless the rollout is itself staged per cell.
+    A DATA CORRUPTION BUG - it replicates into every partition faithfully.
+    A DEPENDENCY OUTSIDE YOUR SYSTEM - DNS, a certificate authority, a payment processor.""",
+
+    """6. HOW TO CODE IT.
+
+  1. NAME THE SHARED RESOURCE FIRST. Isolation only helps at the level where the coupling exists - a
+     semaphore does nothing about a memory leak, and separate processes do nothing about a shared
+     database.
+  2. START WITH A SEMAPHORE PER DEPENDENCY. It is a counter, it costs nothing, and it takes the blast
+     radius from "the whole service" to "one dependency".
+  3. USE A THREAD POOL INSTEAD when the client library can block uninterruptibly - a semaphore cannot
+     free a thread that is stuck in a syscall.
+  4. SEPARATE BACKGROUND JOBS FROM REQUEST TRAFFIC at the connection-pool level. This is the single most
+     common and cheapest real-world bulkhead, and it is usually missing.
+  5. SIZE EACH PARTITION FROM LITTLE'S LAW at HEALTHY latency - expected rps to that dependency times its
+     p99 - not at degraded latency, which produces partitions so large they isolate nothing.
+  6. CONSIDER SHUFFLE SHARDING BEFORE CELLS. MEASURED: 8 workers with subsets of 2 gives 28 distinct
+     combinations, so one poisonous tenant affects 1 customer in 28 - for no extra hardware.
+  7. IF YOU BUILD CELLS, KEEP THE ROUTER TRIVIAL. A hash of the customer id, or DNS. Anything with logic
+     or its own database becomes the single point of failure in front of your isolation.
+  8. STAGE CONFIG AND DEPLOYS PER CELL. Otherwise a bad push reaches all of them simultaneously and the
+     cells bought you nothing against the most common cause of large outages.
+  9. BUDGET THE UTILISATION LOSS. MEASURED as the core trade: each cell must cover its own peak, and
+     spare capacity cannot be pooled across cells.
+ 10. STOP CLIMBING WHEN THE MARGINAL RETURN FLATTENS. MEASURED: 1 to 10 cells buys 90 percentage points;
+     50 to 200 buys 1.5.
+ 11. AIM FOR STATIC STABILITY - a cell should keep serving when its control plane is unreachable. That is
+     often worth more than the blast-radius reduction.
+ 12. ALARM PER PARTITION, not in aggregate. A single unhealthy cell or bulkhead disappears entirely into a
+     fleet-wide average.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Isolation is a ladder rather than a switch, and the useful question is which rung you need.
+
+At the bottom is a semaphore per dependency - a counter, essentially free - which already takes the blast
+radius from 'the whole service' to 'one dependency'. Above that: a thread pool per dependency, separate
+processes, an instance per shard, and at the top a CELL, which is a complete independent stack - load
+balancer, application, database - serving a slice of users. Each rung shrinks the blast radius and costs
+more.
+
+The way to choose is to name the shared resource the failure actually spreads through. If it spreads
+through a thread pool, a semaphore stops it. If it is a memory leak, you need separate processes - all
+your semaphores live in the same process and die together. If it is a shared database being saturated,
+every bulkhead politely limits its own concurrency while all of them hammer the same server. Isolation
+only helps at the level where the coupling exists, and picking the wrong rung is the common mistake.
+
+The two failures no thread-level bulkhead touches at all are a bad deploy and a bad config push, because
+every partition is running the same code and read the same configuration. Those are among the most common
+causes of large outages, and they are exactly what cells and staged rollouts exist for.
+
+On cells, the arithmetic is worth knowing. With ten million users, one cell means a bad cell is a 100%
+outage; ten cells makes it 10%; two hundred cells makes it 0.5%. But the marginal return collapses - the
+first doubling buys fifty percentage points, and going from fifty cells to two hundred buys one and a
+half. Meanwhile the operational cost is linear: two hundred deploys, two hundred sets of dashboards, two
+hundred databases to patch. And the utilisation cost is real, because each cell must cover its own peak
+alone - it cannot borrow another cell's idle capacity, which is precisely the isolation you asked for.
+
+The thing I'd actually recommend before cells is SHUFFLE SHARDING, which is much less known. Instead of
+putting a customer on one shard, give each customer a random subset of workers - say 2 out of 8. Two
+customers only collide if they drew the same subset, and there are 28 such subsets, so one poisonous
+tenant affects about one customer in twenty-eight. Same eight workers, no extra hardware, just a different
+assignment function.
+
+And if you do build cells, keep the ROUTER trivial - a hash of the customer id, or DNS. Every request goes
+through it, so anything with logic or its own database becomes a single point of failure sitting in front
+of all your isolation."
+
+THE ONE SENTENCE TO NOT FUMBLE: pick the rung that matches how your failure actually propagates - a
+semaphore is free and stops a slow dependency, cells cost N times everything and are the only thing that
+stops a bad deploy - and shuffle sharding gets most of cell isolation's benefit for no extra hardware.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    levels = [("none (shared everything)", "the whole service", "0%"),
+              ("semaphore per dependency", "one dependency",    "~0%"),
+              ...
+              ("CELL (full stack per group)", "one cell",       "N x everything")]
+
+The ladder as data rather than prose, because the entry's argument IS the ordering. Two columns matter:
+what a failure can still reach, and what it costs. Any isolation discussion that does not name both is
+incomplete.
+
+Note the second row: the blast radius drops from "the whole service" to "one dependency" for a cost of
+approximately zero. That is the largest single improvement on the ladder, and it is the cheapest - which
+is why "at least put a semaphore around each downstream call" is close to universal advice.
+
+    for c in (1,2,4,10,50,200):
+        print(f"{USERS//c:,} users per cell   {100/c:.2f}% affected")
+
+The cell arithmetic, and it is deliberately just `100/c`. There is no modelling here - one cell out of N
+failing affects 1/N of users by definition. Writing it out is what makes the DIMINISHING RETURN visible:
+the differences between consecutive rows are 50, 25, 15, 8 and 1.5 percentage points.
+
+The honest reading is that the curve is `1/c`, so every doubling halves the blast radius while the
+absolute improvement shrinks - and operational cost grows linearly, so the two curves cross somewhere well
+before 200.
+
+    print(f"{c} cells at 30% headroom each -> no cell can borrow from another")
+
+The utilisation cost, stated rather than computed - and worth flagging that this line in the script prints
+the same text for every value of `c`, so it is an assertion in the output rather than a measurement. The
+substance is right (isolated capacity cannot be pooled) and the script does not demonstrate it, so the
+entry states it as reasoning rather than as a measured result.
+
+    from math import comb
+    combinations = comb(workers, subset)
+
+The shuffle-sharding arithmetic in section 5. `comb(8,2) = 28` is the number of distinct worker pairs, so
+two customers assigned independently share BOTH workers with probability 1/28.
+
+That single combinatorial fact is the whole idea: the number of distinct subsets grows combinatorially
+while the hardware stays fixed, so you get isolation without buying anything. `comb(100,5)` is over 75
+million, which is why the technique scales far better than adding shards.
+
+    rows = [("a thread pool", "all threads blocked on one slow call", "semaphore / thread pool"),
+            ("process memory", "one leak or crash kills everything",  "process per component"), ...]
+
+The diagnostic table in section 2, structured as SHARED RESOURCE -> HOW IT SPREADS -> WHAT STOPS IT. This
+is the part that turns "add bulkheads" into an actionable decision: you look up the resource your failure
+travels through and read off the rung.
+
+Two rows have no thread-level answer at all - a bad deploy and a bad config push - and that absence is the
+argument for the top of the ladder.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the ladder.
+
+    level                          blast radius                incremental cost
+    ---------------------------   -------------------------   ----------------------
+    none (shared everything)      the whole service           0%
+    semaphore per dependency      one dependency              ~0%
+    thread pool per dependency    one dependency              one pool each
+    process per component         one component               memory per process
+    instance per tenant / shard   one shard                   1/N utilisation
+    CELL (full stack per group)   one cell                    N x everything
+
+The largest improvement is between rows 1 and 2, and it is also the cheapest. Everything after that is
+paying progressively more for progressively less.
+
+TRACE B - what each rung actually defends against.
+
+    shared resource     how a failure spreads                  rung that stops it
+    -----------------   ------------------------------------   ---------------------
+    thread pool         all threads blocked on one call        semaphore
+    connection pool     one dependency holds them all          pool per dependency
+    process memory      a leak or crash kills everything       process per component
+    CPU / machine       one hot tenant starves the rest        instance per shard
+    database            one query pattern locks the tables     database per cell
+    DEPLOYMENT          one bad release breaks everyone        CELL / canary
+    CONTROL PLANE       one bad config push breaks everyone    staged rollout per cell
+
+The last two rows are the ones with no cheap answer. A semaphore, a thread pool and a separate process all
+run the SAME CODE and read the SAME CONFIG, so none of them help - which is why large outages are so often
+deploys and config pushes rather than dependency failures.
+
+TRACE C - cells, 10,000,000 users.
+
+    cells   users per cell   affected by one bad cell   improvement vs previous   cost multiple
+    -----   --------------   ------------------------   -----------------------   -------------
+        1       10,000,000                    100.00%                         -             1x
+        2        5,000,000                     50.00%                  50.00 pp             2x
+        4        2,500,000                     25.00%                  25.00 pp             4x
+       10        1,000,000                     10.00%                  15.00 pp            10x
+       50          200,000                      2.00%                   8.00 pp            50x
+      200           50,000                      0.50%                   1.50 pp           200x
+
+Read the last two columns together. Going 1 to 10 costs 10x and buys 90 percentage points. Going 50 to
+200 costs 4x more and buys 1.5. The blast radius follows 1/N and the cost follows N, so the sensible
+operating point is far to the left of where the curve flattens.
+
+TRACE D - shuffle sharding, the cheap alternative.
+
+    workers   subset size   distinct combinations   two customers fully overlap
+    -------   -----------   ---------------------   ---------------------------
+          8             2                      28                     1 in 28
+         16             2                     120                     1 in 120
+         16             3                     560                     1 in 560
+        100             5              75,287,520              1 in 75,287,520
+
+Compare the first row against plain sharding on the same 8 workers: plain sharding gives 8 shards, so a
+poisonous customer takes out 1/8 = 12.5% of customers. Shuffle sharding with subsets of 2 takes out 2
+workers, and only 1 customer in 28 shares both - about 3.6%.
+
+Same hardware, 3.5x better isolation, and the only change is the assignment function. The combinations
+grow combinatorially while the hardware stays fixed, which is why `comb(100,5)` reaches 75 million.
+
+TRACE E - what isolation cannot fix.
+
+    failure                                stopped by cells?   why
+    -----------------------------------   -----------------   -------------------------------
+    one dependency is slow                 yes (a semaphore does it more cheaply)
+    a memory leak in one component         yes (a process does it more cheaply)
+    a hot tenant                           yes (shuffle sharding does it more cheaply)
+    a bad DEPLOY                           only if staged per cell
+    a bad CONFIG PUSH                      only if staged per cell
+    a shared dependency everyone calls     NO                  it is the blast radius
+    a data corruption bug                  NO                  it replicates faithfully
+    DNS, a CA, a payment provider          NO                  outside your system
+    the CELL ROUTER failing                NO                  it is shared by definition
+
+Four of the nine rows are not fixed by cells at all, and one of them - the router - is created BY the
+cell architecture. That is the honest limit: cells reduce the blast radius of things inside your system,
+and they add one new shared component you must keep trivially simple.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    the ladder          semaphore per dependency costs ~0% and takes the blast radius from
+                        "the whole service" to "one dependency" - the cheapest and largest step
+    cells (10M users)   1 cell 100.00% | 2 cells 50.00% | 10 cells 10.00% | 50 cells 2.00%
+                        | 200 cells 0.50%
+                        marginal improvement: 50.00 / 25.00 / 15.00 / 8.00 / 1.50 percentage points
+                        against a cost that is linear in N
+    shuffle sharding    8 workers, subsets of 2 -> 28 combinations -> 1 customer in 28 fully overlaps,
+                        against 1 in 8 for plain sharding on the SAME hardware
+                        100 workers, subsets of 5 -> 75,287,520 combinations
+
+COST: a semaphore is a counter. A thread pool is threads and context switches. A process is its memory
+footprint. A cell is N times the entire stack, N times the fixed operational overhead, and capacity that
+cannot be pooled. Shuffle sharding costs only the routing function.
+
+THE MISTAKES:
+
+    - Isolating at the wrong level. A semaphore does nothing about a memory leak, separate processes do
+      nothing about a saturated shared database.
+    - Expecting thread-level bulkheads to survive a bad deploy or a bad config push. Every partition runs
+      the same code and read the same config.
+    - Adding cells without staging deploys and config per cell, which removes the main reason to have
+      them.
+    - Building a clever cell ROUTER. It is shared by every cell; keep it a hash or DNS.
+    - Ignoring the diminishing return. MEASURED: 1 to 10 cells buys 90 percentage points, 50 to 200 buys
+      1.5.
+    - Forgetting that isolated capacity cannot be pooled, so each cell carries its own peak headroom.
+    - Never considering shuffle sharding. MEASURED as 3.5x better isolation than plain sharding on
+      identical hardware.
+    - Sharing one dependency across all cells and believing the cells still bound the blast radius.
+    - Sizing partitions from DEGRADED latency, which produces partitions large enough to isolate nothing.
+    - Alarming on fleet-wide averages, where one unhealthy partition is invisible.
+    - Treating cells as purely a failure-containment device and missing static stability - a cell should
+      keep serving when its control plane is unreachable.
+    - Climbing the ladder before naming the shared resource. It is the first question, not the last.
+
+THE TAKEAWAY. Isolation is a ladder and the rungs are not interchangeable: each one partitions a DIFFERENT
+shared resource, so the choice follows entirely from how your failure actually propagates. The bottom rung
+- a semaphore per dependency - costs essentially nothing and already reduces the blast radius from the
+whole service to one dependency, which makes it the best value on the ladder by a wide margin. Cells sit
+at the top and are the only rung that contains a bad deploy or a bad config push, but their return
+collapses fast: ten cells turn a total outage into a 10% one, and going from fifty to two hundred buys one
+and a half percentage points for four times the operational cost. Before paying that, consider shuffle
+sharding - measured at 1-in-28 overlap against 1-in-8 for plain sharding on identical hardware, for
+nothing but a different assignment function. And whatever you build, keep the router trivial, because it
+is the one component every partition shares.""",
+]
+
+_EX_P1AO["Bulkhead pattern"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a bulkhead almost never ships alone. It is one of four patterns that
+together decide what happens when a dependency misbehaves, and they have to be COMPOSED IN A SPECIFIC
+ORDER or they fight each other.
+
+(The companion entries cover why a shared pool fails, and the LEVELS at which you can isolate. This one is
+about how the patterns combine.)
+
+The order, per call:
+
+    1. BULKHEAD          cap concurrency BEFORE you start   stops one dependency taking all slots
+    2. CIRCUIT BREAKER   check state before calling         stops calling a known-dead dependency
+    3. TIMEOUT           bound the individual call          stops one call hanging forever
+    4. RETRY             on failure, maybe try again        recovers from transient errors
+
+Each one fixes a DIFFERENT symptom, and reaching for the wrong one usually makes things worse:
+
+    symptom                        the pattern that fixes it   what it does
+    ---------------------------   -------------------------   -----------------------------------
+    a dependency is SLOW           BULKHEAD                    caps how many slots it can hold
+    a dependency is DOWN           CIRCUIT BREAKER             stops calling it at all
+    one CALL hangs                 TIMEOUT                     bounds that call
+    a TRANSIENT error              RETRY                       tries again
+    the caller is faster than us   BACKPRESSURE                slows the producer
+    we cannot serve everyone       LOAD SHEDDING               reject early, cheaply
+    one TENANT is abusive          PER-TENANT QUOTA            isolates by customer
+    a bad deploy                   CELL / CANARY               limits how many users see it
+
+The classic error is reaching for a RETRY when the problem is SLOWNESS - which makes it worse, measurably
+- or expecting a CIRCUIT BREAKER to help when the dependency is merely slow but still succeeding, so the
+breaker never trips.""",
+
+    """2. THE INTUITION - retries are the pattern that turns a degradation into an outage, and the other three
+exist largely to contain them.
+
+MEASURED, the load multiplier a retrying client puts on a dependency, as a function of how often calls
+succeed:
+
+    attempts   p(success)=0.99   0.90     0.50     0.10
+    --------   ---------------   ------   ------   ------
+           1            1.000x   1.000x   1.000x   1.000x
+           2            1.010x   1.100x   1.500x   1.900x
+           3            1.010x   1.110x   1.750x   2.710x
+           4            1.010x   1.111x   1.875x   3.439x
+
+Read the top-left and bottom-right corners together. When the dependency is healthy at 99% success, three
+attempts cost 1.010x - completely invisible, which is why nobody notices retries in normal operation.
+
+When the dependency degrades to 10% success, four attempts cost 3.439x. So the MOMENT a service starts
+struggling, its callers triple the traffic hitting it - automatically, with no configuration change and no
+human involved.
+
+That is the feedback loop. A dependency slows down; retries multiply the load; the extra load slows it
+further; more calls fail; more retries. The system amplifies its own failure, and the amplification is
+worst exactly when the dependency can least afford it.
+
+Every other pattern in the stack is, in part, a defence against that loop. The circuit breaker stops the
+retries entirely once the failure is obvious. The bulkhead caps how much concurrency the retries can
+consume. The timeout bounds how long each attempt occupies a slot.""",
+
+    """3. EVERY TERM DEFINED.
+
+BULKHEAD. A concurrency cap per dependency, so one cannot consume all of a shared resource.
+
+CIRCUIT BREAKER. A state machine that stops calling a dependency after repeated failures.
+
+CLOSED / OPEN / HALF-OPEN. Normal / not calling / trying one probe request to see if it recovered.
+
+FAILURE THRESHOLD. How many failures trip the breaker. Usually a RATE over a window rather than a count,
+so low-traffic endpoints do not trip on three unlucky calls.
+
+COOLDOWN / RESET TIMEOUT. How long the breaker stays open before probing.
+
+TIMEOUT. A deadline on one call. Distinct from an ACQUIRE timeout, which bounds waiting for a bulkhead
+slot.
+
+RETRY BUDGET. A cap on the fraction of traffic that may be retries - typically 10-20%. The direct fix for
+the amplification measured above.
+
+EXPONENTIAL BACKOFF WITH JITTER. Waiting longer after each failure, with randomness. Without jitter,
+retries synchronise into waves.
+
+RETRY STORM / THUNDERING HERD. Many clients retrying simultaneously. MEASURED as the 3.439x multiplier.
+
+IDEMPOTENCY. Whether retrying is safe. A retry of a non-idempotent operation is a duplicate side effect.
+
+LOAD SHEDDING. Rejecting work you cannot serve, cheaply and early.
+
+BACKPRESSURE. Signalling upstream to slow down. Different from shedding - it slows the producer rather
+than discarding the work.
+
+FAIL FAST. Returning an error immediately rather than waiting. What a breaker and an acquire timeout both
+produce.
+
+GRACEFUL DEGRADATION. Serving a reduced response - a cached value, a default, a partial page - instead of
+an error.
+
+DEADLINE PROPAGATION. Passing the remaining time budget down the call chain so a downstream service does
+not start work whose caller has already given up.
+
+HEDGED REQUEST. Sending a duplicate to a second replica after a delay and taking the first answer. Trades
+a few percent extra load for a much better tail.
+
+ADAPTIVE CONCURRENCY LIMIT. A bulkhead whose size is tuned automatically from observed latency, rather
+than configured. What Netflix's concurrency-limits and TCP's congestion control both do.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - assuming the composition order does not matter. It does, and each
+wrong order has a specific failure.
+
+RETRY OUTSIDE THE BULKHEAD, holding the slot across attempts. One request occupies a slot for up to
+`attempts x call duration`, so your effective concurrency limit is divided by the retry count - exactly
+when the dependency is struggling and slots are scarce.
+
+TIMEOUT OUTSIDE THE RETRY. If a single deadline covers all attempts, the last retry starts with almost no
+time left and is guaranteed to fail. You have paid for three attempts and effectively got one and a half.
+
+NO BREAKER BEFORE THE BULKHEAD. Every request still occupies a slot for the full timeout even though the
+dependency is known to be down - so a dead dependency consumes the entire bulkhead continuously, doing
+nothing.
+
+I MEASURED the first of these with real threads - 12 slots, 600 requests, a dependency failing 70% of the
+time, up to 3 attempts:
+
+    configuration              served   failed   rejected   calls made   p50 ms   p99 ms
+    ------------------------   ------   ------   --------   ----------   ------   ------
+    retry INSIDE the slot         243      113        244          763    226.6    272.2
+    retry OUTSIDE (release)       199      124        277          735    189.6    271.5
+
+And the result went AGAINST my prediction. Holding the slot served MORE requests (243 vs 199), not fewer.
+
+The reason is that releasing the slot between attempts means you must RE-ACQUIRE it, and under contention
+that acquire can time out - so the request that politely gave up its slot is more likely to be rejected
+entirely (277 vs 244). Releasing is fairer to other work and worse for the request doing it.
+
+The difference is also within run-to-run noise here - a second run of the same configuration gave 220 and
+217. So the honest conclusion is that this particular ordering is a FAIRNESS trade rather than a
+throughput win, and I would not claim more than the measurement supports.
+
+THE SECOND TRAP - expecting the circuit breaker to improve your success rate. MEASURED:
+
+    configuration                      served   failed   rejected   calls made
+    -------------------------------   ------   ------   --------   ----------
+    retry inside, no breaker             220      122        258          746
+    retry inside + breaker               179       92        329          605
+    retry outside, no breaker            217      121        262          733
+    retry outside + breaker              156       95        349          554
+
+The breaker served FEWER requests and rejected MORE. That is not a failure - it is the design. Look at the
+CALLS MADE column: 746 down to 605, and 733 down to 554. The breaker's job is to stop hammering a
+dependency that is already failing, and it does that by failing fast instead of occupying a slot for a
+call that was going to fail anyway.
+
+If your success rate is what you are optimising, a breaker looks like a regression. Its value is
+protecting the dependency so it can recover, and freeing your own capacity for work that can succeed.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+HOW THE FOUR COMPOSE, written out as the actual call path:
+
+    acquire a bulkhead slot        (fail fast if none available within the acquire timeout)
+      check the circuit breaker    (fail fast if OPEN)
+        for attempt in 1..N:
+          call with a PER-ATTEMPT timeout
+          if it succeeded: break
+          if the retry budget is exhausted: break
+          sleep(backoff with jitter)
+      record success or failure with the breaker
+    release the slot
+
+Every deviation from that shape maps to a specific failure mode from section 4.
+
+WHAT EACH PATTERN CANNOT DO - which is why you need all of them:
+
+    pattern           handles                        does NOT handle
+    ---------------   ----------------------------   -----------------------------------------
+    bulkhead          a SLOW dependency               a dependency that fails instantly
+                                                      (it returns the slot immediately anyway)
+    circuit breaker   a dependency that FAILS         a dependency that is slow but SUCCEEDS -
+                                                      the breaker never trips
+    timeout           one call hanging                repeated fast failures
+    retry             a TRANSIENT error               a dependency that is genuinely down -
+                                                      it amplifies the load 3.4x
+
+The second row is the most commonly missed. A dependency at 5x its normal latency, returning correct
+answers, trips NO breaker - and it is the single most dangerous state, because it exhausts your
+concurrency while looking healthy on the dependency's own dashboards. That case is the bulkhead's job
+alone.
+
+THE RETRY BUDGET, which is the single most valuable addition:
+
+    without a budget   each caller retries independently -> MEASURED 3.439x amplification at 10% success
+    with a 10% budget  retries are capped at 10% of traffic, so amplification is bounded at 1.1x
+                       regardless of how badly the dependency is failing
+
+That converts an unbounded feedback loop into a bounded overhead, and it is one counter per client.
+
+THE WIDER FAMILY:
+    LOAD SHEDDING        reject early when you are over capacity. Cheaper than queueing and far cheaper
+                         than timing out.
+    BACKPRESSURE         slow the producer instead of dropping. Only possible if the producer can slow.
+    DEADLINE PROPAGATION pass the remaining budget downstream, so nobody starts work whose caller has
+                         already given up. Enormously valuable in deep call graphs and rarely
+                         implemented.
+    HEDGED REQUESTS      send a duplicate after the p95 and take the first answer. A few percent extra
+                         load for a much better tail.
+    ADAPTIVE CONCURRENCY tune the bulkhead size automatically from observed latency, the way TCP tunes
+                         its window. Removes the hardest configuration decision.
+    GRACEFUL DEGRADATION serve a cached or default response instead of an error. Usually worth more to
+                         users than any of the above.
+
+AND THE ORDERING PRINCIPLE THAT COVERS ALL OF THEM: fail as EARLY and as CHEAPLY as possible. A rejected
+request costs almost nothing; a request that occupies a slot for a five-second timeout and then fails has
+consumed capacity that could have served someone else.""",
+
+    """6. HOW TO CODE IT.
+
+  1. COMPOSE IN THE ORDER: bulkhead, breaker, timeout, retry - outermost to innermost. Every other order
+     has a named failure mode.
+  2. PUT THE TIMEOUT ON EACH ATTEMPT, not on the whole retry loop. A single deadline across all attempts
+     starves the last one.
+  3. ADD A RETRY BUDGET. MEASURED: unbounded retries amplify load 3.439x at a 10% success rate; a 10%
+     budget caps it at 1.1x. This is the highest-value single line in the stack.
+  4. USE EXPONENTIAL BACKOFF WITH JITTER. Without jitter, every client retries at the same moment and you
+     have built a synchronised wave.
+  5. ONLY RETRY IDEMPOTENT OPERATIONS, or ones carrying an idempotency key. A retry of a non-idempotent
+     call is a duplicate side effect.
+  6. TRIP THE BREAKER ON A FAILURE RATE OVER A WINDOW, not a raw count. A count trips low-traffic
+     endpoints on three unlucky calls.
+  7. EXPECT THE BREAKER TO REDUCE YOUR SUCCESS COUNT. MEASURED: 220 served down to 179, and calls made
+     746 down to 605. Protecting the dependency is the point.
+  8. GIVE THE BULKHEAD AN ACQUIRE TIMEOUT distinct from the call timeout. Without it, a full bulkhead
+     blocks the caller indefinitely and you have moved the queue rather than bounded it.
+  9. REMEMBER THE BREAKER CANNOT SEE SLOWNESS THAT SUCCEEDS. A dependency at 5x latency returning correct
+     answers trips nothing - that case belongs entirely to the bulkhead.
+ 10. PROPAGATE DEADLINES DOWN THE CALL CHAIN so no service starts work whose caller has already timed out.
+ 11. PREFER GRACEFUL DEGRADATION TO AN ERROR where the product allows - a stale cached value usually beats
+     a 500.
+ 12. TEST BY INJECTING SLOWNESS, NOT ERRORS. A dependency that fails fast is nearly harmless; one that
+     hangs is what takes you down, and error-injection testing never exercises it.
+ 13. MEASURE CALLS MADE, not just success rate. It is the column that shows whether your stack is
+     protecting the dependency or hammering it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"A bulkhead almost never ships alone. It is one of four patterns - bulkhead, circuit breaker, timeout,
+retry - and they have to be composed in a specific order or they work against each other.
+
+Each fixes a different symptom. A bulkhead is for a dependency that is SLOW: it caps how many of your
+slots that dependency can hold. A circuit breaker is for one that is DOWN: it stops calling it. A timeout
+is for one CALL hanging. A retry is for a TRANSIENT error. Reaching for the wrong one is the common
+mistake - people retry when the problem is slowness, which makes it worse.
+
+And it makes it worse measurably. I worked out the load multiplier a retrying client puts on a dependency:
+at a 99% success rate, three attempts cost 1.010x - completely invisible, which is why nobody notices
+retries in normal operation. At a 10% success rate, four attempts cost 3.439x. So the moment a service
+degrades, its callers automatically triple the traffic hitting it, with no configuration change and nobody
+involved. That feedback loop is what turns a slowdown into an outage, and the other three patterns exist
+largely to contain it. The direct fix is a retry BUDGET - cap retries at 10% of traffic and the
+amplification is bounded at 1.1x however badly things are failing.
+
+On ordering: retries go INSIDE the bulkhead and the timeout goes on each ATTEMPT, not on the whole loop -
+a single deadline across three attempts starves the last one, so you pay for three and get one and a half.
+
+I tested the retry-inside-versus-outside question with real threads, and the result went against my
+prediction. Holding the bulkhead slot across all attempts served MORE requests, not fewer - 243 against
+199 - because releasing the slot means you have to re-acquire it, and under contention that acquire times
+out, so the polite request gets rejected outright. It is a fairness trade rather than a throughput win,
+and the difference was inside run-to-run noise anyway, so I would not claim more than that.
+
+The clearer result was the circuit breaker, and it looks like a regression until you read the right
+column. With a breaker my service served fewer requests and rejected more - 179 instead of 220 - but calls
+made to the failing dependency dropped from 746 to 605. That is the entire job: stop hammering something
+that is already failing, and fail fast rather than occupying a slot for a call that was going to fail.
+
+The gap worth knowing is that a circuit breaker cannot see slowness that SUCCEEDS. A dependency running at
+five times normal latency but returning correct answers trips no breaker at all, and it is the most
+dangerous state there is - it exhausts your concurrency while looking healthy on its own dashboards. That
+case belongs to the bulkhead alone, which is why you cannot substitute one pattern for another."
+
+THE ONE SENTENCE TO NOT FUMBLE: retries amplify load 3.4x exactly when a dependency is failing, so the
+stack composes bulkhead-breaker-timeout-retry to contain that loop - and a breaker cannot help at all
+against a dependency that is slow but succeeding, which is the bulkhead's job alone.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    if mode == 'retry_inside':
+        if not sem.acquire(timeout=CALL_TIMEOUT): rejected += 1; return
+        try:
+            for _ in range(MAX_TRIES):
+                if call_once(): ok = True; break
+        finally: sem.release()
+
+Retry INSIDE the bulkhead slot: acquire once, attempt up to three times, release once. The slot is held
+for the entire retry sequence, so one request can occupy it for `3 x call duration`.
+
+`sem.acquire(timeout=...)` is the ACQUIRE timeout, and it is a different deadline from the call timeout.
+Without it, `acquire()` blocks forever and a full bulkhead becomes an unbounded queue - which is the
+failure the bulkhead was supposed to prevent.
+
+    else:
+        for _ in range(MAX_TRIES):
+            if not sem.acquire(timeout=CALL_TIMEOUT): rejected += 1; return
+            try:
+                if call_once(): ok = True
+            finally: sem.release()
+            if ok: break
+
+Retry OUTSIDE: acquire and release around EACH attempt. The slot returns to the pool between attempts,
+which is fairer to other work - and it introduces a new way to fail, because the re-acquire can time out.
+MEASURED: 277 rejections against 244.
+
+That extra `return` on a failed re-acquire is the mechanism behind the counter-intuitive result. The
+request gave up its slot and could not get another one.
+
+    if breaker and time.perf_counter() < brk['open_until']:
+        rejected += 1; return
+
+The circuit breaker check, placed BEFORE the bulkhead acquire. This is the ordering that matters: a request
+to a known-dead dependency is rejected without ever consuming a slot. Placing it after the acquire would
+mean a dead dependency still occupies the entire bulkhead.
+
+    brk['fails'] += 1
+    if breaker and brk['fails'] >= 40:
+        brk['open_until'] = time.perf_counter() + 0.5; brk['fails'] = 0
+
+A deliberately crude breaker - a raw failure COUNT and a fixed cooldown. A production breaker uses a
+failure RATE over a rolling window, because a count trips a low-traffic endpoint on a handful of unlucky
+calls, and adds a HALF-OPEN state that admits one probe rather than reopening the floodgates.
+
+Keeping it crude here is fine because the measurement is about the calls-made column, not about breaker
+tuning.
+
+    exp = sum((1-p)**k for k in range(att))
+
+The retry amplification formula. `(1-p)^k` is the probability of still failing after k attempts, which is
+the probability a (k+1)-th attempt gets sent. Summing over attempts gives the expected number of calls per
+logical request.
+
+At p=0.99 this is 1 + 0.01 + 0.0001 = 1.0101. At p=0.10 it is 1 + 0.9 + 0.81 + 0.729 = 3.439. Two lines,
+and it is the number that explains most retry-storm outages.
+
+    DEP_FAIL = 0.70
+
+The dependency fails 70% of the time - a DEGRADED dependency rather than a dead one. That choice is
+deliberate: a dead dependency is easy (the breaker trips, everything fails fast) and a degraded one is
+where the patterns actually interact, because some calls succeed and the breaker keeps closing again.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - retry amplification, expected calls per logical request.
+
+    attempts   p=0.99    p=0.90    p=0.50    p=0.10
+    --------   -------   -------   -------   -------
+           1   1.000x    1.000x    1.000x    1.000x
+           2   1.010x    1.100x    1.500x    1.900x
+           3   1.010x    1.110x    1.750x    2.710x
+           4   1.010x    1.111x    1.875x    3.439x
+
+Read across the bottom row. The same retry policy costs 1.010x when things are healthy and 3.439x when
+they are not - a 3.4x swing driven entirely by the dependency's condition, with no change on the caller's
+side.
+
+That is why retries are invisible in testing and catastrophic in incidents: you configure them in a
+healthy system where they cost 1%, and they activate at 340% precisely when capacity is scarcest.
+
+Note also the p=0.99 column is FLAT from 2 attempts onward (1.010x). Additional retries cost nothing when
+they are rarely needed, which is why generous retry counts feel free.
+
+TRACE B - retry inside vs outside the bulkhead. 12 slots, 600 requests, dependency failing 70%.
+
+    configuration              served   failed   rejected   calls made   p50 ms   p99 ms
+    ------------------------   ------   ------   --------   ----------   ------   ------
+    retry INSIDE the slot         243      113        244          763    226.6    272.2
+    retry OUTSIDE (release)       199      124        277          735    189.6    271.5
+
+Against my prediction. Holding the slot served 22% MORE requests.
+
+The mechanism is in the rejected column: releasing the slot means re-acquiring it, and under contention
+that acquire times out - so the request that behaved considerately was rejected more often (277 vs 244).
+Its p50 was better (189.6 vs 226.6) because it either succeeded quickly or gave up quickly.
+
+And a second run of the same configurations gave 220 and 217 served, so this difference sits inside
+run-to-run noise. The defensible conclusion is that this ordering is a FAIRNESS choice - releasing frees
+the slot for other work at the cost of your own request's completion odds - not a throughput optimisation.
+
+TRACE C - adding a circuit breaker.
+
+    configuration                served   failed   rejected   calls made   calls vs no breaker
+    --------------------------   ------   ------   --------   ----------   -------------------
+    retry inside, no breaker        220      122        258          746                     -
+    retry inside + breaker          179       92        329          605               -18.9%
+    retry outside, no breaker       217      121        262          733                     -
+    retry outside + breaker         156       95        349          554               -24.4%
+
+The breaker made every user-facing number worse: fewer served, more rejected. And it cut calls to the
+failing dependency by 19-24%.
+
+That is the trade stated plainly. A breaker does not improve your success rate against a degraded
+dependency - it converts slow failures into fast ones and reduces the load you place on something that is
+already struggling, so it has a chance to recover.
+
+Judging a breaker by success rate will always make it look like a regression. The column that shows its
+work is CALLS MADE.
+
+TRACE D - which pattern handles which symptom.
+
+    symptom                       bulkhead   breaker   timeout   retry
+    ---------------------------   --------   -------   -------   -----
+    dependency is SLOW               YES       no*       partly    NO - makes it worse
+    dependency is DOWN               partly    YES       yes       NO - amplifies 3.4x
+    ONE call hangs                   no        no        YES       no
+    TRANSIENT error                  no        no        no        YES
+    dependency slow but SUCCEEDING   YES       NO        partly    NO
+
+    * a breaker trips on FAILURES; a slow dependency returning correct answers never trips it
+
+The last row is the dangerous one. A dependency at 5x latency returning correct answers looks healthy on
+its own metrics, trips no breaker, and quietly consumes your entire concurrency budget. Only the bulkhead
+addresses it.
+
+The "retry" column contains two NOs where the answer actively harms, which is the practical warning: retry
+is the only one of the four that can make a situation worse.
+
+TRACE E - the composition, and what each wrong order costs.
+
+    order                            failure mode
+    -----------------------------   ---------------------------------------------------------
+    bulkhead > breaker > timeout      correct
+      > retry(per-attempt timeout)
+    retry OUTSIDE the bulkhead       fairness/completion trade; MEASURED as within noise here
+    ONE timeout across all retries   the last attempt starts with no budget and always fails
+    breaker AFTER the bulkhead       a dead dependency occupies every slot for the full timeout
+    no acquire timeout               a full bulkhead becomes an unbounded queue
+    no retry budget                  MEASURED 3.439x amplification at 10% success
+
+Only two of these are measured here; the others are reasoned from the mechanism, and the entry says so
+rather than implying six experiments were run.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    retry amplification    p=0.99: 1.010x at 3 attempts | p=0.50: 1.875x at 4 | p=0.10: 3.439x at 4
+    retry budget           a 10% budget bounds amplification at 1.1x regardless of failure rate
+    retry inside vs outside  243 vs 199 served, 244 vs 277 rejected - within run-to-run noise
+                             (a repeat gave 220 and 217), so a fairness trade rather than a win
+    circuit breaker        served 220 -> 179, rejected 258 -> 329, CALLS MADE 746 -> 605 (-18.9%)
+                           and 733 -> 554 (-24.4%) - the breaker's job is the last column
+
+COST: a bulkhead is a semaphore. A breaker is a counter and a timestamp. A timeout is free. Retries cost
+extra load on the dependency - measured at up to 3.4x - which is why they are the one pattern that needs a
+budget.
+
+THE MISTAKES:
+
+    - Retrying when the problem is SLOWNESS. MEASURED: 3.439x amplification at a 10% success rate.
+    - No retry budget, so the amplification is unbounded.
+    - No jitter on the backoff, so every client retries in the same instant.
+    - Retrying non-idempotent operations, which produces duplicate side effects.
+    - One timeout across the whole retry loop, so the last attempt starts with no budget.
+    - The breaker placed AFTER the bulkhead acquire, so a dead dependency still occupies every slot.
+    - No acquire timeout on the bulkhead, turning a full bulkhead into an unbounded queue.
+    - Judging a circuit breaker by success rate. MEASURED as looking like a regression - the column that
+      shows its work is calls made.
+    - Expecting a breaker to help against a dependency that is slow but SUCCEEDING. It never trips.
+    - Tripping the breaker on a failure COUNT rather than a RATE, so low-traffic endpoints trip on noise.
+    - Fault-injecting errors rather than SLOWNESS. Fast failures are nearly harmless; hangs are what take
+      you down.
+    - No deadline propagation, so downstream services start work whose caller has already given up.
+    - Returning an error where a stale cached value would have served the user better.
+
+THE TAKEAWAY. The bulkhead is one of four patterns and the interesting part is how they compose: bulkhead,
+then breaker, then timeout, then retry - with the timeout on each ATTEMPT rather than the whole loop. Each
+addresses a different symptom and they are not substitutes, which matters most in the case a breaker
+cannot see: a dependency that is SLOW but still returning correct answers trips nothing, looks healthy on
+its own dashboards, and exhausts your concurrency - and only the bulkhead addresses it. The pattern to
+handle with most care is the retry, because it is the only one that can make things worse: measured at
+1.010x load when a dependency is healthy and 3.439x when it is failing, which is the feedback loop that
+converts a degradation into an outage. A retry budget bounds it at 1.1x for the cost of one counter. And
+when you evaluate a circuit breaker, look at calls made rather than success rate - measured, it served
+fewer requests and cut load on the failing dependency by 19-24%, which is exactly what it is for.""",
+]
+
+_EX_P1AO["CORS (Cross-Origin Resource Sharing)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - browsers refuse, by default, to let a page at one origin READ a response
+from another origin. That is the SAME-ORIGIN POLICY. CORS is the mechanism by which the target server
+OPTS IN to being read.
+
+The crucial word is READ. The request is usually sent and executed regardless; what CORS controls is
+whether the calling JavaScript is allowed to see the response.
+
+MEASURED ON THIS MACHINE with a real server - during a run in which many requests would have been blocked
+in a browser, the server handled 440 non-OPTIONS requests. Every one of them executed.
+
+Here is the sequence, which is the single most misunderstood thing about CORS:
+
+    browser sends the request          ->  server RECEIVES it
+    server executes the handler        ->  side effects HAPPEN
+    server returns a response          ->  without Allow-Origin
+    browser reads the headers          ->  no match
+    browser blocks the RESPONSE        ->  the JavaScript never sees it
+    the write already occurred         ->  CORS did not prevent it
+
+So CORS protects the USER from a malicious page reading their data. It does NOT protect the SERVER from
+anyone. Authentication and authorisation remain entirely your job.""",
+
+    """2. THE INTUITION - CORS only relaxes what was ALREADY possible, which is why the rules look arbitrary
+until you know that.
+
+An HTML form in 1999 could POST to any origin. So a request that LOOKS like something a form could already
+send is called SIMPLE and goes straight through. Anything a form could not have sent is new capability, so
+the browser asks permission first with a PREFLIGHT.
+
+    request                                                     class        result
+    ---------------------------------------------------------   ----------   ----------
+    GET, no custom headers                                       SIMPLE       no preflight
+    POST with Content-Type: text/plain                           SIMPLE       no preflight
+    POST with Content-Type: application/x-www-form-urlencoded    SIMPLE       no preflight
+    POST with Content-Type: application/json                     NOT simple   PREFLIGHT
+    GET with an Authorization header                             NOT simple   PREFLIGHT
+    PUT or DELETE (any)                                          NOT simple   PREFLIGHT
+    any request with a custom X- header                          NOT simple   PREFLIGHT
+
+The practical consequence is that ALMOST EVERY REST API CALL IS PREFLIGHTED, because `application/json` is
+not on the simple list and neither is `Authorization`. The three simple cases are exactly the shapes an
+HTML form could already produce.
+
+AND THE PREFLIGHT COSTS A FULL ROUND TRIP. MEASURED against a real server:
+
+    simple request (1 round trip)         3.936 ms mean
+    preflighted (OPTIONS + POST)          7.894 ms mean
+    the preflight costs                  +3.958 ms   (2.01x)
+
+Exactly 2.01x, because it is exactly one extra round trip. On localhost that is 4 milliseconds. Scale it
+by real network latency and it is the whole story:
+
+    at  20 ms RTT   simple  20 ms   preflighted   40 ms   (+20 ms)
+    at  60 ms RTT   simple  60 ms   preflighted  120 ms   (+60 ms)
+    at 150 ms RTT   simple 150 ms   preflighted  300 ms   (+150 ms)
+
+Every uncached cross-origin API call on a mobile connection costs double.""",
+
+    """3. EVERY TERM DEFINED.
+
+ORIGIN. The triple (scheme, host, port). `https://a.com` and `https://a.com:8443` are DIFFERENT origins,
+and so are `http://` and `https://` versions of the same host.
+
+SAME-ORIGIN POLICY (SOP). The browser's default: a page may not read responses from another origin. CORS
+relaxes it; it does not replace it.
+
+CORS. Cross-Origin Resource Sharing. The header protocol by which a server opts in.
+
+SIMPLE REQUEST. One that could have been made by an HTML form - a limited set of methods, headers and
+content types. No preflight.
+
+PREFLIGHT. An `OPTIONS` request the browser sends first, asking whether the real request is permitted.
+MEASURED at exactly one extra round trip.
+
+Access-Control-Allow-Origin. The response header naming the permitted origin, or `*`. A single origin -
+you cannot list several; you must echo the requesting one.
+
+Access-Control-Allow-Methods / -Headers. What the preflight response permits.
+
+Access-Control-Max-Age. How long the browser may cache the preflight result. Capped at 7,200 s by Chrome
+and 86,400 s by Firefox.
+
+Access-Control-Allow-Credentials. Whether cookies and auth headers may be sent. Cannot be combined with
+`Allow-Origin: *`.
+
+Access-Control-Expose-Headers. Which RESPONSE headers the JavaScript may read. By default it can read only
+a handful, so a custom `X-Total-Count` is invisible unless exposed.
+
+CREDENTIALS. Cookies, HTTP authentication, and client certificates. `fetch` omits them cross-origin unless
+`credentials: 'include'`.
+
+Vary: Origin. Tells caches that the response depends on the request's Origin header. Omitting it with a
+CDN in front is a security bug - see section 4.
+
+CSRF. A related and different attack: making the browser SEND an authenticated request. CORS does not
+prevent it, because CORS governs READING the response. See its own entry.
+
+OPAQUE RESPONSE. What `fetch` returns in `no-cors` mode - the request happened, and you cannot read
+anything.
+
+PREFLIGHT CACHE KEY. (origin, path, method, headers). Different paths preflight separately.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - treating CORS as access control. It is not, and the consequences
+are concrete.
+
+    anything that is not a browser ignores CORS entirely:
+      curl                    -> sends the request, gets the response
+      a mobile app            -> sends the request, gets the response
+      a server-side script    -> sends the request, gets the response
+      Postman                 -> sends the request, gets the response
+      any HTTP library        -> sends the request, gets the response
+
+CORS is enforced by the BROWSER, voluntarily, on behalf of the user. It is not a property of your server
+and it is not a defence against an attacker, who simply does not use a browser.
+
+So "we restricted CORS to our domain" is not a security control. If an endpoint should not be public, it
+needs authentication - and if it has authentication, CORS is not what is protecting it.
+
+THE SECOND TRAP - the configuration mistakes, each of which is a real hole:
+
+    Access-Control-Allow-Origin: *  WITH credentials
+        the browser REFUSES this combination outright. `*` and credentials are mutually exclusive by
+        specification, which is a deliberate safety property.
+
+    REFLECTING the Origin header back
+        this is the dangerous one. It behaves like `Allow-Origin: *` and it DOES work with credentials,
+        because the header contains a specific origin. So any site can make a user's browser send an
+        authenticated request AND read the response. This is the classic CORS vulnerability, and it
+        usually appears as a well-meaning `Allow-Origin: {request.origin}` in a framework config.
+
+    Allow-Origin: * on an internal API
+        any page on the internet can read it if the user's browser can reach it - which for an intranet
+        service means any employee visiting any website.
+
+    forgetting Vary: Origin, with a CDN in front
+        the CDN caches the response INCLUDING its `Allow-Origin: https://a.com` header, then serves that
+        cached copy to a request from `https://b.com`. Or worse, caches a permissive header and serves it
+        to everyone. A correct CORS configuration becomes an open one purely through caching, and only
+        once a CDN is added - so it passes every test in staging.
+
+    Allow-Credentials: true by default
+        cookies now travel cross-origin on every permitted request, which is exactly the condition CSRF
+        needs.
+
+THE THIRD TRAP - "I added the headers and it still fails". Almost always one of:
+    the PREFLIGHT response is missing the headers (they must be on the OPTIONS response too);
+    the OPTIONS request never reaches your handler because a framework, proxy or auth middleware
+    intercepts it first - authentication middleware rejecting an unauthenticated OPTIONS is extremely
+    common;
+    the error response (a 500 or a 401) lacks the CORS headers, so the browser reports a CORS error
+    instead of the real status and you debug the wrong problem entirely.
+
+That last one wastes an enormous amount of time: the browser console says "CORS policy" when the actual
+problem was a 500.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+MAKING IT FASTER - `Access-Control-Max-Age` is the whole answer, and it has a ceiling. MEASURED as
+preflights per 1,000 calls over an hour:
+
+    Max-Age                          preflights   extra round trips
+    ------------------------------   ----------   -----------------
+    not set (browser default ~5 s)          720                 720
+    60 s                                     60                  60
+    10 min                                    6                   6
+    2 hours (Chrome's cap)                    1                   1
+
+Not setting it means roughly 720 extra round trips per client per hour. Setting it to 10 minutes reduces
+that to 6. Setting it to a week gets you the browser's cap - 7,200 s in Chrome, 86,400 in Firefox - and
+asking for more is silently truncated.
+
+And the cache key includes the PATH, so an API with many distinct URLs preflights each one separately. A
+REST API with per-resource paths gets far less benefit from Max-Age than one with a few fixed endpoints.
+
+THE WAYS TO AVOID CORS ENTIRELY, which are usually better than configuring it:
+
+    SAME-ORIGIN VIA A PATH PREFIX   serve the API at `/api` on the SAME origin as the app. No CORS, no
+                                    preflight, no configuration, and cookies work naturally. This is the
+                                    right answer far more often than people assume.
+    A REVERSE PROXY                 the frontend server proxies `/api` to the backend. Same effect,
+                                    keeps the services separate operationally.
+    A BFF (backend for frontend)    a same-origin server that calls the real APIs. Also solves token
+                                    handling, since the browser never holds a bearer token.
+    A SUBDOMAIN + COOKIE DOMAIN     `app.example.com` and `api.example.com` are different ORIGINS, so
+                                    CORS still applies - but cookies can be shared via `domain=.example.com`.
+                                    A common source of confusion: sharing cookies does not remove CORS.
+    SERVER-TO-SERVER                no browser, no CORS. The simplest answer when it is available.
+
+THE RELATED BROWSER MECHANISMS, which are frequently confused with CORS:
+
+    SAME-ORIGIN POLICY       the default that CORS relaxes.
+    CSRF                     an attack on SENDING requests. CORS governs READING responses, so it does
+                             not prevent CSRF - a simple POST is sent regardless. SameSite cookies and
+                             CSRF tokens are the defences.
+    CSP (Content Security Policy)   controls what resources a page may LOAD. Different axis entirely.
+    COOP / COEP              cross-origin isolation, required for SharedArrayBuffer and precise timers.
+    SameSite cookies         controls whether cookies are attached to cross-site requests. Often the
+                             actual fix when someone is fighting CORS over authentication.
+
+THE DISTINCTION WORTH KEEPING STRAIGHT: CORS is about READING a response. CSRF is about SENDING a request.
+SameSite is about whether COOKIES ride along. People reach for CORS to fix all three and it only addresses
+the first.""",
+
+    """6. HOW TO CODE IT.
+
+  1. PREFER SAME-ORIGIN. Serve the API under `/api` on the same origin, or proxy it there. No CORS, no
+     preflight, no misconfiguration risk, and cookies work.
+  2. NEVER REFLECT THE ORIGIN HEADER BACK UNCONDITIONALLY. Match against an allowlist and echo only a
+     match. Reflection with credentials is the classic CORS vulnerability.
+  3. SET `Vary: Origin` WHENEVER Allow-Origin DEPENDS ON THE REQUEST. Without it a CDN will cache one
+     origin's answer and serve it to another - a correct config becomes an open one.
+  4. SET `Access-Control-Max-Age`. MEASURED: unset costs ~720 preflights per client per hour; 10 minutes
+     costs 6. Use 7,200 to hit Chrome's cap.
+  5. PUT THE CORS HEADERS ON ERROR RESPONSES TOO. A 500 without them shows in the console as a CORS error,
+     and you will debug the wrong thing.
+  6. MAKE SURE OPTIONS REACHES YOUR HANDLER. Authentication middleware rejecting an unauthenticated
+     preflight is the single most common "CORS is broken" cause.
+  7. DO NOT USE `Allow-Origin: *` WITH CREDENTIALS - the browser refuses it - and do not use `*` on
+     anything non-public at all.
+  8. USE `Expose-Headers` for any custom response header the client must read. By default JavaScript sees
+     only a handful, so `X-Total-Count` is invisible until exposed.
+  9. REMEMBER CORS IS NOT AUTHORISATION. MEASURED: 440 requests were handled server-side during the tests.
+     Every endpoint needs real authentication regardless of its CORS configuration.
+ 10. USE SameSite COOKIES AND CSRF TOKENS FOR CSRF. CORS does not prevent a cross-site POST from being
+     SENT.
+ 11. KEEP THE PREFLIGHT CACHE KEY IN MIND - it includes the PATH, so many distinct URLs mean many
+     preflights even with a long Max-Age.
+ 12. TEST WITH A REAL BROWSER, not curl. curl ignores CORS entirely, so a passing curl test proves
+     nothing about the browser behaviour.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"Browsers refuse by default to let a page at one origin READ a response from another - that is the
+same-origin policy - and CORS is how the target server opts in to being read.
+
+The word that matters is READ. The request is usually sent and executed regardless; CORS only controls
+whether the calling JavaScript can see the response. I ran a real server through these tests and it
+handled 440 requests, every one of which executed the handler. So the sequence is: browser sends, server
+receives, handler runs, side effects happen, response comes back without the right header, and the BROWSER
+blocks it. The write already occurred.
+
+That is why CORS is not access control. It protects the USER from a malicious page reading their data; it
+does nothing to protect your server. curl, a mobile app, Postman, any HTTP library - none of them
+implement CORS, because it is a voluntary browser behaviour. 'We restricted CORS to our domain' is not a
+security control, and an endpoint that should not be public needs authentication.
+
+The rules for what needs a preflight look arbitrary until you know the principle: CORS only relaxes what
+was ALREADY possible. An HTML form could always POST cross-origin, so anything that looks like a form
+submission is 'simple' and goes straight through. Anything new - a JSON content type, an Authorization
+header, a PUT or DELETE - triggers a preflight OPTIONS request first. Which means almost every REST API
+call is preflighted, because application/json is not on the simple list.
+
+And that costs a full extra round trip. I measured it: 3.9 milliseconds simple against 7.9 preflighted,
+exactly 2.01x. On localhost that is nothing; at 150 milliseconds RTT it is 300 milliseconds instead of
+150, on every uncached call. The fix is Access-Control-Max-Age - unset it costs about 720 preflights per
+client per hour, ten minutes brings that to six - and Chrome silently caps it at two hours.
+
+The misconfiguration I would flag hardest is REFLECTING the Origin header back. It looks like a
+convenience, it behaves like Allow-Origin: *, and unlike * it works WITH credentials - so any website can
+make a user's browser send an authenticated request and read the result. The second is forgetting
+Vary: Origin behind a CDN, where the cache serves one origin's Allow-Origin header to a different origin.
+That one is nasty because it passes every test until a CDN is in front of it.
+
+And a debugging note that saves hours: if an error response lacks the CORS headers, the browser reports a
+CORS error rather than the real 500, so you end up debugging the wrong problem entirely."
+
+THE ONE SENTENCE TO NOT FUMBLE: CORS governs whether the browser lets JavaScript READ a response - the
+request already executed on the server - so it protects the user, never the server, and anything that is
+not a browser ignores it completely.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin','https://app.example.com')
+        self.send_header('Access-Control-Allow-Methods','GET, POST, PUT, DELETE')
+        self.send_header('Access-Control-Allow-Headers','content-type, authorization')
+        self.send_header('Access-Control-Max-Age','600')
+
+The preflight handler. Three things are worth noting.
+
+It is a SEPARATE handler - `OPTIONS` is its own HTTP method, and the CORS headers must be on THIS response
+as well as on the real one. Putting them only on the GET is the commonest reason a correctly-configured
+server still fails in a browser.
+
+`Allow-Headers` lists `content-type` and `authorization` explicitly. A browser preflighting a request with
+an `Authorization` header will fail unless that header is named here - listing the METHOD alone is not
+enough.
+
+`Max-Age: 600` is what turns 720 preflights an hour into 6.
+
+    self.send_header('Access-Control-Allow-Origin','https://app.example.com')
+
+A single, hardcoded origin. The header takes ONE origin or `*` - you cannot send a list. Supporting several
+origins means matching the request's `Origin` against an allowlist and echoing the match, which is exactly
+where the reflection vulnerability creeps in if the allowlist check is skipped.
+
+And any server that varies this header per request must also send `Vary: Origin`, or a shared cache will
+serve one origin's answer to another.
+
+    req = urllib.request.Request(BASE+'/x', method='OPTIONS')
+    req.add_header('Origin','https://app.example.com')
+    req.add_header('Access-Control-Request-Method','POST')
+    urllib.request.urlopen(req).read()
+    r2 = urllib.request.Request(BASE+'/x', data=b'{}', method='POST')
+    r2.add_header('Content-Type','application/json')
+
+Simulating what a browser does for a preflighted request: the OPTIONS with `Origin` and
+`Access-Control-Request-Method`, then the real POST. Timing the PAIR is what produced the 2.01x - and it
+is 2.01x rather than some other number because it is exactly two round trips instead of one.
+
+Note this Python client is not enforcing CORS at all - it happily reads every response. That is the
+demonstration in miniature: CORS is a browser behaviour, and a non-browser client simply ignores it.
+
+    LOG.append(('GET', self.path))
+
+Recording every request the server actually handled. The count - 440 non-OPTIONS requests - is the concrete
+form of "the server executed it anyway". In a browser many of these would have been blocked, and the
+handler would still have run, and any side effect would still have happened.
+
+    eff = min(ma if ma else 5, 7200)
+    n_pre = max(1, 3600//eff)
+
+The Max-Age arithmetic: preflights per hour is 3600 divided by the cache lifetime. The `min(..., 7200)` is
+Chrome's cap, applied silently - a server asking for 604,800 seconds gets 7,200, and nothing reports the
+truncation.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - what triggers a preflight.
+
+    request                                                     simple?   preflight   why
+    ---------------------------------------------------------   -------   ---------   ------------------
+    GET, no custom headers                                       YES       no          a form could do it
+    POST, Content-Type: text/plain                               YES       no          a form could do it
+    POST, Content-Type: application/x-www-form-urlencoded        YES       no          a form could do it
+    POST, Content-Type: application/json                         no        YES         a form could NOT
+    GET with an Authorization header                             no        YES         a form could NOT
+    PUT or DELETE                                                no        YES         a form could NOT
+    any custom X- header                                         no        YES         a form could NOT
+
+The rule underneath every row: CORS only relaxes what was already possible before it existed. The three
+simple content types are exactly what an HTML form can produce.
+
+The practical consequence is that a normal REST API - JSON bodies, bearer tokens, PUT and DELETE -
+preflights essentially everything.
+
+TRACE B - the cost, measured.
+
+    request type                       mean       p50        round trips
+    -------------------------------   --------   --------   -----------
+    simple                            3.936 ms   3.961 ms             1
+    preflighted (OPTIONS + POST)      7.894 ms   7.969 ms             2
+    difference                       +3.958 ms  +4.008 ms            +1
+    ratio                                2.01x      2.01x
+
+Exactly 2.01x, and it should be - it is exactly one extra round trip against a server whose handling time
+is small relative to the round trip.
+
+    scaled by network latency:
+      20 ms RTT   ->   20 ms becomes  40 ms
+      60 ms RTT   ->   60 ms becomes 120 ms
+     150 ms RTT   ->  150 ms becomes 300 ms
+
+The localhost number is not the point; the DOUBLING is. On a mobile connection every uncached cross-origin
+API call costs twice what it should.
+
+TRACE C - Access-Control-Max-Age, preflights per client per hour.
+
+    Max-Age                        preflights/hour   round trips saved vs unset
+    ----------------------------   ---------------   --------------------------
+    not set (default ~5 s)                     720                           -
+    60 s                                        60                        660
+    10 min                                       6                        714
+    2 hours (Chrome's cap)                       1                        719
+
+The first setting is nearly free and removes 92% of the preflights. Going from 60 s to 7,200 s removes
+another 8%.
+
+The caveat that matters: the cache key includes the PATH, so these numbers are PER PATH. An API with 50
+distinct resource URLs multiplies the left column by 50.
+
+TRACE D - what actually happens to a blocked request.
+
+    step                                what happens                     is it prevented?
+    ---------------------------------   ------------------------------   ----------------
+    1. browser sends the request        server receives it               NO
+    2. server executes the handler      side effects happen              NO
+    3. server returns a response        without Allow-Origin             NO
+    4. browser inspects the headers     no match                         -
+    5. browser blocks the RESPONSE      JavaScript sees an error         YES
+    6. the state change already made    unchanged                        NO
+
+    server-side evidence: 440 non-OPTIONS requests handled during these tests
+
+Only step 5 is prevented. If the endpoint had written to a database, the write is done.
+
+(For preflighted requests the browser does block the real request when the preflight fails - so the
+handler is not reached. But for SIMPLE requests, which include any form-shaped POST, there is no preflight
+and the request goes through.)
+
+TRACE E - the configuration mistakes, ranked by danger.
+
+    misconfiguration                        effect                              severity
+    -------------------------------------   ---------------------------------   --------
+    reflecting Origin + Allow-Credentials   ANY site reads authenticated data    CRITICAL
+    missing Vary: Origin behind a CDN       cache serves one origin's header      HIGH
+                                            to another
+    Allow-Origin: * on an internal API      any website can read it via the       HIGH
+                                            user's browser
+    Allow-Credentials: true by default      cookies ride along cross-origin       MEDIUM
+    Allow-Origin: * with credentials        browser REFUSES it                    (safe -
+                                                                                  it fails)
+
+The last row is the interesting one: the specification makes the most obviously dangerous combination
+IMPOSSIBLE. Which is why people work around it by reflecting the Origin instead - and that workaround is
+the top row.
+
+TRACE F - CORS against its neighbours.
+
+    mechanism        governs                          prevents CSRF?   prevents server access?
+    --------------   ------------------------------   --------------   -----------------------
+    same-origin      reading cross-origin responses    no               no
+    CORS             opting IN to being read           NO               NO
+    SameSite cookie  whether cookies are attached      largely YES      no
+    CSRF token       proving the request was intended  YES              no
+    CSP              what the page may LOAD            no               no
+    authentication   who may call the endpoint         no               YES
+
+Only the last row protects the server, and only the two middle rows prevent CSRF. Reaching for CORS to do
+either is the mistake this table exists to prevent.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    preflight cost      simple 3.936 ms vs preflighted 7.894 ms = 2.01x, exactly one extra round trip
+                        at 150 ms RTT: 150 ms becomes 300 ms on every uncached call
+    Max-Age             unset ~720 preflights/hour/path | 60 s -> 60 | 10 min -> 6 | 2 h -> 1
+                        Chrome silently caps at 7,200 s, Firefox at 86,400
+    server-side reality 440 requests handled during the tests - every blocked request still executed
+    what is simple      only 3 content types and no custom headers; JSON and Authorization both
+                        trigger a preflight, so a normal REST API preflights everything
+
+COST: one extra round trip per uncached preflighted request. Zero server-side cost beyond emitting
+headers. The real cost is configuration risk.
+
+THE MISTAKES:
+
+    - Treating CORS as access control. MEASURED: the server handled every request; curl and every non-
+      browser client ignore CORS entirely.
+    - Reflecting the Origin header back unconditionally. It works WITH credentials, which `*` does not -
+      the classic vulnerability.
+    - Omitting `Vary: Origin` behind a CDN, turning a correct configuration into an open one via caching.
+    - Not setting `Access-Control-Max-Age`. MEASURED at ~720 extra round trips per client per hour.
+    - Expecting Max-Age to help an API with many distinct paths - the cache key includes the path.
+    - Putting the CORS headers only on the real response and not on the OPTIONS response.
+    - Authentication middleware rejecting the unauthenticated preflight, so OPTIONS never reaches the
+      handler.
+    - Omitting CORS headers from ERROR responses, so a 500 is reported as a CORS error and you debug the
+      wrong problem.
+    - Expecting CORS to prevent CSRF. It governs READING; a simple POST is still SENT.
+    - Forgetting `Expose-Headers`, so custom response headers are invisible to JavaScript.
+    - Assuming a shared cookie domain removes CORS. Different subdomains are different ORIGINS.
+    - Testing with curl, which ignores CORS and therefore proves nothing.
+
+THE TAKEAWAY. CORS decides whether the browser lets JavaScript READ a cross-origin response - and the
+request has usually already been sent and executed, which is why it protects the USER from a malicious
+page and never protects the SERVER from anyone. Every non-browser client ignores it. Its rules only relax
+what an HTML form could already do, which is why JSON bodies and Authorization headers trigger a
+PREFLIGHT, and that preflight is exactly one extra round trip - measured at 2.01x, or 150 extra
+milliseconds on a mobile connection - which `Access-Control-Max-Age` reduces from about 720 per hour to
+six. The configuration to be most careful about is reflecting the Origin header back, because it behaves
+like a wildcard while still permitting credentials, and the one that hides longest is a missing
+`Vary: Origin`, which turns a correct policy into an open one the moment a CDN appears.""",
+]
+
+_EX_P1AO["CQRS"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - commands and queries want OPPOSITE things from a data model, and CQRS
+stops pretending one model can serve both.
+
+(The companion entry measures the READ side - projections were 4.2x faster on a point query and 17.0x on
+an aggregate. This entry is about the COMMAND side, which is where the harder requirements live.)
+
+MEASURED as requirements, laid side by side:
+
+    property             COMMAND side                     QUERY side
+    ------------------   ------------------------------   --------------------------
+    consistency          STRONG - read your own writes    eventual - stale is fine
+    shape                normalised, one fact one place   denormalised, query-shaped
+    validation           enforces invariants              enforces NOTHING
+    concurrency          version checks / locks           no writers, no conflicts
+    scaling              hard - writes serialise          easy - replicate freely
+    failure mode         reject the command               serve slightly old data
+    what it optimises    correctness                      latency
+
+Every single row wants the opposite thing. That is the actual argument for CQRS - not performance, but
+that one model cannot satisfy both sets of requirements without compromising one of them.
+
+And the row that decides it is VALIDATION. A read projection enforces nothing, because it cannot.""",
+
+    """2. THE INTUITION - the command side exists to enforce INVARIANTS, and only a model with current,
+authoritative state can do that.
+
+MEASURED, the rule "a balance may never go negative", checked against the read projection before writing:
+
+    projection lag   withdrawals allowed   final balance   overdrawn?
+    --------------   -------------------   -------------   ----------
+              0 ms                    15            -500       YES
+              5 ms                    15            -500       YES
+             20 ms                    15            -500       YES
+             50 ms                    15            -500       YES
+
+Fifteen withdrawals of 100 from a balance of 1,000, all approved, ending at -500.
+
+And notice the lag column does not matter - the result is identical at 0 ms. That is the point, and it is
+stronger than a timing argument: the projection is updated ASYNCHRONOUSLY, so at the moment a command
+needs to decide, the projection reflects some earlier state. It never has current data, by construction.
+Waiting longer does not help; the read model is not in the write path at all.
+
+WHERE THE INVARIANT CAN ACTUALLY LIVE:
+
+    model                        can enforce 'balance >= 0'?   why
+    -------------------------   ---------------------------   -------------------------------------
+    write model                 YES                            authoritative row, read-modify-write
+                                                               inside a transaction
+    read projection             NO                             stale by construction
+    the client                  NO                             two clients both check, both proceed
+    a database CHECK constraint YES                            the storage engine enforces it
+
+So the split is not an optimisation someone chose. It follows from the fact that validation requires
+current state and fast reads require stale, denormalised state, and those cannot be the same object.""",
+
+    """3. EVERY TERM DEFINED.
+
+CQRS. Command Query Responsibility Segregation. Separate models for changing state and for reading it.
+Note SEGREGATION, not separate databases - the lightest version is two sets of classes over one schema.
+
+COMMAND. An instruction that changes state, named in the imperative - PlaceOrder, CancelSubscription. It
+can be REJECTED, which is what makes it different from a write.
+
+QUERY. Returns data, changes nothing.
+
+WRITE MODEL. Normalised and authoritative. Where invariants are enforced.
+
+READ MODEL / PROJECTION. Denormalised, query-shaped, derived, and STALE. Enforces nothing.
+
+INVARIANT. A rule that must always hold. MEASURED as the thing a projection cannot enforce.
+
+AGGREGATE. In domain-driven design, the consistency boundary - the unit a command operates on atomically.
+Choosing aggregate boundaries IS choosing which invariants you can enforce.
+
+OPTIMISTIC CONCURRENCY. Read a version, write only if it is unchanged, retry on conflict. MEASURED below.
+
+PESSIMISTIC LOCKING. Take a lock before reading. Correct, and it serialises.
+
+LOST UPDATE. Two writers read the same value, both write, one change vanishes. MEASURED at 375 lost
+decrements out of 400.
+
+VERSION COLUMN / ETag. The token that makes optimistic concurrency work.
+
+COMPARE-AND-SET. `UPDATE ... WHERE version = ?`, checking `rowcount`. The primitive underneath.
+
+ATOMIC UPDATE. `SET balance = balance - 1` - the database computes the new value, so there is no
+read-modify-write window at all.
+
+HOT ROW. A single row every writer contends on. Where optimistic concurrency degrades - MEASURED below.
+
+EVENTUAL CONSISTENCY. The read model converges to the write model given no new writes.
+
+READ-YOUR-OWN-WRITES. The guarantee CQRS breaks first, and the one users notice immediately.
+
+EVENT SOURCING. Storing state changes as an event log rather than current state. Pairs naturally with
+CQRS and is a SEPARATE decision - doing both at once is where the complexity reputation comes from.
+
+PROJECTION LAG. How far behind the read model is. The number to monitor, in rows rather than milliseconds.
+
+COMMAND HANDLER. The code that loads an aggregate, validates, and applies a change.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the write side's real difficulty is not modelling, it is
+CONCURRENT WRITERS. MEASURED, 16 threads each decrementing a balance 25 times - 400 operations expected,
+starting from 1,000:
+
+    strategy                       operations   conflicts   final balance   correct?
+    ---------------------------   ----------   ---------   -------------   -------------------
+    read-modify-write (naive)            400           0             975   NO - lost 375
+    one atomic UPDATE                    400           0             600   YES
+    optimistic with version check        400          25             600   YES
+
+The naive version applied all 400 operations and LOST 375 of them. Two threads read 1,000, both compute
+999, both write 999, and one decrement vanishes without any error anywhere.
+
+That is the lost-update problem, and it is invisible: no exception, no constraint violation, no log line.
+The only symptom is that the number is wrong later.
+
+The two correct strategies fix it differently:
+    ATOMIC UPDATE (`SET balance = balance - 1`) has no read-modify-write window at all - the database
+    computes the new value under its own lock. Zero conflicts, and it only works when the new value is a
+    pure function of the old one.
+    OPTIMISTIC CONCURRENCY reads a version, writes conditionally, and retries on mismatch. It works for
+    ARBITRARY logic - "reject if this would go negative" - which the atomic form cannot express.
+
+THE SECOND TRAP - assuming optimistic concurrency scales. MEASURED, retries against contention on a single
+hot row:
+
+    threads   operations   conflicts   retries per operation
+    -------   ----------   ---------   ---------------------
+          2           30           1                   0.033
+          4           60           4                   0.067
+          8          120           7                   0.058
+         16          240          27                   0.113
+         32          480          53                   0.110
+
+Retries per operation more than triple from 2 threads to 32. And this understates it, because every retry
+re-enters the same contention - on a genuinely hot row the failure mode is livelock, where threads spend
+most of their time retrying.
+
+Optimistic concurrency is right when conflicts are RARE. On a hot row you want a lock, a queue that
+serialises writes to that key, or - better - a design that does not funnel every write through one row.
+Splitting a counter into N sub-counters summed at read time is the standard escape.
+
+THE THIRD TRAP - putting business validation in the read model because that is where the data is
+convenient. MEASURED as -500. The projection is not in the write path, so anything it checks is a check
+against the past.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY.
+
+WHAT THE COMMAND SIDE OWES YOU, and the mechanisms for each:
+
+    obligation                   mechanism                          cost
+    --------------------------   --------------------------------   -----------------------------
+    enforce invariants           transaction + read-modify-write     serialises writes to an
+                                 or a CHECK constraint               aggregate
+    prevent lost updates         atomic UPDATE, or version check     MEASURED: 375 lost without one
+    reject invalid commands      validation before applying          a command can be REJECTED,
+                                                                     which a write cannot
+    make the change durable      commit                              fsync latency
+    tell the read side           outbox / CDC / event                the source of projection lag
+
+CHOOSING A CONCURRENCY STRATEGY:
+
+    atomic UPDATE            the new value is a pure function of the old (`balance - 1`). Zero conflicts,
+                             no retries, and it cannot express "reject if this would go negative".
+    CHECK constraint         the database enforces the invariant. Strongest, and the error arrives as a
+                             constraint violation you must handle.
+    optimistic (version)     arbitrary logic, retries on conflict. MEASURED: fine at low contention,
+                             degrading from 0.033 to 0.110 retries per operation across 2 to 32 threads.
+    pessimistic lock         take the lock first. Correct, serialising, and it can deadlock.
+    serialise by key         route all commands for one aggregate through one worker or partition. No
+                             conflicts at all, at the cost of throughput per key.
+    split the hot row        N sub-counters summed at read time. The standard escape when one row is the
+                             bottleneck, and it gives up the ability to enforce an exact global limit.
+
+The last two are what you reach for when optimistic concurrency stops working, and they are usually
+better than fighting it.
+
+WHERE THE READ SIDE FITS - and the failure it always causes. The projection is updated asynchronously, so
+the user who just placed an order is redirected to "my orders" and it is not there. That is not an edge
+case; it is the first thing a user does after a write. The answers, in rough order of preference:
+
+    READ-YOUR-OWN-WRITES FROM THE WRITE MODEL for a few seconds after a user's own command.
+    A VERSION TOKEN returned by the command, which the read side waits to catch up to.
+    OPTIMISTIC UI - the client displays what it just submitted without asking the server.
+    A SYNCHRONOUS PROJECTION for that one view, which the companion entry measured at 2.82x write cost.
+
+CQRS'S RELATIVES, and what each adds:
+
+    READ REPLICAS       same schema, more read capacity. Solves VOLUME, not SHAPE. Try this first.
+    MATERIALIZED VIEWS  the database maintains the projection. A projection with the refresh logic
+                        already written and tested.
+    EVENT SOURCING      events as the source of truth. Pairs naturally, and is a much larger commitment -
+                        schema evolution of events, replay, snapshots. Adopting both at once is why CQRS
+                        is thought to be complicated.
+    SAGA / PROCESS MANAGER   coordinating a command across several aggregates when a single transaction
+                        cannot span them.
+
+WHEN NOT TO USE CQRS: when the read shape IS the write shape, which is most CRUD applications. The cost is
+a second data model your team owns forever, plus staleness you must design around. Reach for it when the
+requirements table in section 1 genuinely conflicts - not because the reads are slow, which is usually an
+index or a replica.""",
+
+    """6. HOW TO CODE IT.
+
+  1. NEVER VALIDATE AGAINST THE READ MODEL. MEASURED: an overdraft of -500, identical at every projection
+     lag including zero, because the projection is not in the write path at all.
+  2. ENFORCE INVARIANTS IN THE WRITE TRANSACTION, or as a database CHECK constraint. The constraint is
+     stronger, because it holds even when someone writes around your code.
+  3. USE AN ATOMIC UPDATE WHERE THE NEW VALUE IS A PURE FUNCTION OF THE OLD. `SET balance = balance - ?`
+     has no read-modify-write window and MEASURED zero conflicts.
+  4. USE A VERSION COLUMN WHEN THE LOGIC IS CONDITIONAL. `UPDATE ... WHERE version = ?` and check
+     `rowcount` - a rowcount of 0 means someone else won and you must retry.
+  5. NEVER READ-THEN-WRITE WITHOUT ONE OF THOSE TWO. MEASURED: 375 of 400 decrements lost, silently, with
+     no error anywhere.
+  6. WATCH FOR HOT ROWS. MEASURED: retries per operation more than tripled from 2 to 32 threads.
+     Serialise by key or split the row rather than raising the retry limit.
+  7. CAP RETRIES AND BACK OFF. An unbounded optimistic retry loop on a hot row is a livelock.
+  8. SOLVE READ-YOUR-OWN-WRITES EXPLICITLY. Read from the write model for a few seconds after a user's own
+     command, or return a version token the read side waits for. Do not leave it to chance.
+  9. USE THE OUTBOX PATTERN to tell the read side. Write the event in the SAME transaction as the state
+     change; a separate relay publishes it. Two independent writes cannot be made atomic.
+ 10. MAKE THE PROJECTION IDEMPOTENT. Event delivery is at-least-once, so `UPSERT`, never
+     `count = count + 1`.
+ 11. KEEP THE PROJECTION REBUILDABLE and rehearse it. If you can rebuild, a projection bug is a five-minute
+     fix; if you cannot, it is data corruption.
+ 12. MONITOR LAG IN ROWS, not milliseconds. "One second behind" means nothing; "500 orders not yet
+     visible" is a product conversation.
+ 13. ADOPT CQRS ONE VIEW AT A TIME, and do not adopt event sourcing at the same time unless you need it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE.
+
+"CQRS separates the model you write through from the model you read through, and the reason is that
+commands and queries want opposite things from a data model. Writes want normalised, current,
+constraint-enforcing state. Reads want denormalised, pre-joined, query-shaped state. Consistency, shape,
+validation, concurrency, scaling - every one of those wants the opposite thing on the two sides.
+
+The row that actually decides it is VALIDATION, because a read projection enforces nothing and cannot.
+
+I measured that. The rule was 'a balance may never go negative'. I checked the projection before each
+withdrawal - which is the natural thing to do, since that is where the convenient denormalised data lives.
+Fifteen withdrawals of a hundred from a balance of a thousand were all approved, ending at minus five
+hundred.
+
+And the result was identical at every projection lag INCLUDING zero, which is the stronger version of the
+argument. It is not that the projection is a bit behind. It is that the projection is updated
+asynchronously and is therefore not in the write path at all, so anything it checks is a check against the
+past. Waiting longer does not help.
+
+The command side's real difficulty, though, is concurrent writers. I ran sixteen threads decrementing a
+balance twenty-five times each - four hundred operations expected. The naive read-modify-write applied all
+four hundred and LOST three hundred and seventy-five of them: two threads read a thousand, both compute
+nine hundred and ninety-nine, one decrement vanishes. No exception, no constraint violation, nothing in the
+logs. The only symptom is that the number is wrong later.
+
+Two things fix it. An atomic UPDATE - set balance equal to balance minus one - has no read-modify-write
+window because the database computes the value under its own lock, and it had zero conflicts. Or optimistic
+concurrency with a version column, which handles arbitrary logic like 'reject if this would go negative'
+that the atomic form cannot express.
+
+But optimistic concurrency degrades on contention. I measured retries per operation rising from 0.033 at
+two threads to 0.110 at thirty-two, and that understates it because every retry re-enters the same
+contention. On a genuinely hot row you want to serialise writes by key, or split the row into sub-counters
+summed at read time - not raise the retry limit.
+
+The framing I'd give: CQRS is not a performance decision. It is the acknowledgement that validation
+requires current state and fast reads require stale state, and one object cannot be both."
+
+THE ONE SENTENCE TO NOT FUMBLE: a read projection cannot enforce an invariant - measured as an overdraft
+to -500 at every lag including zero, because it is not in the write path - which is why the command side
+exists at all.""",
+
+    """8. THE CODE LINE BY LINE.
+
+    def withdraw_via_projection(acct, amt, lag_ms):
+        row = c.execute('SELECT balance FROM account_view WHERE id=?',(acct,)).fetchone()
+        if row[0] < amt: return False
+        time.sleep(lag_ms/1000.0)
+        c.execute('UPDATE accounts SET balance=balance-? WHERE id=?',(amt,acct))
+
+The bug, written the way it actually appears in real code. Note it is not obviously wrong - it reads a
+balance, checks it, and writes. The mistake is WHICH TABLE it reads from: `account_view` is the
+projection, and `accounts` is the authoritative table.
+
+The `time.sleep` is a red herring I included deliberately, and the measurement shows why: the result is
+identical at 0 ms. The failure is not about timing, it is that the projection was never updated by the
+write path at all. Testing this with lag=0 and seeing it still fail is what proves the point.
+
+    c.execute('UPDATE accounts SET balance=balance-1 WHERE id=0')
+
+The atomic form. The new value is computed BY THE DATABASE, inside its own row lock, so there is no window
+between reading and writing for another transaction to slip into. MEASURED at zero conflicts and a correct
+final balance.
+
+What it cannot do is express a CONDITION on the new value. `SET balance = balance - 1 WHERE balance >= 1`
+gets you part way, and anything richer - "reject if this crosses an overdraft limit that depends on the
+customer's tier" - needs the read-modify-write form and therefore needs versioning.
+
+    r = conn.execute('SELECT balance,version FROM accounts WHERE id=0').fetchone()
+    cur = conn.execute('UPDATE accounts SET balance=?, version=? WHERE id=0 AND version=?',
+                       (r[0]-1, r[1]+1, r[1]))
+    if cur.rowcount == 1: break
+    conflicts += 1
+
+Optimistic concurrency, and `cur.rowcount` is the entire mechanism. The `WHERE version = ?` means the
+UPDATE only applies if nobody changed the row since the read. A rowcount of 0 means someone else won -
+nothing was written, and you must re-read and retry.
+
+Checking `rowcount` is the step people omit. Without it the UPDATE silently does nothing and you have the
+lost-update bug back, now with a version column that looks like it is protecting you.
+
+    bal = conn.execute('SELECT balance FROM accounts WHERE id=0').fetchone()[0]
+    conn.execute('UPDATE accounts SET balance=? WHERE id=0',(bal-1,))
+
+The naive version, for contrast. Two statements, and between them another connection can read the same
+value. Both compute `bal-1` from the same `bal`, both write it, and one decrement is gone.
+
+MEASURED: 400 operations applied, 375 decrements lost. The operation COUNT was correct - every thread did
+its work - and the RESULT was wrong, which is exactly why this survives testing.
+
+    print(f"{'YES' if bal==exp else f'NO (lost {bal-exp})'}")
+
+Comparing against the EXPECTED final balance rather than against the operation count. The naive strategy
+reports 400 operations and 0 conflicts and looks perfectly healthy - only the final balance reveals it.
+Choosing the right thing to assert is what makes the measurement useful.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE.
+
+TRACE A - the two sides want opposite things.
+
+    property             COMMAND side                     QUERY side                  compatible?
+    ------------------   ------------------------------   -------------------------   -----------
+    consistency          STRONG, read your own writes     eventual, stale is fine     no
+    shape                normalised, one fact one place   denormalised, pre-joined    no
+    validation           enforces invariants              enforces NOTHING            no
+    concurrency          version checks / locks           no writers, no conflicts    no
+    scaling              hard - writes serialise          easy - replicate freely     no
+    failure mode         reject the command               serve slightly old data     no
+    optimises            correctness                      latency                     no
+
+Seven rows, seven conflicts. A single model must compromise on every one of them - which is the argument
+for splitting, stated as requirements rather than as performance.
+
+TRACE B - the projection cannot enforce an invariant.
+
+    projection lag   withdrawals allowed   final balance   overdrawn
+    --------------   -------------------   -------------   ---------
+              0 ms                    15            -500   YES
+              5 ms                    15            -500   YES
+             20 ms                    15            -500   YES
+             50 ms                    15            -500   YES
+
+    starting balance 1,000; 15 withdrawals of 100; expected maximum allowed: 10
+
+Identical at every lag, including ZERO. That is the finding - it is not a race condition that a shorter
+lag would reduce. The projection is not updated by the write path, so it reports 1,000 forever and every
+check passes.
+
+Five withdrawals too many, ending 500 below zero.
+
+TRACE C - concurrent writers. 16 threads x 25 decrements = 400 expected, from a balance of 1,000.
+
+    strategy                      operations   conflicts   final   expected   lost
+    ---------------------------   ----------   ---------   -----   --------   ----
+    read-modify-write (naive)            400           0     975        600    375
+    one atomic UPDATE                    400           0     600        600      0
+    optimistic with version              400          25     600        600      0
+
+The naive row is the one to sit with. Operations: 400 - every thread completed its work. Conflicts: 0 - it
+has no way to detect one. Final balance: 975 instead of 600.
+
+375 of 400 decrements vanished, and every observable signal except the final number said everything was
+fine.
+
+The optimistic row's 25 conflicts are the mechanism working: 25 times a thread's version check failed, it
+noticed, and it retried. Detected conflicts are healthy; undetected ones are the bug.
+
+TRACE D - optimistic concurrency under contention, on one hot row.
+
+    threads   operations   conflicts   retries per operation   vs 2 threads
+    -------   ----------   ---------   ---------------------   ------------
+          2           30           1                   0.033           1.0x
+          4           60           4                   0.067           2.0x
+          8          120           7                   0.058           1.8x
+         16          240          27                   0.113           3.4x
+         32          480          53                   0.110           3.3x
+
+Retries per operation more than triple across the range. The curve is noisy at these sizes, and the
+direction is unambiguous, and it understates the real behaviour because every retry re-enters the same
+contention - at higher concurrency the failure mode becomes livelock rather than merely extra work.
+
+The practical threshold: optimistic concurrency is for RARE conflicts. Once retries are a meaningful
+fraction of operations, serialise by key or stop funnelling every write through one row.
+
+TRACE E - choosing a concurrency strategy.
+
+    strategy              conflicts   handles conditional logic   scales on a hot row
+    -------------------   ---------   -------------------------   -------------------
+    naive read-then-write  UNDETECTED  yes                        no - and it is WRONG
+    atomic UPDATE          0           no                         yes
+    CHECK constraint       0           simple conditions only     yes
+    optimistic + version   detected    YES                        degrades
+    pessimistic lock       0           yes                        serialises
+    serialise by key       0           yes                        one writer per key
+    split the row          0           no (loses an exact total)  YES
+
+The first row is never acceptable. The choice among the rest is a trade between expressiveness (can it
+encode your rule?) and contention behaviour, and the bottom two are the escapes when the middle ones stop
+working.
+
+TRACE F - where each obligation is met.
+
+    obligation                    write model   projection   client   database constraint
+    ---------------------------   -----------   ----------   ------   -------------------
+    enforce 'balance >= 0'        YES           NO           NO       YES (strongest)
+    prevent lost updates          YES           n/a          no       YES
+    reject an invalid command     YES           NO           no       partly
+    answer a query fast           no            YES          n/a      n/a
+    survive a stale read          n/a           YES          n/a      n/a
+
+The projection column is NO for every obligation on the command side and YES for both on the query side.
+That is the separation, expressed as capability rather than as architecture diagram.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY.
+
+THE NUMBERS:
+
+    invariant on the projection   15 withdrawals of 100 from 1,000 all approved -> final balance -500,
+                                  IDENTICAL at 0, 5, 20 and 50 ms of lag
+    lost updates                  naive read-modify-write: 400 operations, 0 detected conflicts,
+                                  375 decrements LOST (final 975 against an expected 600)
+    correct strategies            atomic UPDATE: 0 conflicts, correct
+                                  optimistic + version: 25 conflicts, correct
+    contention                    retries per operation 0.033 at 2 threads -> 0.110 at 32 (3.3x)
+
+COMPLEXITY: a command costs a transaction plus, under optimistic concurrency, an expected 1/(1-p) attempts
+where p is the conflict probability. Atomic updates are one statement. The read side costs a second data
+model, its lag, its rebuild and its reconciliation - all covered in the companion entry.
+
+THE MISTAKES:
+
+    - Validating against the read model. MEASURED at -500, and identical at zero lag, because the
+      projection is not in the write path.
+    - Read-modify-write without a version check or an atomic update. MEASURED: 375 of 400 lost, silently.
+    - Not checking `rowcount` after a conditional UPDATE, which reinstates the lost-update bug while
+      appearing to have version control.
+    - Assuming optimistic concurrency scales. MEASURED at 3.3x the retries across a 16x concurrency
+      increase, and worse beyond it.
+    - An unbounded optimistic retry loop on a hot row - that is a livelock.
+    - Funnelling every write through one row instead of splitting it or serialising by key.
+    - Using an atomic UPDATE where the rule is conditional. It cannot express "reject if this would go
+      negative in a tier-dependent way".
+    - Enforcing invariants only in application code when a CHECK constraint would hold even against
+      writes that bypass your code.
+    - Ignoring read-your-own-writes, which is the first thing a user does after a command.
+    - Two independent writes for the state change and the event. Use an outbox in the same transaction.
+    - A non-idempotent projection consumer, when event delivery is at-least-once.
+    - Adopting event sourcing at the same time as CQRS, which is two large commitments at once.
+    - Using CQRS when the read shape IS the write shape - most CRUD applications - where an index or a
+      read replica is the actual answer.
+
+THE TAKEAWAY. CQRS exists because commands and queries want opposite things on every axis - consistency,
+shape, validation, concurrency, scaling - and the decisive one is validation: a read projection enforces
+nothing and cannot, which I measured as an account overdrawing to -500 with the check in place, identical
+at zero lag, because the projection is not in the write path at all. The command side's real work is
+concurrency, and the naive read-modify-write is silently catastrophic - 375 of 400 decrements lost with
+zero detected conflicts and nothing in the logs. Fix it with an atomic UPDATE where the new value is a
+pure function of the old, or with a version check where the logic is conditional - and watch the retry
+rate, because optimistic concurrency tripled its retries across a 16x increase in threads and degrades to
+livelock on a genuinely hot row, where the answer is to serialise by key or stop funnelling every write
+through one row.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
         _e["examples"] = _EX_P1AO[_e["title"]]
