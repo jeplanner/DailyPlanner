@@ -358746,6 +358746,293 @@ _ANSWER_V2['Pattern: Strategy - swap an algorithm at runtime'] = """Pull the par
   chosen from outside and does not change itself; State transitions to the next
   state on its own. Expect to be asked."""
 
+_ANSWER_V2['Context switch'] = """Saving one thread's registers and loading another's - pure overhead, and the cache it destroys costs far more than the swap itself.
+
+· WHAT GETS SAVED — the program counter, the CPU registers and the stack
+  pointer, written to memory; then the next thread's saved state is loaded and
+  jumped into. No useful work happens during any of it.
+· THE DIRECT COST is roughly 1-10 microseconds. That number alone makes context
+  switching sound cheap, which is why the next point matters more.
+· THE INDIRECT COST DOMINATES — the new thread's working set is not in L1/L2
+  cache, and the TLB may be flushed on a process switch. Rebuilding that
+  locality can cost far more than the switch, and it does not appear in any
+  timer you might set around it.
+· PROCESS SWITCHES COST MORE THAN THREAD SWITCHES, because processes have
+  separate address spaces so the page tables change too. Threads in one process
+  share memory mappings and skip that.
+· WHAT CAUSES ONE — the time slice expiring, a blocking I/O call, a
+  higher-priority thread waking, or an interrupt.
+· THIS IS WHY THREAD-PER-REQUEST STOPS SCALING. At high concurrency the machine
+  spends its time switching rather than working, which is precisely the
+  argument for event loops, async I/O and goroutines with user-space
+  scheduling.
+· IT IS ALSO WHY MORE THREADS IS NOT MORE SPEED for CPU-bound work: past the
+  core count you are only adding switches."""
+
+_ANSWER_V2['Deadlock and its four necessary conditions'] = """All FOUR Coffman conditions must hold at once - so preventing a deadlock means breaking any single one of them.
+
+· (1) MUTUAL EXCLUSION — the resource cannot be shared; only one holder at a
+  time.
+· (2) HOLD AND WAIT — a process holds one resource while waiting for another.
+· (3) NO PREEMPTION — the resource cannot be taken away; the holder must
+  release it voluntarily.
+· (4) CIRCULAR WAIT — a cycle of processes, each waiting on the next.
+· 'NECESSARY, ALL FOUR AT ONCE' IS THE POINT OF THE LIST. It is not a
+  description, it is four separate attack surfaces, and naming which one your
+  fix breaks is what a good answer does.
+· THE FIX THAT ACTUALLY GETS USED is breaking circular wait by imposing a
+  GLOBAL LOCK ORDERING — every thread acquires locks in the same defined order,
+  so no cycle can form. Cheap, and it needs no runtime machinery.
+· THE OTHERS IN PRACTICE — break hold-and-wait by acquiring everything at once
+  or nothing; break no-preemption with lock timeouts and retry (which risks
+  livelock); mutual exclusion is usually not negotiable, though lock-free
+  structures remove it entirely.
+· DETECTION AND RECOVERY IS THE OTHER STRATEGY — databases build a wait-for
+  graph, find the cycle, and kill the cheapest transaction as a deadlock
+  victim. That is why your ORM occasionally throws a deadlock error and why
+  retrying it usually works.
+· BANKER'S ALGORITHM AVOIDS deadlock by refusing unsafe allocations, but it
+  needs every process to declare its maximum needs in advance, which is why it
+  is taught and almost never deployed.
+· LIVELOCK IS THE SIBLING — threads are not blocked, they are politely
+  retrying forever and making no progress."""
+
+_ANSWER_V2['IEEE 754 floating point (and why 0.1 + 0.2 != 0.3)'] = """Binary fractions can only represent sums of 1/2, 1/4, 1/8 - so 0.1 has no exact form and must be rounded before you even start.
+
+· THE LAYOUT — sign, exponent, mantissa. A 64-bit double is 1 + 11 + 52 bits,
+  giving about 15-17 significant decimal digits.
+· WHY 0.1 IS INEXACT — its denominator is not a power of two, so in binary it
+  repeats forever and gets rounded to fit. Stored, it is really
+  0.1000000000000000055511151231257827...
+· SO THE SUM IS WRONG BEFORE THE ADDITION — you are adding two already-rounded
+  values, and 0.1 + 0.2 lands on 0.30000000000000004, which is a different
+  double from the rounded 0.3. This is not a bug in any language; it is the
+  same in C, Java and JavaScript.
+· NEVER COMPARE FLOATS WITH ==. Compare with a tolerance: abs(a - b) < epsilon,
+  or math.isclose, which handles relative scale properly.
+· NEVER USE FLOATS FOR MONEY. Use integer cents, or a Decimal type. This is the
+  practical half of the question and the answer they are listening for.
+· PRECISION DEGRADES WITH MAGNITUDE, because the mantissa is a fixed number of
+  bits: above 2^53 consecutive integers are no longer all representable, so
+  adding 1 to a large double can do nothing at all.
+· ADDITION IS NOT ASSOCIATIVE — (a + b) + c can differ from a + (b + c). That
+  is why summing a large array of small values loses accuracy, and why
+  compensated summation exists.
+· THE SPECIAL VALUES — positive and negative zero, infinities, and NaN. NaN is
+  not equal to anything including itself, which is the standard way to test for
+  it and a favourite trick question."""
+
+_ANSWER_V2['Normalisation worked: taking one messy table to 3NF (and when to stop)'] = """Do not recite the forms - normalise one table live, because that is what is actually being asked.
+
+· START WITH THE MESS — an orders table holding order_id, customer_name,
+  customer_email, a comma-separated product_ids, product_names, quantity,
+  unit_price, supplier, supplier_phone.
+· 1NF: EVERY CELL ATOMIC, no repeating groups. The comma-separated product list
+  becomes one row per product, which creates an order_lines table. If you can
+  only query a column with LIKE or a split, it is not in 1NF.
+· 2NF: NO PARTIAL DEPENDENCY on part of a composite key. In order_lines the key
+  is (order_id, product_id), but product_name depends on product_id alone — so
+  it moves to a products table. 2NF only bites when the key is composite.
+· 3NF: NO TRANSITIVE DEPENDENCY — a non-key column depending on another non-key
+  column. supplier_phone depends on supplier, not on the product, so suppliers
+  becomes its own table.
+· THE ONE-LINE MNEMONIC worth saying: every non-key column depends on the key,
+  the whole key, and nothing but the key.
+· WHY IT MATTERS IS UPDATE ANOMALIES, not tidiness. Duplicated supplier phone
+  numbers mean changing one requires finding every row, and missing one leaves
+  the database disagreeing with itself.
+· WHEN TO STOP — 3NF is the practical target. BCNF is worth knowing but rarely
+  changes anything, and beyond that you are solving problems most schemas do
+  not have.
+· DENORMALISE DELIBERATELY, AFTERWARDS. Analytics and read-heavy paths often
+  want the joins pre-done. The rule is normalise first, then denormalise for a
+  measured reason — never start denormalised because joins feel slow."""
+
+_ANSWER_V2["Python's GIL - what it actually stops, and what it does not"] = """One lock means one thread runs Python bytecode at a time - so threads never speed up CPU-bound Python, and are still excellent for I/O.
+
+· THE FACT — CPython has a Global Interpreter Lock, so within one process only
+  one thread executes bytecode at any moment.
+· THE CONSEQUENCE EVERYONE STATES — no speed-up for CPU-bound pure Python. Four
+  threads summing numbers take as long as one, plus switching overhead.
+· THE CONSEQUENCE PEOPLE MISS — the GIL is RELEASED during blocking I/O. A
+  network read, a disk read, time.sleep all let other threads run, so fifty
+  threads waiting on fifty HTTP requests work beautifully. Threads are the
+  right tool for I/O concurrency in Python.
+· NUMPY, PANDAS AND TORCH RELEASE IT TOO for their heavy C loops. This matters
+  enormously for ML code: the expensive work is not holding the lock, so the
+  GIL is far less of a constraint in a numerical stack than the folklore
+  suggests.
+· FOR CPU-BOUND WORK, USE PROCESSES — multiprocessing gives each its own
+  interpreter and its own GIL. The cost is that data must be pickled between
+  them, so it pays only when the work per item outweighs the transfer.
+· ASYNCIO IS A THIRD OPTION and a different mechanism — one thread, cooperative
+  scheduling, no GIL contention at all because there is nothing to contend.
+  Best for very high I/O concurrency; useless for CPU-bound work.
+· IT IS A CPYTHON IMPLEMENTATION DETAIL, not a language rule. Jython and
+  IronPython have none, and CPython 3.13 ships an experimental free-threaded
+  build, so the correct framing is 'CPython has a GIL', not 'Python has a GIL'.
+· THE GIL DOES NOT MAKE YOUR CODE THREAD-SAFE. It protects the interpreter's
+  own state; your count += 1 is still three bytecodes and can still lose an
+  update. You still need locks."""
+
+_ANSWER_V2['Race condition'] = """Correctness depends on the ORDER two threads happen to run in - and that order is not guaranteed.
+
+· THE CLASSIC SHAPE is a read-modify-write on shared data. count = count + 1
+  looks like one step and is three: LOAD, ADD, STORE. Two threads can both
+  load the same old value, both add one, both store — and two increments
+  become one.
+· THE LOST UPDATE IS INVISIBLE IN TESTING, because the bad interleaving may
+  need a specific timing that appears once in a million runs. That is what
+  makes these bugs expensive: they surface under production load.
+· THE FIX IS A LOCK around the whole read-modify-write, or an atomic operation
+  that does all three as one indivisible step. The critical section must cover
+  ALL THREE; guarding only the store fixes nothing.
+· CHECK-THEN-ACT IS THE OTHER COMMON SHAPE — 'if not exists, create' where two
+  threads both pass the check. Same disease: the check and the act must be one
+  atomic step.
+· KEEP THE CRITICAL SECTION SMALL but not too small. Too large and you have
+  serialised the program; too small and it does not cover the invariant.
+· IT IS NOT THE SAME AS A DEADLOCK. A race produces a wrong answer while
+  running; a deadlock produces no answer at all. Interviewers ask for the
+  distinction.
+· TOOLS EXIST — ThreadSanitizer, Go's -race, Java's jcstress. Saying you would
+  reach for one is better than saying you would read the code harder.
+· THE PYTHON NOTE — the GIL does not save you. count += 1 is still multiple
+  bytecodes with a switch possible between them."""
+
+_ANSWER_V2['SQL: WHERE vs GROUP BY vs HAVING, and window functions'] = """Learn the LOGICAL ORDER OF EVALUATION and every confusing SQL error explains itself.
+
+· THE ORDER — FROM and JOIN, then WHERE, then GROUP BY, then HAVING, then
+  SELECT, then ORDER BY, then LIMIT.
+· WHERE FILTERS ROWS BEFORE GROUPING, so it cannot reference an aggregate: the
+  groups do not exist yet. HAVING filters GROUPS AFTER aggregation, which is
+  where HAVING COUNT(*) > 5 belongs.
+· FILTER AS MUCH AS POSSIBLE IN WHERE, because it shrinks the input to the
+  grouping. Doing the same filter in HAVING gives the same answer and more
+  work.
+· SELECT RUNS AFTER GROUP BY, which is why you cannot use a SELECT alias in
+  WHERE or GROUP BY — but you CAN use it in ORDER BY, which runs later. That
+  one asymmetry accounts for a large share of SQL confusion.
+· EVERY NON-AGGREGATED SELECT COLUMN MUST BE IN THE GROUP BY. Postgres enforces
+  it; MySQL historically did not and returned an arbitrary row, which is worth
+  knowing because it silently produced wrong reports.
+· WINDOW FUNCTIONS AGGREGATE WITHOUT COLLAPSING ROWS. That is the whole point:
+  SUM(x) OVER (PARTITION BY dept) puts the department total on every row while
+  keeping the rows.
+· THE THREE RANKERS DIFFER ON TIES — ROW_NUMBER always distinct, RANK leaves
+  gaps after a tie (1,1,3), DENSE_RANK does not (1,1,2). Choosing wrong is the
+  usual bug in a top-N-per-group query.
+· A WINDOW FUNCTION CANNOT GO IN WHERE, because it is computed at SELECT time.
+  Wrap it in a subquery or CTE and filter outside — that is the standard shape
+  for 'top 3 per group'."""
+
+_ANSWER_V2['The SQL queries you will actually be asked to write'] = """A handful of patterns cover most live SQL rounds, and each has one specific trap.
+
+· SECOND-HIGHEST SALARY — the naive MAX(salary) WHERE salary < MAX(salary)
+  works but breaks on ties and does not generalise. DENSE_RANK scales to Nth.
+  Handle 'what if there is no second salary': SELECT MAX(...) returns NULL
+  naturally, while LIMIT 1 OFFSET 1 returns no row at all, which is a different
+  and usually wrong answer.
+· FIND DUPLICATES — GROUP BY the columns that should be unique, HAVING
+  COUNT(*) > 1. The follow-up is DELETING them while keeping one, which needs
+  ROW_NUMBER() in a CTE and a delete where the number is above 1.
+· TOP N PER GROUP — ROW_NUMBER() OVER (PARTITION BY group ORDER BY metric DESC)
+  in a subquery, filtered outside. This is the single most-asked window
+  question, and the reason is that it cannot be done with GROUP BY alone.
+· RUNNING TOTAL — SUM(x) OVER (ORDER BY date). Add ROWS BETWEEN UNBOUNDED
+  PRECEDING AND CURRENT ROW if you want to be explicit, and note the default
+  frame changes behaviour when there are ties in the ORDER BY.
+· ROWS WITH NO MATCH — LEFT JOIN plus WHERE right.id IS NULL, or NOT EXISTS.
+  Prefer NOT EXISTS over NOT IN, because NOT IN with a NULL in the subquery
+  returns no rows at all. That is a genuine production bug, not a curiosity.
+· MONTH-OVER-MONTH — LAG(metric) OVER (ORDER BY month) and subtract.
+· CONSECUTIVE ROWS — self-join on id = id + 1 is fragile if ids have gaps; LAG
+  is the robust version.
+· SAY YOUR ASSUMPTION ABOUT TIES AND NULLS OUT LOUD before writing. Most of
+  these traps are really NULL semantics wearing different clothes."""
+
+_ANSWER_V2['Best Time to Buy and Sell Stock with Cooldown'] = """Three rolling states - HOLD, SOLD, REST - each updated from yesterday's three. That is the whole solution.
+
+· WHY STATES AND NOT GREEDY — the cooldown couples today's choice to
+  yesterday's, so no local rule works. Naming the states is what turns this
+  into a two-line recurrence.
+· THE STATES — HOLD: you own a share. SOLD: you sold TODAY, so you may not buy
+  tomorrow. REST: you own nothing and are free to buy.
+· THE TRANSITIONS — hold = max(hold, rest - price) because you may only buy
+  from REST, never from SOLD. sold = hold + price. rest = max(rest, sold),
+  which is where the cooldown expires.
+· THE COOLDOWN LIVES ENTIRELY IN ONE PLACE: buying is reachable from rest and
+  not from sold. That single restriction is the whole difference from the
+  unlimited-transactions version.
+· UPDATE FROM YESTERDAY'S VALUES, not today's. Assigning hold before using the
+  old rest silently lets you buy and sell on the same day. Compute all three
+  into temporaries, or assign simultaneously.
+· THE INITIAL VALUES — hold starts at negative infinity (or -prices[0]) since
+  you cannot hold before buying; sold and rest start at 0.
+· THE ANSWER IS max(sold, rest) at the end — never hold, because ending with an
+  unsold share is never better than not having bought it.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Binary Tree Zigzag Level-Order Traversal'] = """A normal level-order BFS - only the way you WRITE each level alternates, not the way you traverse it.
+
+· DO NOT ALTERNATE THE TRAVERSAL. Enqueue children left-to-right every time;
+  changing the enqueue order is the tempting wrong turn and it corrupts
+  subsequent levels.
+· THE CLEAN IMPLEMENTATION — build each level into a deque and appendleft when
+  the direction is right-to-left, otherwise append. Then flip a boolean.
+· THE SIMPLER-STILL VERSION — build every level normally and reverse the
+  alternate ones. Same complexity, one less concept, and easier to write
+  correctly under pressure. Reversing is O(level), which changes nothing
+  asymptotically.
+· LEVEL BOUNDARIES COME FROM CAPTURING len(queue) before draining it, exactly
+  as in every other level-order problem.
+· THE FIRST LEVEL IS LEFT-TO-RIGHT, so the flag starts false. Off-by-one on the
+  flag reverses the whole output, which looks like a much deeper bug than it is.
+· A DFS VERSION WORKS TOO — recurse with a depth, append into a list per depth,
+  then reverse odd depths at the end. Worth mentioning if asked for an
+  alternative.
+· COST — O(n) time, O(w) space for the widest level."""
+
+_ANSWER_V2['Bipartite Graph Check (BFS 2-coloring)'] = """Two-colour it with BFS - a graph is bipartite exactly when it has no odd-length cycle.
+
+· THE EQUIVALENCE IS THE INSIGHT, and it is what to say first: bipartite,
+  2-colourable, and no odd cycle are three descriptions of the same property.
+· THE ALGORITHM — BFS from an uncoloured node, colouring each neighbour the
+  opposite colour. If you ever reach a neighbour already coloured the SAME as
+  the current node, an odd cycle exists and it is not bipartite.
+· LOOP OVER ALL NODES as starting points. The graph may be disconnected, and
+  checking only one component is the standard bug — it returns true for a graph
+  containing a triangle elsewhere.
+· AN UNCOLOURED-ARRAY WITH THREE STATES (uncoloured, colour 0, colour 1) is
+  cleaner than a visited set plus a colour map, and it makes the failure test a
+  single comparison.
+· DFS WORKS EQUALLY WELL, colouring with the opposite of the parent. Use BFS if
+  recursion depth is a concern on a large graph.
+· WHAT IT IS FOR — 'split into two teams with no conflicts', 'possible
+  bipartition', and as a precondition for bipartite matching problems.
+· A GRAPH WITH NO EDGES IS BIPARTITE, and so is any tree — trees have no cycles
+  at all, so certainly no odd ones.
+· COST — O(V + E) time, O(V) space."""
+
+_ANSWER_V2['Boats to Save People'] = """Sort, then pair the heaviest with the lightest if they fit - and the heavy pointer moves every single time.
+
+· THE SETUP — each boat carries at most TWO people and has a weight limit;
+  minimise the boat count.
+· THE GREEDY — with two pointers on the sorted array, if lightest + heaviest is
+  within the limit, both board and both pointers move. Otherwise the heaviest
+  goes alone and only the right pointer moves. Either way a boat is used.
+· WHY IT IS OPTIMAL — the heaviest person needs a boat no matter what, so the
+  only question is whether anyone can share it. If the lightest cannot fit
+  beside them, nobody can, so sending them alone loses nothing.
+· THE HEAVY POINTER ALWAYS ADVANCES, which is what guarantees termination and
+  makes the boat count equal to the number of iterations.
+· THE 'AT MOST TWO' CONSTRAINT IS WHAT MAKES GREEDY WORK. With three or more
+  per boat this becomes bin packing, which is NP-hard — worth saying, because
+  it shows you know why the constraint is there.
+· THE LOOP CONDITION IS left <= right, not left < right, or the final lone
+  person is never given a boat.
+· COST — O(n log n) for the sort, O(1) space beyond it."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
