@@ -2378,3 +2378,107 @@ def test_topic_landing_matches_on_title_and_clicks_rather_than_forcing_open():
     assert "head.click()" in block, "forces .open and would show an empty lazy card"
     assert "MutationObserver" in block, "these lists are fetched, not inline"
     assert "landOnTopic(root)" in js, "never wired into attach()"
+
+
+# ═══════════════════════════════════════════════════
+# Prep cards — "Planned on …", green ahead, red elapsed
+# ═══════════════════════════════════════════════════
+
+def test_scheduled_endpoint_reports_when_each_topic_is_planned(auth_client, monkeypatch):
+    """Asked for: a scheduled prep item should say "Planned on <date> at
+    <time>", red once that has elapsed and green while it has not.
+
+    Read from project_tasks, not daily_events: the scheduler writes one task
+    PER TOPIC even when a bulk selection collapses into one calendar block,
+    so the task is the only per-topic record of what was planned.
+    """
+    import routes.interview_prep as ip
+    monkeypatch.setattr(ip, "_find_prep_project", lambda u, b: "PROJ")
+    monkeypatch.setattr(ip, "get", lambda t, params=None, **k: [
+        {"task_text": "ORDER BY, and where NULL sorts", "plan_date": "2026-08-22",
+         "start_time": "19:00:00", "status": "open"},
+        {"task_text": "Untimed one", "plan_date": "2026-08-16",
+         "start_time": "00:00:00", "status": "open"},
+        {"task_text": "Repeat", "plan_date": "2026-09-01",
+         "start_time": "10:00:00", "status": "open"},
+        {"task_text": "Repeat", "plan_date": "2026-08-05",
+         "start_time": "08:00:00", "status": "open"},
+    ])
+    s = auth_client.get("/api/prep/scheduled?bank=sql").get_json()["scheduled"]
+
+    assert s["ORDER BY, and where NULL sorts"]["start_time"] == "19:00"
+    # 00:00 is the scheduler's stand-in for "no time given". Reported as
+    # absent, or the card would read "at 12:00 AM" like a real appointment.
+    assert s["Untimed one"]["start_time"] == ""
+    # A topic scheduled twice keeps the EARLIEST — that is the commitment,
+    # and showing the later one would hide an overdue first attempt.
+    assert s["Repeat"]["plan_date"] == "2026-08-05"
+
+
+def test_opening_a_bank_page_never_creates_its_project(auth_client, monkeypatch):
+    """_ensure_prep_project creates on miss, which is right when scheduling
+    and wrong on a page load — merely opening /java should not bring a
+    JavaPrep project into existence. Hence a read-only sibling."""
+    import routes.interview_prep as ip
+    created = []
+    monkeypatch.setattr(ip, "_find_prep_project", lambda u, b: None)
+    monkeypatch.setattr(ip, "post", lambda *a, **k: created.append(a) or [{}])
+    r = auth_client.get("/api/prep/scheduled?bank=java")
+    assert r.status_code == 200
+    assert r.get_json()["scheduled"] == {}
+    assert not created, "a page load created a project"
+    assert auth_client.get("/api/prep/scheduled?bank=nope").status_code == 400
+
+
+def test_pg_eq_no_longer_quotes_itself_into_matching_nothing():
+    """THE BUG THIS FIXES was silent and expensive. _pg_eq wrapped values in
+    double quotes, which PostgREST matched LITERALLY — so every existence
+    check built on it answered "not there", always.
+
+    Measured on live data: the quoted form returned 0 rows for both a plain
+    name and a comma-bearing title; plain returned 10 and 1. The visible
+    damage was ten SQLPrep projects created for one user in four minutes,
+    one per Plan click, because the project lookup never found the one it
+    had just made.
+
+    The quoting was solving a real problem — commas in titles — that
+    supabase_client already solves by handing params to `requests`, which
+    URL-encodes them.
+    """
+    from routes.interview_prep import _pg_eq
+    assert _pg_eq("SQLPrep") == "eq.SQLPrep"
+    assert '"' not in _pg_eq("ORDER BY, and where NULL sorts")
+    assert _pg_eq("A (paren), a colon: and a comma") == \
+        "eq.A (paren), a colon: and a comma"
+
+
+def test_prep_project_lookup_is_deterministic():
+    """Where duplicates already exist, an unordered limit:1 can return a
+    different row each call and scatter one bank's tasks across several
+    projects — which is exactly how the damage compounded."""
+    import inspect
+    import routes.interview_prep as ip
+    assert "created_at.asc" in inspect.getsource(ip._find_prep_project)
+    # And the creating path must not keep its own copy of the lookup — that
+    # divergence is how the two came to disagree in the first place.
+    ensure = inspect.getsource(ip._ensure_prep_project)
+    assert "_find_prep_project(user_id, bank)" in ensure
+    # The FILTER form specifically — the create payload legitimately sets
+    # is_archived, so a bare substring match flags its own insert.
+    assert '"is_archived": "eq.false"' not in ensure, (
+        "a second, unordered lookup crept back in")
+
+
+def test_planned_pill_elapses_at_the_end_of_an_untimed_day():
+    """The scheduler stores 00:00 for "no time given". Treating that
+    literally would paint TODAY's untimed plan red all day, which is the
+    opposite of what it means — an untimed plan for today has not been
+    missed at 00:01."""
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    block = js.split("function deadlineOf")[1].split("function paintScheduled")[0]
+    assert "23, 59, 59, 999" in block, "an untimed day elapses at midnight"
+    # The comparison must happen on the CLIENT: "has it elapsed" needs the
+    # reader's clock, and the server is a different machine.
+    assert "/api/prep/scheduled" in js
+    paint = js.split("function paintScheduled")[1].split("function loadScheduled")[0]
+    assert "new Date()" in paint and "late" in paint and "soon" in paint

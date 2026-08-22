@@ -147,11 +147,29 @@ def test_a_block_never_runs_into_the_next_day():
     assert ip._ai_sde_end_time("00:00", None) == "00:30"
 
 
-def test_free_text_filters_are_quoted():
-    """386 of the 1,120 titles contain a comma, a colon or a bracket, and
-    PostgREST reads every one of those as filter syntax."""
-    assert ip._pg_eq(TITLE) == f'eq."{TITLE}"'
-    assert ip._pg_eq('say "hi"') == 'eq."say \\"hi\\""'
+def test_free_text_filters_are_not_quoted():
+    """THIS TEST USED TO PIN THE BUG. It asserted that _pg_eq wrapped values
+    in double quotes, and it passed happily for months while every filter
+    built on it matched NOTHING — PostgREST compared the quotes as part of
+    the value.
+
+    The premise was right: 386 of the 1,120 titles contain a comma, a colon
+    or a bracket, and PostgREST does read those as filter syntax. But the
+    escaping already happens one layer down — supabase_client hands params
+    to `requests`, which URL-encodes them, so a comma arrives as %2C.
+
+    Measured against live data: the quoted form returned 0 rows for both a
+    plain name and a comma-bearing title; the plain form returned 10 and 1.
+    The damage was ten duplicate projects for one user in four minutes,
+    because the project lookup never found the one it had just created.
+
+    A test that asserts an implementation detail cannot tell you the detail
+    is wrong. This one now checks the property that actually matters: the
+    filter is the value, unwrapped, and the transport does the escaping.
+    """
+    assert ip._pg_eq(TITLE) == f"eq.{TITLE}"
+    assert ip._pg_eq('say "hi"') == 'eq.say "hi"'
+    assert '"' not in ip._pg_eq("ORDER BY, and where NULL sorts")
 
 
 def test_the_title_beats_a_stale_id():

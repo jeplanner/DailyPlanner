@@ -75,6 +75,20 @@
     ".prep-bulkcount{font-size:12.5px;font-weight:700;color:var(--color-text-secondary,#6b7280)}",
     ".prep-pickbox{flex:none;width:17px;height:17px;cursor:pointer;accent-color:#4338ca}",
     ".q-card.prep-picked{outline:2px solid #4338ca;outline-offset:-2px}",
+
+    /* "Planned on …". Green while it is still ahead of you, red once the
+       moment has passed without the topic being marked done, grey when it
+       has. Sized like the other chips on the row so it reads as one of
+       them rather than an alert. */
+    ".prep-when{flex:none;display:inline-flex;align-items:center;gap:4px;",
+    "font:inherit;font-size:10.5px;font-weight:800;line-height:1;",
+    "border-radius:999px;padding:5px 9px;white-space:nowrap;border:1px solid}",
+    ".prep-when.soon{color:#065f46;background:#d1fae5;border-color:#6ee7b7}",
+    ".prep-when.late{color:#991b1b;background:#fee2e2;border-color:#fca5a5}",
+    ".prep-when.done{color:#374151;background:#f3f4f6;border-color:#d1d5db}",
+    "html.dark .prep-when.soon{color:#6ee7b7;background:#04302a;border-color:#047857}",
+    "html.dark .prep-when.late{color:#fca5a5;background:#3f1d1d;border-color:#b91c1c}",
+    "html.dark .prep-when.done{color:#d1d5db;background:#27272a;border-color:#3f3f46}",
     /* The card you arrived on. Flashes, then stops — a permanent ring
        would read as a state the card is in. */
     ".q-card.prep-landed{outline:3px solid #6366f1;outline-offset:2px;",
@@ -536,6 +550,105 @@
     }, DEADLINE);
   }
 
+  /* ══════════════════════════════════════════════════════════════════
+     "PLANNED ON …" ON EACH CARD
+
+     Asked for: a scheduled topic should say when it is planned for, RED if
+     that moment has passed and GREEN if it has not.
+
+     Until now the only way to find out whether you had already scheduled
+     something was to open the calendar — the wrong place to answer a
+     question you are asking while looking at the topic.
+
+     THE COMPARISON IS MADE HERE, NOT ON THE SERVER, because "has it
+     elapsed" needs the READER's clock and the server is a different
+     machine. The API sends the raw date and time; the colour is decided
+     against the local Date.
+
+     A DATE WITH NO TIME ELAPSES AT THE END OF ITS DAY, not at midnight when
+     it begins. The scheduler stores 00:00 for "no time given", so treating
+     that literally would paint today's untimed plan red all day — which is
+     the opposite of what it means.
+     ══════════════════════════════════════════════════════════════════ */
+
+  var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
+                "Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  function fmtWhen(iso, hhmm) {
+    var p = iso.split("-");
+    if (p.length !== 3) return iso;
+    var d = new Date(+p[0], +p[1] - 1, +p[2]);
+    var txt = d.getDate() + " " + MONTHS[d.getMonth()];
+    var now = new Date();
+    if (d.getFullYear() !== now.getFullYear()) txt += " " + d.getFullYear();
+    return hhmm ? txt + ", " + hhmm : txt;
+  }
+
+  /* The instant a plan stops being "upcoming".
+     With a time, that is the time. Without one, it is the END of the day —
+     an untimed plan for today has not been missed at 00:01. */
+  function deadlineOf(iso, hhmm) {
+    var p = iso.split("-");
+    if (p.length !== 3) return null;
+    if (hhmm) {
+      var t = hhmm.split(":");
+      return new Date(+p[0], +p[1] - 1, +p[2], +t[0] || 0, +t[1] || 0, 0, 0);
+    }
+    return new Date(+p[0], +p[1] - 1, +p[2], 23, 59, 59, 999);
+  }
+
+  function paintScheduled(root, scheduled) {
+    var now = new Date();
+    bulkButtons(root).forEach(function (btn) {
+      var title = btn.getAttribute("data-title") || "";
+      var info = scheduled[title];
+      var host = btn.parentElement;
+      var old = host.querySelector(".prep-when");
+      if (old) old.remove();
+      if (!info || !info.plan_date) return;
+
+      var pill = document.createElement("span");
+      var done = (info.status || "").toLowerCase() === "done";
+      var due = deadlineOf(info.plan_date, info.start_time);
+      var late = !done && due && due.getTime() < now.getTime();
+
+      pill.className = "prep-when " + (done ? "done" : (late ? "late" : "soon"));
+      pill.textContent = (done ? "Studied " : "Planned ") +
+                         fmtWhen(info.plan_date, info.start_time);
+      pill.title = done
+        ? "Marked done in the prep project"
+        : (late ? "This was planned for " + fmtWhen(info.plan_date, info.start_time)
+                  + " and has not been marked done"
+                : "Scheduled — not due yet");
+      host.insertBefore(pill, btn);
+    });
+  }
+
+  function loadScheduled(root) {
+    var bank = bulkBank(root);
+    if (!bank) return;
+    fetch("/api/prep/scheduled?bank=" + encodeURIComponent(bank),
+          { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !j.scheduled) return;
+        schedCache = j.scheduled;
+        paintScheduled(root, schedCache);
+        /* The pages rebuild their list on every filter change, which wipes
+           the pills. Repaint from the cache rather than refetching — the
+           answer cannot have changed because a filter moved. */
+        if (window.MutationObserver && !root.dataset.prepWhenBound) {
+          root.dataset.prepWhenBound = "1";
+          new MutationObserver(function () {
+            paintScheduled(root, schedCache);
+          }).observe(root, { childList: true });
+        }
+      })
+      .catch(function () { /* offline: the cards are still usable */ });
+  }
+
+  var schedCache = {};
+
   var PrepScheduler = {
     /* HTML for the header button. `title` is the topic text and is what
        actually identifies it to the server; `entryId` is optional and is
@@ -610,6 +723,9 @@
       // ?topic= — arriving from the Day Board on one specific line item.
       landOnTopic(root);
 
+      // "Planned on …" pills, from whatever is already scheduled.
+      loadScheduled(root);
+
       // The pages re-render their list on every filter change, which wipes
       // the injected checkboxes. Re-draw them when the children change —
       // childList only, since paintBoxes() itself mutates inside the cards
@@ -625,6 +741,9 @@
     /* Expose the bulk state for tests and for a host page that wants to
        drive it. Deliberately read-only-ish: the module owns the set. */
     _bulk: bulk,
+    _fmtWhen: fmtWhen,
+    _deadlineOf: deadlineOf,
+    _paintScheduled: paintScheduled,
   };
 
   window.PrepScheduler = PrepScheduler;

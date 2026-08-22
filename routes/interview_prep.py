@@ -603,14 +603,29 @@ _AI_SDE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 def _pg_eq(value):
     """A PostgREST ``eq.`` filter for a free-text value.
 
-    386 of the 1,120 topic titles contain a comma, a parenthesis or a
-    colon — "Precision vs Recall (and the 95%-accuracy trap)" — and
-    PostgREST reads every one of those as filter syntax rather than as
-    part of the value. Quoting turns it back into a value; a double quote
-    inside is backslash-escaped, being the one character the quoting
-    can't cover by itself.
+    THIS USED TO WRAP THE VALUE IN DOUBLE QUOTES AND MATCHED NOTHING AT ALL.
+    The reasoning was sound — 386 of the 1,120 topic titles contain a comma,
+    a parenthesis or a colon, and PostgREST does read those as filter syntax
+    — but the fix was already in place one layer down: supabase_client hands
+    params to `requests`, which URL-encodes them, so a comma arrives as %2C
+    and is decoded back into the value. The quotes were then matched
+    LITERALLY, against values that contain no quotes.
+
+    Measured against live data before and after: the quoted form returned 0
+    rows for both a plain name ("SQLPrep") and a comma-bearing title ("ORDER
+    BY, and where NULL sorts"); the plain form returned 10 and 1.
+
+    WHAT IT COST, because a silently always-false filter is the worst kind.
+    Every caller of this is an EXISTENCE check, so each one silently decided
+    "not there" every single time:
+      * _ensure_prep_project never found the bank's project, so every Plan
+        click created a new one — ten SQLPrep projects for one user in four
+        minutes.
+      * the already-scheduled check never matched, so this endpoint's
+        documented idempotence did nothing.
+      * the Quick Bucket dedupe never matched either.
     """
-    return 'eq."' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return "eq." + str(value)
 
 
 def _get_optional(table, params, optional):
@@ -673,6 +688,24 @@ def _ai_sde_end_time(start, minutes):
     return end.strftime("%H:%M")
 
 
+def _find_prep_project(user_id, bank):
+    """The bank's project id, or None. NEVER creates one.
+
+    _ensure_prep_project creates on miss, which is right when scheduling and
+    wrong on a page load — merely opening /sql should not bring a SQLPrep
+    project into existence.
+    """
+    rows = get("projects", params={
+        "user_id": f"eq.{user_id}",
+        "name": _pg_eq(PREP_BANKS[bank]["project"]),
+        "is_archived": "eq.false",
+        "select": "project_id",
+        "order": "created_at.asc",
+        "limit": "1",
+    }) or []
+    return rows[0]["project_id"] if rows else None
+
+
 def _ensure_prep_project(user_id, bank):
     """Return the project id for this bank, creating it if it isn't there.
 
@@ -686,15 +719,12 @@ def _ensure_prep_project(user_id, bank):
     spec = PREP_BANKS[bank]
     name = spec["project"]
 
+    # ONE lookup, shared with the read-only path. It used to be a private
+    # copy here, which is how the two came to differ: this one had no
+    # ordering, so with duplicates present it could return a different
+    # project on each call and scatter one bank's tasks across several.
     def _find():
-        rows = get("projects", params={
-            "user_id": f"eq.{user_id}",
-            "name": _pg_eq(name),
-            "is_archived": "eq.false",
-            "select": "project_id",
-            "limit": "1",
-        }) or []
-        return rows[0]["project_id"] if rows else None
+        return _find_prep_project(user_id, bank)
 
     found = _find()
     if found:
@@ -759,6 +789,74 @@ def _prep_lookup(bank, entry_id, title):
 def _ai_sde_lookup(entry_id, title):
     """Back-compat shim for the AI/SDE bank."""
     return _prep_lookup("ai_sde", entry_id, title)
+
+
+@interview_prep_bp.route("/api/prep/scheduled", methods=["GET"])
+@login_required
+def prep_scheduled():
+    """When each topic of a bank is planned for. ``?bank=ai_sde``
+
+    Returns ``{title: {plan_date, start_time, status}}`` so a bank page can
+    say "Planned Fri 29 Aug, 09:00" on the card itself. Until now the only
+    way to find out whether you had already scheduled something was to open
+    the calendar, which is the wrong place to answer a question you are
+    asking while looking at the topic.
+
+    READ FROM project_tasks, NOT daily_events. The scheduler writes one task
+    PER TOPIC even when a bulk selection collapses into a single calendar
+    block, so the task is the only per-topic record of what was planned.
+
+    WHETHER A DATE HAS ELAPSED IS THE CLIENT'S CALL. The comparison needs
+    the reader's own clock, and the server's idea of "now" is a different
+    machine's. So the raw date and time go over the wire and the page
+    decides the colour.
+    """
+    user_id = session["user_id"]
+    bank = (request.args.get("bank") or "ai_sde").strip()
+    if bank not in PREP_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
+
+    project_id = _find_prep_project(user_id, bank)
+    if not project_id:
+        # No project means nothing has ever been scheduled for this bank.
+        # That is an empty answer, not an error, and it must not CREATE the
+        # project — a page load is not a reason to make one.
+        return jsonify({"bank": bank, "scheduled": {}})
+
+    try:
+        rows = get("project_tasks", params={
+            "user_id": f"eq.{user_id}",
+            "project_id": f"eq.{project_id}",
+            "is_deleted": "eq.false",
+            "select": "task_text,plan_date,start_time,status",
+            "limit": "2000",
+        }) or []
+    except Exception:
+        logger.warning("prep scheduled read failed for %s", bank, exc_info=True)
+        return jsonify({"bank": bank, "scheduled": {}})
+
+    out = {}
+    for r in rows:
+        title = (r.get("task_text") or "").strip()
+        if not title:
+            continue
+        plan_date = r.get("plan_date") or ""
+        # Keep the EARLIEST plan for a topic scheduled more than once — that
+        # is the commitment; a later one is a repeat, and showing the latest
+        # would hide an overdue first attempt.
+        prev = out.get(title)
+        if prev and prev["plan_date"] and plan_date > prev["plan_date"]:
+            continue
+        out[title] = {
+            "plan_date": plan_date,
+            # "00:00:00" is the scheduler's stand-in for "no time given", so
+            # it is reported as absent rather than as midnight — a card
+            # reading "at 12:00 AM" would look like a real appointment.
+            "start_time": (r.get("start_time") or "")[:5] if
+                          (r.get("start_time") or "")[:5] not in ("", "00:00") else "",
+            "status": (r.get("status") or "open"),
+        }
+    return jsonify({"bank": bank, "scheduled": out})
 
 
 @interview_prep_bp.route("/api/prep/schedule-bulk", methods=["POST"])
