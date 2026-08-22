@@ -359536,6 +359536,280 @@ _ANSWER_V2['Tokenization and Byte-Pair Encoding (BPE)'] = """Models read TOKENS,
   likelihood gain rather than raw frequency, and SentencePiece treats the input
   as a raw stream so it needs no pre-tokenisation by whitespace."""
 
+_ANSWER_V2['Vector database & semantic search'] = """A store that finds things by MEANING - embeddings put similar items near each other, and an approximate index makes the search fast enough to use.
+
+· THE MECHANISM — encode text or images as embeddings, then answer a query by
+  finding the nearest vectors to the query's embedding. Similarity is normally
+  cosine, because direction carries the meaning and magnitude often just
+  reflects frequency.
+· EXACT NEAREST-NEIGHBOUR IS TOO SLOW at scale, since it compares against every
+  vector. That is the entire reason these databases exist.
+· ANN INDEXES TRADE A LITTLE RECALL FOR A LOT OF SPEED. HNSW is a layered
+  navigable graph and the usual default; IVF partitions into clusters and
+  searches a few; product quantisation compresses vectors so more fit in
+  memory.
+· RECALL IS A TUNABLE, not a fixed property — ef_search in HNSW, nprobe in IVF.
+  Higher means slower and more accurate. Knowing that these are dials is more
+  useful than knowing the index names.
+· METADATA FILTERING IS THE PART THAT BITES. Filtering after the search can
+  return fewer results than asked for; filtering during it is what you
+  actually want, and support varies by product. For multi-tenant or
+  permissioned data this is a correctness issue, not a feature.
+· HYBRID SEARCH BEATS PURE VECTORS in practice — combine embeddings with BM25
+  keyword matching, because embeddings are poor at exact identifiers, error
+  codes and rare proper nouns.
+· THE EMBEDDING MODEL IS PART OF THE INDEX. Change it and every stored vector
+  must be recomputed, because vectors from two models are not comparable.
+· WHEN YOU DO NOT NEED ONE — under roughly a hundred thousand vectors, a numpy
+  brute-force scan or pgvector on Postgres is fast enough and far simpler."""
+
+_ANSWER_V2['STAR method + a strong student example'] = """Situation, Task, Action, Result - and Action is where most of your time goes, in the first person.
+
+· THE FOUR PARTS — Situation sets context in two sentences, Task states YOUR
+  responsibility, Action is what you personally did, Result quantifies what
+  changed.
+· ACTION IS 60-70% OF THE ANSWER. Most weak answers spend three minutes on
+  setup and thirty seconds on what they did, which is the part being assessed.
+· SAY 'I', NOT 'WE'. The interviewer cannot score a team. Where the work was
+  genuinely shared, say what the team did and then what you did inside it.
+· QUANTIFY THE RESULT, and if you have no metric, use a proxy: hours saved,
+  people affected, the error rate before and after, or what it unblocked.
+· AS A STUDENT YOUR STORIES ARE FINE — capstone projects, hackathons,
+  internships, research, teaching, clubs. Impact matters far more than the
+  title, and interviewers calibrate to your level.
+· PREPARE SIX STORIES, NOT TWELVE. Most leadership principles can be reached
+  from a good story told with a different emphasis, and six you know deeply
+  beat twelve you half remember.
+· KNOW YOUR OWN NUMBERS. Dataset size, accuracy before and after, how many
+  users, how long it took. Not knowing them is the fastest way to make a real
+  story sound invented.
+· END WITH THE LESSON when the question invites one, but do not tack one onto
+  every answer — it reads as rehearsed."""
+
+_ANSWER_V2['Tell me about a time you received difficult feedback (behavioral: feedback)'] = """The signal is what you DID with it - asking for specifics and coming back for a re-review beats any amount of graceful acceptance.
+
+· SITUATION — a mentor told me my code worked but was unreadable, so nobody
+  could review or reuse it.
+· TASK — take the criticism seriously rather than defending the code, and
+  actually change how I wrote.
+· ACTION — I asked for specific examples rather than accepting the general
+  verdict, studied a well-structured open-source codebase to see what good
+  looked like, adopted clearer naming, docstrings and smaller functions, then
+  asked the same mentor to re-review.
+· RESULT — the next pull request was approved with zero readability comments,
+  and a teammate reused the module.
+· ASKING FOR SPECIFICS IS THE STRONGEST BEAT and the one most people omit.
+  Vague feedback cannot be acted on, and requesting examples shows you intend
+  to act rather than to nod.
+· GOING BACK FOR A RE-REVIEW closes the loop. It is what turns 'I listened'
+  into evidence.
+· PICK FEEDBACK THAT WAS ACTUALLY RIGHT. A story where the feedback was unfair
+  and you graciously endured it answers a different question and reads as
+  defensiveness with better manners.
+· THE LESSON THAT LANDS — feedback about my work is not feedback about me. Say
+  it once, briefly."""
+
+_ANSWER_V2['Tell me about your biggest failure and what you learned (behavioral: failure)'] = """Pick a real failure with real consequences, own it without hedging, and make the lesson something you changed permanently.
+
+· SITUATION — I led a team ML project and, overconfident in the model, skipped
+  a proper validation split and tests to save time.
+· WHAT WENT WRONG — two days before the deadline we found the 95% accuracy was
+  inflated by DATA LEAKAGE, an ID feature correlated with the label. The real
+  model was far worse.
+· RESULT — we salvaged it but shipped late and below target. Say that plainly;
+  a failure story with a triumphant ending is not a failure story.
+· THE LESSON — a clean validation setup is the first thing I build now, not the
+  last. Concretely: fit every transform inside a pipeline on the training fold
+  only, and check feature importances for anything implausibly strong.
+· CHOOSE SOMETHING THAT COST SOMETHING. A failure with no consequence reads as
+  a dodge, and interviewers will push until they find a real one anyway.
+· OWN YOUR PART WITHOUT SPREADING IT. Even where others contributed, this
+  question is about your share. 'The requirements were unclear' is heard as
+  deflection.
+· THE LESSON MUST HAVE CHANGED YOUR BEHAVIOUR, and ideally you can name a
+  later occasion where the new habit caught something. That is what makes it
+  learning rather than regret.
+· DO NOT USE A DISGUISED STRENGTH. 'I cared too much about quality' is the
+  oldest one there is and it costs you credibility for the rest of the loop."""
+
+_ANSWER_V2['LLMs & RAG (Retrieval-Augmented Generation)'] = """An LLM only knows its training data and will confidently invent the rest - RAG fixes both by retrieving your documents into the prompt, with no retraining.
+
+· WHAT AN LLM IS — a Transformer trained to predict the next token. Excellent
+  at language, frozen at its training cutoff, and prone to stating false things
+  fluently.
+· THE TWO PROBLEMS RAG SOLVES — it has no access to your private or current
+  data, and it hallucinates when asked something it does not know.
+· OFFLINE — chunk the documents, embed each chunk, store the vectors with their
+  metadata.
+· ONLINE — embed the question, retrieve the most similar chunks, put them in
+  the prompt as context, and ask the model to answer from them and cite.
+· NO RETRAINING IS THE POINT. Updating knowledge means re-indexing a document,
+  not fine-tuning a model, which is faster, cheaper and auditable.
+· RAG VERSUS FINE-TUNING is the follow-up, and they solve different problems:
+  RAG supplies KNOWLEDGE, fine-tuning teaches FORM — tone, format, a
+  specialised task. If the complaint is 'it does not know our policies', that
+  is RAG. If it is 'it will not answer in our house style', that is
+  fine-tuning.
+· IT REDUCES HALLUCINATION, IT DOES NOT ELIMINATE IT. The model can still
+  misread a retrieved chunk or answer from its own weights, which is why the
+  prompt must permit 'I don't know' and the answer must cite.
+· RETRIEVAL QUALITY IS THE CEILING. If the right chunk is not retrieved, no
+  prompt can rescue the answer — so evaluate retrieval separately from
+  generation."""
+
+_ANSWER_V2['Arranging Coins'] = """k complete rows cost k(k+1)/2 coins, so binary search for the largest k that fits - or solve the quadratic.
+
+· THE FORMULA IS THE PROBLEM. Recognising that rows 1..k take the triangular
+  number k(k+1)/2 turns a simulation into a search.
+· THE BINARY SEARCH — over k from 1 to n, find the largest k with
+  k(k+1)/2 <= n. O(log n), and it is the answer most interviewers want because
+  it is robust.
+· THE CLOSED FORM — solving k(k+1)/2 = n gives
+  k = (-1 + sqrt(1 + 8n)) / 2, then take the floor. O(1), but floating-point
+  error near a perfect boundary can round the wrong way, so verify the
+  candidate and step back by one if needed. Say that caveat rather than
+  presenting sqrt as flawless.
+· THE NAIVE LOOP subtracting row by row is O(sqrt n), which is genuinely fine
+  at typical constraints. Offer it, then improve.
+· WATCH OVERFLOW IN JAVA AND C++ — with n near the 32-bit maximum, k*(k+1) can
+  exceed int range even though the answer does not. Use long for the product,
+  or compare with division.
+· COMPLETE ROWS ONLY — leftover coins that cannot fill the next row are
+  discarded, so the answer is a floor and never rounds up.
+· COST — O(log n) time, O(1) space."""
+
+_ANSWER_V2['Backspace String Compare'] = """Build each final string with a stack, or scan from the END with two pointers for O(1) space.
+
+· THE STACK VERSION — walk each string, pushing normal characters and popping
+  on '#'. Compare the two results. Simple, obviously correct, and the right
+  first answer.
+· POPPING AN EMPTY STACK MUST BE A NO-OP. A leading '#' deletes nothing, and
+  crashing or wrapping around on it is the standard bug.
+· THE O(1)-SPACE VERSION scans from the RIGHT, because a backspace affects
+  what came BEFORE it. Going backwards, you can count pending deletions and
+  skip that many real characters, which is impossible going forwards.
+· THE SKIP LOOP — from the right, while you see '#', increment a counter and
+  step left; while the counter is positive and you see a real character,
+  decrement and step left. What you land on is the next surviving character.
+· COMPARE POSITION BY POSITION, and both strings must run out at the same time.
+  Finishing one early with characters left in the other means they differ.
+· OFFER THE STACK, THEN THE TWO-POINTER. The follow-up here is almost always
+  'can you do it in O(1) space', so having the second answer ready is the point
+  of the problem.
+· COST — O(n + m) time either way; O(n + m) space with stacks, O(1) with the
+  reverse scan."""
+
+_ANSWER_V2['Check if Two Strings Are Almost Equivalent'] = """Count both strings' letters and check every one of the 26 differs by at most 3.
+
+· THE DEFINITION — for EVERY letter of the alphabet, the frequency in one
+  string and the other must differ by no more than 3.
+· ALL 26, NOT JUST THE LETTERS PRESENT. A letter appearing 4 times in one
+  string and 0 times in the other fails, and iterating only over observed keys
+  in one string misses exactly that case. This is the trap.
+· THE CLEAN FORM — build two Counters, then check
+  abs(c1[ch] - c2[ch]) <= 3 for ch in the whole alphabet, using a default of 0
+  for absent letters.
+· THE STRINGS ARE THE SAME LENGTH in this problem, which is worth confirming
+  but does not make the all-26 check unnecessary.
+· A SINGLE PASS SUFFICES if you increment for one string and decrement for the
+  other into one array, then check every entry's absolute value. Slightly
+  neater and one loop shorter.
+· THE ALPHABET IS FIXED, so the space is O(1) regardless of input length —
+  worth saying, since it sounds like O(n) at a glance.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Closest Binary Search Tree Value'] = """Walk down using the BST ordering and remember the best seen - one root-to-leaf path, not a traversal.
+
+· WHY IT IS O(height) — at each node the ordering tells you which side can
+  contain anything closer, so you discard half the remaining tree. Traversing
+  everything would be O(n) and ignores the structure entirely.
+· THE WALK — at each node, update the best if this value is closer to the
+  target, then go left if target < node.val and right otherwise.
+· YOU MUST CHECK EVERY NODE ON THE PATH, not just the leaf you end at. The
+  closest value is frequently an ancestor of where the search terminates, and
+  only comparing at the end is the classic wrong answer.
+· THE TIE RULE — when two values are equally close, most versions ask for the
+  smaller. Use a strict less-than when updating and initialise with the root,
+  or handle it explicitly; either way say which convention you used.
+· THE TARGET IS USUALLY A FLOAT and the values integers, so do not assume an
+  exact match exists or that integer arithmetic is safe.
+· ON A DEGENERATE TREE this is O(n), since height equals n. Balanced gives
+  O(log n).
+· COST — O(h) time, O(1) space iteratively. The recursive version costs O(h)
+  stack for no benefit."""
+
+_ANSWER_V2['Count Number of Pairs With Absolute Difference K'] = """One sweep with a frequency map - each number has exactly TWO possible partners, n-k and n+k.
+
+· THE INSIGHT — absolute difference k means the partner is either k below or k
+  above. That is two lookups per element, not a scan.
+· THE SWEEP — for each number, add the counts of (n - k) and (n + k) already
+  seen, then record n in the map. Counting before inserting is what keeps each
+  pair counted exactly once with i < j.
+· INSERT AFTER COUNTING, never before. Inserting first lets a number pair with
+  itself when k is 0, and inflates every count.
+· k IS AT LEAST 1 in the usual version of this problem, which removes the k = 0
+  self-pairing worry. Check the constraint rather than assuming, and say what
+  you would do if k could be 0.
+· BOTH PARTNERS MUST BE CHECKED. Looking only at n - k halves the answer,
+  because you would only ever count a pair from one direction.
+· THE ARRAY IS SMALL in the stated constraints, so the O(n^2) double loop
+  passes. Offer it, then give this — the point of the problem is the
+  improvement, not the brute force.
+· COST — O(n) time, O(n) space."""
+
+_ANSWER_V2['Degree of an Array'] = """The answer is bounded by ONE value - whichever has maximum frequency - so track each value's first and last index in a single pass.
+
+· THE DEFINITION — the degree is the maximum frequency of any element, and you
+  want the shortest contiguous subarray with that same degree.
+· WHAT MAKES IT ONE PASS — a candidate subarray must contain every occurrence
+  of some maximum-frequency value, so its length is
+  last_index - first_index + 1 for that value. Nothing else needs to be
+  searched.
+· THE BOOKKEEPING — three maps: first index seen, last index seen, and count.
+  Or one map from value to (first, last, count).
+· TIES MATTER AND ARE THE POINT. Several values can share the maximum
+  frequency, so you must take the SHORTEST span among all of them rather than
+  stopping at the first one that reaches the degree.
+· UPDATE THE ANSWER WHENEVER A COUNT REACHES OR TIES THE CURRENT DEGREE, and
+  reset the best length when a strictly higher degree appears. Only handling
+  strictly-greater loses the tie case.
+· AN ARRAY OF ALL DISTINCT VALUES has degree 1 and the answer is 1.
+· COST — O(n) time, O(n) space."""
+
+_ANSWER_V2['Find Center of Star Graph'] = """The centre is in EVERY edge, so it is whichever endpoint of the first edge also appears in the second.
+
+· WHY TWO EDGES ARE ENOUGH — in a star, every edge touches the centre. Two
+  distinct edges therefore share exactly one node, and that node is the centre.
+  No other node can appear in both.
+· THE CHECK — if edges[0][0] equals edges[1][0] or edges[1][1], it is the
+  centre; otherwise edges[0][1] is.
+· O(1), NOT O(n). Counting degrees across all edges works and is the obvious
+  answer, but reading the whole input is unnecessary once you see the
+  two-edge argument. That gap is the entire question.
+· THE GUARANTEE IS DOING THE WORK — the problem states the input IS a star
+  graph. Without that promise this reasoning is invalid and you would need to
+  verify the structure.
+· A STAR WITH n NODES HAS n-1 EDGES, so there are always at least two edges for
+  n of 3 or more, which is the constraint given.
+· COST — O(1) time and space, ignoring the input itself."""
+
+_ANSWER_V2['Find Lucky Integer in an Array'] = """A value is lucky when its frequency equals itself - count, then take the largest match.
+
+· THE DEFINITION IS THE SUBTLETY. The value and its count must be equal, so 2
+  appearing twice is lucky and 2 appearing three times is not.
+· THE STEPS — build a frequency map, then scan its items for value == count and
+  keep the maximum. Return -1 if nothing matches.
+· LARGEST, NOT FIRST. Returning the first match found is the common misread,
+  and dict iteration order makes it look correct on small examples.
+· ITERATE THE MAP, NOT THE ARRAY, in the second pass — the array would revisit
+  duplicates and does nothing useful.
+· ONLY POSITIVE VALUES CAN BE LUCKY, since a frequency is at least 1. The
+  constraints usually guarantee positives anyway.
+· A ONE-LINER — max((v for v, c in Counter(nums).items() if v == c),
+  default=-1). Worth showing after the explicit loop, since the default handles
+  the -1 case cleanly.
+· COST — O(n) time, O(n) space."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
