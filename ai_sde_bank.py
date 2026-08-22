@@ -363854,6 +363854,1108 @@ input - otherwise 'dog bites man' and 'man bites dog' are identical.
   modern models inject it as a rotation that makes attention depend on relative
   distance."""
 
+_ANSWER_V2["Multimodal models and CLIP"] = """Train an image encoder and a text encoder so that matching pairs land close
+together in ONE shared space - then images and captions become comparable.
+
+· THE GOAL — put a photo and the sentence describing it at nearly the same
+  point, so you can compare them with a dot product. Everything CLIP does
+  follows from that.
+· CONTRASTIVE TRAINING — take a batch of N image-caption pairs. Compute all
+  N×N similarities. The N correct pairs on the diagonal should score highest,
+  and the N²-N mismatches should score low. That is the entire loss.
+· WHY IT SCALES SO WELL — the supervision is free. Image-alt-text pairs already
+  exist on the web in the hundreds of millions, with no labelling effort.
+· ZERO-SHOT CLASSIFICATION, the headline trick — to classify an image into
+  categories you never trained on, embed the phrases 'a photo of a cat', 'a
+  photo of a dog', and pick whichever is closest to the image. No fine-tuning,
+  no labelled examples.
+· WHY THAT WORKS — the text encoder generalises to phrasings it has never seen,
+  so the set of possible classes is open rather than fixed at training time.
+  A conventional classifier has a fixed final layer and cannot do this.
+· WHAT IT IS USED FOR NOW — image search by description, deduplication,
+  moderation, and as the vision front end of larger multimodal models. It is
+  infrastructure more than a product.
+· THE LIMITATIONS worth naming — poor at counting, at spatial relations ('the
+  cup LEFT of the book'), at reading text in images, and it inherits the biases
+  of web alt text. It matches gist, not structure.
+· THE PROMPT SENSITIVITY — 'a photo of a {}' measurably beats the bare class
+  name, because the training captions were sentences. Ensembling several
+  prompt templates is standard practice and a good detail to volunteer.
+· THE GENERAL PATTERN — contrastive learning aligns any two modalities with
+  paired data, which is how audio-text and video-text models are built too."""
+
+_ANSWER_V2["LLM cost and latency optimization"] = """Attack it in order: send fewer tokens, use a smaller model where you can, cache
+aggressively, and stream so the wait feels shorter.
+
+· KNOW THE TWO LATENCY NUMBERS FIRST — time to first token (dominated by prompt
+  length and the prefill compute) and time per output token (dominated by
+  memory bandwidth). They have different causes and different fixes, and
+  quoting one average hides both.
+· CUT INPUT TOKENS — retrieve five good chunks rather than twenty mediocre
+  ones, summarise old conversation turns instead of resending them, and strip
+  boilerplate from system prompts. Input is usually the larger half of the bill
+  in a RAG system.
+· CUT OUTPUT TOKENS — output typically costs several times more per token than
+  input, and it is also what makes the user wait. Ask for structured, terse
+  answers; do not let the model narrate.
+· PROMPT CACHING is the biggest single lever if your prefix is stable. Providers
+  charge a fraction for cached input, so put the unchanging system prompt and
+  examples FIRST and the variable content last.
+· ROUTE BY DIFFICULTY — a small model handles classification, extraction and
+  simple questions; escalate to the large one only when needed. Measure what
+  fraction can be served small; it is usually most of them.
+· SEMANTIC CACHING — if a near-identical question was asked recently, return
+  the stored answer. Embed the query and look for a close match above a
+  threshold. Beware staleness and personalisation; cache per-tenant.
+· STREAM THE RESPONSE. It changes no real number and transforms perceived
+  latency, because reading starts at the first token rather than the last.
+· BATCH where you can — throughput per GPU rises sharply with batch size, which
+  is why offline jobs are dramatically cheaper than interactive ones. Providers
+  price a batch API accordingly.
+· MEASURE BEFORE OPTIMISING — log tokens in, tokens out, latency and cost per
+  request, broken down by endpoint. Most systems have one or two prompts
+  responsible for most of the spend, and you cannot guess which."""
+
+_ANSWER_V2["Design a customer-support copilot"] = """Assist the AGENT before replacing them - draft answers with citations, keep a
+human in the loop, and measure resolution rather than model quality.
+
+· CLARIFY THE MODE FIRST, because it changes everything: agent-assist (drafts
+  for a human to send) or customer-facing (autonomous). Agent-assist ships
+  sooner, carries far less risk, and generates the labelled data you need for
+  the autonomous version later. Say this before designing.
+· THE CORE PIPELINE — classify intent, retrieve from the knowledge base and
+  similar resolved tickets, draft a reply grounded in what was retrieved, and
+  show the agent the sources alongside the draft.
+· CONTEXT IS THE DIFFERENTIATOR — the customer's order history, subscription
+  state and previous tickets matter more than a cleverer model. Retrieval must
+  cover the CRM, not only the help articles.
+· GROUNDING AND REFUSAL — every claim must trace to a retrieved document.
+  Where it cannot, escalate rather than improvise. A confidently wrong refund
+  policy is worse than no answer.
+· THE ACTION BOUNDARY — reading data is safe; issuing refunds, cancelling
+  orders and changing account details are not. Those go through your
+  permission checks with the human confirming, never on the model's say-so.
+· ESCALATION TRIGGERS — low retrieval confidence, detected frustration, legal
+  or safety topics, repeat contacts on the same issue, and high-value
+  customers. Design the handover so the human sees the whole conversation.
+· THE METRICS THAT MATTER — first contact resolution, average handling time,
+  deflection rate, CSAT, and escalation rate. Not BLEU, not perplexity. Tie
+  the system to the number the support organisation is already judged on.
+· THE FEEDBACK LOOP — agents edit drafts, and those edits are the highest
+  quality training and evaluation data you will ever get. Capture them
+  deliberately from day one.
+· FAILURE MODES TO NAME — stale knowledge base articles, hallucinated policy,
+  prompt injection through ticket text, and tone that is wrong for an angry
+  customer. Each has a specific mitigation, and listing them unprompted is what
+  distinguishes a senior answer."""
+
+_ANSWER_V2["Embeddings for recommendation systems"] = """Learn a vector for every user and every item so that a dot product predicts
+affinity - then recommendation becomes nearest-neighbour search.
+
+· THE STARTING POINT — matrix factorisation. Decompose the sparse user-item
+  interaction matrix into user vectors and item vectors whose dot product
+  approximates the rating or the click.
+· WHAT THE DIMENSIONS MEAN — nothing you named. They are learned latent
+  factors, and they end up capturing things like genre, tone or price bracket
+  without ever being told about them.
+· WHY EMBEDDINGS BEAT COLLABORATIVE FILTERING ON RAW COUNTS — they generalise.
+  Two items nobody co-purchased can still be close if they attract similar
+  users, which is exactly the signal the raw matrix lacks.
+· TWO-TOWER MODELS are the modern form — one network encodes the user (history,
+  context, demographics), another encodes the item (text, image, metadata), and
+  they are trained so matching pairs score high. Item vectors are precomputed;
+  only the user tower runs at request time.
+· WHY THAT ARCHITECTURE IS CHOSEN — it allows an approximate nearest-neighbour
+  index over millions of items with a single vector lookup per request. A model
+  that must score every item individually cannot serve at that scale.
+· THE TWO-STAGE PIPELINE — retrieval fetches a few hundred candidates cheaply
+  by vector search, then a heavier ranker scores those with full features
+  including cross-features. Same shape as search: recall then precision.
+· COLD START is the standard follow-up. Content features in the item tower give
+  a new item a usable vector immediately; a new user gets popularity-based or
+  onboarding-derived recommendations until they have history.
+· NEGATIVE SAMPLING IS THE SUBTLE PART — you only observe positives, so you must
+  invent negatives. In-batch negatives are cheap; hard negatives (items the
+  user saw and did not click) teach far more and are what lifts quality.
+· THE PITFALL TO NAME — a popularity feedback loop. The system recommends what
+  is popular, which makes it more popular. Counter it with exploration,
+  diversity constraints, and measuring long-tail coverage alongside CTR."""
+
+_ANSWER_V2["Design an enterprise AI search assistant"] = """The hard parts are permissions and freshness, not the model - an answer that
+leaks a document the user may not read is worse than no product.
+
+· PERMISSIONS FIRST, and say so first. Every chunk carries its source
+  document's access control list, and retrieval FILTERS by the asking user's
+  permissions before ranking. Filtering after retrieval leaks through result
+  counts and latency, and post-filtering a generated answer is far too late.
+· WHY IT IS THE hardest part — permissions live in a dozen systems (SharePoint,
+  Drive, Confluence, Jira, the HR tool), change constantly, and are often
+  inherited through nested groups. You need a permission sync, not a snapshot.
+· THE CONNECTOR PROBLEM — each source needs incremental sync (only what
+  changed), deletion propagation (a deleted document must leave the index), and
+  rate-limit handling. This is most of the engineering effort and most of the
+  ongoing maintenance.
+· FRESHNESS — an out-of-date policy answer is a real liability. Track each
+  chunk's last-modified date, prefer recent documents in ranking, and show the
+  date in the citation so the reader can judge.
+· RETRIEVAL — hybrid keyword plus vector, because enterprise queries are full
+  of product codes, ticket IDs and internal acronyms that embeddings handle
+  badly. Then rerank with a cross-encoder.
+· THE ANSWER FORMAT — a direct answer, then citations with document titles and
+  links, and an explicit 'I could not find this' when retrieval is weak. Users
+  trust a system that admits gaps and stop trusting one that guesses.
+· PERSONALISATION SIGNALS that genuinely help — the user's team, their recent
+  documents, and their role. An engineer and a salesperson asking 'what is our
+  SLA' want different documents.
+· EVALUATION — a golden set per department, measured on retrieval recall and
+  answer faithfulness separately, plus click-through and reformulation rate in
+  production.
+· THE ADOPTION RISK worth naming — enterprise search fails commercially far
+  more often than technically. Seed it with the ten questions people actually
+  ask, and integrate where they already work (Slack, Teams) rather than
+  building another portal to visit."""
+
+_ANSWER_V2["Data drift and model monitoring in production"] = """A model degrades silently, because nothing errors when the world changes - so
+monitor the INPUTS and outputs continuously, and the labels whenever they
+arrive.
+
+· THE THREE THINGS THAT DRIFT. DATA DRIFT: the input distribution changes
+  (a new customer segment). CONCEPT DRIFT: the relationship between input and
+  output changes (fraud tactics evolve). LABEL DRIFT: the outcome base rate
+  changes (a seasonal spike).
+· WHY IT IS DANGEROUS — there is no exception, no alert and no crash. Accuracy
+  falls quietly for weeks, and you find out from a business metric or a
+  complaint.
+· MONITOR INPUTS FIRST, because they need no labels and are available
+  immediately. Track per-feature distributions with the population stability
+  index or a KS test, plus null rates, cardinality and range violations.
+· MONITOR PREDICTIONS next — the distribution of scores, the rate of predicted
+  positives, and the confidence profile. A sudden shift in predicted-positive
+  rate is an early warning even before you know if it is wrong.
+· MONITOR PERFORMANCE when labels arrive, and be honest about the LAG. Fraud
+  labels take weeks through chargebacks; churn labels take a month by
+  definition. Your alerting has to work in that gap, which is why input
+  monitoring carries the load.
+· PROXY METRICS FOR THE GAP — agreement with a champion model, human review of
+  a sample, and downstream business metrics.
+· MONITOR THE PIPELINE, not only the model — training-serving skew, where the
+  features computed at serving time differ from those in training, is a more
+  common cause of degradation than genuine drift. A feature store exists mostly
+  to prevent it.
+· ALERT ON ACTIONABLE THRESHOLDS. Some drift is normal and noisy; paging on
+  every fluctuation trains people to ignore the alerts. Tie thresholds to
+  measured performance impact where you can.
+· THE RESPONSE PLAYBOOK — decide in advance whether drift triggers retraining,
+  rollback to a previous model, or human review. And a scheduled retrain
+  cadence, since regular retraining prevents more incidents than any detector
+  catches."""
+
+_ANSWER_V2["A/B testing an ML / LLM feature"] = """Randomise users, not requests, and measure the business outcome - offline model
+metrics routinely fail to predict online behaviour.
+
+· WHY OFFLINE METRICS ARE NOT ENOUGH — a model with better accuracy can lose
+  online because it is slower, because its errors are more visible, or because
+  it changes what users see and therefore what they do. The gap is real and
+  common.
+· RANDOMISE AT THE RIGHT UNIT — the user, not the request. Randomising per
+  request gives one person an inconsistent experience, which itself changes
+  behaviour and contaminates the comparison.
+· PICK ONE PRIMARY METRIC before you start, tied to the product goal:
+  resolution rate, conversion, retention. Guardrail metrics (latency, cost,
+  error rate, complaint volume) run alongside and can stop a launch on their
+  own.
+· POWER THE TEST FIRST — decide the minimum effect worth detecting, then
+  compute the sample size and duration needed. Underpowered tests waste weeks
+  and produce ambiguous results you then argue about.
+· RUN FOR FULL WEEKS to cover the weekly cycle, and do not stop early because
+  it looks good. Peeking repeatedly inflates the false positive rate badly;
+  use sequential testing if you genuinely need to monitor continuously.
+· THE LLM-SPECIFIC COMPLICATIONS — outputs are non-deterministic, so fix the
+  temperature or accept extra variance; cost per request differs between arms
+  and belongs in the analysis; and quality is partly subjective, so pair the
+  behavioural metric with human ratings on a sample.
+· NOVELTY AND PRIMACY EFFECTS — a new interface gets engagement simply for
+  being new, and power users may resist a change at first. Both fade, which is
+  another reason not to read the first two days as the result.
+· THE INTERLEAVING ALTERNATIVE for ranking and retrieval — show results from
+  both systems mixed in one list and see which are clicked. Far more
+  statistically efficient than a split test, and only applicable to ranked
+  lists.
+· SHADOW MODE FIRST — run the new model on real traffic without showing its
+  output, to check latency, cost and crash rate before any user is exposed.
+  It de-risks the experiment and costs almost nothing to add."""
+
+_ANSWER_V2["Reranker cross-encoders (precision after retrieval)"] = """A bi-encoder embeds query and document SEPARATELY; a cross-encoder reads them
+TOGETHER - far more accurate, far too slow to run over everything.
+
+· THE BI-ENCODER, which does retrieval — encode the document once at index time
+  and the query once at request time, then compare with a dot product. The
+  document's vector cannot depend on the query, which is precisely what makes
+  precomputation possible.
+· WHAT THAT COSTS — the model must compress a document into one vector without
+  knowing what will be asked of it. Nuance is lost, and near-misses look like
+  matches.
+· THE CROSS-ENCODER — feed 'query [SEP] document' through the model as one
+  sequence, so every query token attends to every document token, and output a
+  single relevance score. Nothing is compressed and nothing is guessed in
+  advance.
+· WHY IT CANNOT DO RETRIEVAL — the score depends on the pair, so nothing can be
+  precomputed. Scoring a million documents means a million forward passes per
+  query. That is the whole reason for the two-stage design.
+· THE PIPELINE — bi-encoder (plus BM25) retrieves the top 100 cheaply, the
+  cross-encoder rescores those 100 and returns the best 5 to the LLM. Recall
+  first, precision second.
+· THE MEASURABLE GAIN — reranking typically improves retrieval quality more
+  than swapping embedding models does, and it is the first thing to try when
+  RAG answers cite the wrong passage.
+· THE LATENCY BUDGET is the design constraint — 100 documents through a small
+  cross-encoder is tens of milliseconds on a GPU and much more on CPU. Choose
+  the shortlist size from your latency budget, not from a round number.
+· THE PRACTICAL OPTIONS — small dedicated rerankers (bge-reranker, Cohere
+  Rerank) are the usual choice; an LLM can rerank via prompting, which is
+  better and much slower.
+· THE ONE-LINE SUMMARY — bi-encoders scale, cross-encoders judge. Use each for
+  what it is shaped for."""
+
+_ANSWER_V2["Design a churn prediction system"] = """Most of the work is defining churn and building leak-free features from a
+point-in-time view - the model itself is a gradient-boosted tree.
+
+· DEFINE CHURN FIRST, and it is a product decision. Subscription churn is
+  explicit (a cancellation event). Usage churn needs a rule: no activity for 30
+  days. Get this agreed before modelling, because it changes the label, the
+  horizon and the intervention.
+· FRAME THE PREDICTION — 'will this customer churn in the next 30 days, given
+  what we knew on day 0?' Both windows must be explicit, or the training data
+  is ambiguous.
+· THE LEAKAGE TRAP THAT RUINS THESE PROJECTS — features computed AFTER the
+  prediction date. A 'cancellation request submitted' flag predicts churn
+  perfectly and is useless, because by then you already know. Build every
+  feature from a strict point-in-time snapshot.
+· THE FEATURES THAT WORK — recency, frequency and monetary value; TRENDS rather
+  than levels (usage down 40% month on month beats absolute usage); support
+  ticket count and sentiment; engagement with core features; payment failures;
+  and tenure.
+· THE CLASS IMBALANCE — churners are typically 2-10% of the base. Use
+  class weights or the model's scale_pos_weight, evaluate with PR-AUC rather
+  than ROC-AUC, and never report plain accuracy, which a 'nobody churns' model
+  wins.
+· THE MODEL — gradient boosting (XGBoost, LightGBM) on tabular features is the
+  right default. No scaling needed, handles mixed types, strong out of the box.
+  Start with logistic regression as an interpretable baseline.
+· THE THRESHOLD IS A BUSINESS DECISION — it depends on the cost of a retention
+  offer versus the value of a saved customer. Present the precision-recall
+  trade-off and let the business choose the operating point.
+· THE PART THAT ACTUALLY MATTERS — a score nobody acts on is worthless. Pair
+  it with reasons (SHAP values give per-customer drivers) and a specific
+  intervention, then A/B test whether the intervention WORKS. Many churn models
+  are accurate and change nothing.
+· MONITORING — churn drivers shift with pricing, competitors and seasons, so
+  retrain on a schedule and watch for drift."""
+
+_ANSWER_V2["Design a time-series forecasting system"] = """Respect time in every decision - split chronologically, never let the future
+leak backwards, and start with a naive baseline you must beat.
+
+· THE FIRST THING TO SAY — a random train/test split is invalid. You must split
+  by TIME, training on the past and testing on the future, or you are asking
+  the model to interpolate rather than forecast.
+· BACKTESTING PROPERLY — rolling-origin evaluation. Train to time t, predict
+  t+1..t+h, roll forward, repeat. A single holdout period can be lucky; several
+  folds show the variance.
+· ALWAYS START WITH NAIVE BASELINES — last value, seasonal naive (the same day
+  last week), and a moving average. A surprising number of production
+  forecasting systems fail to beat seasonal naive, and if yours does not, that
+  is the finding.
+· THE COMPONENTS to decompose into — trend, seasonality (often several: daily,
+  weekly, yearly), holidays and events, and residual noise. Naming them guides
+  both the model choice and the features.
+· THE MODEL LADDER — classical (ARIMA, exponential smoothing) for single
+  well-behaved series; Prophet for strong seasonality and holiday effects with
+  little tuning; gradient boosting on lag features for many series with
+  covariates, which is what usually wins in practice; deep models (DeepAR,
+  temporal fusion transformers) when you have many related series and lots of
+  data.
+· FEATURE ENGINEERING IS LAGS AND WINDOWS — value at t-1, t-7, t-364, rolling
+  means and standard deviations, plus calendar features. Every window must end
+  strictly before the prediction point.
+· THE METRIC MATTERS more than usual. MAPE breaks on zeros and punishes
+  under-forecasting differently from over-forecasting; use MAE for absolute
+  errors, RMSE when large errors are disproportionately bad, and sMAPE or MASE
+  when comparing across series of different scales.
+· FORECAST INTERVALS, not just point forecasts. Inventory and capacity
+  decisions need the range; a single number hides the risk and is often used as
+  if it were certain.
+· THE OPERATIONAL REALITIES — cold start for new series, structural breaks
+  (a pandemic, a price change) that no model anticipates, and hierarchical
+  reconciliation so store forecasts sum to the regional one."""
+
+_ANSWER_V2["Cold-start problem in ML systems"] = """A new user or item has no history, so any model built on history has nothing to
+work with - the fix is to fall back on CONTENT and context until behaviour
+arrives.
+
+· THE THREE FLAVOURS — new USER (no interactions), new ITEM (nobody has engaged
+  with it), and new SYSTEM (no data at all). They need different answers, so
+  say which one you are solving.
+· NEW USER — start with popularity and trending, optionally segmented by
+  whatever you do know (country, device, referral source). Then onboarding:
+  ask for a few preferences explicitly, which converts a cold start into a warm
+  one in thirty seconds.
+· THE CONTEXTUAL BANDIT is the principled version — treat it as
+  explore-versus-exploit, showing varied items early to learn preferences fast
+  while still serving something reasonable. Thompson sampling is the usual
+  choice.
+· NEW ITEM — use CONTENT features: text, images, category, price, creator.
+  A two-tower model with content in the item tower gives a new item a usable
+  embedding from the moment it is created, without a single interaction.
+· WHY THAT ARCHITECTURE MATTERS — pure collaborative filtering literally cannot
+  represent an item with no interactions. Content features are what make the
+  cold case expressible at all, which is the design decision to highlight.
+· DELIBERATE EXPLORATION — reserve a small share of impressions for new items.
+  Without it, new content is never shown, never gets data, and never becomes
+  recommendable. The system starves its own catalogue.
+· TRANSFER AND SIMILARITY — place a new item near similar existing items and
+  borrow their behaviour as a prior, then let real data override it as it
+  accumulates.
+· THE HYBRID PATTERN — blend a content-based score with a collaborative score,
+  weighted by how much interaction data exists. The weight shifts smoothly from
+  content to behaviour as the item warms up, so there is no cliff.
+· THE MEASUREMENT TRAP — overall CTR hides cold-start failure entirely, because
+  popular items carry the average. Track coverage and long-tail performance
+  explicitly, or the problem stays invisible while looking fine."""
+
+_ANSWER_V2["TCP three-way handshake"] = """SYN, SYN-ACK, ACK - three messages, because both sides must agree on a starting
+sequence number and each must confirm the other's.
+
+· WHY A HANDSHAKE AT ALL — TCP guarantees ordered, reliable delivery. That needs
+  sequence numbers, and both directions need one, agreed before any data flows.
+· STEP ONE, SYN — the client sends a segment with the SYN flag and its initial
+  sequence number x. The client moves to SYN-SENT.
+· STEP TWO, SYN-ACK — the server replies with SYN set, its own initial sequence
+  number y, and an acknowledgement of x+1. One segment doing two jobs, which is
+  why there are three messages and not four.
+· STEP THREE, ACK — the client acknowledges y+1. Both sides are now
+  ESTABLISHED and data can flow.
+· WHY THREE AND NOT TWO — after two messages the SERVER has no confirmation
+  that the client received its sequence number. The third message closes that
+  gap. This is the question behind the question.
+· WHY RANDOM INITIAL SEQUENCE NUMBERS — predictable ones allow connection
+  spoofing and injection. Randomising them is a security measure, not an
+  implementation detail.
+· THE SYN FLOOD ATTACK — send many SYNs and never complete the handshake,
+  filling the server's half-open connection table. SYN cookies defend by
+  encoding the state into the sequence number so no memory is held until the
+  final ACK arrives.
+· CLOSING TAKES FOUR — FIN, ACK, FIN, ACK, because each direction closes
+  independently and one side may still have data to send. The TIME_WAIT state
+  afterwards exists to absorb delayed duplicates.
+· THE COST, and why it matters in practice — one full round trip before any
+  data, plus more for TLS. That is why connection reuse, HTTP keep-alive and
+  TLS 1.3's one round trip exist, and why QUIC combines transport and crypto
+  setup into a single exchange."""
+
+_ANSWER_V2["Writing thread-safe classes for an LLD round"] = """Make state immutable where you can, and where you cannot, guard every access to
+shared mutable state with the same lock.
+
+· THE ONLY DANGER IS SHARED MUTABLE STATE. If data is not shared, or is never
+  modified after construction, threads cannot interfere. Say this first; it
+  reframes the design instead of sprinkling locks.
+· IMMUTABILITY IS THE STRONGEST TOOL — final fields set in the constructor, no
+  setters, defensive copies of any collection passed in or out. An immutable
+  object is thread-safe with no locking and no cost.
+· IF YOU MUST MUTATE — one lock per invariant, and every read AND write of the
+  guarded state goes through it. Reads matter too: an unsynchronised read can
+  see a partially updated object or a stale cached value.
+· THE COMPOUND-ACTION BUG — check-then-act and read-modify-write are not atomic
+  even when each half is. `if (!map.containsKey(k)) map.put(k, v)` is a race
+  even on a ConcurrentHashMap. Use putIfAbsent, or hold a lock across both.
+· A THREAD-SAFE COLLECTION DOES NOT MAKE THE CLASS THREAD-SAFE. It makes each
+  individual operation safe. Your invariants usually span several operations,
+  and that is where the bug lives.
+· PREFER THE CONCURRENCY LIBRARY over raw synchronized — AtomicInteger for
+  counters, ConcurrentHashMap for maps, BlockingQueue for producer-consumer,
+  ReadWriteLock when reads vastly outnumber writes.
+· DEADLOCK AVOIDANCE — acquire multiple locks in a globally consistent ORDER,
+  keep critical sections short, and never call unknown code (a callback, a
+  listener) while holding a lock.
+· DOUBLE-CHECKED LOCKING NEEDS volatile, or the reference can be published
+  before the object is fully constructed. In Java prefer a static holder class
+  or an enum; in Python the GIL does not save you from compound-action races.
+· WHAT TO SAY IN THE ROUND — name the shared state explicitly, name the
+  invariant that must hold, then choose the smallest mechanism that protects
+  it. Interviewers grade that reasoning, not the number of locks."""
+
+_ANSWER_V2["Pattern: Singleton - and why interviewers are suspicious of it"] = """One instance, globally reachable - and interviewers ask about it to see whether
+you know it is usually global mutable state wearing a design-pattern badge.
+
+· WHAT IT IS — a class that permits exactly one instance and provides a global
+  access point to it. Private constructor, static instance, static getter.
+· THE LEGITIMATE USES — a genuinely single resource: a connection pool, a
+  logger, a configuration registry, a hardware handle. Note that all of these
+  are infrastructure, not domain logic.
+· WHY INTERVIEWERS ARE WARY, and this is what the question is really about.
+  It is global state, so any code can change it from anywhere. It HIDES
+  DEPENDENCIES — a class using a singleton does not declare that it does, so
+  you cannot tell what it needs from its constructor. And it makes testing
+  hard, because you cannot substitute a fake and state leaks between tests.
+· THE THREAD-SAFETY TRAP — lazy initialisation with a plain null check is a
+  race, and two threads can both create an instance. Double-checked locking
+  needs the field to be volatile or the reference can be published before
+  construction finishes.
+· THE SAFE IMPLEMENTATIONS — in Java, an enum singleton (which also handles
+  serialisation and reflection attacks) or a static holder class. In Python, a
+  module-level object, since modules are already singletons.
+· THE BETTER ANSWER IN MOST CASES — dependency injection. Create ONE instance
+  and pass it to whoever needs it. You keep the single instance and lose the
+  global access point, which is the harmful half.
+· SINGLETON VERSUS STATIC CLASS — a singleton can implement an interface, be
+  subclassed, be passed as an argument and be lazily created. A static utility
+  class cannot, which is why singletons are preferred where a seam might be
+  wanted.
+· HOW TO ANSWER — implement it correctly and thread-safely, then volunteer the
+  criticisms and say when you would use DI instead. Reciting the pattern
+  without the caveats is the failure mode."""
+
+_ANSWER_V2["LLD: Design a Rate Limiter"] = """Pick the algorithm from the behaviour you want at the boundary - fixed windows
+allow double bursts, sliding windows and token buckets do not.
+
+· CLARIFY THE SCOPE FIRST — per user, per IP, per API key, or global? And is it
+  a single process or a distributed fleet? The distributed answer needs shared
+  state and is a different design.
+· FIXED WINDOW COUNTER — count requests per clock minute and reset. Trivial and
+  memory-cheap, with one real flaw: a client can send the full limit at 11:59:59
+  and again at 12:00:00, achieving double the rate across the boundary.
+· SLIDING WINDOW LOG — store a timestamp per request and count those inside the
+  trailing window. Exactly correct, and it costs memory proportional to the
+  request rate, which is why it is rarely used at scale.
+· SLIDING WINDOW COUNTER — the practical compromise. Weight the previous
+  window's count by how much of it still overlaps. Nearly as accurate as the
+  log, with fixed-window memory. This is the usual production answer.
+· TOKEN BUCKET — tokens refill at a constant rate up to a capacity; each request
+  spends one. It ALLOWS BURSTS up to the bucket size while bounding the average
+  rate, which is what most APIs actually want. Two numbers of state per key.
+· LEAKY BUCKET — requests queue and drain at a fixed rate, smoothing output
+  completely. Right for protecting a downstream system that cannot absorb
+  bursts; it adds queueing latency.
+· THE DISTRIBUTED PROBLEM — with many servers, per-instance counters let a
+  client get N times the limit. Centralise in Redis, and make the
+  check-and-increment ATOMIC with a Lua script or INCR plus EXPIRE, or you have
+  a race between reading and writing.
+· THE FAILURE DECISION — if Redis is down, do you fail open (serve everything,
+  risking overload) or fail closed (reject everything, causing an outage)? State
+  the choice and why; it is the most senior part of this design.
+· THE INTERFACE — return 429 with Retry-After, plus X-RateLimit-Limit,
+  -Remaining and -Reset headers, so clients can back off intelligently rather
+  than retrying blindly and making it worse."""
+
+_ANSWER_V2["LLD: Design an e-commerce Order and Inventory model"] = """The whole design turns on one question: when is stock RESERVED - and the answer
+is at checkout, with a timeout, not at payment.
+
+· THE CORE ENTITIES — Product (the catalogue item), Inventory (quantity per SKU
+  per warehouse), Cart, Order, OrderLine, Payment, Shipment. Keep Inventory
+  separate from Product; they change at completely different rates and for
+  different reasons.
+· THE OVERSELLING PROBLEM — two customers buy the last unit simultaneously.
+  Both read quantity 1, both decrement, and you have sold stock you do not
+  have. This is the question being asked.
+· THE THREE FIELDS that solve it — on_hand, reserved, and available as a derived
+  value (on_hand minus reserved). Reserving increments `reserved` without
+  touching `on_hand`; shipping decrements both.
+· THE CONCURRENCY CONTROL — either a database transaction with SELECT ... FOR
+  UPDATE on the inventory row (pessimistic, simple, contended on hot items), or
+  a version column with an optimistic retry. Say which and why: pessimistic for
+  high contention on few SKUs, optimistic when conflicts are rare.
+· THE ATOMIC DECREMENT is the neat version — `UPDATE inventory SET reserved =
+  reserved + 1 WHERE sku = ? AND on_hand - reserved >= 1`, then check the rows
+  affected. The condition and the update happen in one statement, so there is
+  no window to race in.
+· RESERVATION EXPIRY — a reservation must have a TTL, or abandoned carts hold
+  stock forever. A background job releases expired reservations, and the order
+  state machine must handle a reservation expiring mid-checkout.
+· THE ORDER STATE MACHINE — CREATED, PAYMENT_PENDING, CONFIRMED, PACKED,
+  SHIPPED, DELIVERED, with CANCELLED and REFUNDED as exits. Make transitions
+  explicit and one-way; an order that can move backwards is a source of
+  permanent confusion.
+· IDEMPOTENCY — payment callbacks and order submissions retry. Every mutating
+  endpoint takes an idempotency key, or you will charge twice. This is the
+  detail that separates people who have shipped commerce from people who have
+  not.
+· THE EVENTS worth emitting — OrderPlaced, PaymentCaptured, StockReserved,
+  OrderShipped. They decouple email, analytics and the warehouse from the
+  checkout path, and they give you an audit trail for free."""
+
+_ANSWER_V2["Number of Provinces"] = """Count the connected components - each province is one group of cities reachable
+from each other, so the answer is how many times you have to start a new search.
+
+· THE INPUT SHAPE — an adjacency MATRIX, where isConnected[i][j] == 1 means a
+  direct road. Not an edge list, which changes how you iterate over neighbours.
+· THE ALGORITHM — for each city not yet visited, start a DFS or BFS, mark
+  everything reachable, and increment the count. The count of starts IS the
+  number of components.
+· WHY 'HOW MANY TIMES YOU START' IS THE ANSWER — each traversal consumes exactly
+  one whole component. You can only need a fresh start when nothing already
+  visited reaches the current city.
+· THE NEIGHBOUR LOOP — from city i, the neighbours are every j where
+  isConnected[i][j] == 1. That inner scan is what makes this O(n²), which is
+  unavoidable given the matrix input.
+· THE UNION-FIND ALTERNATIVE — union every connected pair, then count distinct
+  roots. Start a counter at n and decrement on each successful union, which
+  avoids a final pass. Same complexity, and it is the natural choice if edges
+  arrive incrementally.
+· THE HAND TRACE on [[1,1,0],[1,1,0],[0,0,1]]: starting at 0 reaches 1, so
+  that is one province; city 2 is unvisited so it starts a second. Answer 2.
+· THE DIAGONAL is always 1 (a city connects to itself) and is harmless — it
+  just revisits an already-visited node.
+· THE FAMILY — Number of Islands, Friend Circles, Accounts Merge and Redundant
+  Connection are all connected-components problems. Recognising the shape
+  matters more than the traversal you pick."""
+
+_ANSWER_V2["Surrounded Regions"] = """Do not look for enclosed regions - find the ones touching the BORDER, and
+everything else is enclosed by elimination.
+
+· THE PROBLEM — flip every 'O' region completely surrounded by 'X' to 'X'. A
+  region touching the edge of the board is not surrounded and must survive.
+· THE INVERSION THAT SOLVES IT — deciding whether a region is enclosed is
+  awkward; deciding whether it touches the border is easy. So mark the safe
+  ones and flip the rest.
+· THE THREE PASSES. First, run a DFS or BFS from every 'O' on the four BORDERS,
+  marking everything reached with a temporary character such as '#'. Second,
+  turn every remaining 'O' into 'X' — those are the enclosed ones. Third, turn
+  every '#' back into 'O'.
+· WHY THE TEMPORARY MARKER — you need to distinguish 'safe O' from 'doomed O'
+  while you work, and the board has no spare state. Using a third character is
+  simpler than a parallel visited grid and keeps the space O(1) beyond the
+  recursion.
+· ONLY THE BORDER CELLS SEED THE SEARCH. Starting from interior cells and
+  checking whether they escape re-solves the same region repeatedly and is much
+  slower.
+· THE HAND TRACE — in a board where one O region touches the left edge and
+  another sits in the middle, the first survives untouched and the second
+  becomes X. Nothing else changes.
+· THE RECURSION DEPTH RISK — a large board of all Os can blow the stack. Use an
+  explicit stack or BFS with a queue if the grid may be big; mentioning this
+  unprompted reads well.
+· COST — O(m×n), since every cell is examined a constant number of times.
+· THE SAME INVERSION solves Number of Enclaves and Pacific Atlantic Water Flow:
+  search inward from the boundary rather than outward from the interior."""
+
+_ANSWER_V2["Shallow copy vs deep copy (and the aliasing bug behind it)"] = """A shallow copy duplicates the container and SHARES what is inside it - so
+changing a nested object changes both copies.
+
+· THE EVERYDAY PICTURE — photocopying a page of addresses. You now have two
+  pages, but both list the same houses. Repainting a house changes what both
+  pages describe. A deep copy would be building duplicate houses too.
+· ASSIGNMENT IS NOT A COPY AT ALL — `b = a` gives a second NAME for one object.
+  Every change through either name is visible through the other. This is the
+  first thing to separate out.
+· SHALLOW COPY — `list(a)`, `a[:]`, `a.copy()`, `dict(a)`, `copy.copy(a)`. The
+  outer container is new, so appending to one does not affect the other. The
+  nested objects are the SAME objects.
+· DEEP COPY — `copy.deepcopy(a)` recursively duplicates everything, so the two
+  structures share nothing. It is slower, uses more memory, and it handles
+  cycles correctly by tracking what it has already copied.
+· THE CLASSIC BUG — `grid = [[0] * 3] * 3` creates three references to ONE row,
+  so `grid[0][0] = 1` appears to change all three rows. The fix is a
+  comprehension: `[[0] * 3 for _ in range(3)]`.
+· THE OTHER CLASSIC — a mutable default argument, `def f(items=[])`. The list is
+  created once when the function is defined, so it accumulates across calls.
+  Use None and create inside.
+· WHEN SHALLOW IS CORRECT — when the contents are IMMUTABLE (numbers, strings,
+  tuples). There is nothing to mutate, so sharing is free and deep copying is
+  waste.
+· THE DESIGN LESSON — defensive copying at API boundaries. If a constructor
+  stores a list the caller still holds, the caller can mutate your object's
+  internals from outside. Copy on the way in and on the way out.
+· HOW TO ANSWER — define the three levels (alias, shallow, deep), give the
+  nested-mutation example, then say the real answer is often immutability
+  rather than copying at all."""
+
+_ANSWER_V2["CPU scheduling algorithms (FCFS, SJF, SRTF, Round Robin, Priority)"] = """Every scheduler trades average waiting time against fairness and
+responsiveness - and the ones with the best averages are the ones that starve
+somebody.
+
+· THE VOCABULARY FIRST. Burst time: how long a process needs the CPU. Waiting
+  time: how long it sat ready but not running. Turnaround: completion minus
+  arrival. Response time: first run minus arrival, which is what an interactive
+  user feels.
+· PREEMPTIVE VS NON-PREEMPTIVE — can the scheduler take the CPU away from a
+  running process, or must it wait for it to yield? This single property splits
+  the whole list.
+· FCFS (first come, first served) — a queue. Simple and fair in order, and it
+  suffers the CONVOY EFFECT: one long job at the front makes every short job
+  behind it wait, wrecking the average.
+· SJF (shortest job first, non-preemptive) — provably OPTIMAL for average
+  waiting time. Two problems: it requires knowing burst times in advance, which
+  you generally cannot, and long jobs can STARVE if short ones keep arriving.
+· SRTF (shortest remaining time first) — the preemptive version of SJF. Better
+  averages still, more context switches, and the same starvation risk.
+· ROUND ROBIN — each process gets a fixed time quantum, then goes to the back
+  of the queue. Fair and responsive, which is why interactive systems use it.
+  The quantum is the whole tuning problem: too large and it degenerates to
+  FCFS, too small and context-switch overhead dominates.
+· PRIORITY SCHEDULING — highest priority runs first. Starvation again, fixed by
+  AGEING (gradually raise the priority of waiting processes).
+· PRIORITY INVERSION is the detail worth naming — a high-priority task blocked
+  on a lock held by a low-priority one that never gets scheduled. Priority
+  inheritance fixes it, and it famously nearly lost the Mars Pathfinder
+  mission.
+· WHAT REAL SYSTEMS DO — multilevel feedback queues, which approximate SJF
+  without knowing burst times by demoting processes that use their full
+  quantum and promoting those that block early. Linux's CFS instead tracks
+  virtual runtime and always runs whoever has had least."""
+
+_ANSWER_V2["Database keys: super, candidate, primary, composite, foreign, surrogate"] = """They are nested categories, not a list - every key type below is a special case
+of the one above it.
+
+· SUPERKEY — any set of columns that uniquely identifies a row. It may contain
+  redundant columns: {id, name, email} is a superkey if id alone is. This is
+  the widest category.
+· CANDIDATE KEY — a MINIMAL superkey, meaning no column can be removed without
+  losing uniqueness. A table can have several: for a user table, both `id` and
+  `email` might qualify.
+· PRIMARY KEY — the candidate key you CHOOSE as the row's official identity. One
+  per table, never null, and typically what other tables reference. The choice
+  is a design decision, not a property of the data.
+· ALTERNATE KEY — the candidate keys you did not choose. They still deserve a
+  UNIQUE constraint, and forgetting that is how duplicate emails appear.
+· COMPOSITE KEY — a key made of two or more columns, such as (order_id,
+  product_id) on an order-lines table. Note this is orthogonal to the others: a
+  composite key can be a candidate, primary or foreign key.
+· FOREIGN KEY — a column referencing another table's primary key. It enforces
+  REFERENTIAL INTEGRITY: you cannot insert an order for a customer who does not
+  exist, and you must decide what a delete does (CASCADE, SET NULL, RESTRICT).
+· NATURAL VS SURROGATE — a natural key comes from the data itself (email,
+  ISBN); a surrogate is invented purely for identity (an auto-increment integer
+  or a UUID).
+· WHY SURROGATE KEYS USUALLY WIN — natural keys change (people change email
+  addresses), and a changing primary key must cascade everywhere it is
+  referenced. They are also wider, making indexes larger. A surrogate is
+  stable, narrow and meaningless, which are all virtues in an identifier.
+· THE UUID CAVEAT worth naming — random UUIDs as a clustered primary key cause
+  page splits and poor locality on insert, because each new row lands in a
+  random place. UUIDv7 or ULID are time-ordered and fix it."""
+
+_ANSWER_V2["OSI and TCP/IP models - what each layer actually does"] = """Layering exists so each level can change without disturbing the others - OSI
+has seven layers as a teaching model, and the internet actually runs four.
+
+· THE POINT OF LAYERS — each provides a service to the one above and hides how
+  it works. Wi-Fi replaced Ethernet without changing a single application,
+  which is the property the whole design is buying.
+· LAYER 1, PHYSICAL — bits as voltages, light or radio. Cables, connectors,
+  signalling. Hubs live here.
+· LAYER 2, DATA LINK — frames between two directly connected devices on the same
+  network. MAC addresses, error detection. SWITCHES live here, and this is
+  where ARP maps IP addresses to MAC addresses.
+· LAYER 3, NETWORK — packets across networks. IP addresses, ROUTING, and
+  fragmentation. Routers live here. This layer is best-effort: no guarantee of
+  delivery or order.
+· LAYER 4, TRANSPORT — process-to-process delivery, identified by PORTS. TCP
+  adds reliability, ordering and flow control on top of the unreliable network
+  layer; UDP adds almost nothing and is faster for it.
+· LAYERS 5-7, SESSION / PRESENTATION / APPLICATION — session management,
+  encryption and encoding, and the protocol the user's software speaks (HTTP,
+  DNS, SMTP). In practice these three blur together, which is exactly why the
+  TCP/IP model merges them.
+· THE TCP/IP MODEL, which is what actually exists — Link, Internet, Transport,
+  Application. Four layers, and the one to describe if asked how the internet
+  works.
+· ENCAPSULATION IS THE MECHANISM — each layer wraps the one above in its own
+  header. Your HTTP request becomes a TCP segment, inside an IP packet, inside
+  an Ethernet frame, and each header is stripped on the way up.
+· WHERE TLS SITS is the question people fumble — between transport and
+  application, often called layer 6-ish. It is not in the original OSI model,
+  which is worth saying rather than guessing.
+· THE USEFUL VERSION OF THIS KNOWLEDGE is debugging: is the cable connected
+  (L1), can I ARP the gateway (L2), does ping reach it (L3), is the port open
+  (L4), does the service respond correctly (L7)? Walking up the stack is how
+  you find a fault."""
+
+_ANSWER_V2["PCA - what it does, what it does not, and when to use it"] = """Rotate the data so the first axis captures the most variance, then keep the
+first few axes - it is compression by variance, and it knows nothing about
+your labels.
+
+· THE INTUITION — imagine a cloud of points shaped like a flattened rugby ball.
+  Most of the spread runs along one direction. PCA finds that direction, calls
+  it the first component, then finds the next-best direction perpendicular to
+  it, and so on.
+· THE MECHANICS — centre the data, compute the covariance matrix, take its
+  eigenvectors and eigenvalues. The eigenvectors are the new axes; the
+  eigenvalues say how much variance each explains. In practice it is computed
+  by SVD, which is more numerically stable.
+· YOU MUST STANDARDISE FIRST if the features have different units. PCA
+  maximises variance, and variance depends on scale, so an unscaled salary
+  column will dominate an age column purely because of its units. This is the
+  single most common mistake.
+· HOW MANY COMPONENTS — plot cumulative explained variance and keep enough for
+  90-95%, or look for the elbow in a scree plot. There is no principled
+  universal answer, and saying so is better than inventing one.
+· WHAT IT IS GOOD FOR — compression, removing multicollinearity before a linear
+  model, speeding up training, denoising, and visualisation in 2D.
+· WHAT IT IS NOT. It is UNSUPERVISED, so it does not know which directions
+  predict your target — a low-variance direction can be the one that matters,
+  and PCA will discard it. Use LDA when you want supervised dimensionality
+  reduction.
+· IT DESTROYS INTERPRETABILITY — a component is a linear combination of all
+  original features, so 'component 3' has no business meaning. If you need to
+  explain the model to a regulator, this is disqualifying.
+· IT ONLY CAPTURES LINEAR STRUCTURE. Data on a curved manifold is not helped;
+  kernel PCA, UMAP or t-SNE are the alternatives, and t-SNE and UMAP are for
+  VISUALISATION only, not as features.
+· FIT ON TRAINING DATA ONLY, then transform the test set with the same
+  components. Fitting on everything leaks test information and inflates your
+  score, exactly as with a scaler."""
+
+_ANSWER_V2["Loss functions - which to use when, and why the pairing matters"] = """The loss defines what 'wrong' means, so it must match both the task and the
+output layer - a mismatched pair trains slowly or not at all.
+
+· REGRESSION, MSE — squares the error, so large mistakes dominate. Use it when
+  big errors are disproportionately bad. It is very sensitive to outliers, and
+  it assumes Gaussian noise.
+· REGRESSION, MAE — absolute error, treating all mistakes proportionally. Far
+  more robust to outliers. Its gradient is constant, which can make convergence
+  near the optimum less smooth.
+· HUBER — quadratic for small errors and linear for large ones, so it gets MSE's
+  smooth gradients and MAE's outlier resistance. The usual answer when you have
+  outliers you cannot remove.
+· BINARY CLASSIFICATION, BINARY CROSS-ENTROPY, paired with a sigmoid output. It
+  punishes confident wrong answers enormously, since the log of a near-zero
+  predicted probability goes to infinity.
+· MULTI-CLASS, CATEGORICAL CROSS-ENTROPY, paired with softmax. Use the
+  'sparse' variant when labels are integers rather than one-hot; it is the same
+  loss with less memory.
+· WHY CROSS-ENTROPY RATHER THAN MSE FOR CLASSIFICATION, which is the question
+  behind the question: with a sigmoid output, MSE's gradient contains the
+  sigmoid's derivative, which is nearly zero when the model is confidently
+  wrong. So the model learns slowest exactly when it is most wrong.
+  Cross-entropy's gradient cancels that term and stays proportional to the
+  error.
+· USE THE 'FROM LOGITS' VERSION where the framework offers one — it fuses the
+  softmax and the log for numerical stability instead of computing log of a
+  possibly underflowed probability.
+· IMBALANCED DATA — weighted cross-entropy raises the cost of the rare class;
+  FOCAL LOSS goes further by down-weighting easy examples so training
+  concentrates on the hard ones. Focal loss was designed for object detection,
+  where background overwhelms objects.
+· THE OTHERS WORTH NAMING — hinge loss for SVMs, triplet and contrastive loss
+  for embeddings (learning that similar things should be near), and KL
+  divergence for matching distributions, which is what knowledge distillation
+  uses."""
+
+_ANSWER_V2["The applied ML question: taking a model from notebook to production"] = """The model is perhaps a tenth of the work - the rest is data pipelines,
+reproducibility, serving, monitoring and the ability to roll back.
+
+· START BY ASKING WHAT DECISION IT DRIVES. Batch scores written to a table
+  nightly and a real-time API are completely different systems, and the answer
+  changes the whole design. Do not assume real time.
+· THE DATA PIPELINE COMES FIRST — where the features come from, how often they
+  refresh, and what happens when a source is late or missing. A model is only
+  as reliable as its least reliable feature.
+· TRAINING-SERVING SKEW is the defining production failure. Features computed
+  one way in a training notebook and another way in the serving code produce
+  silent, gradual wrongness. A shared feature definition, or a feature store,
+  is the structural fix.
+· REPRODUCIBILITY — version the data, the code and the model together, pin
+  random seeds, and record which data produced which artifact. 'Which version
+  is in production and what was it trained on' must have an answer.
+· VALIDATE THE INPUTS AT SERVING TIME — schema, ranges, null rates. A model
+  will happily produce a confident score from garbage, and input validation is
+  the cheapest guard you will ever add.
+· SERVING CHOICES — batch (a scheduled job into a table) is simplest and covers
+  most cases; real time needs a service, a latency budget and autoscaling;
+  streaming sits between them. Pick the simplest that meets the requirement.
+· DEPLOY GRADUALLY — shadow mode first (run on real traffic, log the output,
+  show nobody), then a canary to a small percentage, then a full rollout with
+  an A/B test measuring a BUSINESS metric. Keep the previous model warm so
+  rollback is a config change.
+· MONITOR THREE LAYERS — system health (latency, errors, saturation), data
+  health (drift, nulls, schema), and model health (score distribution, and
+  accuracy once labels arrive).
+· PLAN THE RETRAINING CADENCE up front, along with what triggers an off-schedule
+  retrain. A model with no retraining plan is a model with an expiry date
+  nobody wrote down.
+· THE HONEST FRAMING to give — say plainly that the hard parts are engineering
+  and operations, not modelling. That single sentence separates people who have
+  shipped from people who have finished a course."""
+
+_ANSWER_V2["A/B testing an ML model (and the statistics you must get right)"] = """Decide the metric, the effect size and the duration BEFORE you start - almost
+every bad A/B decision comes from choices made after seeing the data.
+
+· THE HYPOTHESIS — state it precisely. 'The new ranker increases add-to-cart
+  rate' is testable; 'the new model is better' is not.
+· ONE PRIMARY METRIC, chosen in advance. Testing ten metrics and reporting the
+  significant one is how you find effects that do not exist — with ten metrics
+  at p < 0.05, a false positive is more likely than not.
+· POWER ANALYSIS BEFORE LAUNCH — from the baseline rate, the minimum detectable
+  effect you care about, and the significance level, compute the required
+  sample size and therefore the duration. An underpowered test cannot find the
+  effect you are looking for, and running it anyway wastes the traffic.
+· WHAT THE p-VALUE MEANS, and getting this right matters: the probability of
+  seeing data this extreme IF there were no real effect. It is NOT the
+  probability that the null hypothesis is true, and it is not the probability
+  your change works.
+· DO NOT PEEK AND STOP EARLY. Checking repeatedly and stopping at the first
+  significant moment inflates the false positive rate far above 5%. If you must
+  monitor continuously, use sequential testing or always-valid confidence
+  intervals designed for it.
+· RANDOMISE AT THE USER LEVEL and check the assignment is actually balanced —
+  a SAMPLE RATIO MISMATCH (say 52/48 when you expected 50/50) means the
+  experiment is broken and the result cannot be trusted, whatever it says.
+· RUN FULL WEEKS to absorb the weekly cycle, and expect novelty effects in the
+  first days.
+· REPORT THE CONFIDENCE INTERVAL, not just significance. 'Between +0.1% and
+  +4%' tells you far more than 'p = 0.04', particularly whether the effect is
+  large enough to be worth the complexity.
+· PRACTICAL VERSUS STATISTICAL SIGNIFICANCE — with enough traffic, a 0.01%
+  improvement is statistically significant and commercially irrelevant. Decide
+  in advance what size of effect justifies shipping.
+· GUARDRAILS can veto a win — latency, cost, error rate, complaints. A ranker
+  that lifts clicks and doubles serving cost may still be the wrong call."""
+
+_ANSWER_V2["Tell me about a time you dealt with ambiguity or unclear requirements"] = """They are testing whether you make PROGRESS without permission - the strong
+answer shows you narrowing the ambiguity yourself rather than waiting for
+someone to resolve it.
+
+· WHAT IS ACTUALLY BEING ASSESSED — do you freeze, do you guess and build the
+  wrong thing, or do you take deliberate steps to reduce uncertainty? Senior
+  roles are mostly ambiguous, so this predicts performance directly.
+· USE STAR, and keep the Situation short. Two sentences of context, then spend
+  the time on what YOU did.
+· THE SITUATION should be genuinely ambiguous — conflicting stakeholders, a
+  one-line request, an undefined success metric, a new domain. 'The ticket was
+  vague' is too small.
+· THE TASK — say what you were accountable for and what specifically was
+  unclear. Name the unknowns; that alone shows structured thinking.
+· THE ACTION is the whole answer, and it should show a METHOD: who you talked
+  to and what you asked, what you wrote down and circulated to force
+  disagreement into the open, what you prototyped to make the question
+  concrete, what assumptions you documented explicitly, and how you scoped a
+  small first version to learn from.
+· THE MOVE THAT LANDS BEST — writing the assumptions down and sending them out.
+  'Here is what I am going to build unless someone objects by Friday' converts
+  silence into a decision and is a very senior behaviour.
+· THE RESULT — quantify it, and include what you learned that changed the plan.
+  Ambiguity stories are stronger when the first assumption turned out partly
+  wrong and you caught it early, because that is the point of the approach.
+· WHAT TO AVOID — blaming the requester, describing endless meetings with no
+  decision, or a story where a manager eventually told you what to do. The last
+  one answers a different question.
+· HAVE ONE STORY where you were wrong and adjusted. It makes the rest
+  believable and pre-empts the follow-up."""
+
+_ANSWER_V2["Tell me about a time you led without authority"] = """Influence without a title comes from credibility, listening and making the
+change easy - the answer must show HOW you got agreement, not that you were
+right.
+
+· WHY THE QUESTION EXISTS — most real work crosses team boundaries where nobody
+  reports to you. They want evidence you can move things anyway.
+· PICK A SITUATION WITH GENUINE RESISTANCE. If everyone agreed immediately,
+  there was nothing to lead. The interest is in how you handled the
+  disagreement.
+· THE ACTIONS THAT WORK, and they should appear in the story: understanding why
+  people objected before arguing, finding the version of your goal that also
+  served THEIR goal, building something small that proved the point, recruiting
+  one respected supporter early, and giving other people ownership of parts of
+  it.
+· EVIDENCE BEATS ASSERTION — a prototype, a measurement, a cost figure. 'I
+  showed that the retry storm was causing 40% of our pages' moves people in a
+  way an opinion does not.
+· CREDIT IS THE MECHANISM, not a nicety. People follow someone who makes them
+  look good. Say explicitly how you shared it.
+· HANDLE THE DISSENTER PROPERLY IN THE STORY — name the strongest objection,
+  say whether it was right, and what you changed because of it. A story where
+  everyone eventually saw you were correct is less convincing than one where
+  the plan improved.
+· THE RESULT — what changed, measured, and whether it stuck after you stopped
+  pushing. Durability is the real test of influence.
+· WHAT TO AVOID — escalating to a manager as the main tactic (that is borrowing
+  authority, not leading without it), painting colleagues as obstacles, or a
+  story where nothing was actually adopted.
+· THE FOLLOW-UP TO PREPARE — 'what would you do differently?' Have a real
+  answer, usually about starting the conversations earlier or with different
+  people."""
+
+_ANSWER_V2["How do you handle a group project where someone is not pulling their weight?"] = """Go to the person first, privately, and assume a reason rather than a fault -
+escalation is a later step, and jumping to it is the answer that fails.
+
+· WHAT IS BEING TESTED — whether you handle conflict directly and
+  professionally, or avoid it, do the work yourself, or run to authority. All
+  three failure modes are common and all three are visible in the answer.
+· STEP ONE, CHECK YOUR OWN ASSUMPTIONS — is the work genuinely unequal, is the
+  expectation clear, did they get the context they needed? Sometimes the
+  problem is an unclear split rather than a person.
+· STEP TWO, TALK TO THEM PRIVATELY, and lead with curiosity. 'I noticed the API
+  piece has not moved — is something blocking you?' Very often the answer is
+  overload elsewhere, an illness, or being stuck and embarrassed to say so.
+· STEP THREE, MAKE IT CONCRETE — agree specific deliverables and dates, written
+  down where everyone can see them. Vague expectations are what let this
+  situation form.
+· STEP FOUR, ADJUST THE PLAN if the capacity really is not there. Reallocate,
+  cut scope, or get help. Protecting the project matters more than protecting
+  the original allocation.
+· STEP FIVE, ESCALATE ONLY IF IT PERSISTS, and do it factually: what was
+  agreed, what happened, what impact it has. No character judgements. And tell
+  the person you are escalating rather than doing it behind them.
+· WHAT NOT TO SAY — 'I just did their work'. It reads as martyrdom, it hides
+  the problem from whoever could fix it, and it does not scale.
+· THE OTHER ANSWER THAT FAILS — going to the manager or lecturer first. It
+  signals conflict avoidance dressed as diligence.
+· IF YOU HAVE A REAL STORY, use it, and include the part where your first
+  assumption was wrong. That is the most credible version, and it demonstrates
+  the listening step actually happened rather than being described."""
+
+_ANSWER_V2["Why software engineering, and why AI/ML specifically?"] = """Two claims, each needing evidence - and the AI/ML half must show you understand
+what the work actually involves, not just that the field is exciting.
+
+· THE STRUCTURE — a genuine origin, evidence that you have done it and stayed
+  interested, and why THIS role connects to it. Enthusiasm without evidence is
+  the commonest weak answer.
+· WHY SOFTWARE — a specific moment beats a general claim. Something you built
+  that someone used, the feeling of a problem yielding, the fact that the
+  feedback loop is fast and honest. Keep it brief; this half is rarely
+  interrogated.
+· WHY AI/ML needs more care, because the field attracts people for the wrong
+  reasons and interviewers know it. Show you understand that the work is mostly
+  data, evaluation and iteration, not model architecture.
+· THE CREDIBLE VERSION names what drew you SPECIFICALLY — systems that improve
+  from data rather than from more rules, the fact that correctness is
+  statistical rather than binary, working where the product and the research
+  meet. Then back it with something you built.
+· EVIDENCE IS THE WHOLE GAME — a project, a paper you implemented, a model you
+  deployed, a dataset you cleaned and what it taught you. One concrete thing
+  outweighs any amount of stated passion.
+· INCLUDE A FRUSTRATION, honestly. 'I spent three weeks on data quality for two
+  days of modelling, and that is when I understood what the job actually is.'
+  It proves you have done it rather than read about it.
+· CONNECT TO THEM — what they build, why that problem is interesting, what you
+  want to work on there. This half is what stops the answer being reusable at
+  every company.
+· WHAT TO AVOID — 'AI is the future', 'it is a growing field', anything about
+  salary, and anything that would be equally true of any company or any role.
+· THE FOLLOW-UP TO EXPECT — 'what have you read or built recently?' Have a real
+  and specific answer ready, ideally one you can discuss critically rather than
+  just name."""
+
+_ANSWER_V2["What questions should you ask the interviewer?"] = """Ask what you genuinely need to know to decide - the questions reveal how you
+think, and having none reads as indifference.
+
+· IT IS STILL BEING ASSESSED. Your questions show what you care about, whether
+  you researched them, and how you would operate. Treat it as part of the
+  interview rather than the end of it.
+· ALWAYS HAVE AT LEAST THREE, because one or two may get answered during the
+  conversation. Write them down; nobody minds.
+· ABOUT THE WORK — what would I be working on in the first three months? What
+  does a typical week look like? What is the hardest technical problem the team
+  faces right now?
+· ABOUT HOW THEY OPERATE — how do you decide what to build? How do changes get
+  from a laptop to production, and how long does that take? What does the
+  on-call rotation look like? What is your test and code review culture?
+· ABOUT THE TEAM — how big, how experienced, how long have people been here?
+  Who would I work with most closely? How did the last person in this role get
+  on?
+· ABOUT GROWTH — what separates someone doing well here from someone doing
+  exceptionally? How is feedback given? What have people in this role moved on
+  to do?
+· THE STRONGEST QUESTIONS ARE SPECIFIC TO THEM — about a recent launch, a
+  design decision visible in their product, a post from their engineering blog.
+  It proves the preparation in a way nothing else does.
+· ONE GOOD DIAGNOSTIC QUESTION — 'what is something about working here that you
+  would change?' The answer is genuinely useful to you, and a candid response
+  tells you a great deal about the culture.
+· WHAT NOT TO ASK in early rounds — salary, holiday, remote policy, anything
+  answered on their careers page. Save compensation for the recruiter, where it
+  belongs.
+· CLOSE WITH A REAL ONE — 'do you have any hesitations about my fit?' It is
+  uncomfortable and it lets you address a concern that would otherwise go
+  unspoken."""
+
+_ANSWER_V2["Union-Find / Disjoint Set Union (DSU)"] = """Answers 'are these two things in the same group?' and 'merge these two groups'
+in effectively constant time - each group is a tree, named by its root.
+
+· THE EVERYDAY PICTURE — friendship circles. To ask whether two people are in
+  the same circle you do not compare everyone; you ask each of them 'who is the
+  head of your circle?' and compare those two answers. Merging two circles is
+  one person pointing at another.
+· THE REPRESENTATION — a single `parent` array. parent[x] is x's immediate
+  parent, and a root is a node that is its own parent. That one array is the
+  entire data structure.
+· FIND(x) — follow parent pointers up until you reach a root, and return it.
+  Two elements are in the same set exactly when their roots are the same
+  object.
+· UNION(a, b) — find both roots. If they are already equal, do nothing (they
+  were already together, which is also how you DETECT A CYCLE). Otherwise point
+  one root at the other.
+· WITHOUT OPTIMISATIONS IT DEGRADES — repeatedly attaching a tree to a chain
+  produces a straight line, and find becomes O(n). Both fixes below are what
+  make it usable, so never present the naive version as finished.
+· PATH COMPRESSION — during find, repoint every node you walked past directly
+  at the root. Written recursively it is one line: `parent[x] = find(parent[x])`.
+  The next lookup for any of them is immediate.
+· UNION BY RANK OR SIZE — always attach the SMALLER tree under the larger, so
+  the depth never grows unnecessarily. Rank tracks approximate height; size
+  tracks node count, and both work equally well in practice.
+· THE COST WITH BOTH — O(α(n)) amortised, where α is the inverse Ackermann
+  function. It is below 5 for any n that fits in the universe, so it is
+  constant for every practical purpose. Say 'effectively constant' and name
+  the real bound; both together read as precise rather than vague.
+· THE HAND TRACE — start with 1,2,3,4 each alone. union(1,2) points 2 at 1.
+  union(3,4) points 4 at 3. union(2,4) finds roots 1 and 3 and joins them, so
+  all four are now one set. find(4) walks 4→3→1 and, with compression,
+  afterwards points 4 straight at 1.
+· WHAT IT CANNOT DO — it does not support DELETION or splitting a set, and it
+  cannot enumerate a set's members without a separate pass. If the problem
+  needs either, union-find is the wrong structure and saying so is a good sign.
+· WHERE IT SHOWS UP — Kruskal's MST, Number of Provinces, Redundant Connection,
+  Accounts Merge, Number of Islands II, and detecting cycles in an UNDIRECTED
+  graph. For a DIRECTED graph you need DFS colouring instead, which is the
+  distinction interviewers probe.
+· WORTH MEMORISING — this is fifteen lines and appears constantly. Being able
+  to write it without thinking frees your attention for the actual problem."""
+
+
+# The same text on the canonical half of the duplicate pair. She is routed
+# to "Union-Find (Disjoint Set Union)" by ai_sde_dupes, so a rewrite that
+# landed only on the shadow would never be read.
+_ANSWER_V2["Union-Find (Disjoint Set Union)"] = """Answers 'are these two things in the same group?' and 'merge these two groups'
+in effectively constant time - each group is a tree, named by its root.
+
+· THE EVERYDAY PICTURE — friendship circles. To ask whether two people are in
+  the same circle you do not compare everyone; you ask each of them 'who is the
+  head of your circle?' and compare those two answers. Merging two circles is
+  one person pointing at another.
+· THE REPRESENTATION — a single `parent` array. parent[x] is x's immediate
+  parent, and a root is a node that is its own parent. That one array is the
+  entire data structure.
+· FIND(x) — follow parent pointers up until you reach a root, and return it.
+  Two elements are in the same set exactly when their roots are the same
+  object.
+· UNION(a, b) — find both roots. If they are already equal, do nothing (they
+  were already together, which is also how you DETECT A CYCLE). Otherwise point
+  one root at the other.
+· WITHOUT OPTIMISATIONS IT DEGRADES — repeatedly attaching a tree to a chain
+  produces a straight line, and find becomes O(n). Both fixes below are what
+  make it usable, so never present the naive version as finished.
+· PATH COMPRESSION — during find, repoint every node you walked past directly
+  at the root. Written recursively it is one line: `parent[x] = find(parent[x])`.
+  The next lookup for any of them is immediate.
+· UNION BY RANK OR SIZE — always attach the SMALLER tree under the larger, so
+  the depth never grows unnecessarily. Rank tracks approximate height; size
+  tracks node count, and both work equally well in practice.
+· THE COST WITH BOTH — O(α(n)) amortised, where α is the inverse Ackermann
+  function. It is below 5 for any n that fits in the universe, so it is
+  constant for every practical purpose. Say 'effectively constant' and name
+  the real bound; both together read as precise rather than vague.
+· THE HAND TRACE — start with 1,2,3,4 each alone. union(1,2) points 2 at 1.
+  union(3,4) points 4 at 3. union(2,4) finds roots 1 and 3 and joins them, so
+  all four are now one set. find(4) walks 4→3→1 and, with compression,
+  afterwards points 4 straight at 1.
+· WHAT IT CANNOT DO — it does not support DELETION or splitting a set, and it
+  cannot enumerate a set's members without a separate pass. If the problem
+  needs either, union-find is the wrong structure and saying so is a good sign.
+· WHERE IT SHOWS UP — Kruskal's MST, Number of Provinces, Redundant Connection,
+  Accounts Merge, Number of Islands II, and detecting cycles in an UNDIRECTED
+  graph. For a DIRECTED graph you need DFS colouring instead, which is the
+  distinction interviewers probe.
+· WORTH MEMORISING — this is fifteen lines and appears constantly. Being able
+  to write it without thinking frees your attention for the actual problem."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])

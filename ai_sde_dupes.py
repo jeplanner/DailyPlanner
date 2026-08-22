@@ -83,7 +83,10 @@ DUPES = {
         "Neither deep; canonical marginally fuller in both answer and code."),
     "Union-Find / Disjoint Set Union (DSU)": (
         "Union-Find (Disjoint Set Union)",
-        "Both deep and both P0; canonical has 611+866 chars against 369+797."),
+        "Both deep and both P0. Both answers were rewritten together on "
+        "2026-08-22 and are now identical, so the canonical stays ahead on "
+        "code length alone (866 vs 797). Keep them in step: rewriting only "
+        "the shadow sends her to the older prose."),
     "Vector database / ANN": (
         "Vector database",
         "Both deep; canonical answer 345 vs 258."),
