@@ -36,6 +36,21 @@ const at=(h,m,s=0)=>new Date(2026,7,22,h,m,s);
 
 // parseTimes
 ok("parses forgiving list", JSON.stringify(TA._parseTimes("9, 13:30 18:45"))==='["09:00","13:30","18:45"]');
+// "5.00" is how most of the world writes five o'clock. Splitting on any
+// non-digit read it as TWO times — 05:00 and 00:00 — and announced midnight.
+ok("5.00 is five o'clock, not 5:00 + 0:00", JSON.stringify(TA._parseTimes("5.00"))==='["05:00"]');
+ok("5.30 keeps its minutes",   JSON.stringify(TA._parseTimes("5.30"))==='["05:30"]');
+ok("dotted list",              JSON.stringify(TA._parseTimes("5.00, 9.30, 18.45"))==='["05:00","09:30","18:45"]');
+ok("pm shifts by 12",          JSON.stringify(TA._parseTimes("5pm"))==='["17:00"]');
+ok("am leaves alone",          JSON.stringify(TA._parseTimes("5am"))==='["05:00"]');
+ok("12am is midnight",         JSON.stringify(TA._parseTimes("12am"))==='["00:00"]');
+ok("12pm is noon",             JSON.stringify(TA._parseTimes("12pm"))==='["12:00"]');
+ok("6.45pm",                   JSON.stringify(TA._parseTimes("6.45pm"))==='["18:45"]');
+ok("mixed notations together", JSON.stringify(TA._parseTimes("5.00, 9am, 13:30, 6.45pm"))==='["05:00","09:00","13:30","18:45"]');
+ok("many times allowed",       TA._parseTimes("1,2,3,4,5,6,7,8").length===8);
+ok("24h still works",          JSON.stringify(TA._parseTimes("17:00"))==='["17:00"]');
+ok("friendly reads back 12h",  TA._friendly("17:30")==="5:30 PM" && TA._friendly("05:00")==="5:00 AM");
+ok("friendly noon/midnight",   TA._friendly("12:00")==="12:00 PM" && TA._friendly("00:00")==="12:00 AM");
 ok("drops nonsense",        JSON.stringify(TA._parseTimes("25:00, abc, 9:70"))==='[]');
 ok("dedupes + sorts",       JSON.stringify(TA._parseTimes("18:00, 9:00, 18:00"))==='["09:00","18:00"]');
 

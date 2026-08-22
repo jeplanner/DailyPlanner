@@ -94,16 +94,55 @@
      shows what survived so nothing is silently ignored. */
   function parseTimes(text) {
     var out = [];
-    String(text || "").split(/[^0-9:]+/).forEach(function (tok) {
+    // A FULL STOP IS A TIME SEPARATOR. "5.00" is how most of the world writes
+    // five o'clock, and the previous version split on any non-digit — so it
+    // read that as TWO times, 05:00 and 00:00, and quietly announced midnight
+    // every night. Dots and dashes between the hour and minute are joined
+    // back up before anything is split.
+    var t = String(text || "")
+      .toLowerCase()
+      .replace(/(\d)\s*[.\-]\s*(\d)/g, "$1:$2");
+
+    // Split on commas, semicolons, "and", or runs of spaces — but NOT on
+    // letters, because am/pm has to survive to the next step.
+    t.split(/\s*(?:,|;|\band\b|\s{2,})\s*|\s+(?=\d)/).forEach(function (tok) {
+      tok = (tok || "").trim();
       if (!tok) return;
-      var m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(tok);
+      var m = /^(\d{1,2})(?::(\d{1,2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/.exec(tok);
       if (!m) return;
       var h = parseInt(m[1], 10), mi = parseInt(m[2] || "0", 10);
-      if (h > 23 || mi > 59) return;
+      var mer = (m[3] || "").replace(/\./g, "");
+      if (mi > 59) return;
+      // 12-HOUR INPUT, because "5pm" is what people type. Without a meridiem
+      // the number is taken as-is, so 17:00 still works and 5 means 05:00.
+      if (mer === "pm" && h < 12) h += 12;
+      else if (mer === "am" && h === 12) h = 0;
+      if (h > 23) return;
       var v = (h < 10 ? "0" + h : h) + ":" + (mi < 10 ? "0" + mi : mi);
       if (out.indexOf(v) === -1) out.push(v);
     });
     return out.sort();
+  }
+
+  /* 24h -> "5:00 AM", so the echo is unambiguous about what was understood.
+     "Is 5.00 five in the morning?" is only a question because nothing ever
+     read the answer back. */
+  function friendly(hhmm) {
+    var p = hhmm.split(":");
+    var h = parseInt(p[0], 10);
+    var suffix = h < 12 ? "AM" : "PM";
+    var h12 = h % 12 === 0 ? 12 : h % 12;
+    return h12 + ":" + p[1] + " " + suffix;
+  }
+
+  /* The schedule in words. Used by the lock-screen metadata and the panel. */
+  function scheduleWords() {
+    var bits = [];
+    if (state.every > 0) bits.push("every " + state.every + " min");
+    if (state.at.length) {
+      bits.push("at " + state.at.map(friendly).join(", "));
+    }
+    return bits.length ? bits.join(", plus ") : "nothing scheduled";
   }
 
   function save() {
@@ -358,11 +397,23 @@
         el.setAttribute("playsinline", "");
         document.body.appendChild(el);
       }
+      // METADATA MUST BE SET ONCE PLAYBACK HAS ACTUALLY STARTED, not before.
+      // play() is asynchronous; a session described while the element is
+      // still loading is routinely discarded, and then there is no lock
+      // screen entry even though the audio is running.
+      el.addEventListener("playing", setMediaSession);
+
       var p = el.play();
       if (p && p.catch) {
         // Blocked until a gesture. Start IS a gesture so the normal path
         // works; a page restored without one picks it up on first touch.
-        p.catch(function () {});
+        // SAID OUT LOUD, though: silently swallowing this is how "keep going
+        // when minimised" ends up ticked and doing nothing.
+        p.catch(function (err) {
+          note(false, "keep-alive audio was blocked (" +
+                      ((err && err.name) || "autoplay policy") +
+                      ") — tap the page once");
+        });
       }
       setMediaSession();
       keepCtx = { el: el };
@@ -373,14 +424,21 @@
   }
 
   /* Naming the session is what makes the lock-screen entry legible, and
-     wiring its buttons is what makes it honest. */
+     wiring its buttons is what makes it honest.
+
+     WHY THE LOCK SCREEN SHOWED NOTHING. The keep-alive track was ONE SECOND
+     long. Chrome does not create a media notification for media shorter than
+     about five seconds — it classifies short clips as sound effects, not
+     playback. Audio focus was held either way, so the page stayed awake and
+     the announcements worked, but there were no controls anywhere. The track
+     is now 40 seconds, still one least-significant-bit of amplitude. */
   function setMediaSession() {
     if (!("mediaSession" in navigator)) return;
     try {
       if (window.MediaMetadata) {
         navigator.mediaSession.metadata = new window.MediaMetadata({
           title: "Announcing the time",
-          artist: "Every " + state.every + " minutes",
+          artist: scheduleWords(),
           album: "DailyPlanner",
         });
       }
@@ -556,10 +614,7 @@
        not the one in effect. */
     var nowEl = pop.querySelector("[data-ta-now]");
     if (nowEl) {
-      var bits = [];
-      if (state.every > 0) bits.push("every " + state.every + " min");
-      if (state.at.length) bits.push("at " + state.at.join(", "));
-      var what = bits.length ? bits.join(", plus ") : "nothing scheduled";
+      var what = scheduleWords();
       if (state.label) what += " \u2014 saying \u201c" + state.label + "\u201d first";
       nowEl.textContent = (state.mode === "on" ? "Saved & running: "
                            : state.mode === "paused" ? "Saved, paused: "
@@ -608,8 +663,12 @@
     var e = pop.querySelector("[data-ta-at-echo]");
     if (!e) return;
     e.textContent = state.at.length
-      ? "Understood: " + state.at.join(", ")
-      : "Optional. Blank = only the interval above.";
+      ? "Understood: " + state.at.map(function (t) {
+          return t + " (" + friendly(t) + ")";
+        }).join(", ")
+      : "Optional, and you can list as many as you like. "
+        + "5.00 / 5:00 / 5am all mean five in the morning; use 5pm or 17:00 "
+        + "for the evening.";
   }
 
   function buildPop() {
@@ -639,7 +698,7 @@
       '</div>' +
       '<div class="ta-fld">' +
         '<label>Also announce at exactly' +
-        '<input type="text" data-ta-at placeholder="9:00, 13:30, 18:45"></label>' +
+        '<input type="text" data-ta-at placeholder="5.00, 9am, 13:30, 6.45pm"></label>' +
         '<small data-ta-at-echo></small>' +
       '</div>' +
       '<div class="ta-fld">' +
@@ -816,6 +875,8 @@
     _slotFor: slotFor,
     _dueSlot: dueSlot,
     _parseTimes: parseTimes,
+    _friendly: friendly,
+    _scheduleWords: scheduleWords,
     _health: function () { return health; },
     _set: function (patch) { Object.keys(patch).forEach(function (k) {
       state[k] = patch[k]; }); },

@@ -2266,7 +2266,11 @@ def test_announcer_keepalive_uses_real_media_not_web_audio():
     assert 'setActionHandler("pause"' in js and 'setActionHandler("stop"' in js
     import os
     assert os.path.exists("static/audio-keepalive.wav"), "the track is missing"
-    assert os.path.getsize("static/audio-keepalive.wav") < 20000
+    # SIZE BOUND RAISED FROM 20KB. The track had to grow from 1s to 15s so
+    # Chrome would surface lock-screen controls for it (it treats anything
+    # under ~5s as a sound effect, not playback), and 8kHz mono 8-bit for 15s
+    # is ~120KB. Fetched once and cached by the service worker.
+    assert os.path.getsize("static/audio-keepalive.wav") < 200000
     # Precached: the moment it is needed is exactly when the network is
     # least likely to be there.
     assert "audio-keepalive.wav" in open("static/service-worker.js", encoding="utf-8").read()
@@ -3650,3 +3654,29 @@ def test_session_outlives_a_week_for_installed_apps():
     import datetime as dtm
     from settings import BaseConfig
     assert BaseConfig.PERMANENT_SESSION_LIFETIME >= dtm.timedelta(days=30)
+
+
+def test_keepalive_track_is_long_enough_for_a_lock_screen_notification():
+    """Reported: "keep going when minimised is checked, but pause button not
+    appearing in the lock screen".
+
+    Chrome does not create a media notification for media shorter than about
+    five seconds — it classifies short clips as sound effects rather than
+    playback. The track was ONE second. Audio focus was held either way, so
+    the page stayed awake and the announcements worked; there were simply no
+    controls anywhere, which is the hardest kind of half-working.
+    """
+    import wave
+    with wave.open("static/audio-keepalive.wav", "rb") as w:
+        seconds = w.getnframes() / float(w.getframerate())
+    assert seconds >= 10, (
+        f"keep-alive is {seconds:.1f}s; Chrome will not show lock-screen "
+        "controls for anything under ~5s"
+    )
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    # Metadata set once playback has really started: play() is async, and a
+    # session described while the element is still loading gets discarded.
+    assert 'addEventListener("playing", setMediaSession)' in js
+    # A blocked play() must not be swallowed — that is how "keep going when
+    # minimised" ends up ticked and doing nothing.
+    assert "keep-alive audio was blocked" in js
