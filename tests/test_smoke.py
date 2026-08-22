@@ -1452,3 +1452,124 @@ def test_pdf_body_size_defaults_to_26pt_and_is_clamped(app):
         with app.test_request_context(f"/ai-sde/pdf?fs={bad}"):
             got = ip._pdf_body_pt()
             assert ip._PDF_MIN_PT <= got <= ip._PDF_MAX_PT, f"fs={bad} gave {got}"
+
+
+# ═══════════════════════════════════════════════════
+# Day Board — click through to the section, and back
+# ═══════════════════════════════════════════════════
+
+def test_day_board_rows_link_to_the_section_that_owns_them(auth_client, monkeypatch):
+    """The board began look-only. Asked for: tapping a row should open the
+    section it belongs to, and bring you back.
+
+    The three destinations disagree about how a date is spelled — /day takes
+    an ISO `date`, /todo takes year/month/day, /checklist takes none — so the
+    URLs are built in Python rather than scattered across the template.
+    """
+    import routes.day_board as db
+    from utils.user_tz import user_today
+    today = user_today().isoformat()
+
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [
+        {"id": "E1", "title": "Standup", "start_time": "09:00", "end_time": "09:30"},
+        {"id": "E2", "title": "Read paper", "start_time": None, "end_time": None},
+    ])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [
+        {"id": "T1", "task_text": "Ship the thing", "quadrant": "Q1", "task_time": "14:00"},
+    ])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [
+        {"id": "C1", "title": "Vitamins", "done": False},
+    ])
+
+    html = auth_client.get("/day-board").get_data(as_text=True)
+
+    # The event focus id is PREFIXED, because that is what the day view calls
+    # its event rows. Sending the raw id lands on the right page with nothing
+    # highlighted, which reads as a broken link.
+    assert f"/day?date={today}&amp;focus=ev-E1" in html
+    assert "focus=ev-E2" in html, "the untimed event is not linked"
+    assert "/todo?year=" in html and "focus=T1" in html
+    assert "/checklist?focus=C1" in html
+    # Every link carries the way home.
+    assert html.count("from=board") >= 4
+    # Events are anchors; list rows get a full-cell overlay instead, because
+    # wrapping a flex row's children would change the height the fit pass
+    # measures.
+    assert '<a class="ev' in html
+    assert 'class="hit"' in html
+
+
+def test_day_board_does_not_link_the_checklist_from_another_day(auth_client, monkeypatch):
+    """/checklist takes no date argument at all — it is today-only. A link
+    from a past or future board would land on TODAY's list while looking
+    like it opened that day's, which is worse than not linking."""
+    import routes.day_board as db
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [
+        {"id": "C1", "title": "Vitamins", "done": False},
+    ])
+    html = auth_client.get("/day-board?date=2020-01-01").get_data(as_text=True)
+    assert "Vitamins" in html, "the row should still be shown, just not linked"
+    assert "/checklist?focus=" not in html
+
+
+def test_arriving_from_the_board_offers_one_tap_back(auth_client):
+    """Without a way back the board is a one-way trip, which is worse than
+    not linking at all — you arrive somewhere and have to find your way home
+    through the menu.
+
+    The chip lives in _top_nav.html because all the destinations already
+    include it, so one chip covers every page the board can reach, including
+    any added later.
+    """
+    # Assert on the ELEMENT, not the class name: the rule ships in the shared
+    # partial's stylesheet on every page, so the bare string always matches.
+    plain = auth_client.get("/todo").get_data(as_text=True)
+    assert 'class="back-board"' not in plain, (
+        "the chip shows when it was not asked for")
+
+    import re
+    for path in ("/todo", "/checklist", "/day"):
+        html = auth_client.get(f"{path}?from=board&bd=2026-08-22").get_data(as_text=True)
+        assert 'class="back-board"' in html, f"no way back from {path}"
+        # The board answers on both /day-board and /board, and url_for picks
+        # whichever rule registered last — so assert the PROPERTY (it goes to
+        # the board, carrying the date you came from) rather than a spelling.
+        href = re.search(r'class="back-board"\s+href="([^"]+)"', html)
+        if href is None:
+            href = re.search(r'href="([^"]+)"[^>]*class="back-board"', html)
+        assert href, f"{path} renders the chip without an href"
+        target = href.group(1)
+        assert "board" in target, f"{path} chip does not point at the board: {target}"
+        assert "date=2026-08-22" in target, (
+            f"{path} loses the board's date on the way back: {target}")
+
+
+def test_focus_landing_survives_a_list_that_renders_later():
+    """Most of these pages build their lists in JavaScript after their own
+    fetch, so the row is not in the DOM at DOMContentLoaded. The landing
+    retries via MutationObserver, and gives up rather than observing forever.
+
+    A missing id is a NORMAL outcome — the task was completed and filtered
+    out, or the item was deleted — so it must stay silent instead of
+    reporting a failure the user can already see.
+    """
+    js = open("static/js/global.js", encoding="utf-8").read()
+    block = js.split("ARRIVING FROM THE DAY BOARD")[1]
+    assert "MutationObserver" in block, "gives up before a JS-rendered list appears"
+    assert "DEADLINE" in block and "disconnect()" in block, "observes forever"
+    assert "CSS.escape" in block, "the id comes from the URL and is not escaped"
+    # Both hooks: data-focus-id is explicit, data-id is what the existing
+    # task and checklist markup already carries.
+    assert "data-focus-id" in block and "data-id" in block
+    # Esc returns to the board, and must not eat an editor's escape.
+    assert "Escape" in block and "TEXTAREA" in block
+
+
+def test_day_page_rows_carry_a_focus_id(auth_client):
+    """The landing needs something to find. /todo and /checklist already
+    emit data-id; the day view emitted nothing."""
+    html = open("templates/day.html", encoding="utf-8").read()
+    assert html.count('data-focus-id="{{ i.id }}"') == 3, (
+        "not every day-view item block is addressable")

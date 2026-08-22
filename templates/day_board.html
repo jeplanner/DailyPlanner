@@ -146,6 +146,15 @@ header{
 }
 .ev.now{background:color-mix(in srgb, var(--ok) 26%, var(--panel));
         border-left-color:var(--ok)}
+/* The board began look-only and is now also a way IN. The affordance stays
+   deliberately quiet — a kiosk being glanced at from across a desk must not
+   look like a page full of buttons — but it is a real target, not a hint. */
+a.ev{display:block; color:inherit; text-decoration:none; cursor:pointer}
+a.ev:hover, a.ev:focus-visible{
+  filter:brightness(1.18);
+  outline:2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset:1px;
+}
 .ev .t{font-size:calc(var(--u) * .75); color:var(--dim); font-variant-numeric:tabular-nums}
 .ev .ttl{font-weight:650; display:-webkit-box; -webkit-line-clamp:2;
          -webkit-box-orient:vertical; overflow:hidden}
@@ -168,6 +177,17 @@ li{
   border-bottom:1px solid color-mix(in srgb, var(--line) 55%, transparent);
 }
 li:last-child{border-bottom:0}
+/* A full-cell overlay target. It is absolutely positioned and therefore out
+   of flow, so the flex row above keeps the exact geometry the fit pass
+   measures — wrapping the row's contents in an anchor instead would change
+   the measured height and fight the shrink-to-fit search. */
+li{position:relative}
+.hit{position:absolute; inset:0; z-index:2; border-radius:calc(var(--u) * .25)}
+li:has(.hit){cursor:pointer}
+li:has(.hit:hover), li:has(.hit:focus-visible){
+  background:color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.hit:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
 li.done{color:var(--dim)}
 li.done .txt{text-decoration:line-through}
 .dot{
@@ -260,15 +280,17 @@ li.done .txt{text-decoration:line-through}
           <div class="evlayer">
           {% for p in placed %}
             {%- set w = 100.0 / p.lane_count -%}
-            <div class="ev{% if p.is_now %} now{% endif %}"
-                 data-start="{{ p.s }}" data-end="{{ p.t }}"
-                 style="top:{{ '%.3f'|format(p.top) }}%;
-                        height:{{ '%.3f'|format(p.height) }}%;
-                        left:{{ '%.3f'|format(p.lane * w) }}%;
-                        width:calc({{ '%.3f'|format(w) }}% - var(--u) * .4);">
+            <a class="ev{% if p.is_now %} now{% endif %}"
+               href="{{ p.href }}"
+               title="Open {{ p.title }} in the day view"
+               data-start="{{ p.s }}" data-end="{{ p.t }}"
+               style="top:{{ '%.3f'|format(p.top) }}%;
+                      height:{{ '%.3f'|format(p.height) }}%;
+                      left:{{ '%.3f'|format(p.lane * w) }}%;
+                      width:calc({{ '%.3f'|format(w) }}% - var(--u) * .4);">
               <div class="t">{{ p.start }}–{{ p.end }}</div>
               <div class="ttl">{{ p.title }}</div>
-            </div>
+            </a>
           {% endfor %}
           </div>
 
@@ -295,6 +317,8 @@ li.done .txt{text-decoration:line-through}
               <li class="q2">
                 <span class="dot"></span>
                 <span class="txt">{{ e.title or e.event_text or e.name }}</span>
+                <a class="hit" href="{{ e.href }}"
+                   aria-label="Open {{ e.title or e.event_text or e.name }}"></a>
               </li>
             {% endfor %}
             {% for t in tasks %}
@@ -304,6 +328,8 @@ li.done .txt{text-decoration:line-through}
                 {% else %}<span class="dot"></span>{% endif %}
                 <span class="txt">{{ t.task_text }}</span>
                 {% if t.task_time %}<span class="at">{{ t.task_time[:5] }}</span>{% endif %}
+                <a class="hit" href="{{ t.href }}"
+                   aria-label="Open {{ t.task_text }} in the matrix"></a>
               </li>
             {% endfor %}
             {% if not tasks and not untimed %}
@@ -324,6 +350,10 @@ li.done .txt{text-decoration:line-through}
                 {% if c.done %}<span class="tick">✓</span>
                 {% else %}<span class="dot"></span>{% endif %}
                 <span class="txt">{{ c.title }}</span>
+                {% if c.href %}
+                  <a class="hit" href="{{ c.href }}"
+                     aria-label="Open {{ c.title }} in the checklist"></a>
+                {% endif %}
               </li>
             {% endfor %}
             {% if not checklist %}

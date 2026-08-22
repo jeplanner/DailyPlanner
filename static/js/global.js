@@ -128,3 +128,115 @@
         if (el) el.remove();
     };
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   ARRIVING FROM THE DAY BOARD
+
+   The board links into whichever section owns a row (?focus=<id>), and the
+   shared nav renders a "← Board" chip on the way back (?from=board&bd=...).
+   This is the third piece: making the arrival land ON the thing you tapped
+   rather than at the top of a page you now have to search.
+
+   Two problems it has to survive:
+
+   1. MOST OF THESE PAGES RENDER THEIR LISTS IN JAVASCRIPT, after their own
+      fetch. An element queried at DOMContentLoaded is usually not there yet,
+      so this retries on a MutationObserver until the row appears, and gives
+      up after a few seconds rather than observing forever.
+   2. THE ID MAY SIMPLY NOT BE ON THE PAGE — the task was completed and
+      filtered out, the date moved on, the item was deleted. That is a normal
+      outcome, not an error: the page is still the right page, so it stays
+      silent rather than showing a failure for something the user can see.
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+    "use strict";
+
+    var params = new URLSearchParams(window.location.search);
+    var focusId = params.get("focus");
+    var fromBoard = params.get("from") === "board";
+
+    /* Esc goes back to the board, matching the board's own Esc-to-menu.
+       Skipped while typing, so it cannot eat an editor's escape. */
+    if (fromBoard) {
+        document.addEventListener("keydown", function (ev) {
+            if (ev.key !== "Escape") return;
+            var t = ev.target;
+            if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
+                      t.isContentEditable)) return;
+            var chip = document.querySelector(".back-board");
+            if (chip) window.location.href = chip.getAttribute("href");
+        });
+    }
+
+    if (!focusId) return;
+
+    var DEADLINE = 6000;
+    var started = Date.now();
+    var observer = null;
+    var done = false;
+
+    function find() {
+        /* data-focus-id is the explicit hook; data-id is what the existing
+           task and list markup already carries, so both are accepted. The
+           id is escaped because it comes from the URL. */
+        var safe = (window.CSS && CSS.escape) ? CSS.escape(focusId)
+                                              : focusId.replace(/["\\\]]/g, "\\$&");
+        return document.querySelector('[data-focus-id="' + safe + '"]') ||
+               document.querySelector('[data-id="' + safe + '"]');
+    }
+
+    function land(el) {
+        if (done) return;
+        done = true;
+        if (observer) observer.disconnect();
+        try {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+        } catch (_) {
+            el.scrollIntoView();
+        }
+        el.classList.add("board-focus");
+        /* Remove the class rather than leaving it: a permanent highlight
+           reads as a state the item is in, not as "here is what you tapped". */
+        setTimeout(function () { el.classList.remove("board-focus"); }, 2600);
+    }
+
+    function attempt() {
+        var el = find();
+        if (el) { land(el); return true; }
+        if (Date.now() - started > DEADLINE && observer) {
+            observer.disconnect();
+            observer = null;
+        }
+        return false;
+    }
+
+    function start() {
+        if (attempt()) return;
+        if (!window.MutationObserver) return;
+        observer = new MutationObserver(attempt);
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(function () {
+            if (observer) { observer.disconnect(); observer = null; }
+        }, DEADLINE);
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", start);
+    } else {
+        start();
+    }
+
+    /* Injected rather than added to every stylesheet, so a page that never
+       receives a ?focus= never pays for it. */
+    var style = document.createElement("style");
+    style.textContent =
+        ".board-focus{animation:board-focus-flash 2.4s ease-out 1;" +
+        "outline:2px solid #6366f1 !important;outline-offset:2px;" +
+        "border-radius:8px;scroll-margin:80px}" +
+        "@keyframes board-focus-flash{" +
+        "0%,25%{background:rgba(99,102,241,.28)}" +
+        "100%{background:transparent}}" +
+        "@media (prefers-reduced-motion:reduce){" +
+        ".board-focus{animation:none;background:rgba(99,102,241,.18)}}";
+    document.head.appendChild(style);
+})();

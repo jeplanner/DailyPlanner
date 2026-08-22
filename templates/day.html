@@ -146,7 +146,7 @@
   <h2>On the clock <span class="n">{{ timed|length }}</span></h2>
   {% if timed %}
     {% for i in timed %}
-    <div class="item">
+    <div class="item" data-focus-id="{{ i.id }}">
       <div class="t">{{ i.time }}</div>
       <div class="b">
         <div class="ttl">{{ i.title }}</div>
@@ -168,7 +168,7 @@
   <h2>No time set <span class="n">{{ untimed|length }}</span></h2>
   {% if untimed %}
     {% for i in untimed %}
-    <div class="item">
+    <div class="item" data-focus-id="{{ i.id }}">
       <div class="t none">any<br>time</div>
       <div class="b">
         <div class="ttl">{{ i.title }}</div>
@@ -187,7 +187,7 @@
   {% if overdue %}
   <h2>Overdue <span class="n">{{ overdue|length }}</span></h2>
     {% for i in overdue[:12] %}
-    <div class="item">
+    <div class="item" data-focus-id="{{ i.id }}">
       <div class="t none">{{ i.time or '—' }}</div>
       <div class="b">
         <div class="ttl">{{ i.title }}</div>

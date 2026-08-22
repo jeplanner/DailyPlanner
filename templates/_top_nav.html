@@ -33,6 +33,21 @@
    TOP NAV / SIDEBAR — grouped, mobile-friendly
    ═══════════════════════════════════════════════════════════ */
 
+/* ── Back to the Day Board ──
+   Shown only when you arrived from the board. Deliberately the most
+   prominent thing in the bar: it is the one control the user is looking
+   for at that moment, and a subtle one would send them to the menu. */
+.back-board{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:6px 12px; border-radius:999px;
+  background:#4338ca; color:#fff; font-weight:700; font-size:13px;
+  text-decoration:none; white-space:nowrap; flex:none;
+}
+.back-board:hover{background:#3730a3}
+.back-board:focus-visible{outline:2px solid #fff; outline-offset:2px}
+html.dark .back-board{background:#6366f1}
+html.dark .back-board:hover{background:#818cf8}
+
 /* ── Top header bar ── */
 .top-context{
   width:100%;
@@ -1011,6 +1026,22 @@ html.dark .section-title{color:#f1f5f9;}
 <!-- ===== HEADER ===== -->
 
 <div class="top-context">
+
+  {# ── RETURN TO THE DAY BOARD ────────────────────────────────────────
+     The board links INTO the sections that own its rows, and every such
+     link carries `from=board` plus `bd` (the board's date). Without a way
+     back the board is a one-way trip, which is worse than not linking at
+     all — you arrive somewhere and have to find your way home through the
+     menu. It lives here rather than in each destination because all four
+     of them already include this partial, so one chip covers every place
+     the board can send you, including any added later. #}
+  {% if request.args.get('from') == 'board' %}
+    <a class="back-board"
+       href="{{ url_for('day_board.day_board', date=request.args.get('bd')) if request.args.get('bd') else url_for('day_board.day_board') }}"
+       title="Back to the Day Board (Esc)">
+      <span aria-hidden="true">&larr;</span> Board
+    </a>
+  {% endif %}
 
   <button class="hamburger" onclick="toggleSidebar()">
   ☰ <span>Menu</span>

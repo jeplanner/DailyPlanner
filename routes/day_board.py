@@ -34,7 +34,7 @@ should not depend on a token still being valid in JavaScript.
 import logging
 from datetime import date, datetime, time, timedelta
 
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import Blueprint, jsonify, render_template, request, session, url_for
 
 from services.login_service import login_required
 from services import event_recurrence
@@ -437,6 +437,53 @@ def pin_to_notifications():
                     "persisted": True, **summary})
 
 
+# ── Click-through ─────────────────────────────────────────────────────
+# The board began as a look-only kiosk. It is now also the fastest way IN:
+# tapping a row opens the section that owns it, and every such link carries
+# `from=board` plus the board's date so the destination can offer one tap
+# back. Without that return trip the board becomes a dead end, and a dead end
+# is worse than a link nobody presses.
+#
+# The URLs are built HERE rather than in the template because the three
+# destinations disagree about how a date is spelled — /day takes an ISO
+# `date`, /todo takes year/month/day, /checklist takes none at all — and
+# hiding that in Jinja would put three different conventions in the markup.
+
+def _back_args(plan_date):
+    """Query args every click-through carries, so the way back is never lost."""
+    return {"from": "board", "bd": plan_date.isoformat()}
+
+
+def _link_event(item, plan_date):
+    """An event opens the day view for the date it belongs to.
+
+    The focus id is PREFIXED "ev-" because that is what the day view calls
+    its event rows (agenda_service builds them as f"ev-{row id}"). Sending
+    the raw row id would land on the right page with nothing highlighted,
+    which looks like the link is broken rather than like the row is gone.
+    """
+    raw_id = item.get("id")
+    focus = f"ev-{raw_id}" if raw_id else ""
+    return url_for("day.day_page", date=plan_date.isoformat(),
+                   focus=focus, **_back_args(plan_date))
+
+
+def _link_task(item, plan_date):
+    """A task opens the Eisenhower matrix, which wants the date in parts."""
+    return url_for("todo.todo", year=plan_date.year, month=plan_date.month,
+                   day=plan_date.day, focus=item.get("id") or "",
+                   **_back_args(plan_date))
+
+
+def _link_checklist(item, plan_date):
+    """The checklist page is TODAY-ONLY by construction — it takes no date
+    argument at all. Linking a past or future board's row to it would land on
+    today's list and quietly show the wrong day, so those rows stay
+    unlinked."""
+    return url_for("checklist.checklist_page", focus=item.get("id") or "",
+                   **_back_args(plan_date))
+
+
 @day_board_bp.route("/day-board")
 @day_board_bp.route("/board")
 @login_required
@@ -505,6 +552,20 @@ def day_board():
 
     open_tasks = [t for t in tasks
                   if not (t.get("is_done") or t.get("status") == "done")]
+
+    # Attach the click-through target to every row. Done here rather than in
+    # the template so the three date conventions stay in one place.
+    for _p in placed:
+        _p["href"] = _link_event(_p.get("raw") or {}, plan_date)
+    for _e in untimed:
+        _e["href"] = _link_event(_e, plan_date)
+    for _t in tasks:
+        _t["href"] = _link_task(_t, plan_date)
+    # Checklist rows are only linkable when the board shows TODAY — the
+    # checklist page takes no date argument, so a link from another day would
+    # land on today's list and silently show the wrong thing.
+    for _c in checklist:
+        _c["href"] = _link_checklist(_c, plan_date) if is_today else None
 
     return render_template(
         "day_board.html",
