@@ -19,6 +19,29 @@
  * new document, so after a navigation the first announcement may be
  * refused until you touch the page. The control says so rather than
  * pretending, and re-arms itself on the first interaction.
+ *
+ * DOES IT RUN WHEN THE WINDOW IS MINIMISED? Partly, and the honest answer
+ * has three parts.
+ *
+ *   1. THROTTLING — survivable, and measured. A hidden tab has its timers
+ *      clamped, in Chrome to once per MINUTE after about five minutes.
+ *      Simulated against this logic: a 60s tick still catches all 96
+ *      quarter-hours in a day, because GRACE_MS is 90s. At a 120s clamp it
+ *      would start missing half, which is why the grace window is not
+ *      tightened.
+ *   2. FREEZING — fatal, and the reason KEEPALIVE exists below. Chrome may
+ *      FREEZE an eligible background tab, at which point timers do not run
+ *      at all. Tabs that are playing audio are exempt, so the opt-in
+ *      keep-alive holds a near-silent Web Audio node open. It costs a
+ *      little battery and makes the tab show an "playing audio" indicator,
+ *      which is why it is opt-in rather than always on.
+ *   3. A CLOSED PAGE, OR A BACKGROUNDED PHONE BROWSER — nothing works, and
+ *      nothing here can make it. Script only runs while the document is
+ *      alive, and mobile browsers suspend background pages almost at once.
+ *      That is a limit of the platform, not a setting.
+ *
+ * Whatever happens, a missed announcement is SKIPPED rather than replayed,
+ * so waking up never produces a burst of stale times.
  */
 (function () {
   "use strict";
@@ -32,15 +55,17 @@
   var state = load();
   var timer = null;
   var armed = false;             // has this document had a user gesture?
+  var keepCtx = null;            // Web Audio node held open, see KEEPALIVE
 
   function load() {
-    var d = { mode: "off", every: 15, lastSlot: null };
+    var d = { mode: "off", every: 15, lastSlot: null, keepalive: false };
     try {
       var raw = JSON.parse(localStorage.getItem(KEY));
       if (raw && typeof raw === "object") {
         if (raw.mode === "on" || raw.mode === "paused") d.mode = raw.mode;
         if (INTERVALS.indexOf(raw.every) !== -1) d.every = raw.every;
         if (typeof raw.lastSlot === "string") d.lastSlot = raw.lastSlot;
+        d.keepalive = !!raw.keepalive;
       }
     } catch (_) {}
     return d;
@@ -121,12 +146,63 @@
     if (timer) { clearInterval(timer); timer = null; }
   }
 
+  /* ── KEEPALIVE ──────────────────────────────────────────────────────
+     Chrome may FREEZE a background tab, and a frozen page runs no timers
+     at all — which is the difference between "announcements are late" and
+     "announcements stop". Tabs that are playing audio are exempt from
+     freezing, so this holds a Web Audio node open at a level far below
+     hearing.
+
+     It is OPT-IN because it is not free: the tab shows the browser's
+     "playing audio" indicator, and keeping an audio context alive costs a
+     little battery. Someone who only uses this at a desk with the window
+     visible should not pay for either.
+
+     The gain is very small but NOT zero. A muted graph is the thing a
+     browser is entitled to optimise away, and an optimised-away graph
+     stops counting as playback — which would silently undo the whole
+     point. Verified only by reasoning about the spec; if freezing still
+     happens with this on, that is the first thing to re-check. */
+  function keepaliveOn() {
+    if (keepCtx) return true;
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return false;
+      var ctx = new Ctx();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      gain.gain.value = 0.0001;            // inaudible, not silent
+      osc.frequency.value = 30;            // below most speakers anyway
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      keepCtx = { ctx: ctx, osc: osc };
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function keepaliveOff() {
+    if (!keepCtx) return;
+    try { keepCtx.osc.stop(); } catch (_) {}
+    try { keepCtx.ctx.close(); } catch (_) {}
+    keepCtx = null;
+  }
+
+  function applyKeepalive() {
+    // Only worth holding while announcements are actually due to happen.
+    if (state.mode === "on" && state.keepalive) keepaliveOn();
+    else keepaliveOff();
+  }
+
   function applyMode() {
     if (state.mode === "on") start();
     else {
       stopTimer();
       if (supported()) { try { window.speechSynthesis.cancel(); } catch (_) {} }
     }
+    applyKeepalive();
     save();
     paint();
   }
@@ -159,6 +235,10 @@
       "color:var(--color-text-secondary,#6b7280)}",
       ".ta-int button{padding:4px 9px;border-radius:999px;font-size:11.5px}",
       ".ta-warn{margin-top:9px;font-size:11px;line-height:1.45;color:#b45309}",
+      ".ta-keep{display:flex;align-items:center;gap:7px;margin-top:11px;",
+      "font-size:12px;font-weight:700;cursor:pointer}",
+      ".ta-keep input{width:15px;height:15px;accent-color:#4338ca;cursor:pointer}",
+      ".ta-note{margin-top:7px !important;font-size:10.5px !important;line-height:1.45}",
     ].join("");
     var el = document.createElement("style");
     el.id = "ta-style";
@@ -190,6 +270,8 @@
     pop.querySelectorAll("[data-ta-every]").forEach(function (b) {
       b.classList.toggle("on", parseInt(b.getAttribute("data-ta-every"), 10) === state.every);
     });
+    var keep = pop.querySelector("[data-ta-keep]");
+    if (keep) keep.checked = !!state.keepalive;
     var warn = pop.querySelector(".ta-warn");
     if (warn) warn.hidden = !(state.mode === "on" && !armed);
   }
@@ -212,6 +294,13 @@
           return '<button type="button" data-ta-every="' + n + '">' + n + 'm</button>';
         }).join("") +
       '</div>' +
+      '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
+        'Keep going when minimised</label>' +
+      '<p class="ta-note">Announcements survive another window being on top. They ' +
+      'stop if the browser freezes this tab &mdash; the option above prevents that ' +
+      'by holding a silent sound open, at the cost of a little battery and an ' +
+      '&ldquo;audio playing&rdquo; mark on the tab. Nothing works once the page ' +
+      'is closed, or on a phone with the browser in the background.</p>' +
       '<p class="ta-warn" hidden>Your browser needs a tap on this page before it ' +
       'will speak. Interact anywhere and the next announcement will play.</p>';
     document.body.appendChild(pop);
@@ -224,6 +313,14 @@
         // to the user that sound works before they walk away from the desk.
         if (state.mode === "on") { armed = true; speak(phrase(new Date())); }
         applyMode();
+        return;
+      }
+      var k = ev.target.closest("[data-ta-keep]");
+      if (k) {
+        state.keepalive = !!k.checked;
+        applyKeepalive();
+        save();
+        paint();
         return;
       }
       var e = ev.target.closest("[data-ta-every]");
@@ -296,6 +393,8 @@
     pause: function () { state.mode = "paused"; applyMode(); },
     stop:  function () { state.mode = "off"; state.lastSlot = null; applyMode(); },
     state: function () { return JSON.parse(JSON.stringify(state)); },
+    keepalive: function (on) { state.keepalive = !!on; applyKeepalive(); save(); paint(); },
+    _keptAlive: function () { return !!keepCtx; },
     _phrase: phrase,
     _slotFor: slotFor,
     _check: check,

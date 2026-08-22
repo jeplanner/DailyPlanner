@@ -2131,3 +2131,59 @@ def test_history_window_is_bounded(auth_client, monkeypatch):
     seen.clear()
     auth_client.get("/checklist/history?days=nonsense")
     assert seen["days"] == 30
+
+
+def test_announcer_survives_a_throttled_background_timer():
+    """"Will it work when the window is minimised?"
+
+    A hidden tab has its timers clamped — Chrome to once per MINUTE after
+    about five minutes. Simulated against this logic: a 60s tick still
+    catches every one of the 96 quarter-hours in a day, from any starting
+    phase, because the grace window is 90s. At a 120s clamp it would start
+    missing half, which is why the window is not tightened.
+    """
+    import re
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    grace_ms = int(re.search(r"GRACE_MS\s*=\s*(\d+)\s*\*\s*1000", js).group(1)) * 1000
+    tick_ms = int(re.search(r"TICK_MS\s*=\s*(\d+)\s*\*\s*1000", js).group(1)) * 1000
+    every = 15
+
+    def announced(tick, phase):
+        seen = set()
+        t = phase
+        while t < 24 * 3600 * 1000:
+            mins, secs = divmod(t // 1000, 60)
+            late = (mins % every) * 60000 + secs * 1000
+            if late <= grace_ms:
+                seen.add((mins // every) * every)
+            t += tick
+        return len(seen)
+
+    expected = 24 * 60 // every
+    for clamp in (tick_ms, 60_000):
+        worst = min(announced(clamp, p) for p in range(0, clamp, 1000))
+        assert worst == expected, (
+            f"a {clamp // 1000}s tick misses {expected - worst} of {expected} "
+            "quarter-hours in the worst phase")
+
+
+def test_announcer_keepalive_is_opt_in_and_not_actually_silent():
+    """Chrome may FREEZE a background tab, and a frozen page runs no timers
+    at all — the difference between "late" and "stopped". Tabs playing
+    audio are exempt, so the keep-alive holds an audio node open.
+
+    OPT-IN, because it costs battery and puts an "audio playing" mark on
+    the tab; someone using this at a visible desk should not pay for that.
+    And the gain is NOT zero: a muted graph is exactly what a browser is
+    entitled to optimise away, and an optimised-away graph stops counting
+    as playback, which would silently undo the whole point.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "keepaliveOn" in js and "data-ta-keep" in js
+    assert "keepalive: false" in js, "the keep-alive defaults to on"
+    assert "gain.gain.value = 0.0001" in js, "a zero gain can be optimised away"
+    # Only held while announcements are actually due.
+    body = js.split("function applyKeepalive()")[1].split("}")[0]
+    assert 'state.mode === "on"' in body and "state.keepalive" in body
+    # And the limits are stated to the user, not buried in a comment.
+    assert "once the page" in js and "is closed" in js
