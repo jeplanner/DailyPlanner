@@ -1649,7 +1649,7 @@
         items.unshift(r.item);
         render();
         // Confirm a scheduled item so the user knows the alarm is set.
-        if (r.item.time_bucket === "at" && r.item.due_at) {
+        if (!opts.quiet && r.item.time_bucket === "at" && r.item.due_at) {
           const when = new Date(r.item.due_at).toLocaleString([], {
             weekday: "short", hour: "numeric", minute: "2-digit",
           });
@@ -1670,11 +1670,43 @@
           archived_at: null,
         });
         render();
-        if (window.showToast) showToast("Saved offline — will sync", "info", 2200);
+        if (!opts.quiet && window.showToast) showToast("Saved offline — will sync", "info", 2200);
       }
     } catch (err) {
       toast(err.message || "Couldn't add", "error");
     }
+  };
+
+  /* PASTE A LAUNDRY LIST — one item per line.
+     The capture field is already a textarea (Shift+Enter keeps a newline),
+     but everything typed into it became ONE row, so pasting twenty things
+     to get out of your head produced one item containing twenty lines.
+     That is the opposite of what a bucket is for.
+
+     Adds each line through addItem(), rather than a bulk endpoint, so every
+     line still gets the full treatment: the "@1h" and "tomorrow" bucket
+     parsing, the offline queue, the client-id dedupe. A separate bulk path
+     would have to reimplement all of it and would drift.
+
+     ONE line is the overwhelmingly common case and behaves exactly as
+     before — no summary toast, no change at all. */
+  const addLines = async (raw) => {
+    const lines = String(raw || "")
+      .split(/\r?\n/)
+      .map(function (l) { return l.trim(); })
+      .filter(Boolean);
+
+    if (lines.length <= 1) { await addItem(raw); return; }
+
+    let added = 0;
+    for (const line of lines) {
+      // Sequential on purpose: the priority badge is computed from the rows
+      // already present, so firing them in parallel would hand several
+      // items the same number.
+      await addItem(line, { quiet: true });
+      added++;
+    }
+    toast(`Added ${added} items`, "success");
   };
 
   // SW reports back when a queued write actually lands on the server.
@@ -2242,7 +2274,7 @@
       autosizeInput();
       if (wantsKeyboardRefocus) input.focus();
       else input.blur();
-      await addItem(v);
+      await addLines(v);
     });
 
     // ── Mic: dictate one task at a time (Web Speech API) ──

@@ -3162,3 +3162,37 @@ def test_health_buffer_is_bounded():
     assert len(loud.recent()) <= loud._RECORD_MAX
     assert any("the important recurring one" in r["message"] for r in loud.recent())
     loud.clear()
+
+
+def test_quick_bucket_accepts_a_pasted_list(auth_client):
+    """Asked: is there somewhere to dump a laundry list of items?
+
+    The Quick Bucket is exactly that surface — and its capture field is
+    already a textarea — but everything typed into it became ONE row, so
+    pasting twenty things to get them out of your head produced one item
+    containing twenty lines. That is the opposite of what a bucket is for.
+    """
+    js = open("static/js/quick_bucket.js", encoding="utf-8").read()
+    assert "const addLines" in js
+    block = js.split("const addLines")[1].split("// SW reports back")[0]
+    assert "split(/\\r?\\n/)" in block, "windows line endings would not split"
+    assert "filter(Boolean)" in block, "blank lines would become empty items"
+    # One line must behave exactly as before — no summary toast, no change.
+    assert "if (lines.length <= 1)" in block
+    # Each line goes through addItem, so "@1h" and "tomorrow" still parse and
+    # the offline queue and client-id dedupe still apply. A bulk endpoint
+    # would have to reimplement all of it.
+    assert "await addItem(line" in block
+    # Sequential on purpose: the priority badge is derived from the rows
+    # already present, so parallel adds would collide on the number.
+    assert "for (const line of lines)" in block
+
+    html = open("templates/quick_bucket.html", encoding="utf-8").read()
+    # maxlength caps the whole BOX, not one item. At 500 a pasted list was
+    # truncated at roughly eight lines.
+    assert 'maxlength="20000"' in html
+    assert "one item per line" in html
+
+    # The server still bounds each individual item.
+    import routes.quick_bucket as qb
+    assert qb._MAX_TEXT_LEN == 500

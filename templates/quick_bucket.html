@@ -1005,9 +1005,12 @@
 
   <div class="qb-capture-wrap">
     <form id="qb-add-form" class="qb-add" autocomplete="off">
+      {# maxlength is the whole BOX, not one item — 500 here capped a pasted
+         list at about eight lines, which is the opposite of what a bucket
+         is for. The server still trims each individual item to 500. #}
       <textarea id="qb-add-input"
-                placeholder="What needs doing? @5m / @1h for a timer, or @1pm today to schedule + alarm. Enter adds."
-                maxlength="500" rows="2"></textarea>
+                placeholder="What needs doing? Paste a list — one item per line. @5m / @1h for a timer, or @1pm today to schedule + alarm. Enter adds."
+                maxlength="20000" rows="2"></textarea>
       <div class="qb-add-actions">
         <span class="qb-add-hint">↵ add · ⇧↵ newline · @5m @1h timer · @1pm today schedule</span>
         <button id="qb-mic-btn" class="qb-btn" type="button" title="Dictate a task">
