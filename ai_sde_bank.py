@@ -359938,6 +359938,145 @@ _ANSWER_V2['Intersection of Two Arrays II'] = """Duplicates count, so each value
 · ORDER OF THE OUTPUT IS UNSPECIFIED, so no sorting of the result is needed.
 · COST — O(n + m) time, O(min(n, m)) space."""
 
+_ANSWER_V2['Is Subsequence'] = """Sweep t once, advancing the s-pointer on every match - s is a subsequence exactly when that pointer reaches the end.
+
+· SUBSEQUENCE, NOT SUBSTRING. The characters must appear in order but need not
+  be adjacent, which is why a single greedy sweep works and no backtracking is
+  needed.
+· WHY GREEDY IS SAFE — matching a character of s at the EARLIEST possible
+  position in t never hurts. It leaves the largest possible remainder of t for
+  the characters still to match, so no later choice is foreclosed.
+· THE LOOP — one pointer per string; advance t always, advance s only on a
+  match. Answer is whether the s-pointer finished.
+· AN EMPTY s IS A SUBSEQUENCE of anything, and the loop returns true for it
+  without a special case.
+· THE FOLLOW-UP IS THE REASON THIS IS ASKED — 'what if there are a billion
+  strings s to check against the same t'. The sweep would be O(n) each time.
+  The answer is to preprocess t into, for each character, a sorted list of its
+  positions, then binary search forward for each character of s: O(|s| log n)
+  per query.
+· THE DP VERSION exists (it is a special case of edit distance) but is
+  unnecessary and much slower here.
+· COST — O(n) time, O(1) space for the basic version."""
+
+_ANSWER_V2['Isomorphic Strings'] = """You need BOTH maps - s to t and t to s - because a one-way map lets two characters collapse onto the same target.
+
+· THE DEFINITION — a consistent one-to-one mapping between characters that
+  preserves order. One-to-one is the part that needs the second map.
+· WHY ONE MAP IS NOT ENOUGH — with only s to t, 'badc' and 'baba' would pass:
+  d and c can both be mapped to a and b without contradicting anything in that
+  direction. The reverse map is what rejects it.
+· THE CHECK — for each position, if s[i] is already mapped and not to t[i],
+  fail; if t[i] is already mapped back and not to s[i], fail. Otherwise record
+  both.
+· LENGTHS MUST MATCH, and comparing them first saves the whole loop.
+· A CHARACTER MAY MAP TO ITSELF, which is fine and needs no special handling.
+· THE ELEGANT ALTERNATIVE — compare the index-of-first-occurrence patterns of
+  the two strings. 'egg' becomes [0,1,1] and 'add' becomes [0,1,1], so they
+  match. It handles both directions at once and is a nice one-liner to offer.
+· THE SAME TECHNIQUE SOLVES WORD PATTERN, which maps characters to whole words
+  instead. Recognising the shared shape is the transferable bit.
+· COST — O(n) time, O(1) space for a fixed alphabet."""
+
+_ANSWER_V2['Kth Distinct String in an Array'] = """Distinct means appears EXACTLY once - count first, then walk the array in its ORIGINAL order counting them down.
+
+· THE TWO REQUIREMENTS people conflate: 'distinct' here means frequency exactly
+  1, not merely 'not seen before'. And the result must respect the input's
+  original order.
+· THE TWO PASSES — build a frequency map, then scan the array in order,
+  decrementing k at each string whose count is 1, and returning when k hits 0.
+· ITERATE THE ARRAY, NOT THE MAP, in the second pass. That is what preserves
+  original order; relying on dict ordering is fragile and wrong in principle.
+· RETURN THE EMPTY STRING if fewer than k distinct strings exist. Do not raise
+  or return None.
+· k IS 1-INDEXED, so decrementing before the comparison and after are different
+  answers. Decide once and write it consistently.
+· A STRING APPEARING TWICE IS NEVER ELIGIBLE, no matter how far apart the
+  occurrences are.
+· COST — O(n) time, O(n) space."""
+
+_ANSWER_V2['Kth Largest Element in a Stream'] = """A MIN-heap capped at size k - its root IS the kth largest, permanently and for free.
+
+· THE INVARIANT — hold exactly the k largest values seen so far. The smallest
+  of those is by definition the kth largest, and in a min-heap that is the
+  root, so every query is O(1).
+· THE MIN-HEAP FOR THE LARGEST is the inversion to remember, and it is the same
+  one as every other top-K problem: you keep the opposite heap so the weakest
+  keeper is instantly evictable.
+· add(val) — push, then pop if the size exceeds k, then return the root. Three
+  lines.
+· SEED THE HEAP FROM THE CONSTRUCTOR's initial array using the same rule, so
+  the class is correct before the first add.
+· THE HEAP MAY START SMALLER THAN k if fewer than k values have arrived. The
+  problem usually guarantees enough will arrive before any query; say what you
+  would return otherwise.
+· DUPLICATES COUNT SEPARATELY. In [5,5,5] with k=2 the answer is 5, not the
+  second distinct value.
+· WHY NOT A SORTED LIST — insertion is O(n) per add against O(log k) here, and
+  it holds everything rather than just k. The memory point matters for a
+  stream.
+· COST — O(log k) per add, O(k) space."""
+
+_ANSWER_V2['Kth Missing Positive Number'] = """At index i, exactly arr[i] - (i+1) positives are missing before it - which makes it a binary search.
+
+· THE FORMULA IS THE PROBLEM. If the array held no gaps, arr[i] would equal
+  i+1. The shortfall arr[i] - (i+1) is therefore precisely how many positive
+  integers are missing at or before that position.
+· THE LINEAR ANSWER — walk the positive integers, advancing the array pointer
+  on a hit and decrementing k on a miss, returning the current number when k
+  reaches 0. O(n + k), simple, and a fine first answer.
+· THE BINARY SEARCH — find the first index where the missing count is at least
+  k. The answer is then k + that index, or equivalently
+  arr[lo - 1] + (k - missing(lo - 1)).
+· THE FINAL ARITHMETIC IS WHERE IT GOES WRONG. After the search, lo is the
+  count of array elements before the answer, so the answer is lo + k. Deriving
+  that on the spot beats memorising it.
+· THE ANSWER CAN LIE BEYOND THE ARRAY — if k exceeds every gap, the missing
+  number is past arr[-1], and the same formula still gives it.
+· THE ARRAY IS SORTED AND STRICTLY INCREASING, which is what licenses both the
+  formula and the search.
+· COST — O(log n) binary search, or O(n + k) linear; O(1) space."""
+
+_ANSWER_V2['Last Stone Weight (max-heap)'] = """Repeatedly take the two heaviest - a max-heap gives them in O(log n), which is the entire data-structure choice.
+
+· THE RULE — smash the two heaviest. If equal, both are destroyed; if not, the
+  difference goes back into the pile.
+· WHY A HEAP — you need the two largest repeatedly, and re-sorting the list
+  after every smash is O(n log n) per step. A heap makes each step O(log n).
+· PYTHON HAS NO MAX-HEAP, so negate everything on the way in and on the way
+  out. Forgetting one of the two negations produces the smallest stones and a
+  confidently wrong answer.
+· ONLY PUSH BACK A NON-ZERO DIFFERENCE. Pushing zeros back does not change the
+  final answer but pollutes the heap and confuses the termination check.
+· LOOP WHILE MORE THAN ONE STONE REMAINS, then return the last one, or 0 if the
+  heap emptied.
+· THE ORDER OF SMASHING DOES NOT NEED PROVING here — the problem prescribes
+  'the two heaviest', so this is simulation, not greedy optimisation. Do not
+  spend time justifying a choice the problem already made.
+· LAST STONE WEIGHT II IS A DIFFERENT PROBLEM ENTIRELY — it asks for the
+  minimum possible remainder and is a subset-sum DP. Check which one you were
+  given.
+· COST — O(n log n) time, O(n) space."""
+
+_ANSWER_V2['Left and Right Sum Difference'] = """Precompute the total, then one sweep: right = total - left - current, and the answer is the absolute difference.
+
+· THE SAME ALGEBRA AS FIND PIVOT INDEX. Keeping a running left sum and deriving
+  the right from the total avoids building a second array, which is the point
+  of both problems.
+· THE STEP — at each index, record abs(left - (total - left - nums[i])), then
+  add nums[i] to left.
+· ORDER MATTERS: record BEFORE adding the current element to the left sum. The
+  current element belongs to neither side.
+· THE ENDS ARE REAL CASES — index 0 has an empty left sum of 0, and the last
+  index has an empty right sum. Both fall out of the formula without special
+  handling.
+· ABSOLUTE DIFFERENCE, so sign never matters and negative inputs need no extra
+  thought.
+· THE TWO-ARRAY VERSION (prefix and suffix sums) is equally correct and easier
+  to see at first. Offer it, then collapse it to O(1) space — that compression
+  is what is being assessed.
+· COST — O(n) time, O(1) extra space beyond the output."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
