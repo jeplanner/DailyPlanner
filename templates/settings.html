@@ -64,6 +64,26 @@
     </header>
 
     <div class="settings-card">
+      {# ── Install ────────────────────────────────────────────────────
+         The iPhone hint shows itself once and then not for thirty days,
+         which is right for a hint and wrong as the only route to it —
+         dismiss it once, or get a new phone, and the steps are gone. iOS
+         has no install prompt at all, so the steps ARE the feature. #}
+      <section class="settings-section">
+        <h2 class="settings-section-title">Install on your phone</h2>
+        <p class="settings-section-desc">
+          Runs full screen, keeps you signed in, and is the only way the
+          notifications and the spoken time keep working with the screen off.
+          <b>On iPhone/iPad</b> there is no install button anywhere &mdash;
+          open the site in <b>Safari</b>, tap <b>Share</b>, then
+          <b>Add to Home Screen</b>. Chrome and Firefox on iOS cannot do it.
+          <b>On Android</b> use the Install button, or the browser menu.
+        </p>
+        <button type="button" class="btn" onclick="window.dpShowInstallHelp &amp;&amp; window.dpShowInstallHelp()">
+          Show the steps for this device
+        </button>
+      </section>
+
       <section class="settings-section">
         <h2 class="settings-section-title">Timezone</h2>
         <p class="settings-section-desc">

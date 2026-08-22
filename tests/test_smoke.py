@@ -3569,3 +3569,76 @@ def test_day_board_phone_layout_lets_the_page_scroll():
     # .rail is height:100%, which collapses to zero once the page may grow.
     assert ".panel.cal .body{height:" in html, \
         "the timeline has no explicit height on a phone and will vanish"
+
+
+# ── 2026-08-22 round three: highlight, phone truncation, iOS install ───
+def test_announcer_interval_buttons_can_actually_highlight():
+    """Reported: "15m, 30m, 45m, 60m not getting highlighted".
+
+    paint() had always set .on on the right button. The STYLE for .on was
+    scoped to `.ta-row button.on`, and the interval buttons live in
+    `.ta-int` — so the class landed on an element no rule could reach.
+    A selector that styles nothing is the hardest kind of dead code to see.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert ".ta-int button.on" in js, "the selected interval cannot highlight"
+    # ...and the buttons need their base look from the same shared rule.
+    assert ".ta-row button,.ta-int button{" in js
+
+
+def test_announcer_says_that_it_autosaves():
+    """Asked: "is there a save button or it is autosaved?"
+
+    It always autosaved. Nothing said so, and silent persistence is
+    indistinguishable from none — which is why the question came up.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "data-ta-saved" in js and "savedFlash" in js
+    assert "saves as you type" in js
+
+
+def test_day_board_phone_breakpoint_is_declared_once():
+    """CSS owns the breakpoint; JS reads it back.
+
+    The first version tested `max-width: 720px` in a matchMedia call AND in
+    a media query. Two copies of a breakpoint are one breakpoint and one
+    future bug — they drift the first time either is tuned.
+    """
+    html = open("templates/day_board.html", encoding="utf-8").read()
+    assert "--phone: 0;" in html and "#board{--phone:1}" in html
+    assert 'getPropertyValue("--phone")' in html
+    # A landscape phone is short, not narrow: 390px of height sends the fit
+    # pass to its floor and then truncates half the day.
+    assert "(max-height: 560px)" in html
+
+
+def test_day_board_does_not_clamp_titles_on_a_phone():
+    """The two-line clamp is right on a fixed-height board and wrong on one
+    that scrolls — there it hides words for nothing, and "truncated on
+    mobile" means that as much as it means a shortened list."""
+    html = open("templates/day_board.html", encoding="utf-8").read()
+    assert "-webkit-line-clamp:none" in html
+
+
+def test_ios_install_hint_detects_ipados():
+    """iPadOS 13+ reports itself as "Macintosh". Without the touch-point
+    check an iPad never sees the hint — on the one platform where the hint
+    IS the only way to install."""
+    js = open("static/js/pwa.js", encoding="utf-8").read()
+    assert "maxTouchPoints" in js and "MacIntel" in js
+    assert "dpShowInstallHelp" in js, "no on-demand route to the steps"
+
+
+def test_settings_explains_ios_install(auth_client):
+    html = auth_client.get("/settings").get_data(as_text=True)
+    assert "Add to Home Screen" in html
+    assert "dpShowInstallHelp" in html
+
+
+def test_session_outlives_a_week_for_installed_apps():
+    """An installed iOS PWA has its own cookie jar, so a 7-day session meant
+    signing in again about weekly on the phone — the single thing that makes
+    an installed PWA feel broken and stop being opened."""
+    import datetime as dtm
+    from settings import BaseConfig
+    assert BaseConfig.PERMANENT_SESSION_LIFETIME >= dtm.timedelta(days=30)

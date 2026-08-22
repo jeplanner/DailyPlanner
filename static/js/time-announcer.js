@@ -448,13 +448,21 @@
       ".ta-pop p{margin:0 0 10px;font-size:11.5px;line-height:1.45;",
       "color:var(--color-text-secondary,#6b7280)}",
       ".ta-row{display:flex;gap:6px;margin-bottom:8px}",
-      ".ta-row button{flex:1;font:inherit;font-size:12.5px;font-weight:700;padding:6px 8px;",
-      "border-radius:9px;border:1px solid var(--color-border,#e5e7eb);",
+      // .ta-int is listed everywhere .ta-row is. The interval buttons live in
+      // .ta-int and these rules were scoped to .ta-row only, so 15/30/45/60
+      // never highlighted the selected one — and never even got a border or a
+      // background. paint() was setting .on correctly the whole time; there
+      // was simply nothing for the class to do.
+      ".ta-row button,.ta-int button{font:inherit;font-size:12.5px;font-weight:700;",
+      "padding:6px 8px;border-radius:9px;border:1px solid var(--color-border,#e5e7eb);",
       "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827);cursor:pointer}",
-      ".ta-row button.on{background:#4338ca;border-color:#4338ca;color:#fff}",
+      ".ta-row button{flex:1}",
+      ".ta-row button.on,.ta-int button.on{background:#4338ca;border-color:#4338ca;",
+      "color:#fff;box-shadow:0 0 0 2px color-mix(in srgb,#4338ca 30%,transparent)}",
       ".ta-int{display:flex;gap:6px;align-items:center;font-size:11.5px;font-weight:700;",
       "color:var(--color-text-secondary,#6b7280)}",
-      ".ta-int button{padding:4px 9px;border-radius:999px;font-size:11.5px}",
+      ".ta-int{flex-wrap:wrap}",
+      ".ta-int button{flex:0 0 auto;padding:5px 10px;border-radius:999px;font-size:11.5px}",
       ".ta-warn{margin-top:9px;font-size:11px;line-height:1.45;color:#b45309}",
       ".ta-keep{display:flex;align-items:center;gap:7px;margin-top:11px;",
       "font-size:12px;font-weight:700;cursor:pointer}",
@@ -477,6 +485,11 @@
       "line-height:1.45;font-weight:700}",
       ".ta-health.good{color:#047857}",
       ".ta-health.bad{color:#b91c1c}",
+      ".ta-saved{float:right;font-size:10.5px;font-weight:700;color:#047857;",
+      "opacity:0;transition:opacity .15s}",
+      ".ta-saved.show{opacity:1}",
+      ".ta-auto{margin:10px 0 0 !important;font-size:10.5px !important;",
+      "line-height:1.45;font-style:italic}",
     ].join("");
     var el = document.createElement("style");
     el.id = "ta-style";
@@ -550,6 +563,22 @@
     }
   }
 
+  /* AUTOSAVE, SAID OUT LOUD.
+     There is no Save button and there should not be — this writes to
+     localStorage, and a setting that needs saving is a setting people forget
+     to save. But silent persistence is indistinguishable from no persistence,
+     which is exactly the doubt it caused. So it now says "Saved" for a beat
+     after every keystroke settles. */
+  var savedTimer = null;
+  function savedFlash() {
+    var el = pop && pop.querySelector("[data-ta-saved]");
+    if (!el) return;
+    el.textContent = "Saved";
+    el.classList.add("show");
+    if (savedTimer) clearTimeout(savedTimer);
+    savedTimer = setTimeout(function () { el.classList.remove("show"); }, 1400);
+  }
+
   function paintAtEcho() {
     if (!pop) return;
     var e = pop.querySelector("[data-ta-at-echo]");
@@ -564,7 +593,7 @@
     pop.className = "ta-pop";
     pop.hidden = true;
     pop.innerHTML =
-      '<h4>Announce the time</h4>' +
+      '<h4>Announce the time <span class="ta-saved" data-ta-saved></span></h4>' +
       '<p>Spoken on the clock, not from when you pressed start. A missed one ' +
       'is skipped rather than read out late.</p>' +
       '<div class="ta-row">' +
@@ -595,6 +624,8 @@
         'placeholder="e.g. Stand up and stretch"></label>' +
         '<small>Read out before the time, every time.</small>' +
       '</div>' +
+      '<p class="ta-auto">Everything here saves as you type &mdash; there is no ' +
+      'Save button, and closing this panel keeps your settings.</p>' +
       '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
       '<p class="ta-health" data-ta-health></p>' +
       '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
@@ -666,6 +697,7 @@
        setting that needs saving is a setting people forget to save. */
     pop.addEventListener("input", function (ev) {
       var n = ev.target;
+      if (n.matches("[data-ta-every-in],[data-ta-at],[data-ta-label]")) savedFlash();
       if (n.matches("[data-ta-every-in]")) {
         var v = parseInt(n.value, 10);
         if (!(v >= 0)) return;

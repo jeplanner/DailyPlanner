@@ -26,6 +26,7 @@
   /* THE ONE KNOB. Every size below is a multiple of this, so the fit pass
      only has to change one number to rescale the entire board. */
   --u: 10px;
+  --phone: 0;                      /* flipped to 1 by the phone media query */
 
   --bg:#0e1117; --panel:#161b26; --line:#243044; --text:#e8edf7;
   --dim:#8b98ae; --accent:#6366f1; --ok:#2dd4a7; --warn:#fbbf24;
@@ -144,7 +145,14 @@ header{
    The timeline needs an explicit height because .rail is height:100% and
    a percentage of an auto-height parent is zero — the one thing that
    silently breaks when a fixed-height layout is allowed to grow. */
-@media (max-width: 720px){
+@media (max-width: 720px), (max-height: 560px){
+  /* The single source of truth for "am I on the scrolling layout". JS reads
+     this computed value instead of re-testing the breakpoint itself —
+     the previous version duplicated `max-width: 720px` in a matchMedia call,
+     and two copies of a breakpoint are one breakpoint and one future bug.
+     A short LANDSCAPE phone needs this layout too: it is 390px tall, where
+     the fit pass finds a floor of 9px and then truncates half the day. */
+  #board{--phone:1}
   html, body{height:auto; overflow:visible; overscroll-behavior:auto}
   #board{height:auto; min-height:100dvh; width:auto}
   header{flex-wrap:wrap; row-gap:calc(var(--u) * .3)}
@@ -158,6 +166,13 @@ header{
   .panel .body{overflow:visible}
   .panel.cal .body{height:66vh}          /* the timeline keeps a real height */
   .more{display:none}                    /* nothing is truncated down here */
+  /* ...and neither is any individual TITLE. The two-line clamp is right on a
+     fixed-height board where a long title would push a whole row off the
+     screen. Here the page scrolls, so clamping just hides words for no gain —
+     and a task reading "Follow up with the vendor about the..." is the other
+     thing "truncated on mobile" means. */
+  .txt, .ev .ttl{-webkit-line-clamp:none; display:block; overflow:visible}
+  .ev{overflow:visible}
   /* Comfortable thumb targets. The desktop board is look-only; the phone
      one is the version people actually tap. */
   li{padding:calc(var(--u) * .45) 0}
@@ -572,8 +587,13 @@ li.done .when{color:var(--dim); font-weight:500}
      overflow would find a tiny one — the content is taller than the screen
      BY DESIGN there — and then truncate a list that did not need it. */
   function isPhone() {
-    try { return window.matchMedia("(max-width: 720px)").matches; }
-    catch (e) { return (window.innerWidth || 1024) <= 720; }
+    try {
+      var b = document.getElementById("board");
+      var v = getComputedStyle(b).getPropertyValue("--phone").trim();
+      return v === "1";
+    } catch (e) {
+      return (window.innerWidth || 1024) <= 720;
+    }
   }
 
   function phoneU() {

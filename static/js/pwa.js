@@ -142,7 +142,13 @@
   // explicitly to suppress forever.
   const IOS_HINT_KEY = "dp-ios-install-hint-v1";
   function isIOS() {
-    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (window.MSStream) return false;
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return true;
+    // iPadOS 13+ reports itself as "Macintosh" and is otherwise
+    // indistinguishable from a desktop Mac — except that a desktop Mac has
+    // no touch points. Without this an iPad never saw the install hint at
+    // all, because the only way to install there is the one this explains.
+    return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
   }
   function isInStandalone() {
     return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -195,6 +201,23 @@
   }
   // Delay slightly so it doesn't compete with first paint.
   setTimeout(showIOSInstallHint, 2500);
+
+  /* ON DEMAND. The banner above shows once and then not for thirty days,
+     which is right for a hint and wrong as the ONLY route to it: dismiss it
+     once, or install on one device and later get another, and the
+     instructions are unreachable. Settings can call this. */
+  window.dpShowInstallHelp = function () {
+    try { localStorage.removeItem(IOS_HINT_KEY); } catch (_) {}
+    var old = document.getElementById("dp-ios-install-hint");
+    if (old) old.remove();
+    if (isInStandalone()) {
+      alert("DailyPlanner is already installed — you are running it now.");
+      return;
+    }
+    if (isIOS()) { showIOSInstallHint(); return; }
+    alert("On Android/Chrome use the Install button, or the browser menu's " +
+          "\"Install app\" / \"Add to Home screen\".");
+  };
 
   /* ───── offline-queue status pill ───────────────────────────── */
 
