@@ -476,12 +476,15 @@ def _link_task(item, plan_date):
 
 
 def _link_checklist(item, plan_date):
-    """The checklist page is TODAY-ONLY by construction — it takes no date
-    argument at all. Linking a past or future board's row to it would land on
-    today's list and quietly show the wrong day, so those rows stay
-    unlinked."""
-    return url_for("checklist.checklist_page", focus=item.get("id") or "",
-                   **_back_args(plan_date))
+    """The checklist now takes ?date=, so a row from any board day links.
+
+    It used to be today-only by construction, which is why rows on a past or
+    future board were left unlinked — a link would have landed on today's
+    list while appearing to open that day's. The page now shows the day it
+    is asked for, read-only when it is not today.
+    """
+    return url_for("checklist.checklist_page", date=plan_date.isoformat(),
+                   focus=item.get("id") or "", **_back_args(plan_date))
 
 
 @day_board_bp.route("/day-board")
@@ -561,11 +564,10 @@ def day_board():
         _e["href"] = _link_event(_e, plan_date)
     for _t in tasks:
         _t["href"] = _link_task(_t, plan_date)
-    # Checklist rows are only linkable when the board shows TODAY — the
-    # checklist page takes no date argument, so a link from another day would
-    # land on today's list and silently show the wrong thing.
+    # Every day links now: the checklist takes ?date= and shows that day
+    # read-only when it is not today.
     for _c in checklist:
-        _c["href"] = _link_checklist(_c, plan_date) if is_today else None
+        _c["href"] = _link_checklist(_c, plan_date)
 
     return render_template(
         "day_board.html",

@@ -5,9 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Checklist — DailyPlanner</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='checklist.css') }}">
+  <style>
+    .cl-otherday{margin:6px 0 2px;padding:7px 11px;border-radius:9px;font-size:12.5px;
+      background:#fef3c7;color:#92400e;border:1px solid #f59e0b;display:inline-block}
+    .cl-otherday a{color:inherit;font-weight:800;margin-left:6px}
+    html.dark .cl-otherday{background:#3a2a06;color:#fcd34d;border-color:#b45309}
+    /* Ticks are the record of a day. Showing them for another date is
+       useful; letting them be changed from there is not. */
+    body.cl-readonly .cl-item input[type=checkbox],
+    body.cl-readonly .cl-tickpill{pointer-events:none;opacity:.55}
+  </style>
 {% include "_pwa_head.html" %}
 </head>
-<body>
+<body{% if not is_today %} class="cl-readonly"{% endif %}>
 
   <div class="nav-icons">
     {% include "_top_nav.html" %}
@@ -18,6 +28,17 @@
     <header class="cl-header">
       <h1>✓ Daily Checklist</h1>
       <div class="cl-date">{{ plan_date }}</div>
+      {# Viewing another day is a NARROW case — it exists so the Day Board
+         can link a row from the day it is showing. Ticking stays
+         today-only: back-filling "slept at 10.30" for last Tuesday is
+         self-deception, and a checklist you can edit backwards stops being
+         a record of what happened. #}
+      {% if not is_today %}
+        <div class="cl-otherday">
+          Viewing <strong>{{ plan_date }}</strong> — read only.
+          <a href="/checklist">Back to today</a>
+        </div>
+      {% endif %}
     </header>
 
     <!-- Pomodoro duration — controls the ▶ button on every item.

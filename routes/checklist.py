@@ -259,10 +259,35 @@ def _resync_all_children_calendar_async(user_id, item_row):
 # ─────────────────────────────────────────────
 #  PAGE
 # ─────────────────────────────────────────────
+def _requested_date():
+    """The date the caller is asking about, defaulting to today.
+
+    The checklist has always been a TODAY surface, and mostly should stay
+    one. This exists for a narrower reason: the Day Board links each row to
+    the section that owns it, and a board showing Thursday could not link
+    its checklist rows anywhere, because this page had no way to be told
+    which day it meant. A bad or missing value falls back to today rather
+    than erroring — a wrong date in a URL is a bad link, not a failure the
+    user can act on.
+    """
+    raw = (request.args.get("date") or "").strip()
+    if not raw:
+        return user_today()
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return user_today()
+
+
 @checklist_bp.route("/checklist")
 @login_required
 def checklist_page():
-    return render_template("checklist.html", plan_date=user_today().isoformat())
+    on = _requested_date()
+    today = user_today()
+    return render_template("checklist.html",
+                           plan_date=on.isoformat(),
+                           is_today=(on == today),
+                           today=today.isoformat())
 
 
 # ─────────────────────────────────────────────
@@ -272,7 +297,9 @@ def checklist_page():
 @login_required
 def list_items():
     user_id = session["user_id"]
-    today = user_today().isoformat()
+    # Named `today` throughout this function for the day being SHOWN, which
+    # is today unless the caller asked for another one.
+    today = _requested_date().isoformat()
 
     items = get(
         "checklist_items",

@@ -1489,7 +1489,7 @@ def test_day_board_rows_link_to_the_section_that_owns_them(auth_client, monkeypa
     assert f"/day?date={today}&amp;focus=ev-E1" in html
     assert "focus=ev-E2" in html, "the untimed event is not linked"
     assert "/todo?year=" in html and "focus=T1" in html
-    assert "/checklist?focus=C1" in html
+    assert "/checklist?date=" in html and "focus=C1" in html
     # Every link carries the way home.
     assert html.count("from=board") >= 4
     # Events are anchors; list rows get a full-cell overlay instead, because
@@ -1499,10 +1499,12 @@ def test_day_board_rows_link_to_the_section_that_owns_them(auth_client, monkeypa
     assert 'class="hit"' in html
 
 
-def test_day_board_does_not_link_the_checklist_from_another_day(auth_client, monkeypatch):
-    """/checklist takes no date argument at all — it is today-only. A link
-    from a past or future board would land on TODAY's list while looking
-    like it opened that day's, which is worse than not linking."""
+def test_day_board_links_the_checklist_to_the_day_it_is_showing(auth_client, monkeypatch):
+    """This was previously left UNLINKED on any non-today board, because
+    /checklist took no date and would have landed on today's list while
+    appearing to open that day's. The page now takes ?date=, so the link
+    carries the board's day.
+    """
     import routes.day_board as db
     monkeypatch.setattr(db, "_events_for", lambda u, d: [])
     monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
@@ -1510,8 +1512,31 @@ def test_day_board_does_not_link_the_checklist_from_another_day(auth_client, mon
         {"id": "C1", "title": "Vitamins", "done": False},
     ])
     html = auth_client.get("/day-board?date=2020-01-01").get_data(as_text=True)
-    assert "Vitamins" in html, "the row should still be shown, just not linked"
-    assert "/checklist?focus=" not in html
+    assert "Vitamins" in html
+    assert "/checklist?date=2020-01-01" in html, "the link lost the board's day"
+
+
+def test_checklist_shows_another_day_read_only(auth_client):
+    """Ticks are the record of a day. Showing them for another date is
+    useful; letting them be CHANGED from there is not — back-filling
+    "slept at 10.30" for last Tuesday is self-deception, and a checklist
+    you can edit backwards stops being a record of what happened.
+    """
+    # Assert on the class ATTRIBUTE, not the name: the rule ships in the
+    # page's stylesheet either way, so the bare string always matches.
+    today = auth_client.get("/checklist").get_data(as_text=True)
+    assert 'class="cl-readonly"' not in today, "today must stay editable"
+    assert "Back to today" not in today
+
+    other = auth_client.get("/checklist?date=2026-08-01").get_data(as_text=True)
+    assert 'class="cl-readonly"' in other, "another day is editable"
+    assert "2026-08-01" in other and "Back to today" in other
+
+    # A bad date is a bad link, not an error the user can act on.
+    bad = auth_client.get("/checklist?date=not-a-date")
+    assert bad.status_code == 200
+    assert 'class="cl-readonly"' not in bad.get_data(as_text=True), (
+        "a bad date should fall back to today, not render a read-only page")
 
 
 def test_arriving_from_the_board_offers_one_tap_back(auth_client):

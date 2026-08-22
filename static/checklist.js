@@ -613,7 +613,10 @@
   // ── Load ──────────────────────────────────────────
   async function load() {
     try {
-      const data = await api("/api/checklist/items");
+      // Carry the day being viewed through to the API, so the ticks that
+      // come back belong to it. Absent = today, which is the normal case.
+      const _d = new URLSearchParams(location.search).get("date") || "";
+      const data = await api("/api/checklist/items" + (_d ? "?date=" + encodeURIComponent(_d) : ""));
       state.items = data.items || [];
       // Derive known groups from the loaded items — avoids a second
       // round-trip to /api/checklist/groups on every page load.
