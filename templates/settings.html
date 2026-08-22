@@ -17,6 +17,26 @@
     .settings-header h1{font-size:var(--font-size-2xl);font-weight:var(--font-weight-bold);letter-spacing:var(--letter-spacing-tight);margin:0 0 6px;}
     .settings-header p{color:var(--color-text-secondary);font-size:var(--font-size-sm);margin:0;}
     .settings-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);padding:var(--space-6);box-shadow:var(--shadow-sm);}
+    .health-list{list-style:none;margin:0 0 14px;padding:0;display:flex;
+      flex-direction:column;gap:8px;}
+    .health-row{border:1px solid var(--color-border);border-left:4px solid var(--color-border);
+      border-radius:10px;padding:10px 12px;background:var(--color-surface);}
+    /* One occurrence is weak evidence; a run of them is not. */
+    .health-row.is-loud{border-left-color:#dc2626;
+      background:color-mix(in srgb,#dc2626 5%,var(--color-surface));}
+    .health-top{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;}
+    .health-count{font-weight:800;font-size:13px;font-variant-numeric:tabular-nums;}
+    .health-row.is-loud .health-count{color:#dc2626;}
+    .health-label{font-weight:700;font-size:13.5px;}
+    .health-when{margin-left:auto;font-size:11.5px;color:var(--color-text-secondary);
+      white-space:nowrap;}
+    .health-msg{font-size:13px;margin-top:3px;}
+    .health-ctx{font-size:11.5px;color:var(--color-text-secondary);
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:2px;
+      overflow-x:auto;white-space:nowrap;}
+    .health-blurb{font-size:11.5px;color:var(--color-text-secondary);
+      margin-top:5px;line-height:1.45;}
+    .health-empty{font-size:14px;color:var(--color-text-secondary);margin:0;}
     .settings-section + .settings-section{margin-top:var(--space-8);padding-top:var(--space-6);border-top:1px solid var(--color-border-light);}
     .settings-section-title{font-size:var(--font-size-lg);font-weight:var(--font-weight-semibold);margin:0 0 6px;color:var(--color-text);}
     .settings-section-desc{color:var(--color-text-secondary);font-size:var(--font-size-sm);margin:0 0 var(--space-5);line-height:var(--line-height-normal);}
@@ -78,6 +98,47 @@
         </div>
 
         <div id="tz-save-status" class="save-status" role="status" aria-live="polite" style="margin-top:var(--space-3)"></div>
+      </section>
+
+      {# ── App health ──────────────────────────────────────────────
+         This exists because four separate faults in this app were live for
+         weeks without anyone knowing: a filter that matched nothing, push
+         subscriptions that had quietly expired, two features that never
+         ran. None of them crashed, so none of them showed up anywhere.
+
+         Everything here is something that DECLINED to work rather than
+         failing. An empty list is the normal state. #}
+      <section class="settings-section">
+        <h2 class="settings-section-title">App health</h2>
+        <p class="settings-section-desc">
+          Things that quietly did nothing, rather than failing outright &mdash;
+          the kind of fault that otherwise goes unnoticed for months.
+          <strong>An empty list is what you want to see.</strong>
+          Counted since the app last restarted ({{ health_since }}), so a
+          deploy clears it; anything genuinely broken reappears within
+          minutes.
+        </p>
+
+        {% if health %}
+          <ul class="health-list">
+            {% for h in health %}
+              <li class="health-row{% if h.loud %} is-loud{% endif %}">
+                <div class="health-top">
+                  <span class="health-count">&times;{{ h.count }}</span>
+                  <span class="health-label">{{ h.label }}</span>
+                  <span class="health-when">last {{ h.last }}</span>
+                </div>
+                <div class="health-msg">{{ h.message }}</div>
+                {% if h.context %}<div class="health-ctx">{{ h.context }}</div>{% endif %}
+                <div class="health-blurb">{{ h.blurb }}</div>
+              </li>
+            {% endfor %}
+          </ul>
+          <button type="button" class="btn" id="health-clear">Clear this list</button>
+          <span class="save-status" id="health-status"></span>
+        {% else %}
+          <p class="health-empty">Nothing has reported a problem. ✅</p>
+        {% endif %}
       </section>
 
       <section class="settings-section">
@@ -164,6 +225,34 @@
           status.textContent = "Network error.";
         } finally {
           saveBtn.disabled = false;
+        }
+      });
+    })();
+
+    /* Clear the health list. Reloads rather than emptying the DOM, so what
+       is shown afterwards is what the server actually holds — the point of
+       this section is that it can be trusted. */
+    (function () {
+      const btn = document.getElementById("health-clear");
+      if (!btn) return;
+      const status = document.getElementById("health-status");
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        if (status) status.textContent = "Clearing…";
+        try {
+          const r = await fetch("/api/settings/health/clear", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "X-CSRFToken": document.querySelector('meta[name=csrf-token]')?.content || "" },
+          });
+          if (!r.ok) throw new Error();
+          location.reload();
+        } catch {
+          if (status) {
+            status.className = "save-status err";
+            status.textContent = "Could not clear.";
+          }
+          btn.disabled = false;
         }
       });
     })();

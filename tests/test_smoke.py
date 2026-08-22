@@ -3072,3 +3072,86 @@ def test_the_notes_box_is_injected_on_open_not_on_render():
     # Typing must not reach the page's own card toggle.
     assert "stopPropagation" in body
     assert 'attributeFilter: ["class"]' in js, "a lazy re-render would lose it"
+
+
+# ═══════════════════════════════════════════════════
+# App health — silent failures surfaced where they'll be seen
+# ═══════════════════════════════════════════════════
+
+def test_settings_surfaces_silent_failures(auth_client):
+    """Logging a problem only helps if someone reads the log. Four faults
+    were live for weeks precisely because nothing crashed — so the same
+    reports now appear on a page that gets opened.
+
+    NOTE ON ASSERTIONS HERE: match the class ATTRIBUTE, not the bare class
+    NAME. The stylesheet ships on every render, so `"health-row" in html` is
+    true even with an empty list — a trap that has already produced three
+    false results in this suite.
+    """
+    import re
+    from services import loud
+    loud.clear()
+
+    html = auth_client.get("/settings").get_data(as_text=True)
+    assert "Nothing has reported a problem" in html
+    assert 'class="health-row' not in html, "an empty list rendered rows"
+
+    for _ in range(7):
+        loud.expect([], "the SQLPrep project", user_id="u1", bank="sql")
+    loud.bailed("web push", "every subscription is INACTIVE", user_id="u1")
+
+    html = auth_client.get("/settings").get_data(as_text=True)
+    assert "App health" in html
+    # Aggregated, not one line per occurrence: the COUNT is the signal.
+    assert "&times;7" in html
+    assert "the SQLPrep project" in html and "web push" in html
+    # It says which user/bank, or the report is unactionable.
+    assert "bank=&#39;sql&#39;" in html or "bank='sql'" in html
+
+    # One occurrence is weak evidence; a run of them is not — so only the
+    # repeated one is called out.
+    rows = re.findall(r'class="health-row([^"]*)"',
+                      html.split('class="health-list"')[1])
+    assert any("is-loud" in r for r in rows), "a repeated fault is not flagged"
+    assert any("is-loud" not in r for r in rows), "a single report is over-flagged"
+
+    loud.clear()
+
+
+def test_health_list_can_be_cleared(auth_client):
+    """The list stops being useful the moment it is mostly things already
+    dealt with."""
+    from services import loud
+    loud.clear()
+    loud.expect([], "something", user_id="u1")
+    assert loud.recent()
+
+    assert auth_client.post("/api/settings/health/clear").status_code == 200
+    assert not loud.recent()
+
+
+def test_health_counts_stay_true_while_the_log_is_throttled():
+    """The log line is throttled to once per five minutes so it does not
+    become noise — but the COUNT must not be, or the page would report a
+    hourly fault as having happened once."""
+    from services import loud
+    loud.clear()
+    for _ in range(40):
+        loud.expect([], "a broken filter", user_id="u1")
+    rows = loud.recent()
+    assert len(rows) == 1 and rows[0]["count"] == 40
+    loud.clear()
+
+
+def test_health_buffer_is_bounded():
+    """A burst of new problems must not push out the one still happening."""
+    from services import loud
+    loud.clear()
+    loud.expect([], "the important recurring one", user_id="u1")
+    for i in range(loud._RECORD_MAX + 50):
+        loud.expect([], f"noise {i}", user_id="u1")
+    # Keep it alive: eviction is least-recently-SEEN, not oldest-first.
+    loud.expect([], "the important recurring one", user_id="u1")
+    assert len(loud.recent()) <= loud._RECORD_MAX
+    assert any("the important recurring one" in r["message"] for r in loud.recent())
+    loud.clear()

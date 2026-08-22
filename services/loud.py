@@ -51,6 +51,61 @@ THROTTLE_SECONDS = 300
 _last = {}
 _lock = threading.Lock()
 
+#: What was reported, aggregated. A settings page showing 47 identical lines
+#: is not more informative than one line saying it happened 47 times — and
+#: the count IS the signal here: something that fires once may be a genuine
+#: empty, something firing hourly is a fault.
+#:
+#: IN MEMORY, AND ONLY SINCE THIS PROCESS STARTED. That is a real limit and
+#: the page says so. It is enough for the job because these events are not
+#: one-offs: a broken filter keeps firing, so it reappears within minutes of
+#: a restart. Persisting them would need a table and a write on every
+#: warning, which is a lot of machinery for something that self-reports
+#: continuously anyway.
+_RECORD_MAX = 200
+_records = {}
+_started_at = time.time()
+
+
+def _record(kind, message, ctx):
+    key = (kind, message, _fmt(ctx))
+    now = time.time()
+    with _lock:
+        row = _records.get(key)
+        if row is None:
+            if len(_records) >= _RECORD_MAX:
+                # Drop the least recently seen, so a burst of new problems
+                # cannot push out the one that is still happening.
+                oldest = min(_records, key=lambda k: _records[k]["last"])
+                _records.pop(oldest, None)
+            _records[key] = {"kind": kind, "message": message,
+                             "context": _fmt(ctx), "count": 1,
+                             "first": now, "last": now}
+        else:
+            row["count"] += 1
+            row["last"] = now
+
+
+def recent():
+    """Everything reported since this process started, worst-recent first."""
+    with _lock:
+        rows = [dict(r) for r in _records.values()]
+    rows.sort(key=lambda r: r["last"], reverse=True)
+    return rows
+
+
+def clear():
+    """Forget what has been reported. For after something is fixed — the
+    list stops being useful the moment it is mostly things you have dealt
+    with."""
+    with _lock:
+        _records.clear()
+        _last.clear()
+
+
+def started_at():
+    return _started_at
+
 
 def _throttled(key):
     """True if this exact warning was logged recently."""
@@ -82,6 +137,7 @@ def expect(rows, what, **ctx):
     """
     if rows:
         return rows
+    _record("miss", f"expected to find {what}", ctx)
     key = ("expect", what, _fmt(ctx))
     if not _throttled(key):
         logger.warning("SILENT-MISS: expected to find %s but matched nothing. %s",
@@ -95,6 +151,7 @@ def bailed(feature, why, **ctx):
     For the early-return case: a guard that is *supposed* to be rare, and
     which — if it stops being rare — means the feature is simply not running.
     """
+    _record("inert", f"{feature} — {why}", ctx)
     key = ("bail", feature, why, _fmt(ctx))
     if not _throttled(key):
         logger.warning("FEATURE-INERT: %s did nothing — %s. %s",
@@ -108,6 +165,7 @@ def created_what_should_exist(what, **ctx):
     where the find is broken silently produces a new row every time, and the
     only visible symptom is a slowly filling table.
     """
+    _record("created", f"created {what} after a failed lookup", ctx)
     key = ("create", what, _fmt(ctx))
     if not _throttled(key):
         logger.warning("CREATED-AFTER-MISS: creating %s because the lookup "

@@ -48,6 +48,60 @@ COMMON_TIMEZONES = [
 ]
 
 
+#: How each kind reads to a person. The wording matters more than usual
+#: here: the whole point is that someone who is not holding the codebase in
+#: their head can tell whether it needs attention.
+_HEALTH_KINDS = {
+    "miss": ("Looked for something and found nothing",
+             "A lookup that expected to match came back empty. Once can be "
+             "normal; repeatedly is usually a broken filter."),
+    "inert": ("A feature did nothing",
+              "Something declined to run rather than failing. If it is "
+              "counting up, that feature is effectively switched off."),
+    "created": ("Created something that should already have existed",
+                "A find-or-create could not find what it made last time. "
+                "Repeats mean duplicates are piling up."),
+}
+
+
+def _health_rows():
+    """Recent silent failures, shaped for the page."""
+    from datetime import datetime
+
+    from services import loud
+
+    tz = user_tz()
+    rows = []
+    for r in loud.recent():
+        label, blurb = _HEALTH_KINDS.get(r["kind"], (r["kind"], ""))
+        last = datetime.fromtimestamp(r["last"], tz)
+        first = datetime.fromtimestamp(r["first"], tz)
+        rows.append({
+            "kind": r["kind"],
+            "label": label,
+            "blurb": blurb,
+            "message": r["message"],
+            "context": r["context"],
+            "count": r["count"],
+            "last": last.strftime("%d %b, %I:%M %p"),
+            "first": first.strftime("%d %b, %I:%M %p"),
+            # One occurrence is weak evidence; a run of them is not.
+            "loud": r["count"] >= 5,
+        })
+    return rows
+
+
+@settings_bp.route("/api/settings/health/clear", methods=["POST"])
+@login_required
+def clear_health():
+    """Forget what has been reported, for after something is fixed — the
+    list stops being useful the moment it is mostly things already dealt
+    with."""
+    from services import loud
+    loud.clear()
+    return jsonify({"status": "ok"})
+
+
 @settings_bp.route("/settings")
 @login_required
 def settings_page():
@@ -59,6 +113,10 @@ def settings_page():
         all_timezones=all_tz,
         current_tz=user_tz_name(),
         default_tz=DEFAULT_TZ_NAME,
+        health=_health_rows(),
+        health_since=__import__("datetime").datetime.fromtimestamp(
+            __import__("services.loud", fromlist=["loud"]).started_at(),
+            user_tz()).strftime("%d %b, %I:%M %p"),
     )
 
 
