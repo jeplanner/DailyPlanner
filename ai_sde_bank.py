@@ -360456,6 +360456,317 @@ _ANSWER_V2['Sqrt(x) — integer square root (binary search)'] = """Binary search
   search.
 · COST — O(log x) time, O(1) space."""
 
+_ANSWER_V2['Sum of Unique Elements'] = """Count first, then sum only the values whose count is exactly one.
+
+· UNIQUE MEANS "APPEARS ONCE", not "distinct". A value appearing three times
+  contributes NOTHING — not one copy of itself. Reading it as "sum the
+  distinct values" is the trap, and both readings agree on an array with no
+  repeats, so a careless test passes.
+· TWO PASSES — build a frequency map, then sum the keys whose value is 1.
+· ONE LINE IN PYTHON — sum(v for v, c in Counter(nums).items() if c == 1).
+  Write the loop first; the comprehension hides exactly the condition being
+  assessed.
+· AN ARRAY WITH NO UNIQUE VALUES answers 0, which falls out of the sum with
+  no special case.
+· ITERATE THE MAP IN THE SECOND PASS, not the array — walking the array again
+  would re-add a unique value once (harmless) but makes the intent murkier.
+· COST — O(n) time, O(n) space."""
+
+_ANSWER_V2['Summary Ranges'] = """Sweep once, extending a run while each value is exactly one more than the last, then emit it.
+
+· THE RULE FOR ENDING A RUN — the run breaks when nums[i] != nums[i-1] + 1.
+  The array is sorted and DISTINCT, so that gap test is the whole logic; with
+  duplicates it would break, which is why the constraint is stated.
+· TWO OUTPUT SHAPES — "a->b" for a run of two or more, and just "a" for a run
+  of one. Emitting "5->5" for a singleton is the common slip.
+· TRACK THE START of the current run and compare against the PREVIOUS value.
+  Keeping only a length is fiddlier and buys nothing.
+· FLUSH THE LAST RUN AFTER THE LOOP. It never hits a break condition, so a
+  loop that only emits on a gap silently drops the final range — the classic
+  bug in every run-length problem.
+· AN EMPTY ARRAY returns an empty list, so guard before touching nums[0].
+· WATCH FOR OVERFLOW IN OTHER LANGUAGES — nums[i-1] + 1 at the integer
+  maximum wraps. Python is immune; say so rather than ignoring it.
+· COST — O(n) time, O(1) space beyond the output."""
+
+_ANSWER_V2['Two Sum IV - Input is a BST'] = """A set of what you have seen, checked as you traverse — the tree shape barely matters.
+
+· THE HONEST ANSWER FIRST: this is Two Sum with a tree as the container. Any
+  traversal works because you must visit every node anyway in the worst case.
+· THE WALK — at each node, if k - node.val is already in the set, return
+  True; otherwise add node.val and continue.
+· ADD AFTER CHECKING, or a node whose value is exactly k/2 matches itself and
+  returns True for a tree with one such node. "Two DISTINCT elements" is the
+  requirement.
+· THE BST-AWARE ANSWER, which is what the "Input is a BST" in the title is
+  pointing at: an inorder traversal yields sorted values, so a two-pointer
+  walk from both ends solves it in O(1) extra space if you can iterate
+  forwards and backwards. That needs two stacks and is genuinely fiddly.
+· SAY THE TRADE-OFF — the set is O(n) space and trivially correct; the
+  two-pointer version is O(h) space and much easier to get wrong under
+  pressure. Offer the set, mention the other.
+· PRUNING BY THE BST PROPERTY DOES NOT HELP here, because the pair can be
+  anywhere in the tree.
+· COST — O(n) time, O(n) space for the set."""
+
+_ANSWER_V2['Valid Mountain Array'] = """Walk up, then walk down, and demand that you land exactly on the last index.
+
+· THE THREE CONDITIONS, all required: it must rise, it must then fall, and
+  the peak must be neither the first nor the last element. Length under 3
+  fails immediately.
+· THE WALK — from index 0, advance while nums[i] < nums[i+1]. Then check the
+  peak is not at 0 (never rose) and not at the end (never fell). Then advance
+  while nums[i] > nums[i+1]. Valid exactly when i ends at the last index.
+· STRICTLY, in both directions. A plateau — two equal neighbours — stops both
+  walks, so the final index check rejects it automatically. That is why the
+  ending position is the test rather than a separate flat check.
+· THE FINAL POSITION IS THE WHOLE ANSWER. Anything that stalls mid-array
+  (a plateau, a second rise) leaves i short of the end, and one comparison
+  catches all of it.
+· A PURELY INCREASING ARRAY fails on "peak is not the last index"; a purely
+  decreasing one fails on "peak is not the first".
+· COST — O(n) time, O(1) space, and one pass in practice since the two walks
+  never revisit."""
+
+_ANSWER_V2['Valid Perfect Square'] = """Binary search the root and compare mid*mid to n — no sqrt, and no float anywhere.
+
+· WHY NOT sqrt() — the point of the question is to avoid it, and floating
+  point makes the answer unreliable near large squares: sqrt of a perfect
+  square can come back as 46340.999999 and floor to the wrong integer.
+· THE SEARCH — over [1, n], if mid*mid == n it is a perfect square; if
+  smaller, search right; if larger, search left. Exhausting the range means
+  it is not one.
+· mid*mid OVERFLOWS in Java or C++ for n near the 32-bit maximum. Compare
+  mid <= n / mid instead, or use a long. Python is immune, and saying which
+  applies is the point.
+· SEARCH TO n // 2 + 1 rather than n if you want to halve the range, but 0
+  and 1 must then be handled separately — the same shortcut and the same
+  caveat as the integer square root problem.
+· THE NEAT ALTERNATIVE, worth knowing: a perfect square is the sum of the
+  first k odd numbers. Subtract 1, 3, 5, … from n until you reach 0 (square)
+  or go negative (not). O(sqrt n), no multiplication at all.
+· NEWTON'S METHOD also works and converges faster; mention it, write the
+  binary search.
+· COST — O(log n) time, O(1) space."""
+
+_ANSWER_V2['Word Pattern'] = """A bijection, so you need BOTH maps — letter to word and word back to letter.
+
+· WHY ONE MAP IS NOT ENOUGH — with only letter to word, the pattern "ab" and
+  the words "dog dog" would pass: a maps to dog, b maps to dog, and nothing
+  in that direction objects. The reverse map is what rejects it.
+· THE CHECK — for each pair, if the letter is already mapped and not to this
+  word, fail; if the word is already mapped back and not to this letter,
+  fail. Otherwise record both.
+· SPLIT ON WHITESPACE AND COMPARE LENGTHS FIRST. A pattern of 3 against 4
+  words fails immediately, and zipping them without that check silently
+  ignores the extra word.
+· BEWARE OF Python's zip, which stops at the shorter sequence — that is
+  exactly how the length mismatch gets missed.
+· THIS IS ISOMORPHIC STRINGS with words instead of characters. Recognising
+  that is the transferable part; the same two-map shape solves both, and the
+  same one-map bug breaks both.
+· THE ELEGANT ALTERNATIVE — compare the index-of-first-occurrence patterns of
+  the letters and the words. Both directions fall out at once.
+· COST — O(n) time, O(n) space."""
+
+_ANSWER_V2["Composition over inheritance - why 'is-a' keeps failing"] = """Inheritance is a PROMISE that the subtype works everywhere the parent does — and most of the time you only wanted to reuse some code.
+
+· THE DISTINCTION — inheritance says "this IS a kind of that". Composition
+  says "this HAS a helper it delegates to". Beginners reach for inheritance
+  because it removes duplication fastest, which is the wrong reason.
+· (1) IT IS A PROMISE, NOT A SHORTCUT. Penguin extends Bird commits you to
+  Penguin working anywhere a Bird is expected — including fly(). That is the
+  Liskov substitution principle, and the failure is not a naming problem, it
+  is a design one.
+· (2) YOU ONLY GET ONE. Single inheritance means the parent slot is spent;
+  the second thing your class turns out to be has nowhere to go. Composition
+  has no such limit — an object can hold as many collaborators as it needs.
+· (3) IT IS THE TIGHTEST COUPLING AVAILABLE. A subclass depends on the
+  parent's internals, not just its interface, so a change inside the parent
+  breaks children that never touched it. That is the fragile base class
+  problem.
+· THE TEST TO APPLY — can you say "is a" and mean it in every context the
+  parent is used, not just the obvious one? If not, hold an instance instead
+  and delegate.
+· WHAT COMPOSITION COSTS — more wiring, and a little forwarding code. Say
+  that; pretending it is free is how the advice stops being believed.
+· INHERITANCE IS STILL RIGHT for genuine substitutability and for a shared
+  abstract base with real invariants. "Prefer composition" is a default, not
+  a prohibition."""
+
+_ANSWER_V2['LLD: Design a Parking Lot'] = """The most-asked OOD question at Amazon — and it is scored on how you SHRINK it, not on how much you model.
+
+· CLARIFY, THEN COMMIT OUT LOUD. Multiple floors? Vehicle sizes? Hourly or
+  flat pricing? One entrance or several? Nearest spot or any spot? Then say
+  the scope you will build: "multi-floor, three vehicle sizes, hourly
+  pricing, any free spot that fits." Fixing scope yourself is the strongest
+  early signal.
+· NOUNS BECOME CLASSES — ParkingLot, Floor, Spot, Vehicle, Ticket, Payment,
+  PricingStrategy.
+· VERBS BECOME METHODS — park, unpark, price, pay. Put each on the class that
+  already owns the data it needs.
+· THE ONE EXTENSION POINT IS PRICING. Say it explicitly: "pricing is what
+  will change, so it goes behind a PricingStrategy interface." One interface
+  where change is expected is judgement; five is speculation.
+· SPOT ALLOCATION IS THE INTERESTING DATA STRUCTURE. A free-list per size
+  gives O(1) park; scanning every spot is the naive answer and the follow-up
+  is always "how do you find a spot fast in a 5,000-space lot".
+· CONCURRENCY IS THE FOLLOW-UP THEY REALLY WANT. Two cars at two entrances
+  can be handed the same spot. The fix is an atomic claim — a lock per floor,
+  or a compare-and-set on the spot's state — and saying "the spot must be
+  claimed atomically, not read then written" is enough.
+· THE TICKET IS THE STATE, not the car. Issue on entry with a timestamp;
+  price on exit from the elapsed time. That is what makes pricing a pure
+  function and therefore swappable.
+· WRITE REAL CODE FOR TWO OR THREE CLASSES, not skeletons for ten."""
+
+_ANSWER_V2['LLD: Design a Vending Machine (the state-machine question)'] = """This prompt exists to see whether you reach for the State pattern instead of a wall of status checks.
+
+· CLARIFY — coins only or cards, is change given, what happens when an item
+  is sold out, can the user cancel mid-transaction. Commit to: coins, change
+  given, cancel supported, sold-out handled.
+· THE NAIVE DESIGN IS THE TRAP. A Machine with self.status = "idle" and every
+  method opening with a stack of status checks works for three states and
+  becomes unreadable at six — and every new state means editing every method.
+· THE STATE PATTERN — each state is a class implementing the same operations
+  (insertCoin, select, dispense, cancel), and the machine delegates to the
+  one it is holding. Transitions are the states' own business: a state
+  returns or sets the next one.
+· WHY IT IS BETTER, in one line: an illegal action is handled by the state
+  that does not support it, rather than by a condition somewhere else
+  remembering to forbid it.
+· NAME THE STATES — Idle, HasMoney, Dispensing, SoldOut. Four is enough to
+  show the shape; more is padding.
+· CANCEL IS THE STATE THAT EXPOSES BAD DESIGNS, because it must refund and
+  return to Idle from anywhere. In the naive version that is a special case
+  in every method.
+· CHANGE-MAKING IS A SEPARATE PROBLEM and worth flagging rather than solving:
+  greedy works for normal coin systems and fails in general, so the machine
+  should also refuse a sale it cannot make change for.
+· STATE VS STRATEGY is the likely follow-up: identical structure, different
+  intent — Strategy is chosen from outside and does not change itself, State
+  transitions on its own."""
+
+_ANSWER_V2['SOLID principles - all five, each with the bug it prevents'] = """Five rules about where to draw class boundaries — learn each as the specific bug it prevents, not as its slogan.
+
+· (S) SINGLE RESPONSIBILITY — one reason to change. A User class that
+  validates passwords, saves to Postgres and formats HTML email changes when
+  security, the schema, OR marketing changes: three teams in one file, three
+  chances to break it.
+· (O) OPEN/CLOSED — open to extension, closed to modification. If adding a
+  payment method means editing a switch that every existing method flows
+  through, every new type risks the old ones. A registry or a strategy makes
+  it an addition.
+· (L) LISKOV SUBSTITUTION — a subtype must work anywhere its parent does.
+  Square extends Rectangle is the classic: setWidth on a Square must also
+  change the height, so code that sets both and checks the area breaks. The
+  bug is a design promise, not a typo.
+· (I) INTERFACE SEGREGATION — no client should depend on methods it does not
+  use. A fat Printer interface forces a scanner-less printer to implement
+  scan() with a throw, and every caller must now know which methods are real.
+· (D) DEPENDENCY INVERSION — depend on abstractions, not concretions. A
+  service that constructs its own PostgresClient cannot be tested without a
+  database; one that receives a storage interface can.
+· THE THREAD RUNNING THROUGH ALL FIVE is isolating change. Each says "put the
+  thing that varies behind a boundary so the things that do not vary are not
+  edited when it does."
+· SAY THE COST. Applied without judgement these produce a class per verb and
+  an interface per class, which is its own kind of unreadable. They are
+  pressure to apply when something is actually changing, not a checklist to
+  satisfy up front."""
+
+_ANSWER_V2['Tell me about a time you made a mistake that affected other people'] = """Distinct from "your biggest failure" by the thing that actually tests character: someone else paid for it.
+
+· WHAT THEY ARE TESTING — whether you disclose fast or hide, whether you fix
+  the CAUSE or just the symptom, and whether you can discuss your own error
+  without minimising it or wallowing in it.
+· THE ARC — what you did, how you found out, who it hurt and how much, what
+  you told them and how quickly, what you did to fix it, and what changed so
+  it cannot recur.
+· FINDING IT YOURSELF IS BETTER than being told, and telling them before they
+  notice is better still. If someone else found it, say so plainly — the
+  honesty is worth more than the flattering version.
+· NAME THE COST TO OTHERS IN THEIR TERMS. "The team lost two days" or "the
+  client's report went out wrong" lands; "there was some impact" is the
+  sentence that makes an interviewer probe.
+· APOLOGISE ONCE, CONCRETELY, then move to what you did. Repeated apology
+  reads as performance and eats the time you need for the fix.
+· THE CAUSE IS THE POINT. A symptom fix ("I corrected the number") is the
+  minimum; the answer they remember explains why the mistake was POSSIBLE and
+  what now prevents it.
+· THE TRAP is a mistake with no victim, which quietly answers a different
+  question. If your example only cost you, it is the wrong example."""
+
+_ANSWER_V2['Tell me about a time you worked with someone difficult (collaboration)'] = """They are not asking whether you have met a difficult person — they are checking whether you are the kind who makes conflict worse.
+
+· THE TELL IS HOW YOU DESCRIBE THEM. Contempt is disqualifying. Describe
+  behaviour and its effect, not character: "he rewrote my PRs without
+  comment, so I stopped knowing what was landing" rather than "he was
+  arrogant".
+· STRUCTURE — STAR, with the Action weighted toward the CONVERSATION you had,
+  not the technical work around it. That conversation is the whole answer.
+· SHOW THAT YOU TRIED TO UNDERSTAND BEFORE TRYING TO CHANGE. What did the
+  situation look like from their side, and what did you learn when you asked?
+  An answer with no curiosity in it reads as a complaint.
+· GO DIRECT FIRST, and say so. Escalating before speaking to the person is
+  the pattern interviewers most dislike; escalating after a genuine attempt
+  is maturity.
+· THE STRONGEST VERSION includes something you were doing wrong. Almost every
+  real friction is two-sided, and noticing your half is the thing they are
+  actually listening for.
+· THE RESULT IS THE WORKING RELATIONSHIP, not winning. "We agreed he would
+  comment before rewriting, and it stopped being an issue" beats "I was
+  proved right."
+· THE TRAP is picking someone genuinely awful. It makes the story about them,
+  and you get no credit for surviving weather."""
+
+_ANSWER_V2['Function calling / tool use in LLMs'] = """The model does not run anything — it emits a structured REQUEST to call a function, and your code decides whether to honour it.
+
+· THE LOOP — you describe the tools (name, purpose, typed arguments); the
+  model replies with a call and arguments instead of prose; YOUR code
+  executes it and feeds the result back; the model continues with that result
+  in context. Often several rounds.
+· THAT SEPARATION IS THE SECURITY MODEL AND THE WHOLE POINT. The model is
+  proposing, not executing. Anything destructive needs its own authorisation
+  on your side, because a prompt-injected document can absolutely persuade a
+  model to ask for it.
+· IT FIXES WHAT LLMs ARE BAD AT — live data, exact arithmetic, querying your
+  database, taking actions. The model decides WHICH tool and WITH WHAT; it
+  does not do the work.
+· DESCRIPTIONS ARE PROMPT, not documentation. Vague ones cause the wrong tool
+  to be chosen, and a good description says when NOT to use it as well as
+  when to.
+· VALIDATE THE ARGUMENTS ANYWAY. A typed schema makes malformed calls rare,
+  not impossible, and "rare" is not a safety property.
+· KEEP THE TOOL SET SMALL. Accuracy falls as the list grows; past roughly a
+  dozen, retrieve the relevant tools first rather than presenting all of them.
+· IT IS THE MECHANISM UNDER "AGENTS". An agent is this loop plus a goal and
+  a stopping condition — worth saying, because it demystifies the word.
+· FAILURES MUST GO BACK AS TEXT. A tool that errors should return the error
+  for the model to react to; raising it out of the loop turns a recoverable
+  step into a dead conversation."""
+
+_ANSWER_V2['Bellman-Ford (shortest path with negative edges)'] = """Relax every edge V-1 times — and one extra pass that still improves something proves a negative cycle.
+
+· WHY V-1 ROUNDS IS EXACTLY RIGHT — after k rounds, every shortest path using
+  at most k edges is correct. A simple path in a graph of V vertices has at
+  most V-1 edges, so V-1 rounds settles them all.
+· THE Vth PASS IS THE CYCLE DETECTOR. If any distance still improves, some
+  path is getting shorter by going round again, which is only possible with a
+  reachable negative cycle. That detection is the reason to choose this
+  algorithm at all.
+· WHY NOT DIJKSTRA — it assumes that once a node is finalised nothing can
+  improve it, and a negative edge breaks exactly that assumption. Saying WHY
+  it fails is worth more than saying that it does.
+· COST — O(V * E), which is much worse than Dijkstra's O(E log V). Use it
+  only when edges can be negative or you need cycle detection.
+· EARLY EXIT — if a full pass changes nothing, you are done. On most graphs
+  that finishes far sooner than V-1 and costs one boolean.
+· THE CLASSIC APPLICATION is currency arbitrage: take negative logs of the
+  exchange rates and a negative cycle is a profitable loop. Worth naming.
+· SPFA is the queue-based refinement, faster in practice, same worst case.
+  Mention it if pushed."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
