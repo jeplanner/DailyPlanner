@@ -205,6 +205,10 @@ def _layout_events(events, win_start, win_end):
             t = min(w1, max(t, s + 15))               # never runs past the window
         placed.append({
             "raw": e,
+            # Completed events are struck through rather than hidden. A
+            # board is a record of the day as well as a plan for it, and a
+            # done item vanishing makes a full morning look empty.
+            "done": (e.get("status") or "open") == "done" or bool(e.get("is_done")),
             "title": e.get("title") or e.get("event_text") or e.get("name") or "(untitled)",
             "start": st.strftime("%H:%M"),
             "end": en.strftime("%H:%M"),
@@ -598,6 +602,7 @@ def day_board():
         _p["href"] = _link_event(_p.get("raw") or {}, plan_date)
     for _e in untimed:
         _e["href"] = _link_event(_e, plan_date)
+        _e["done"] = (_e.get("status") or "open") == "done" or bool(_e.get("is_done"))
     for _t in tasks:
         _t["href"] = _link_task(_t, plan_date)
     # Every day links now: the checklist takes ?date= and shows that day

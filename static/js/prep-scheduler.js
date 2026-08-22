@@ -76,19 +76,24 @@
     ".prep-pickbox{flex:none;width:17px;height:17px;cursor:pointer;accent-color:#4338ca}",
     ".q-card.prep-picked{outline:2px solid #4338ca;outline-offset:-2px}",
 
-    /* "Planned on …". Green while it is still ahead of you, red once the
-       moment has passed without the topic being marked done, grey when it
-       has. Sized like the other chips on the row so it reads as one of
-       them rather than an alert. */
-    ".prep-when{flex:none;display:inline-flex;align-items:center;gap:4px;",
-    "font:inherit;font-size:10.5px;font-weight:800;line-height:1;",
-    "border-radius:999px;padding:5px 9px;white-space:nowrap;border:1px solid}",
-    ".prep-when.soon{color:#065f46;background:#d1fae5;border-color:#6ee7b7}",
-    ".prep-when.late{color:#991b1b;background:#fee2e2;border-color:#fca5a5}",
-    ".prep-when.done{color:#374151;background:#f3f4f6;border-color:#d1d5db}",
-    "html.dark .prep-when.soon{color:#6ee7b7;background:#04302a;border-color:#047857}",
-    "html.dark .prep-when.late{color:#fca5a5;background:#3f1d1d;border-color:#b91c1c}",
-    "html.dark .prep-when.done{color:#d1d5db;background:#27272a;border-color:#3f3f46}",
+    /* "(Planned 22 Aug, 19:00)". Green while it is still ahead of you, red
+       once the moment has passed without the topic being marked done, grey
+       when it has.
+
+       INLINE TEXT, NOT A PILL, because it now sits inside the title: a
+       bordered chip mid-sentence would break the line it is part of. It
+       stays slightly smaller and lighter than the title so the topic still
+       reads first and the schedule reads as an aside about it. */
+    ".prep-when{font-size:.86em;font-weight:700;white-space:nowrap}",
+    ".prep-when.soon{color:#047857}",
+    ".prep-when.late{color:#b91c1c}",
+    ".prep-when.done{color:var(--color-text-secondary,#6b7280);font-weight:600}",
+    "html.dark .prep-when.soon{color:#6ee7b7}",
+    "html.dark .prep-when.late{color:#fca5a5}",
+    "html.dark .prep-when.done{color:#9ca3af}",
+    /* A struck-out title must not strike the schedule with it — the date is
+       still true after the topic is done. */
+    ".q-card.done .prep-when, .q-card .done .prep-when{text-decoration:none}",
     /* The card you arrived on. Flashes, then stops — a permanent ring
        would read as a state the card is in. */
     ".q-card.prep-landed{outline:3px solid #6366f1;outline-offset:2px;",
@@ -624,30 +629,53 @@
     return new Date(+p[0], +p[1] - 1, +p[2], 23, 59, 59, 999);
   }
 
+  /* The title element, whichever of the four pages this is. They disagree:
+     /ai-sde and /interview-prep use .q-text, /java and /sql use .t. Scoped
+     to the card's HEADER so a .t elsewhere in the body cannot be picked up
+     by accident. */
+  function titleElOf(card) {
+    var head = card.querySelector(".q-head") || card;
+    return head.querySelector(".q-text, .t");
+  }
+
   function paintScheduled(root, scheduled) {
     var now = new Date();
     bulkButtons(root).forEach(function (btn) {
       var title = btn.getAttribute("data-title") || "";
       var info = scheduled[title];
-      var host = btn.parentElement;
-      var old = host.querySelector(".prep-when");
-      if (old) old.remove();
+      var card = btn.closest(".q-card");
+      var titleEl = card ? titleElOf(card) : null;
+
+      // Clear any previous mark, wherever it ended up.
+      [titleEl, btn.parentElement].forEach(function (host) {
+        if (!host) return;
+        var prev = host.querySelector(".prep-when");
+        if (prev) prev.remove();
+      });
       if (!info || !info.plan_date) return;
 
-      var pill = document.createElement("span");
+      var mark = document.createElement("span");
       var done = (info.status || "").toLowerCase() === "done";
       var due = deadlineOf(info.plan_date, info.start_time);
       var late = !done && due && due.getTime() < now.getTime();
 
-      pill.className = "prep-when " + (done ? "done" : (late ? "late" : "soon"));
-      pill.textContent = (done ? "Studied " : "Planned ") +
-                         fmtWhen(info.plan_date, info.start_time);
-      pill.title = done
+      mark.className = "prep-when " + (done ? "done" : (late ? "late" : "soon"));
+      /* ON THE TITLE, IN PARENTHESES — which is how it was asked for, and it
+         reads better than a separate chip: the schedule is a fact ABOUT this
+         topic, so it belongs in the sentence naming it rather than in the
+         row of category chips beside it. */
+      mark.textContent = " (" + (done ? "Studied " : "Planned ") +
+                         fmtWhen(info.plan_date, info.start_time) + ")";
+      mark.title = done
         ? "Marked done in the prep project"
         : (late ? "This was planned for " + fmtWhen(info.plan_date, info.start_time)
                   + " and has not been marked done"
                 : "Scheduled — not due yet");
-      host.insertBefore(pill, btn);
+
+      // Beside the Plan button only if the page has a title shape we do not
+      // recognise, so a new page never silently loses the mark.
+      if (titleEl) titleEl.appendChild(mark);
+      else btn.parentElement.insertBefore(mark, btn);
     });
   }
 

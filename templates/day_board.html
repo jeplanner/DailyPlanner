@@ -146,6 +146,13 @@ header{
 }
 .ev.now{background:color-mix(in srgb, var(--ok) 26%, var(--panel));
         border-left-color:var(--ok)}
+/* Done — struck through and stood down, not removed. The board is a record
+   of the day as much as a plan for it, and a completed morning that
+   disappears reads as a morning where nothing happened. Muted enough that
+   what is LEFT is what your eye lands on. */
+.ev.done{opacity:.55; border-left-color:var(--dim)}
+.ev.done .ttl{text-decoration:line-through}
+.ev.done .t{text-decoration:none}
 /* The board began look-only and is now also a way IN. The affordance stays
    deliberately quiet — a kiosk being glanced at from across a desk must not
    look like a page full of buttons — but it is a real target, not a hint. */
@@ -285,7 +292,7 @@ li.done .txt{text-decoration:line-through}
           <div class="evlayer">
           {% for p in placed %}
             {%- set w = 100.0 / p.lane_count -%}
-            <a class="ev{% if p.is_now %} now{% endif %}"
+            <a class="ev{% if p.is_now %} now{% endif %}{% if p.done %} done{% endif %}"
                href="{{ p.href }}"
                title="Open {{ p.title }} in the day view"
                data-start="{{ p.s }}" data-end="{{ p.t }}"
@@ -293,7 +300,7 @@ li.done .txt{text-decoration:line-through}
                       height:{{ '%.3f'|format(p.height) }}%;
                       left:{{ '%.3f'|format(p.lane * w) }}%;
                       width:calc({{ '%.3f'|format(w) }}% - var(--u) * .4);">
-              <div class="t">{{ p.start }}–{{ p.end }}</div>
+              <div class="t">{% if p.done %}✓ {% endif %}{{ p.start }}–{{ p.end }}</div>
               <div class="ttl">{{ p.title }}</div>
             </a>
           {% endfor %}
@@ -319,8 +326,9 @@ li.done .txt{text-decoration:line-through}
         <div class="body">
           <ul data-fit>
             {% for e in untimed %}
-              <li class="q2">
-                <span class="dot"></span>
+              <li class="q2{% if e.done %} done{% endif %}">
+                {% if e.done %}<span class="tick">✓</span>
+                {% else %}<span class="dot"></span>{% endif %}
                 <span class="txt">{{ e.title or e.event_text or e.name }}</span>
                 <a class="hit" href="{{ e.href }}"
                    aria-label="Open {{ e.title or e.event_text or e.name }}"></a>

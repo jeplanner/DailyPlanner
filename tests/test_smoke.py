@@ -2469,6 +2469,31 @@ def test_prep_project_lookup_is_deterministic():
         "a second, unordered lookup crept back in")
 
 
+def test_the_schedule_mark_goes_on_the_title_itself():
+    """Asked for as "(Planned on X Date at that time)" — parenthesised, on
+    the title. It reads better there than as a separate chip: the schedule
+    is a fact ABOUT this topic, so it belongs in the sentence naming it
+    rather than in the row of category chips beside it.
+
+    The four pages disagree about their title element (.q-text on /ai-sde
+    and /interview-prep, .t on /java and /sql), and /java's card body
+    contains another .t — so the lookup is scoped to the card HEADER.
+    """
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    assert "function titleElOf" in js
+    lookup = js.split("function titleElOf")[1].split("}")[0]
+    assert '".q-head"' in lookup, "an unscoped search would hit a .t in the body"
+    assert '".q-text, .t"' in lookup
+    paint = js.split("function paintScheduled")[1].split("function loadScheduled")[0]
+    assert "titleEl.appendChild(mark)" in paint
+    assert '" (" +' in paint, "not parenthesised"
+    # A page with an unrecognised title shape must not silently lose it.
+    assert "else btn.parentElement.insertBefore(mark, btn)" in paint
+    # Inline text, not a pill: a bordered chip mid-sentence breaks the line.
+    assert ".prep-when{font-size:.86em" in js
+    assert "border-radius:999px;padding:5px 9px" not in js
+
+
 def test_planned_pill_elapses_at_the_end_of_an_untimed_day():
     """The scheduler stores 00:00 for "no time given". Treating that
     literally would paint TODAY's untimed plan red all day, which is the
@@ -2587,3 +2612,60 @@ def test_prep_features_do_not_assume_the_list_already_exists():
     # page on a bank that is genuinely empty.
     waiter = js.split("function whenCardsReady")[1].split("function bulkButtons")[0]
     assert "disconnect()" in waiter and "setTimeout" in waiter
+
+
+def test_day_board_strikes_out_anything_completed(auth_client, monkeypatch):
+    """Asked for. Tasks and checklist rows already did; EVENTS did not —
+    neither the timed chips on the rail nor the untimed ones in the list.
+
+    Struck through and stood down rather than REMOVED: the board is a record
+    of the day as much as a plan for it, and a completed morning that
+    disappears reads as a morning where nothing happened.
+    """
+    import re
+    import routes.day_board as db
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [
+        {"id": "E1", "title": "Standup done", "start_time": "09:00",
+         "end_time": "09:30", "status": "done"},
+        {"id": "E2", "title": "Standup open", "start_time": "10:00",
+         "end_time": "10:30", "status": "open"},
+        {"id": "E3", "title": "Untimed done", "start_time": None,
+         "end_time": None, "status": "done"},
+        {"id": "E4", "title": "Untimed open", "start_time": None,
+         "end_time": None, "status": "open"},
+    ])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [
+        {"id": "T1", "task_text": "Task done", "quadrant": "Q1", "is_done": True},
+        {"id": "T2", "task_text": "Task open", "quadrant": "Q1", "is_done": False},
+    ])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [
+        {"id": "C1", "title": "Check done", "done": True},
+        {"id": "C2", "title": "Check open", "done": False},
+    ])
+    html = auth_client.get("/day-board").get_data(as_text=True)
+
+    def marked_done(title):
+        """Is the CONTAINER wrapping `title` flagged done?
+
+        Matches the <li> or the rail <a> specifically. A bare "last class
+        before the title" search picks up the ✓ span's own class instead,
+        which is how the first version of this test reported a false miss.
+        """
+        i = html.find(title)
+        assert i != -1, f"{title!r} is not on the board"
+        seg = html[max(0, i - 600):i]
+        m = None
+        for m in re.finditer(r'<(?:li|a) class="([^"]*)"', seg):
+            pass
+        return "done" in (m.group(1) if m else "")
+
+    for title in ("Standup done", "Untimed done", "Task done", "Check done"):
+        assert marked_done(title), f"{title} is not struck out"
+    for title in ("Standup open", "Untimed open", "Task open", "Check open"):
+        assert not marked_done(title), f"{title} was struck out while still open"
+
+    # Both shapes need the rule that actually draws the line.
+    assert ".ev.done .ttl{text-decoration:line-through}" in html
+    assert "li.done .txt{text-decoration:line-through}" in html
+    # Done is dimmed, not hidden.
+    assert ".ev.done{opacity:.55" in html
