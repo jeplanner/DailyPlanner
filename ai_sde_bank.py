@@ -359033,6 +359033,247 @@ _ANSWER_V2['Boats to Save People'] = """Sort, then pair the heaviest with the li
   person is never given a boat.
 · COST — O(n log n) for the sort, O(1) space beyond it."""
 
+_ANSWER_V2['Count Good Nodes in a Binary Tree'] = """Carry the maximum seen on the path DOWN the recursion - a node is good when it is at least that max.
+
+· THE DEFINITION — a node is good if nothing on the root-to-node path is
+  strictly greater than it. Note the root is always good, since its path is
+  just itself.
+· THE PARAMETER IS THE ALGORITHM. Pass the running path maximum as an argument;
+  at each node compare, count if node.val >= maxSoFar, then recurse with
+  max(maxSoFar, node.val).
+· GREATER-OR-EQUAL, NOT GREATER. An equal value on the path still leaves the
+  node good, and using strict > silently undercounts on trees with duplicates.
+· PASS DOWN, DO NOT RETURN UP. This is a top-down accumulation, unlike Tilt or
+  Diameter which compute bottom-up. Recognising which direction the information
+  flows is the reusable skill.
+· THE INITIAL MAX is the root's value, or negative infinity — either works,
+  since the root compares equal to itself.
+· THE COUNT can be returned as a sum from the recursion (1 + left + right) or
+  accumulated into an outer variable. The returning version is cleaner and
+  avoids the closure.
+· COST — O(n) time, O(h) stack."""
+
+_ANSWER_V2['Divide Players Into Teams of Equal Skill'] = """Sort, then pair first with last - if every such pair does not hit the same total, no arrangement can.
+
+· WHY SMALLEST-WITH-LARGEST — if all pairs must share one total, the smallest
+  player is forced to partner the largest. Any other partner leaves the largest
+  needing someone even smaller, who does not exist.
+· THAT MAKES THE PAIRING UNIQUE, which is the key realisation: there is nothing
+  to search. Sort, pair inward, and verify.
+· THE TARGET is total_skill * 2 / n, or equivalently the first pair's sum. If
+  the total is not divisible, return -1 immediately.
+· CHECK EVERY PAIR, not just the first. The moment one differs, return -1.
+· THE ANSWER IS THE SUM OF PRODUCTS, not of sums. Reading the question too
+  quickly and summing the skills is the easy mistake, and the two agree on
+  small examples.
+· WATCH THE MAGNITUDE — n up to 10^5 with skills to 1000 means the product sum
+  exceeds 32-bit range. Python is safe; Java and C++ need a long.
+· COST — O(n log n) for the sort, O(1) space beyond it."""
+
+_ANSWER_V2['Find Right Interval'] = """Sort the starts with their ORIGINAL indices, then binary search each end against them.
+
+· WHAT IS ASKED — for each interval, find the interval whose start is the
+  smallest value that is still >= this one's end. Return the original index, or
+  -1 if none exists.
+· KEEP THE INDICES WHEN YOU SORT. The answer is expressed in the input's
+  original positions, so sorting bare starts loses exactly the information you
+  need. Sort (start, index) pairs.
+· THE SEARCH IS bisect_left on the starts for this interval's end. That returns
+  the first start >= end, which is the definition given. bisect_right would
+  skip an interval whose start equals the end, and equality is allowed here.
+· OUT OF RANGE MEANS -1 — if the search lands past the last element, nothing
+  qualifies.
+· AN INTERVAL CAN BE ITS OWN RIGHT INTERVAL when its start equals its end, and
+  the algorithm handles that without a special case.
+· THE ALTERNATIVE is a sorted map or a two-pointer sweep over both sorted ends
+  and sorted starts; same complexity, more bookkeeping. Binary search is the
+  clearer answer.
+· COST — O(n log n) for the sort and the n searches, O(n) space."""
+
+_ANSWER_V2['House Robber II (circular street)'] = """First and last are adjacent, so they can never both be taken - run the linear version twice and keep the better answer.
+
+· THE REDUCTION IS THE WHOLE PROBLEM. Once you see that at most one of the two
+  ends is robbed, the circle becomes two straight streets: houses 0..n-2, and
+  houses 1..n-1.
+· WHY THAT IS COMPLETE — every valid circular selection excludes the first, or
+  excludes the last, or both. Both cases are covered by the two runs, and a
+  selection excluding both appears in either.
+· THE LINEAR SUBROUTINE is the original House Robber: rolling prev and curr,
+  with curr = max(curr, prev + house). O(1) space, and you call it twice.
+· THE SINGLE-HOUSE CASE MUST BE SPECIAL-CASED. With n == 1 both slices are
+  empty and the answer would come out 0 instead of that house's value.
+· DO NOT TRY TO SOLVE THE CIRCLE DIRECTLY with an extra state for 'did I take
+  the first'. It works, but it is far more error-prone than calling a clean
+  linear helper twice, and interviewers prefer the reduction.
+· THE PATTERN GENERALISES — many circular-array problems reduce to two linear
+  runs by fixing the treatment of one boundary element.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Integer Break (DP)'] = """dp[i] is the best product for i, built from every split point - and the mathematical answer is 'use as many 3s as possible'.
+
+· THE DP — for each i, try every split j from 1 to i-1 and take the best of
+  j * (i - j), leaving the rest whole, and j * dp[i - j], breaking the rest
+  further. Both options are needed; considering only one undercounts.
+· THE CONSTRAINT IS AT LEAST TWO PARTS, which is why dp[2] = 1 and not 2: you
+  must break it. That base case is where careless solutions go wrong.
+· THE MATHEMATICAL SHORTCUT — the optimum uses as many 3s as possible, with a
+  remainder handled as 4 = 2 + 2 rather than 3 + 1. Because 3 * 1 < 4, a
+  leftover 1 should always be merged into a 3 to make two 2s.
+· WHY 3 — among integers, 3 maximises the product per unit of sum. The
+  continuous optimum is e (about 2.718), and 3 is the nearer integer to it than
+  2 when you compare the actual products.
+· SAY BOTH. The DP shows you can solve it mechanically; the 3s result shows you
+  understood it. Leading with the shortcut alone risks looking like recall.
+· n = 2 AND n = 3 ARE THE EXCEPTIONS to the 3s rule, returning 1 and 2, because
+  the forced break costs more than it gains.
+· COST — O(n^2) for the DP, O(n) space; the mathematical version is O(1)."""
+
+_ANSWER_V2['Jump Game II (fewest jumps)'] = """It is a BFS by levels wearing a greedy costume - each 'level' is everything reachable within one more jump.
+
+· THE FRAME THAT MAKES IT CLICK — think of indices reachable in k jumps as
+  level k. The answer is the level containing the last index, which is exactly
+  what BFS computes. The greedy is that BFS with the queue implied.
+· THE THREE VARIABLES — jumps, currentEnd (the last index of this level), and
+  farthest (the furthest index seen from anywhere in this level).
+· THE LOOP — at each i, update farthest = max(farthest, i + nums[i]). When i
+  reaches currentEnd, you have exhausted the level, so increment jumps and set
+  currentEnd = farthest.
+· STOP THE LOOP AT n - 2, not n - 1. Reaching the final index should not
+  trigger another jump increment, and looping to the end is the standard
+  off-by-one that returns one too many.
+· THE PROBLEM GUARANTEES REACHABILITY, so there is no failure case here. Jump
+  Game I is the variant that asks only whether the end is reachable, and it is
+  a simpler single-variable greedy.
+· DO NOT JUMP TO THE FARTHEST INDEX EACH TIME. That is the intuitive greedy and
+  it is wrong; what matters is the farthest index reachable from ANY position
+  in the current range, which is what the level framing captures.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Longest Arithmetic Subsequence'] = """The state needs TWO things - where the chain ends and what its common difference is - so it is a dictionary per index.
+
+· WHY A PLAIN ARRAY WILL NOT DO. A subsequence is only arithmetic relative to a
+  difference, so dp[i] alone cannot say anything; the difference has to be part
+  of the state.
+· THE STATE — dp[i][d] is the length of the longest arithmetic subsequence
+  ending at index i with common difference d. Store it as a dict per index, not
+  a 2-D array, because d can be negative and unbounded.
+· THE TRANSITION — for every pair j < i, let d = nums[i] - nums[j], then
+  dp[i][d] = dp[j].get(d, 1) + 1. The default of 1 counts nums[j] itself as the
+  start of a chain.
+· SUBSEQUENCE, NOT SUBARRAY — elements need not be adjacent, which is exactly
+  why every earlier j must be considered and why this is O(n^2) rather than
+  linear.
+· THE MINIMUM ANSWER IS 2 for any array of length 2 or more, since any two
+  elements form an arithmetic sequence. A length-1 array answers 1.
+· DUPLICATES GIVE d = 0 and are handled with no special case, which is worth
+  checking mentally because it is a common source of doubt.
+· COST — O(n^2) time and O(n^2) space in the worst case, since each index can
+  hold up to n distinct differences."""
+
+_ANSWER_V2['Longest Palindromic Subsequence'] = """Interval DP over s[i..j] - if the ends match take both and move inward, otherwise drop the worse end.
+
+· SUBSEQUENCE, NOT SUBSTRING. Characters need not be contiguous, which is why
+  the expand-around-centre trick from Longest Palindromic Substring does not
+  apply here at all. Check which problem you were given.
+· THE STATE — dp[i][j] is the answer for the slice s[i..j].
+· THE TRANSITION — if s[i] == s[j], dp[i][j] = dp[i+1][j-1] + 2. Otherwise
+  dp[i][j] = max(dp[i+1][j], dp[i][j-1]).
+· THE FILL ORDER IS THE PART PEOPLE GET WRONG. dp[i][j] depends on shorter
+  intervals, so iterate by increasing LENGTH, or iterate i downward and j
+  upward. A naive row-by-row loop reads cells that have not been computed.
+· THE BASE CASE — dp[i][i] = 1, since a single character is a palindrome of
+  length 1.
+· THE ELEGANT ALTERNATIVE — the answer equals the longest common subsequence of
+  s and its reverse. That reuses a routine you already know, and is worth
+  offering as the one-liner after giving the direct DP.
+· COST — O(n^2) time and O(n^2) space, reducible to O(n) space by keeping two
+  rows."""
+
+_ANSWER_V2['Maximal Square (DP)'] = """dp[r][c] is the SIDE of the largest square whose bottom-right corner is here - and it is 1 + the min of three neighbours.
+
+· THE STATE CHOICE IS THE INSIGHT. Anchoring on the bottom-right corner is what
+  makes the recurrence local; trying to track squares by their top-left or
+  centre does not produce a clean rule.
+· THE TRANSITION — if the cell is 1, dp[r][c] = 1 + min(dp[r-1][c],
+  dp[r][c-1], dp[r-1][c-1]). If it is 0, dp is 0.
+· WHY THE MINIMUM, AND WHY ALL THREE — a square of side k+1 ending here
+  requires squares of side k ending above, to the left, and diagonally. The
+  weakest of the three limits you, so the min is the binding constraint. Using
+  only two neighbours allows an L-shape and is the classic wrong answer.
+· THE ANSWER IS THE AREA, so square the best side before returning. Returning
+  the side is an easy misread.
+· THE FIRST ROW AND COLUMN are their own values, since no larger square can end
+  there. Padding the DP with an extra zero row and column removes those special
+  cases entirely.
+· WATCH THE CELL TYPE — many versions of this input are characters '0' and '1',
+  not integers, and comparing to the wrong one silently produces all zeros.
+· SPACE CAN DROP TO O(cols) by keeping one previous row plus the diagonal
+  value in a temporary.
+· COST — O(rows * cols) time; O(rows * cols) space, or O(cols) optimised."""
+
+_ANSWER_V2['Maximum Length of Pair Chain'] = """Sort by END and take greedily - the same activity-selection argument as non-overlapping intervals.
+
+· THE RULE — sort the pairs by their second element, then walk through keeping
+  any pair whose start is strictly greater than the current chain's end.
+· WHY SORT BY END — the pair that finishes earliest leaves the most room for
+  everything after it, so taking it can never be worse than any alternative.
+  That exchange argument is the proof, and it is worth stating.
+· SORTING BY START IS THE TRAP, and it gives wrong answers whenever one long
+  pair covers several short ones.
+· STRICTLY GREATER — the problem requires next.start > current.end, not >=.
+  Getting the comparison wrong overcounts by chaining touching pairs.
+· PAIRS MAY BE GIVEN UNSORTED and in any order, so the sort is mandatory rather
+  than an optimisation.
+· THE DP ALTERNATIVE is O(n^2) longest-increasing-subsequence style, and it is
+  correct but unnecessary here. Mentioning that the greedy is provable is
+  better than presenting the DP as the primary answer.
+· THIS IS THE SAME PROBLEM as Non-overlapping Intervals, phrased as maximise
+  kept rather than minimise removed. Recognising that saves you deriving it
+  twice.
+· COST — O(n log n) for the sort, O(1) space beyond it."""
+
+_ANSWER_V2['Minimum Number of Arrows to Burst Balloons'] = """Sort by END, fire at the first balloon's end, and only fire again when a balloon starts beyond that point.
+
+· WHY SHOOT AT THE END — an arrow placed at the earliest-ending balloon's right
+  edge is as far right as that balloon allows, so it catches the maximum number
+  of later balloons. Shooting anywhere earlier can only hit fewer.
+· THE SWEEP — keep the position of the last arrow. For each balloon, if its
+  start is greater than that position, it was missed: fire a new arrow at this
+  balloon's end and update.
+· TOUCHING COUNTS AS HIT — a balloon starting exactly at the arrow's position is
+  burst, so the test is start > arrowPos, not >=. That single character is the
+  usual bug.
+· THIS IS THE INTERVAL-OVERLAP FAMILY AGAIN. Minimum arrows equals the number
+  of disjoint groups, which is the same greedy as Non-overlapping Intervals and
+  Pair Chain.
+· BEWARE INTEGER OVERFLOW IN OTHER LANGUAGES — coordinates can reach the 32-bit
+  limits, so computing a midpoint or comparing with arithmetic can overflow.
+  Compare directly rather than computing differences.
+· SORT BY END, NEVER BY START. Sorting by start needs you to track a running
+  minimum end and is more error-prone for no benefit.
+· COST — O(n log n) for the sort, O(1) space."""
+
+_ANSWER_V2['Minimum Number of Coins for Fruits'] = """Buying fruit i grants the next i free - so the DP asks where you next RESUME paying, not what you buy.
+
+· THE OFFER — paying prices[i] for the i-th fruit (1-indexed) gives fruits
+  i+1 through 2i free. You may still choose to buy one of those, to claim its
+  own larger offer.
+· THAT CHOICE IS WHY IT IS A DP and not a greedy. Paying for a free fruit can
+  be worth it when its offer reaches further, and no local rule decides that
+  reliably.
+· THE STATE — dp[i] is the minimum cost to acquire every fruit from i onward,
+  given you are paying for fruit i.
+· THE TRANSITION — dp[i] = prices[i] + min(dp[j]) for j from i+1 to 2i+1. Those
+  are the positions where you could resume paying: anywhere inside the free
+  window, or immediately after it.
+· WORK BACKWARDS from the end, since dp[i] depends on larger indices. If
+  2i >= n the offer already covers the rest, so dp[i] = prices[i].
+· THE 1-INDEXING IS THE MAIN SOURCE OF BUGS. Decide once whether your array is
+  0- or 1-indexed and write the window bounds to match; mixing them produces an
+  answer that is close but wrong.
+· COST — O(n^2) in the straightforward form, which is fine at the given
+  constraints. A monotonic deque reduces the min-query to O(n) if pushed."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
