@@ -356994,6 +356994,438 @@ know, it still generates a confident, fluent guess.
 · YOU REDUCE IT — you do not eliminate it. Say that out loud."""
 
 
+_ANSWER_V2['Find First and Last Position (sorted array)'] = """Two binary searches, not one: bisect_left gives the first index, bisect_right - 1
+gives the last.
+
+· WHY ONE SEARCH IS NOT ENOUGH — a plain binary search stops at ANY matching
+  index. With duplicates that could be anywhere in the run, so it cannot tell
+  you where the run starts or ends.
+· bisect_left(a, x) returns the first slot where x could go and keep the array
+  sorted, which for a present value IS its first index.
+· bisect_right(a, x) returns the slot just PAST the last x, so the last index
+  is bisect_right - 1.
+· THE ABSENCE CHECK is the bit people fumble: if left is past the end of the
+  array, or a[left] is not the target, the value is not there. Return [-1, -1].
+  Do not test bisect_right first - it is past-the-end by construction.
+· WRITING IT BY HAND — the two loops differ by ONE comparison. For the left
+  bound move hi down when a[mid] >= target; for the right bound move lo up when
+  a[mid] <= target. Getting >= and <= the wrong way round is the classic bug.
+· COST — O(log n) time, O(1) space."""
+
+_ANSWER_V2['Find Minimum in Rotated Sorted Array'] = """Compare the middle to the RIGHT end, never to the left - that one choice makes
+every case work.
+
+· THE SHAPE — a sorted array rotated at some pivot is two ascending runs, and
+  the minimum is exactly where the second one starts.
+· THE RULE — if nums[mid] > nums[hi], everything from lo to mid is the higher
+  run, so the minimum is strictly to the RIGHT: lo = mid + 1. Otherwise the
+  minimum is at mid or left of it: hi = mid.
+· WHY NOT COMPARE TO nums[lo] — with no rotation at all (already sorted) that
+  comparison cannot distinguish the two halves and the search goes wrong. The
+  right end has no such blind spot.
+· hi = mid, NOT mid - 1, because mid itself may BE the minimum. That off-by-one
+  is the usual way this loop loses the answer.
+· LOOP WHILE lo < hi and return nums[lo] - when they meet, that is the answer.
+  No separate found-check is needed.
+· DUPLICATES BREAK IT — with repeated values nums[mid] == nums[hi] tells you
+  nothing and the worst case degrades to O(n). Say so; it is a common follow-up.
+· COST — O(log n) time, O(1) space."""
+
+_ANSWER_V2['Find Peak Element (binary search)'] = """Binary search on the SLOPE, not on a value - walk uphill and you must hit a peak.
+
+· WHAT COUNTS AS A PEAK — any element strictly greater than both neighbours.
+  ANY peak will do, which is what makes the logarithmic answer possible.
+· THE RULE — if nums[mid] < nums[mid+1] you are on an ascending slope, so a
+  peak lies to the right: lo = mid + 1. Otherwise you are on a descending slope
+  and a peak is at mid or to its left: hi = mid.
+· WHY IT CANNOT FAIL — treat out-of-bounds as negative infinity. An ascending
+  slope must eventually turn down or hit the wall, and either is a peak.
+· THIS IS THE SURPRISING PART, and worth saying out loud: the array is NOT
+  sorted, yet binary search still applies, because the invariant is 'a peak
+  exists in this range', not 'the range is ordered'.
+· COST — O(log n) time, O(1) space. The O(n) scan is the obvious answer; the
+  interviewer is asking for this one."""
+
+_ANSWER_V2["Find the Duplicate Number (Floyd's cycle)"] = """Read the array as a linked list - value = next pointer - and the duplicate is
+the cycle entrance.
+
+· THE CONSTRAINTS ARE THE HINT — n+1 numbers each in [1, n], read-only, O(1)
+  space. That rules out sorting, a seen-set and marking-in-place, which is
+  precisely why the trick is wanted.
+· THE MAPPING — from index i go to index nums[i]. Because every value is a
+  valid index, this walk never leaves the array, and two indices sharing a
+  value both point at the same place, which creates a cycle.
+· PHASE 1 — tortoise moves one step, hare two, until they meet somewhere inside
+  the cycle. That meeting point is NOT the answer.
+· PHASE 2 — reset one pointer to the start and advance both one step at a time.
+  They meet at the cycle's ENTRANCE, which is the duplicated value.
+· WHY START AT INDEX 0 — no value equals 0, so nothing points back at index 0
+  and it can never be inside the cycle. Without that guarantee the entrance
+  argument does not hold.
+· COST — O(n) time, O(1) space, array untouched."""
+
+_ANSWER_V2["Heap / Top-K — when 'K largest/most frequent' appears"] = """Keep a heap of size k, not a sorted array of size n - and use the OPPOSITE heap
+to the thing you want.
+
+· THE TRIGGER — 'K largest / smallest / most frequent', or a stream too big to
+  sort at all.
+· THE INVERSION PEOPLE GET WRONG — for the K LARGEST you keep a MIN-heap. Its
+  top is the weakest of your current winners, so it is exactly what to evict
+  when something better arrives. For the K smallest, a max-heap.
+· THE LOOP — push; if the heap exceeds k, pop the top. What remains is the
+  answer, and only k items were ever held.
+· PYTHON ONLY HAS A MIN-HEAP — for a max-heap push the negated value, or a
+  tuple with a negated first element.
+· WHY IT BEATS SORTING — O(n log k) against O(n log n), and it works on a
+  stream where sorting is impossible because you never hold everything.
+· WHEN NOT TO — if k is close to n, just sort; the heap's constant factor is
+  no longer worth it. For a one-off k-th element, quickselect averages O(n).
+· COST — O(n log k) time, O(k) space."""
+
+_ANSWER_V2['Intervals — merge, insert, overlap'] = """Sort by start time, then sweep once - after sorting, every overlap is adjacent.
+
+· THE FAMILY — merge overlapping meetings, can one person attend all, minimum
+  rooms needed, insert a new interval. Nearly all of them open the same way.
+· WHY SORTING IS THE WHOLE TRICK — unsorted, any two intervals might overlap
+  and you are facing O(n^2). Sorted by start, an interval can only overlap the
+  one immediately before it, so a single pass suffices.
+· THE OVERLAP TEST — [a,b] and [c,d] overlap when c <= b: the next one starts
+  before the current one ends. Decide explicitly whether touching endpoints
+  count as overlapping and say which you assumed.
+· TO MERGE — extend the current end to max(b, d). Otherwise close the current
+  interval and start a new one.
+· MINIMUM ROOMS IS THE ODD ONE OUT — it is not a merge. Sort starts and ends
+  separately, or use a min-heap of end times; the answer is the largest number
+  of intervals alive at once.
+· COST — O(n log n), dominated by the sort. The sweep itself is O(n)."""
+
+_ANSWER_V2['K Closest Points to Origin (heap)'] = """A MAX-heap of size k keyed by SQUARED distance - the square root is wasted work.
+
+· THE HEAP IS THE OPPOSITE OF WHAT YOU WANT, as always with top-K: you want the
+  k CLOSEST, so you hold a MAX-heap whose top is the farthest of your current
+  keepers - exactly the one to evict when something nearer turns up.
+· SKIP THE SQUARE ROOT — sqrt is monotonic, so x*x + y*y ranks points in the
+  same order as the true distance. Cheaper, and it avoids float error entirely
+  when the inputs are integers.
+· THE LOOP — push (-(x*x + y*y), point) in Python since heapq is a min-heap;
+  if the size passes k, pop. Whatever survives is the answer, in any order.
+· ORDER IS NOT REQUIRED — the question asks for the k closest, not for them
+  sorted. Sorting the k at the end is optional and costs O(k log k).
+· WHY NOT SORT EVERYTHING — O(n log k) against O(n log n), and it holds only k
+  points, which matters when the input is a stream.
+· COST — O(n log k) time, O(k) space."""
+
+_ANSWER_V2['Kth Largest Element'] = """A MIN-heap of size k, or quickselect if they want the optimal average - know both
+and say which you are giving.
+
+· THE HEAP VERSION — hold the k largest seen so far in a MIN-heap. Its top is
+  the weakest keeper and therefore the kth largest at all times. Push, and pop
+  when the size exceeds k. O(n log k) time, O(k) space.
+· QUICKSELECT IS THE OPTIMAL AVERAGE — partition like quicksort, but recurse
+  into only the side that can contain the answer. O(n) average because the
+  work halves each time: n + n/2 + n/4 ... converges to 2n.
+· ITS WORST CASE IS O(n^2) on a bad pivot sequence. A random pivot makes that
+  vanishingly unlikely; say that rather than pretending the worst case is O(n).
+· WHICH TO OFFER — the heap if the data is a stream or k is small; quickselect
+  for a one-off query on an array you may mutate. Quickselect REORDERS the
+  input, which disqualifies it when the caller still needs the original.
+· THE OFF-BY-ONE — kth LARGEST is index n-k in ascending order. State which
+  convention you are using before you write the partition."""
+
+_ANSWER_V2['Letter Combinations of a Phone Number'] = """A Cartesian product built one digit at a time - start with one empty string and
+extend it.
+
+· THE MAPPING — 2:abc, 3:def, 4:ghi, 5:jkl, 6:mno, 7:pqrs, 8:tuv, 9:wxyz. Write
+  it as a dict; 7 and 9 have FOUR letters and that is where sloppy answers slip.
+· THE ITERATIVE BUILD — hold a running list starting at ['']. For each digit,
+  replace it with every existing prefix extended by each of that digit's
+  letters. Three digits of three letters gives 27 strings.
+· THE RECURSIVE FORM is the same thing as backtracking: choose a letter for the
+  current digit, recurse to the next, undo. Either is accepted; the iterative
+  one is harder to get wrong.
+· THE EMPTY INPUT IS THE TEST THEY RUN — an empty digit string must return an
+  empty list, NOT ['']. Starting the loop at [''] makes that the one case you
+  have to special-case.
+· COST — O(4^n) output and therefore O(4^n) time; you cannot beat the size of
+  the answer. Space is the same, plus O(n) recursion depth."""
+
+_ANSWER_V2['Longest Palindromic Substring (expand around center)'] = """Try all 2n-1 centres and expand outward - no DP table, O(1) space.
+
+· WHY 2n-1 CENTRES, not n: a palindrome can be odd-length, centred ON a
+  character, or even-length, centred on the GAP between two. Missing the gaps
+  is the commonest bug and it silently fails on 'abba'.
+· THE EXPANSION — from a centre, walk both ends outward while they are in
+  bounds and equal. When they stop matching, the last matching pair bounds the
+  palindrome.
+· TRACK INDICES, NOT SUBSTRINGS — keep the best start and length and slice once
+  at the end. Building a new string at every centre turns this into O(n^3).
+· CONTIGUOUS, NOT A SUBSEQUENCE — 'longest palindromic subsequence' is a
+  different problem with a genuine DP answer. Check which one was asked.
+· COST — O(n^2) time, O(1) space. The DP table is also O(n^2) time but O(n^2)
+  space, so this is strictly better. Manacher's is O(n) and almost never
+  expected - mention it exists and move on.
+· A ONE-CHARACTER STRING IS ALREADY A PALINDROME, so the answer is never empty
+  for a non-empty input."""
+
+_ANSWER_V2['Longest Repeating Character Replacement'] = """Slide a window and ask one question: how many characters would I have to replace
+to make this window uniform?
+
+· THE KEY QUANTITY — window size minus the count of the most frequent character
+  in it. That is exactly the number of replacements needed, and the window is
+  valid while it is <= k.
+· THE LOOP — extend the right edge, update the count of that character, and
+  while the window is invalid, shrink from the left, decrementing as you go.
+· THE SUBTLETY THAT TRIPS PEOPLE — you do not need to recompute the maximum
+  frequency when the window shrinks. A stale, too-high max only ever keeps the
+  window from growing, so the answer stays correct and the code stays O(n).
+  You can recompute it and still be right, just slower.
+· WHY THE ANSWER IS THE WINDOW SIZE — the window is only ever valid, so the
+  largest it ever reaches is the longest achievable run.
+· THE COUNTS ARE BOUNDED — 26 uppercase letters, so the frequency table is
+  constant space no matter how long the string is.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Meeting Rooms II (minimum rooms)'] = """Sort by start, keep a MIN-heap of end times - the heap's size IS the number of
+rooms in use.
+
+· NOT A MERGE PROBLEM — the other interval questions merge overlaps. This one
+  counts how many are alive at the same moment, which is a different question
+  and needs a different structure.
+· THE ALGORITHM — sort meetings by start time. For each, if the earliest-ending
+  room (the heap top) has finished by this meeting's start, pop it and reuse
+  that room. Then push this meeting's end time. The answer is the largest the
+  heap ever grew.
+· WHY THE MIN-HEAP — the only room worth checking is the one that frees up
+  soonest. If that one is still busy, every other room is too.
+· THE EQUALITY CASE — a meeting ending exactly when the next begins does not
+  need a second room. Use 'end <= start' to reuse; using '<' silently
+  over-counts. Confirm the convention with the interviewer.
+· THE OTHER ACCEPTED ANSWER — sort all start times and all end times into two
+  separate lists and sweep with two pointers, adding a room on each start and
+  freeing one on each end. Same O(n log n), no heap.
+· COST — O(n log n) time, O(n) space."""
+
+_ANSWER_V2['Non-overlapping Intervals (min removals)'] = """Sort by END time and keep whatever finishes soonest - the classic
+activity-selection greedy.
+
+· SORT BY END, NOT BY START. This is the whole answer, and it is the opposite
+  of the merge-intervals family. Sorting by start looks reasonable and gives
+  wrong answers on inputs where one long interval swallows several short ones.
+· THE GREEDY ARGUMENT — an interval that ends earliest leaves the most room for
+  everything after it. So keeping it can never be worse than keeping any
+  alternative, which is what makes the greedy provably optimal here.
+· THE SWEEP — track the end of the last kept interval. If the next one starts
+  before that end, it overlaps: count a removal and keep the old one. Otherwise
+  adopt the new interval as the current one.
+· THE ANSWER IS COUNTED, NOT CONSTRUCTED — you are asked how many to remove,
+  which is n minus the number you kept.
+· TOUCHING ENDPOINTS DO NOT OVERLAP here: [1,2] and [2,3] are fine. Use
+  'start < end' as the overlap test, not '<='.
+· COST — O(n log n) for the sort, O(1) space beyond it."""
+
+_ANSWER_V2['Rotting Oranges (multi-source BFS)'] = """Seed the queue with EVERY rotten orange at once, then BFS level by level - each
+level is one minute.
+
+· WHY MULTI-SOURCE — rot spreads from all rotten cells simultaneously. Running
+  a separate BFS from each one and taking the minimum is both slower and
+  needlessly complicated; putting them all in the queue at time 0 models the
+  simultaneity exactly.
+· ONE LEVEL IS ONE MINUTE — process the queue in whole levels (record the size,
+  then drain exactly that many) and increment the clock per level. Incrementing
+  per cell instead is the standard bug and inflates the answer.
+· COUNT THE FRESH ONES FIRST, and decrement as each rots. At the end, if any
+  fresh cell remains it was unreachable, so return -1. Checking reachability
+  any other way is harder than just counting.
+· THE ZERO CASE — no fresh oranges at the start means the answer is 0, even if
+  there are no rotten ones either. Handle it before the loop.
+· THE CLOCK IS LEVELS MINUS ONE if you increment before checking the queue is
+  empty; simplest is to count levels only when the next level is non-empty.
+· COST — O(rows*cols) time and space; every cell enters the queue at most once."""
+
+_ANSWER_V2['Search a 2D Matrix'] = """It is not a matrix, it is a sorted 1-D array folded into rows - so binary search
+over [0, m*n).
+
+· THE PRECONDITION THAT MAKES IT WORK — each row is sorted AND every row starts
+  higher than the previous row ends. Reading the grid row after row therefore
+  gives one fully sorted sequence.
+· THE INDEX MAPPING — treat mid as a position in that flat sequence; the cell
+  is matrix[mid // n][mid % n], where n is the number of COLUMNS. Using the row
+  count here is the classic slip and it fails on any non-square matrix.
+· ONE SEARCH, NOT TWO — binary searching for the row and then within it is also
+  O(log m + log n), which is the same complexity, but it is more code and more
+  edge cases. The flat search is cleaner.
+· THE DIFFERENT PROBLEM — 'Search a 2D Matrix II' only guarantees rows and
+  columns are individually sorted, with no relation between them. That one is
+  solved by starting at the top-right and stepping left or down, in O(m + n).
+  Check which variant you were given.
+· COST — O(log(m*n)) time, O(1) space."""
+
+_ANSWER_V2['Search in Rotated Sorted Array'] = """At every step, ONE half is still properly sorted - find which, and you can decide
+where the target must be.
+
+· THE INSIGHT — a rotated sorted array cut at any midpoint always leaves at
+  least one sorted half. That half you can reason about with a simple range
+  check; the other half is where the rotation hides.
+· THE TEST — if nums[lo] <= nums[mid] the LEFT half is sorted; otherwise the
+  right half is. Use <= so a two-element window does not misclassify.
+· THEN DECIDE — if the left is sorted and nums[lo] <= target < nums[mid], go
+  left, else go right. Mirror it for the sorted-right case. Both bounds must be
+  checked; testing only one sends you down the wrong half.
+· THIS IS THE SAME SHAPE AS 'Find Minimum in Rotated Sorted Array', and some
+  people solve it by finding the pivot first and then binary searching the
+  correct segment. That is two passes and equally acceptable - just say which
+  you are doing.
+· DUPLICATES RUIN THE TEST — with repeats, nums[lo] == nums[mid] identifies
+  nothing and the worst case is O(n). That is 'Search in Rotated Sorted Array
+  II' and the honest answer is that no O(log n) solution exists.
+· COST — O(log n) time, O(1) space."""
+
+_ANSWER_V2['Sliding Window — recognize & apply'] = """Grow the window from the right, shrink from the left when it breaks the rule -
+every element enters and leaves once, so it is O(n).
+
+· THE TRIGGER — 'contiguous subarray or substring' plus 'longest / shortest /
+  at most k' plus some condition. Contiguity is the part that matters; if the
+  problem allows skipping elements it is not a window.
+· THE TEMPLATE — for each right, add nums[right] to the window state; while the
+  window is invalid, remove nums[left] and advance left; then record the best.
+· WHY O(n) AND NOT O(n^2) — left never moves backwards. Across the whole run
+  each index is added once and removed at most once, so the total work is
+  linear even though there are two nested-looking loops.
+· LONGEST vs SHORTEST changes where you record the answer: for the longest,
+  after the window is valid again; for the shortest, inside the shrink loop
+  while it is still valid.
+· IT BREAKS ON NEGATIVE NUMBERS. Growing the window no longer monotonically
+  grows the sum, so 'shrink until valid' is meaningless. That is the signal to
+  switch to prefix sums with a hash map.
+· COST — O(n) time; space is whatever the window state needs, often O(1) or
+  O(alphabet)."""
+
+_ANSWER_V2['Subarray Sum Equals K'] = """Prefix sums in a hash map - a subarray ending here sums to k exactly when some
+earlier prefix equals current - k.
+
+· THE ALGEBRA — if prefix[j] - prefix[i] == k then the slice from i+1 to j sums
+  to k. Rearranged: prefix[i] == prefix[j] - k. So at each j, look up how many
+  earlier prefixes had that value.
+· THE MAP HOLDS COUNTS, NOT POSITIONS — the question asks HOW MANY subarrays,
+  and the same prefix value can occur many times. Storing an index instead of a
+  count silently under-counts.
+· SEED THE MAP WITH {0: 1}. That accounts for a subarray starting at index 0,
+  whose prefix difference is the running sum itself. Forgetting it is the
+  single commonest bug here.
+· ADD BEFORE YOU RECORD — look up the count for (running - k) and add it to the
+  answer BEFORE inserting the current running sum, or a k of 0 counts the empty
+  subarray.
+· WHY NOT A SLIDING WINDOW — negatives. The running sum is not monotonic, so
+  there is no 'shrink until valid' rule. This is the standard reason the window
+  approach is rejected here.
+· COST — O(n) time, O(n) space."""
+
+_ANSWER_V2['Subsets (power set)'] = """Start with the empty subset and, for each new number, append it to a copy of
+everything you already have - the count doubles each round.
+
+· WHY 2^n — every element is independently in or out, so n binary choices give
+  2^n subsets. That also tells you no algorithm can beat exponential here: the
+  output itself is that big.
+· THE ITERATIVE DOUBLING — result starts as [[]]. For each num, add
+  [sub + [num] for sub in result] to result. After n rounds you have all of them.
+· THE BACKTRACKING FORM — at index i, either skip the element or take it, and
+  recurse. Identical output, and it is the version to reach for when the
+  problem grows a constraint (a target sum, a size limit).
+· APPEND A COPY, never the working list. Appending the live list means every
+  stored subset is the same object and they all mutate together - the single
+  most common bug in this family.
+· DUPLICATES CHANGE THE PROBLEM — 'Subsets II' has repeated values, and the fix
+  is to sort first and skip a value equal to its predecessor at the same
+  recursion depth.
+· COST — O(n * 2^n) time and space, because there are 2^n subsets averaging
+  n/2 elements each."""
+
+_ANSWER_V2['Top K Frequent Elements'] = """Count with a hash map, then pick the top k - by heap for O(n log k), or by
+bucket sort for O(n).
+
+· STEP ONE IS ALWAYS THE SAME — a frequency map over the input, O(n).
+· THE HEAP VERSION — push (count, value) into a MIN-heap and pop when it
+  exceeds k, so the top is always the weakest keeper. O(n log k), and the
+  natural choice when k is small relative to n.
+· THE BUCKET VERSION IS THE ONE THEY ARE FISHING FOR — a frequency can be at
+  most n, so make an array of n+1 buckets indexed BY COUNT, drop each value
+  into its bucket, and walk from the high end until you have k. That is O(n),
+  beating the heap, and it surprises people that it is possible.
+· WHY BUCKETS WORK HERE — the key being sorted on is bounded by n, which is
+  exactly the condition that lets a counting-style sort beat comparison sorts.
+· TIES ARE UNSPECIFIED — when several values share the k-th frequency, any of
+  them is usually acceptable. Ask rather than assume.
+· COST — O(n) time and space with buckets; O(n log k) time, O(n) space with a
+  heap."""
+
+_ANSWER_V2['Two Pointers — recognize & apply'] = """Two indices moving through a SORTED array so each element is visited once -
+O(n) instead of O(n^2).
+
+· THE TRIGGER — a sorted array, plus 'find a pair / triplet', or comparing from
+  both ends, or rearranging in place. Sortedness is what makes the decision
+  rule valid; without it, moving a pointer proves nothing.
+· THE DECISION RULE for a target sum: if the current pair sums too LOW, move
+  the left pointer right to increase it; too HIGH, move the right pointer left
+  to decrease it. Each move discards a whole set of pairs that cannot work,
+  which is why the scan is linear.
+· THE OTHER FLAVOUR is fast-and-slow on the same side: cycle detection, finding
+  the middle of a list, and in-place removal where slow marks the write
+  position and fast scans ahead.
+· 3SUM IS TWO POINTERS WITH A LOOP OUTSIDE — fix the first element, then run
+  the pair scan on the rest. O(n^2) overall, and the skip-duplicates step is
+  where most attempts break.
+· IF THE INPUT IS UNSORTED you must either sort first, which costs O(n log n)
+  and destroys the original order, or use a hash map instead. Say which
+  trade-off you are taking.
+· COST — O(n) time, O(1) space, after any sorting."""
+
+_ANSWER_V2['Bias-Variance trade-off (explained simply)'] = """Two different ways to be wrong: too simple to see the pattern, or so flexible it
+memorised the noise.
+
+· BIAS is error from wrong assumptions - a straight line through curved data.
+  It shows up as bad performance on BOTH training and test sets. That is
+  underfitting.
+· VARIANCE is sensitivity to the particular training sample - the model fit the
+  noise. It shows up as excellent training performance and poor test
+  performance. That is overfitting.
+· THE DECOMPOSITION — expected test error is roughly bias^2 + variance +
+  irreducible noise. The last term is the floor: no model beats it, because it
+  is randomness in the world rather than a flaw in the fit.
+· THE TRADE-OFF — as you add capacity, bias falls and variance rises. The best
+  model is the one with the lowest TOTAL, which is almost never the lowest bias.
+· HOW TO TELL WHICH YOU HAVE — compare training error to test error. Both high
+  means bias. A large gap means variance. This is the diagnostic the question
+  is really testing.
+· THE FIXES DIFFER, so the diagnosis matters. High bias: a richer model, better
+  features, less regularisation. High variance: more data, regularisation, a
+  simpler model, or ensembling.
+· MORE DATA CURES VARIANCE, NOT BIAS. A straight line stays a straight line no
+  matter how many points you give it - worth saying, because it is the part
+  people get backwards."""
+
+_ANSWER_V2['CNN vs RNN vs Transformer — when to use which'] = """Each encodes a different assumption about the data: nearby-matters, order-matters,
+everything-can-see-everything.
+
+· CNN — shared filters slide over the input, so it assumes patterns are LOCAL
+  and position-independent. Cheap in parameters and fully parallel. Images,
+  spectrograms, and any grid where a local motif means the same thing anywhere.
+· RNN / LSTM — a hidden state carried step to step, so it assumes ORDER matters
+  and memory should be sequential. The cost is that step t cannot start until
+  t-1 finishes, so training does not parallelise, and long-range signal decays
+  through the chain. LSTM gates reduce that decay without removing it.
+· TRANSFORMER — self-attention lets every position look at every other in one
+  step, so distance costs nothing and the whole sequence trains in parallel.
+  That is why it displaced RNNs for essentially all sequence work.
+· THE PRICE OF ATTENTION is O(n^2) in sequence length, in both time and memory.
+  That is the real constraint on context windows, and the reason for the whole
+  literature on efficient attention.
+· THE QUICK PICK — images: CNN. Text or any sequence today: Transformer. Short
+  univariate time series with little data: an LSTM or even a classical model
+  may genuinely win, because transformers are data-hungry.
+· THE HONEST NUANCE — vision transformers now match or beat CNNs given enough
+  data, because the CNN's locality assumption is a helpful prior exactly when
+  data is scarce and a limitation when it is plentiful."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
