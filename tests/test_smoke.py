@@ -2560,3 +2560,30 @@ def test_calendar_grid_uses_the_same_missed_rule():
     # become an unreadable wall of red.
     assert "repeating-linear-gradient" in css.split(".event-chip.is-missed")[1][:400]
     assert "html.dark .event-chip.is-missed" in css, "unreadable in dark mode"
+
+
+def test_prep_features_do_not_assume_the_list_already_exists():
+    """A BUG THAT SHIPPED, and the reason it got through.
+
+    Every bank page calls PrepScheduler.attach() synchronously while its
+    list is fetched over the network and rendered in a .then() — so at the
+    moment attach runs there is not a single card in the container.
+
+    Both the bulk-select bar and the "Planned on …" pill opened with a
+    "no cards? nothing to do" guard, which was true every single time. Both
+    features were dead on every page, and the jsdom harnesses missed it
+    because they inserted cards BEFORE calling attach — the opposite of what
+    the pages do. A test that sets up the world in the wrong order can only
+    ever confirm the wrong order works.
+    """
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    assert "function whenCardsReady" in js, "nothing waits for the list"
+    # The two features that need a card must go through the waiter.
+    attach = js.split("attach: function (root)")[1].split("_bulk:")[0]
+    assert "whenCardsReady(root, function ()" in attach
+    body = attach.split("whenCardsReady(root, function ()")[1][:220]
+    assert "mountBulk(root)" in body and "loadScheduled(root)" in body
+    # It must give up eventually rather than observing for the life of the
+    # page on a bank that is genuinely empty.
+    waiter = js.split("function whenCardsReady")[1].split("function bulkButtons")[0]
+    assert "disconnect()" in waiter and "setTimeout" in waiter

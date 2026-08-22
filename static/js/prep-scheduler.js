@@ -262,6 +262,33 @@
 
   var bulk = { on: false, picked: null, root: null, bar: null, panel: null };
 
+  /* EVERY ONE OF THESE PAGES CALLS attach() BEFORE ITS LIST EXISTS.
+     The bank is fetched over the network and rendered in a .then(), while
+     attach() runs synchronously further down the same script — so at the
+     moment it runs there is not a single card in the container.
+
+     Anything that needs to SEE a card therefore cannot do its work
+     immediately, and must not give up either. Both of the features that did
+     — the bulk bar and the "Planned on" pill — silently never appeared,
+     because each opened with a "no cards? then there is nothing to do"
+     guard that was true every single time.
+
+     This waits for the first card and then runs once. The deadline exists
+     so a page with a genuinely empty bank stops observing rather than
+     watching forever. */
+  function whenCardsReady(root, cb) {
+    if (!root) return;
+    if (root.querySelector("[data-prep-plan]")) { cb(); return; }
+    if (!window.MutationObserver) return;
+    var observer = new MutationObserver(function () {
+      if (!root.querySelector("[data-prep-plan]")) return;
+      observer.disconnect();
+      cb();
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    setTimeout(function () { observer.disconnect(); }, 15000);
+  }
+
   function bulkButtons(root) {
     return Array.prototype.slice.call(root.querySelectorAll("[data-prep-plan]"));
   }
@@ -626,7 +653,9 @@
 
   function loadScheduled(root) {
     var bank = bulkBank(root);
-    if (!bank) return;
+    if (!bank) return;                  // called via whenCardsReady, so a
+                                        // miss here means a genuinely empty
+                                        // bank, not a slow one.
     fetch("/api/prep/scheduled?bank=" + encodeURIComponent(bank),
           { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -716,15 +745,16 @@
         }
       }, true);   // capture — see the header comment
 
-      // Bulk select, mounted above the list. Wired from attach() so every
-      // page that already calls attach() gets it with no template change.
-      mountBulk(root);
+      // The bulk bar and the "Planned on" pills both need a card to exist
+      // before they can do anything, and at this point none do — see
+      // whenCardsReady. landOnTopic does its own waiting.
+      whenCardsReady(root, function () {
+        mountBulk(root);
+        loadScheduled(root);
+      });
 
       // ?topic= — arriving from the Day Board on one specific line item.
       landOnTopic(root);
-
-      // "Planned on …" pills, from whatever is already scheduled.
-      loadScheduled(root);
 
       // The pages re-render their list on every filter change, which wipes
       // the injected checkboxes. Re-draw them when the children change —
