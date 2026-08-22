@@ -359810,6 +359810,134 @@ _ANSWER_V2['Find Lucky Integer in an Array'] = """A value is lucky when its freq
   the -1 case cleanly.
 · COST — O(n) time, O(n) space."""
 
+_ANSWER_V2['Find Pivot Index'] = """Precompute the total, then sweep with a running left sum - the right side is total - left - current, so no second array is needed.
+
+· THE ALGEBRA IS THE WHOLE TRICK. Rather than computing a right-sum array, note
+  that right = total - left - nums[i]. One number and one running sum replace
+  an entire second pass.
+· THE TEST at each index is left == total - left - nums[i]. Return the first i
+  that satisfies it.
+· ADD THE CURRENT ELEMENT TO `left` AFTER the test, never before. The pivot
+  itself belongs to neither side, and including it early is the standard bug.
+· LEFTMOST MEANS RETURN IMMEDIATELY on the first match. Continuing the scan and
+  keeping the last match answers a different question.
+· INDEX 0 IS A VALID PIVOT, with an empty left side summing to 0. Likewise the
+  final index. Starting the loop at 1 to 'avoid the edge' loses real answers.
+· NEGATIVE NUMBERS ARE ALLOWED, so you cannot stop early once the left sum
+  exceeds half the total — a later element could bring it back.
+· RETURN -1 if no index works.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Find Words That Can Be Formed by Characters'] = """For each word, check its letter counts fit INSIDE the available counts - and the available pool is not consumed between words.
+
+· THE RULE PEOPLE MISREAD — each word is tested independently against the full
+  set of characters. You do not spend characters on one word and have fewer for
+  the next.
+· THE CHECK — count the word's letters and confirm every count is less than or
+  equal to the corresponding count in the available pool. A missing letter has
+  count 0 and fails automatically with a defaulting lookup.
+· COUNT THE POOL ONCE, outside the loop. Recounting it per word is the easy
+  inefficiency and turns O(n) into O(n * m).
+· DO NOT MUTATE THE POOL COUNTS. Decrementing as you validate destroys the pool
+  for later words, which is precisely the misreading above expressed as a bug.
+· THE ANSWER IS THE TOTAL LENGTH of the words that pass, not the count of
+  words. That is an easy misread and both are plausible outputs.
+· A COUNTER SUBSET CHECK is the idiomatic Python — Counter(word) & pool_counter
+  equalling Counter(word), or simply comparing each item. Show the explicit
+  loop too.
+· COST — O(total characters) time, O(1) space for the fixed alphabet."""
+
+_ANSWER_V2['Find the Highest Altitude'] = """Running prefix sum of the gains, tracking the maximum - and 0 is a candidate, because you start there.
+
+· THE SETUP — you begin at altitude 0 and the array gives the CHANGE at each
+  step, not the altitude itself. Confusing the two is the only real trap.
+· THE SWEEP — keep a running altitude, add each gain, and track the largest
+  value seen.
+· INITIALISE THE MAXIMUM TO 0, not to negative infinity and not to the first
+  element. The starting altitude counts, so an all-negative array answers 0.
+· THIS IS A PREFIX SUM in the plainest form. Naming it is worth doing, because
+  the same shape appears in Running Sum, Pivot Index and Subarray Sum
+  problems.
+· THE HIGHEST POINT NEED NOT BE AT THE END, which is why you track a maximum
+  rather than returning the final sum.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['First Unique Character in a String'] = """Two passes - count every character, then return the index of the first with a count of 1.
+
+· WHY TWO PASSES ARE NECESSARY — you cannot know a character is unique until
+  you have seen the whole string. A single left-to-right pass would call the
+  first character unique before meeting its duplicate.
+· PASS ONE builds the frequency map. PASS TWO scans the STRING in order,
+  returning the index of the first character whose count is 1.
+· SCAN THE STRING, NOT THE MAP, in the second pass. The map is unordered in
+  general, and even where insertion order is preserved it gives you the
+  character, not its index.
+· RETURN -1 when nothing is unique.
+· THE ALPHABET IS FIXED at 26 lowercase letters in the usual constraints, so
+  the space is O(1) despite looking like O(n).
+· THE FOLLOW-UP IS A STREAM — 'what if characters arrive one at a time and you
+  must answer at any moment'. That needs a queue of candidates plus the counts,
+  popping from the front while the front is no longer unique. Worth having
+  ready; it is the reason this problem is asked.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Flipping an Image'] = """Reverse then invert collapses into one two-pointer pass: new[i] = 1 - row[n-1-i].
+
+· THE FUSION IS THE POINT. Doing the reverse and the inversion as two separate
+  passes is correct and obvious; combining them into one traversal is what the
+  problem is testing.
+· THE TWO-POINTER SWEEP — swap row[left] and row[right] while inverting both,
+  moving inward. Each element is touched once.
+· THE MIDDLE ELEMENT OF AN ODD-LENGTH ROW still needs inverting, and a loop
+  with a strict left < right condition skips it. Either use left <= right, or
+  handle the centre after the loop. This is the bug the problem is built to
+  catch.
+· INVERTING A BIT is 1 - x, or x ^ 1. Both read fine; the XOR generalises
+  better if the values were ever wider than one bit.
+· IT CAN BE DONE IN PLACE, mutating the input matrix, which is O(1) extra
+  space. Say that you are mutating.
+· THE ROWS ARE INDEPENDENT, so this is just the same operation applied per row
+  with no interaction between them.
+· COST — O(rows * cols) time, O(1) extra space."""
+
+_ANSWER_V2['How Many Numbers Are Smaller Than the Current'] = """Values are bounded 0..100, so counting sort plus a prefix sum answers every query in O(1).
+
+· THE CONSTRAINT IS THE HINT. Whenever values sit in a small fixed range, a
+  counting approach beats sorting, and that bound is put in the problem
+  deliberately.
+· THE THREE STEPS — tally how many times each value occurs, take a prefix sum
+  so that prefix[v] is how many elements are strictly less than v, then map
+  every element through it.
+· STRICTLY SMALLER, so prefix[v] must EXCLUDE the count of v itself. Build the
+  prefix from counts of values below v, or subtract count[v] afterwards. Getting
+  this wrong is off by the number of duplicates.
+· THE SORTING ALTERNATIVE — sort a copy and, for each value, its first index in
+  the sorted array is the answer. O(n log n) and also fine, but the counting
+  version is the one the constraint is asking for.
+· THE BRUTE-FORCE DOUBLE LOOP is O(n^2) and passes at these constraints. Offer
+  it, then improve — the improvement is the question.
+· COST — O(n + k) time where k is 101, O(k) space."""
+
+_ANSWER_V2['Intersection of Two Arrays II'] = """Duplicates count, so each value appears min(count in A, count in B) times - use a counter, not a set.
+
+· THE DIFFERENCE FROM PART I is the whole problem. Version I returns unique
+  values and a set is enough; version II preserves multiplicity, so a set gives
+  the wrong answer.
+· THE METHOD — count the SMALLER array, then walk the other, emitting a value
+  and decrementing its count whenever the count is still positive.
+· COUNT THE SMALLER ARRAY to keep the map small. It changes nothing
+  asymptotically and is the answer to 'what if one array is much larger'.
+· DECREMENT AS YOU EMIT. Without it a repeated value in the second array
+  produces more copies than the first array had.
+· THE SORTED FOLLOW-UP — if both arrays are already sorted, two pointers give
+  O(n + m) with O(1) space and no map at all. This is the standard follow-up
+  and it is worth volunteering.
+· THE DISK-RESIDENT FOLLOW-UP — if one array cannot fit in memory, sort both
+  externally and merge, or chunk the smaller one. Interviewers ask this
+  precisely because the counter answer assumes memory.
+· ORDER OF THE OUTPUT IS UNSPECIFIED, so no sorting of the result is needed.
+· COST — O(n + m) time, O(min(n, m)) space."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
