@@ -357986,6 +357986,223 @@ _ANSWER_V2['STAR: Raising the bar on hiring or quality (Hire and Develop the Bes
 · THE TRAP is a story that is really about your own high standards for your own
   work. That is Ownership, not this."""
 
+_ANSWER_V2['STAR: Simplifying/inventing to remove a bottleneck (Invent and Simplify)'] = """Something got structurally simpler because of you - fewer steps, fewer systems, fewer people in the loop.
+
+· THE LP — Invent and Simplify. Leaders expect and require innovation, find
+  ways to simplify, are externally aware, and are not limited by 'not invented
+  here'.
+· SIMPLIFY IS THE HALF THAT SCORES, and the half people skip in favour of the
+  clever invention. Deleting a step is worth more than adding a smart one.
+· NAME THE BOTTLENECK WITH A NUMBER — the queue was four days, the deploy took
+  nine manual steps, three teams had to sign off. Without a before-number there
+  is no after.
+· 'NOT INVENTED HERE' IS EXPLICITLY IN THE LP, so a story where you adopted an
+  existing tool instead of building your own scores well. Being externally
+  aware is part of the principle, not a compromise of it.
+· SAY WHAT YOU DELETED. The strongest version of this answer removes a system
+  rather than adding one, and the count of things retired is the metric.
+· SHOW IT SCALED — the simplification held as volume grew, or other teams
+  adopted it. A local clean-up is good work; a durable one is the LP.
+· THE TRAP is describing a complicated new system as an invention. If the
+  explanation takes five minutes, it did not simplify anything."""
+
+_ANSWER_V2['STAR: Thinking big and influencing beyond your team (Think Big)'] = """You proposed something outside your own mandate and got people who did not report to you to move.
+
+· THE LP — Think Big. Leaders create and communicate a bold direction that
+  inspires results, think differently, and look around corners.
+· THE SCOPE MUST EXCEED YOUR JOB. A big project you were assigned does not
+  count. The signal is that you saw something nobody had asked you to look at.
+· INFLUENCE WITHOUT AUTHORITY IS THE ACTUAL TEST — who you had to convince,
+  what they cared about, and how you framed it in their terms rather than
+  yours. That reframing is the most valuable beat you have.
+· BOLD MUST STILL BE CONCRETE. A vision with no first step reads as a slide
+  deck; say what the smallest credible version was and how you got it funded.
+· 'LOOKING AROUND CORNERS' — say what you saw coming that others had not, and
+  what evidence made you believe it. That is what separates this from
+  optimism.
+· EXPECT RESISTANCE IN THE STORY. Nobody reorganises priorities cheerfully, so
+  an account with no pushback sounds untrue. Say who disagreed and how it
+  resolved.
+· MEASURE THE OUTCOME AT THE RIGHT ALTITUDE — adoption across teams, revenue,
+  or a capability that exists now and did not before.
+· THE TRAP for a new grad is that this LP is weighted towards senior loops. If
+  you have no company-wide story, a genuine cross-team or campus-wide one told
+  honestly beats an inflated one."""
+
+_ANSWER_V2['Insert Interval'] = """The list is already sorted, so it is one sweep in three phases: copy before, absorb overlaps, copy after.
+
+· WHY NO SORTING — the input is guaranteed sorted and non-overlapping. Adding a
+  sort makes it O(n log n) for no reason, and is the giveaway that someone is
+  solving Merge Intervals from memory instead of reading the problem.
+· PHASE 1 — copy every interval that ends BEFORE the new one starts
+  (end < newStart). These can never overlap, so they pass through untouched.
+· PHASE 2 — while an interval starts before or at the new one's end, it
+  overlaps: absorb it by widening the new interval to
+  min(starts) and max(ends). Do not append these; they are being merged in.
+· PHASE 3 — append the merged interval, then copy everything that remains.
+· THE BOUNDARY CONVENTION decides phase 1's test. If touching intervals like
+  [1,2] and [2,3] should merge, use end < newStart; if they should not, use
+  end <= newStart. Ask, and say which you chose.
+· THE EMPTY LIST and an interval that belongs at either end are the cases to
+  check; the three-phase shape handles them without special-casing.
+· COST — O(n) time, O(n) for the output. This is the payoff for the input
+  being pre-sorted."""
+
+_ANSWER_V2['Trie (Prefix Tree)'] = """Store characters on the EDGES so words sharing a prefix share a path - which makes prefix queries cost the word's length, not the dictionary's size.
+
+· THE STRUCTURE — each node holds a map from a character to a child node, plus
+  a boolean marking that a complete word ends here.
+· THE END-OF-WORD FLAG IS NOT OPTIONAL. Without it you cannot tell that 'car'
+  is a stored word when 'card' is also stored - the path exists either way.
+  This is the single most common omission.
+· THE COST IS O(L), the length of the word, for insert, search and
+  starts-with, INDEPENDENT of how many words are in the trie. That
+  independence is the whole reason to choose it.
+· WHY NOT A HASH SET — a set answers 'is this exact word present' just as fast,
+  but cannot answer 'does anything start with this prefix' without scanning
+  everything. If the question mentions prefixes or autocomplete, it wants a
+  trie.
+· THE SPACE COST IS REAL — a node per character per unique path, each holding a
+  map. Tries trade memory for prefix speed, and a compressed trie (radix tree)
+  is the answer when that matters.
+· WHAT IT IS FOR — autocomplete, spell-check, word-search puzzles on a grid,
+  and IP routing tables. It also powers Word Search II, where a trie prunes the
+  DFS dramatically.
+· DELETION IS THE FIDDLY OPERATION — unset the flag, then remove nodes upward
+  only while they have no children and are not themselves word ends."""
+
+_ANSWER_V2['Assign Cookies'] = """Sort both, then give the SMALLEST cookie that will do to the LEAST greedy child - never waste a big cookie on a small need.
+
+· THE SETUP — each child has a greed factor g, each cookie a size s, and a
+  child is content when s >= g. Maximise how many children are content.
+· THE GREEDY RULE — sort children by greed and cookies by size, then walk both
+  with two pointers. If the current cookie satisfies the current child, take
+  it and advance both; otherwise the cookie is too small for everyone
+  remaining, so discard it and advance only the cookie pointer.
+· WHY IT IS OPTIMAL — a cookie that satisfies the least greedy child satisfies
+  the fewest possible children, so spending it there preserves the most
+  options. This is the same exchange argument behind activity selection.
+· THE COMMON WRONG GREEDY is matching the biggest cookie to the greediest
+  child. It can be made to work but wastes capacity and is easy to get wrong;
+  smallest-first is cleaner to justify.
+· A COOKIE TOO SMALL FOR THE CURRENT CHILD is too small for every later child
+  too, since the children are sorted ascending - that is why it can be dropped
+  outright rather than reconsidered.
+· COST — O(n log n + m log m) for the two sorts, O(1) space beyond them. The
+  sweep itself is linear."""
+
+_ANSWER_V2['Average of Levels in Binary Tree'] = """BFS one whole level at a time - record the queue's size FIRST, then drain exactly that many nodes.
+
+· THE LEVEL BOUNDARY IS THE ONLY DIFFICULTY. A plain BFS gives you nodes in
+  level order but no idea where one level ends. Capturing len(queue) before the
+  inner loop is what draws that line.
+· THE LOOP — while the queue is non-empty: n = len(queue); pop exactly n nodes,
+  summing their values and enqueueing their children; append sum/n.
+· DO NOT RE-READ len(queue) INSIDE the inner loop. It grows as you enqueue
+  children, so the loop would run into the next level and the averages would be
+  wrong in a way that still looks plausible.
+· USE FLOAT DIVISION — integer division silently truncates, and the expected
+  output is a real average. In Python that means / not //.
+· A DFS SOLUTION ALSO WORKS: recurse with a depth argument, accumulating a sum
+  and a count per depth, then divide at the end. Same O(n), and it is the
+  better answer if the tree is very wide, since BFS holds a whole level.
+· OVERFLOW IS A REAL FOLLOW-UP in Java or C++ — a level of many large ints can
+  exceed int range, so the running sum should be a long. Python is immune,
+  which is worth saying rather than ignoring.
+· COST — O(n) time, O(w) space where w is the widest level."""
+
+_ANSWER_V2['Binary Tree Tilt'] = """One post-order DFS that RETURNS each subtree's sum while accumulating the tilt as a side effect.
+
+· THE TWO DIFFERENT VALUES, which is the crux: the function RETURNS the
+  subtree's total sum, but ACCUMULATES the tilt into an outer variable. Trying
+  to return the tilt makes the recursion impossible.
+· WHY POST-ORDER — a node's tilt needs both children's sums, so both must be
+  computed before the node can be handled. That ordering is exactly post-order.
+· THE TILT of a node is abs(left sum - right sum). The answer is the sum of
+  that over every node, not the root's tilt.
+· A NULL CHILD CONTRIBUTES ZERO, which makes leaves fall out automatically: a
+  leaf has tilt abs(0 - 0) = 0 and returns its own value.
+· THIS IS A PATTERN, NOT A ONE-OFF. Diameter of a Binary Tree and Binary Tree
+  Maximum Path Sum have the identical shape — return one thing upward, record a
+  different thing globally. Recognising the shape is the transferable part.
+· COST — O(n) time since each node is visited once, O(h) stack space, which is
+  O(n) on a degenerate tree."""
+
+_ANSWER_V2['Count Pairs Whose Sum is Less than Target'] = """Sort, then two pointers - and when a pair works, EVERY element between them works too, so count them all at once.
+
+· THE COUNTING TRICK IS THE WHOLE POINT. If nums[left] + nums[right] < target
+  and the array is sorted, then pairing left with anything from left+1 up to
+  right also sums below target. That is (right - left) pairs added in one step,
+  not one.
+· THE LOOP — if the sum is below target, add (right - left) and advance left;
+  otherwise the sum is too big, so pull right inward.
+· WITHOUT THAT INSIGHT you would count one pair per step and still be O(n^2).
+  The batched count is what makes it linear after the sort.
+· SORTING IS SAFE HERE because the question asks for the NUMBER of pairs, not
+  which index pairs. If it wanted the actual indices, sorting would destroy
+  them and you would need a different approach.
+· i < j IS AUTOMATICALLY SATISFIED — left always stays below right, so each
+  unordered pair is counted exactly once and nothing is double counted.
+· STRICTLY LESS THAN, not less-than-or-equal. The comparison operator is the
+  entire difference between this and the adjacent problem; read it twice.
+· COST — O(n log n) for the sort, O(n) for the sweep, O(1) extra space."""
+
+_ANSWER_V2['DI String Match'] = """Hand out the smallest remaining number on 'I' and the largest on 'D' - either choice leaves the rest still satisfiable.
+
+· THE SETUP — a pattern of 'I' and 'D' of length n, and you must produce any
+  permutation of 0..n where each 'I' means the next value rises and each 'D'
+  means it falls.
+· THE GREEDY — keep low = 0 and high = n. For 'I' emit low and increment it;
+  for 'D' emit high and decrement it. After the pattern, emit whatever single
+  value remains (low and high are now equal).
+· WHY IT ALWAYS WORKS — emitting the smallest available value guarantees that
+  whatever comes next is larger, so an 'I' cannot fail. Emitting the largest
+  guarantees the next is smaller, so a 'D' cannot fail. The constraint is
+  satisfied locally at every step and never constrains the future.
+· 'ANY VALID ANSWER' IS THE PERMISSION that makes this trivial. If a specific
+  permutation were required (lexicographically smallest, say) this greedy would
+  not be enough.
+· THE OUTPUT IS ONE LONGER THAN THE PATTERN — n characters describe n+1
+  numbers. Forgetting the final append is the standard bug and produces an
+  answer that is almost right.
+· COST — O(n) time, O(n) for the output, O(1) extra."""
+
+_ANSWER_V2['Meeting Rooms (can attend all)'] = """Sort by start, then check one thing: does any meeting begin before the previous one ended?
+
+· THE QUESTION IS A YES/NO — can a single person attend every meeting. That is
+  exactly 'do any two intervals overlap'.
+· WHY SORTING SUFFICES — once sorted by start time, an overlap can only ever be
+  with the immediately preceding meeting. Any earlier one ends no later than
+  that one starts. So a single adjacent-pair scan is complete.
+· THE TEST — if intervals[i].start < intervals[i-1].end, return False. Compare
+  against the PREVIOUS END, not the previous start; that is the usual slip.
+· TOUCHING IS NOT OVERLAPPING — a meeting from 2 to 3 after one ending at 2 is
+  fine, so use strict less-than. If the convention is the other way, the test
+  becomes <=. Ask.
+· THIS IS THE EASY SIBLING of Meeting Rooms II, which asks HOW MANY rooms and
+  needs a min-heap of end times. Recognising which one you have been given
+  before you start writing is worth a moment.
+· COST — O(n log n) for the sort, O(1) space. You cannot beat the sort here,
+  because detecting any overlap in an unsorted list is provably as hard."""
+
+_ANSWER_V2['Merge Similar Items'] = """Accumulate weights into a map keyed by value, then emit sorted - a group-by, not a merge.
+
+· WHAT IS BEING ASKED — two lists of [value, weight] pairs; combine them so
+  each distinct value appears once with its weights summed, sorted by value.
+· THE STRAIGHTFORWARD ANSWER — walk both lists into a dict, adding rather than
+  assigning, then sort the items. Reaching for a defaultdict or Counter makes
+  this three lines.
+· A COUNTER IS THE IDIOMATIC PYTHON — Counter(dict(items1)) + Counter(dict(items2))
+  sums shared keys automatically. Say it, then be ready to write the loop by
+  hand, because the interviewer usually wants to see it.
+· ADD, DO NOT OVERWRITE. Assigning instead of accumulating silently drops the
+  first list's weight whenever a value appears in both, and the output still
+  looks well-formed - which is why this bug survives a quick eyeball.
+· IF BOTH INPUTS ARE ALREADY SORTED by value, a two-pointer merge gives O(n+m)
+  with no map and no final sort. Worth offering as the follow-up when the
+  interviewer asks you to do better.
+· COST — O((n+m) log(n+m)), dominated by the sort; O(n+m) space."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
