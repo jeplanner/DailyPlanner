@@ -360219,6 +360219,243 @@ _ANSWER_V2['Why use the bulkhead pattern to isolate resources instead of a share
   deserves the deepest pool; a best-effort recommendation service can have a
   small one and be shed under pressure."""
 
+_ANSWER_V2['Maximum Score After Splitting a String'] = """Precompute the total ones, then one sweep — the right side's ones are total minus what you have passed.
+
+· THE SCORE — zeros on the LEFT plus ones on the RIGHT, for a split into two
+  non-empty halves.
+· THE TRICK IS THE SAME AS EVERY PREFIX PROBLEM: you do not need a second
+  pass over the right side. Count total ones once; at any split point the
+  right-hand ones are total_ones minus the ones seen so far.
+· THE SWEEP — walk the split points keeping left_zeros and left_ones, and
+  score left_zeros + (total_ones - left_ones) at each.
+· BOTH HALVES MUST BE NON-EMPTY, so the split index runs from 1 to n-1. Going
+  to n lets the whole string be the left half, which scores higher and is not
+  a legal answer — that is the intended trap.
+· UPDATE THE COUNTS BEFORE SCORING at the current index, since the character
+  at that index belongs to the LEFT side. Getting that order wrong shifts
+  every score by one position.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Minimum Common Value'] = """Two-pointer merge over the sorted arrays — the FIRST match you find is the smallest, so return immediately.
+
+· WHY THE FIRST MATCH IS THE ANSWER — both arrays are sorted and both
+  pointers only move forward, so values are visited in ascending order. The
+  first common value encountered is therefore the minimum.
+· THE LOOP — compare the two current values. Equal means done. Otherwise
+  advance whichever pointer sits on the SMALLER value, because that value
+  cannot appear later in the other array.
+· RETURN -1 if either pointer runs off the end without a match.
+· DO NOT COLLECT ALL COMMON VALUES and take the minimum. It works and is
+  slower, and it misses the point of the question, which is that sortedness
+  lets you stop early.
+· A SET WOULD ALSO WORK — build one from the smaller array and scan the other
+  — but it costs O(n) space and throws away the ordering you were given. Say
+  that trade-off out loud; it is the follow-up.
+· DUPLICATES CHANGE NOTHING, since you stop at the first match.
+· COST — O(n + m) time, O(1) space."""
+
+_ANSWER_V2['Minimum Recolors to Get K Consecutive Black Blocks'] = """A fixed window of size k, and the answer for a window is simply how many W's are in it.
+
+· THE RESTATEMENT IS THE SOLUTION. Recolouring W to B means the cost of
+  making a window all black is exactly its count of W. So the question is
+  "which window of size k has the fewest W's".
+· FIXED-SIZE WINDOW, so it is the simplest kind: slide by one, add the
+  entering character, remove the leaving one. No shrink loop and no
+  condition to maintain.
+· SEED THE FIRST WINDOW before the loop, then slide from index k onward.
+  Trying to build and slide in a single loop is where off-by-ones creep in.
+· TRACK THE MINIMUM AS YOU GO rather than storing every window's count.
+· THE ANSWER CAN BE 0, when a run of k blacks already exists. Initialise the
+  best to k (the worst possible) rather than to zero.
+· k IS AT MOST THE LENGTH by the constraints, so there is always at least one
+  window; no empty-input special case is needed.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Points That Intersect With Cars'] = """A difference array: +1 where a car starts, -1 just past where it ends, then prefix-sum and count what is above zero.
+
+· WHY NOT MARK EVERY POINT — with many long intervals, painting each covered
+  position is O(total length). The difference array touches only the two
+  ENDPOINTS of each car, then one pass to accumulate.
+· THE OFF-BY-ONE THAT MATTERS — the -1 goes at end + 1, not at end, because
+  the interval is INCLUSIVE of its end. Putting it at end drops the last
+  point of every car.
+· THEN PREFIX-SUM the difference array and count the positions where the
+  running total is greater than zero. Overlaps take care of themselves: a
+  point covered by three cars sums to 3 and still counts once.
+· SIZE THE ARRAY to max_end + 2 so the end + 1 write is always in range.
+· THE CONSTRAINTS HERE ARE SMALL (coordinates up to 100), so a boolean
+  marking sweep or even a set is perfectly acceptable and simpler. Offer that
+  first, then the difference array as what you would use if the range were
+  large — the technique is the point of the question.
+· COST — O(n + range) time and O(range) space."""
+
+_ANSWER_V2['Ransom Note'] = """Count the magazine's letters once, then spend them — a letter that runs out means impossible.
+
+· THE DIRECTION MATTERS. Count the MAGAZINE (the supply) and decrement as the
+  note consumes it. Counting the note and checking against the magazine works
+  too, but the supply-and-spend framing makes the "runs out" case obvious.
+· THE CHECK — for each character of the note, if its remaining count is zero,
+  return False; otherwise decrement. Survive the whole note and it is True.
+· EACH MAGAZINE LETTER IS USABLE ONCE, which is exactly why a SET fails here
+  and a counter is needed. That is the trap.
+· AN EARLY LENGTH CHECK is a free win: a note longer than the magazine can
+  never work.
+· THE IDIOMATIC PYTHON is Counter(note) - Counter(magazine) being empty, or
+  `not (Counter(note) - Counter(magazine))`. Show the loop too — the
+  subtraction hides exactly the logic being assessed.
+· THE ALPHABET IS FIXED at 26 lowercase letters, so the space is O(1) despite
+  looking like O(n).
+· COST — O(n + m) time, O(1) space."""
+
+_ANSWER_V2['Remove Duplicates from Sorted List'] = """Sorted means duplicates are adjacent, so one pointer and a relink is the whole job.
+
+· THE INSIGHT IS THE PRECONDITION. In a sorted list every run of equal values
+  is contiguous, so you never need to look further than the next node.
+· THE LOOP — while cur and cur.next: if the values match, cur.next =
+  cur.next.next, which unlinks the duplicate; otherwise advance cur.
+· DO NOT ADVANCE ON A MATCH. After skipping one duplicate there may be
+  another, and moving on leaves it in place. That is the classic bug and it
+  passes on lists with no triples.
+· NO DUMMY HEAD IS NEEDED, unlike most linked-list surgery, because the head
+  itself is always kept — you are removing duplicates AFTER a node, never the
+  node you are standing on.
+· THE HARDER SIBLING is "Remove Duplicates from Sorted List II", which removes
+  EVERY copy of a duplicated value rather than keeping one. That one does need
+  a dummy head, because the original head may itself be deleted. Check which
+  you were asked.
+· AN EMPTY OR SINGLE-NODE LIST falls out of the loop condition with no
+  special case.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Remove Linked List Elements'] = """A dummy head, so deleting the first node needs no special case at all.
+
+· WHY THE DUMMY — the head itself may match, and it may match repeatedly.
+  Without a node in front of it, removing the head is a different operation
+  from removing anything else, and that branch is where the bugs live. A
+  dummy pointing at the head makes every deletion identical.
+· THE LOOP — walk with a `cur` sitting BEFORE the node under inspection. If
+  cur.next matches, cur.next = cur.next.next; otherwise advance cur.
+· DO NOT ADVANCE AFTER A DELETION. The new cur.next may match too, and moving
+  on leaves it behind — the same bug as the sorted-list version, and it
+  passes on any list without consecutive matches.
+· RETURN dummy.next, NOT head. The original head may be gone, and returning it
+  hands back a deleted node. This is the single most common slip.
+· ONE POINTER IS ENOUGH — a separate `prev` and `cur` pair also works, but
+  standing on the node before and looking forward needs half the bookkeeping.
+· AN ALL-MATCHING LIST correctly returns None, because dummy.next ends up
+  null. Worth checking mentally.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Reverse String (in place)'] = """Two pointers from the ends, swapping inward until they meet.
+
+· IN PLACE IS THE CONSTRAINT, which is why this is asked at all — building a
+  reversed copy is trivial and uses O(n) extra space.
+· THE LOOP — while left < right: swap, then move both inward.
+· left < right, NOT <=. With an odd length the middle character is already in
+  its final place, and swapping it with itself is harmless but pointless;
+  with <= on an even length you would swap every pair twice and undo the
+  whole thing.
+· PYTHON SWAPS IN ONE LINE — s[l], s[r] = s[r], s[l] — with no temporary. In
+  most other languages you need the temp, and mentioning it shows you know
+  what the line is doing.
+· IT MUST BE A LIST, not a str. Python strings are immutable, which is
+  exactly why this problem hands you a character array.
+· s.reverse() OR s[::-1] — the first is in place and would be accepted with a
+  shrug; the second builds a copy and misses the constraint. Write the
+  pointers.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Running Sum of 1d Array'] = """Each element becomes itself plus the one before it — a single pass, and it can be done in place.
+
+· THE RECURRENCE — result[i] = result[i-1] + nums[i]. Because index i-1 has
+  already been converted into a running total, adding it is enough; there is
+  no need to re-sum anything.
+· IN PLACE is the neat version: start at index 1 and do nums[i] += nums[i-1].
+  O(1) extra space. Say that you are mutating the input.
+· START AT 1, not 0 — index 0 is already its own running sum, and touching
+  nums[-1] wraps to the END of the array in Python, which silently produces
+  a wrong answer rather than an error.
+· THIS IS THE PREFIX-SUM PATTERN in its simplest form, and worth naming: the
+  same idea powers Subarray Sum Equals K, Pivot Index and Find the Highest
+  Altitude. Recognising it is the transferable part, not this problem.
+· itertools.accumulate(nums) is the one-liner. Show it after the loop.
+· COST — O(n) time, O(1) extra space in place."""
+
+_ANSWER_V2['Search Insert Position'] = """It is a lower-bound binary search: converge on the FIRST index whose value is not less than the target.
+
+· THE TWO ANSWERS ARE ONE ANSWER. "Where is it" and "where would it go" are
+  the same position — the first index not less than the target — which is why
+  no separate found-check is needed at the end.
+· THE COMPARISON — move hi = mid when nums[mid] >= target, else lo = mid + 1.
+  That >= is what makes it a LOWER bound; using > gives the upper bound and
+  lands one past a match.
+· hi = mid, NOT mid - 1, because mid may itself be the answer. Combined with
+  a while lo < hi loop, the pointers converge and lo is the result.
+· INITIALISE hi TO len(nums), not len - 1. The target may belong AFTER every
+  element, and that position is index n, which a hi of n-1 can never reach.
+· NO SEPARATE RETURN FOR "NOT FOUND" — the loop's exit value is correct for
+  both cases, which is the elegance of the problem.
+· THIS IS bisect_left, and saying so is fine. Then write it, because writing
+  it is what is being assessed.
+· COST — O(log n) time, O(1) space."""
+
+_ANSWER_V2['Search in a Binary Search Tree'] = """Follow the ordering — smaller goes left, larger goes right — and you walk ONE path, not the tree.
+
+· THE PROPERTY IS THE ALGORITHM. At each node the BST invariant says which
+  side can possibly contain the value, so the other side is discarded
+  entirely. That is what makes it O(height) rather than O(n).
+· THE WALK — if target < node.val go left, if greater go right, if equal
+  return the node. Null means it is not there.
+· RETURN THE SUBTREE, not a boolean. The question asks for the node, and
+  everything below it comes with it because it is a reference.
+· ITERATIVE IS BETTER HERE — a while loop with one variable, O(1) space. The
+  recursive version is equally correct and costs O(h) stack for nothing.
+· O(h) IS O(log n) ONLY IF BALANCED. A degenerate tree built from sorted
+  inserts is a linked list and this degrades to O(n). That is the follow-up,
+  and the answer to it is a self-balancing tree.
+· DO NOT TRAVERSE THE WHOLE TREE looking for the value — it works and throws
+  away the only thing that makes it a BST question.
+· COST — O(h) time, O(1) space iteratively."""
+
+_ANSWER_V2['Sort Array By Parity'] = """Two pointers from the ends: swap only when the left is odd AND the right is even.
+
+· THE TASK — evens before odds, in any relative order. That freedom is what
+  allows an in-place O(n) answer with no sorting at all.
+· THE LOOP — advance left past evens, pull right back past odds, and when
+  both stop swap them. Repeat until they meet.
+· BOTH CONDITIONS MUST HOLD before swapping. Swapping whenever the left is
+  odd, regardless of the right, can move an odd number leftward and
+  undo progress.
+· CHECK PARITY WITH x % 2, and remember that in some languages % on a
+  negative number is negative — x & 1 is the safer idiom there. The
+  constraints here are non-negative, so either is fine.
+· STABILITY IS NOT REQUIRED, which is worth saying: if the question DID
+  require preserving relative order, this approach is wrong and you would
+  need a stable partition or an extra array.
+· THE ONE-PASS ALTERNATIVE is a write pointer for evens followed by a second
+  sweep for odds, which is stable but needs O(n) space.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Sqrt(x) — integer square root (binary search)'] = """Binary search the ANSWER, not the array — you are searching the space of possible roots.
+
+· THE FRAME IS THE LESSON. There is no array here; the search space is the
+  integers from 0 to x, and the predicate "mid * mid <= x" is monotonic. That
+  monotonicity is the only requirement binary search actually has.
+· THE LOOP — if mid * mid <= x the answer is mid or larger, so keep it and go
+  right; otherwise go left. The floor is whatever survives.
+· FLOOR, NOT ROUND. sqrt(8) returns 2, and returning 3 because 2.83 rounds up
+  is the intended trap.
+· mid * mid CAN OVERFLOW in Java or C++ for x near the 32-bit limit. Compare
+  with mid <= x / mid instead, or use a long. Python is immune, and saying so
+  rather than ignoring it is the point.
+· SEARCH [0, x], or [1, x // 2] with 0 and 1 special-cased — halving is a
+  valid shortcut because for x >= 4 the root never exceeds x/2, but it needs
+  those two cases handled or it returns 0 for x = 1.
+· NEWTON'S METHOD is the other accepted answer and converges faster:
+  r = (r + x / r) / 2 until it stops changing. Mention it; write the binary
+  search.
+· COST — O(log x) time, O(1) space."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
