@@ -358203,6 +358203,265 @@ _ANSWER_V2['Merge Similar Items'] = """Accumulate weights into a map keyed by va
   interviewer asks you to do better.
 · COST — O((n+m) log(n+m)), dominated by the sort; O(n+m) space."""
 
+_ANSWER_V2['Merge Two Binary Trees'] = """Recurse on both trees at once - if either node is null, return the other; otherwise sum and recurse on both pairs of children.
+
+· THE BASE CASE IS THE WHOLE PROBLEM. If node A is null return B; if B is null
+  return A. That single pair of lines handles every mismatch in shape, so no
+  other null checking is needed anywhere.
+· THE RECURSIVE STEP — set A's value to a.val + b.val, then
+  a.left = merge(a.left, b.left) and a.right = merge(a.right, b.right), and
+  return A.
+· RETURNING THE OTHER NODE, not a copy of it, is what makes the one-liner
+  base case work: an entire missing subtree is grafted across in one step.
+· THIS MUTATES TREE A. If the caller still needs the originals, build new
+  nodes instead. Interviewers do ask, and 'I am mutating the input' is
+  something to say before you are asked.
+· AN ITERATIVE VERSION uses a stack of node PAIRS, but it is genuinely more
+  awkward here, because you can only push a pair when both children exist —
+  otherwise you attach and stop. Offer recursion first.
+· COST — O(min(n, m)) time, since recursion stops as soon as one side runs
+  out; O(h) stack space."""
+
+_ANSWER_V2['Minimum Depth of Binary Tree'] = """BFS and return at the FIRST leaf you meet - and note that minimum depth needs a leaf, not just a null child.
+
+· THE DEFINITION IS THE TRAP. Minimum depth is the shortest path from root to
+  a LEAF, and a leaf has no children at all. A node with one child is not a
+  leaf, so that path does not count.
+· WHY NAIVE DFS FAILS — 1 + min(depth(left), depth(right)) returns 1 for a root
+  with only a right child, because the null left side reports 0. The correct
+  DFS must special-case a missing child and take the other side's depth.
+· BFS AVOIDS THE PITFALL ENTIRELY. Search level by level and return the moment
+  you dequeue a node with no children; by construction that is the shallowest
+  leaf.
+· BFS IS ALSO FASTER HERE — it stops as soon as it finds the answer, while DFS
+  must explore the whole tree. On a tree with a shallow leaf and one very deep
+  branch, the difference is large.
+· CONTRAST WITH MAXIMUM DEPTH, where the naive 1 + max(...) IS correct, because
+  a null side reporting 0 can never win a max. That asymmetry is exactly why
+  this problem exists.
+· AN EMPTY TREE IS DEPTH 0. Handle it before the loop.
+· COST — O(n) worst case, O(w) space for the queue, but typically far less
+  than n because of the early return."""
+
+_ANSWER_V2['N-th Tribonacci Number'] = """Fibonacci with a three-term window - roll three variables forward, never build an array.
+
+· THE DEFINITION — T0 = 0, T1 = 1, T2 = 1, and thereafter
+  Tn = Tn-1 + Tn-2 + Tn-3. Note T1 and T2 are BOTH 1; getting the seeds wrong
+  shifts the whole sequence.
+· THE ROLLING UPDATE — hold a, b, c and repeatedly do
+  a, b, c = b, c, a + b + c. Python's simultaneous assignment does this in one
+  line without a temporary; in other languages you need the temp and the order
+  matters.
+· WHY NOT MEMOISED RECURSION — it works and is O(n), but it costs O(n) stack
+  and O(n) memory for no benefit. Naive recursion without memoisation is
+  exponential, roughly 1.84^n, and will time out.
+· HANDLE n < 3 BEFORE THE LOOP. Returning early for 0, 1 and 2 is cleaner than
+  trying to make the loop cover them.
+· THE VALUES GROW FAST — T37 already exceeds 32-bit range. Python is fine;
+  in Java or C++ this needs a long, and that is the follow-up.
+· THE GENERAL SHAPE is worth naming: any fixed-order linear recurrence can be
+  rolled in O(1) space this way. Matrix exponentiation gets it to O(log n) if
+  they push.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Rank Transform of an Array'] = """Rank the DISTINCT values, then look each original element up - equal values must share a rank.
+
+· THE RULE — smallest distinct value is rank 1, the next distinct is 2, and
+  duplicates all receive the same rank. Ranks are 1-based, not 0-based.
+· THE THREE STEPS — take the set of values, sort it, build a dict from value to
+  its 1-based position, then map the original array through that dict.
+· DEDUPLICATE BEFORE RANKING. Sorting the raw array and using positions gives
+  duplicates different ranks and leaves gaps in the sequence, which is the
+  intended trap.
+· NO GAPS EITHER — after 1, 1 the next distinct value is 2, not 3. This is
+  dense ranking, not competition ranking. Say which convention you are using;
+  the two differ exactly here.
+· PRESERVE THE ORIGINAL ORDER. The output is index-aligned with the input, so
+  build a lookup and map, rather than sorting the array in place.
+· AN EMPTY ARRAY returns empty, and the dict handles it without a special case.
+· COST — O(n log n) for the sort, O(n) space for the set and the map."""
+
+_ANSWER_V2['Sum of Left Leaves'] = """A leaf is not enough - it must be a leaf AND the LEFT child, so the parent has to make the decision.
+
+· WHY THE PARENT DECIDES — a node cannot tell whether it is a left or a right
+  child. So the test lives in the parent: if node.left exists AND node.left has
+  no children, add node.left's value.
+· THE RECURSION — apply that test at every node, then recurse into both
+  subtrees and sum the three contributions.
+· PASSING A FLAG IS THE OTHER CLEAN WAY — recurse with an is_left boolean, and
+  at a leaf add the value only if the flag is set. Equivalent, and slightly
+  nicer if you prefer the decision at the leaf.
+· A ROOT WITH NO CHILDREN CONTRIBUTES NOTHING. It is a leaf, but it is nobody's
+  left child, so the answer is 0. That is the case the flag version gets right
+  automatically and a careless version gets wrong.
+· A LEFT CHILD THAT IS NOT A LEAF contributes nothing itself, but you still
+  recurse into it — its own subtree may contain left leaves.
+· AN ITERATIVE VERSION with an explicit stack is straightforward: push nodes
+  with their is-left flag.
+· COST — O(n) time, O(h) stack."""
+
+_ANSWER_V2['Valid Palindrome II (delete at most one)'] = """Two pointers until the first mismatch, then try skipping EITHER side and test the remainder - one mismatch, two chances.
+
+· THE INSIGHT — you get exactly one deletion, so the first time the ends
+  disagree is the only place it can be spent. Everything before that matched,
+  and everything after is a plain palindrome check.
+· THE BRANCH — on a mismatch at (i, j), test whether s[i+1..j] is a palindrome
+  OR s[i..j-1] is. If either holds, the answer is yes.
+· BOTH BRANCHES ARE REQUIRED. Skipping only the left character fails on inputs
+  where the right one is the intruder, and the bug passes many simple tests
+  before failing.
+· THE HELPER IS A PLAIN PALINDROME CHECK on a range, with no deletion budget —
+  the allowance is already spent. Letting it recurse with another deletion
+  solves a different problem.
+· WHY IT IS STILL O(n) — the main scan is linear and each branch check is at
+  most linear, and they run at most once. Two linear passes, not nested loops.
+· NO MISMATCH AT ALL means it is already a palindrome, which 'at most one'
+  permits. Return true.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Activation functions - which one, and why'] = """Without a non-linearity a stack of layers collapses into one linear map - the activation is the bend that makes depth mean anything.
+
+· THAT COLLAPSE ARGUMENT IS THE ANSWER to 'why do we need them at all'. W2(W1x)
+  is just (W2W1)x, another single matrix. A hundred layers without activations
+  is one layer.
+· RELU is the default for hidden layers: max(0, x). Gradient is exactly 1 on
+  the positive side, so signal does not decay with depth, and it is trivially
+  cheap.
+· DYING RELU is its failure mode — a unit stuck at negative input has zero
+  gradient forever and never recovers. Leaky ReLU (a small negative slope) and
+  GELU exist to fix that; GELU is the standard in transformers.
+· SIGMOID SATURATES at both ends, with a maximum gradient of 0.25, so stacking
+  it kills the signal within a few layers. It is also not zero-centred, which
+  makes updates zig-zag. Use it for a binary OUTPUT only, never in hidden
+  layers.
+· TANH is the zero-centred version, range (-1,1), max gradient 1. Better than
+  sigmoid for hidden layers, still saturating, and still largely superseded.
+· SOFTMAX IS AN OUTPUT LAYER, not an activation between layers. It normalises
+  a vector of logits into a distribution over mutually exclusive classes.
+· THE PRACTICAL RULE — ReLU or GELU in hidden layers; sigmoid for binary
+  output; softmax for multi-class output; nothing at all on a regression
+  output, because squashing would cap the range you are trying to predict."""
+
+_ANSWER_V2['Class Imbalance Strategies'] = """Fix it at the level where the problem actually is - and start with the metric and the threshold, not with resampling.
+
+· THE PROBLEM — when one class dominates, the model can score well by ignoring
+  the minority entirely, which is usually the class you care about.
+· START WITH EVALUATION, because a wrong metric hides everything else. Accuracy
+  is useless here; use precision, recall, F1 and PR-AUC. Prefer PR-AUC to
+  ROC-AUC, whose false-positive rate is flattered by the huge negative count.
+· THEN MOVE THE THRESHOLD. Most models already produce a usable score; the
+  default 0.5 cut is arbitrary. Choosing the operating point from the business
+  cost of a false positive versus a false negative is free and often enough.
+· ALGORITHM LEVEL — class-weighted loss makes minority errors cost more, and
+  is the first thing to try because it changes no data. Focal loss down-weights
+  easy examples and is the standard fix for extreme imbalance in detection.
+· DATA LEVEL — oversample the minority (SMOTE synthesises new points rather
+  than copying), undersample the majority, or both. Resample the TRAINING FOLD
+  ONLY; doing it before the split leaks synthetic neighbours into validation
+  and produces a beautiful, meaningless score.
+· ENSEMBLES — balanced bagging or boosting, which resample per base learner.
+· AT THE EXTREME, REFRAME IT. At 1 in 100,000, treat it as anomaly detection
+  and model only the normal class; classification stops being the right frame.
+· MORE MINORITY DATA BEATS ALL OF THIS if you can get it. Say so before
+  reaching for SMOTE."""
+
+_ANSWER_V2['Data leakage - the bug that makes a terrible model look excellent'] = """Information that will not exist at prediction time got into training - the symptom is a wonderful validation score that dies in production.
+
+· THE DEFINITION MATTERS because it is also the test: for every feature, ask
+  whether its value would truly be known at the moment you need the prediction.
+· TARGET LEAKAGE — a feature that is a CONSEQUENCE of the label. Predicting
+  churn with 'account_closed_date', or readmission with a flag recorded after
+  readmission. The tell is one feature with implausible importance.
+· TRAIN-TEST CONTAMINATION — fitting a scaler, imputer or encoder on the whole
+  dataset before splitting. The test fold's statistics are now baked into the
+  transform. Fit inside a pipeline, on the training fold only.
+· TEMPORAL LEAKAGE — random splits on time-series data, so the model trains on
+  the future to predict the past. Always split forward in time.
+· GROUP LEAKAGE — the same patient, user or device appearing in both folds. The
+  model memorises the entity rather than the pattern. Use grouped splits.
+· DUPLICATE ROWS across the split do the same thing more crudely. Deduplicate
+  before splitting.
+· FEATURE SELECTION ON THE FULL DATASET is leakage too, and it is subtle:
+  choosing the top-k correlated features using test rows has already consulted
+  the answers.
+· THE DIAGNOSTIC — if validation looks too good, assume leakage before you
+  celebrate. Drop the single most important feature and see whether performance
+  collapses to something believable."""
+
+_ANSWER_V2['Ensembles — Bagging vs Boosting'] = """Bagging averages independent models in PARALLEL to cut variance; boosting builds models SEQUENTIALLY on each other's errors to cut bias.
+
+· BAGGING — train each model on a bootstrap resample and average. Because the
+  errors are largely independent, averaging cancels them, which is why it
+  attacks VARIANCE. Random Forest is the canonical case, adding a random
+  feature subset at each split to decorrelate the trees further.
+· BOOSTING — train models in sequence, each one focused on what the previous
+  ensemble got wrong, then combine with weights. That systematically reduces
+  BIAS, which is why it usually wins on tabular data.
+· THE PARALLELISM FOLLOWS FROM THE DEFINITION. Bagging's models are
+  independent, so they train in parallel; boosting's are a chain and cannot be.
+· OVERFITTING BEHAVIOUR IS THE KEY DIFFERENCE — adding more trees to a Random
+  Forest does not overfit, it converges. Adding more rounds to a boosted model
+  eventually does, which is why boosting needs early stopping and a learning
+  rate and Random Forest barely needs tuning.
+· THE BASE LEARNERS DIFFER ACCORDINGLY — bagging wants LOW-bias, high-variance
+  learners (deep trees) to average down. Boosting wants HIGH-bias, low-variance
+  learners (shallow stumps) to build up.
+· STACKING IS THE THIRD KIND — train diverse models and let a meta-model learn
+  how to combine them. More powerful, much easier to leak with, and it needs
+  out-of-fold predictions to train the meta-model honestly.
+· THE PRACTICAL PICK — XGBoost or LightGBM for tabular accuracy; Random Forest
+  when you want a strong baseline with almost no tuning and easy parallelism."""
+
+_ANSWER_V2['How a decision tree actually picks a split (Gini, entropy, information gain)'] = """It tries every feature and every threshold, and keeps whichever split makes the children PURER than the parent.
+
+· PURITY IS THE OBJECTIVE. GINI IMPURITY is 1 - sum(p_i^2), the chance of
+  mislabelling a random element using the node's class distribution. ENTROPY is
+  -sum(p_i log2 p_i), the bits of uncertainty. Both are 0 for a pure node and
+  maximal at a 50/50 mix.
+· INFORMATION GAIN is the parent's impurity minus the WEIGHTED average of the
+  children's. Weighted by child size, which matters — a split peeling off one
+  pure example is not a good split, and the weighting is what says so.
+· GINI VERSUS ENTROPY BARELY MATTERS in practice; they agree on the chosen
+  split the overwhelming majority of the time. Gini is slightly cheaper (no
+  logarithm) and is scikit-learn's default. Do not let a follow-up push you
+  into claiming a big difference.
+· THE SEARCH IS EXHAUSTIVE BUT LOCAL — every feature, every candidate
+  threshold, best one wins, then recurse. It is greedy: no backtracking, and no
+  guarantee of the globally optimal tree, which is NP-hard.
+· FOR REGRESSION the criterion becomes variance reduction (or MSE) instead of
+  Gini, and the leaf predicts the mean. Same algorithm, different impurity.
+· STOPPING RULES ARE WHAT PREVENT MEMORISATION — max depth, minimum samples per
+  leaf, minimum impurity decrease. An unconstrained tree grows until every leaf
+  is pure, which is a perfect training score and a useless model.
+· HIGH-CARDINALITY FEATURES ARE FAVOURED UNFAIRLY, because more distinct values
+  means more candidate splits and more chances to look good. That is why gain
+  RATIO exists, and why an ID column will win every split if you leave it in."""
+
+_ANSWER_V2['Neural network basics: from a perceptron to a multi-layer network'] = """One neuron is logistic regression and can only draw a straight boundary; stacking them with a non-linearity between lets the boundary bend into any shape.
+
+· THE SINGLE NEURON — multiply each input by a weight, sum, add a bias, squash.
+  That is exactly logistic regression, which is the most useful sentence here
+  because it connects the whole subject to something already understood.
+· ITS LIMIT IS FAMOUS — a perceptron cannot learn XOR, because no straight line
+  separates it. That result stalled the field for years and is the reason
+  hidden layers exist.
+· A LAYER computes a = f(Wx + b): a weight matrix, a bias vector, and a
+  non-linear activation. The non-linearity is essential; without it the stack
+  collapses to one linear map, however deep.
+· THE UNIVERSAL APPROXIMATION THEOREM says one sufficiently wide hidden layer
+  can approximate any continuous function. Quote it accurately: it says such a
+  network EXISTS, not that gradient descent will find it, and it says nothing
+  about how many units you would need.
+· DEPTH BEATS WIDTH IN PRACTICE because features compose — edges into shapes
+  into objects — so a deep network expresses that hierarchy with exponentially
+  fewer units than a shallow one.
+· TRAINING IS THE SAME LOOP AS EVERYTHING ELSE — forward pass, compute the
+  loss, backpropagate the gradients, step the weights. Nothing new is invented
+  for neural networks.
+· WEIGHTS MUST BE INITIALISED RANDOMLY. Initialise them all to zero and every
+  unit in a layer computes the same thing and receives the same gradient
+  forever, so the layer is permanently one unit wide."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
