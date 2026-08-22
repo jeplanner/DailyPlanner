@@ -981,7 +981,13 @@ def prep_notes_save():
     note = (data.get("note") or "")[:20000]
 
     try:
-        post("prep_notes",
+        # ?on_conflict= NAMES THE TARGET, and without it this fails on the
+        # SECOND save of any note. PostgREST infers the conflict target from
+        # the PRIMARY KEY unless told otherwise, and the primary key here is
+        # a generated uuid that never collides — so merge-duplicates had
+        # nothing to merge on and returned 409. Caught by exercising the
+        # real endpoint twice rather than once.
+        post("prep_notes?on_conflict=user_id,bank,entry_title",
              {"user_id": user_id, "bank": bank, "entry_title": title,
               "note": note, "updated_at": _iso_now()},
              prefer="resolution=merge-duplicates,return=minimal")

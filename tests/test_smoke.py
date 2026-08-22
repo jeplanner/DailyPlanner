@@ -3006,12 +3006,19 @@ def test_a_note_can_be_saved_and_read_back_per_bank(auth_client, monkeypatch):
         "note": "Ask about NULLS FIRST vs LAST"})
     assert r.status_code == 200
     table, payload, kwargs = posted[-1]
-    assert table == "prep_notes"
+    assert table.startswith("prep_notes")
     assert payload["entry_title"] == "ORDER BY, and where NULL sorts"
     assert payload["bank"] == "sql"
     # UPSERT, not insert. Without merge-duplicates a second save creates a
     # second row and the first silently becomes unreachable.
     assert "merge-duplicates" in kwargs.get("prefer", "")
+    # AND the conflict target must be named. PostgREST infers it from the
+    # PRIMARY KEY unless told, and this table's key is a generated uuid that
+    # never collides — so without ?on_conflict= there is nothing to merge on
+    # and the SECOND save of any note returns 409. Verified against the live
+    # database, not assumed.
+    assert "on_conflict=user_id,bank,entry_title" in table, (
+        "the second edit of a note will fail with a conflict")
 
 
 def test_notes_are_keyed_by_title_not_by_a_positional_id(auth_client, monkeypatch):
