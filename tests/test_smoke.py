@@ -1790,3 +1790,117 @@ def test_quick_bucket_list_degrades_when_the_migration_is_not_run():
     assert "select_scheduled" in src
     assert "for sel in (select_scheduled, select_effort" in src, (
         "the new columns are not the first rung, or the ladder was not extended")
+
+
+# ═══════════════════════════════════════════════════
+# Prep banks — bulk-add topics as one study block
+# ═══════════════════════════════════════════════════
+
+def _bulk_prep_stub(monkeypatch):
+    import routes.interview_prep as ip
+    posted = []
+    monkeypatch.setattr(ip, "post",
+                        lambda t, p, **k: posted.append((t, p)) or [{"id": "EV1", "task_id": "T1", **p}])
+    monkeypatch.setattr(ip, "update", lambda *a, **k: None)
+    monkeypatch.setattr(ip, "get", lambda *a, **k: [])
+    monkeypatch.setattr(ip, "_get_optional", lambda *a, **k: [])
+    monkeypatch.setattr(ip, "_ensure_prep_project", lambda u, b: "PROJ")
+    return posted
+
+
+def test_bulk_prep_makes_one_block_with_the_topics_in_the_description(auth_client, monkeypatch):
+    """Asked for: bulk-add topics from the prep pages to the calendar.
+
+    ONE calendar block, not one event per topic — six topics on a Saturday
+    morning is one session, and six stacked entries make the day
+    unreadable. But the PROJECT still gets one task per topic, because that
+    is where progress is tracked and a single "study block" task cannot be
+    half done.
+    """
+    import ai_sde_bank as bank
+    posted = _bulk_prep_stub(monkeypatch)
+    picked = bank.ENTRIES[:3]
+    titles = [e["title"] for e in picked]
+
+    r = auth_client.post("/api/prep/schedule-bulk", json={
+        "bank": "ai_sde", "plan_date": "2026-08-29", "start_time": "09:00",
+        "topics": [{"title": t} for t in titles]})
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    events = [p for t, p in posted if t == "daily_events"]
+    tasks = [p for t, p in posted if t == "project_tasks"]
+    assert len(events) == 1, "one block, not one event per topic"
+    assert len(tasks) == 3, "the project must still get one task per topic"
+    for title in titles:
+        assert "• " + title in events[0]["description"]
+
+
+def test_bulk_prep_duration_defaults_to_the_topics_own_prep_time(auth_client, monkeypatch):
+    """The bank already knows how long each topic takes. Making the user
+    add that up by hand would be asking them to re-derive a number that is
+    on the page in front of them."""
+    import ai_sde_bank as bank
+    posted = _bulk_prep_stub(monkeypatch)
+    picked = bank.ENTRIES[:3]
+    total = sum(e["prep_minutes"] for e in picked)
+
+    r = auth_client.post("/api/prep/schedule-bulk", json={
+        "bank": "ai_sde", "plan_date": "2026-08-29", "start_time": "09:00",
+        "topics": [{"title": e["title"]} for e in picked]})
+    j = r.get_json()
+    assert j["total_minutes"] == total
+    # 09:00 + the summed prep time, not a fixed guess.
+    end_h, end_m = divmod(9 * 60 + total, 60)
+    assert j["end_time"] == f"{end_h:02d}:{end_m:02d}"
+
+
+def test_bulk_prep_collapses_repeats_and_reports_what_it_could_not_find(auth_client, monkeypatch):
+    """A title that resolves to nothing must be REPORTED, not silently
+    dropped — otherwise a stale tab schedules four of five topics and says
+    it did all five."""
+    import ai_sde_bank as bank
+    _bulk_prep_stub(monkeypatch)
+    t0 = bank.ENTRIES[0]["title"]
+    r = auth_client.post("/api/prep/schedule-bulk", json={
+        "bank": "ai_sde", "plan_date": "2026-08-29",
+        "topics": [{"title": t0}, {"title": t0}, {"title": "no such topic"}]})
+    j = r.get_json()
+    assert j["count"] == 1, "the same topic picked twice must collapse"
+    assert j["unknown"] == ["no such topic"]
+
+
+def test_bulk_prep_rejects_input_it_cannot_honour(auth_client):
+    for body in ({"bank": "nope", "plan_date": "2026-08-29", "topics": [{"title": "x"}]},
+                 {"bank": "ai_sde", "plan_date": "bad", "topics": [{"title": "x"}]},
+                 {"bank": "ai_sde", "plan_date": "2026-08-29", "topics": []}):
+        assert auth_client.post("/api/prep/schedule-bulk", json=body).status_code == 400
+
+
+def test_every_prep_bank_can_be_bulk_scheduled(auth_client, monkeypatch):
+    """All four banks, because the ask named AI SDE, Java and SQL — and
+    leaving the behavioural one out would be an odd gap."""
+    import routes.interview_prep as ip
+    for bank_key in ("ai_sde", "java", "sql", "behavioral"):
+        posted = _bulk_prep_stub(monkeypatch)
+        source, field, _prefix = ip._BANK_SOURCES[bank_key]
+        first = source()[0][field]
+        r = auth_client.post("/api/prep/schedule-bulk", json={
+            "bank": bank_key, "plan_date": "2026-08-29",
+            "topics": [{"title": first}]})
+        assert r.status_code == 200, f"{bank_key}: {r.get_data(as_text=True)}"
+        assert [p for t, p in posted if t == "daily_events"], f"{bank_key} made no block"
+
+
+def test_bulk_select_needs_no_per_page_markup():
+    """The prep pages disagree about their card structure — the title is
+    .q-text on one and .t on another. Selection keys off the Plan button's
+    own data attributes, which every schedulable card already carries, so
+    all four pages get this without a template change.
+    """
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    block = js.split("BULK: several topics into ONE study block")[1]
+    assert "[data-prep-plan]" in block, "bulk reads page-specific markup"
+    assert "mountBulk(root)" in js, "attach() does not wire bulk"
+    # The pages re-render their list on filter changes, which would wipe
+    # the injected checkboxes.
+    assert "MutationObserver" in js and "paintBoxes()" in js

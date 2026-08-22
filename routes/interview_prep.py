@@ -761,6 +761,212 @@ def _ai_sde_lookup(entry_id, title):
     return _prep_lookup("ai_sde", entry_id, title)
 
 
+@interview_prep_bp.route("/api/prep/schedule-bulk", methods=["POST"])
+@login_required
+def prep_schedule_bulk():
+    """Put SEVERAL topics from one bank into ONE study block.
+
+    Body: ``{bank, topics: [{id?, title?}, ...], plan_date, start_time?,
+    duration_min?, title?}``
+
+    ONE CALENDAR EVENT, NOT ONE PER TOPIC. Selecting six topics for
+    Saturday morning means one two-hour block on the calendar whose
+    DESCRIPTION lists what is in it — not six stacked entries that make the
+    day unreadable. This mirrors what the Quick Bucket bulk move does, for
+    the same reason.
+
+    THE PROJECT TASKS ARE STILL ONE PER TOPIC, because that is where
+    progress is tracked: a single "study block" task cannot be half done.
+    So the calendar gets the block and the project gets the topics.
+
+    DURATION DEFAULTS TO THE SUM OF THE TOPICS' OWN prep_minutes, which is
+    the whole reason that field exists — the bank already knows a
+    six-topic session is 3h40m, and making the user work that out by hand
+    would be asking them to re-derive something on the page in front of
+    them.
+
+    Topics already scheduled on that day are skipped rather than stacked,
+    matching the single-topic endpoint's idempotence.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+
+    bank = (data.get("bank") or "ai_sde").strip()
+    if bank not in PREP_BANKS:
+        return jsonify({"error": f"unknown bank {bank!r}"}), 400
+    spec = PREP_BANKS[bank]
+
+    plan_date = (data.get("plan_date") or "").strip()
+    if not _AI_SDE_DATE_RE.match(plan_date):
+        return jsonify({"error": "plan_date must be YYYY-MM-DD"}), 400
+    try:
+        date.fromisoformat(plan_date)
+    except ValueError:
+        return jsonify({"error": "plan_date is not a real date"}), 400
+
+    raw_topics = data.get("topics") or []
+    if not isinstance(raw_topics, list) or not raw_topics:
+        return jsonify({"error": "Select at least one topic first."}), 400
+    if len(raw_topics) > 60:
+        # A cap with a reason: past this the description stops being
+        # readable in a calendar cell and the block stops being a session.
+        return jsonify({"error": "That is too many for one block — 60 max."}), 400
+
+    resolved, unknown = [], []
+    for t in raw_topics:
+        if isinstance(t, str):
+            t = {"title": t}
+        title, mins = _prep_lookup(bank, (t or {}).get("id"), (t or {}).get("title"))
+        if not title:
+            unknown.append((t or {}).get("title") or (t or {}).get("id"))
+            continue
+        if any(r[0] == title for r in resolved):
+            continue                       # the same topic picked twice
+        resolved.append((title, mins or 0))
+
+    if not resolved:
+        return jsonify({"error": "None of those topics could be found."}), 404
+
+    total_minutes = sum(m for _, m in resolved)
+    try:
+        duration = int(data.get("duration_min") or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    if duration <= 0:
+        duration = total_minutes or 30 * len(resolved)
+    duration = max(5, min(12 * 60, duration))
+
+    start_time = _ai_sde_clean_time(data.get("start_time"))
+    end_time = _ai_sde_end_time(start_time, duration)
+
+    project_id = _ensure_prep_project(user_id, bank)
+    if not project_id:
+        return jsonify({"error": f"could not open the {spec['project']} project"}), 500
+
+    # ── 1. One project task per topic, skipping what is already there ──
+    created, skipped = [], []
+    epic_id = None
+    try:
+        from routes.projects import _default_epic_id
+        epic_id = _default_epic_id(user_id, project_id)
+    except Exception:
+        logger.warning("%s: default epic unresolved, filing tasks flat",
+                       spec["project"], exc_info=True)
+
+    for title, mins in resolved:
+        existing = _get_optional("project_tasks", {
+            "user_id": f"eq.{user_id}",
+            "project_id": f"eq.{project_id}",
+            "plan_date": f"eq.{plan_date}",
+            "task_text": _pg_eq(title),
+            "is_deleted": "eq.false",
+            "select": "task_id",
+            "limit": "1",
+        }, optional={"is_deleted"})
+        if existing:
+            skipped.append(title)
+            continue
+
+        payload = {
+            "user_id": user_id,
+            "project_id": project_id,
+            "task_text": title,
+            "status": "open",
+            "priority": "medium",
+            "plan_date": plan_date,
+            "start_time": start_time,
+            "due_date": plan_date,
+            "notes": f"{spec['label']} topic · scheduled from {spec['page']}",
+            "is_deleted": False,
+        }
+        if mins:
+            payload["planned_hours"] = round(mins / 60.0, 2)
+        if epic_id:
+            payload["epic_id"] = epic_id
+        try:
+            post("project_tasks", payload, prefer="return=minimal")
+            created.append(title)
+        except Exception:
+            logger.exception("%s: bulk task failed for %r", spec["project"], title)
+
+    # ── 2. One calendar block, with the topics as its description ──────
+    #
+    # Written even when every topic was already scheduled: the user asked
+    # for a block at this time, and refusing to create it because the tasks
+    # exist would look like the button did nothing.
+    lines = [f"• {t}" for t, _ in resolved]
+    hours, rem = divmod(total_minutes, 60)
+    effort = (f"{hours}h {rem}m" if hours and rem else
+              f"{hours}h" if hours else f"{rem}m") if total_minutes else ""
+    header = f"{spec['label']} · {len(resolved)} topic" + ("s" if len(resolved) != 1 else "")
+    if effort:
+        header += f" · {effort} of prep"
+    description = header + "\n\n" + "\n".join(lines) + f"\n\nOpen them at {spec['page']}"
+
+    block_title = (data.get("title") or "").strip()
+    if not block_title:
+        block_title = (resolved[0][0] if len(resolved) == 1
+                       else f"{spec['label']}: {len(resolved)} topics")
+    block_title = block_title[:200]
+
+    event_id = None
+    event_row = None
+    try:
+        ev = post("daily_events", {
+            "user_id": user_id,
+            "plan_date": plan_date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "title": block_title,
+            "description": description,
+            "priority": "medium",
+            "reminder_minutes": 10,
+            "is_deleted": False,
+        }, prefer="return=representation")
+        event_row = (ev or [None])[0]
+        event_id = (event_row or {}).get("id")
+    except Exception:
+        logger.exception("%s: bulk calendar block failed on %s", spec["project"], plan_date)
+        return jsonify({"error": "Couldn't create the calendar block."}), 502
+
+    # ── 2b. Mirror to Google, off the request ──────────────────────────
+    # Same shape as the single-topic path: a Google round trip is a second
+    # or more and the in-app calendar is already correct.
+    if event_row:
+        try:
+            connected = bool(get("user_google_tokens",
+                                 params={"user_id": f"eq.{user_id}"}) or [])
+        except Exception:
+            connected = False
+        if connected:
+            def _mirror(row=event_row, uid=user_id):
+                try:
+                    from services import events_calendar_service as events_cal
+                    gid = events_cal.sync_create(uid, row)
+                    if gid:
+                        update("daily_events",
+                               params={"id": f"eq.{row['id']}", "user_id": f"eq.{uid}"},
+                               json={"google_event_id": gid})
+                except Exception:
+                    logger.exception("Google mirror failed for %r", row.get("title"))
+            threading.Thread(target=_mirror, daemon=True).start()
+
+    return jsonify({
+        "status": "ok",
+        "bank": bank,
+        "plan_date": plan_date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "event_id": event_id,
+        "title": block_title,
+        "count": len(resolved),
+        "scheduled": created,
+        "already_there": skipped,
+        "unknown": [u for u in unknown if u],
+        "total_minutes": total_minutes,
+    })
+
+
 @interview_prep_bp.route("/api/prep/schedule", methods=["POST"])
 @interview_prep_bp.route("/api/ai-sde/schedule", methods=["POST"])
 @login_required

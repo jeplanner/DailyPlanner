@@ -1053,7 +1053,7 @@
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
-          ${PrepScheduler.button("ai_sde", e.title, e.id)}
+          ${PrepScheduler.button("ai_sde", e.title, e.id, e.prep_minutes)}
           <p class="q-sum">${esc(SUMS[e.id] || "")}</p>
           <span class="q-chips">
             <span class="q-read read-${readingOf(e)}" title="${readingOf(e)==='must'

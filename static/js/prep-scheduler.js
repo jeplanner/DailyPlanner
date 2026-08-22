@@ -59,6 +59,44 @@
     ".prep-msg.err{color:#b91c1c;font-weight:700}",
     "html.dark .prep-msg.ok{color:#6ee7b7}html.dark .prep-msg.err{color:#fca5a5}",
 
+    /* ── Bulk select ──
+       The topics are already selectable one at a time; this is for planning
+       a SESSION. Off until pressed, because the everyday use of these pages
+       is reading one card. */
+    ".prep-bulkbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}",
+    ".prep-bulkbtn{font:inherit;font-size:12.5px;font-weight:700;padding:5px 12px;",
+    "border-radius:999px;border:1px solid var(--color-border,#e5e7eb);",
+    "background:var(--color-surface,#fff);color:var(--color-text,#111827);cursor:pointer}",
+    ".prep-bulkbtn:hover{background:var(--color-bg,#f9fafb)}",
+    ".prep-bulkbtn.on{background:var(--color-primary,#2563eb);color:#fff;",
+    "border-color:var(--color-primary,#2563eb)}",
+    ".prep-bulkbtn--go{background:#4338ca;border-color:#4338ca;color:#fff}",
+    ".prep-bulkbtn--go[disabled]{opacity:.45;cursor:default}",
+    ".prep-bulkcount{font-size:12.5px;font-weight:700;color:var(--color-text-secondary,#6b7280)}",
+    ".prep-pickbox{flex:none;width:17px;height:17px;cursor:pointer;accent-color:#4338ca}",
+    ".q-card.prep-picked{outline:2px solid #4338ca;outline-offset:-2px}",
+
+    /* The session panel. Same shape as the single-topic one so the two
+       do not look like different features. */
+    ".prep-bulkpanel{display:flex;flex-wrap:wrap;gap:8px;align-items:center;",
+    "margin:0 0 12px;padding:11px;border:1px dashed var(--color-border,#e5e7eb);",
+    "border-radius:10px;background:var(--color-bg,#f9fafb)}",
+    ".prep-bulkpanel[hidden]{display:none}",
+    ".prep-bulkpanel label{display:flex;align-items:center;gap:6px;font-size:12px;",
+    "font-weight:700;color:var(--color-text-secondary,#6b7280)}",
+    ".prep-bulkpanel input{font:inherit;font-size:13px;padding:6px 8px;min-width:0;",
+    "border:1px solid var(--color-border,#e5e7eb);border-radius:8px;",
+    "background:var(--color-surface,#fff);color:var(--color-text,#111827)}",
+    ".prep-bulkpanel .prep-bulkgo{font:inherit;font-size:12.5px;font-weight:800;color:#fff;",
+    "background:#4338ca;border:1px solid #4338ca;border-radius:10px;padding:7px 12px;cursor:pointer}",
+    ".prep-bulkpanel .prep-bulkgo[disabled]{opacity:.6;cursor:default}",
+    ".prep-bulkmsg{flex-basis:100%;font-size:11.5px;color:var(--color-text-secondary,#6b7280)}",
+    ".prep-bulkmsg.ok{color:#047857;font-weight:700}",
+    ".prep-bulkmsg.err{color:#b91c1c;font-weight:700}",
+    "html.dark .prep-bulkmsg.ok{color:#6ee7b7}html.dark .prep-bulkmsg.err{color:#fca5a5}",
+    "@media (max-width:640px){.prep-bulkpanel label{flex-basis:100%}",
+    ".prep-bulkpanel label input{flex:1}.prep-bulkpanel .prep-bulkgo{width:100%}}",
+
     /* Each field on its own line on a phone — a date picker squeezed
        beside a time picker at 360px leaves neither one tappable. */
     "@media (max-width:640px){.prep-panel label{flex-basis:100%}",
@@ -80,8 +118,12 @@
   }
 
   /* LOCAL date, not toISOString(). toISOString() converts to UTC first, so
-     anywhere west of Greenwich it returns yesterday for most of the
-     evening and the picker opens on the wrong day. */
+     the picker opens on the wrong day at opposite ends of the day
+     depending on the sign of the offset: WEST of Greenwich it returns
+     TOMORROW through the evening (20:00 in New York is already the next
+     day in UTC), and EAST of Greenwich it returns YESTERDAY through the
+     early morning (03:00 at +05:30 is still the previous day in UTC).
+     This household is +05:30, so the failing window is 00:00-05:29. */
   function todayISO() {
     var d = new Date(), p = function (n) { return String(n).padStart(2, "0"); };
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
@@ -178,14 +220,242 @@
     }
   }
 
+  /* ══════════════════════════════════════════════════════════════════
+     BULK: several topics into ONE study block
+
+     Asked for: "bulk add items from Interview prep pages AI SDE, JAVA,
+     SQL etc to calendar".
+
+     THIS READS NO PAGE-SPECIFIC MARKUP. The pages disagree about their
+     card structure — the title is .q-text on one and .t on another — but
+     every schedulable card already carries a Plan button holding its own
+     bank and title in data attributes. Selecting off THOSE buttons means
+     bulk works on all four pages without touching any of their templates,
+     which is the same principle the single-topic path was built on.
+
+     ONE CALENDAR EVENT, NOT ONE PER TOPIC. Six topics on Saturday morning
+     is one block whose description lists them, not six stacked entries.
+     The project still gets one task per topic, because that is where
+     progress is tracked and a single "study block" cannot be half done.
+     ══════════════════════════════════════════════════════════════════ */
+
+  var bulk = { on: false, picked: null, root: null, bar: null, panel: null };
+
+  function bulkButtons(root) {
+    return Array.prototype.slice.call(root.querySelectorAll("[data-prep-plan]"));
+  }
+
+  function bulkBank(root) {
+    var first = root.querySelector("[data-prep-plan]");
+    return first ? first.getAttribute("data-bank") : null;
+  }
+
+  /* Sum the prep time of what is selected, when the page has told us.
+     Returns null when no card carries a minutes hint, so the panel can
+     leave the field empty and let the server decide rather than showing a
+     confident zero. */
+  function pickedMinutes() {
+    var total = 0, seen = false;
+    bulk.picked.forEach(function (title) {
+      var btn = bulk.root.querySelector('[data-prep-plan][data-title="' + cssEsc(title) + '"]');
+      var m = btn && parseInt(btn.getAttribute("data-minutes") || "", 10);
+      if (m > 0) { total += m; seen = true; }
+    });
+    return seen ? total : null;
+  }
+
+  function cssEsc(v) {
+    return String(v).replace(/["\\]/g, "\\$&");
+  }
+
+  function bulkPanelHTML() {
+    return '<div class="prep-bulkpanel" hidden>' +
+      '<label>Day <input type="date" class="prep-bulkdate" value="' + todayISO() + '"></label>' +
+      '<label>Start <input type="time" class="prep-bulktime"></label>' +
+      '<label>Minutes <input type="number" class="prep-bulkdur" min="5" max="720" step="5" ' +
+             'placeholder="auto"></label>' +
+      '<button class="prep-bulkgo" type="button">Create the study block</button>' +
+      '<span class="prep-bulkmsg">One calendar block, with the topics as its description. ' +
+      'Leave minutes blank and it uses the topics\u2019 own prep time. ' +
+      'Each topic also becomes a task in the prep project.</span>' +
+      '</div>';
+  }
+
+  function paintBulk() {
+    if (!bulk.bar) return;
+    var toggle = bulk.bar.querySelector(".prep-bulk-toggle");
+    var count  = bulk.bar.querySelector(".prep-bulkcount");
+    var go     = bulk.bar.querySelector(".prep-bulk-open");
+    var all    = bulk.bar.querySelector(".prep-bulk-all");
+    var none   = bulk.bar.querySelector(".prep-bulk-none");
+
+    toggle.classList.toggle("on", bulk.on);
+    toggle.textContent = bulk.on ? "Done selecting" : "Select several";
+    [count, go, all, none].forEach(function (el) { if (el) el.hidden = !bulk.on; });
+    if (!bulk.on) return;
+
+    var n = bulk.picked.size;
+    count.textContent = n === 1 ? "1 topic" : n + " topics";
+    var mins = pickedMinutes();
+    if (n && mins) {
+      var h = Math.floor(mins / 60), r = mins % 60;
+      count.textContent += " · " + (h ? h + "h" + (r ? " " + r + "m" : "") : r + "m");
+    }
+    go.disabled = n === 0;
+  }
+
+  /* The checkbox is injected beside the Plan button, sharing its parent —
+     so no page's header layout is rearranged, and removing it restores the
+     card exactly. */
+  function paintBoxes() {
+    bulkButtons(bulk.root).forEach(function (btn) {
+      var title = btn.getAttribute("data-title") || "";
+      var card = btn.closest(".q-card");
+      var box = btn.parentElement.querySelector(".prep-pickbox");
+      if (!bulk.on) {
+        if (box) box.remove();
+        if (card) card.classList.remove("prep-picked");
+        return;
+      }
+      if (!box) {
+        box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "prep-pickbox";
+        box.setAttribute("aria-label", "Select this topic");
+        btn.parentElement.insertBefore(box, btn);
+      }
+      box.checked = bulk.picked.has(title);
+      if (card) card.classList.toggle("prep-picked", box.checked);
+    });
+  }
+
+  async function submitBulk() {
+    var bank = bulkBank(bulk.root);
+    var titles = Array.prototype.slice.call(bulk.picked);
+    if (!bank || !titles.length) return;
+
+    var dateEl = bulk.panel.querySelector(".prep-bulkdate");
+    var timeEl = bulk.panel.querySelector(".prep-bulktime");
+    var durEl  = bulk.panel.querySelector(".prep-bulkdur");
+    var msg    = bulk.panel.querySelector(".prep-bulkmsg");
+    var go     = bulk.panel.querySelector(".prep-bulkgo");
+
+    if (!dateEl.value) {
+      msg.className = "prep-bulkmsg err";
+      msg.textContent = "Pick a day first.";
+      return;
+    }
+
+    go.disabled = true;
+    msg.className = "prep-bulkmsg";
+    msg.textContent = "Creating…";
+    try {
+      var r = await fetch("/api/prep/schedule-bulk", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+        body: JSON.stringify({
+          bank: bank,
+          topics: titles.map(function (t) { return { title: t }; }),
+          plan_date: dateEl.value,
+          start_time: timeEl.value || "",
+          duration_min: parseInt(durEl.value, 10) || 0,
+        }),
+      });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        msg.className = "prep-bulkmsg err";
+        msg.textContent = j.error || "Could not create the block.";
+        return;
+      }
+      msg.className = "prep-bulkmsg ok";
+      var extra = (j.already_there && j.already_there.length)
+        ? " (" + j.already_there.length + " already on that day)" : "";
+      msg.textContent = j.count + " topic" + (j.count === 1 ? "" : "s") +
+        " → " + j.plan_date + " " + j.start_time + "–" + j.end_time + extra;
+      if (window.toast) window.toast("Study block created for " + j.plan_date, "success");
+      bulk.picked.clear();
+      paintBoxes();
+      paintBulk();
+    } catch (_) {
+      msg.className = "prep-bulkmsg err";
+      msg.textContent = "Network error — nothing was scheduled.";
+    } finally {
+      go.disabled = false;
+    }
+  }
+
+  function setBulk(on) {
+    bulk.on = on;
+    if (!on) {
+      bulk.picked.clear();
+      bulk.panel.setAttribute("hidden", "");
+    }
+    paintBoxes();
+    paintBulk();
+  }
+
+  function mountBulk(root) {
+    if (!root || root.dataset.prepBulkBound) return;
+    if (!root.querySelector("[data-prep-plan]")) return;   // nothing to select
+    root.dataset.prepBulkBound = "1";
+
+    bulk.root = root;
+    bulk.picked = new Set();
+
+    var wrap = document.createElement("div");
+    wrap.innerHTML =
+      '<div class="prep-bulkbar">' +
+        '<button class="prep-bulkbtn prep-bulk-toggle" type="button">Select several</button>' +
+        '<span class="prep-bulkcount" hidden></span>' +
+        '<button class="prep-bulkbtn prep-bulk-all" type="button" hidden>All shown</button>' +
+        '<button class="prep-bulkbtn prep-bulk-none" type="button" hidden>None</button>' +
+        '<button class="prep-bulkbtn prep-bulkbtn--go prep-bulk-open" type="button" hidden disabled>' +
+          'Add to calendar →</button>' +
+      '</div>' + bulkPanelHTML();
+    bulk.bar = wrap.firstChild;
+    bulk.panel = wrap.lastChild;
+    root.parentNode.insertBefore(bulk.panel, root);
+    root.parentNode.insertBefore(bulk.bar, bulk.panel);
+
+    bulk.bar.querySelector(".prep-bulk-toggle").addEventListener("click", function () {
+      setBulk(!bulk.on);
+    });
+    bulk.bar.querySelector(".prep-bulk-all").addEventListener("click", function () {
+      bulkButtons(bulk.root).forEach(function (b) {
+        bulk.picked.add(b.getAttribute("data-title") || "");
+      });
+      paintBoxes(); paintBulk();
+    });
+    bulk.bar.querySelector(".prep-bulk-none").addEventListener("click", function () {
+      bulk.picked.clear(); paintBoxes(); paintBulk();
+    });
+    bulk.bar.querySelector(".prep-bulk-open").addEventListener("click", function () {
+      bulk.panel.toggleAttribute("hidden");
+      if (!bulk.panel.hasAttribute("hidden")) {
+        bulk.panel.querySelector(".prep-bulkdate").focus();
+      }
+    });
+    bulk.panel.querySelector(".prep-bulkgo").addEventListener("click", submitBulk);
+    // Typing in the panel must not reach the host page's card toggle.
+    bulk.panel.addEventListener("click", function (ev) { ev.stopPropagation(); });
+
+    paintBulk();
+  }
+
   var PrepScheduler = {
     /* HTML for the header button. `title` is the topic text and is what
        actually identifies it to the server; `entryId` is optional and is
        only ever a hint. */
-    button: function (bank, title, entryId) {
+    button: function (bank, title, entryId, prepMinutes) {
+      // `prepMinutes` is optional and only ever a DISPLAY hint — it lets
+      // the bulk bar total up a session before you commit to it. The server
+      // recomputes from the bank either way, so a page that does not pass
+      // it loses nothing but the running total.
       return '<button class="prep-plan-btn" type="button" data-prep-plan' +
         ' data-bank="' + esc(bank) + '"' +
         ' data-title="' + esc(title) + '"' +
+        (prepMinutes > 0 ? ' data-minutes="' + esc(prepMinutes) + '"' : "") +
         (entryId ? ' data-entry-id="' + esc(entryId) + '"' : "") +
         ' title="Put this topic on a day" aria-label="Schedule this topic">' +
         '📅<span>Plan</span></button>';
@@ -200,6 +470,22 @@
       injectStyles();
 
       root.addEventListener("click", function (ev) {
+        // The bulk checkbox, before anything else. It sits inside the card
+        // header, which every host page has wired to open and close the
+        // card — so this must stop here or ticking a box also folds the
+        // card, which reads as the tick having done nothing.
+        var box = ev.target.closest(".prep-pickbox");
+        if (box && root.contains(box)) {
+          ev.stopPropagation();
+          var owner = box.parentElement.querySelector("[data-prep-plan]");
+          var t = owner ? (owner.getAttribute("data-title") || "") : "";
+          if (box.checked) bulk.picked.add(t); else bulk.picked.delete(t);
+          var card = box.closest(".q-card");
+          if (card) card.classList.toggle("prep-picked", box.checked);
+          paintBulk();
+          return;
+        }
+
         var btn = ev.target.closest("[data-prep-plan]");
         if (btn && root.contains(btn)) {
           ev.stopPropagation();
@@ -223,7 +509,26 @@
           ev.stopPropagation();
         }
       }, true);   // capture — see the header comment
+
+      // Bulk select, mounted above the list. Wired from attach() so every
+      // page that already calls attach() gets it with no template change.
+      mountBulk(root);
+
+      // The pages re-render their list on every filter change, which wipes
+      // the injected checkboxes. Re-draw them when the children change —
+      // childList only, since paintBoxes() itself mutates inside the cards
+      // and observing the subtree would re-enter forever.
+      if (window.MutationObserver) {
+        var mo = new MutationObserver(function () {
+          if (bulk.on && bulk.root === root) paintBoxes();
+        });
+        mo.observe(root, { childList: true });
+      }
     },
+
+    /* Expose the bulk state for tests and for a host page that wants to
+       drive it. Deliberately read-only-ish: the module owns the set. */
+    _bulk: bulk,
   };
 
   window.PrepScheduler = PrepScheduler;
