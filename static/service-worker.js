@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v200-2026-08-22-planned-pill"
+const CACHE_VERSION = "v201-2026-08-22-missed-shading"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";

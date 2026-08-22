@@ -120,6 +120,33 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 </head>
 <body>
+<style>
+  /* MISSED — the slot has passed and nothing marked it done. Same rule and
+     same look as the calendar grid's chip, because a day that reads
+     "missed" on one surface and fine on the other is worse than neither
+     showing it.
+
+     A tint and a red edge rather than a solid fill: these rows already
+     carry a source badge and a priority colour, and repainting them would
+     destroy both and turn a busy past day into a wall of red. */
+  .item.missed{
+    background-image:repeating-linear-gradient(135deg,
+      rgba(220,38,38,.10) 0px, rgba(220,38,38,.10) 6px,
+      transparent 6px, transparent 12px);
+    box-shadow:inset 3px 0 0 #dc2626;
+  }
+  html.dark .item.missed{
+    background-image:repeating-linear-gradient(135deg,
+      rgba(248,113,113,.16) 0px, rgba(248,113,113,.16) 6px,
+      transparent 6px, transparent 12px);
+    box-shadow:inset 3px 0 0 #f87171;
+  }
+  .item.missed .t{color:#dc2626;font-weight:800}
+  html.dark .item.missed .t{color:#f87171}
+  @media (prefers-contrast: more){
+    .item.missed{outline:2px solid #dc2626;outline-offset:-2px}
+  }
+</style>
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 <div class="wrap">
 
@@ -146,7 +173,7 @@
   <h2>On the clock <span class="n">{{ timed|length }}</span></h2>
   {% if timed %}
     {% for i in timed %}
-    <div class="item" data-focus-id="{{ i.id }}">
+    <div class="item{% if i.missed %} missed{% endif %}" data-focus-id="{{ i.id }}">
       <div class="t">{{ i.time }}</div>
       <div class="b">
         <div class="ttl">{{ i.title }}</div>
@@ -168,7 +195,7 @@
   <h2>No time set <span class="n">{{ untimed|length }}</span></h2>
   {% if untimed %}
     {% for i in untimed %}
-    <div class="item" data-focus-id="{{ i.id }}">
+    <div class="item{% if i.missed %} missed{% endif %}" data-focus-id="{{ i.id }}">
       <div class="t none">any<br>time</div>
       <div class="b">
         <div class="ttl">{{ i.title }}</div>
@@ -187,7 +214,7 @@
   {% if overdue %}
   <h2>Overdue <span class="n">{{ overdue|length }}</span></h2>
     {% for i in overdue[:12] %}
-    <div class="item" data-focus-id="{{ i.id }}">
+    <div class="item{% if i.missed %} missed{% endif %}" data-focus-id="{{ i.id }}">
       <div class="t none">{{ i.time or '—' }}</div>
       <div class="b">
         <div class="ttl">{{ i.title }}</div>

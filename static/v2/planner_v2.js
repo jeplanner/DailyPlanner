@@ -468,6 +468,25 @@ function renderAllColumns() {
         chip.classList.add(`p-${ev.priority || "medium"}`);
       }
 
+      /* MISSED: the slot has gone by and nothing marked it done.
+         Shading it is the whole point of looking at a past day — an
+         unmarked chip that looks identical to a future one tells you
+         nothing about whether the day actually happened.
+
+         MEASURED FROM THE END, NOT THE START. An event running 19:00-20:00
+         is not missed at 19:01; it is missed at 20:00. Where no end time is
+         recorded the start is used, since that is all that is known.
+
+         `done` is the only status treated as complete — anything else
+         (open, or absent) is still outstanding. */
+      const _endsAt = ev.end_time || ev.start_time;
+      if (_endsAt && (ev.status || "open") !== "done") {
+        const [_h, _m] = String(_endsAt).split(":");
+        const _p = ds.split("-");
+        const _due = new Date(+_p[0], +_p[1] - 1, +_p[2], +_h || 0, +_m || 0, 0, 0);
+        if (_due.getTime() < Date.now()) chip.classList.add("is-missed");
+      }
+
       // Position
       chip.style.top = ev.top + "px";
       chip.style.height = Math.max(ev.height, 18) + "px";

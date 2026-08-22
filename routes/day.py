@@ -20,14 +20,15 @@ into one chronological list. Nothing here re-implements that; the page is
 a different SHAPE over the same data.
 """
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from datetime import time as dtime
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
 from auth import login_required
 from services.agenda_service import build_dashboard
 from supabase_client import get
-from utils.user_tz import user_today
+from utils.user_tz import user_now, user_today
 
 logger = logging.getLogger("daily_plan")
 day_bp = Blueprint("day", __name__)
@@ -77,6 +78,34 @@ def day_page():
     # information rather than a gap.
     timed = [i for i in items if i.get("time")]
     untimed = [i for i in items if not i.get("time")]
+
+    # MISSED: the slot has gone by and nothing marked it done. Computed here
+    # rather than in the template so the same rule the calendar grid uses
+    # lives on both surfaces — a day that reads "missed" on one and fine on
+    # the other is worse than neither showing it.
+    #
+    # Measured from the END where one is recorded: an event running
+    # 19:00-20:00 is not missed at 19:01, it is missed at 20:00.
+    now = user_now()
+    for i in timed:
+        i["missed"] = False
+        if i.get("done") or (i.get("status") or "open") == "done":
+            continue
+        stamp = (i.get("end_time") or i.get("time") or "")[:5]
+        if not stamp or ":" not in stamp:
+            continue
+        try:
+            hh, mm = (int(x) for x in stamp.split(":", 1))
+        except ValueError:
+            continue
+        due = datetime.combine(plan_date, dtime(hh, mm), tzinfo=now.tzinfo)
+        i["missed"] = due < now
+    # An UNTIMED item is only missed once its whole day is behind us —
+    # "no time set" cannot be late at 9am on the day itself.
+    day_is_past = plan_date < now.date()
+    for i in untimed:
+        i["missed"] = day_is_past and not (
+            i.get("done") or (i.get("status") or "open") == "done")
 
     return render_template(
         "day.html",

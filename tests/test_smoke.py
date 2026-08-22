@@ -2482,3 +2482,81 @@ def test_planned_pill_elapses_at_the_end_of_an_untimed_day():
     assert "/api/prep/scheduled" in js
     paint = js.split("function paintScheduled")[1].split("function loadScheduled")[0]
     assert "new Date()" in paint and "late" in paint and "soon" in paint
+
+
+# ═══════════════════════════════════════════════════
+# Missed slots — shaded red once the moment has passed
+# ═══════════════════════════════════════════════════
+
+def _day_html(auth_client, monkeypatch, items, on="2026-08-22"):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import routes.day as d
+    now = datetime(2026, 8, 22, 19, 30, tzinfo=ZoneInfo("Asia/Kolkata"))
+    monkeypatch.setattr(d, "user_now", lambda: now)
+    monkeypatch.setattr(d, "user_today", lambda: now.date())
+    monkeypatch.setattr(d, "_meta", lambda u, pd: {})
+    monkeypatch.setattr(d, "build_dashboard", lambda u, pd: {"today_items": items})
+    return auth_client.get(f"/day?date={on}").get_data(as_text=True)
+
+
+def _classes_for(html, title):
+    """The class list of the .item block containing `title`."""
+    import re
+    idx = html.find(">" + title + "<")
+    assert idx != -1, f"{title!r} is not on the page"
+    before = html[:idx]
+    m = None
+    for m in re.finditer(r'<div class="item([^"]*)"', before):
+        pass
+    return m.group(1) if m else ""
+
+
+def test_day_view_shades_a_missed_slot(auth_client, monkeypatch):
+    """Asked for: shade it red once the date/time has been missed.
+
+    MEASURED FROM THE END, not the start. An event running 19:00-20:00 is
+    not missed at 19:01; it is missed at 20:00. Anything else marks things
+    red the moment they begin, which is when you are most likely doing them.
+    """
+    html = _day_html(auth_client, monkeypatch, [
+        {"id": "a", "title": "Ended earlier", "time": "18:00", "end_time": "19:00", "status": "open"},
+        {"id": "b", "title": "Running now", "time": "19:00", "end_time": "20:00", "status": "open"},
+        {"id": "c", "title": "Later today", "time": "21:00", "end_time": "22:00", "status": "open"},
+        {"id": "d", "title": "Past but done", "time": "09:00", "end_time": "10:00",
+         "status": "done", "done": True},
+    ])
+    assert "missed" in _classes_for(html, "Ended earlier")
+    assert "missed" not in _classes_for(html, "Running now"), "marked red while in progress"
+    assert "missed" not in _classes_for(html, "Later today")
+    # Done is done — a completed slot is never a miss, however late it is.
+    assert "missed" not in _classes_for(html, "Past but done")
+
+
+def test_an_untimed_item_is_only_missed_once_its_whole_day_is_past(auth_client, monkeypatch):
+    """"No time set" cannot be late at 9am on the day itself — it has all
+    day to happen. It becomes a miss when the day is behind us."""
+    item = [{"id": "e", "title": "Read the paper", "time": None, "status": "open"}]
+    today = _day_html(auth_client, monkeypatch, item, on="2026-08-22")
+    assert "missed" not in _classes_for(today, "Read the paper")
+    past = _day_html(auth_client, monkeypatch, item, on="2026-08-20")
+    assert "missed" in _classes_for(past, "Read the paper")
+
+
+def test_calendar_grid_uses_the_same_missed_rule():
+    """A day that reads "missed" on the list and fine on the grid is worse
+    than neither showing it, so both surfaces share the rule: measured from
+    the END, and `done` is the only status that counts as complete."""
+    js = open("static/v2/planner_v2.js", encoding="utf-8").read()
+    block = js.split("MISSED:")[1].split("// Position")[0]
+    assert "ev.end_time || ev.start_time" in block, "measured from the start"
+    assert '(ev.status || "open") !== "done"' in block
+    assert "is-missed" in block
+
+    css = open("static/v2/planner_v2.css", encoding="utf-8").read()
+    assert ".event-chip.is-missed" in css
+    # A tint and an edge, not a solid repaint: these chips already carry a
+    # priority colour and a meaningful fill, and a busy past day would
+    # become an unreadable wall of red.
+    assert "repeating-linear-gradient" in css.split(".event-chip.is-missed")[1][:400]
+    assert "html.dark .event-chip.is-missed" in css, "unreadable in dark mode"

@@ -612,6 +612,46 @@ body {
   z-index: 20;
 }
 
+/* MISSED — the slot has passed and nothing marked it done.
+   Shading it is the whole point of looking back at a day: an unmarked chip
+   that looks identical to a future one tells you nothing about whether the
+   day actually happened.
+
+   A TINT AND A RED EDGE, not a solid red fill. These chips already carry a
+   priority colour on the left border and a fill that means something; a
+   solid repaint would destroy both and turn a busy past day into a wall.
+   The stripe reads as "missed" at a glance while the chip stays itself. */
+.event-chip.is-missed {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(220, 38, 38, 0.14) 0px,
+    rgba(220, 38, 38, 0.14) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  border-left-color: #dc2626 !important;
+  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.45);
+}
+.event-chip.is-missed .chip-title {
+  text-decoration-color: rgba(220, 38, 38, 0.7);
+}
+html.dark .event-chip.is-missed {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(248, 113, 113, 0.20) 0px,
+    rgba(248, 113, 113, 0.20) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  border-left-color: #f87171 !important;
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.45);
+}
+/* A missed chip is information, not decoration — keep it legible when the
+   user has asked for less motion or more contrast. */
+@media (prefers-contrast: more) {
+  .event-chip.is-missed { outline: 2px solid #dc2626; outline-offset: -2px; }
+}
+
 .event-chip .event-title {
   font-weight: 600;
   white-space: nowrap;
