@@ -232,6 +232,16 @@ def list_items():
     # hasn't been applied yet. Without this fallback, a missing column
     # on Supabase makes the whole list query 400 and the page renders
     # empty — which is what just happened.
+    # Most-preferred first. The ladder exists because a column that has not
+    # been migrated yet makes the WHOLE query 400 and renders the page empty,
+    # which has happened before — so each rung drops the newest fields.
+    select_scheduled = (
+        "id,text,time_bucket,due_at,is_done,done_at,position,"
+        "top5_date,top5_position,priority_label,"
+        "planned_minutes,actual_minutes,effort_date,"
+        "scheduled_event_id,scheduled_for,"
+        "created_at,updated_at"
+    )
     select_effort = (
         "id,text,time_bucket,due_at,is_done,done_at,position,"
         "top5_date,top5_position,priority_label,"
@@ -255,7 +265,7 @@ def list_items():
         "limit": "500",
     }
     rows = None
-    for sel in (select_effort, select_full, select_legacy):
+    for sel in (select_scheduled, select_effort, select_full, select_legacy):
         try:
             rows = get("quick_bucket", params={**base_params, "select": sel}) or []
             break
@@ -868,3 +878,165 @@ def archive_item(item_id):
     if old_event_id:
         cal_sync.sync_async(user_id, item_id, {}, old_event_id=old_event_id, force_delete=True)
     return jsonify({"ok": True})
+
+
+# ── Bulk: bucket items -> one calendar slot ──────────────────────────
+# Asked for: select several bucket items, drop them into a slot on the
+# calendar, and have them show up in that event's DESCRIPTION.
+#
+# ONE EVENT, NOT ONE PER ITEM. Five items become five lines in one slot's
+# description, not five overlapping calendar entries. That is what "move them
+# to a slot" means, and it is also the only version that stays readable on a
+# week view.
+#
+# THE ITEMS ARE NOT DELETED AND NOT MARKED DONE. Deleting loses them; marking
+# them done is a lie, because they are scheduled rather than finished. They
+# are linked to the event they went to (scheduled_event_id / scheduled_for),
+# which is reversible and lets the bucket show where a row went.
+
+#: The description is rebuilt from scratch on every scheduling, so it needs a
+#: marker to know which part it owns. Anything the user typed above this line
+#: is preserved.
+_QB_DESC_HEADER = "From Quick Bucket:"
+
+
+def _qb_description(texts, existing=""):
+    """Build the event description, keeping anything the user wrote.
+
+    Appending blindly would duplicate the list every time more items are
+    scheduled into the same slot; replacing blindly would delete a note the
+    user had typed. So the block below the marker is ours to rewrite and
+    everything above it is theirs.
+    """
+    kept = (existing or "").split(_QB_DESC_HEADER)[0].rstrip()
+    lines = [f"• {t}" for t in texts if t]
+    block = _QB_DESC_HEADER + "\n" + "\n".join(lines)
+    return (kept + "\n\n" + block).strip() if kept else block
+
+
+def _add_minutes(hhmm, minutes):
+    """Clock arithmetic that stops at 23:59 instead of wrapping into
+    yesterday. An event that wrapped would render at the top of the day and
+    look like it happens in the morning."""
+    h, m = int(hhmm[:2]), int(hhmm[3:5])
+    total = min(h * 60 + m + minutes, 23 * 60 + 59)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+@quick_bucket_bp.route("/api/quick-bucket/schedule", methods=["POST"])
+@login_required
+def schedule_to_calendar():
+    """Move a selection of bucket items into one calendar slot.
+
+    Body: {ids: [...], date: 'YYYY-MM-DD', start: 'HH:MM',
+           duration: minutes, title?: str, event_id?: str}
+
+    `event_id` adds the selection to an EXISTING slot rather than creating a
+    new one, which is what a second bulk-move into the same hour should do.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    ids = [str(i) for i in (data.get("ids") or []) if str(i).strip()]
+    if not ids:
+        return jsonify({"error": "Select at least one item first."}), 400
+
+    plan_date = (data.get("date") or "").strip()
+    start = (data.get("start") or "").strip()[:5]
+    try:
+        date.fromisoformat(plan_date)
+        datetime.strptime(start, "%H:%M")
+    except (ValueError, TypeError):
+        return jsonify({"error": "Pick a valid date and time."}), 400
+
+    try:
+        duration = int(data.get("duration") or 30)
+    except (TypeError, ValueError):
+        duration = 30
+    duration = max(5, min(600, duration))
+    end = _add_minutes(start, duration)
+
+    # Read the selected rows BACK from the database rather than trusting the
+    # titles the client sent — the description must reflect what the bucket
+    # actually holds, and this also scopes the ids to this user.
+    try:
+        rows = get("quick_bucket", params={
+            "user_id": f"eq.{user_id}",
+            "id": f"in.({','.join(ids)})",
+            "is_deleted": "eq.false",
+        }) or []
+    except Exception as exc:
+        logger.error("quick_bucket schedule read failed: %s", exc)
+        return jsonify({"error": "Couldn't read those items — please retry."}), 502
+
+    if not rows:
+        return jsonify({"error": "Those items are no longer in the bucket."}), 404
+
+    # Keep the order the user sees, not whatever the database returned.
+    order = {str(i): n for n, i in enumerate(ids)}
+    rows.sort(key=lambda r: order.get(str(r.get("id")), 999))
+    texts = [(r.get("text") or "").strip() for r in rows]
+
+    title = (data.get("title") or "").strip()
+    if not title:
+        # A slot holding one item should be named after it; several become a
+        # count, because a title made of five concatenated tasks is unreadable
+        # in a calendar cell.
+        title = texts[0] if len(texts) == 1 else f"{len(texts)} bucket tasks"
+    title = title[:200]
+
+    event_id = (data.get("event_id") or "").strip()
+    try:
+        if event_id:
+            existing = get("daily_events", params={
+                "id": f"eq.{event_id}", "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+            }) or []
+            if not existing:
+                return jsonify({"error": "That calendar slot no longer exists."}), 404
+            row = existing[0]
+            update("daily_events",
+                   params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}"},
+                   json={"description": _qb_description(texts, row.get("description"))})
+            created = row
+        else:
+            payload = {
+                "user_id": user_id,
+                "plan_date": plan_date,
+                "start_time": start,
+                "end_time": end,
+                "title": title,
+                "description": _qb_description(texts),
+                "priority": "medium",
+                "reminder_minutes": 10,
+            }
+            resp = post("daily_events", payload, prefer="return=representation")
+            created = (resp or [{}])[0]
+    except Exception as exc:
+        logger.error("quick_bucket schedule write failed: %s", exc)
+        return jsonify({"error": "Couldn't create the calendar slot."}), 502
+
+    # Link the rows to where they went. Best-effort: the columns arrive with
+    # MIGRATION_LOGIN_HISTORY.sql, and the scheduling itself — the thing that
+    # was asked for — must still work before that has been run.
+    linked = False
+    try:
+        update("quick_bucket",
+               params={"user_id": f"eq.{user_id}", "id": f"in.({','.join(ids)})"},
+               json={"scheduled_event_id": created.get("id"),
+                     "scheduled_for": plan_date})
+        linked = True
+    except Exception as exc:
+        logger.warning("quick_bucket schedule link skipped — run "
+                       "MIGRATION_LOGIN_HISTORY.sql (%s)", str(exc)[:120])
+
+    return jsonify({
+        "ok": True,
+        "event_id": created.get("id"),
+        "title": title,
+        "date": plan_date,
+        "start": start,
+        "end": end,
+        "count": len(texts),
+        "linked": linked,
+    })

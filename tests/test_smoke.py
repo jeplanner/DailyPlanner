@@ -1673,3 +1673,120 @@ def test_a_failed_sign_in_is_recorded_against_the_targeted_account():
     src = inspect.getsource(auth.login)
     assert 'outcome="failed"' in src, "failed attempts are not recorded"
     assert "if user:" in src, "a failure for an unknown email would be stored"
+
+
+# ═══════════════════════════════════════════════════
+# Quick Bucket — bulk select into one calendar slot
+# ═══════════════════════════════════════════════════
+
+def _qb_stub(monkeypatch, rows):
+    import routes.quick_bucket as qb
+    sent = {"posted": [], "updated": []}
+    monkeypatch.setattr(qb, "get",
+                        lambda t, params=None, **k: rows if t == "quick_bucket" else [])
+    monkeypatch.setattr(qb, "post",
+                        lambda t, p, **k: sent["posted"].append((t, p)) or [{"id": "EV1", **p}])
+    monkeypatch.setattr(qb, "update",
+                        lambda t, params=None, json=None, **k: sent["updated"].append((t, json)))
+    return sent
+
+
+def test_bulk_selection_becomes_one_slot_with_the_items_in_the_description(auth_client, monkeypatch):
+    """Asked for: bulk select bucket items, move them to a calendar slot,
+    and have them appear in the description.
+
+    ONE EVENT, NOT ONE PER ITEM. Five tasks become five lines in one slot,
+    which is what "move them to a slot" means and the only version that
+    stays readable on a week view.
+    """
+    sent = _qb_stub(monkeypatch, [{"id": "B", "text": "Call the bank"},
+                                  {"id": "A", "text": "Book flights"}])
+    r = auth_client.post("/api/quick-bucket/schedule", json={
+        "ids": ["A", "B"], "date": "2026-08-25", "start": "15:00", "duration": 45})
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    assert len(sent["posted"]) == 1, "one slot, not one event per item"
+    table, ev = sent["posted"][0]
+    assert table == "daily_events"
+    assert ev["end_time"] == "15:45"
+    assert "From Quick Bucket:" in ev["description"]
+    assert "• Book flights" in ev["description"] and "• Call the bank" in ev["description"]
+    # The order the user selected, not whatever the database returned.
+    assert ev["description"].index("Book flights") < ev["description"].index("Call the bank")
+
+
+def test_scheduling_neither_deletes_the_items_nor_marks_them_done(auth_client, monkeypatch):
+    """Deleting loses them; marking them done is a lie, because they are
+    scheduled rather than finished. They are LINKED to the slot instead,
+    which is reversible and lets the bucket show where a row went."""
+    sent = _qb_stub(monkeypatch, [{"id": "A", "text": "Book flights"}])
+    auth_client.post("/api/quick-bucket/schedule", json={
+        "ids": ["A"], "date": "2026-08-25", "start": "09:00"})
+    link = [j for t, j in sent["updated"] if t == "quick_bucket"][0]
+    assert link["scheduled_event_id"] == "EV1"
+    assert link["scheduled_for"] == "2026-08-25"
+    assert "is_done" not in link and "is_deleted" not in link
+
+
+def test_one_item_names_the_slot_after_itself(auth_client, monkeypatch):
+    """A slot holding five tasks cannot be titled with all five — a calendar
+    cell has no room. One item keeps its own name; several become a count."""
+    sent = _qb_stub(monkeypatch, [{"id": "A", "text": "Book flights"}])
+    auth_client.post("/api/quick-bucket/schedule", json={
+        "ids": ["A"], "date": "2026-08-25", "start": "09:00"})
+    assert sent["posted"][0][1]["title"] == "Book flights"
+
+    sent = _qb_stub(monkeypatch, [{"id": "A", "text": "a"}, {"id": "B", "text": "b"}])
+    auth_client.post("/api/quick-bucket/schedule", json={
+        "ids": ["A", "B"], "date": "2026-08-25", "start": "09:00"})
+    assert sent["posted"][0][1]["title"] == "2 bucket tasks"
+
+
+def test_a_late_slot_does_not_wrap_past_midnight(auth_client, monkeypatch):
+    """An event that wrapped would render at the top of the day and look
+    like it happens in the morning."""
+    sent = _qb_stub(monkeypatch, [{"id": "A", "text": "x"}])
+    auth_client.post("/api/quick-bucket/schedule", json={
+        "ids": ["A"], "date": "2026-08-25", "start": "23:40", "duration": 120})
+    assert sent["posted"][0][1]["end_time"] == "23:59"
+
+
+def test_scheduling_into_an_existing_slot_rewrites_only_its_own_block(auth_client, monkeypatch):
+    """A second bulk-move into the same hour should add to that slot, not
+    duplicate the list — and must not eat a note the user typed above it."""
+    import routes.quick_bucket as qb
+    existing = {"id": "EV1", "description": "Bring the folder.\n\nFrom Quick Bucket:\n• old one"}
+    sent = {"updated": []}
+    monkeypatch.setattr(qb, "get", lambda t, params=None, **k:
+                        [{"id": "A", "text": "Book flights"}] if t == "quick_bucket" else [existing])
+    monkeypatch.setattr(qb, "post", lambda *a, **k: [{}])
+    monkeypatch.setattr(qb, "update",
+                        lambda t, params=None, json=None, **k: sent["updated"].append((t, json)))
+    auth_client.post("/api/quick-bucket/schedule", json={
+        "ids": ["A"], "date": "2026-08-25", "start": "09:00", "event_id": "EV1"})
+    desc = [j for t, j in sent["updated"] if t == "daily_events"][0]["description"]
+    assert desc.startswith("Bring the folder."), "the user's own note was destroyed"
+    assert desc.count("From Quick Bucket:") == 1, "the block was duplicated"
+    assert "old one" not in desc, "the block was appended instead of rewritten"
+    assert "• Book flights" in desc
+
+
+def test_schedule_rejects_input_it_cannot_honour(auth_client, monkeypatch):
+    import routes.quick_bucket as qb
+    monkeypatch.setattr(qb, "get", lambda *a, **k: [])
+    for body in ({"ids": [], "date": "2026-08-25", "start": "09:00"},
+                 {"ids": ["A"], "date": "nope", "start": "09:00"},
+                 {"ids": ["A"], "date": "2026-08-25", "start": "9am"}):
+        assert auth_client.post("/api/quick-bucket/schedule", json=body).status_code == 400
+
+
+def test_quick_bucket_list_degrades_when_the_migration_is_not_run():
+    """A column that has not been migrated makes the WHOLE query 400 and
+    renders the page empty — which has happened here before. Each rung of
+    the select ladder drops the newest fields."""
+    import inspect
+    import routes.quick_bucket as qb
+    src = inspect.getsource(qb.list_items)
+    assert "select_scheduled" in src
+    assert "for sel in (select_scheduled, select_effort" in src, (
+        "the new columns are not the first rung, or the ladder was not extended")

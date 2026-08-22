@@ -36,6 +36,15 @@
   const TICK_MS = 10_000;
 
   let items = [];
+
+  /* ── Bulk select -> one calendar slot ──
+     `selectMode` is off by default: the everyday use of this page is typing
+     a line and cycling a bucket, and a permanent row of checkboxes would tax
+     that to serve an occasional planning session. `selected` holds ids as
+     STRINGS, because they arrive from data-id attributes as strings and
+     comparing those to numeric ids silently never matches. */
+  let selectMode = false;
+  const selected = new Set();
   // Tracks rows we've already alerted on so the toast / row pulse only
   // fires once when a deadline trips, not every 30s after.
   const alerted = new Set();
@@ -442,13 +451,29 @@
         ${prio == null ? '·' : (prio > 99 ? '99+' : prio)}
       </button>`;
 
+    // Where this row went, if it has been dropped into a calendar slot.
+    // Shown rather than hiding the row: it is scheduled, not finished.
+    const schedPill = it.scheduled_for
+      ? `<span class="qb-sched-pill" title="On the calendar">📅 ${escapeHTML(String(it.scheduled_for))}</span>`
+      : "";
+
+    // The selection box exists ONLY in select mode, so the row keeps its
+    // normal geometry the rest of the time.
+    const selBox = selectMode
+      ? `<input type="checkbox" class="qb-selectbox" data-action="pick-select"
+                aria-label="Select for scheduling" ${selected.has(String(it.id)) ? "checked" : ""}>`
+      : "";
+    if (selectMode && selected.has(String(it.id))) cls.push("is-picked");
+
     return `
       <div class="${cls.join(' ')}" data-id="${it.id}">
+        ${selBox}
         <input type="checkbox" class="qb-check" data-action="done"
                aria-label="Mark done" ${it.is_done ? 'checked' : ''}>
         ${prioBadge}
         <div class="qb-text" data-action="edit" title="Click to edit"
              tabindex="0" role="button">${escapeHTML(it.text)}</div>
+        ${schedPill}
         <button class="${togCls}" data-action="pick" type="button"
                 title="Click to choose when: Now / 1H–8H / Future">
           ${escapeHTML(toggleLabel(it))}
@@ -753,6 +778,157 @@
     });
   };
 
+  // ─────────── bulk select -> calendar slot ─────────────────
+  // Asked for: pick several bucket items, drop them into a slot, and have
+  // them appear in that event's DESCRIPTION.
+  //
+  // ONE EVENT, NOT ONE PER ITEM. Five tasks become five lines in one slot,
+  // not five overlapping calendar entries — which is what "move them to a
+  // slot" means and the only version that stays readable on a week view.
+
+  const selectableIds = () =>
+    $$("#qb-groups .qb-row").map(r => r.dataset.id).filter(Boolean);
+
+  const paintSelBar = () => {
+    const count  = $("#qb-selcount");
+    const go     = $("#qb-sel-schedule");
+    const all    = $("#qb-sel-all");
+    const none   = $("#qb-sel-none");
+    const toggle = $("#qb-sel-toggle");
+    if (!toggle) return;
+
+    toggle.classList.toggle("is-on", selectMode);
+    toggle.textContent = selectMode ? "Done selecting" : "Select";
+    [count, go, all, none].forEach(el => { if (el) el.hidden = !selectMode; });
+    if (!selectMode) return;
+
+    const n = selected.size;
+    if (count) count.textContent = n === 1 ? "1 selected" : n + " selected";
+    if (go) go.disabled = n === 0;
+  };
+
+  const setSelectMode = (on) => {
+    selectMode = on;
+    if (!on) selected.clear();
+    render();          // the checkbox only exists in select mode
+    paintSelBar();
+  };
+
+  /* Default the picker to the next round half-hour, which is what someone
+     scheduling "later today" almost always means.
+
+     Built from LOCAL date parts, never toISOString(): that returns UTC, so
+     at +05:30 it still reports YESTERDAY between 00:00 and 05:29 local.
+     Verified rather than assumed — 00:30 IST on the 26th gives "2026-08-25"
+     from toISOString and "2026-08-26" from the local parts. An early-morning
+     planning session would silently schedule everything a day late. */
+  const nextHalfHour = () => {
+    const d = new Date();
+    d.setSeconds(0, 0);
+    d.setMinutes(d.getMinutes() + (30 - (d.getMinutes() % 30)));
+    const p = (n) => String(n).padStart(2, "0");
+    return {
+      date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+      time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+    };
+  };
+
+  const openScheduleModal = () => {
+    if (!selected.size) return;
+    const when = nextHalfHour();
+    $("#qb-sched-date").value  = when.date;
+    $("#qb-sched-start").value = when.time;
+    $("#qb-sched-dur").value   = 30;
+    $("#qb-sched-title-in").value = "";
+
+    const picked = items.filter(i => selected.has(String(i.id)));
+    const sub = $("#qb-sched-sub");
+    if (sub) {
+      const names = picked.slice(0, 3).map(i => i.text).join(", ");
+      sub.textContent = picked.length === 1
+        ? `“${picked[0].text}” will go into this slot.`
+        : `${picked.length} tasks — ${names}${picked.length > 3 ? ", …" : ""}`;
+    }
+    const m = $("#qb-sched-modal");
+    m.classList.add("is-open");
+    m.setAttribute("aria-hidden", "false");
+    $("#qb-sched-date").focus();
+  };
+
+  const closeScheduleModal = () => {
+    const m = $("#qb-sched-modal");
+    m.classList.remove("is-open");
+    m.setAttribute("aria-hidden", "true");
+  };
+
+  const submitSchedule = async () => {
+    const ids = selectableIds().filter(id => selected.has(String(id)));
+    if (!ids.length) return;
+
+    const body = {
+      ids,
+      date:     $("#qb-sched-date").value,
+      start:    $("#qb-sched-start").value,
+      duration: parseInt($("#qb-sched-dur").value, 10) || 30,
+      title:    $("#qb-sched-title-in").value.trim(),
+    };
+    if (!body.date || !body.start) {
+      toast("Pick a day and a start time.", "error");
+      return;
+    }
+
+    const go = $("#qb-sched-go");
+    go.disabled = true;
+    try {
+      const res = await fetch("/api/quick-bucket/schedule", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": document.querySelector('meta[name=csrf-token]')?.content || "",
+        },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(j.error || "Couldn't create the slot.", "error");
+        return;
+      }
+      closeScheduleModal();
+      setSelectMode(false);
+      toast(`${j.count} on the calendar — ${j.date} at ${j.start}`, "success");
+      // The rows now carry scheduled_for, which the pill reads.
+      await loadItems();
+    } catch (_) {
+      toast("Network error — nothing was scheduled.", "error");
+    } finally {
+      go.disabled = false;
+    }
+  };
+
+  const wireSelectBar = () => {
+    $("#qb-sel-toggle")?.addEventListener("click", () => setSelectMode(!selectMode));
+    $("#qb-sel-all")?.addEventListener("click", () => {
+      selectableIds().forEach(id => selected.add(String(id)));
+      render(); paintSelBar();
+    });
+    $("#qb-sel-none")?.addEventListener("click", () => {
+      selected.clear(); render(); paintSelBar();
+    });
+    $("#qb-sel-schedule")?.addEventListener("click", openScheduleModal);
+    $("#qb-sched-cancel")?.addEventListener("click", closeScheduleModal);
+    $("#qb-sched-go")?.addEventListener("click", submitSchedule);
+    $("#qb-sched-modal")?.addEventListener("click", (e) => {
+      if (e.target.id === "qb-sched-modal") closeScheduleModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if ($("#qb-sched-modal")?.classList.contains("is-open")) closeScheduleModal();
+      else if (selectMode) setSelectMode(false);
+    });
+    paintSelBar();
+  };
+
   // ─────────── interactions ─────────────────────────────────
 
   const wireRows = () => {
@@ -764,6 +940,15 @@
       $("input.qb-check", row)?.addEventListener("change", (e) => {
         if (e.target.checked) markDone(it);
         else reopen(it);
+      });
+      // The SELECTION box, distinct from the done box beside it. Repaints
+      // only this row rather than the whole list, so ticking a dozen items
+      // does not rebuild the groups a dozen times.
+      $("input.qb-selectbox", row)?.addEventListener("change", (e) => {
+        const key = String(it.id);
+        if (e.target.checked) selected.add(key); else selected.delete(key);
+        row.classList.toggle("is-picked", e.target.checked);
+        paintSelBar();
       });
       $("button.qb-toggle", row)?.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -2318,6 +2503,7 @@
     }
 
     await loadItems();
+    wireSelectBar();
     // After the first render, prime the alerted set with currently-
     // overdue items so we don't fire a wall of toasts for tasks the
     // user has been ignoring across sessions.

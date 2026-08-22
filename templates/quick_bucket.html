@@ -558,6 +558,61 @@
   }
   .qb-effort-field input:focus { border-color: var(--color-primary); }
 
+  /* ── Bulk select -> calendar slot ──
+     The bar sits above the groups and stays quiet until Select is pressed;
+     the everyday use of this page is one line and one toggle, and a
+     permanent row of checkboxes would tax that for an occasional task. */
+  .qb-selbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 4px 0 10px; padding: 0 2px;
+  }
+  .qb-selbtn {
+    font-size: 12.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text); cursor: pointer; white-space: nowrap;
+  }
+  .qb-selbtn:hover { background: var(--color-bg); }
+  .qb-selbtn.is-on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .qb-selbtn--ghost { font-weight: 600; color: var(--color-text-secondary); }
+  .qb-selbtn--go { background: #4338ca; border-color: #4338ca; color: #fff; }
+  .qb-selbtn--go:hover:not([disabled]) { background: #3730a3; }
+  .qb-selbtn--go[disabled] { opacity: .45; cursor: default; }
+  .qb-selcount { font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); }
+
+  /* The selection box only exists in select mode, so the row keeps its
+     normal geometry the rest of the time. */
+  .qb-selectbox { flex: 0 0 auto; width: 17px; height: 17px; cursor: pointer;
+                  accent-color: #4338ca; margin-right: 2px; }
+  .qb-row.is-picked { background: color-mix(in srgb, #4338ca 10%, var(--color-surface)); }
+
+  /* Where a row went, once it has been scheduled. Shown rather than hiding
+     the row: the item is scheduled, not finished, and it is still yours. */
+  .qb-sched-pill {
+    flex: 0 0 auto; font-size: 10.5px; font-weight: 700; border-radius: 999px;
+    padding: 2px 7px; white-space: nowrap;
+    background: color-mix(in srgb, #4338ca 14%, transparent); color: #4338ca;
+  }
+  html.dark .qb-sched-pill { color: #a5b4fc; background: rgba(99,102,241,.18); }
+
+  .qb-sched { padding: 18px 18px 16px; }
+  .qb-sched h3 { margin: 0 0 4px; font-size: 17px; font-weight: 800; }
+  .qb-sched-sub { margin: 0 0 14px; font-size: 13px; color: var(--color-text-secondary); }
+  .qb-sched-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .qb-sched-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+                    font-weight: 700; color: var(--color-text-secondary); }
+  .qb-sched-field em { font-weight: 500; font-style: normal; }
+  .qb-sched-field--wide { grid-column: 1 / -1; }
+  .qb-sched-field input {
+    font-size: 14px; padding: 8px 10px; border-radius: 9px;
+    border: 1px solid var(--color-border); background: var(--color-bg);
+    color: var(--color-text); font-family: inherit; width: 100%; box-sizing: border-box;
+  }
+  .qb-sched-field input:focus { border-color: var(--color-primary); outline: none; }
+  .qb-sched-note { margin: 12px 0 0; font-size: 12.5px; line-height: 1.5;
+                   color: var(--color-text-secondary); }
+  .qb-sched-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  @media (max-width: 520px) { .qb-sched-grid { grid-template-columns: 1fr 1fr; } }
+
   /* "Move to category" modal */
   .qb-modal-backdrop {
     position: fixed; inset: 0; background: rgba(15,23,42,.5);
@@ -989,9 +1044,65 @@
     </section>
   </div>
 
+  <!-- Bulk select -> one calendar slot. Off by default and out of the way:
+       the everyday use of this page is typing one line and cycling a bucket,
+       and a permanent row of checkboxes would tax that to serve the
+       occasional planning session. -->
+  <div class="qb-selbar" id="qb-selbar">
+    <button type="button" class="qb-selbtn" id="qb-sel-toggle">Select</button>
+    <span class="qb-selcount" id="qb-selcount" hidden>0 selected</span>
+    <button type="button" class="qb-selbtn qb-selbtn--ghost" id="qb-sel-all" hidden>All</button>
+    <button type="button" class="qb-selbtn qb-selbtn--ghost" id="qb-sel-none" hidden>None</button>
+    <button type="button" class="qb-selbtn qb-selbtn--go" id="qb-sel-schedule" hidden disabled>
+      Move to calendar →
+    </button>
+  </div>
+
   <div id="qb-groups"></div>
   <div id="qb-empty" class="qb-empty" hidden>Nothing in the bucket — add one above.</div>
 </main>
+
+<!-- The slot picker. Deliberately four fields: which day, what time, how
+     long, and what to call it. Anything more and this becomes the event
+     editor, which already exists on the calendar. -->
+<div class="qb-modal-backdrop" id="qb-sched-modal" role="dialog" aria-modal="true"
+     aria-hidden="true" aria-labelledby="qb-sched-title">
+  <div class="qb-modal qb-sched">
+    <h3 id="qb-sched-title">Move to a calendar slot</h3>
+    <p class="qb-sched-sub" id="qb-sched-sub"></p>
+
+    <div class="qb-sched-grid">
+      <label class="qb-sched-field">
+        <span>Day</span>
+        <input type="date" id="qb-sched-date">
+      </label>
+      <label class="qb-sched-field">
+        <span>Start</span>
+        <input type="time" id="qb-sched-start" step="300">
+      </label>
+      <label class="qb-sched-field">
+        <span>Minutes</span>
+        <input type="number" id="qb-sched-dur" min="5" max="600" step="5" value="30">
+      </label>
+      <label class="qb-sched-field qb-sched-field--wide">
+        <span>Title <em>(optional)</em></span>
+        <input type="text" id="qb-sched-title-in" maxlength="200"
+               placeholder="Named after the task, or “N bucket tasks”">
+      </label>
+    </div>
+
+    <p class="qb-sched-note">
+      The selected tasks become the event's <strong>description</strong>, one
+      per line. They stay in the bucket, linked to the slot — nothing is
+      deleted and nothing is marked done.
+    </p>
+
+    <div class="qb-sched-actions">
+      <button type="button" class="qb-selbtn qb-selbtn--ghost" id="qb-sched-cancel">Cancel</button>
+      <button type="button" class="qb-selbtn qb-selbtn--go" id="qb-sched-go">Create slot</button>
+    </div>
+  </div>
+</div>
 
 <!-- Pomodoro timer popup. The trigger button on the stats card opens
      this; the timer keeps ticking even when the popup is closed. -->
