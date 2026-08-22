@@ -2187,3 +2187,41 @@ def test_announcer_keepalive_is_opt_in_and_not_actually_silent():
     assert 'state.mode === "on"' in body and "state.keepalive" in body
     # And the limits are stated to the user, not buried in a comment.
     assert "once the page" in js and "is closed" in js
+
+
+def test_announcer_recommends_the_keepalive_to_installed_app_users():
+    """Asked: "I have the PWA, can it not announce even when minimised?"
+
+    Installing changes nothing about what the platform ALLOWS — an
+    installed app is still a document, and a minimised window is still
+    hidden and freezable. What it changes is the advice: someone who
+    installed the app is far more likely to leave it minimised and expect
+    it to keep working, which is exactly what the keep-alive is for. So the
+    recommendation is surfaced there instead of buried in a paragraph.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "display-mode: standalone" in js
+    # iOS reports installed-ness its own way.
+    assert "navigator.standalone" in js
+    assert "ta-tip" in js
+    # Shown only when it would actually help: installed AND not already on.
+    assert "isInstalled() && !state.keepalive" in js
+
+
+def test_periodic_background_sync_cannot_drive_a_15_minute_announcement():
+    """The obvious "surely the service worker can do it" answer, closed off
+    in the codebase itself: the app already registers periodicSync, at a
+    TWELVE HOUR interval, and the service worker's own comment records that
+    the browser fires it "usually closer to once per day".
+
+    Nowhere near 15 minutes — and a service worker cannot speak anyway,
+    since speechSynthesis is a window API with no worker equivalent.
+    """
+    sw = open("static/service-worker.js", encoding="utf-8").read()
+    pwa = open("static/js/pwa.js", encoding="utf-8").read()
+    assert "periodicsync" in sw
+    assert "12h interval" in sw or "12 * 60" in pwa or "43200" in pwa, (
+        "the periodic sync interval is no longer documented as coarse")
+    # And nothing should ever try to speak from the worker.
+    assert "speechSynthesis" not in sw, (
+        "a service worker has no speechSynthesis — this cannot work")

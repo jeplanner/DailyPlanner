@@ -163,6 +163,24 @@
      stops counting as playback — which would silently undo the whole
      point. Verified only by reasoning about the spec; if freezing still
      happens with this on, that is the first thing to re-check. */
+  /* Running as an INSTALLED PWA rather than a tab. It changes nothing about
+     what the platform allows — an installed app is still a document, and a
+     minimised window is still hidden — but it does change the ADVICE: someone
+     who installed the app is far more likely to leave it minimised and expect
+     it to keep working, which is exactly the case the keep-alive exists for.
+     So the recommendation is surfaced instead of buried. */
+  function isInstalled() {
+    try {
+      return (window.matchMedia &&
+              (window.matchMedia("(display-mode: standalone)").matches ||
+               window.matchMedia("(display-mode: window-controls-overlay)").matches ||
+               window.matchMedia("(display-mode: minimal-ui)").matches)) ||
+             window.navigator.standalone === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function keepaliveOn() {
     if (keepCtx) return true;
     try {
@@ -239,6 +257,9 @@
       "font-size:12px;font-weight:700;cursor:pointer}",
       ".ta-keep input{width:15px;height:15px;accent-color:#4338ca;cursor:pointer}",
       ".ta-note{margin-top:7px !important;font-size:10.5px !important;line-height:1.45}",
+      ".ta-tip{margin-top:6px !important;font-size:11px !important;line-height:1.45;",
+      "color:#4338ca;font-weight:700}",
+      ".ta-tip[hidden]{display:none}",
     ].join("");
     var el = document.createElement("style");
     el.id = "ta-style";
@@ -272,6 +293,8 @@
     });
     var keep = pop.querySelector("[data-ta-keep]");
     if (keep) keep.checked = !!state.keepalive;
+    var tip = pop.querySelector(".ta-tip");
+    if (tip) tip.hidden = !(isInstalled() && !state.keepalive);
     var warn = pop.querySelector(".ta-warn");
     if (warn) warn.hidden = !(state.mode === "on" && !armed);
   }
@@ -296,6 +319,9 @@
       '</div>' +
       '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
         'Keep going when minimised</label>' +
+      '<p class="ta-tip" hidden>You are running the installed app &mdash; turn this ' +
+      'on, or the system can freeze the window while it is minimised and the ' +
+      'announcements stop.</p>' +
       '<p class="ta-note">Announcements survive another window being on top. They ' +
       'stop if the browser freezes this tab &mdash; the option above prevents that ' +
       'by holding a silent sound open, at the cost of a little battery and an ' +
@@ -399,6 +425,7 @@
     _slotFor: slotFor,
     _check: check,
     _supported: supported,
+    _isInstalled: isInstalled,
   };
 
   if (document.readyState === "loading") {
