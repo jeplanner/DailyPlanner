@@ -3196,3 +3196,42 @@ def test_quick_bucket_accepts_a_pasted_list(auth_client):
     # The server still bounds each individual item.
     import routes.quick_bucket as qb
     assert qb._MAX_TEXT_LEN == 500
+
+
+def test_quick_bucket_can_show_one_group_at_a_time(auth_client):
+    """Asked for as "a filter to show only Future".
+
+    Future IS the backlog bucket, and it is unreadable sitting underneath
+    everything due now. Built as a focus on any single group rather than a
+    Future-only toggle: it is the same control, and it also answers "what is
+    due now" and "what did I finish", which are the other two questions this
+    list gets asked.
+    """
+    html = auth_client.get("/quick-bucket").get_data(as_text=True)
+    assert 'id="qb-groupfilter"' in html
+
+    js = open("static/js/quick_bucket.js", encoding="utf-8").read()
+    assert "GROUP_FILTERS" in js and "paintGroupFilter" in js
+    # Every group, plus an explicit All.
+    for key in ('""', '"now"', '"today"', '"future"', '"done"'):
+        assert key in js.split("const GROUP_FILTERS")[1].split("];")[0]
+
+    paint = js.split("const paintGroupFilter")[1].split("const wireGroupFilter")[0]
+    # The count is half the point: the chip must say how much is in Future
+    # while you are looking at Now, so it is computed from ALL groups.
+    assert "VISIBLE_GROUPS.reduce" in paint
+    # An empty Future bucket is a fact worth looking at, not a dead button.
+    # Match the ATTRIBUTE, not the word — the comment explaining this says
+    # "disabled", and matching prose is a mistake this suite keeps making.
+    assert "disabled>" not in paint and 'disabled="' not in paint
+
+    wire = js.split("const wireGroupFilter")[1].split("// ───")[0]
+    # Pressing the active chip returns to All, so the filter is never a state
+    # you have to hunt for the way out of.
+    assert "groupFilter === next" in wire
+    # Persisted: a backlog review is a mode you stay in for a few minutes.
+    assert "GROUP_FILTER_KEY" in wire
+
+    # The default is everything — the everyday view must not change.
+    state = js.split("let groupFilter =")[1][:40]
+    assert '""' in state

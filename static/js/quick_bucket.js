@@ -45,6 +45,20 @@
      comparing those to numeric ids silently never matches. */
   let selectMode = false;
   const selected = new Set();
+
+  /* Which group is being shown. "" means all of them, which is the
+     everyday view and stays the default — this exists so the FUTURE
+     bucket can be looked at on its own, as a backlog, without the
+     nine things due now sitting on top of it.
+
+     Persisted, because a backlog review is a mode you stay in for a
+     few minutes and losing it on every render would be maddening. */
+  const GROUP_FILTER_KEY = "qb-group-filter-v1";
+  let groupFilter = "";
+  try {
+    const saved = localStorage.getItem(GROUP_FILTER_KEY) || "";
+    if (["now", "today", "future", "done"].includes(saved)) groupFilter = saved;
+  } catch (_) {}
   // Tracks rows we've already alerted on so the toast / row pulse only
   // fires once when a deadline trips, not every 30s after.
   const alerted = new Set();
@@ -551,8 +565,13 @@
     }
     empty.setAttribute("hidden", "");
     const groups = groupItems();
-    const anyVisible = VISIBLE_GROUPS.some(g => groups[g].length > 0);
-    wrap.innerHTML = VISIBLE_GROUPS.map(g => {
+    // Counts come from ALL groups, so the chips can say how much is in
+    // Future while you are looking at Now — the number is half the reason
+    // to have the filter at all.
+    paintGroupFilter(groups);
+    const shown = groupFilter ? [groupFilter] : VISIBLE_GROUPS;
+    const anyVisible = shown.some(g => groups[g].length > 0);
+    wrap.innerHTML = shown.map(g => {
       const list = groups[g];
       if (!list.length) return "";
       return `
@@ -775,6 +794,52 @@
         await saveTop5(remaining);
         toast("Removed from Top 5", "info");
       });
+    });
+  };
+
+  // ─────────── show one group at a time ─────────────────────
+  // Asked for as "a filter to show only Future". Built as a focus on any
+  // ONE group rather than a Future-only toggle: the same control, and it
+  // also answers "what is due now" and "what did I finish today", which
+  // are the other two questions this list gets asked.
+
+  const GROUP_FILTERS = [
+    ["", "All"],
+    ["now", "Now"],
+    ["today", "Today"],
+    ["future", "Future"],
+    ["done", "Done"],
+  ];
+
+  const paintGroupFilter = (groups) => {
+    const bar = $("#qb-groupfilter");
+    if (!bar) return;
+    bar.innerHTML = GROUP_FILTERS.map(function (pair) {
+      const key = pair[0], label = pair[1];
+      const n = key ? (groups[key] || []).length
+                    : VISIBLE_GROUPS.reduce(function (t, g) {
+                        return t + (groups[g] || []).length;
+                      }, 0);
+      const on = groupFilter === key ? " is-on" : "";
+      // An empty group is still clickable — a Future bucket with nothing in
+      // it is a fact worth being able to look at, not a disabled button.
+      return '<button type="button" class="qb-gf' + on + '" data-gf="' + key + '">' +
+             label + ' <span class="qb-gf-n">' + n + '</span></button>';
+    }).join("");
+  };
+
+  const wireGroupFilter = () => {
+    const bar = $("#qb-groupfilter");
+    if (!bar) return;
+    bar.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-gf]");
+      if (!btn) return;
+      const next = btn.getAttribute("data-gf") || "";
+      // Pressing the active one returns to All, so the filter is never a
+      // state you have to hunt for the way out of.
+      groupFilter = (groupFilter === next) ? "" : next;
+      try { localStorage.setItem(GROUP_FILTER_KEY, groupFilter); } catch (_) {}
+      render();
     });
   };
 
@@ -2536,6 +2601,7 @@
 
     await loadItems();
     wireSelectBar();
+    wireGroupFilter();
     // After the first render, prime the alerted set with currently-
     // overdue items so we don't fire a wall of toasts for tasks the
     // user has been ignoring across sessions.

@@ -558,6 +558,24 @@
   }
   .qb-effort-field input:focus { border-color: var(--color-primary); }
 
+  /* ── Show one group at a time ── */
+  .qb-groupfilter {
+    display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 10px; padding: 0 2px;
+  }
+  .qb-gf {
+    font-size: 12.5px; font-weight: 700; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text-secondary); cursor: pointer; white-space: nowrap;
+  }
+  .qb-gf:hover { background: var(--color-bg); }
+  .qb-gf.is-on {
+    background: var(--color-primary); border-color: var(--color-primary); color: #fff;
+  }
+  .qb-gf-n {
+    font-weight: 800; font-variant-numeric: tabular-nums; opacity: .7; margin-left: 2px;
+  }
+  .qb-gf.is-on .qb-gf-n { opacity: .9; }
+
   /* ── Bulk select -> calendar slot ──
      The bar sits above the groups and stays quiet until Select is pressed;
      the everyday use of this page is one line and one toggle, and a
@@ -1051,6 +1069,14 @@
        the everyday use of this page is typing one line and cycling a bucket,
        and a permanent row of checkboxes would tax that to serve the
        occasional planning session. -->
+  {# Focus one group. Asked for as "show only Future" — the Future bucket is
+     the backlog, and it is unreadable underneath everything due now. Built
+     for any single group because it is the same control and it also answers
+     "what is due now" and "what did I finish". Counts are always for ALL
+     groups, so the chip tells you how much is in Future without switching
+     to it. #}
+  <div class="qb-groupfilter" id="qb-groupfilter"></div>
+
   <div class="qb-selbar" id="qb-selbar">
     <button type="button" class="qb-selbtn" id="qb-sel-toggle">Select</button>
     <span class="qb-selcount" id="qb-selcount" hidden>0 selected</span>
