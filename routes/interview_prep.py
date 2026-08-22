@@ -791,6 +791,115 @@ def _ai_sde_lookup(entry_id, title):
     return _prep_lookup("ai_sde", entry_id, title)
 
 
+#: "AISDEPrep · Balanced Binary Tree" -> ("ai_sde", "Balanced Binary Tree").
+#: The separator alone is not enough to recognise one of these: a bucket row
+#: reading "Walking (Pomodoro · 25m)" contains it too. The PROJECT NAME
+#: prefix is what identifies a prep row.
+_BUCKET_SEP = " · "
+
+
+def parse_bucket_text(text):
+    """The bank and topic a Quick Bucket row came from, or (None, None).
+
+    Exported because the bucket's own done/reopen endpoints need to walk
+    this backwards — ticking a row there has to reach the topic it came
+    from, not just the row.
+    """
+    text = (text or "").strip()
+    for bank, spec in PREP_BANKS.items():
+        prefix = spec["project"] + _BUCKET_SEP
+        if text.startswith(prefix):
+            title = text[len(prefix):].strip()
+            return (bank, title) if title else (None, None)
+    return (None, None)
+
+
+def complete_prep_artifacts(user_id, bank, title, done, include_bucket=True):
+    """Close (or reopen) everything a scheduled topic created.
+
+    `include_bucket` exists to stop the two directions chasing each other.
+    When the BUCKET is the thing being ticked, its own endpoint has already
+    updated that row, so re-writing it here would be pointless work at best
+    and a loop at worst.
+
+    Returns a count per surface. Every failure is logged and swallowed: a
+    tick that half-propagates is better than a tick that 500s.
+    """
+    if bank not in PREP_BANKS:
+        return {}
+    spec = PREP_BANKS[bank]
+    touched = {"tasks": 0, "events": 0, "bucket": 0, "progress": 0}
+
+    project_id = _find_prep_project(user_id, bank)
+    if project_id:
+        try:
+            update("project_tasks",
+                   params={"user_id": f"eq.{user_id}",
+                           "project_id": f"eq.{project_id}",
+                           "task_text": _pg_eq(title),
+                           "is_deleted": "eq.false"},
+                   json={"status": "done" if done else "open"})
+            touched["tasks"] = 1
+        except Exception:
+            logger.warning("prep complete: task update failed for %r", title,
+                           exc_info=True)
+
+    try:
+        rows = get("daily_events", params={
+            "user_id": f"eq.{user_id}",
+            "title": _pg_eq(title),
+            "is_deleted": "eq.false",
+            "select": "id,description",
+            "limit": "200",
+        }) or []
+        for r in rows:
+            # Only the rows the scheduler wrote. A real appointment that
+            # happens to share a title is not this topic.
+            if spec["page"] not in (r.get("description") or ""):
+                continue
+            update("daily_events",
+                   params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+                   json={"status": "done" if done else "open"})
+            touched["events"] += 1
+    except Exception:
+        logger.warning("prep complete: event update failed for %r", title,
+                       exc_info=True)
+
+    if include_bucket:
+        bucket_text = f"{spec['project']}{_BUCKET_SEP}{title}"[:500]
+        try:
+            update("quick_bucket",
+                   params={"user_id": f"eq.{user_id}",
+                           "text": _pg_eq(bucket_text),
+                           "is_deleted": "eq.false"},
+                   json={"is_done": done,
+                         "done_at": _iso_now() if done else None,
+                         "top5_date": None, "top5_position": None})
+            touched["bucket"] = 1
+        except Exception:
+            logger.warning("prep complete: bucket update failed for %r", title,
+                           exc_info=True)
+
+    # The STUDY record, so the bank page's own checkbox agrees. Only
+    # /ai-sde keeps this on the server; /java and /sql hold it in
+    # localStorage, which nothing here can reach — the client reconciles
+    # those from the task status instead.
+    if bank == "ai_sde" and title in _AI_SDE_TITLES:
+        try:
+            post("ai_sde_progress",
+                 {"user_id": user_id, "entry_title": title,
+                  "studied": bool(done),
+                  "studied_at": _iso_now() if done else None,
+                  "updated_at": _iso_now()},
+                 prefer="resolution=merge-duplicates,return=minimal")
+            touched["progress"] = 1
+        except Exception:
+            logger.warning("prep complete: progress update failed for %r", title,
+                           exc_info=True)
+
+    return touched
+
+
 @interview_prep_bp.route("/api/prep/complete", methods=["POST"])
 @login_required
 def prep_complete():
@@ -825,66 +934,9 @@ def prep_complete():
         return jsonify({"error": "title is required"}), 400
     done = bool(data.get("done", True))
 
-    spec = PREP_BANKS[bank]
-    touched = {"tasks": 0, "events": 0, "bucket": 0}
-
-    # ── the project task ────────────────────────────────────────────
-    # Scoped to the bank's project so a same-named task elsewhere is not
-    # swept up. Uses the read-only lookup: completing a topic is not a
-    # reason to bring a project into existence.
-    project_id = _find_prep_project(user_id, bank)
-    if project_id:
-        try:
-            update("project_tasks",
-                   params={"user_id": f"eq.{user_id}",
-                           "project_id": f"eq.{project_id}",
-                           "task_text": _pg_eq(title),
-                           "is_deleted": "eq.false"},
-                   json={"status": "done" if done else "open"})
-            touched["tasks"] = 1
-        except Exception:
-            logger.warning("prep complete: task update failed for %r", title,
-                           exc_info=True)
-
-    # ── the calendar row ────────────────────────────────────────────
-    # Matched on title AND on the description the scheduler wrote, so a
-    # real appointment that happens to share a name is left alone.
-    try:
-        rows = get("daily_events", params={
-            "user_id": f"eq.{user_id}",
-            "title": _pg_eq(title),
-            "is_deleted": "eq.false",
-            "select": "id,description",
-            "limit": "200",
-        }) or []
-        for r in rows:
-            if spec["page"] not in (r.get("description") or ""):
-                continue
-            update("daily_events",
-                   params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
-                   json={"status": "done" if done else "open"})
-            touched["events"] += 1
-    except Exception:
-        logger.warning("prep complete: event update failed for %r", title,
-                       exc_info=True)
-
-    # ── the Quick Bucket line ───────────────────────────────────────
-    bucket_text = f"{spec['project']} · {title}"[:500]
-    try:
-        update("quick_bucket",
-               params={"user_id": f"eq.{user_id}",
-                       "text": _pg_eq(bucket_text),
-                       "is_deleted": "eq.false"},
-               json={"is_done": done,
-                     "done_at": _iso_now() if done else None,
-                     # Clear the Top-5 pins on completion, the same way the
-                     # bucket's own done endpoint does — otherwise the row
-                     # stays pinned and crossed out in today's panel.
-                     "top5_date": None, "top5_position": None})
-        touched["bucket"] = 1
-    except Exception:
-        logger.warning("prep complete: bucket update failed for %r", title,
-                       exc_info=True)
+    # The work itself is shared with the Quick Bucket's own done/reopen
+    # endpoints, so a tick in either place lands in exactly the same rows.
+    touched = complete_prep_artifacts(user_id, bank, title, done)
 
     return jsonify({"status": "ok", "bank": bank, "title": title,
                     "done": done, "touched": touched})

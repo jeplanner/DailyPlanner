@@ -2771,3 +2771,109 @@ def test_the_studied_checkbox_is_wired_without_hijacking_the_page():
     # Our own bulk box must never be mistaken for the studied one.
     assert 'classList.contains("prep-pickbox")' in handler
     assert "stopPropagation" not in handler, "would break the page's own tick"
+
+
+def test_quick_bucket_tick_reaches_the_topic_it_came_from(auth_client, monkeypatch):
+    """Reported: un-ticking a row in the Quick Bucket left the prep page and
+    the day planner still showing it done.
+
+    The link existed in ONE direction — scheduling a topic wrote a bucket
+    row, but the row knew nothing about where it came from. Both endpoints
+    now walk it back.
+    """
+    import routes.quick_bucket as qb
+    import routes.interview_prep as ip
+    calls = []
+    monkeypatch.setattr(qb, "update", lambda *a, **k: None)
+    monkeypatch.setattr(qb, "_fetch_event_id", lambda u, i: None)
+    monkeypatch.setattr(qb, "get", lambda t, params=None, **k:
+                        [{"text": "AISDEPrep · Balanced Binary Tree"}]
+                        if t == "quick_bucket" else [])
+    monkeypatch.setattr(ip, "complete_prep_artifacts",
+                        lambda u, b, t, d, include_bucket=True:
+                        calls.append((b, t, d, include_bucket)) or {})
+
+    auth_client.post("/api/quick-bucket/X/done")
+    # include_bucket=False: the caller has already written that row, and
+    # re-writing it would be pointless work at best and a fight at worst.
+    assert calls == [("ai_sde", "Balanced Binary Tree", True, False)]
+
+    calls.clear()
+    auth_client.post("/api/quick-bucket/X/reopen")
+    assert calls == [("ai_sde", "Balanced Binary Tree", False, False)]
+
+
+def test_an_ordinary_bucket_row_is_not_mistaken_for_a_prep_one(auth_client, monkeypatch):
+    """The separator alone cannot identify one: a row reading
+    "Walking (Pomodoro · 25m)" contains it too. The PROJECT NAME prefix is
+    what marks a prep row."""
+    import routes.quick_bucket as qb
+    import routes.interview_prep as ip
+    from routes.interview_prep import parse_bucket_text
+
+    assert parse_bucket_text("AISDEPrep · Balanced Binary Tree") == \
+        ("ai_sde", "Balanced Binary Tree")
+    assert parse_bucket_text("SQLPrep · ORDER BY, and where NULL sorts") == \
+        ("sql", "ORDER BY, and where NULL sorts")
+    for text in ("Walking (Pomodoro · 25m)", "buy milk", "Something · else",
+                 "AISDEPrep · ", ""):
+        assert parse_bucket_text(text) == (None, None), text
+
+    calls = []
+    monkeypatch.setattr(qb, "update", lambda *a, **k: None)
+    monkeypatch.setattr(qb, "_fetch_event_id", lambda u, i: None)
+    monkeypatch.setattr(qb, "get", lambda t, params=None, **k:
+                        [{"text": "Walking (Pomodoro · 25m)"}] if t == "quick_bucket" else [])
+    monkeypatch.setattr(ip, "complete_prep_artifacts",
+                        lambda *a, **k: calls.append(a) or {})
+    auth_client.post("/api/quick-bucket/X/done")
+    assert not calls
+
+
+def test_ai_sde_study_record_follows_a_tick_made_elsewhere(auth_client, monkeypatch):
+    """/ai-sde keeps studied state on the server, so closing a topic from
+    the bucket has to update it or the page disagrees on reload.
+
+    /java and /sql keep theirs in localStorage, which nothing server-side
+    can reach — those are reconciled on the client from the task status.
+    """
+    import routes.interview_prep as ip
+    posted = []
+    monkeypatch.setattr(ip, "_find_prep_project", lambda u, b: None)
+    monkeypatch.setattr(ip, "get", lambda *a, **k: [])
+    monkeypatch.setattr(ip, "update", lambda *a, **k: None)
+    monkeypatch.setattr(ip, "post", lambda t, p, **k: posted.append((t, p)) or [{}])
+
+    title = ip.AI_SDE_ENTRIES[0]["title"]
+    ip.complete_prep_artifacts("u1", "ai_sde", title, True)
+    prog = [p for t, p in posted if t == "ai_sde_progress"]
+    assert prog and prog[0]["studied"] is True and prog[0]["entry_title"] == title
+
+    posted.clear()
+    ip.complete_prep_artifacts("u1", "ai_sde", title, False)
+    prog = [p for t, p in posted if t == "ai_sde_progress"]
+    assert prog and prog[0]["studied"] is False and prog[0]["studied_at"] is None
+
+    # A bank with no server-side study record must not invent one.
+    posted.clear()
+    ip.complete_prep_artifacts("u1", "sql", "ORDER BY, and where NULL sorts", True)
+    assert not [p for t, p in posted if t == "ai_sde_progress"]
+
+
+def test_the_checkbox_is_reconciled_without_echoing_back():
+    """/java and /sql hold studied state in localStorage, so a tick made in
+    the bucket can only reach them on the client. The reconciler dispatches
+    a real change event — each page persists its own progress in its own
+    handler, and simply setting .checked would leave the tick undone on the
+    next reload — and guards against that event returning as a fresh
+    completion.
+    """
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    assert "function reconcileChecked" in js
+    body = js.split("function reconcileChecked")[1].split("function syncCompletion")[0]
+    assert "reconciling = true" in body and "reconciling = false" in body
+    assert 'new Event("change"' in body, "the page would never persist the tick"
+    # Only topics that are actually scheduled — an unscheduled one has no
+    # task to disagree with.
+    assert "if (!info) return" in body
+    assert "if (reconciling) return;" in js.split("function syncCompletion")[1][:200]

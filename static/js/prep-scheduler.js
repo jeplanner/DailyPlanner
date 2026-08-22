@@ -691,6 +691,7 @@
         if (!j || !j.scheduled) return;
         schedCache = j.scheduled;
         paintScheduled(root, schedCache);
+        reconcileChecked(root, schedCache);
         /* The pages rebuild their list on every filter change, which wipes
            the pills. Repaint from the cache rather than refetching — the
            answer cannot have changed because a filter moved. */
@@ -698,6 +699,7 @@
           root.dataset.prepWhenBound = "1";
           new MutationObserver(function () {
             paintScheduled(root, schedCache);
+            reconcileChecked(root, schedCache);
           }).observe(root, { childList: true });
         }
       })
@@ -730,7 +732,49 @@
      still correct and the schedule catches up on the next tick.
      ══════════════════════════════════════════════════════════════════ */
 
+  /* Set while the checkbox is being brought into line with the server, so
+     the change we dispatch to make the page persist it does not come
+     straight back here as a fresh completion. */
+  var reconciling = false;
+
+  /* THE OTHER DIRECTION. Ticking a row in the Quick Bucket closes the topic
+     server-side, but /java and /sql keep their studied state in
+     localStorage where nothing server-side can reach it — so on load the
+     checkbox has to be brought into line with what the schedule says.
+
+     ONLY FOR TOPICS THAT ARE ACTUALLY SCHEDULED. An unscheduled topic has
+     no task to disagree with, and forcing its box either way would be
+     overwriting a study record with silence.
+
+     The change event IS dispatched, because each page persists its own
+     progress in its own handler and simply setting .checked would leave the
+     tick undone on the next reload. */
+  function reconcileChecked(root, scheduled) {
+    reconciling = true;
+    try {
+      bulkButtons(root).forEach(function (btn) {
+        var info = scheduled[btn.getAttribute("data-title") || ""];
+        if (!info) return;
+        var card = btn.closest(".q-card");
+        if (!card) return;
+        var box = card.querySelector('input[type="checkbox"]:not(.prep-pickbox)');
+        if (!box) return;
+        var want = (info.status || "").toLowerCase() === "done";
+        if (box.checked === want) return;
+        box.checked = want;
+        try {
+          box.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch (_) {
+          box.dispatchEvent(document.createEvent("HTMLEvents"));
+        }
+      });
+    } finally {
+      reconciling = false;
+    }
+  }
+
   function syncCompletion(card, isDone) {
+    if (reconciling) return;            // we set that box, not the user
     var btn = card.querySelector("[data-prep-plan]");
     if (!btn) return;                       // not a schedulable card
     var bank = btn.getAttribute("data-bank");

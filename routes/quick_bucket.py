@@ -724,6 +724,39 @@ def reorder():
     return jsonify({"ok": True, "count": len(ids)})
 
 
+def _propagate_prep(user_id, item_id, done):
+    """A bucket row that came from a prep topic closes the topic too.
+
+    Reported: un-ticking a row here left the prep page and the day planner
+    still showing it as outstanding. The link existed in one direction only
+    — scheduling a topic wrote a bucket row, but the bucket row knew nothing
+    about where it came from.
+
+    `include_bucket=False` because the caller has already updated this very
+    row; re-writing it would be pointless work and, if the two ever
+    disagreed, a fight.
+
+    Best-effort and never raises: the bucket's own tick has to succeed
+    whatever happens here.
+    """
+    try:
+        rows = get("quick_bucket", params={
+            "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
+            "select": "text", "limit": "1",
+        }) or []
+        if not rows:
+            return
+        from routes.interview_prep import (complete_prep_artifacts,
+                                           parse_bucket_text)
+        bank, title = parse_bucket_text(rows[0].get("text"))
+        if not bank:
+            return                      # an ordinary bucket line
+        complete_prep_artifacts(user_id, bank, title, done, include_bucket=False)
+    except Exception:
+        logger.warning("quick_bucket: prep propagation failed for %s",
+                       item_id, exc_info=True)
+
+
 @quick_bucket_bp.route("/api/quick-bucket/<item_id>/done", methods=["POST"])
 @login_required
 def mark_done(item_id):
@@ -749,6 +782,7 @@ def mark_done(item_id):
 
     if old_event_id:
         cal_sync.sync_async(user_id, item_id, {}, old_event_id=old_event_id, force_delete=True)
+    _propagate_prep(user_id, item_id, True)
     return jsonify({"ok": True})
 
 
@@ -780,6 +814,10 @@ def reopen(item_id):
     if cur_rows and cur_rows[0].get("due_at"):
         cal_sync.sync_async(user_id, item_id, cur_rows[0])
 
+    # Reopening here reopens the topic it came from, which is the half that
+    # was reported missing: un-ticking a row left the prep page and the day
+    # planner still showing it done.
+    _propagate_prep(user_id, item_id, False)
     return jsonify({"ok": True})
 
 
