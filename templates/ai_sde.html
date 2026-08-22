@@ -168,6 +168,13 @@
   .q-sub { font-size: 10px; font-weight: 800; color: #0f766e; background: #ccfbf1; border-radius: 999px;
            padding: 2px 8px; white-space: nowrap; flex: none; }
   html.dark .q-sub { color: #5eead4; background: #042f2e; }
+  /* A shadowed near-duplicate. Deliberately muted and dashed: this is the
+     row to SKIP, so it must not compete with the frequency chip beside it. */
+  .q-dup { font-size: 10px; font-weight: 800; color: #92400e; background: #fef3c7;
+           border: 1px dashed #f59e0b; border-radius: 999px;
+           padding: 2px 8px; white-space: nowrap; flex: none; }
+  html.dark .q-dup { color: #fcd34d; background: #3a2a06; border-color: #b45309; }
+  .q-card.dup .q-text { opacity: .72; }
   .fld.tags { background: #fdf4ff; border-left: 3px solid #a855f7; }
   html.dark .fld.tags { background: #2a1033; }
   .fld.tags .flagnote { display: block; margin-top: 4px; font-style: italic; color: var(--color-text-secondary); }
@@ -406,6 +413,11 @@
       <input type="text" class="search" id="search" placeholder="Search e.g. sliding window, attention, recall, STAR…">
       <label class="only"><input type="checkbox" id="unstudied"> Unstudied only</label>
       <label class="only" id="duewrap" style="display:none"><input type="checkbox" id="duefilter"> <span id="duelabel">Due for review</span></label>
+      <!-- 18 topics exist twice under two spellings, and because the halves
+           score alike they land ADJACENT in the stack rank — so the same
+           topic gets met twice in a row and paid for twice. Hidden by
+           default; nothing is deleted, so unticking shows them again. -->
+      <label class="only" id="dupwrap" style="display:none"><input type="checkbox" id="hidedupes" checked> <span id="duplabel">Hide duplicates</span></label>
       <a class="btn sm" href="/ai-sde/quiz" title="Daily 25-question quiz">🎯 Daily Quiz</a>
       <button class="btn sm" id="pdf" type="button" title="Open a printable PDF for the current filter">⤓ Export PDF</button>
     </div>
@@ -901,11 +913,31 @@
     if (!n && $("duefilter").checked) { $("duefilter").checked = false; render(); }
   }
 
+  /* The duplicate control only appears when there is something to hide, and
+     its label carries the payoff so the tick is an informed one. A bank with
+     no duplicates shows no control at all rather than a dead checkbox — the
+     same rule fillTagFilters() follows for an empty vocabulary. */
+  function paintDupes(d){
+    const wrap = $("dupwrap");
+    if (!wrap) return;
+    const n = d && d.shadows ? d.shadows : 0;
+    if (!n) { wrap.style.display = "none"; return; }
+    wrap.style.display = "";
+    const saved = Math.round(((d.total_minutes||0) - (d.deduped_minutes||0)) / 60);
+    $("duplabel").textContent = saved
+      ? `Hide duplicates (${n} topics, ${saved}h)`
+      : `Hide duplicates (${n} topics)`;
+    wrap.title = `${n} topics appear twice in this bank under two spellings. `
+      + `They score alike, so they land next to each other in the study order. `
+      + `Hiding them saves ${saved}h of repeated work. Nothing is deleted — untick to see them.`;
+  }
+
   function render(){
     if(!BANK) return;
     const cat = $("cat").value, onlyUn = $("unstudied").checked;
     const onlyDue = $("duefilter") ? $("duefilter").checked : false;
     const diff = $("diff") ? $("diff").value : "";
+    const hideDupes = $("hidedupes") ? $("hidedupes").checked : false;
     const pri = $("pri") ? $("pri").value : "", sort = $("sort") ? $("sort").value : "rank";
     // The six interview-tag filters, applied on top of everything above.
     const tv = {}; TAG_FILTERS.forEach(([id, field]) => { tv[field] = $(id) ? $(id).value : ""; });
@@ -913,6 +945,7 @@
       (!reading || readingOf(e) === reading) &&
       (!cat || e.cat===cat) && (!onlyUn || !studied.has(e.id)) && (!diff || e.difficulty===diff) &&
       (!onlyDue || isDue(e.title)) &&
+      (!hideDupes || !e.duplicate_of) &&
       (!pri || e.priority===pri) &&
       TAG_FILTERS.every(([, field]) => !tv[field] || e[field] === tv[field]) &&
       (searchIds === null || searchIds.has(e.id))
@@ -940,7 +973,7 @@
 
   function cardsHTML(list){
     return list.map(e => `
-      <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
+      <div class="q-card ${studied.has(e.id)?'done':''} ${e.duplicate_of?'dup':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
@@ -956,6 +989,7 @@
             ${e.tag_priority ? `<span class="q-freq ${FREQ_CLASS[e.tag_priority]||''}" title="How often this is really asked of a new grad">${esc(e.tag_priority)}</span>` : ""}
             ${e.tag_subtopic ? `<span class="q-sub" title="${esc(e.tag_topic||'')} — sub-area">${esc(e.tag_subtopic)}</span>` : ""}
             ${e.difficulty ? `<span class="q-diff diff-${esc((e.difficulty||'').toLowerCase())}">${esc(e.difficulty)}</span>` : ""}
+            ${e.duplicate_of ? `<span class="q-dup" title="Same topic as &quot;${esc(e.duplicate_of)}&quot; — study that one instead. Kept, not deleted.">⧉ duplicate</span>` : ""}
             <span class="q-badge">${esc(catLabel[e.cat]||e.cat)}</span>
           </span>
         </div>
@@ -1020,6 +1054,7 @@
   $("search").addEventListener("input", onSearchInput);
   $("unstudied").addEventListener("change", render);
   if ($("duefilter")) $("duefilter").addEventListener("change", render);
+  if ($("hidedupes")) $("hidedupes").addEventListener("change", render);
   TAG_FILTERS.forEach(([id]) => {
     const sel = $(id); if (!sel) return;
     // Changing the subject re-scopes the sub-area list before re-rendering.
@@ -1090,6 +1125,7 @@
       (BANK.categories||[]).forEach(c => catLabel[c.key]=c.label);
       $("cat").innerHTML = '<option value="">All topics</option>' + (BANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       fillTagFilters();
+      paintDupes(BANK.dupes);
       refreshDue();
       render();
       // The summaries come AFTER the first render, deliberately — see SUMS.

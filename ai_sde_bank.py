@@ -356162,6 +356162,24 @@ from ai_sde_tags import apply as _apply_tags, TAGS as _TAGS  # noqa: E402
 TAGGED_COUNT, UNTAGGED_COUNT = _apply_tags(ENTRIES)
 
 
+# ══ Near-duplicate pairs ══════════════════════════════════════════════════
+# 19 topics exist twice in this bank under two spellings. Because the two
+# halves score alike they land ADJACENT in the stack rank, so the same topic
+# is met twice in a row and its prep_minutes are paid twice.
+#
+# Also purely additive, and NOTHING IS DELETED - the shadowed twin keeps all
+# its content and stays readable. prep_minutes itself is left untouched on
+# purpose: it feeds the score and the P0-P3 band cut, so zeroing it would
+# renumber all 1,120 entries. `prep_minutes_effective` carries the deduped
+# number instead.
+from ai_sde_dupes import apply as _apply_dupes  # noqa: E402
+
+DUPLICATE_SHADOWS, DUPLICATE_CANONICALS, DUPLICATE_MERGE_PENDING = _apply_dupes(ENTRIES)
+
+#: Study time with each duplicated topic counted ONCE - the honest denominator.
+DEDUPED_PREP_MINUTES = sum(e["prep_minutes_effective"] for e in ENTRIES)
+
+
 # ══ Answers rewritten headline-first ══════════════════════════════════════
 # The "Answer / reasoning" field is what gets read under time pressure, and it
 # was written as dense prose - 3 or 4 sentences run together, unskimmable and

@@ -29,6 +29,10 @@ from system_design_bank import (CATEGORIES as SD_CATEGORIES,
                                  ENTRIES as SD_ENTRIES)
 from ai_sde_bank import (CATEGORIES as AI_SDE_CATEGORIES,
                          ENTRIES as AI_SDE_ENTRIES)
+# The module itself, for the module-level dedupe counters. Importing the
+# names directly would freeze them at import time; the counters are computed
+# during the bank's own import, so the module reference is the honest handle.
+import ai_sde_bank as AI_SDE_BANK_MODULE
 # Imported for the scheduler's bank registry only. java_bank is a plain
 # data module — it imports no routes, so this cannot cycle.
 import java_bank
@@ -278,6 +282,10 @@ _AI_SDE_LIST_FIELDS = (
     # Sort, the effort line, and the "prep time & priority" line in the body
     "rank", "cat_rank", "prep_minutes", "priority_label", "priority_rank",
     "priority_total", "priority_minutes_total", "priority_minutes_cumulative",
+    # Near-duplicate collapse. Only 18 of 1,120 rows carry duplicate_of, and
+    # its value is a title string, so this costs ~1 KB — worth it to stop the
+    # same topic being studied twice. See ai_sde_dupes.py.
+    "duplicate_of",
 )
 
 #: Fields the list deliberately omits — the body of the card. Kept as an
@@ -364,6 +372,16 @@ def ai_sde_bank():
         # the single source of truth in ai_sde_tags.py rather than a hardcoded
         # copy in the template that would drift the moment a value is added.
         "tag_vocab": _ai_sde_tag_vocab(),
+        # Near-duplicate topics. 18 pairs exist under two spellings and, because
+        # the halves score alike, they land ADJACENT in the stack rank — so the
+        # same topic gets met twice in a row and paid for twice. Nothing is
+        # deleted: the shadow keeps its content and the page can still show it.
+        "dupes": {
+            "shadows": AI_SDE_BANK_MODULE.DUPLICATE_SHADOWS,
+            "merge_pending": AI_SDE_BANK_MODULE.DUPLICATE_MERGE_PENDING,
+            "total_minutes": AI_SDE_BANK_MODULE.TOTAL_PREP_MINUTES,
+            "deduped_minutes": AI_SDE_BANK_MODULE.DEDUPED_PREP_MINUTES,
+        },
         # The must-read / optional split. The RULE travels rather than the
         # answer, so the page filters on tag_priority — which it already
         # has for every row — instead of the list carrying a second field
@@ -1082,6 +1100,15 @@ def ai_sde_pdf():
     if _tag_bits:
         _tags = " · ".join(_tag_bits)
         label = f"{label} — {_tags}" if label else _tags
+    # Near-duplicate topics are dropped from the export by default, matching
+    # the study page's own default. Printing both halves is worse here than
+    # on screen: on screen she can see they are the same topic and skip one,
+    # on paper she just reads it twice. ?dupes=1 prints them.
+    if (request.args.get("dupes") or "").strip() not in ("1", "true", "yes"):
+        _before = len(selected)
+        selected = [it for it in selected if not it.get("duplicate_of")]
+        if len(selected) < _before:
+            label = f"{label} — no duplicates" if label else "No duplicates"
     selected.sort(key=lambda it: it.get("rank") or 0)
     heading = label or "AI SDE Prep Bank"
     _mins = sum(it.get("prep_minutes") or 0 for it in selected)

@@ -13,6 +13,7 @@ seconds, catches the regressions users actually hit:
 
 Run with:  python -m pytest tests/test_smoke.py -v
 """
+import inspect
 import pytest
 
 
@@ -1154,3 +1155,110 @@ def test_every_question_bank_shows_a_card_summary(auth_client):
         # so clamping would reintroduce the cut-off the report was about.
         assert "-webkit-line-clamp" not in html, (
             f"{path} clamps the summary — it will be cut off again")
+
+
+def test_ai_sde_duplicate_map_is_keyed_to_real_titles():
+    """A mis-keyed title in ai_sde_dupes.py silently does nothing at all.
+
+    Same trap as the _EX_* example dicts and ai_sde_tags.py: the key is a
+    title string, so a typo produces no error and no effect. validate()
+    also rejects a self-reference and a shadow pointing at another shadow.
+    """
+    import ai_sde_bank as bank
+    import ai_sde_dupes
+    ai_sde_dupes.validate(bank.ENTRIES)
+
+
+def test_ai_sde_dedupe_changes_nothing_that_already_existed():
+    """The dedupe pass is ADDITIVE. Nothing is dropped and nothing renumbered.
+
+    prep_minutes feeds the stack-rank score and the P0-P3 band cut, so
+    zeroing a shadow's minutes there would re-band and renumber all 1,120
+    entries. The deduped figure lives in prep_minutes_effective instead,
+    and this pins that separation.
+    """
+    import ai_sde_bank as bank
+    assert len(bank.ENTRIES) == 1120, "an entry was dropped"
+    assert bank.TOTAL_PREP_MINUTES == sum(e["prep_minutes"] for e in bank.ENTRIES)
+    assert bank.DEDUPED_PREP_MINUTES < bank.TOTAL_PREP_MINUTES
+    for e in bank.ENTRIES:
+        if e.get("duplicate_of"):
+            assert e["prep_minutes"] > 0, "the shadow's own minutes were zeroed"
+            assert e["prep_minutes_effective"] == 0, "shadow still counted"
+            assert e.get("answer"), "the shadow lost its content — nothing is deleted"
+        else:
+            assert e["prep_minutes_effective"] == e["prep_minutes"]
+
+
+def test_ai_sde_duplicate_pairs_point_at_the_richer_entry():
+    """The canonical must not be the emptier half of the pair.
+
+    The selection rule is: the deep dive wins, else more content wins. A
+    pair that fails this is one where the rule was applied backwards and
+    she would be sent to the thinner entry.
+    """
+    import ai_sde_bank as bank
+    import ai_sde_dupes
+    by_title = {e["title"]: e for e in bank.ENTRIES}
+    weight = lambda e: (len(e.get("examples") or []) >= 10,
+                        len(e.get("answer") or "") + len(e.get("code") or ""))
+    for shadow, (canonical, note) in ai_sde_dupes.DUPES.items():
+        s, c = by_title[shadow], by_title[canonical]
+        if weight(c) < weight(s):
+            assert "RULE OVERRIDDEN" in note, (
+                f"{canonical!r} is thinner than the {shadow!r} it supersedes, "
+                "with no note explaining why")
+
+
+def test_ai_sde_merge_pending_pairs_are_not_silently_collapsed():
+    """A pair whose rule would shadow the RICHER entry stays open.
+
+    Collapsing it either way destroys the better teaching material, so it
+    is flagged as merge-pending rather than resolved wrongly. Both halves
+    keep their full prep_minutes because neither has been superseded yet.
+    """
+    import ai_sde_bank as bank
+    import ai_sde_dupes
+    by_title = {e["title"]: e for e in bank.ENTRIES}
+    assert bank.DUPLICATE_MERGE_PENDING == len(ai_sde_dupes.MERGE_PENDING)
+    for a, (b, _note) in ai_sde_dupes.MERGE_PENDING.items():
+        for t in (a, b):
+            assert by_title[t]["prep_minutes_effective"] == by_title[t]["prep_minutes"]
+            assert by_title[t].get("duplicate_merge_pending"), f"{t} not marked"
+
+
+def test_ai_sde_page_offers_to_hide_duplicate_topics(auth_client):
+    """18 topics exist twice, and the two halves land ADJACENT in the study
+    order because they score alike — so she meets the same thing twice in a
+    row. The page hides them by default and says what that saves.
+
+    The control is revealed by paintDupes() only when the payload actually
+    reports shadows, so a bank with no duplicates shows no dead checkbox.
+    """
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    assert 'id="hidedupes"' in html, "no way to hide the duplicated topics"
+    assert 'checked' in html.split('id="hidedupes"')[1][:40], (
+        "duplicates must be hidden by DEFAULT — that is the whole point")
+    assert "paintDupes" in html, "the control is never revealed"
+    assert "q-dup" in html, "no chip marks which half is the duplicate"
+
+    payload = auth_client.get("/api/ai-sde").get_json()
+    assert payload["dupes"]["shadows"] == 18
+    assert payload["dupes"]["deduped_minutes"] < payload["dupes"]["total_minutes"]
+    shadows = [e for e in payload["entries"] if e.get("duplicate_of")]
+    assert len(shadows) == 18, "the list payload cannot collapse what it cannot see"
+    titles = {e["title"] for e in payload["entries"]}
+    for e in shadows:
+        assert e["duplicate_of"] in titles, (
+            f"{e['title']!r} points at a canonical that is not in the list")
+
+
+def test_ai_sde_pdf_does_not_print_the_same_topic_twice(auth_client):
+    """On screen she can see two rows are the same topic and skip one. On
+    paper she just reads it twice, so the export drops shadows by default.
+    ?dupes=1 puts them back."""
+    pytest.importorskip("fpdf", reason="fpdf2 not installed; PDF route falls back to a redirect")
+    import routes.interview_prep as ip
+    src = inspect.getsource(ip.ai_sde_pdf)
+    assert 'request.args.get("dupes")' in src, "no escape hatch to print duplicates"
+    assert 'it.get("duplicate_of")' in src, "the export still prints both halves"
