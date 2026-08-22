@@ -135,6 +135,67 @@ def _tasks_for(user_id, plan_date):
     return rows
 
 
+def _bucket_for(user_id, plan_date, is_today):
+    """Quick Bucket rows that belong to THIS day.
+
+    The board read daily_events, todo_matrix and checklist_items and simply
+    never looked at the bucket — so anything captured there was invisible
+    here, which is most of what actually gets typed on a given day.
+
+    WHAT BELONGS, and it is not everything:
+
+      * a row whose due_at falls on this date — real work with a real
+        deadline, whichever bucket produced it (5m..8h, or a pinned "@1pm");
+      * a "now" row, but ONLY when the board is showing today. "Now" carries
+        no date, so on any other day it is not that day's business.
+
+    WHAT DOES NOT: the FUTURE bucket. That is the backlog by definition, and
+    this board's premise is one day on one screen with no scrolling — its own
+    docstring says it has no room for things that are not today's business.
+    /backlog is where those live.
+    """
+    rows = get("quick_bucket", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false",
+        "select": "id,text,time_bucket,due_at,is_done,done_at,priority_label",
+        "limit": "1000",
+    }) or []
+
+    day = plan_date.isoformat()
+    tz = user_now().tzinfo
+    out = []
+    for r in rows:
+        bucket = (r.get("time_bucket") or "").lower()
+        if bucket == "future":
+            continue
+
+        when = None
+        if r.get("due_at"):
+            try:
+                due = datetime.fromisoformat(
+                    r["due_at"].replace("Z", "+00:00")).astimezone(tz)
+            except (ValueError, TypeError):
+                due = None
+            if due is None or due.date().isoformat() != day:
+                continue                      # a deadline on some other day
+            when = due.strftime("%H:%M")
+        elif not (bucket == "now" and is_today):
+            continue                          # undated, and not today
+
+        out.append({
+            "id": r.get("id"),
+            "title": (r.get("text") or "").strip(),
+            "at": when,
+            "done": bool(r.get("is_done")),
+        })
+
+    # Timed first and in time order, then the undated "now" ones; done sinks,
+    # matching how the task column already reads.
+    out.sort(key=lambda x: (x["done"], x["at"] is None, x["at"] or "",
+                            x["title"].lower()))
+    return [x for x in out if x["title"]]
+
+
 def _checklist_for(user_id, plan_date):
     """Today's checklist with its tick state.
 
@@ -551,6 +612,7 @@ def day_board():
     events = _events_for(user_id, plan_date)
     tasks = _tasks_for(user_id, plan_date)
     checklist = _checklist_for(user_id, plan_date)
+    bucket = _bucket_for(user_id, plan_date, plan_date == user_today())
 
     # The visible window. Explicit ?from/?to wins; otherwise fit it to the
     # day's actual events with an hour of margin, so an early-start day is not
@@ -604,6 +666,9 @@ def day_board():
 
     open_tasks = [t for t in tasks
                   if not (t.get("is_done") or t.get("status") == "done")]
+    open_bucket = [b for b in bucket if not b["done"]]
+    for _b in bucket:
+        _b["href"] = url_for("quick_bucket.quick_bucket_page", **_back_args(plan_date))
 
     # Attach the click-through target to every row. Done here rather than in
     # the template so the three date conventions stay in one place.
@@ -631,6 +696,7 @@ def day_board():
         win_start=win_start, win_end=win_end,
         placed=placed, untimed=untimed,
         tasks=tasks, open_task_count=len(open_tasks),
+        bucket=bucket, open_bucket_count=len(open_bucket),
         checklist=checklist,
         checklist_done=sum(1 for c in checklist if c["done"]),
         now_pct=now_pct,

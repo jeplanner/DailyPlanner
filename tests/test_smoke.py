@@ -1480,6 +1480,7 @@ def test_day_board_rows_link_to_the_section_that_owns_them(auth_client, monkeypa
     monkeypatch.setattr(db, "_checklist_for", lambda u, d: [
         {"id": "C1", "title": "Vitamins", "done": False},
     ])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
 
     html = auth_client.get("/day-board").get_data(as_text=True)
 
@@ -1511,6 +1512,7 @@ def test_day_board_links_the_checklist_to_the_day_it_is_showing(auth_client, mon
     monkeypatch.setattr(db, "_checklist_for", lambda u, d: [
         {"id": "C1", "title": "Vitamins", "done": False},
     ])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
     html = auth_client.get("/day-board?date=2020-01-01").get_data(as_text=True)
     assert "Vitamins" in html
     assert "/checklist?date=2020-01-01" in html, "the link lost the board's day"
@@ -2323,8 +2325,10 @@ def test_day_board_sends_a_prep_topic_to_its_own_bank_page(auth_client, monkeypa
         {"id": "E3", "title": "Dentist", "description": "bring the referral letter",
          "start_time": "10:00", "end_time": "10:30"},
     ])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
     monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
     monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
     html = auth_client.get("/day-board").get_data(as_text=True)
 
     assert "/sql?" in html and "topic=SELECT" in html
@@ -2358,6 +2362,7 @@ def test_day_board_has_a_home_button(auth_client, monkeypatch):
     monkeypatch.setattr(db, "_events_for", lambda u, d: [])
     monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
     monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
     html = auth_client.get("/day-board").get_data(as_text=True)
     assert 'href="/" title="Home"' in html
     assert "/summary?view=daily" in html, "the menu was replaced instead of joined"
@@ -2642,6 +2647,7 @@ def test_day_board_strikes_out_anything_completed(auth_client, monkeypatch):
         {"id": "C1", "title": "Check done", "done": True},
         {"id": "C2", "title": "Check open", "done": False},
     ])
+    monkeypatch.setattr(db, "get", lambda *a, **k: [])
     html = auth_client.get("/day-board").get_data(as_text=True)
 
     def marked_done(title):
@@ -3399,3 +3405,55 @@ def test_project_progress_excludes_binned_work():
         open("routes/projects.py", encoding="utf-8").read()
     block = src.split('"select": "project_id,status"')[0][-500:]
     assert "_NOT_LIVE_FILTER" in block, "the denominator still counts binned tasks"
+
+
+def test_day_board_shows_quick_bucket_items_for_that_day(auth_client, monkeypatch):
+    """Reported: bucket items never appeared on the Day Board.
+
+    They could not — the board read daily_events, todo_matrix and
+    checklist_items, and never looked at quick_bucket at all. So anything
+    captured in the bucket, which is most of what actually gets typed on a
+    given day, was invisible on the screen meant to show the day.
+
+    The FUTURE bucket is deliberately still excluded: that is the backlog,
+    and this board's premise is one day on one screen. /backlog is for those.
+    """
+    from datetime import timedelta
+    import re
+    import routes.day_board as db
+    from utils.user_tz import user_today
+    today = user_today()
+
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    monkeypatch.setattr(db, "get", lambda t, params=None, **k: ([
+        {"id": "1", "text": "Due at three", "time_bucket": "3h", "is_done": False,
+         "due_at": today.isoformat() + "T15:00:00+00:00"},
+        {"id": "2", "text": "Do it now", "time_bucket": "now",
+         "is_done": False, "due_at": None},
+        {"id": "3", "text": "Someday backlog", "time_bucket": "future",
+         "is_done": False, "due_at": None},
+        {"id": "4", "text": "Due tomorrow", "time_bucket": "5h", "is_done": False,
+         "due_at": (today + timedelta(days=1)).isoformat() + "T09:00:00+00:00"},
+        {"id": "5", "text": "Already ticked", "time_bucket": "now",
+         "is_done": True, "due_at": None},
+    ] if t == "quick_bucket" else []))
+
+    html = auth_client.get("/day-board").get_data(as_text=True)
+    assert "Due at three" in html          # a deadline today
+    assert "Do it now" in html             # undated, and today is today
+    assert "Already ticked" in html        # done, struck out rather than hidden
+    assert "Someday backlog" not in html, "the backlog leaked onto the board"
+    assert "Due tomorrow" not in html, "another day's deadline is not today's"
+
+    # Done rows are struck out, consistent with every other row on the board.
+    seg = html[max(0, html.find("Already ticked") - 500):html.find("Already ticked")]
+    m = None
+    for m in re.finditer(r'<li class="([^"]*)"', seg):
+        pass
+    assert m and "done" in m.group(1)
+
+    # A "now" item carries no date, so it is not a past day's business.
+    past = auth_client.get("/day-board?date=2020-01-01").get_data(as_text=True)
+    assert "Do it now" not in past

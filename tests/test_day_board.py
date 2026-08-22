@@ -132,6 +132,12 @@ def rendered():
         tasks=[{"task_text": "Ship the board", "quadrant": "Q1",
                 "is_done": False, "task_time": "11:00"}],
         open_task_count=1,
+        # Quick Bucket rows land in the same column as the tasks. The board
+        # never read the bucket at all until this was added, so anything
+        # captured there was invisible on the screen meant to show the day.
+        bucket=[{"id": "b1", "title": "Call the bank", "at": "14:00",
+                 "done": False, "href": "#"}],
+        open_bucket_count=1,
         checklist=[{"id": 1, "title": "Meds", "done": True}],
         checklist_done=1, now_pct=45.0, refresh=120, theme="dark")
 
@@ -141,6 +147,10 @@ def test_template_renders_all_three_panels(rendered):
     assert "Ship the board" in rendered       # tasks
     assert "Meds" in rendered                 # checklist
     assert "No time set" in rendered          # untimed events land in tasks
+    assert "Call the bank" in rendered        # and Quick Bucket rows
+    # The heading counts every outstanding thing in the column, not just the
+    # matrix tasks — a "1" over a list of two reads as a bug.
+    assert ">2<" in rendered.split("To do")[1][:80]
 
 
 def test_template_cannot_scroll(rendered):
@@ -173,6 +183,7 @@ def test_template_escapes_titles():
         prev_date="2026-08-15", next_date="2026-08-17",
         hours=[dt.time(9, 0)], win_start=dt.time(8, 0), win_end=dt.time(18, 0),
         placed=placed, untimed=[], tasks=[], open_task_count=0,
+        bucket=[], open_bucket_count=0,
         checklist=[], checklist_done=0, now_pct=None, refresh=0, theme="dark")
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
@@ -202,6 +213,7 @@ def test_today_button_only_appears_when_not_on_today():
             next_date="2026-08-17", hours=[dt.time(9, 0)],
             win_start=dt.time(8, 0), win_end=dt.time(18, 0),
             placed=[], untimed=[], tasks=[], open_task_count=0,
+            bucket=[], open_bucket_count=0,
             checklist=[], checklist_done=0, now_pct=None, refresh=0,
             theme="dark")
 

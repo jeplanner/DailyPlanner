@@ -201,6 +201,10 @@ li.done .txt{text-decoration:line-through}
   flex:0 0 auto; width:calc(var(--u) * .62); height:calc(var(--u) * .62);
   border-radius:50%; margin-top:calc(var(--u) * .3); background:var(--q4);
 }
+/* A Quick Bucket row. Given its own dot colour because the column now
+   holds three different kinds of thing, and on a board being read from
+   across a desk "where did this come from" should not need a click. */
+.qb .dot{background:var(--accent)}
 .q1 .dot{background:var(--q1)} .q2 .dot{background:var(--q2)}
 .q3 .dot{background:var(--q3)} .q4 .dot{background:var(--q4)}
 .tick{flex:0 0 auto; width:calc(var(--u) * .9); text-align:center;
@@ -322,7 +326,7 @@ li.done .txt{text-decoration:line-through}
 
       <!-- ── TASKS ──────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>To do <span class="n">{{ open_task_count }}</span></h2>
+        <h2>To do <span class="n">{{ open_task_count + open_bucket_count }}</span></h2>
         <div class="body">
           <ul data-fit>
             {% for e in untimed %}
@@ -345,7 +349,23 @@ li.done .txt{text-decoration:line-through}
                    aria-label="Open {{ t.task_text }} in the matrix"></a>
               </li>
             {% endfor %}
-            {% if not tasks and not untimed %}
+            {# Quick Bucket rows that belong to this day. The board never
+               read the bucket at all, so anything captured there was
+               invisible here — which is most of what gets typed on a given
+               day. FUTURE items are deliberately excluded: that is the
+               backlog, and this board has no room for things that are not
+               today's business. #}
+            {% for b in bucket %}
+              <li class="qb{% if b.done %} done{% endif %}">
+                {% if b.done %}<span class="tick">✓</span>
+                {% else %}<span class="dot"></span>{% endif %}
+                <span class="txt">{{ b.title }}</span>
+                {% if b.at %}<span class="at">{{ b.at }}</span>{% endif %}
+                <a class="hit" href="{{ b.href }}"
+                   aria-label="Open {{ b.title }} in the Quick Bucket"></a>
+              </li>
+            {% endfor %}
+            {% if not tasks and not untimed and not bucket %}
               <li class="empty">Nothing scheduled.</li>
             {% endif %}
           </ul>
