@@ -2181,12 +2181,14 @@ def test_announcer_keepalive_is_opt_in_and_not_actually_silent():
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     assert "keepaliveOn" in js and "data-ta-keep" in js
     assert "keepalive: false" in js, "the keep-alive defaults to on"
-    assert "gain.gain.value = 0.0001" in js, "a zero gain can be optimised away"
-    # Only held while announcements are actually due.
+    # Only held while announcements are actually due to happen.
     body = js.split("function applyKeepalive()")[1].split("}")[0]
     assert 'state.mode === "on"' in body and "state.keepalive" in body
-    # And the limits are stated to the user, not buried in a comment.
-    assert "once the page" in js and "is closed" in js
+    # The limits are stated to the USER, not buried in a source comment:
+    # what it costs, and that a fully closed app cannot be rescued.
+    assert "battery" in js and "fully closed" in js
+    assert "best-effort" in js.lower(), (
+        "the locked-phone case is presented as certain when it is not")
 
 
 def test_announcer_recommends_the_keepalive_to_installed_app_users():
@@ -2225,3 +2227,73 @@ def test_periodic_background_sync_cannot_drive_a_15_minute_announcement():
     # And nothing should ever try to speak from the worker.
     assert "speechSynthesis" not in sw, (
         "a service worker has no speechSynthesis — this cannot work")
+
+
+def test_announcer_keepalive_uses_real_media_not_web_audio():
+    """Asked: "voice even when the phone is locked."
+
+    On a locked phone the page is suspended and nothing in an ordinary web
+    page survives it. The single exception is MEDIA: a page holding an
+    active media session keeps running with the screen off, which is how a
+    music PWA keeps playing in your pocket. A Web Audio oscillator — what
+    the first version used — is not treated as playback and does not
+    qualify, so the keep-alive is a real looping <audio> element.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert 'createElement("audio")' in js, "still using Web Audio, which will not survive lock"
+    assert "audio-keepalive.wav" in js
+    assert "el.loop = true" in js
+    # A MUTED element holds no audio focus, so the OS keeps nothing alive.
+    # Check the ASSIGNMENT, not the word — the comment explaining this says
+    # "muted" and an earlier version of this test matched its own docs.
+    assert "el.volume" in js
+    assert "el.muted = true" not in js and "muted: true" not in js
+    # The lock screen entry must be labelled, and its buttons must work —
+    # a control that looks like it stops something has to stop it.
+    assert "mediaSession" in js and "MediaMetadata" in js
+    assert 'setActionHandler("pause"' in js and 'setActionHandler("stop"' in js
+    import os
+    assert os.path.exists("static/audio-keepalive.wav"), "the track is missing"
+    assert os.path.getsize("static/audio-keepalive.wav") < 20000
+    # Precached: the moment it is needed is exactly when the network is
+    # least likely to be there.
+    assert "audio-keepalive.wav" in open("static/service-worker.js", encoding="utf-8").read()
+
+
+def test_push_subscription_self_heals_when_the_server_deactivated_it():
+    """A silent, invisible failure, found in live data: six push
+    subscriptions for the same Android phone, EVERY one is_active=false,
+    the newest already a month old.
+
+    The cause is a one-way drift. The server flips is_active=false the
+    moment a send returns 404/410, and never tells the browser. The UI only
+    checked whether the BROWSER still held a subscription, so it reported
+    "notifications are on" while nothing would ever be delivered — which is
+    the likeliest reason nothing on that checklist had been ticked in four
+    months.
+
+    Re-registering is idempotent (the endpoint upserts and sets
+    is_active=true), so doing it on load repairs the drift silently.
+    """
+    js = open("static/js/push.js", encoding="utf-8").read()
+    heal = js.split("SELF-HEAL")[1].split("enableBtn")[0]
+    assert "/api/push/subscribe" in heal, "nothing re-registers the subscription"
+    # The server reads data["subscription"] — a flat body is a 400.
+    assert "subscription: sub.toJSON()" in heal
+    assert "X-CSRFToken" in heal
+    # Only when the browser actually has one; re-registering nothing is
+    # a guaranteed 400 on every page load.
+    assert "if (on)" in heal
+
+
+def test_push_deactivation_is_only_for_a_gone_subscription():
+    """is_active=false must mean "the push service says this endpoint no
+    longer exists", not "a send failed once" — otherwise a transient error
+    silently switches someone's reminders off for good."""
+    src = open("services/push_service.py", encoding="utf-8").read()
+    assert "status in (404, 410)" in src
+    block = src.split("status in (404, 410)")[1].split("else:")[0]
+    assert "_deactivate" in block
+    # A non-410 failure warns and leaves the subscription alone.
+    after = src.split("status in (404, 410)")[1].split("else:")[1][:200]
+    assert "_deactivate" not in after

@@ -98,6 +98,43 @@
       const on = Boolean(sub) && Notification.permission === "granted";
       statusEl.hidden = on;
       statusOkEl.hidden = !on;
+
+      /* SELF-HEAL THE SERVER'S COPY.
+         This used to check only whether the BROWSER holds a subscription,
+         and reported "notifications are on" whenever it did. But the server
+         marks a row is_active=false the moment a send comes back 404/410,
+         and the browser is not told — so the two drift apart and the UI
+         confidently says on while nothing will ever be delivered.
+
+         Found in live data: six subscriptions for the same Android phone,
+         every one inactive, the newest already a month old. Checklist
+         reminders had not been arriving at all, which is the likeliest
+         reason nothing on that checklist had been ticked in four months.
+
+         Re-registering is idempotent — /api/push/subscribe upserts on the
+         endpoint and sets is_active=true — so doing it on every load is
+         cheap and repairs the drift without the user knowing there was any. */
+      if (on) {
+        try {
+          await fetch("/api/push/subscribe", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": document.querySelector('meta[name=csrf-token]')?.content || "",
+            },
+            // Same shape subscribe() sends — the server reads
+            // data["subscription"], so a flat body is a 400.
+            body: JSON.stringify({
+              subscription: sub.toJSON(),
+              user_agent: navigator.userAgent,
+            }),
+          });
+        } catch (_) {
+          /* Offline, or the endpoint is unhappy. The next load tries again;
+             there is nothing useful to tell the user here. */
+        }
+      }
     }
 
     enableBtn?.addEventListener("click", async () => {

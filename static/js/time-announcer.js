@@ -147,28 +147,41 @@
   }
 
   /* ── KEEPALIVE ──────────────────────────────────────────────────────
-     Chrome may FREEZE a background tab, and a frozen page runs no timers
-     at all — which is the difference between "announcements are late" and
-     "announcements stop". Tabs that are playing audio are exempt from
-     freezing, so this holds a Web Audio node open at a level far below
-     hearing.
+     Two different problems, one mechanism.
 
-     It is OPT-IN because it is not free: the tab shows the browser's
-     "playing audio" indicator, and keeping an audio context alive costs a
-     little battery. Someone who only uses this at a desk with the window
-     visible should not pay for either.
+     ON A DESKTOP the risk is FREEZING: Chrome may freeze an eligible
+     background window, and a frozen page runs no timers at all — the
+     difference between "announcements are late" and "announcements stop".
 
-     The gain is very small but NOT zero. A muted graph is the thing a
-     browser is entitled to optimise away, and an optimised-away graph
-     stops counting as playback — which would silently undo the whole
-     point. Verified only by reasoning about the spec; if freezing still
-     happens with this on, that is the first thing to re-check. */
+     ON A LOCKED PHONE the page is suspended outright and nothing in an
+     ordinary web page survives it. The one exception is MEDIA: a page with
+     an active media session keeps running with the screen off, which is
+     exactly how a music PWA keeps playing in your pocket. So the keep-alive
+     is a real <audio> element on loop, registered with the Media Session
+     API — NOT a Web Audio oscillator, which the OS does not treat as
+     playback, and which is what the first version of this used.
+
+     The track is one second of 8 kHz PCM at an amplitude of ONE least
+     significant bit: genuinely audio, inaudible in practice. Not digital
+     silence, on purpose — silence is what a platform may optimise away, and
+     an optimised-away stream stops counting as playback, quietly undoing
+     the whole point.
+
+     THE LOCK SCREEN WILL SHOW A MEDIA NOTIFICATION for it, and that is a
+     feature rather than a leak. It is honest about what is running, and its
+     pause button really does stop the announcements — a control that looks
+     like it stops something must stop it.
+
+     BEST-EFFORT, AND SAID SO. Whether a locked Android keeps the page
+     scheduled well enough to speak is a device-and-version question that
+     cannot be settled from here. iOS is stricter and is not expected to
+     work at all. */
   /* Running as an INSTALLED PWA rather than a tab. It changes nothing about
      what the platform allows — an installed app is still a document, and a
      minimised window is still hidden — but it does change the ADVICE: someone
-     who installed the app is far more likely to leave it minimised and expect
-     it to keep working, which is exactly the case the keep-alive exists for.
-     So the recommendation is surfaced instead of buried. */
+     who installed the app is far more likely to leave it minimised or pocket
+     the phone and expect it to keep working, which is exactly the case the
+     keep-alive exists for. So the recommendation is surfaced, not buried. */
   function isInstalled() {
     try {
       return (window.matchMedia &&
@@ -184,29 +197,71 @@
   function keepaliveOn() {
     if (keepCtx) return true;
     try {
-      var Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return false;
-      var ctx = new Ctx();
-      var osc = ctx.createOscillator();
-      var gain = ctx.createGain();
-      gain.gain.value = 0.0001;            // inaudible, not silent
-      osc.frequency.value = 30;            // below most speakers anyway
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      keepCtx = { ctx: ctx, osc: osc };
+      var el = document.getElementById("ta-keepalive");
+      if (!el) {
+        el = document.createElement("audio");
+        el.id = "ta-keepalive";
+        el.src = "/static/audio-keepalive.wav";
+        el.loop = true;
+        el.preload = "auto";
+        // NOT muted: a muted element does not hold audio focus, and without
+        // audio focus the OS will not keep the page alive for it.
+        el.volume = 0.02;
+        el.setAttribute("playsinline", "");
+        document.body.appendChild(el);
+      }
+      var p = el.play();
+      if (p && p.catch) {
+        // Blocked until a gesture. Start IS a gesture so the normal path
+        // works; a page restored without one picks it up on first touch.
+        p.catch(function () {});
+      }
+      setMediaSession();
+      keepCtx = { el: el };
       return true;
     } catch (_) {
       return false;
     }
   }
 
+  /* Naming the session is what makes the lock-screen entry legible, and
+     wiring its buttons is what makes it honest. */
+  function setMediaSession() {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      if (window.MediaMetadata) {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: "Announcing the time",
+          artist: "Every " + state.every + " minutes",
+          album: "DailyPlanner",
+        });
+      }
+      navigator.mediaSession.playbackState = "playing";
+      navigator.mediaSession.setActionHandler("pause", function () {
+        state.mode = "paused";
+        applyMode();
+      });
+      navigator.mediaSession.setActionHandler("play", function () {
+        state.mode = "on";
+        applyMode();
+      });
+      navigator.mediaSession.setActionHandler("stop", function () {
+        state.mode = "off";
+        state.lastSlot = null;
+        applyMode();
+      });
+    } catch (_) {}
+  }
+
   function keepaliveOff() {
     if (!keepCtx) return;
-    try { keepCtx.osc.stop(); } catch (_) {}
-    try { keepCtx.ctx.close(); } catch (_) {}
+    try { keepCtx.el.pause(); } catch (_) {}
+    try {
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+    } catch (_) {}
     keepCtx = null;
   }
+
 
   function applyKeepalive() {
     // Only worth holding while announcements are actually due to happen.
@@ -318,15 +373,17 @@
         }).join("") +
       '</div>' +
       '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
-        'Keep going when minimised</label>' +
+        'Keep going when minimised or locked</label>' +
       '<p class="ta-tip" hidden>You are running the installed app &mdash; turn this ' +
-      'on, or the system can freeze the window while it is minimised and the ' +
+      'on, or the system will freeze it once the window is minimised and the ' +
       'announcements stop.</p>' +
-      '<p class="ta-note">Announcements survive another window being on top. They ' +
-      'stop if the browser freezes this tab &mdash; the option above prevents that ' +
-      'by holding a silent sound open, at the cost of a little battery and an ' +
-      '&ldquo;audio playing&rdquo; mark on the tab. Nothing works once the page ' +
-      'is closed, or on a phone with the browser in the background.</p>' +
+      '<p class="ta-note">This holds an inaudible sound playing, which is what stops ' +
+      'the system suspending the app. A media entry appears on the lock screen while ' +
+      'it runs &mdash; its pause button really does stop the announcements. It costs ' +
+      'some battery. <b>On a locked phone this is best-effort:</b> it is the only ' +
+      'mechanism that can work, and whether it does depends on your device. Nothing ' +
+      'works once the app is fully closed &mdash; the web cannot speak from a closed ' +
+      'app.</p>' +
       '<p class="ta-warn" hidden>Your browser needs a tap on this page before it ' +
       'will speak. Interact anywhere and the next announcement will play.</p>';
     document.body.appendChild(pop);

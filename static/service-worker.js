@@ -16,7 +16,7 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v196-2026-08-22-announcer-pwa-tip"
+const CACHE_VERSION = "v197-2026-08-22-announcer-mediasession"
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
@@ -39,6 +39,10 @@ const PRECACHE_URLS = [
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
   "/static/icons/apple-touch-icon.png",
+  // The keep-alive track. Precached because it is what holds the app alive
+  // when the screen is off, and fetching it at that moment is exactly when
+  // the network is least likely to be there.
+  "/static/audio-keepalive.wav",
 ];
 
 self.addEventListener("install", (event) => {
