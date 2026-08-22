@@ -1017,8 +1017,8 @@ def schedule_to_calendar():
         return jsonify({"error": "Couldn't create the calendar slot."}), 502
 
     # Link the rows to where they went. Best-effort: the columns arrive with
-    # MIGRATION_LOGIN_HISTORY.sql, and the scheduling itself — the thing that
-    # was asked for — must still work before that has been run.
+    # MIGRATION_QUICK_BUCKET_SCHEDULE.sql, and the scheduling itself — the
+    # thing that was asked for — must still work before that has been run.
     linked = False
     try:
         update("quick_bucket",
@@ -1028,7 +1028,7 @@ def schedule_to_calendar():
         linked = True
     except Exception as exc:
         logger.warning("quick_bucket schedule link skipped — run "
-                       "MIGRATION_LOGIN_HISTORY.sql (%s)", str(exc)[:120])
+                       "MIGRATION_QUICK_BUCKET_SCHEDULE.sql (%s)", str(exc)[:120])
 
     return jsonify({
         "ok": True,
