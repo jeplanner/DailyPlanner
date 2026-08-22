@@ -360077,6 +360077,148 @@ _ANSWER_V2['Left and Right Sum Difference'] = """Precompute the total, then one 
   is what is being assessed.
 · COST — O(n) time, O(1) extra space beyond the output."""
 
+_ANSWER_V2['Why subtract the max before exponentiating in softmax, and why is the result unchanged?'] = """To stop exp() overflowing to infinity — and it changes nothing because the constant cancels top and bottom.
+
+· THE DANGER — softmax is exp(x_i) / sum_j exp(x_j). A logit of 1000 makes
+  exp(1000) overflow to +inf in float, and inf/inf is NaN. The whole
+  computation blows up even though the true answer is perfectly well defined
+  and lives in (0,1).
+· THE FIX — subtract a constant c from every logit first:
+  exp(x_i - c) / sum_j exp(x_j - c).
+· WHY IT IS IDENTICAL — exp(x_i - c) = exp(x_i) * exp(-c), and that exp(-c)
+  appears in every term of the numerator AND the denominator, so it cancels.
+  Softmax is invariant to adding any constant to all its inputs. That is the
+  whole proof and it fits in one line.
+· WHY THE MAX SPECIFICALLY — using c = max(x) makes the largest exponent
+  exactly exp(0) = 1, so nothing can overflow. The other terms are all below
+  1, which can UNDERFLOW to zero, but underflow is harmless: those terms were
+  negligible anyway, and the denominator still contains the 1.
+· THIS IS WHY YOU PASS LOGITS, NOT PROBABILITIES, to a cross-entropy loss.
+  The library fuses softmax and the log together and applies this trick
+  internally; doing softmax yourself first throws away the protection.
+· LOG-SUM-EXP IS THE SAME TRICK under another name, and it is worth
+  recognising: log(sum exp(x)) = c + log(sum exp(x - c))."""
+
+_ANSWER_V2['Why train classifiers with cross-entropy loss instead of accuracy?'] = """Accuracy has no usable gradient — it is flat everywhere and jumps at the boundary, so there is nothing to descend.
+
+· THE PROBLEM WITH ACCURACY — it is a step function of the predictions.
+  Nudging a weight usually does not flip any prediction, so the loss does not
+  move and the gradient is zero; when it does flip one, the loss jumps and
+  the gradient is undefined. Gradient descent has nothing to work with.
+· CROSS-ENTROPY IS A SMOOTH SURROGATE with a useful gradient everywhere.
+  Moving a predicted probability from 0.61 to 0.63 improves the loss even
+  though the prediction was already correct, so there is always a direction.
+· IT REWARDS CONFIDENCE, NOT JUST CORRECTNESS, which is what you want from a
+  model that will be thresholded later — and it punishes confident wrong
+  answers enormously, which is what stops it being reckless.
+· THE GRADIENT IS BEAUTIFULLY SIMPLE when paired with softmax: predictions
+  minus one-hot labels. The messy Jacobian cancels, which is why libraries
+  fuse the two.
+· OPTIMISE THE PROXY, REPORT THE METRIC. You still quote accuracy, F1 or
+  AUC to humans; you just cannot train on them. Say that distinction out
+  loud — it is the point of the question.
+· THE SAME ARGUMENT EXPLAINS THE OTHERS. AUC, F1 and precision are all
+  non-differentiable in the model's parameters, which is why the literature
+  is full of differentiable approximations of them."""
+
+_ANSWER_V2['Why use CQRS (separate read and write models), and when is it worth the complexity?'] = """When reads and writes genuinely want different shapes and scale independently - and almost never before that.
+
+· THE MISMATCH IT SOLVES — writes want a normalised, validated model that
+  can enforce invariants; reads want denormalised, pre-joined, query-shaped
+  data that is fast. One model serving both means every read pays for the
+  write side's normalisation in joins.
+· AND THE WORKLOADS DIVERGE — a thousand times more reads than writes is
+  common, and they cannot be scaled separately while they share a model.
+· WHAT CQRS ACTUALLY IS — two models. Commands go through the write model
+  and emit events or updates; queries are served from one or more read
+  models shaped for the screens that need them.
+· THE PRICE IS EVENTUAL CONSISTENCY, and it is not a detail. The read model
+  lags the write, so a user can save something and not see it. Every real
+  CQRS system has to answer "what do I show immediately after a write" —
+  usually by returning the command's own result rather than re-querying.
+· THE OTHER PRICE is two models to keep in step, more moving parts, and a
+  much harder debugging story when they disagree.
+· WHEN IT IS WORTH IT — a genuine read/write asymmetry in shape or scale, or
+  a domain rich enough that the write model is about invariants rather than
+  storage. Reporting and analytics views are the everyday version.
+· WHEN IT IS NOT — a CRUD app. Say that plainly: reaching for CQRS by
+  default is the classic over-engineering answer, and interviewers are often
+  probing for whether you know when NOT to.
+· IT DOES NOT REQUIRE EVENT SOURCING. They are frequently taught together
+  and are independent choices; conflating them is a common mistake."""
+
+_ANSWER_V2['Why use a sidecar / service mesh instead of a shared library in each service?'] = """A library has to be adopted, compiled in and redeployed by every team; a sidecar is a separate process you can upgrade without touching anyone's code.
+
+· THE LIBRARY'S THREE COSTS — every service must adopt it, must be written
+  in a language it supports, and must REDEPLOY to pick up a fix or a policy
+  change. Across dozens of polyglot services that is a coordination problem,
+  not an engineering one.
+· WHAT MOVES INTO THE SIDECAR — mTLS, retries, timeouts, circuit breaking,
+  routing, load balancing, metrics and tracing. Everything that is about
+  talking to other services rather than about the business.
+· LANGUAGE-AGNOSTIC IS THE HEADLINE BENEFIT: the Python service and the Go
+  service get identical retry and timeout behaviour, because neither of them
+  implements it.
+· CENTRALLY CONFIGURED — the control plane pushes a timeout or a canary
+  weight to every proxy at once, with no deploy.
+· THE COSTS ARE REAL AND ARE THE FOLLOW-UP. An extra network hop per call
+  and its latency; a proxy container's CPU and memory beside every pod; and
+  a large new thing to operate and debug, where a misconfigured mesh can
+  take down traffic that the application code would have served fine.
+· WHEN A LIBRARY IS THE RIGHT ANSWER — one or two languages, a handful of
+  services, and a team that can deploy together. The mesh earns its keep at
+  polyglot scale, not before.
+· THE MIDDLE GROUND worth mentioning is a gateway for north-south traffic
+  only, without a per-pod sidecar for east-west."""
+
+_ANSWER_V2['Why use connection pooling instead of a database connection per request?'] = """Opening a connection costs milliseconds you cannot afford, and databases cap how many can exist at all.
+
+· WHAT A NEW CONNECTION ACTUALLY COSTS — a TCP handshake, TLS negotiation,
+  authentication, and server-side session setup. Several milliseconds, which
+  dwarfs a fast query and is paid on every single request.
+· THE HARD LIMIT IS THE OTHER HALF, and it is the one people forget.
+  Databases cap concurrent connections because each costs memory and often a
+  whole backend process. Connection-per-request under load exhausts that cap
+  and the database starts rejecting or thrashing.
+· WHAT A POOL DOES — keeps a fixed set of warm, authenticated connections,
+  lends an idle one per request and takes it back afterwards. The handshake
+  is paid once, and the cap is respected by construction.
+· POOL SIZE IS NOT "AS BIG AS POSSIBLE". Past the database's own capacity,
+  more connections mean more contention and LOWER throughput. The usual
+  starting point is a small multiple of the database's core count, and the
+  right answer is measured, not guessed.
+· A POOL TURNS A CRASH INTO A QUEUE — when all connections are busy, callers
+  wait rather than failing. That is the point, but it needs a checkout
+  TIMEOUT, or a slow database converts into a hung application.
+· CONNECTIONS ARE STATEFUL, which is the classic bug: a transaction,
+  temporary table or session variable left behind is inherited by whoever
+  gets that connection next. Pools reset on return for this reason.
+· SERVERLESS BREAKS THE MODEL, because every instance has its own pool and
+  they multiply. That is what external poolers like PgBouncer exist for."""
+
+_ANSWER_V2['Why use the bulkhead pattern to isolate resources instead of a shared pool?'] = """One shared pool means one sick dependency can consume every thread, so calls that never touch it start failing too.
+
+· THE FAILURE IT PREVENTS — with a single thread or connection pool serving
+  all downstream calls, requests to a hung dependency pile up holding their
+  threads. Those threads are no longer available to the HEALTHY dependencies,
+  so a local problem becomes a total outage.
+· THE NAME IS THE EXPLANATION — a ship is divided into watertight
+  compartments so one breach floods one compartment rather than the hull.
+· WHAT YOU DO — give each dependency its own bounded pool. When the sick one
+  is saturated, calls to it fail fast while everything else keeps working.
+· FAILING FAST IS A FEATURE, NOT A SIDE EFFECT. A caller that is rejected
+  immediately can fall back or degrade; a caller blocked for thirty seconds
+  cannot, and it takes its own caller down with it.
+· IT PAIRS WITH A CIRCUIT BREAKER but is not the same thing. The bulkhead
+  BOUNDS the damage; the breaker STOPS calling a dependency that is failing.
+  Interviewers ask for that distinction.
+· THE COST IS UTILISATION — partitioned pools cannot lend capacity to each
+  other, so you hold more threads in total for the same throughput. That is
+  the trade being bought.
+· SIZE EACH BULKHEAD BY WHAT THE DEPENDENCY IS WORTH. The critical path
+  deserves the deepest pool; a best-effort recommendation service can have a
+  small one and be shed under pressure."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
