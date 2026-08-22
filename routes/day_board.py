@@ -135,6 +135,68 @@ def _tasks_for(user_id, plan_date):
     return rows
 
 
+#: The day, cut where its shape actually changes. Asked for as
+#: before 8 / 8-12 / 12-18 / after 6, which is the rhythm of a working day
+#: rather than an even split.
+#:
+#: Ordered EARLIEST FIRST, with the untimed band last: something with no
+#: time is not "before dawn", it is "whenever", and putting it at the top
+#: would make the first thing on the board the least urgent thing on it.
+CHECKLIST_BANDS = (
+    ("early",     "Before 8am",  0,    8 * 60),
+    ("morning",   "8am – 12pm",  8 * 60,  12 * 60),
+    ("afternoon", "12pm – 6pm",  12 * 60, 18 * 60),
+    ("evening",   "After 6pm",   18 * 60, 24 * 60),
+)
+
+
+def _band_checklist(rows):
+    """Group checklist rows into the four bands, plus an untimed one.
+
+    Empty bands are dropped rather than rendered as headings over nothing —
+    this board's whole constraint is that it fits on one screen, and four
+    labels for two items is the opposite of that.
+    """
+    buckets = {key: [] for key, _l, _s, _e in CHECKLIST_BANDS}
+    untimed = []
+    for r in rows:
+        at = r.get("at")
+        if not at or ":" not in at:
+            untimed.append(r)
+            continue
+        try:
+            hh, mm = (int(x) for x in at.split(":", 1))
+        except ValueError:
+            untimed.append(r)
+            continue
+        mins = hh * 60 + mm
+        for key, _label, start, end in CHECKLIST_BANDS:
+            if start <= mins < end:
+                buckets[key].append(r)
+                break
+        else:
+            untimed.append(r)
+
+    out = []
+    for key, label, _s, _e in CHECKLIST_BANDS:
+        # CHRONOLOGICAL, not done-last. Every other list on this board sinks
+        # finished rows, but this one prints the clock time next to each
+        # item — and a column of times that does not run downwards reads as
+        # a bug. The strikethrough already says "done"; the order says
+        # "when", and those are different jobs.
+        rows_in = sorted(buckets[key],
+                         key=lambda r: (r["at"] or "", r["title"].lower()))
+        if rows_in:
+            out.append({"key": key, "label": label, "rows": rows_in})
+    if untimed:
+        out.append({"key": "anytime", "label": "Any time",
+                    "rows": sorted(untimed, key=lambda r: (r["done"],
+                                                           r["title"].lower()))})
+    # (The untimed band keeps done-last: with no clock to preserve there is
+    #  no order to break, so the useful one wins.)
+    return out
+
+
 def _bucket_for(user_id, plan_date, is_today):
     """Quick Bucket rows that belong to THIS day.
 
@@ -236,11 +298,49 @@ def _checklist_for(user_id, plan_date):
     }) or []
     ticked = {t["item_id"] for t in ticks}
 
-    return [{
-        "id": i.get("id"),
-        "title": i.get("title") or i.get("name") or i.get("text") or "",
-        "done": i.get("id") in ticked,
-    } for i in items if (i.get("title") or i.get("name") or i.get("text"))]
+    # Ticks are keyed by (item, reminder_time). An item with three reminders
+    # is settled three times a day, independently — the checklist page has
+    # always worked that way and the board must agree.
+    ticked_at = {}
+    for t in ticks:
+        ticked_at.setdefault(t.get("item_id"), set()).add(t.get("reminder_time"))
+
+    times = get("checklist_reminder_times", params={
+        "user_id": f"eq.{user_id}",
+        "select": "item_id,reminder_time",
+        "order": "reminder_time.asc",
+        "limit": "1000",
+    }) or []
+    times_by_item = {}
+    for t in times:
+        times_by_item.setdefault(t["item_id"], []).append(t.get("reminder_time"))
+
+    out = []
+    for i in items:
+        title = i.get("title") or i.get("name") or i.get("text")
+        if not title:
+            continue
+        item_ticks = ticked_at.get(i.get("id"), set())
+        # A legacy whole-item tick predates reminder times and still counts —
+        # configuring a reminder later cannot un-tick a day already ticked.
+        legacy_done = None in item_ticks
+
+        stamps = times_by_item.get(i.get("id")) or []
+        if not stamps:
+            stamps = [i.get("reminder_time")] if i.get("reminder_time") else [None]
+
+        # ONE ROW PER REMINDER. "Drink water" at 08:00 and 11:00 is two
+        # things to do, and a board that showed it once would be telling you
+        # the day is smaller than it is.
+        for stamp in stamps:
+            hhmm = (stamp or "")[:5] or None
+            out.append({
+                "id": i.get("id"),
+                "title": title,
+                "at": hhmm,
+                "done": legacy_done or (stamp in item_ticks),
+            })
+    return out
 
 
 def _layout_events(events, win_start, win_end):
@@ -612,6 +712,7 @@ def day_board():
     events = _events_for(user_id, plan_date)
     tasks = _tasks_for(user_id, plan_date)
     checklist = _checklist_for(user_id, plan_date)
+    checklist_bands = _band_checklist(checklist)
     bucket = _bucket_for(user_id, plan_date, plan_date == user_today())
 
     # The visible window. Explicit ?from/?to wins; otherwise fit it to the
@@ -697,7 +798,7 @@ def day_board():
         placed=placed, untimed=untimed,
         tasks=tasks, open_task_count=len(open_tasks),
         bucket=bucket, open_bucket_count=len(open_bucket),
-        checklist=checklist,
+        checklist=checklist, checklist_bands=checklist_bands,
         checklist_done=sum(1 for c in checklist if c["done"]),
         now_pct=now_pct,
         refresh=refresh,

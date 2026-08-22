@@ -138,7 +138,9 @@ def rendered():
         bucket=[{"id": "b1", "title": "Call the bank", "at": "14:00",
                  "done": False, "href": "#"}],
         open_bucket_count=1,
-        checklist=[{"id": 1, "title": "Meds", "done": True}],
+        checklist=[{"id": 1, "title": "Meds", "at": "21:00", "done": True}],
+        checklist_bands=db._band_checklist(
+            [{"id": 1, "title": "Meds", "at": "21:00", "done": True}]),
         checklist_done=1, now_pct=45.0, refresh=120, theme="dark")
 
 
@@ -184,7 +186,8 @@ def test_template_escapes_titles():
         hours=[dt.time(9, 0)], win_start=dt.time(8, 0), win_end=dt.time(18, 0),
         placed=placed, untimed=[], tasks=[], open_task_count=0,
         bucket=[], open_bucket_count=0,
-        checklist=[], checklist_done=0, now_pct=None, refresh=0, theme="dark")
+        checklist=[], checklist_bands=[], checklist_done=0, now_pct=None,
+        refresh=0, theme="dark")
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
 
@@ -214,7 +217,8 @@ def test_today_button_only_appears_when_not_on_today():
             win_start=dt.time(8, 0), win_end=dt.time(18, 0),
             placed=[], untimed=[], tasks=[], open_task_count=0,
             bucket=[], open_bucket_count=0,
-            checklist=[], checklist_done=0, now_pct=None, refresh=0,
+            checklist=[], checklist_bands=[], checklist_done=0, now_pct=None,
+            refresh=0,
             theme="dark")
 
     assert 'id="today"' not in render(True)
@@ -388,3 +392,85 @@ def test_scheduler_refresh_respects_the_window_and_signature():
     # a new day forces a send even when the text matches yesterday's
     sent, _ = run(dict(base, pinned_date="2026-08-15"), 8)
     assert len(sent) == 1, "the first refresh of a new morning must land"
+
+
+# ── CHECKLIST TIME BANDS ───────────────────────────────────────────────
+# Asked for 2026-08-22: prefix each checklist row with its time and split
+# the day at 8am / noon / 6pm "so that easy to visualise the day board
+# items". Banding is pure, so it is tested directly.
+
+def _row(title, at, done=False):
+    return {"id": title, "title": title, "at": at, "done": done}
+
+
+def test_bands_run_earliest_first_with_untimed_last():
+    bands = db._band_checklist([
+        _row("Ram", None), _row("Brush", "22:00"), _row("Wake", "06:00"),
+        _row("Water", "08:00"), _row("Rent", "12:12"),
+    ])
+    assert [b["label"] for b in bands] == [
+        "Before 8am", "8am – 12pm", "12pm – 6pm", "After 6pm", "Any time"]
+
+
+def test_band_boundaries_are_inclusive_at_the_start():
+    """08:00 is the morning, not before it; 12:00 is afternoon; 18:00 evening.
+
+    The off-by-one at a boundary is the only interesting bug in a banding
+    function, and it is invisible on a screen until the one day an item
+    sits exactly on the hour.
+    """
+    for at, label in (("07:59", "Before 8am"), ("08:00", "8am – 12pm"),
+                      ("11:59", "8am – 12pm"), ("12:00", "12pm – 6pm"),
+                      ("17:59", "12pm – 6pm"), ("18:00", "After 6pm"),
+                      ("23:59", "After 6pm")):
+        bands = db._band_checklist([_row("x", at)])
+        assert bands[0]["label"] == label, f"{at} landed in {bands[0]['label']}"
+
+
+def test_empty_bands_are_dropped_not_rendered_as_headings_over_nothing():
+    bands = db._band_checklist([_row("x", "09:00")])
+    assert len(bands) == 1
+
+
+def test_banding_never_loses_a_row():
+    rows = [_row(f"i{n}", t) for n, t in enumerate(
+        ["00:01", "08:00", "12:00", "18:00", None, "zz", ""])]
+    bands = db._band_checklist(rows)
+    assert sum(len(b["rows"]) for b in bands) == len(rows)
+
+
+def test_unparseable_time_falls_into_any_time_rather_than_vanishing():
+    bands = db._band_checklist([_row("x", "not-a-time")])
+    assert bands[0]["label"] == "Any time"
+
+
+def test_rows_within_a_band_stay_in_clock_order_even_when_done():
+    """Done rows must NOT sink here.
+
+    Every other list on this board sinks finished work, but this one prints
+    the time beside each row — a column of times that does not run downwards
+    reads as a rendering bug, so the strikethrough carries "done" instead.
+    """
+    bands = db._band_checklist([
+        _row("late", "22:30", done=True), _row("early", "21:00", done=False),
+    ])
+    assert [r["title"] for r in bands[0]["rows"]] == ["early", "late"]
+
+
+def test_board_renders_the_time_prefix_and_band_headings():
+    bands = db._band_checklist([_row("Wake", "06:00"), _row("Ram", None)])
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader("templates"),
+                             autoescape=True)
+    env.globals["url_for"] = lambda *a, **k: "#"
+    html = env.get_template("day_board.html").render(
+        plan_date=dt.date(2026, 8, 22), prev_date=dt.date(2026, 8, 21),
+        next_date=dt.date(2026, 8, 23), is_today=True,
+        win_start=dt.time(6, 0), win_end=dt.time(23, 0),
+        placed=[], untimed=[], tasks=[], open_task_count=0,
+        bucket=[], open_bucket_count=0,
+        checklist=[], checklist_bands=bands, checklist_done=0,
+        now_pct=None, refresh=0, theme="dark")
+    assert 'class="band"' in html
+    assert "Before 8am" in html and "Any time" in html
+    assert ">06:00<" in html            # the time actually prefixes the row
+    assert ">··<" in html               # ...and untimed rows say so

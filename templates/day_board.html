@@ -213,6 +213,28 @@ li.done .txt{text-decoration:line-through}
      -webkit-box-orient:vertical; overflow:hidden}
 .at{flex:0 0 auto; color:var(--dim); font-size:calc(var(--u) * .85);
     font-variant-numeric:tabular-nums}
+/* CHECKLIST TIME BANDS. The heading is a list row so the fit/truncate pass
+   measures it like any other; it is styled to read as a rule, not an item. */
+li.band{
+  display:flex; align-items:baseline; gap:calc(var(--u) * .4);
+  margin-top:calc(var(--u) * .5); padding-bottom:calc(var(--u) * .1);
+  border-bottom:1px solid var(--line); color:var(--dim);
+  font-size:calc(var(--u) * .72); font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase;
+}
+li.band:first-child{margin-top:0}
+.band-l{flex:1; min-width:0}
+.band-n{flex:0 0 auto; font-variant-numeric:tabular-nums; opacity:.75}
+/* The time prefix. Fixed width and tabular figures so every title starts on
+   the same column — a ragged left edge is what makes a timed list unreadable
+   at a glance, which is the whole point of putting the time there. */
+.when{
+  flex:0 0 auto; width:calc(var(--u) * 2.5); color:var(--text);
+  font-size:calc(var(--u) * .82); font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+.when.nowhen{color:var(--dim); font-weight:500}
+li.done .when{color:var(--dim); font-weight:500}
 .more{
   padding:calc(var(--u) * .3) calc(var(--u) * .8);
   font-size:calc(var(--u) * .95); font-weight:700; color:var(--warn);
@@ -378,16 +400,28 @@ li.done .txt{text-decoration:line-through}
         <h2>Checklist <span class="n">{{ checklist_done }}/{{ checklist|length }}</span></h2>
         <div class="body">
           <ul data-fit>
-            {% for c in checklist %}
-              <li class="{% if c.done %}done{% endif %}">
-                {% if c.done %}<span class="tick">✓</span>
-                {% else %}<span class="dot"></span>{% endif %}
-                <span class="txt">{{ c.title }}</span>
-                {% if c.href %}
-                  <a class="hit" href="{{ c.href }}"
-                     aria-label="Open {{ c.title }} in the checklist"></a>
-                {% endif %}
+            {#- Banded by clock time, earliest first. A flat list of twenty
+                items is a list; the same twenty under "Before 8am / 8am-12pm
+                / 12pm-6pm / After 6pm" is a SHAPE, and you can see at a
+                glance whether tonight is loaded before you commit to it. -#}
+            {% for band in checklist_bands %}
+              <li class="band" data-band="{{ band.key }}">
+                <span class="band-l">{{ band.label }}</span>
+                <span class="band-n">{{ band.rows|selectattr("done")|list|length }}/{{ band.rows|length }}</span>
               </li>
+              {% for c in band.rows %}
+                <li class="cl {% if c.done %}done{% endif %}"
+                    data-of="{{ band.key }}">
+                  {% if c.done %}<span class="tick">✓</span>
+                  {% else %}<span class="dot"></span>{% endif %}
+                  <span class="when {% if not c.at %}nowhen{% endif %}">{{ c.at or '··' }}</span>
+                  <span class="txt">{{ c.title }}</span>
+                  {% if c.href %}
+                    <a class="hit" href="{{ c.href }}"
+                       aria-label="Open {{ c.title }} in the checklist"></a>
+                  {% endif %}
+                </li>
+              {% endfor %}
             {% endfor %}
             {% if not checklist %}
               <li class="empty">No checklist items for today.</li>
@@ -456,7 +490,27 @@ li.done .txt{text-decoration:line-through}
           items[j].hidden = true;
           hiddenCount++;
         }
-        if (hiddenCount && more) {
+        // A band heading whose every row got hidden is a lie — it says
+        // "After 6pm" over nothing. Hide it too, and do not count it as
+        // one of the hidden ITEMS, because the reader is being told how
+        // much WORK is off-screen, not how much furniture.
+        var kids = Array.prototype.slice.call(ul.children);
+        kids.forEach(function (el, k) {
+          if (!el.classList.contains("band") || el.hidden) return;
+          var live = false;
+          for (var m = k + 1; m < kids.length; m++) {
+            if (kids[m].classList.contains("band")) break;
+            if (!kids[m].hidden) { live = true; break; }
+          }
+          if (!live) { el.hidden = true; }
+        });
+        // Recount from the DOM rather than trusting the tally: the loop
+        // above hid headings, and the loop before it may have hidden some
+        // too. "+3 more" has to mean three things to DO.
+        hiddenCount = kids.filter(function (el) {
+          return el.hidden && !el.classList.contains("band");
+        }).length;
+        if (hiddenCount > 0 && more) {
           more.textContent = "+" + hiddenCount + " more";
           more.hidden = false;
         }
