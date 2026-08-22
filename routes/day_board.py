@@ -38,7 +38,8 @@ from urllib.parse import urlencode
 from flask import Blueprint, jsonify, render_template, request, session, url_for
 
 from services.login_service import login_required
-from services import checklist_schedule, event_recurrence, loud
+from services import checklist_schedule
+from services import streak as streak_service, event_recurrence, loud
 from supabase_client import get
 from utils.user_tz import user_now, user_today
 
@@ -713,6 +714,9 @@ def day_board():
     tasks = _tasks_for(user_id, plan_date)
     checklist = _checklist_for(user_id, plan_date)
     checklist_bands = _band_checklist(checklist)
+    # THE CHAIN. Derived, never written, and never allowed to break the
+    # board — compute() swallows its own failures and returns ok=False.
+    chain = streak_service.compute(user_id, plan_date)
     bucket = _bucket_for(user_id, plan_date, plan_date == user_today())
 
     # The visible window. Explicit ?from/?to wins; otherwise fit it to the
@@ -798,7 +802,7 @@ def day_board():
         placed=placed, untimed=untimed,
         tasks=tasks, open_task_count=len(open_tasks),
         bucket=bucket, open_bucket_count=len(open_bucket),
-        checklist=checklist, checklist_bands=checklist_bands,
+        checklist=checklist, checklist_bands=checklist_bands, chain=chain,
         checklist_done=sum(1 for c in checklist if c["done"]),
         now_pct=now_pct,
         refresh=refresh,

@@ -3487,3 +3487,85 @@ def test_time_announcer_scheduling_behaviour():
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "0 failed" in r.stdout, r.stdout
+
+
+# ── THE CHAIN (services/streak.py) ─────────────────────────────────────
+# Asked for 2026-08-22: "can you gamify something which will make me
+# motivated". Calibrated against the real numbers, which were 9 checklist
+# ticks out of 926 due over 60 days — so the bar is low and the streak
+# does not die at midnight. Both of those are load-bearing, hence tests.
+
+def _streak_with(monkeypatch, per_day):
+    """Stub every source so `per_day` is what each day's tally becomes."""
+    from services import streak as st
+
+    def fake_get(table, params=None, **kw):
+        if table != "checklist_ticks":
+            return []
+        col = "tick_date"
+        return [{col: d} for d, n in per_day.items() for _ in range(n)]
+
+    monkeypatch.setattr(st, "get", fake_get)
+    return st
+
+
+def test_chain_counts_back_from_today_when_today_qualifies(monkeypatch):
+    import datetime as dtm
+    st = _streak_with(monkeypatch, {"2026-08-22": 6, "2026-08-21": 5,
+                                    "2026-08-20": 9})
+    r = st.compute("u", dtm.date(2026, 8, 22))
+    assert r["ok"] and r["met"] and r["streak"] == 3
+
+
+def test_chain_survives_a_morning_with_nothing_done_yet(monkeypatch):
+    """The streak must NOT read 0 every morning until you have done five
+    things. It counts back from yesterday while yesterday still qualifies —
+    a chain that resets at midnight is a nag, not a chain.
+    """
+    import datetime as dtm
+    st = _streak_with(monkeypatch, {"2026-08-21": 7, "2026-08-20": 7})
+    r = st.compute("u", dtm.date(2026, 8, 22))
+    assert r["today"] == 0 and r["met"] is False
+    assert r["streak"] == 2, "the streak died at midnight"
+
+
+def test_chain_breaks_only_after_a_whole_day_under_the_bar(monkeypatch):
+    import datetime as dtm
+    st = _streak_with(monkeypatch, {"2026-08-21": 1, "2026-08-20": 9,
+                                    "2026-08-19": 9})
+    r = st.compute("u", dtm.date(2026, 8, 22))
+    assert r["streak"] == 0
+    assert r["best"] == 2, "the earlier run should still be the best"
+
+
+def test_chain_never_raises_and_never_breaks_the_board(monkeypatch):
+    """A broken game is not an outage. The board renders regardless."""
+    import datetime as dtm
+    from services import streak as st
+
+    def boom(*a, **k):
+        raise RuntimeError("postgrest is down")
+
+    monkeypatch.setattr(st, "get", boom)
+    r = st.compute("u", dtm.date(2026, 8, 22))
+    assert r["ok"] is False and r["streak"] == 0
+
+
+def test_chain_says_something_true_when_there_is_no_history(monkeypatch):
+    import datetime as dtm
+    st = _streak_with(monkeypatch, {})
+    r = st.compute("u", dtm.date(2026, 8, 22))
+    assert r["line"] and str(r["window"]) in r["line"]
+
+
+def test_day_board_phone_layout_lets_the_page_scroll():
+    """The no-scroll contract is right for a desk monitor and wrong for a
+    phone: three panels crushed into 640px is unreadable or truncated to
+    "+11 more". Below 720px the page scrolls and the fit pass stands down.
+    """
+    html = open("templates/day_board.html", encoding="utf-8").read()
+    assert "@media (max-width: 720px)" in html
+    assert "function isPhone()" in html and "function phoneU()" in html
+    # .rail is height:100%, which collapses to zero once the page may grow.
+    assert ".panel.cal .body{height:" in html, \
+        "the timeline has no explicit height on a phone and will vanish"

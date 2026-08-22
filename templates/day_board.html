@@ -95,6 +95,26 @@ header{
        color:var(--accent)}
 .counts{margin-left:auto; display:flex; gap:calc(var(--u) * 1.1);
         font-size:calc(var(--u) * 1.05); color:var(--dim)}
+/* ── THE CHAIN ───────────────────────────────────────────────────────
+   Don't-break-the-chain, on the screen that is already being looked at.
+   Under the bar it is an empty circle in the dim colour: present, not
+   nagging. Over it, a flame. The difference should be visible from the
+   far side of a room, because that is the only distance this board is
+   ever read from. */
+.chain{
+  flex:1; min-width:0; display:flex; align-items:baseline;
+  gap:calc(var(--u) * .45); margin-left:calc(var(--u) * 1.1);
+  color:var(--dim); text-decoration:none;
+  font-size:calc(var(--u) * .95);
+}
+.chain b{flex:0 0 auto; font-size:calc(var(--u) * 1.25); font-weight:800}
+.chain.met{color:var(--ok)}
+.chain.met b{color:var(--ok)}
+.chain-line{
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  opacity:.85;
+}
+.chain:hover, .chain:focus-visible{color:var(--text)}
 .counts b{color:var(--text); font-weight:700}
 .stale{color:var(--warn)}
 
@@ -107,6 +127,41 @@ header{
 }
 @media (max-aspect-ratio: 1/1){    /* a portrait panel: stack instead */
   .cols{grid-template-columns:1fr; grid-template-rows:1.2fr 1fr}
+}
+
+/* ── ON A PHONE, LET IT SCROLL ───────────────────────────────────────
+   The no-scroll contract above is right for the surface this was built
+   for: a spare monitor on a desk, glanced at from across the room. It is
+   wrong for a phone. Squeezing a timeline, a to-do list and a twenty-row
+   checklist into 640px of height leaves every one of them either
+   unreadable or truncated to "+11 more" — which is a board that shows you
+   almost nothing, on the device you actually carry.
+
+   So below 720px the page scrolls, like every other page on a phone, and
+   the type stays comfortable. Nothing is hidden and nothing is shrunk;
+   you swipe, which is free. The fit pass stands down here (see phoneU()).
+
+   The timeline needs an explicit height because .rail is height:100% and
+   a percentage of an auto-height parent is zero — the one thing that
+   silently breaks when a fixed-height layout is allowed to grow. */
+@media (max-width: 720px){
+  html, body{height:auto; overflow:visible; overscroll-behavior:auto}
+  #board{height:auto; min-height:100dvh; width:auto}
+  header{flex-wrap:wrap; row-gap:calc(var(--u) * .3)}
+  .counts{margin-left:0; flex-basis:100%; flex-wrap:wrap;
+          row-gap:calc(var(--u) * .2)}
+  .chain{flex-basis:100%; margin-left:0; align-items:flex-start}
+  .chain-line{white-space:normal; overflow:visible; line-height:1.3}
+  .cols{grid-template-columns:1fr; grid-template-rows:none}
+  .right{grid-template-rows:none}
+  .panel{overflow:visible}
+  .panel .body{overflow:visible}
+  .panel.cal .body{height:66vh}          /* the timeline keeps a real height */
+  .more{display:none}                    /* nothing is truncated down here */
+  /* Comfortable thumb targets. The desktop board is look-only; the phone
+     one is the version people actually tap. */
+  li{padding:calc(var(--u) * .45) 0}
+  .ico{min-width:calc(var(--u) * 2.4); min-height:calc(var(--u) * 2.4)}
 }
 .right{min-height:0; display:grid; grid-template-rows:1fr 1fr;
        gap:calc(var(--u) * .7)}
@@ -292,6 +347,16 @@ li.done .when{color:var(--dim); font-weight:500}
 
     <div class="date">{{ date_label }}</div>
     {% if is_today %}<div class="clock" id="clock">--:--</div>{% endif %}
+    {#- THE CHAIN. Sits between the clock and the counts and takes the
+        leftover width, so it costs the board no extra HEIGHT — which
+        matters, because height is what sets the type size here. -#}
+    {% if chain and chain.ok %}
+    <a class="chain {% if chain.met %}met{% endif %}" href="{{ url_for('checklist.checklist_page') }}"
+       title="{{ chain.today }} closed today. A day counts at {{ chain.bar }}. Best run: {{ chain.best }} days.">
+      <b>{% if chain.met %}&#128293;{% else %}&#9675;{% endif %} {{ chain.streak }}</b>
+      <span class="chain-line">{{ chain.line }}</span>
+    </a>
+    {% endif %}
     <div class="counts">
       <span><b>{{ placed|length }}</b> events</span>
       <span><b>{{ open_task_count }}</b> to do</span>
@@ -301,9 +366,12 @@ li.done .when{color:var(--dim); font-weight:500}
   </header>
 
   <div class="cols">
+    {#- .cal is only used by the phone layout, which has to give the timeline
+        an explicit height (its rail is height:100%, which collapses to
+        nothing the moment the page is allowed to grow). -#}
 
     <!-- ── CALENDAR ─────────────────────────────────────────────── -->
-    <section class="panel">
+    <section class="panel cal">
       <h2>Calendar
         <span class="n">{{ win_start.strftime('%H:%M') }}–{{ win_end.strftime('%H:%M') }}</span>
       </h2>
@@ -499,7 +567,29 @@ li.done .when{color:var(--dim); font-weight:500}
     document.documentElement.style.setProperty("--u", px.toFixed(2) + "px");
   }
 
+  /* On a phone there is nothing to fit: the page scrolls, so the right size
+     is simply a readable one. Searching for the largest --u that avoids
+     overflow would find a tiny one — the content is taller than the screen
+     BY DESIGN there — and then truncate a list that did not need it. */
+  function isPhone() {
+    try { return window.matchMedia("(max-width: 720px)").matches; }
+    catch (e) { return (window.innerWidth || 1024) <= 720; }
+  }
+
+  function phoneU() {
+    var vw = window.innerWidth || 390;
+    return Math.max(11, Math.min(15, vw / 26)) * SIZES[sizeIdx];
+  }
+
   function fit() {
+    if (isPhone()) {
+      document.querySelectorAll("[data-fit] > li").forEach(function (li) {
+        li.hidden = false;
+      });
+      document.querySelectorAll(".more").forEach(function (m) { m.hidden = true; });
+      setU(phoneU());
+      return;
+    }
     MIN_U = floorU();               // the viewport may have changed under us
 
     // Reveal everything first, so the search measures the true content height
