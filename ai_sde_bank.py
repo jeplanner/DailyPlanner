@@ -359274,6 +359274,268 @@ _ANSWER_V2['Minimum Number of Coins for Fruits'] = """Buying fruit i grants the 
 · COST — O(n^2) in the straightforward form, which is fine at the given
   constraints. A monotonic deque reduces the min-query to O(n) if pushed."""
 
+_ANSWER_V2['Minimum Path Sum'] = """Each cell holds the cheapest cost to REACH it - its own value plus the better of above and left.
+
+· WHY DP AND NOT A GREEDY — always stepping toward the smaller neighbour is the
+  obvious idea and it is wrong, because a cheap first step can lead into an
+  expensive region. Only considering every path, which the DP does implicitly,
+  is safe.
+· THE RECURRENCE — dp[r][c] = grid[r][c] + min(dp[r-1][c], dp[r][c-1]).
+· THE FIRST ROW AND COLUMN have only one way in, so they are running sums along
+  the edge. Handling them before the main loop is cleaner than branching inside
+  it.
+· IT CAN BE DONE IN PLACE by overwriting the grid, which is O(1) extra space.
+  Say that you are mutating the input, since some interviewers care.
+· A ROLLING ROW gives O(cols) space without mutating: keep one array and update
+  it left to right, since dp[r][c] needs only the value above (the array's
+  current entry) and to the left (the entry you just wrote).
+· THIS IS NOT DIJKSTRA, because movement is restricted to right and down, so
+  the grid is a DAG and a simple sweep suffices. If diagonal or upward moves
+  were allowed, it would become a shortest-path problem and need a heap.
+· NEGATIVE VALUES would not break this DP, unlike Dijkstra — worth mentioning
+  if the follow-up goes there.
+· COST — O(rows * cols) time, O(cols) space."""
+
+_ANSWER_V2['Network Delay Time (Dijkstra application)'] = """Single-source shortest paths, and the answer is the MAXIMUM of those distances - the last node to hear the signal.
+
+· THE TRANSLATION IS THE QUESTION. Recognising 'time for all nodes to receive'
+  as 'the largest shortest-path distance' is the whole insight; the rest is a
+  textbook Dijkstra.
+· DIJKSTRA — a min-heap keyed by tentative distance, popping the closest
+  unfinished node and relaxing its edges. Skip a popped node if you have
+  already finalised it, which is the lazy-deletion idiom.
+· BUILD AN ADJACENCY LIST FIRST. Working from the raw edge list inside the loop
+  turns each relaxation into a scan and destroys the complexity.
+· RETURN -1 IF ANY NODE IS UNREACHED. Check that you finalised all n nodes, or
+  that no distance is still infinity — the graph is directed, so unreachable
+  nodes are entirely normal here.
+· THE NODES ARE 1-INDEXED in this problem while your arrays are not. That
+  off-by-one is the most common failure and it produces a wrong answer rather
+  than a crash.
+· WHY NOT BELLMAN-FORD — it works and is simpler to write, at O(V*E). It is the
+  right answer only if edges could be negative, which delays cannot be.
+· BFS IS NOT ENOUGH because the edges are weighted. Plain BFS finds the fewest
+  hops, not the smallest total delay.
+· COST — O(E log V) time, O(V + E) space."""
+
+_ANSWER_V2['Palindrome Partitioning (backtracking)'] = """Try every cut point from the current position, but only recurse when the piece you just cut is itself a palindrome.
+
+· THE SHAPE — backtrack from a start index; for each end from start to the
+  string's end, if s[start..end] is a palindrome, add it to the path and
+  recurse from end+1. When start passes the last character, the path is one
+  complete partition.
+· THE PALINDROME CHECK IS THE PRUNE, and it is what keeps this tractable.
+  Generating all 2^(n-1) partitions and filtering afterwards is the same answer
+  and far slower.
+· RECORD A COPY of the path when you reach the end. Appending the live list
+  means every stored partition is the same object and they all mutate together
+  — the standard backtracking bug.
+· POP AFTER RECURSING. The undo is what makes it backtracking; forgetting it
+  leaves earlier pieces stuck in the path for every later branch.
+· PRECOMPUTE THE PALINDROME TABLE if asked to optimise: isPal[i][j] via interval
+  DP in O(n^2), which turns each check from O(n) into O(1).
+· A SINGLE CHARACTER IS ALWAYS A PALINDROME, so a valid partition always exists
+  and the result is never empty.
+· COST — O(n * 2^n) in the worst case, because there can be that many
+  partitions (a string of identical characters is the bad case). You cannot
+  beat the size of the output."""
+
+_ANSWER_V2['Path Sum II (all root-to-leaf paths)'] = """Backtracking DFS - append on the way down, record a COPY at a qualifying leaf, pop on the way back up.
+
+· ROOT-TO-LEAF MEANS LEAF, and a leaf has no children at all. A node with one
+  child is not a leaf, so a path ending there does not count even if the sum
+  matches. That is the trap this problem is built around.
+· THE LOOP — subtract the node's value from the remaining target, append the
+  node to the path, and if it is a leaf with remaining target now zero, record
+  the path.
+· RECORD A COPY, not the path itself. The list is mutated on the way back up,
+  so storing the reference gives you a set of identical, wrong results.
+· POP ON THE WAY OUT, unconditionally — after both recursive calls, whether or
+  not anything was recorded.
+· CARRY A REMAINING TARGET rather than a running sum. Both work, but
+  decrementing means the leaf test is a comparison against zero and there is
+  one fewer variable to keep straight.
+· NEGATIVE VALUES ARE ALLOWED, so you cannot prune a branch just because the
+  running sum has already passed the target. That rules out the obvious
+  optimisation, and it is worth saying so.
+· AN EMPTY TREE returns an empty list, not a list containing an empty path.
+· COST — O(n) to visit, plus O(n) per recorded path to copy it, so O(n^2) worst
+  case; O(h) stack."""
+
+_ANSWER_V2['Path Sum III (prefix sum)'] = """Running prefix sums in a hash map, exactly like Subarray Sum Equals K - the tree just replaces the array.
+
+· THE MAPPING TO A KNOWN PROBLEM is the point. A downward path is a contiguous
+  run along a root-to-node chain, so the same algebra applies: a path ending
+  here sums to target when some ANCESTOR prefix equals running - target.
+· THE MAP holds counts of prefix sums seen on the CURRENT root-to-node path,
+  not in the whole tree.
+· SEED IT WITH {0: 1} to count paths that begin at the root, exactly as in the
+  array version.
+· BACKTRACK THE MAP ON THE WAY UP. Decrement the current prefix's count after
+  recursing into both children. Without that, sums from a sibling branch leak
+  in and the count is too high — this is the one line that makes the tree
+  version different from the array version, and it is the whole difficulty.
+· NEGATIVE VALUES ARE PERMITTED, which is why this needs prefix sums rather
+  than any sliding or pruning approach.
+· PATHS GO DOWNWARD ONLY, parent to child. They need not start at the root or
+  end at a leaf, which is what makes the naive answer O(n^2).
+· THE NAIVE VERSION — run a sum-from-here DFS at every node — is O(n^2) and is
+  worth offering first, then improving to this.
+· COST — O(n) time, O(h) space for the map and the stack."""
+
+_ANSWER_V2['Perfect Squares (DP)'] = """dp[i] is the fewest squares summing to i - try every square that fits and take one more than the best remainder.
+
+· THE RECURRENCE — dp[i] = 1 + min(dp[i - j*j]) over every j with j*j <= i, and
+  dp[0] = 0.
+· THIS IS UNBOUNDED COIN CHANGE with the coins being 1, 4, 9, 16 and so on.
+  Naming that lets you reuse a routine you already know rather than deriving a
+  new one.
+· THE GREEDY IS WRONG, and it is worth knowing the counterexample: for 12, the
+  greedy takes 9 then 1+1+1 for four squares, while 4+4+4 is three. Any
+  argument that starts 'take the largest square' fails here.
+· INITIALISE TO INFINITY, not to zero, or the min never improves. dp[0] = 0 is
+  the only zero.
+· LAGRANGE'S FOUR-SQUARE THEOREM says the answer is always 1, 2, 3 or 4, and
+  Legendre's three-square theorem tells you exactly when it is 4 — when n is of
+  the form 4^a(8b+7). That gives an O(sqrt n) solution and is a strong thing to
+  mention, but give the DP first.
+· A BFS FORMULATION also works: levels are the number of squares used, and the
+  first time you reach n is the answer. Same complexity, and it stops early.
+· COST — O(n * sqrt(n)) time, O(n) space."""
+
+_ANSWER_V2['Reorganize String (greedy heap)'] = """Always place the most frequent character that is not the one you just placed - a max-heap plus a one-turn cooldown slot.
+
+· THE FEASIBILITY TEST FIRST — it is impossible exactly when some character's
+  count exceeds (n+1)//2. Check it up front and return '' rather than
+  discovering failure halfway through.
+· WHY THAT BOUND — the most frequent character must occupy alternating
+  positions, and there are (n+1)//2 of those in a string of length n. One more
+  and two of them must touch.
+· THE GREEDY — pop the highest-count character from a max-heap, append it,
+  decrement, and hold it ASIDE rather than pushing it straight back. Push the
+  previously held character back before the next pop.
+· THE COOLDOWN SLOT IS THE WHOLE MECHANISM. Pushing the character back
+  immediately lets it be chosen again at once, which is exactly what you are
+  trying to prevent.
+· ONLY PUSH BACK IF THE COUNT IS STILL POSITIVE, or you will place a character
+  you have run out of.
+· WHY MOST-FREQUENT-FIRST — the scarce characters are easy to place later; the
+  abundant one is what will run out of room. Spending it early is what keeps
+  the arrangement feasible.
+· PYTHON NEEDS NEGATED COUNTS since heapq is a min-heap.
+· COST — O(n log k) where k is the alphabet size, O(k) space."""
+
+_ANSWER_V2['Sum Root to Leaf Numbers'] = """Carry the number built so far DOWN the recursion - current * 10 + node value - and add it to the total at each leaf.
+
+· THE ACCUMULATOR IS THE ALGORITHM. Passing the partial number down means each
+  leaf already knows its complete value; there is nothing to combine on the way
+  back up.
+· THE STEP — at every node, current = current * 10 + node.val. The multiply is
+  what shifts the earlier digits left, and the root ends up most significant
+  automatically.
+· ADD ONLY AT LEAVES. A node with one child is not a leaf, and adding at every
+  node counts prefixes of numbers as if they were numbers.
+· THE RETURNING FORM is cleanest: return left + right for internal nodes, and
+  the completed number at a leaf. No outer accumulator, no closure.
+· AN EMPTY TREE contributes 0, which the null base case gives you free.
+· THIS IS THE TOP-DOWN COUNTERPART to problems like Diameter that accumulate
+  bottom-up. Noticing which direction the information flows is the reusable
+  part, and it is decided by whether a child's answer depends on its ancestors.
+· NO OVERFLOW CONCERN IN PYTHON; in Java the problem constrains depth so it
+  fits in an int, which is worth confirming aloud rather than assuming.
+· COST — O(n) time, O(h) stack."""
+
+_ANSWER_V2['Triangle (Minimum Path Sum)'] = """Work BOTTOM-UP - each cell takes the smaller of its two children, and the apex ends holding the answer.
+
+· WHY BOTTOM-UP IS BETTER HERE — going top-down you must handle the edges of
+  each row specially, because the first and last cells have only one parent.
+  Bottom-up, every cell has exactly two children, so there are no special
+  cases at all.
+· THE RECURRENCE — dp[c] = triangle[r][c] + min(dp[c], dp[c+1]), sweeping rows
+  upward and overwriting a single array in place.
+· THE SPACE IS O(n) NATURALLY, using one array the width of the last row. No
+  cleverness is needed, which is a nice contrast with Minimum Path Sum where
+  the rolling row takes a moment to justify.
+· INITIALISE THE ARRAY TO THE LAST ROW, then process rows from second-to-last
+  upward. dp[0] at the end is the answer.
+· ADJACENT MEANS INDEX c OR c+1 in the row below, not c-1 and c+1. Getting the
+  neighbour relation wrong gives a plausible number that is not the answer.
+· IN-PLACE ON THE TRIANGLE is O(1) extra space if mutation is allowed; say so
+  before doing it.
+· NEGATIVE NUMBERS are permitted in most versions, so no pruning by running
+  total is safe.
+· COST — O(n^2) time for the n^2/2 cells, O(n) space."""
+
+_ANSWER_V2['Unique Paths II (grid with obstacles)'] = """Same counting DP as the obstacle-free version, except an obstacle sets its cell to zero and the zero propagates.
+
+· THE BASE PROBLEM — paths to a cell are paths from above plus paths from the
+  left, because those are the only two ways in.
+· THE OBSTACLE RULE — if the cell is blocked, dp is 0. That single line does
+  everything: a zero contributes nothing to the cells below and right, so whole
+  regions become correctly unreachable without any extra logic.
+· THE ROLLING ROW — one array of width cols, updated left to right, gives
+  O(cols) space. dp[c] before the update holds the value from above, and
+  dp[c-1] holds the value from the left, so dp[c] += dp[c-1] is the whole
+  update.
+· THE FIRST ROW IS NOT ALL ONES, unlike the unobstructed version. Once an
+  obstacle appears in row 0, every cell after it is unreachable. The rolling
+  form handles this automatically; an explicit initialisation does not.
+· A BLOCKED START OR FINISH means the answer is 0. Check it rather than
+  trusting the loop.
+· dp[0] MUST BE SET TO 1 initially (or 0 if the start is blocked) — it is the
+  seed the entire count grows from.
+· THIS IS NOT A COMBINATORICS PROBLEM ANY MORE. The obstacle-free version has
+  the closed form C(m+n-2, m-1); obstacles destroy that, which is worth saying
+  if you offered the formula for part one.
+· COST — O(rows * cols) time, O(cols) space."""
+
+_ANSWER_V2['Wiggle Subsequence (greedy)'] = """Track two lengths - the best wiggle ending on a rise and the best ending on a fall - and each move extends the other one.
+
+· THE STATES — up is the longest wiggle so far whose last move was an increase;
+  down is the same for a decrease.
+· THE UPDATE — on a rise, up = down + 1, because a rise can only follow a fall.
+  On a fall, down = up + 1. Equal neighbours change nothing and are skipped.
+· THE ANSWER IS max(up, down), and both start at 1 since a single element is a
+  wiggle of length 1.
+· WHY GREEDY IS SAFE — you never need to skip a genuine direction change. Taking
+  every turning point is optimal, and the two counters are just a compact way of
+  recording them.
+· EQUAL ADJACENT VALUES MUST BE IGNORED, not treated as either direction.
+  Treating a flat step as a rise inflates the answer, and flat runs are exactly
+  what the test cases probe.
+· THE O(n^2) DP EXISTS and is easier to justify but unnecessary. Offer the
+  greedy and be ready to explain why it is correct rather than presenting it as
+  a trick.
+· AN ARRAY OF ONE ELEMENT answers 1; an array of all-equal elements also
+  answers 1.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2['Tokenization and Byte-Pair Encoding (BPE)'] = """Models read TOKENS, not letters or words - and BPE builds those tokens by repeatedly merging the most frequent adjacent pair.
+
+· THE TRADE IT SOLVES — a whole-word vocabulary explodes in size and cannot
+  handle a word it has never seen; a character vocabulary handles everything
+  but makes sequences enormously long. Subwords sit between the two.
+· HOW BPE TRAINS — start from single characters, count adjacent pairs across
+  the corpus, merge the most frequent into a new token, repeat until the
+  vocabulary reaches the target size. Common words end up as one token; rare
+  ones decompose into pieces.
+· NOTHING IS EVER OUT OF VOCABULARY, because the character level is always
+  available as a fallback. That is the property that made subword tokenisation
+  win.
+· THE PRACTICAL RULE OF THUMB — roughly 4 characters or 0.75 words per token in
+  English. That is the number you use to estimate cost and context budget.
+· NON-ENGLISH TEXT COSTS MORE TOKENS for the same meaning, because the merges
+  were learned on a corpus that was mostly English. This is a real fairness and
+  pricing issue, not a curiosity.
+· IT EXPLAINS THE CLASSIC FAILURES — counting letters in a word, reversing a
+  string, or arithmetic on long numbers are all hard because the model never
+  sees the characters, only the chunks.
+· BYTE-LEVEL BPE operates on raw bytes rather than Unicode characters, which
+  guarantees any input encodes without a special unknown token.
+· SENTENCEPIECE AND WORDPIECE are the neighbours — WordPiece merges by
+  likelihood gain rather than raw frequency, and SentencePiece treats the input
+  as a raw stream so it needs no pre-tokenisation by whitespace."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
