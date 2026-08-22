@@ -1573,3 +1573,103 @@ def test_day_page_rows_carry_a_focus_id(auth_client):
     html = open("templates/day.html", encoding="utf-8").read()
     assert html.count('data-focus-id="{{ i.id }}"') == 3, (
         "not every day-view item block is addressable")
+
+
+# ═══════════════════════════════════════════════════
+# Sign-in history — IST, location, failed attempts
+# ═══════════════════════════════════════════════════
+
+def test_login_history_shows_utc_rows_in_the_users_own_timezone(auth_client, monkeypatch):
+    """Asked for: sign-in history "in IST Time along with location".
+
+    Rows are stored in UTC because that is the only representation that
+    survives a timezone change; the conversion happens in the view, once.
+    09:15 UTC is 14:45 IST, and that arithmetic is the whole point of the
+    page — a history showing UTC would be read wrong every single time.
+    """
+    import routes.settings as st
+    rows = [
+        {"at": "2026-08-22T09:15:00+00:00", "ip": "49.207.1.2",
+         "user_agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit Chrome/120 Mobile Safari",
+         "city": "Chennai", "region": "Tamil Nadu", "country": "India",
+         "location_status": "ok", "outcome": "success"},
+        {"at": "2026-08-21T18:40:00+00:00", "ip": "192.168.1.5",
+         "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X) Safari/605",
+         "location_status": "private", "outcome": "failed"},
+    ]
+    monkeypatch.setattr(st, "get", lambda *a, **kw: rows)
+    html = auth_client.get("/settings/login-history").get_data(as_text=True)
+
+    assert "02:45 PM" in html, "UTC was not converted to the user's zone"
+    assert "IST" in html, "the page does not say which zone it is showing"
+    assert "Chennai, Tamil Nadu, India" in html
+    # location_status distinguishes three states an empty cell would flatten
+    # into one that looks like a bug.
+    assert "On this network" in html
+    assert "Chrome on Android" in html and "Safari on Mac" in html
+    # A history of successes alone cannot show someone trying to get in.
+    assert "failed attempt" in html
+
+
+def test_login_history_names_the_migration_instead_of_500ing(auth_client, monkeypatch):
+    """An unrun migration is a setup step, not an error. The page says which
+    file closes it — and says the earlier sign-ins cannot be backfilled,
+    because they were never stored."""
+    import routes.settings as st
+
+    def missing(*a, **kw):
+        raise Exception('relation "login_events" does not exist')
+
+    monkeypatch.setattr(st, "get", missing)
+    r = auth_client.get("/settings/login-history")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert "MIGRATION_LOGIN_HISTORY.sql" in html
+    assert "backfilled" in html
+
+
+def test_login_geolocation_is_honest_about_what_it_cannot_know():
+    """`location_status` carries WHY a row has no city, so the page can say
+    "on this network" rather than showing a blank that reads as a bug.
+
+    A private address is detected rather than sent to the geo provider: the
+    lookup would fail anyway, and the answer is more useful.
+    """
+    from services import login_history_service as svc
+    assert svc.locate("127.0.0.1")["location_status"] == "private"
+    assert svc.locate("192.168.1.5")["location_status"] == "private"
+    assert svc.locate("10.0.0.9")["location_status"] == "private"
+    assert svc.locate(None)["location_status"] == "unknown"
+    assert svc.locate("not-an-ip")["location_status"] in ("failed", "unknown")
+
+
+def test_login_history_prefers_the_forwarded_address(monkeypatch):
+    """Behind a proxy, remote_addr is the PROXY. The real client is the
+    left-most entry of X-Forwarded-For — trusted for "roughly where", never
+    for anything security-critical, because the header is client-settable."""
+    from services import login_history_service as svc
+
+    class Req:
+        def __init__(self, headers, remote):
+            self.headers = headers
+            self.remote_addr = remote
+
+    assert svc.client_ip(Req({"X-Forwarded-For": "203.0.113.9, 70.41.3.18"},
+                             "10.0.0.1")) == "203.0.113.9"
+    assert svc.client_ip(Req({}, "203.0.113.9")) == "203.0.113.9"
+    # Nothing available must be None, not a placeholder that later looks
+    # like real data.
+    assert svc.client_ip(Req({}, "")) is None
+
+
+def test_a_failed_sign_in_is_recorded_against_the_targeted_account():
+    """Half the point of the page is showing attempts that were not you.
+
+    Nothing is recorded for an unknown email — there is no account to show
+    it to, and writing one would let a stranger fill the table.
+    """
+    import inspect
+    import routes.auth as auth
+    src = inspect.getsource(auth.login)
+    assert 'outcome="failed"' in src, "failed attempts are not recorded"
+    assert "if user:" in src, "a failure for an unknown email would be stored"

@@ -3,6 +3,7 @@ User settings — currently just timezone, designed so we can drop in
 notifications / display preferences here without restructuring.
 
 GET  /settings           → render the settings page
+GET  /settings/login-history → recent sign-ins, in the user's own timezone
 POST /api/settings/timezone  → JSON body {"timezone": "America/New_York"} → persist
 """
 import logging
@@ -12,8 +13,8 @@ from flask import Blueprint, jsonify, render_template, request, session
 from flask_login import current_user
 
 from services.login_service import login_required
-from supabase_client import update
-from utils.user_tz import DEFAULT_TZ_NAME, set_session_tz, user_tz_name
+from supabase_client import get, update
+from utils.user_tz import DEFAULT_TZ_NAME, set_session_tz, user_tz, user_tz_name
 
 logger = logging.getLogger("daily_plan")
 settings_bp = Blueprint("settings", __name__)
@@ -103,3 +104,137 @@ def update_timezone():
             pass
 
     return jsonify({"status": "ok", "timezone": tz_name})
+
+
+# ── Login history ─────────────────────────────────────────────────────
+#: How many sign-ins to show. Enough to cover "was that me last week?"
+#: without paginating a page nobody visits twice a day.
+LOGIN_HISTORY_LIMIT = 100
+
+
+def _describe_location(row):
+    """One human line for where a sign-in came from.
+
+    `location_status` exists so this can be honest about the difference
+    between "we know it was Chennai", "it was your own network", and "the
+    lookup failed" — three states an empty cell would flatten into one that
+    looks like a bug.
+    """
+    status = (row.get("location_status") or "").lower()
+    if status == "ok":
+        parts = [row.get("city"), row.get("region"), row.get("country")]
+        text = ", ".join(p for p in parts if p)
+        return text or "Unknown location"
+    if status == "private":
+        return "On this network"
+    if status == "unknown":
+        return "No address recorded"
+    return "Could not determine"
+
+
+def _describe_device(user_agent):
+    """A short, honest device label from the user-agent string.
+
+    Deliberately coarse. User-agent parsing is a bottomless pit and the
+    question this answers is only "does that look like my phone or a machine
+    I do not recognise", which needs the browser and the platform and nothing
+    else.
+    """
+    ua = user_agent or ""
+    low = ua.lower()
+    if not ua:
+        return "Unknown device"
+
+    if "edg/" in low:
+        browser = "Edge"
+    elif "opr/" in low or "opera" in low:
+        browser = "Opera"
+    elif "chrome" in low and "chromium" not in low:
+        browser = "Chrome"
+    elif "firefox" in low:
+        browser = "Firefox"
+    elif "safari" in low:
+        browser = "Safari"
+    else:
+        browser = "Browser"
+
+    if "android" in low:
+        platform = "Android"
+    elif "iphone" in low:
+        platform = "iPhone"
+    elif "ipad" in low:
+        platform = "iPad"
+    elif "windows" in low:
+        platform = "Windows"
+    elif "mac os" in low or "macintosh" in low:
+        platform = "Mac"
+    elif "linux" in low:
+        platform = "Linux"
+    else:
+        platform = "Unknown OS"
+    return f"{browser} on {platform}"
+
+
+@settings_bp.route("/settings/login-history")
+@login_required
+def login_history_page():
+    """Recent sign-ins for the current user, newest first.
+
+    STORED IN UTC, SHOWN IN THE USER'S OWN ZONE. The rows carry a UTC
+    timestamp because that is the only representation that stays correct
+    across a timezone change; the conversion happens here, once, so the
+    template holds no date arithmetic. For this household the user timezone
+    is Asia/Kolkata, so the page reads in IST.
+    """
+    from datetime import datetime, timezone as _tz
+
+    tz = user_tz()
+    rows = []
+    migration_needed = False
+    try:
+        raw = get("login_events", params={
+            "user_id": f"eq.{session['user_id']}",
+            "order": "at.desc",
+            "limit": str(LOGIN_HISTORY_LIMIT),
+        }) or []
+    except Exception as exc:
+        text = str(exc)
+        if ("login_events" in text or "does not exist" in text
+                or "schema cache" in text):
+            # An unrun migration is a setup step, not an error — say which
+            # file closes it rather than showing a 500.
+            logger.warning("login history unavailable: %s", text[:160])
+            migration_needed = True
+            raw = []
+        else:
+            raise
+
+    for r in raw:
+        at_raw = r.get("at") or ""
+        local = None
+        if at_raw:
+            try:
+                iso = at_raw.replace("Z", "+00:00")
+                parsed = datetime.fromisoformat(iso)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=_tz.utc)
+                local = parsed.astimezone(tz)
+            except ValueError:
+                local = None
+        rows.append({
+            "when": local.strftime("%a %d %b %Y, %I:%M %p") if local else "—",
+            "when_iso": local.isoformat() if local else "",
+            "location": _describe_location(r),
+            "device": _describe_device(r.get("user_agent")),
+            "ip": r.get("ip") or "—",
+            "outcome": (r.get("outcome") or "success").lower(),
+        })
+
+    return render_template(
+        "login_history.html",
+        rows=rows,
+        tz_name=user_tz_name(),
+        tz_abbr=datetime.now(tz).strftime("%Z"),
+        migration_needed=migration_needed,
+        limit=LOGIN_HISTORY_LIMIT,
+    )

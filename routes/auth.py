@@ -78,6 +78,14 @@ def login():
                         json={"last_login_at": datetime.now(timezone.utc).isoformat()})
             except Exception:
                 logger.warning("last_login_at stamp failed for %s", email)
+            # Full history, with where the sign-in came from. Threaded and
+            # failure-swallowing inside: a slow geo provider or a Supabase
+            # hiccup must never stop someone getting into their own planner.
+            try:
+                from services.login_history_service import record as _record_login
+                _record_login(user.id, request, outcome="success")
+            except Exception:
+                logger.warning("login history call failed for %s", email)
             # Cache the user's preferred timezone in the session so the
             # rest of the app (utils.user_tz.user_now / user_today) can
             # serve "today" in the user's wall-clock without a DB hit
@@ -88,6 +96,17 @@ def login():
             next_page = _safe_next_url(request.args.get("next"))
             return redirect(next_page or url_for("planner.planner"))
 
+        # Record the failure against the account that was TARGETED, when it
+        # exists. A history that only shows successes cannot show someone
+        # trying to get in, which is half of what it is for. Nothing is
+        # recorded for an unknown address — there is no account to show it to,
+        # and writing one would let a stranger fill the table.
+        if user:
+            try:
+                from services.login_history_service import record as _record_login
+                _record_login(user.id, request, outcome="failed")
+            except Exception:
+                logger.warning("login history call failed for %s", email)
         return render_template("login.html", error="Invalid email or password",
                                email=email)
 

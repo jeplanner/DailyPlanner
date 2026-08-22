@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign-in history — DailyPlanner</title>
+  {% include "_pwa_head.html" %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='components.css') }}">
+</head>
+<body>
+{% include "_top_nav.html" %}
+<style>
+  body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-family)}
+  .lh-wrap{max-width:900px;margin:0 auto;padding:16px 14px 40px}
+  .lh-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+  .lh-head h1{font-size:20px;font-weight:800;margin:0}
+  .lh-zone{font-size:12.5px;color:var(--color-text-secondary);font-weight:600}
+  .lh-desc{color:var(--color-text-secondary);font-size:13.5px;margin:0 0 16px;line-height:1.5}
+
+  .lh-note{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;
+           border-radius:10px;padding:12px 14px;font-size:13.5px;line-height:1.55;margin-bottom:16px}
+  .lh-note code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px}
+  html.dark .lh-note{background:#3a2a06;color:#fcd34d;border-color:#b45309}
+
+  /* A table on a desk, a stack of cards on a phone. The same rows either
+     way — the board taught us that hiding information to fit is worse than
+     changing shape to fit. */
+  .lh-list{display:flex;flex-direction:column;gap:8px}
+  .lh-row{display:grid;grid-template-columns:1fr auto;gap:4px 14px;
+          border:1px solid var(--color-border);border-radius:10px;
+          padding:11px 13px;background:var(--color-surface)}
+  .lh-row.is-failed{border-color:#dc2626;background:color-mix(in srgb,#dc2626 7%,var(--color-surface))}
+  .lh-when{font-weight:700;font-size:14.5px;font-variant-numeric:tabular-nums}
+  .lh-where{color:var(--color-text-secondary);font-size:13px}
+  .lh-meta{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;
+           font-size:11.5px;color:var(--color-text-secondary)}
+  .lh-chip{border:1px solid var(--color-border);border-radius:999px;padding:2px 8px;white-space:nowrap}
+  .lh-fail{border-color:#dc2626;color:#dc2626;font-weight:700}
+  .lh-empty{color:var(--color-text-secondary);text-align:center;padding:36px 12px;font-size:14px}
+  @media(max-width:560px){
+    .lh-row{grid-template-columns:1fr}
+    .lh-where{grid-column:1}
+  }
+</style>
+
+<div class="lh-wrap">
+  <div class="lh-head">
+    <h1>Sign-in history</h1>
+    <span class="lh-zone">times shown in {{ tz_abbr }} ({{ tz_name }})</span>
+  </div>
+  <p class="lh-desc">
+    The last {{ limit }} sign-ins to this account, newest first, with where
+    each one came from. Failed attempts are listed too &mdash; a history that
+    showed only successes could not show someone else trying to get in.
+    Location is worked out from the network address at the moment of the
+    sign-in, so it is approximate and can name a nearby city rather than
+    your own.
+  </p>
+
+  {% if migration_needed %}
+    <div class="lh-note">
+      <strong>Not recording yet.</strong> Run
+      <code>MIGRATION_LOGIN_HISTORY.sql</code> in Supabase to create the
+      <code>login_events</code> table. Sign-ins from that point on will
+      appear here; the ones before it were never stored, so they cannot be
+      backfilled.
+    </div>
+  {% endif %}
+
+  {% if rows %}
+    <div class="lh-list">
+      {% for r in rows %}
+        <div class="lh-row{% if r.outcome != 'success' %} is-failed{% endif %}">
+          <div class="lh-when">{{ r.when }}</div>
+          <div class="lh-where">{{ r.location }}</div>
+          <div class="lh-meta">
+            {% if r.outcome != 'success' %}
+              <span class="lh-chip lh-fail">failed attempt</span>
+            {% endif %}
+            <span class="lh-chip">{{ r.device }}</span>
+            <span class="lh-chip">{{ r.ip }}</span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% elif not migration_needed %}
+    <div class="lh-empty">
+      No sign-ins recorded yet. This page fills up from your next sign-in.
+    </div>
+  {% endif %}
+</div>
+</body>
+</html>
