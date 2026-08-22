@@ -224,6 +224,11 @@ li.done .txt{text-decoration:line-through}
 
   <header>
     <div class="ctl">
+      {# Two ways off the board, because they are different destinations and
+         one was missing. Home is the app's start page — where you go when
+         you are done glancing and want to actually do something. The menu
+         is the daily summary. Esc still goes to the menu, as it always did. #}
+      <a class="ico" href="/" title="Home" aria-label="Home">&#127968;</a>
       <a class="ico" href="/summary?view=daily" title="Main menu (Esc)"
          aria-label="Main menu">&#9776;</a>
       <button class="ico" id="prev" title="Previous day (left arrow)"

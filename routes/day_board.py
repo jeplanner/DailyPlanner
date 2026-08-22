@@ -33,6 +33,7 @@ should not depend on a token still being valid in JavaScript.
 """
 import logging
 from datetime import date, datetime, time, timedelta
+from urllib.parse import urlencode
 
 from flask import Blueprint, jsonify, render_template, request, session, url_for
 
@@ -454,6 +455,29 @@ def _back_args(plan_date):
     return {"from": "board", "bd": plan_date.isoformat()}
 
 
+#: description fragment -> (bank page, human label). The prep scheduler
+#: writes "{label} — open the topic at {page}" into the calendar row it
+#: creates, and the bulk one writes "Open them at {page}". Both name the
+#: page, which is the only durable thing to match on: the TITLE is the
+#: topic itself and tells you nothing about which bank it came from.
+_PREP_PAGES = ("/ai-sde", "/interview-prep", "/java", "/sql")
+
+
+def _prep_target(item):
+    """If this row came from a prep bank, the page it belongs to.
+
+    Returns None for an ordinary calendar entry. Longest paths are checked
+    first so "/interview-prep" is not swallowed by a shorter match.
+    """
+    text = (item.get("description") or "")
+    if not text:
+        return None
+    for page in sorted(_PREP_PAGES, key=len, reverse=True):
+        if page in text:
+            return page
+    return None
+
+
 def _link_event(item, plan_date):
     """An event opens the day view for the date it belongs to.
 
@@ -462,6 +486,18 @@ def _link_event(item, plan_date):
     the raw row id would land on the right page with nothing highlighted,
     which looks like the link is broken rather than like the row is gone.
     """
+    # A PREP TOPIC GOES TO ITS BANK, not to the day view. Clicking
+    # "SELECT ... WHERE" on the board should open that topic on /sql — the
+    # day view would only show the same one-line title you just clicked,
+    # which is a round trip to no new information.
+    page = _prep_target(item)
+    if page:
+        title = (item.get("title") or "").strip()
+        args = dict(_back_args(plan_date))
+        if title:
+            args["topic"] = title
+        return page + "?" + urlencode(args)
+
     raw_id = item.get("id")
     focus = f"ev-{raw_id}" if raw_id else ""
     return url_for("day.day_page", date=plan_date.isoformat(),

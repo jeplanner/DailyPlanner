@@ -75,6 +75,13 @@
     ".prep-bulkcount{font-size:12.5px;font-weight:700;color:var(--color-text-secondary,#6b7280)}",
     ".prep-pickbox{flex:none;width:17px;height:17px;cursor:pointer;accent-color:#4338ca}",
     ".q-card.prep-picked{outline:2px solid #4338ca;outline-offset:-2px}",
+    /* The card you arrived on. Flashes, then stops — a permanent ring
+       would read as a state the card is in. */
+    ".q-card.prep-landed{outline:3px solid #6366f1;outline-offset:2px;",
+    "border-radius:12px;scroll-margin:90px;animation:prep-land 2.6s ease-out 1}",
+    "@keyframes prep-land{0%,22%{background:rgba(99,102,241,.20)}",
+    "100%{background:transparent}}",
+    "@media (prefers-reduced-motion:reduce){.q-card.prep-landed{animation:none}}",
 
     /* The session panel. Same shape as the single-topic one so the two
        do not look like different features. */
@@ -443,6 +450,92 @@
     paintBulk();
   }
 
+  /* ══════════════════════════════════════════════════════════════════
+     ARRIVING FROM THE DAY BOARD ON A SPECIFIC TOPIC (?topic=)
+
+     Reported: "if an AI SDE prep question is displayed on the day board and
+     I click it, it should go to that specific line item on that page."
+
+     Before this, a scheduled prep topic on the board linked to the DAY
+     view, which showed the same one-line title you had just clicked — a
+     round trip to no new information.
+
+     MATCHED BY TITLE, NOT BY ID. Every one of these banks numbers its
+     entries by POSITION (ai42, j7, sq3) and a position shifts the moment an
+     entry is added or deduped, so a link made last week would open whatever
+     moved into that slot since. The Plan button on each card already
+     carries its own title, and that is what is matched — which also means
+     this reads no page-specific markup, exactly like the bulk selector.
+
+     IT CLICKS THE CARD RATHER THAN SETTING .open. Some of these pages fill
+     the card body LAZILY on first open (/ai-sde fetches the ten-section
+     deep dive), so forcing the class would reveal an empty card. Clicking
+     runs whatever the host page does, including the fetch.
+     ══════════════════════════════════════════════════════════════════ */
+
+  function landOnTopic(root) {
+    var wanted;
+    try {
+      wanted = new URLSearchParams(window.location.search).get("topic");
+    } catch (_) {
+      return;
+    }
+    if (!wanted) return;
+
+    var DEADLINE = 8000;              // these lists are fetched, not inline
+    var started = Date.now();
+    var observer = null;
+    var done = false;
+
+    function attempt() {
+      if (done) return true;
+      var btns = root.querySelectorAll("[data-prep-plan]");
+      for (var i = 0; i < btns.length; i++) {
+        if ((btns[i].getAttribute("data-title") || "") !== wanted) continue;
+        var card = btns[i].closest(".q-card");
+        if (!card) continue;
+        done = true;
+        if (observer) { observer.disconnect(); observer = null; }
+        open(card);
+        return true;
+      }
+      if (Date.now() - started > DEADLINE && observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      return false;
+    }
+
+    function open(card) {
+      if (!card.classList.contains("open")) {
+        // Click the HEADER, not the card: on some pages the card-level
+        // handler would also catch the studied checkbox sitting inside it.
+        var head = card.querySelector(".q-head") || card;
+        try { head.click(); } catch (_) { card.classList.add("open"); }
+      }
+      try {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch (_) {
+        card.scrollIntoView();
+      }
+      card.classList.add("prep-landed");
+      // Removed rather than left: a permanent ring reads as a state the
+      // card is in, not as "this is the one you came for".
+      setTimeout(function () { card.classList.remove("prep-landed"); }, 2800);
+    }
+
+    if (attempt()) return;
+    if (!window.MutationObserver) return;
+    observer = new MutationObserver(attempt);
+    observer.observe(root, { childList: true, subtree: true });
+    setTimeout(function () {
+      if (observer) { observer.disconnect(); observer = null; }
+      // Not found: stay silent. The topic may have been filtered out or
+      // renamed, and the page is still the right page — a failure message
+      // for something the user can see is worse than nothing.
+    }, DEADLINE);
+  }
+
   var PrepScheduler = {
     /* HTML for the header button. `title` is the topic text and is what
        actually identifies it to the server; `entryId` is optional and is
@@ -513,6 +606,9 @@
       // Bulk select, mounted above the list. Wired from attach() so every
       // page that already calls attach() gets it with no template change.
       mountBulk(root);
+
+      // ?topic= — arriving from the Day Board on one specific line item.
+      landOnTopic(root);
 
       // The pages re-render their list on every filter change, which wipes
       // the injected checkboxes. Re-draw them when the children change —

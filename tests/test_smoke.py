@@ -2297,3 +2297,84 @@ def test_push_deactivation_is_only_for_a_gone_subscription():
     # A non-410 failure warns and leaves the subscription alone.
     after = src.split("status in (404, 410)")[1].split("else:")[1][:200]
     assert "_deactivate" not in after
+
+
+def test_day_board_sends_a_prep_topic_to_its_own_bank_page(auth_client, monkeypatch):
+    """Reported: clicking an AI SDE prep question on the board should open
+    that specific topic, not the day view.
+
+    Before this it went to /day, which showed the same one-line title you
+    had just clicked — a round trip to no new information. Live data had 12
+    such rows, including SQL topics scheduled for today.
+
+    Matched on the DESCRIPTION, because that is the only durable signal: the
+    prep scheduler writes "{label} — open the topic at {page}" into the row
+    it creates, while the title is the topic itself and says nothing about
+    which bank it came from.
+    """
+    import routes.day_board as db
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [
+        {"id": "E1", "title": "SELECT ... WHERE — the shape of every query",
+         "description": "SQL prep — open the topic at /sql",
+         "start_time": "19:00", "end_time": "19:30"},
+        {"id": "E2", "title": "Balanced Binary Tree",
+         "description": "AI/SDE prep — open the topic at /ai-sde",
+         "start_time": None, "end_time": None},
+        {"id": "E3", "title": "Dentist", "description": "bring the referral letter",
+         "start_time": "10:00", "end_time": "10:30"},
+    ])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    html = auth_client.get("/day-board").get_data(as_text=True)
+
+    assert "/sql?" in html and "topic=SELECT" in html
+    assert "/ai-sde?" in html and "topic=Balanced" in html
+    # An ordinary calendar entry still goes to the day view.
+    assert "/day?date=" in html and "focus=ev-E3" in html
+    # And the way home is still carried.
+    assert html.count("from=board") >= 3
+
+
+def test_prep_page_match_is_longest_first():
+    """"/interview-prep" contains no shorter page path, but the check has to
+    be ordered anyway — a future "/sql-advanced" would be swallowed by
+    "/sql" and silently route to the wrong bank."""
+    import routes.day_board as db
+    assert db._prep_target({"description": "Interview prep — open the topic at /interview-prep"}) \
+        == "/interview-prep"
+    assert db._prep_target({"description": "SQL prep — open the topic at /sql"}) == "/sql"
+    assert db._prep_target({"description": "bring the referral letter"}) is None
+    assert db._prep_target({"description": ""}) is None
+    assert db._prep_target({}) is None
+    src = __import__("inspect").getsource(db._prep_target)
+    assert "key=len, reverse=True" in src, "shortest path could win"
+
+
+def test_day_board_has_a_home_button(auth_client, monkeypatch):
+    """Asked for. Home and the menu are different destinations — home is the
+    app's start page, the menu is the daily summary — and only one of them
+    existed."""
+    import routes.day_board as db
+    monkeypatch.setattr(db, "_events_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_tasks_for", lambda u, d: [])
+    monkeypatch.setattr(db, "_checklist_for", lambda u, d: [])
+    html = auth_client.get("/day-board").get_data(as_text=True)
+    assert 'href="/" title="Home"' in html
+    assert "/summary?view=daily" in html, "the menu was replaced instead of joined"
+
+
+def test_topic_landing_matches_on_title_and_clicks_rather_than_forcing_open():
+    """Every one of these banks numbers entries by POSITION (ai42, j7, sq3),
+    and a position shifts the moment an entry is added or deduped — so a
+    link made last week would open whatever moved into that slot. Titles are
+    stable, and the Plan button already carries one.
+
+    And it CLICKS the card: /ai-sde fills the body lazily on first open, so
+    forcing the class would reveal an empty card.
+    """
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    block = js.split("ARRIVING FROM THE DAY BOARD ON A SPECIFIC TOPIC")[1]
+    assert 'getAttribute("data-title")' in block, "matching on something other than the title"
+    assert "head.click()" in block, "forces .open and would show an empty lazy card"
+    assert "MutationObserver" in block, "these lists are fetched, not inline"
+    assert "landOnTopic(root)" in js, "never wired into attach()"
