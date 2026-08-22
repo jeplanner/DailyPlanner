@@ -1956,15 +1956,25 @@ def test_time_announcer_never_reads_out_a_time_that_has_passed():
     """
     js = open("static/js/time-announcer.js", encoding="utf-8").read()
     assert "GRACE_MS" in js, "no bound on how late an announcement may be"
-    assert "if (lateBy > GRACE_MS) return;" in js, "a missed slot is not skipped"
+    # The lateness rule itself is exercised for real in
+    # tests/js/time_announcer.test.js ("2m late is skipped") rather than
+    # asserted as a source string — the previous version of this test pinned
+    # one exact LINE, which made moving the check into dueSlot() look like a
+    # regression while proving nothing about the behaviour either way.
+    assert "lateBy" in js and "dueSlot" in js
     # Aligned to the clock, not to when you pressed start — otherwise 3:07
     # and 3:22 would be "every fifteen minutes" and useless.
     assert "Math.floor(mins / state.every) * state.every" in js
     # Two open tabs must not both announce.
     assert "fresh.lastSlot === slot" in js, "sibling tabs would double-announce"
     # A queued backlog read out in sequence is the failure mode people
-    # remember, so anything pending is cancelled first.
+    # remember, so anything pending is cancelled first — but ONLY when
+    # something really is in flight. cancel() followed by speak() in the same
+    # task is a Chrome bug that swallows the utterance, and doing it
+    # unconditionally is why announcements went mute.
     assert "speechSynthesis.cancel()" in js
+    assert "synth.speaking || synth.pending" in js, \
+        "cancel() is unconditional again — Chrome will swallow the speech"
 
 
 def test_time_announcer_offers_pause_and_stop_separately():
@@ -3457,3 +3467,23 @@ def test_day_board_shows_quick_bucket_items_for_that_day(auth_client, monkeypatc
     # A "now" item carries no date, so it is not a past day's business.
     past = auth_client.get("/day-board?date=2020-01-01").get_data(as_text=True)
     assert "Do it now" not in past
+
+
+# ── TIME ANNOUNCER: behaviour, not source strings ──────────────────────
+def test_time_announcer_scheduling_behaviour():
+    """Run the announcer module and assert what it actually does.
+
+    Reported 2026-08-22: "announce the time why 15 min, 30 min, 45 min,
+    60 min is not working". 45 was never an option, and the speaking path
+    had no error handler, no voice priming and a cancel()-then-speak() in
+    one task, which Chrome drops. None of that was visible to the source
+    assertions above it.
+    """
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    r = subprocess.run(["node", "tests/js/time_announcer.test.js"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0 failed" in r.stdout, r.stdout

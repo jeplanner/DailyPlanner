@@ -50,25 +50,60 @@
   var KEY = "dp-time-announcer";
   var GRACE_MS = 90 * 1000;      // how late an announcement may still be true
   var TICK_MS = 15 * 1000;       // cheap: the work is one Date comparison
-  var INTERVALS = [15, 30, 60];
+  var INTERVALS = [15, 30, 45, 60];   // 45 was simply missing before
+  var MAX_EVERY = 720;                // 12h; beyond that use exact times
+  var SILENT_MS = 1500;               // no onstart by now => it did not speak
 
   var state = load();
   var timer = null;
   var armed = false;             // has this document had a user gesture?
   var keepCtx = null;            // Web Audio node held open, see KEEPALIVE
+  var voicesReady = false;
+  var health = { at: null, ok: null, why: "", said: "" };   // see NOISY FAILURE
 
   function load() {
-    var d = { mode: "off", every: 15, lastSlot: null, keepalive: false };
+    var d = { mode: "off", every: 15, at: [], label: "",
+              lastSlot: null, keepalive: false };
     try {
       var raw = JSON.parse(localStorage.getItem(KEY));
       if (raw && typeof raw === "object") {
         if (raw.mode === "on" || raw.mode === "paused") d.mode = raw.mode;
-        if (INTERVALS.indexOf(raw.every) !== -1) d.every = raw.every;
+        // ANY whole number of minutes, not just the presets. The old code
+        // tested `INTERVALS.indexOf(raw.every)` and SILENTLY reset anything
+        // else to 15 — so a custom value could never have stuck even if the
+        // UI had offered one.
+        var e = parseInt(raw.every, 10);
+        if (e >= 0 && e <= MAX_EVERY) d.every = e;
+        if (Array.isArray(raw.at)) d.at = raw.at.filter(isHHMM);
+        if (typeof raw.label === "string") d.label = raw.label.slice(0, 60);
         if (typeof raw.lastSlot === "string") d.lastSlot = raw.lastSlot;
         d.keepalive = !!raw.keepalive;
       }
     } catch (_) {}
     return d;
+  }
+
+  function isHHMM(v) {
+    return typeof v === "string" && /^([01]?\d|2[0-3]):[0-5]\d$/.test(v);
+  }
+
+  /* "9, 9:30, 13:45 18:00" -> ["09:00","09:30","13:45","18:00"].
+     Deliberately forgiving about separators and about a bare hour, because
+     this is a text field someone types into once and should not have to
+     get exactly right. Anything unparseable is dropped, and the caller
+     shows what survived so nothing is silently ignored. */
+  function parseTimes(text) {
+    var out = [];
+    String(text || "").split(/[^0-9:]+/).forEach(function (tok) {
+      if (!tok) return;
+      var m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(tok);
+      if (!m) return;
+      var h = parseInt(m[1], 10), mi = parseInt(m[2] || "0", 10);
+      if (h > 23 || mi > 59) return;
+      var v = (h < 10 ? "0" + h : h) + ":" + (mi < 10 ? "0" + mi : mi);
+      if (out.indexOf(v) === -1) out.push(v);
+    });
+    return out.sort();
   }
 
   function save() {
@@ -83,10 +118,39 @@
   /* The boundary this moment belongs to, as a stable key. Shared through
      localStorage so two open tabs do not both announce — whichever gets
      there first writes the slot and the other sees it already done. */
-  function slotFor(d) {
-    var mins = d.getHours() * 60 + d.getMinutes();
-    var slot = Math.floor(mins / state.every) * state.every;
-    return d.toDateString() + "|" + slot;
+  function slotFor(d, slotMins) {
+    return d.toDateString() + "|" + slotMins;
+  }
+
+  /* WHICH BOUNDARY, IF ANY, THIS MOMENT BELONGS TO.
+     Returns the boundary in minutes-since-midnight, or null.
+
+     Two sources, either of which can fire: the repeating interval, and the
+     list of exact times. An exact time WINS when both land together, so
+     that "09:00" is announced once rather than twice.
+
+     A 45-minute interval does not divide the hour, and that is fine — it
+     steps from midnight (00:00, 00:45, 01:30, ...) rather than resetting
+     each hour, which is the only definition of "every 45 minutes" that is
+     actually every 45 minutes. */
+  function dueSlot(now) {
+    var mins = now.getHours() * 60 + now.getMinutes();
+    var lateBy = function (boundary) {
+      return (mins - boundary) * 60000 + now.getSeconds() * 1000;
+    };
+
+    for (var i = 0; i < state.at.length; i++) {
+      var p = state.at[i].split(":");
+      var b = parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+      var late = lateBy(b);
+      if (late >= 0 && late <= GRACE_MS) return b;
+    }
+
+    if (state.every > 0) {
+      var boundary = Math.floor(mins / state.every) * state.every;
+      if (lateBy(boundary) <= GRACE_MS) return boundary;
+    }
+    return null;
   }
 
   function phrase(d) {
@@ -97,36 +161,120 @@
     // "3 o'clock" reads better than "3:00", and the engines say the rest
     // correctly from digits.
     var body = m === 0 ? h12 + " o'clock" : h12 + ":" + (m < 10 ? "0" + m : m);
-    return "It's " + body + " " + suffix;
+    var said = "It's " + body + " " + suffix;
+    // THE HEADING, read before the time. The point of an announcement is
+    // rarely the time itself — it is what the time is FOR. "Stand up and
+    // stretch. It's 3 o'clock PM" does a job that "It's 3 o'clock PM"
+    // does not.
+    if (state.label) said = state.label.replace(/[.!?]*$/, "") + ". " + said;
+    return said;
+  }
+
+  /* ── NOISY FAILURE ──────────────────────────────────────────────────
+     The old speak() returned true if speechSynthesis.speak() did not
+     THROW. It almost never throws. It just does nothing, and there was no
+     onerror handler, no watchdog and nothing on screen — so "the
+     announcements are not working" had no evidence anywhere, which is
+     precisely the report that arrived.
+
+     Every attempt now lands in `health`, and the panel shows it. */
+  function note(ok, why, said) {
+    if (ok === null) { health = { at: null, ok: null, why: "", said: "" }; paint(); return; }
+    health = { at: new Date(), ok: ok, why: why || "", said: said || "" };
+    try {
+      if (window.dpInert && !ok) window.dpInert("time announcer", why);
+    } catch (_) {}
+    paint();
+  }
+
+  /* Voices arrive ASYNCHRONOUSLY. On Android especially, getVoices() is
+     empty for the first moments after load and speaking into that gap is
+     dropped without a sound or an error. */
+  function primeVoices() {
+    if (!supported()) return;
+    try {
+      voicesReady = (window.speechSynthesis.getVoices() || []).length > 0;
+      if (voicesReady) return;
+      window.speechSynthesis.addEventListener("voiceschanged", function () {
+        voicesReady = (window.speechSynthesis.getVoices() || []).length > 0;
+      });
+    } catch (_) {}
   }
 
   function speak(text) {
-    if (!supported()) return false;
-    try {
-      // Cancel anything still queued: a backlog of announcements read out
-      // in sequence is the failure mode people remember.
-      window.speechSynthesis.cancel();
-      var u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.95;
-      u.volume = 1;
-      window.speechSynthesis.speak(u);
-      return true;
-    } catch (_) {
+    if (!supported()) {
+      note(false, "this browser has no speech synthesis");
       return false;
     }
+    var synth = window.speechSynthesis;
+
+    function fire() {
+      try {
+        var u = new SpeechSynthesisUtterance(text);
+        u.rate = 0.95;
+        u.volume = 1;
+        u.lang = (document.documentElement.lang || navigator.language ||
+                  "en-US");
+
+        // Naming a voice explicitly. Left unset, some Android builds pick
+        // nothing at all and stay silent.
+        try {
+          var vs = synth.getVoices() || [];
+          var want = u.lang.slice(0, 2).toLowerCase();
+          var v = vs.filter(function (x) {
+            return (x.lang || "").slice(0, 2).toLowerCase() === want;
+          })[0] || vs.filter(function (x) { return x.default; })[0] || vs[0];
+          if (v) u.voice = v;
+        } catch (_) {}
+
+        var started = false, errored = false;
+        u.onstart = function () { started = true; note(true, "", text); };
+        u.onerror = function (ev) {
+          errored = true;
+          note(false, (ev && ev.error) || "the browser refused to speak");
+        };
+        synth.speak(u);
+
+        // CHROME LEAVES THE QUEUE PAUSED after some page lifecycle events,
+        // and a paused queue accepts utterances forever without saying one.
+        try { if (synth.paused) synth.resume(); } catch (_) {}
+
+        // WATCHDOG. If onstart has not fired, nothing was said — and with
+        // no error either, this is the silent case that had no evidence.
+        setTimeout(function () {
+          if (!started && !errored) {
+            note(false, armed
+              ? "the browser accepted it but said nothing"
+              : "blocked until you tap the page once");
+          }
+        }, SILENT_MS);
+        return true;
+      } catch (e) {
+        note(false, "speak() threw: " + (e && e.message));
+        return false;
+      }
+    }
+
+    // CANCEL-THEN-SPEAK IN THE SAME TASK IS A CHROME BUG: the new utterance
+    // is swallowed. The old code did exactly that on every announcement, on
+    // desktop and Android alike. Only cancel when something is actually in
+    // flight, and let the cancel settle first.
+    if (synth.speaking || synth.pending) {
+      try { synth.cancel(); } catch (_) {}
+      setTimeout(fire, 150);
+      return true;
+    }
+    return fire();
   }
 
   function check(now) {
     if (state.mode !== "on") return;
     now = now || new Date();
-    var mins = now.getHours() * 60 + now.getMinutes();
-    if (mins % state.every !== 0 && (mins % state.every) * 60000 + now.getSeconds() * 1000 > GRACE_MS) {
-      return;                                   // not near a boundary
-    }
-    var lateBy = (mins % state.every) * 60000 + now.getSeconds() * 1000;
-    if (lateBy > GRACE_MS) return;              // slept through it — stay quiet
 
-    var slot = slotFor(now);
+    var boundary = dueSlot(now);
+    if (boundary === null) return;   // not near one, or slept through it
+
+    var slot = slotFor(now, boundary);
     // Re-read from storage so a sibling tab that already announced wins.
     var fresh = load();
     if (fresh.lastSlot === slot) { state.lastSlot = slot; return; }
@@ -315,6 +463,20 @@
       ".ta-tip{margin-top:6px !important;font-size:11px !important;line-height:1.45;",
       "color:#4338ca;font-weight:700}",
       ".ta-tip[hidden]{display:none}",
+      ".ta-fld{margin-top:9px}",
+      ".ta-fld[hidden]{display:none}",
+      ".ta-fld label{display:block;font-size:11.5px;font-weight:700;",
+      "color:var(--color-text-secondary,#6b7280)}",
+      ".ta-fld input{width:100%;box-sizing:border-box;margin-top:4px;font:inherit;",
+      "font-size:13px;padding:6px 8px;border-radius:8px;",
+      "border:1px solid var(--color-border,#e5e7eb);",
+      "background:var(--color-bg,#f9fafb);color:var(--color-text,#111827)}",
+      ".ta-fld small{display:block;margin-top:3px;font-size:10.5px;line-height:1.4;",
+      "color:var(--color-text-secondary,#6b7280)}",
+      ".ta-health{margin:9px 0 0 !important;font-size:11px !important;",
+      "line-height:1.45;font-weight:700}",
+      ".ta-health.good{color:#047857}",
+      ".ta-health.bad{color:#b91c1c}",
     ].join("");
     var el = document.createElement("style");
     el.id = "ta-style";
@@ -352,6 +514,49 @@
     if (tip) tip.hidden = !(isInstalled() && !state.keepalive);
     var warn = pop.querySelector(".ta-warn");
     if (warn) warn.hidden = !(state.mode === "on" && !armed);
+
+    var custom = INTERVALS.indexOf(state.every) === -1;
+    var cbtn = pop.querySelector("[data-ta-custom]");
+    if (cbtn) {
+      cbtn.classList.toggle("on", custom);
+      cbtn.textContent = custom ? state.every + "m" : "Custom";
+    }
+    var crow = pop.querySelector("[data-ta-customrow]");
+    if (crow && custom) crow.hidden = false;
+    var cin = pop.querySelector("[data-ta-every-in]");
+    if (cin && document.activeElement !== cin) cin.value = state.every;
+    var atin = pop.querySelector("[data-ta-at]");
+    if (atin && document.activeElement !== atin) atin.value = state.at.join(", ");
+    var lbl = pop.querySelector("[data-ta-label]");
+    if (lbl && document.activeElement !== lbl) lbl.value = state.label;
+    paintAtEcho();
+
+    /* THE HEALTH LINE. The whole reason this feature could fail unnoticed
+       was that nothing on screen ever said whether it had worked. */
+    var h = pop.querySelector("[data-ta-health]");
+    if (h) {
+      if (!health.at) {
+        h.textContent = state.mode === "on"
+          ? "Nothing announced yet this session."
+          : "";
+        h.className = "ta-health";
+      } else {
+        var t = health.at.toTimeString().slice(0, 5);
+        h.className = "ta-health " + (health.ok ? "good" : "bad");
+        h.textContent = health.ok
+          ? "\u2713 Spoke at " + t + " \u2014 \u201c" + health.said + "\u201d"
+          : "\u26a0 " + t + " \u2014 " + health.why;
+      }
+    }
+  }
+
+  function paintAtEcho() {
+    if (!pop) return;
+    var e = pop.querySelector("[data-ta-at-echo]");
+    if (!e) return;
+    e.textContent = state.at.length
+      ? "Understood: " + state.at.join(", ")
+      : "Optional. Blank = only the interval above.";
   }
 
   function buildPop() {
@@ -360,8 +565,8 @@
     pop.hidden = true;
     pop.innerHTML =
       '<h4>Announce the time</h4>' +
-      '<p>Spoken on the clock — :00, :15, :30, :45. A missed one is skipped, ' +
-      'never read out late.</p>' +
+      '<p>Spoken on the clock, not from when you pressed start. A missed one ' +
+      'is skipped rather than read out late.</p>' +
       '<div class="ta-row">' +
         '<button type="button" data-ta-mode="on">Start</button>' +
         '<button type="button" data-ta-mode="paused">Pause</button>' +
@@ -371,7 +576,27 @@
         INTERVALS.map(function (n) {
           return '<button type="button" data-ta-every="' + n + '">' + n + 'm</button>';
         }).join("") +
+        '<button type="button" data-ta-custom>Custom</button>' +
       '</div>' +
+      '<div class="ta-fld" data-ta-customrow hidden>' +
+        '<label>Minutes between announcements' +
+        '<input type="number" min="0" max="' + MAX_EVERY + '" step="1" ' +
+        'data-ta-every-in placeholder="e.g. 20"></label>' +
+        '<small>0 = only the exact times below.</small>' +
+      '</div>' +
+      '<div class="ta-fld">' +
+        '<label>Also announce at exactly' +
+        '<input type="text" data-ta-at placeholder="9:00, 13:30, 18:45"></label>' +
+        '<small data-ta-at-echo></small>' +
+      '</div>' +
+      '<div class="ta-fld">' +
+        '<label>Say this first' +
+        '<input type="text" maxlength="60" data-ta-label ' +
+        'placeholder="e.g. Stand up and stretch"></label>' +
+        '<small>Read out before the time, every time.</small>' +
+      '</div>' +
+      '<div class="ta-row"><button type="button" data-ta-test>Test the voice now</button></div>' +
+      '<p class="ta-health" data-ta-health></p>' +
       '<label class="ta-keep"><input type="checkbox" data-ta-keep> ' +
         'Keep going when minimised or locked</label>' +
       '<p class="ta-tip" hidden>You are running the installed app &mdash; turn this ' +
@@ -379,8 +604,14 @@
       'announcements stop.</p>' +
       '<p class="ta-note">This holds an inaudible sound playing, which is what stops ' +
       'the system suspending the app. A media entry appears on the lock screen while ' +
-      'it runs &mdash; its pause button really does stop the announcements. It costs ' +
-      'some battery. <b>On a locked phone this is best-effort:</b> it is the only ' +
+      'it runs &mdash; its pause button really does stop the announcements. ' +
+      '<b>Battery:</b> the announcements themselves cost nothing measurable ' +
+      '(one date comparison every 15s, and a second of speech an hour). This ' +
+      'checkbox is the part that costs &mdash; holding audio open keeps the ' +
+      'screen-off CPU awake, roughly like leaving a podcast paused-but-loaded: ' +
+      'expect a few percent over a night, not a flat battery. Leave it OFF if ' +
+      'you only want announcements while you are looking at the app. ' +
+      '<b>On a locked phone this is best-effort:</b> it is the only ' +
       'mechanism that can work, and whether it does depends on your device. Nothing ' +
       'works once the app is fully closed &mdash; the web cannot speak from a closed ' +
       'app.</p>' +
@@ -411,6 +642,49 @@
         state.every = parseInt(e.getAttribute("data-ta-every"), 10) || 15;
         state.lastSlot = null;
         applyMode();
+        return;
+      }
+      if (ev.target.closest("[data-ta-custom]")) {
+        var row = pop.querySelector("[data-ta-customrow]");
+        if (row) row.hidden = false;
+        var inp = pop.querySelector("[data-ta-every-in]");
+        if (inp) { inp.value = state.every; inp.focus(); inp.select(); }
+        return;
+      }
+      if (ev.target.closest("[data-ta-test]")) {
+        // Pressing it IS the gesture, so this is also the way to re-arm a
+        // page that has not been touched yet.
+        armed = true;
+        note(null, "");
+        speak(phrase(new Date()));
+        return;
+      }
+    });
+
+    /* The three text fields. Committed on input rather than on a Save
+       button — there is nothing here worth a round trip to confirm, and a
+       setting that needs saving is a setting people forget to save. */
+    pop.addEventListener("input", function (ev) {
+      var n = ev.target;
+      if (n.matches("[data-ta-every-in]")) {
+        var v = parseInt(n.value, 10);
+        if (!(v >= 0)) return;
+        state.every = Math.min(MAX_EVERY, v);
+        state.lastSlot = null;
+        save();
+        paint();
+        return;
+      }
+      if (n.matches("[data-ta-at]")) {
+        state.at = parseTimes(n.value);
+        state.lastSlot = null;
+        save();
+        paintAtEcho();
+        return;
+      }
+      if (n.matches("[data-ta-label]")) {
+        state.label = n.value.slice(0, 60);
+        save();
       }
     });
   }
@@ -480,11 +754,17 @@
     _keptAlive: function () { return !!keepCtx; },
     _phrase: phrase,
     _slotFor: slotFor,
+    _dueSlot: dueSlot,
+    _parseTimes: parseTimes,
+    _health: function () { return health; },
+    _set: function (patch) { Object.keys(patch).forEach(function (k) {
+      state[k] = patch[k]; }); },
     _check: check,
     _supported: supported,
     _isInstalled: isInstalled,
   };
 
+  primeVoices();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () { mount(); applyMode(); });
   } else {
