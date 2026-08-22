@@ -357425,6 +357425,353 @@ everything-can-see-everything.
   data, because the CNN's locality assumption is a helpful prior exactly when
   data is scarce and a limitation when it is plentiful."""
 
+_ANSWER_V2['Cross-validation — what and why'] = """Rotate the validation set through the data instead of trusting one lucky split, then average the scores.
+
+· THE PROBLEM IT SOLVES — a single train/test split gives ONE number, and that
+  number depends on which rows happened to land in the test set. On small data
+  that luck can swamp the real difference between two models.
+· K-FOLD — cut the data into k parts, train on k-1 and score on the held-out
+  one, k times, then average. Every row is used for validation exactly once.
+· WHAT YOU GAIN is a lower-variance estimate, and a standard deviation across
+  folds - which tells you whether a 1% difference between models is real.
+· STRATIFIED K-FOLD for classification, always. It keeps each fold's class
+  ratio equal to the whole, which matters enormously when a class is rare;
+  plain k-fold can hand you a fold with none of it.
+· TIME SERIES MUST NOT USE PLAIN K-FOLD — training on future rows to predict
+  the past leaks information and produces a score you can never reproduce live.
+  Use forward-chaining splits instead.
+· THE COST — k times the training. k=5 or 10 is the usual compromise;
+  leave-one-out is k=n, nearly unbiased and usually far too slow.
+· THE TEST SET STAYS SEALED. Cross-validation happens inside the training data
+  for tuning; if you tune against the final test set you have turned it into a
+  validation set and no longer have an honest estimate."""
+
+_ANSWER_V2['How gradient descent works (batch vs SGD vs mini-batch)'] = """Step the weights downhill against the gradient; the three variants differ only in how much data you look at per step.
+
+· THE UPDATE — w <- w - lr * gradient. The gradient points uphill, so the minus
+  sign is what makes it descend. Everything else is detail.
+· THE LEARNING RATE is the one hyperparameter that will ruin you. Too large and
+  the loss oscillates or diverges; too small and it crawls or stalls in a flat
+  region. If your loss is NaN, suspect this first.
+· BATCH uses every example per step: a smooth, accurate gradient, but one step
+  costs a full pass and the whole dataset must fit in memory.
+· SGD uses one example: very fast steps, very noisy path. The noise is not
+  purely a cost - it helps escape shallow local minima and sharp basins.
+· MINI-BATCH, 32 to 256, is what everyone actually uses. It gets most of the
+  gradient quality of batch while fitting a GPU and vectorising properly, which
+  is why it is faster in wall-clock terms than either extreme.
+· ONE EPOCH IS ONE PASS over the data; the number of STEPS in it is
+  dataset size / batch size. Confusing epochs with steps is a common slip when
+  comparing runs.
+· MOMENTUM, RMSProp AND ADAM adapt the step per parameter rather than using one
+  global rate. Adam is the default starting point; plain SGD with momentum
+  often generalises slightly better and is still used for vision."""
+
+_ANSWER_V2['L1 vs L2 regularization'] = """Both punish large weights; L1 drives some to EXACTLY zero, L2 only shrinks them smoothly toward it.
+
+· THE SHARED IDEA — add a penalty on the weights to the loss, so the optimiser
+  must trade fitting the data against keeping the model simple.
+· L2 (RIDGE) penalises the square of each weight. The gradient of w^2 is 2w,
+  which vanishes as w approaches zero - so weights get small but never actually
+  reach it. Good with correlated features: it spreads weight across them.
+· L1 (LASSO) penalises the absolute value. Its gradient is a constant sign, so
+  it keeps pushing with the same force all the way to zero and weights land
+  there exactly. That is automatic feature selection.
+· THE GEOMETRIC PICTURE, if they ask why — L1's constraint region is a diamond
+  with corners ON the axes, and the optimum tends to touch a corner, which
+  means a coordinate of zero. L2's region is a circle with no corners.
+· WHICH TO USE — L2 as the default smoother; L1 when you suspect many features
+  are useless and want a sparse, readable model. Elastic Net combines them and
+  is the sane choice when features are both numerous AND correlated, since pure
+  L1 picks one of a correlated group arbitrarily.
+· SCALE YOUR FEATURES FIRST. The penalty is on the raw weight, so a feature
+  measured in a small unit needs a big weight and gets punished for it. Without
+  standardisation the regulariser is choosing by measurement unit."""
+
+_ANSWER_V2['Precision vs Recall (and the 95%-accuracy trap)'] = """Precision is how many of your flags were right; recall is how many of the real cases you caught.
+
+· THE FORMULAS — Precision = TP/(TP+FP). Recall = TP/(TP+FN). If you remember
+  nothing else, remember that the denominators differ: precision divides by
+  what you PREDICTED positive, recall by what actually IS positive.
+· YOU CHOOSE BY THE COST OF THE ERROR, not by preference. A spam filter wants
+  precision, because deleting a real email is worse than letting spam through.
+  Cancer screening and fraud want recall, because a miss is catastrophic and a
+  false alarm just costs a second look.
+· THEY TRADE OFF THROUGH THE THRESHOLD. Lower it and you flag more, so recall
+  rises and precision falls. This is one model, not many - which is why quoting
+  a single precision number without its threshold is meaningless.
+· F1 is their harmonic mean, which punishes a bad one far harder than an
+  average would. Use it when you genuinely need both and have no cost model.
+· THE 95% ACCURACY TRAP — if 95% of rows are the negative class, predicting
+  'negative' always scores 95% and detects nothing. Accuracy hides this
+  completely, which is why it is the wrong metric for imbalanced data.
+· FOR IMBALANCE, REPORT PR-AUC rather than ROC-AUC. ROC-AUC looks flattering
+  because the huge true-negative count keeps the false-positive rate tiny;
+  precision-recall shows the cost you actually pay."""
+
+_ANSWER_V2['What is an embedding?'] = """A dense vector for a discrete thing, learned so that semantic similarity becomes geometric closeness.
+
+· THE PLAIN VERSION — turn a word, user or product into a list of numbers, in
+  such a way that similar items end up near each other. Then 'find me something
+  similar' becomes 'find me a nearby vector', which is arithmetic.
+· WHY NOT ONE-HOT — a one-hot vector is as long as the vocabulary, almost all
+  zeros, and every pair is exactly equally distant. It encodes identity and
+  nothing else, so the model cannot generalise from 'cat' to 'kitten'.
+· DENSE AND LOW-DIMENSIONAL is the point: a few hundred numbers where each
+  dimension is a learned feature nobody named, instead of fifty thousand slots
+  where each means one word.
+· THEY ARE LEARNED, not designed - by a dedicated objective like word2vec's
+  predict-the-neighbour, or jointly as the first layer of the network that
+  needs them.
+· SIMILARITY IS USUALLY COSINE, not Euclidean, because direction carries the
+  meaning and magnitude often just reflects frequency.
+· 'king - man + woman = queen' is the famous demo of the structure, and it is
+  worth knowing it holds far less cleanly than the story suggests. Do not build
+  an argument on it.
+· IN PRACTICE — embed everything, put the vectors in an index, and use
+  approximate nearest-neighbour search. That is the engine under semantic
+  search, recommendations and RAG retrieval."""
+
+_ANSWER_V2['How to drive a low-level design (LLD) interview'] = """The prompt is one vague sentence on purpose; run the same five moves every time and the vagueness stops being a problem.
+
+· THE PROMPT IS THE TEST. 'Design a parking lot' is deliberately
+  underspecified, and what is being watched is whether you impose structure on
+  it or wait to be told what to do.
+· (1) CLARIFY AND SHRINK — ask two or three questions, then STATE the scope
+  out loud: what you will build and what you are explicitly leaving out.
+  Fixing scope yourself is the strongest early signal, and the thing juniors
+  never do.
+· (2) NOUNS BECOME CLASSES — read the problem back and underline the nouns:
+  lot, floor, spot, vehicle, ticket, payment. Drop any that are really just a
+  field on another class.
+· (3) VERBS BECOME METHODS — park, unpark, price, pay. Put each verb on the
+  class that already owns the data it needs, which is most of encapsulation
+  done for free.
+· (4) DRAW THE RELATIONSHIPS — who holds a reference to whom. Default to
+  has-a; use is-a only where the subtype is genuinely substitutable.
+· (5) NAME THE EXTENSION POINT — say which part is most likely to change and
+  put ONE interface there, for example a PricingStrategy. One is a design
+  decision; five is speculation.
+· THEN WRITE REAL CODE for the two or three interesting classes rather than
+  empty skeletons for all ten. The five moves take four minutes and buy you
+  the rest of the hour."""
+
+_ANSWER_V2['Stack memory vs heap memory'] = """Two places your program keeps data: the stack frees itself automatically and rigidly, the heap is flexible and must be released.
+
+· THE STACK grows and shrinks with function calls. A call pushes a FRAME with
+  the parameters, locals and return address; returning pops it and frees
+  everything by moving one pointer.
+· THAT IS WHY IT IS FAST — allocation is a pointer bump, deallocation is a
+  pointer bump back, and the memory is contiguous so it is already in cache.
+· THE PRICE IS RIGIDITY — the space is small (typically 1-8 MB per thread) and
+  a local dies the moment its function returns. Returning a pointer to a local
+  is the classic C bug: the memory is still there, but no longer yours.
+· THE HEAP is a general pool for anything whose size or lifetime you cannot
+  know at compile time - data that must outlive the function that made it, or
+  is simply too big for a frame.
+· HEAP ALLOCATION IS FAR SLOWER because the allocator has to find a suitable
+  free block, and repeated allocate/free leaves the space fragmented.
+· RELEASE IS YOUR PROBLEM ON THE HEAP — free/delete in C and C++, or a garbage
+  collector in Java, Python and Go. Every leak and use-after-free lives here.
+· STACK OVERFLOW IS ALMOST ALWAYS RUNAWAY RECURSION, because the frames pile up
+  faster than a few megabytes can hold. Out-of-memory is the heap's version.
+· THE RULE OF THUMB — small, short-lived, known size goes on the stack. Big,
+  long-lived, or shared between owners goes on the heap."""
+
+_ANSWER_V2['Find Median from Data Stream (two heaps)'] = """Split the stream in half: a MAX-heap for the low half, a MIN-heap for the high half, and the median sits at their tops.
+
+· WHY TWO HEAPS — the median only needs the middle, not a sorted list. Each
+  heap keeps its extreme instantly available, and the two extremes facing each
+  other ARE the middle of the data.
+· THE ORIENTATION, which is what people get backwards: the LOW half is a
+  MAX-heap so its top is the largest small value; the HIGH half is a MIN-heap
+  so its top is the smallest large value.
+· THE INSERT — push onto one heap, then move its top across to the other. That
+  single transfer is what keeps every element in the low heap below every
+  element in the high heap.
+· REBALANCE so the sizes differ by at most one. If they are equal the median is
+  the average of both tops; if one is larger, its top is the median.
+· PYTHON HAS NO MAX-HEAP — negate values going into the low heap and negate
+  them again coming out. Forgetting one of the two negations is the usual bug.
+· COST — O(log n) per insertion, O(1) per median query. Keeping a sorted list
+  instead is O(n) per insert, which is the version this question exists to
+  reject."""
+
+_ANSWER_V2['Merge k Sorted Lists (min-heap)'] = """A min-heap holding one candidate per list - pop the smallest, then push its successor from the SAME list.
+
+· THE INVARIANT — the heap always holds at most k items, one frontier element
+  from each list. The global smallest remaining element must be one of them,
+  which is why popping the heap top is always correct.
+· THE LOOP — seed with the head of each list, then repeatedly pop and push the
+  next element of whichever list the popped item came from. That is why the
+  heap entry must carry its list index.
+· TAG WITH THE INDEX for a second reason: if two values tie, Python compares
+  the next tuple element, and comparing two ListNode objects raises. Store
+  (value, list_index, node) so the tie-break is an integer.
+· THE COST — N total elements, each costing O(log k) to pop and push, so
+  O(N log k). Concatenating everything and sorting is O(N log N), which is
+  worse whenever k is much smaller than N.
+· THE OTHER ACCEPTED ANSWER is divide and conquer: merge lists pairwise, then
+  merge the results, halving the number of lists each round. Same O(N log k),
+  no heap, and often the one the interviewer prefers.
+· SKIP EMPTY LISTS when seeding, or the first pop dereferences a null head."""
+
+_ANSWER_V2['Minimum Window Substring (sliding window)'] = """Expand right until the window covers every required character, then shrink from the left while it still does.
+
+· THE TWO PHASES — grow to become VALID, shrink to become MINIMAL. Recording
+  the answer during the shrink phase, while the window is still valid, is what
+  makes it the smallest one ending at that right edge.
+· COUNT WHAT IS MISSING, not what is present. Keep a need-map of t's character
+  counts and a single integer of how many characters are still outstanding;
+  the window is valid exactly when that integer hits zero. Comparing two whole
+  maps on every step turns this into O(n * alphabet).
+· DECREMENT MISSING ONLY WHEN THE COUNT IS STILL NEEDED — a character already
+  satisfied should not reduce the outstanding total again. Getting this wrong
+  makes the window look valid too early.
+· MULTIPLICITY COUNTS — t = 'AABC' requires two A's. A set instead of a
+  counter silently accepts a window with one.
+· THE ANSWER IS INDICES, not a growing string. Track the best start and length
+  and slice once at the end.
+· NO VALID WINDOW must return the empty string, so initialise the best length
+  to infinity and check it before slicing.
+· COST — O(n + m) time, O(alphabet) space. Each pointer only moves forward."""
+
+_ANSWER_V2['Trapping Rain Water'] = """Water above a bar is min(tallest to its left, tallest to its right) minus its own height - and two pointers get that in O(1) space.
+
+· THE UNIT OF THOUGHT IS ONE COLUMN, not one pool. Trying to find and measure
+  each puddle is far harder than asking, for every bar independently, how deep
+  the water is on top of it.
+· THE FORMULA — water[i] = min(maxLeft[i], maxRight[i]) - height[i], floored at
+  zero. The shorter of the two walls is what bounds the water, exactly like a
+  bucket with one low side.
+· THE OBVIOUS SOLUTION precomputes maxLeft and maxRight as two arrays in two
+  passes. O(n) time, O(n) space, and completely acceptable - offer it first.
+· THE TWO-POINTER REFINEMENT — walk inward from both ends, always advancing the
+  side whose running max is SMALLER. That side's max is provably the binding
+  constraint, so you can settle that column immediately without ever knowing
+  the other side's exact maximum.
+· WHY THAT IS SOUND — if leftMax < rightMax, then whatever the true right wall
+  is, it is at least rightMax, so the minimum is leftMax. That single
+  observation is the whole trick.
+· COST — O(n) time, O(1) space. A stack-based version also exists and is O(n)
+  time with O(n) space; it is harder to explain under pressure."""
+
+_ANSWER_V2['Union-Find (Disjoint Set Union)'] = """Every element points at a parent; the ROOT names the group, so 'same group?' and 'merge groups' both become near-O(1).
+
+· THE TWO OPERATIONS — FIND walks parent pointers to the root and returns it.
+  UNION finds both roots and points one at the other. Two elements are in the
+  same set exactly when their roots match.
+· WHAT IT IS FOR — counting connected components, detecting a cycle in an
+  UNDIRECTED graph, Kruskal's minimum spanning tree, and merge-accounts style
+  problems. If the question is about connectivity and never asks for a PATH,
+  this is almost always the structure.
+· PATH COMPRESSION — during find, repoint every node you passed straight at the
+  root. The tree flattens as a side effect of asking questions, so the next
+  query is nearly free.
+· UNION BY SIZE OR RANK — always attach the smaller tree under the larger.
+  Without it, a run of unions can build a linked list and find degrades to
+  O(n).
+· BOTH TOGETHER give inverse-Ackermann amortised time, which is under 5 for any
+  input that fits in the universe. Either one alone is materially worse; that
+  is a favourite follow-up.
+· IT CANNOT UNDO A UNION, and it cannot detect cycles in a DIRECTED graph -
+  that needs DFS with a recursion-stack colour. Knowing the limits is half the
+  question.
+· COST — O(alpha(n)) amortised per operation, O(n) space."""
+
+_ANSWER_V2['Linear regression from first principles (and its assumptions)'] = """Draw the line minimising the sum of SQUARED vertical distances - squared because it is differentiable and punishes big misses hard.
+
+· THE MODEL — y = w0 + w1x1 + ... + wnxn, fitted by minimising mean squared
+  error. Linear in the PARAMETERS, which is what 'linear' actually means; you
+  can feed it x^2 as a feature and still call it linear regression.
+· WHY SQUARED, NOT ABSOLUTE — it penalises large errors far more, and it is
+  differentiable everywhere, which gives a clean closed-form solution. Absolute
+  error is more robust to outliers but has no such formula.
+· THE NORMAL EQUATION — w = (X^T X)^-1 X^T y solves it exactly in one step, but
+  inverting is O(n^3) in the number of FEATURES. Excellent to a few thousand
+  features, hopeless beyond.
+· GRADIENT DESCENT — w := w - alpha * X^T(Xw - y)/m, O(n) per step, and the
+  only option on large or streaming data.
+· BOTH REACH THE SAME ANSWER because MSE with a linear model is convex: one
+  global optimum and no local minima. Worth saying out loud.
+· THE ASSUMPTIONS ARE WHAT GETS PROBED — a genuinely linear relationship,
+  independent errors (time series violate this), constant error variance
+  (homoscedasticity), roughly normal residuals for the confidence intervals to
+  mean anything, and no severe multicollinearity.
+· MULTICOLLINEARITY DOES NOT HURT PREDICTIONS, it destroys INTERPRETATION: the
+  coefficients become unstable and their signs can flip on a resample. That
+  distinction is the one people miss."""
+
+_ANSWER_V2['Logistic regression - why not just use linear regression for classification?'] = """Because a line outputs 1.4 and -0.3, which are not probabilities - so you squash it through a sigmoid and change the loss.
+
+· THE FIRST PROBLEM — an unbounded output cannot be a probability, and there is
+  no honest way to read one off it.
+· THE SECOND, WORSE PROBLEM — least squares is dragged by distant points, so a
+  single far-away example can tilt the line and flip decisions for everything
+  else. Classification does not want that sensitivity.
+· THE FIX — p = sigma(w.x + b) with sigma(z) = 1/(1+e^-z), mapping any real
+  number into (0,1). The model stays LINEAR in its inputs; only the output is
+  bent.
+· THE LOSS MUST CHANGE TOO, and this is the part worth knowing: MSE combined
+  with a sigmoid is NON-CONVEX and stalls. Log loss (binary cross-entropy) is
+  convex, and its gradient is X^T(p - y)/m - identical in form to linear
+  regression's, which is a satisfying result.
+· LOG LOSS PUNISHES CONFIDENT WRONG ANSWERS enormously: predicting 0.99 for a
+  true 0 costs about 4.6 nats. That is exactly the behaviour you want from a
+  probability model.
+· THE DECISION BOUNDARY is w.x + b = 0, a hyperplane - so it cannot separate
+  XOR without engineered interaction features. Knowing what it CANNOT do is
+  usually the follow-up.
+· THE COEFFICIENTS ARE LOG-ODDS, not probabilities: exp(w) is an odds ratio.
+  Reading them as probability changes is a common and confident mistake."""
+
+_ANSWER_V2['Supervised vs unsupervised vs semi-supervised vs self-supervised vs reinforcement learning'] = """They differ in one thing only: what feedback the model gets - full answers, no answers, a few, invented ones, or a delayed score.
+
+· SUPERVISED — every example carries a known label. Classification for discrete
+  labels, regression for continuous. The labels are the expensive part, and
+  that cost is the reason the other four exist.
+· UNSUPERVISED — no labels, just 'find the structure': clustering, dimensionality
+  reduction, density estimation. Evaluation is the hard part, because with no
+  ground truth you are left with internal measures and human judgement.
+· SEMI-SUPERVISED — a small labelled set plus a mountain of unlabelled data.
+  Useful exactly when labelling is expensive but collecting is cheap, which is
+  most real situations.
+· SELF-SUPERVISED — you MANUFACTURE the labels from the data itself: hide a word
+  and predict it, or mask a patch of an image. It is technically supervised
+  learning on a task nobody had to annotate, and it is how every large language
+  model is pretrained.
+· REINFORCEMENT — no answers at all, only a reward after a sequence of actions.
+  The hard parts are credit assignment (which action earned the reward) and the
+  explore/exploit trade-off.
+· THE DISTINCTION THEY ACTUALLY PROBE is self-supervised versus unsupervised.
+  Both use unlabelled data, but self-supervised invents a supervised objective
+  and unsupervised has none - which is why self-supervised scaled and classical
+  unsupervised largely did not."""
+
+_ANSWER_V2['Backpropagation worked by hand on a tiny network'] = """The chain rule, applied backward so every intermediate result is reused - which is why training costs about one extra forward pass, not one per weight.
+
+· THE IDEA — the network guesses, the guess is wrong by some amount, and the
+  error walks BACKWARD through the layers handing each weight its share of the
+  blame.
+· THE QUANTITY THAT MATTERS is delta: the gradient of the loss with respect to
+  a layer's PRE-ACTIVATION. Once you have it, the weight gradient is just that
+  layer's input times delta.
+· THE RECURSION — delta_l = (W_{l+1}^T delta_{l+1}) * f'(z_l). Propagate delta
+  back through the weights, then multiply by the local activation derivative.
+· WHY BACKWARD AND NOT FORWARD — going backward, each layer's delta is computed
+  once and reused for every weight in it. Forward differentiation would redo
+  the work per parameter, which is the difference between minutes and never.
+· THE FORWARD PASS MUST CACHE ITS ACTIVATIONS, because the backward pass needs
+  them. That is precisely why training uses far more memory than inference, and
+  it is a favourite follow-up.
+· SOFTMAX PLUS CROSS-ENTROPY COLLAPSES to the gradient (predictions - one_hot),
+  with the messy softmax Jacobian cancelling out. Libraries fuse the two for
+  that reason, and it is also why you pass raw logits, not softmax output, to
+  the loss function.
+· VANISHING GRADIENTS ARE VISIBLE IN THE RECURSION — every layer multiplies by
+  another f'(z), so with sigmoid (max derivative 0.25) the signal dies within a
+  few layers. ReLU, whose derivative is 1 on the positive side, is the fix."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
