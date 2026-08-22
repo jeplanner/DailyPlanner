@@ -404,6 +404,35 @@ def test_ai_sde_tag_filters_narrow_and_ignore_junk(app):
     assert len(wide) == len(items) and bits == []
 
 
+def _pdf_text(data):
+    """The visible text of a PDF built by _pdf_bytes().
+
+    The export embeds a real Unicode font, so box-drawing and arrows survive
+    instead of being transliterated to ASCII by _latin1(). The cost is that
+    the content streams now hold two-byte GLYPH IDS rather than readable
+    characters, and each of the three embedded fonts numbers its glyphs
+    independently — so the old "decompress and grep for ASCII" only ever
+    worked because the core fonts wrote latin-1 directly.
+
+    Decoding that correctly means resolving each font's /ToUnicode CMap and
+    tracking which font is selected at every Tf. pypdf already does exactly
+    that, and a hand-rolled version in a test would be a second PDF parser
+    to maintain. Skips rather than silently passing when pypdf is absent.
+
+    Whitespace is COLLAPSED. Body text is 26pt, so a phrase routinely breaks
+    across lines, and justified output extracts with doubled spaces — an
+    assertion about content should not fail over either. This helper is
+    therefore for "is it in there", never for layout.
+    """
+    import io
+    import re
+    pypdf = pytest.importorskip(
+        "pypdf", reason="pypdf not installed; cannot decode embedded-font text")
+    reader = pypdf.PdfReader(io.BytesIO(data))
+    raw = "\n".join(page.extract_text() or "" for page in reader.pages)
+    return re.sub(r"\s+", " ", raw)
+
+
 def test_ai_sde_pdf_carries_the_interview_tags(auth_client):
     """The exported sheet must show the tags, not just filter by them."""
     pytest.importorskip("fpdf", reason="fpdf2 not installed; PDF route falls back to a redirect")
@@ -411,16 +440,7 @@ def test_ai_sde_pdf_carries_the_interview_tags(auth_client):
     assert r.status_code == 200
     assert r.mimetype == "application/pdf"
 
-    import re
-    import zlib
-    chunks = []
-    for m in re.finditer(rb"stream\r?\n(.*?)endstream", r.get_data(), re.S):
-        try:
-            chunks.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except Exception:
-            pass
-    text = " ".join(s[1:-1] for s in
-                    re.findall(r"\((?:[^()\\]|\\.)*\)", " ".join(chunks)))
+    text = _pdf_text(r.get_data())
     assert "INTERVIEW TAGS" in text, "the PDF lost the Interview tags field"
     assert "Must-Know for a new grad" in text
     assert "DSA / Graphs" in text
@@ -1341,3 +1361,94 @@ def test_ai_sde_awards_notes_by_title_not_by_positional_id():
     body = js.split("rekeyTopics: function (map)")[1].split("\n    reset:")[0]
     # A rename must not touch the balance — the notes are already banked.
     assert "award(" not in body, "rekeyTopics awards notes; it must only rename keys"
+
+
+def test_pdf_splits_prose_from_drawn_tables():
+    """The worked examples interleave prose with drawn tables in ONE string.
+
+    Rendering the whole thing as prose wraps the tables into noise — which
+    is exactly what the export used to do, and the reported complaint.
+    Rendering it all as monospace shrinks the prose for no reason. So each
+    line is judged and consecutive verdicts are grouped into runs.
+    """
+    import routes.interview_prep as ip
+    text = (
+        "Here is the idea in a sentence.\n"
+        "\n"
+        "┌─ STEP 1 ─────────────┐\n"
+        "│ clarify the scope    │\n"
+        "└──────────────────────┘\n"
+        "\n"
+        "And a closing thought that should wrap like prose does.\n"
+    )
+    runs = ip._pdf_runs(text)
+    kinds = [k for k, _ in runs]
+    assert True in kinds and False in kinds, f"nothing was split: {kinds}"
+    drawn = [t for k, t in runs if k]
+    assert any("┌" in t for t in drawn), "the box was not treated as fixed-width"
+    prose = " ".join(t for k, t in runs if not k)
+    assert "idea in a sentence" in prose and "closing thought" in prose
+
+    # A column-aligned table with no box characters still counts.
+    assert ip._pdf_is_fixed_width("name        count      pct") is True
+    assert ip._pdf_is_fixed_width("    indented_code = True") is True
+    assert ip._pdf_is_fixed_width("-----+------+-----") is True
+    # An ordinary sentence does not.
+    assert ip._pdf_is_fixed_width("This is a normal line of prose text.") is False
+    # A blank line inherits its neighbours rather than breaking the run.
+    assert ip._pdf_is_fixed_width("   ") is None
+
+
+def test_pdf_keeps_unicode_instead_of_mangling_it():
+    """_latin1() turned '┌─ CLARIFY ──┐ → ≤' into '+- CLARIFY --+ -> <='.
+
+    With a real embedded font the characters survive, which is the whole
+    reason the drawn diagrams were unreadable in the export.
+    """
+    pytest.importorskip("fpdf", reason="fpdf2 not installed")
+    import routes.interview_prep as ip
+
+    art = "┌─────────────┐\n│ scope first │\n└─────────────┘"
+    data = ip._pdf_bytes("Unicode check", "one topic", [
+        {"title": "Box drawing", "cat": "test",
+         "fields": [("Diagram", art)], "mono_blocks": [], "tags": []}])
+    text = _pdf_text(data)
+    if "+-" in text and "─" not in text:
+        pytest.skip("no Unicode font on this box; core-font fallback in use")
+    assert "─" in text, "box-drawing was transliterated away"
+    assert "│" in text
+
+
+def test_pdf_falls_back_to_core_fonts_when_no_unicode_font_exists():
+    """Render must degrade, never 500. Production images do not all ship
+    DejaVu, and the export is not worth a crash."""
+    pytest.importorskip("fpdf", reason="fpdf2 not installed")
+    import routes.interview_prep as ip
+
+    original = ip._PDF_FONT_CANDIDATES
+    try:
+        ip._PDF_FONT_CANDIDATES = (("/nope/a.ttf", "/nope/b.ttf", "/nope/c.ttf"),)
+        data = ip._pdf_bytes("Fallback", "sub", [
+            {"title": "Em dash — and an arrow →", "cat": "test",
+             "fields": [("Answer", "value ≤ limit — always")],
+             "mono_blocks": [], "tags": []}])
+    finally:
+        ip._PDF_FONT_CANDIDATES = original
+    assert data.startswith(b"%PDF"), "the fallback did not produce a PDF"
+    assert len(data) > 800
+
+
+def test_pdf_body_size_defaults_to_26pt_and_is_clamped(app):
+    """26pt was asked for, and on A4 it yields ~40 characters per line —
+    the measure a phone shows when the page is fitted to width. ?fs= is
+    for reading on a laptop, and must not be able to produce a broken page."""
+    import routes.interview_prep as ip
+    assert ip._PDF_BODY_PT == 26
+    with app.test_request_context("/ai-sde/pdf"):
+        assert ip._pdf_body_pt() == 26
+    with app.test_request_context("/ai-sde/pdf?fs=14"):
+        assert ip._pdf_body_pt() == 14
+    for bad in ("0", "999", "-5", "abc", ""):
+        with app.test_request_context(f"/ai-sde/pdf?fs={bad}"):
+            got = ip._pdf_body_pt()
+            assert ip._PDF_MIN_PT <= got <= ip._PDF_MAX_PT, f"fs={bad} gave {got}"

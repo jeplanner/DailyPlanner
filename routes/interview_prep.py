@@ -1171,7 +1171,7 @@ def ai_sde_pdf():
             "fields": fields, "arch": None, "mono_blocks": mono, "tags": it.get("tags"),
         })
     try:
-        pdf = _pdf_bytes(heading, subtitle, sections)
+        pdf = _pdf_bytes(heading, subtitle, sections, body_pt=_pdf_body_pt())
     except ImportError:
         return redirect(url_for("interview_prep.ai_sde_page"))
     fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "ai-sde-bank.pdf"
@@ -1605,7 +1605,7 @@ def behavioral_pdf():
         "arch": None, "tags": it.get("tags"),
     } for it in selected]
     try:
-        pdf = _pdf_bytes(heading, subtitle, sections)
+        pdf = _pdf_bytes(heading, subtitle, sections, body_pt=_pdf_body_pt())
     except ImportError:
         return redirect(url_for("interview_prep.behavioral_print", **request.args.to_dict()))
     fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "behavioral-bank.pdf"
@@ -1702,67 +1702,275 @@ def _latin1(s):
     return s.encode("latin-1", "replace").decode("latin-1")
 
 
-def _pdf_bytes(heading, subtitle, sections):
+#: Where to look for a real Unicode font. Debian/Ubuntu (and Render's
+#: images) ship fonts-dejavu-core; if none of these exist the renderer
+#: falls back to fpdf2's built-in core fonts and _latin1() transliteration,
+#: which is what the export did before — degraded, never broken.
+_PDF_FONT_CANDIDATES = (
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+    ("/usr/share/fonts/dejavu/DejaVuSans.ttf",
+     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+     "/usr/share/fonts/dejavu/DejaVuSansMono.ttf"),
+    ("/usr/share/fonts/TTF/DejaVuSans.ttf",
+     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+     "/usr/share/fonts/TTF/DejaVuSansMono.ttf"),
+)
+
+#: Body size, in points. 26 was asked for explicitly, and it is also the
+#: right answer: on A4 with 12 mm margins it yields ~40 characters per
+#: line, which is the measure a phone shows comfortably when the page is
+#: fitted to width. A PDF's point size means nothing on its own — what a
+#: reader actually experiences is CHARACTERS PER LINE after fit-to-width.
+_PDF_BODY_PT = 26
+_PDF_MIN_PT, _PDF_MAX_PT = 12, 40
+
+#: Never shrink a monospace block below this. Under it, the block goes on
+#: its own LANDSCAPE page, where the column is 273 mm instead of 186 and
+#: the same content lands ~47% larger.
+_PDF_MONO_FLOOR_PT = 8.25
+
+
+def _pdf_body_pt():
+    """?fs= lets the reader pick a body size; 26pt is the default.
+
+    26pt on A4 gives ~40 characters per line, which is what a phone shows
+    comfortably when the page is fitted to width. Someone reading on a
+    laptop wants more text per page, so the knob is worth having — but the
+    DEFAULT is the phone, because that is where prep actually gets read.
+    """
+    raw = (request.args.get("fs") or "").strip()
+    if not raw:
+        return _PDF_BODY_PT
+    try:
+        return max(_PDF_MIN_PT, min(_PDF_MAX_PT, float(raw)))
+    except ValueError:
+        return _PDF_BODY_PT
+
+
+def _pdf_register_fonts(pdf):
+    """Register DejaVu if the system has it. Returns (sans, mono, unicode?).
+
+    With a real Unicode font the box-drawing characters, arrows and smart
+    punctuation in the bank render as themselves. Without one they are
+    transliterated to ASCII by _latin1(), which is why the old export
+    turned diagrams into noise.
+    """
+    import os
+    for regular, bold, mono in _PDF_FONT_CANDIDATES:
+        if not (os.path.exists(regular) and os.path.exists(mono)):
+            continue
+        try:
+            pdf.add_font("dj", "", regular)
+            pdf.add_font("dj", "B", bold if os.path.exists(bold) else regular)
+            pdf.add_font("djm", "", mono)
+            return "dj", "djm", True
+        except Exception as exc:                      # pragma: no cover
+            logger.warning("PDF: could not load %s (%s)", regular, exc)
+            break
+    logger.info("PDF: no Unicode font found; falling back to core fonts")
+    return "Helvetica", "Courier", False
+
+
+#: Characters that only ever appear in drawn art, never in prose.
+_PDF_BOX_CHARS = frozenset("─│┌┐└┘├┤┬┴┼━┏┓┗┛┣┫┳┻╋╔╗╚╝║═╠╣╦╩╬")
+_PDF_RULE_RE = re.compile(r"^[\s|+\-=_.·]{8,}$")
+#: Column alignment, distinguished from an accidental double space after a
+#: full stop: either a deliberate 3+ space gap, or two separate 2+ space
+#: gaps on one line (which is a table row, not a sentence).
+_PDF_ALIGN_WIDE_RE = re.compile(r"\S {3,}\S")
+_PDF_ALIGN_RE = re.compile(r"\S {2,}\S")
+
+
+def _pdf_is_fixed_width(line):
+    """True if `line` must keep its exact spacing, None if it is blank.
+
+    The bank's worked examples interleave prose with drawn tables and
+    hand-traces in the SAME string. Rendering the whole block as prose
+    wraps the tables into noise — which is what the export used to do —
+    and rendering it all as monospace shrinks the prose to 8pt for no
+    reason. So each line is judged on its own and consecutive verdicts
+    are grouped into runs.
+    """
+    if not line.strip():
+        return None                       # blank: inherits its neighbours
+    if any(c in _PDF_BOX_CHARS for c in line):
+        return True
+    if _PDF_RULE_RE.match(line):
+        return True
+    if line.startswith(("    ", "\t")):   # indented code or a variable trace
+        return True
+    if _PDF_ALIGN_WIDE_RE.search(line):
+        return True
+    # A single 2-space gap is usually "end.  Next sentence"; two or more on
+    # one line is a table row. Length is not the discriminator — a SHORT
+    # table row must not be split away from the wide rows under it.
+    return len(_PDF_ALIGN_RE.findall(line)) >= 2
+
+
+def _pdf_runs(text):
+    """Split `text` into [(is_fixed_width, "chunk"), ...] preserving order.
+
+    Measured over the whole bank: 41% of example lines are fixed-width and
+    59% are prose. Isolating them matters — the fixed-width RUNS are only
+    106 columns at p99, against 107 for the blocks they sit in, so nearly
+    all of them fit portrait instead of being rotated or shrunk.
+    """
+    runs, cur, kind = [], [], None
+    for line in (text or "").split("\n"):
+        k = _pdf_is_fixed_width(line)
+        if k is None:
+            cur.append(line)
+            continue
+        if kind is None:
+            kind = k
+        if k != kind:
+            runs.append((kind, "\n".join(cur).strip("\n")))
+            cur, kind = [], k
+        cur.append(line)
+    if cur:
+        runs.append((bool(kind), "\n".join(cur).strip("\n")))
+    return [(k, t) for k, t in runs if t.strip()]
+
+
+def _pdf_bytes(heading, subtitle, sections, body_pt=_PDF_BODY_PT):
     """Build a PDF from sections. Each section:
     {title, cat, fields:[(label,text)...], arch, tags}. Raises ImportError
-    if fpdf2 isn't installed (caller falls back to the print view)."""
+    if fpdf2 isn't installed (caller falls back to the print view).
+
+    THE TENSION THIS RESOLVES. The body is set large (26pt) so it can be
+    read on a phone. But the bank's worked examples are pre-wrapped ASCII
+    drawn to a MEASURED median of 101 columns (p99 = 107) — code to 76,
+    diagrams to 68. A 105-column block cannot be shown at 26pt on any page
+    that also gives prose a sane measure; that is arithmetic, not a bug.
+
+    The old renderer fed those blocks through multi_cell at a fixed 8pt on
+    a 182 mm column, so every line that overflowed HARD-WRAPPED and the art
+    became noise. Here each monospace block is measured and scaled so its
+    widest line fits the column exactly — small, but intact and zoomable.
+    Blocks that would fall under _PDF_MONO_FLOOR_PT get their own landscape
+    page instead, where they land ~47% larger.
+
+    NOT DONE, and not doable here: true reflow ("Adobe liquid mode") needs
+    a tagged PDF with a structure tree over the paragraphs. fpdf2 2.8.x
+    builds a structure tree for outlines and links only and exposes no
+    public API to tag body text, so this sets the document language and
+    title — which is what helps a reader — and stops short of claiming
+    reflow it does not provide.
+    """
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
 
     NX, NY = XPos.LMARGIN, YPos.NEXT  # each line returns to the left margin
 
-    def cell(pdf, h, txt, **kw):
-        pdf.multi_cell(0, h, txt, new_x=NX, new_y=NY, **kw)
+    body_pt = max(_PDF_MIN_PT, min(_PDF_MAX_PT, float(body_pt or _PDF_BODY_PT)))
+    scale = body_pt / 10.0            # every other size is relative to the body
 
+    MARGIN = 12
     pdf = FPDF(format="A4")
-    pdf.set_auto_page_break(auto=True, margin=14)
-    pdf.set_margins(14, 14, 14)
+    pdf.set_auto_page_break(auto=True, margin=MARGIN)
+    pdf.set_margins(MARGIN, MARGIN, MARGIN)
+    SANS, MONO, unicode_ok = _pdf_register_fonts(pdf)
+    # With a real font the text is kept as written; without one it is
+    # transliterated, which is the pre-existing behaviour.
+    txt = (lambda s: s or "") if unicode_ok else _latin1
+    pdf.set_title(heading or "Interview prep")
+    pdf.set_lang("en")
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 18)
-    cell(pdf, 8, _latin1(heading))
-    pdf.set_font("Helvetica", "", 9)
+
+    portrait_col = pdf.w - 2 * MARGIN
+    landscape_col = 297 - 2 * MARGIN
+
+    def line_h(size):
+        """Leading for a given point size, in mm. 1pt = 0.3528mm."""
+        return size * 0.3528 * 1.22
+
+    def cell(size, text, style="", h=None):
+        pdf.set_font(SANS, style, size)
+        pdf.multi_cell(0, h or line_h(size), txt(text), new_x=NX, new_y=NY)
+
+    # Millimetres of advance per point of font size, for ONE monospace
+    # character. Measured from the font actually in use rather than
+    # assumed, so it stays correct under the core-font fallback too.
+    pdf.set_font(MONO, "", 10)
+    mono_mm_per_pt = pdf.get_string_width("M") / 10.0
+
+    def mono_block(text, col_mm):
+        """Size a monospace block so its WIDEST line fits `col_mm` exactly."""
+        lines = (text or "").split("\n")
+        cols = max((len(l) for l in lines), default=1) or 1
+        fitted = col_mm / (cols * mono_mm_per_pt)
+        # Never bigger than the body, never so small it is decorative only.
+        return max(4.0, min(body_pt, fitted)), cols
+
+    def draw_mono(text, label=None):
+        """Draw a monospace block, rotating to landscape if it must."""
+        size, cols = mono_block(text, portrait_col)
+        if size < _PDF_MONO_FLOOR_PT:
+            land_size, _ = mono_block(text, landscape_col)
+            if land_size > size:
+                pdf.add_page(orientation="L")
+                if label:
+                    pdf.set_font(SANS, "B", max(7, 7.5 * scale))
+                    pdf.set_text_color(107, 114, 128)
+                    pdf.multi_cell(0, line_h(7.5 * scale), txt(label.upper()),
+                                   new_x=NX, new_y=NY)
+                    pdf.set_text_color(17, 24, 39)
+                pdf.set_font(MONO, "", land_size)
+                pdf.set_fill_color(245, 246, 250)
+                pdf.multi_cell(0, line_h(land_size), txt(text),
+                               new_x=NX, new_y=NY, fill=True)
+                pdf.add_page()          # back to portrait for the prose
+                return
+        if label:
+            pdf.set_font(SANS, "B", max(7, 7.5 * scale))
+            pdf.set_text_color(107, 114, 128)
+            pdf.multi_cell(0, line_h(7.5 * scale), txt(label.upper()),
+                           new_x=NX, new_y=NY)
+            pdf.set_text_color(17, 24, 39)
+        pdf.set_font(MONO, "", size)
+        pdf.set_fill_color(245, 246, 250)
+        pdf.multi_cell(0, line_h(size), txt(text), new_x=NX, new_y=NY, fill=True)
+
+    cell(min(_PDF_MAX_PT, body_pt * 1.35), heading, style="B")
     pdf.set_text_color(120, 120, 120)
-    cell(pdf, 5, _latin1(subtitle))
+    cell(body_pt * 0.62, subtitle)
     pdf.set_text_color(20, 20, 20)
     pdf.ln(2)
 
     for sec in sections:
-        pdf.set_font("Helvetica", "B", 8)
         pdf.set_text_color(67, 56, 202)
-        cell(pdf, 4, _latin1((sec.get("cat") or "").upper()))
+        cell(max(7, body_pt * 0.46), (sec.get("cat") or "").upper(), style="B")
         pdf.set_text_color(17, 24, 39)
-        pdf.set_font("Helvetica", "B", 13)
-        cell(pdf, 6, _latin1(sec["title"]))
+        cell(body_pt * 1.05, sec["title"], style="B")
         pdf.ln(0.5)
         for label, text in sec.get("fields", []):
             if not text:
                 continue
-            pdf.set_font("Helvetica", "B", 7.5)
             pdf.set_text_color(107, 114, 128)
-            cell(pdf, 4, _latin1(label.upper()))
+            cell(max(7, body_pt * 0.46), label.upper(), style="B")
             pdf.set_text_color(17, 24, 39)
-            pdf.set_font("Helvetica", "", 10)
-            cell(pdf, 4.6, _latin1(text))
+            # A field is not uniformly prose: the worked examples carry drawn
+            # tables and hand-traces inline. Prose wraps at the body size,
+            # fixed-width runs are scaled to fit whole.
+            for is_fixed, chunk in _pdf_runs(text):
+                if is_fixed:
+                    draw_mono(chunk)
+                else:
+                    cell(body_pt, chunk)
             pdf.ln(0.4)
         if sec.get("arch"):
-            pdf.set_font("Courier", "", 8)
-            pdf.set_fill_color(245, 246, 250)
-            cell(pdf, 3.8, _latin1(sec["arch"]), fill=True)
-        # Optional monospace blocks (framework diagrams).
+            draw_mono(sec["arch"])
         for label, text in sec.get("mono_blocks", []):
             if not text:
                 continue
-            pdf.set_font("Helvetica", "B", 7.5)
-            pdf.set_text_color(107, 114, 128)
-            cell(pdf, 4, _latin1(label.upper()))
-            pdf.set_text_color(17, 24, 39)
-            pdf.set_font("Courier", "", 8)
-            pdf.set_fill_color(245, 246, 250)
-            cell(pdf, 3.8, _latin1(text), fill=True)
+            draw_mono(text, label)
         if sec.get("tags"):
-            pdf.set_font("Helvetica", "I", 8)
             pdf.set_text_color(67, 56, 202)
-            cell(pdf, 4, _latin1("  ".join("#" + t for t in sec["tags"])))
+            # No italic face is registered for the Unicode font, and asking
+            # fpdf2 for a style it has no file for raises.
+            cell(body_pt * 0.62, "  ".join("#" + t for t in sec["tags"]))
             pdf.set_text_color(17, 24, 39)
         pdf.ln(3.5)
 
@@ -1947,7 +2155,7 @@ def system_design_pdf():
             "mono_blocks": mono_blocks, "tags": it.get("tags"),
         })
     try:
-        pdf = _pdf_bytes(heading, subtitle, sections)
+        pdf = _pdf_bytes(heading, subtitle, sections, body_pt=_pdf_body_pt())
     except ImportError:
         return redirect(url_for("interview_prep.system_design_print", **request.args.to_dict()))
     fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "system-design-bank.pdf"

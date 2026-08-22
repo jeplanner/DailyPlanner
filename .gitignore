@@ -8,3 +8,8 @@ build/
 venv/
 *.log
 .DS_Store
+
+# Local-only PDF test deps (fpdf2/pypdf installed with pip --target).
+# fpdf2 is a real runtime dep and lives in requirements.txt; this directory
+# is just how it gets satisfied on a dev box where pip is PEP-668 blocked.
+pdflib/
