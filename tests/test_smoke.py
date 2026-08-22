@@ -1262,3 +1262,82 @@ def test_ai_sde_pdf_does_not_print_the_same_topic_twice(auth_client):
     src = inspect.getsource(ip.ai_sde_pdf)
     assert 'request.args.get("dupes")' in src, "no escape hatch to print duplicates"
     assert 'it.get("duplicate_of")' in src, "the export still prints both halves"
+
+
+def test_ai_sde_clocked_minutes_reach_the_server(auth_client, monkeypatch):
+    """Pomodoro effort was localStorage-only, so the hours she actually put
+    in never left the device — and `minutes_focused` sat unwritten.
+
+    The route already accepted minutes; nothing called it. This pins the
+    contract the client now uses: minutes are saved BY TITLE, because the
+    "ai{i}" id is the entry's index in the bank and shifts under it.
+    """
+    import routes.interview_prep as ip
+    saved = []
+    monkeypatch.setattr(ip, "post", lambda table, payload, **kw: saved.append((table, payload)))
+
+    title = ip.AI_SDE_ENTRIES[0]["title"]
+    r = auth_client.post("/api/ai-sde/progress", json={"title": title, "minutes": 42})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert saved, "nothing was written"
+    table, payload = saved[-1]
+    assert table == "ai_sde_progress"
+    assert payload["entry_title"] == title, "keyed on something other than the title"
+    assert payload["minutes_focused"] == 42
+    assert "ai0" not in str(payload), "a positional id leaked into the row"
+
+    # A title the bank does not hold must be refused, not stored — otherwise
+    # a renamed topic accumulates effort nobody can ever read back.
+    r = auth_client.post("/api/ai-sde/progress", json={"title": "nope", "minutes": 5})
+    assert r.status_code == 400
+
+
+def test_ai_sde_page_pulls_and_pushes_clocked_effort():
+    """Both directions, and the loop-breaker between them.
+
+    Pull: server minutes seed the timers. Push: a changed card is sent
+    back. Without the `seeded` guard every page load would echo straight
+    back what it had just read.
+    """
+    html = open("templates/ai_sde.html", encoding="utf-8").read()
+    assert "Pomodoro.seed" in html, "server minutes never reach the timers"
+    assert "queueEffort" in html, "clocked effort is never sent back"
+    assert "detail.seeded" in html or "ev.detail && ev.detail.seeded" in html, (
+        "no guard against echoing a server-seeded change back at the server")
+    # Sent by title, never by the positional card id.
+    push = html.split("async function flushEffort")[1].split("function queueEffort")[0]
+    assert "titleOf(id)" in push and "title: title" in push, "pushed by id, not title"
+    # A tab-hide is how a page ends on a phone; a 4s debounce would not survive it.
+    assert "keepalive" in push, "the last minutes are lost when the tab closes"
+
+
+def test_pomodoro_seed_unions_by_max_and_never_overwrites_local_time():
+    """Time clocked offline has not reached the server yet, so taking the
+    server's smaller number would silently delete it. Same union rule the
+    studied-set sync follows."""
+    js = open("static/js/pomodoro.js", encoding="utf-8").read()
+    body = js.split("Controller.prototype.seed = function")[1].split("};")[0]
+    assert "> this.logged(id)" in body, (
+        "seed() does not compare against the local log — it can overwrite it")
+    assert "this.emit(null, true)" in body, "a seeded change is not marked as seeded"
+
+
+def test_ai_sde_awards_notes_by_title_not_by_positional_id():
+    """Sadhana XP is DERIVED from studied topics + clocked minutes, so once
+    both sync the bar rebuilds on any device — no table of its own needed.
+
+    But the derivation was keyed on the "ai{i}" id, which is the entry's
+    index in the bank. A reshuffle meant the backfill no longer recognised
+    topics already paid for and awarded them again. Now keyed on title,
+    with a one-time carry-over of the old keys.
+    """
+    html = open("templates/ai_sde.html", encoding="utf-8").read()
+    assert "Gamify.studied(gkey(" in html, "notes are still awarded on the raw id"
+    assert "id: gkey(x.title)" in html, "the backfill still keys on the positional id"
+    assert "Gamify.rekeyTopics" in html, "no carry-over — existing topics get re-paid"
+    assert "ai_sde_gamify_titlekeys_v1" in html, "the carry-over is not guarded, so it can re-run"
+
+    js = open("static/js/gamify.js", encoding="utf-8").read()
+    body = js.split("rekeyTopics: function (map)")[1].split("\n    reset:")[0]
+    # A rename must not touch the balance — the notes are already banked.
+    assert "award(" not in body, "rekeyTopics awards notes; it must only rename keys"

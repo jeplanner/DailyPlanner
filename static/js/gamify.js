@@ -622,6 +622,35 @@
     streak: function () { return state.streak.n; },
     state: function () { return JSON.parse(JSON.stringify(state)); },
     /* Wipe everything - only used by a deliberate "start over". */
+    /* Rename awarded-topic keys in place. `map` is {oldKey: newKey}.
+
+       Awards and refunds NOTHING — the notes are already banked; this only
+       changes what the "already counted this one" set is keyed on, so a
+       later backfill recognises the same topic instead of paying for it a
+       second time. Needed because /ai-sde awarded against the entry's
+       POSITIONAL id ("ai0"), which shifts whenever the bank changes. */
+    rekeyTopics: function (map) {
+      var changed = 0, oldKey, newKey;
+      for (oldKey in map) {
+        if (!Object.prototype.hasOwnProperty.call(map, oldKey)) continue;
+        if (!state.topics[oldKey]) continue;
+        newKey = map[oldKey];
+        if (!newKey || newKey === oldKey) continue;
+        /* Already carried over (a re-run, or two ids pointing at one
+           title): drop the stale key and keep stats honest. */
+        if (state.topics[newKey]) {
+          delete state.topics[oldKey];
+          state.stats.topics = Math.max(0, (state.stats.topics || 0) - 1);
+        } else {
+          state.topics[newKey] = state.topics[oldKey];
+          delete state.topics[oldKey];
+        }
+        changed++;
+      }
+      if (changed) save();
+      return changed;
+    },
+
     reset: function () { state = blank(); save(); render(); emit(); }
   };
 })();

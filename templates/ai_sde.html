@@ -766,6 +766,10 @@
      phone and laptop; localStorage stays on as an offline mirror, which is
      also what makes the first paint instant instead of waiting on a fetch. */
   const PKEY = "ai_sde_studied_titles"; const studied = new Set();
+  /* Sadhana keys awarded topics by title, namespaced because ids and titles
+     collide across the four banks that share the game. */
+  const gkey = (t) => "ai:" + (t || "");
+  const GAMIFY_REKEYED = "ai_sde_gamify_titlekeys_v1";
   const LEGACY_PKEY = "ai_sde_studied";
   let progressSynced = false;
 
@@ -795,6 +799,58 @@
   }
 
   const saveP = () => { saveLocal(); };
+
+  /* ── Clocked effort -> server ────────────────────────────────────────
+     The timers fire pomodoro:change on every bank (up to once every 15s
+     while running), and a POST per tick would be absurd — so changed
+     cards are collected and flushed once, a few seconds after the last
+     one. Sent by TITLE for the same reason the studied set is: "ai{i}"
+     is the entry's index in the bank and shifts under it.
+
+     A `seeded` change came FROM the server; echoing it back would mean
+     every page load rewrites what it just read. */
+  const dirtyEffort = new Set();
+  let effortTimer = null;
+
+  async function flushEffort(urgent){
+    if (effortTimer) { clearTimeout(effortTimer); effortTimer = null; }
+    const ids = [...dirtyEffort]; dirtyEffort.clear();
+    for (const id of ids) {
+      const title = titleOf(id);
+      if (!title || !window.Pomodoro) continue;
+      const minutes = Math.round(Pomodoro.logged("ai_sde", id) / 60);
+      if (minutes < 1) continue;         // nothing worth a round trip yet
+      try {
+        await fetch("/api/ai-sde/progress", {
+          method: "POST", credentials: "same-origin",
+          // keepalive lets the request outlive the page, which is the whole
+          // point on pagehide. sendBeacon cannot carry the CSRF header, so
+          // it is not an option here.
+          keepalive: !!urgent,
+          headers: {"Content-Type": "application/json",
+                    "X-CSRFToken": (document.querySelector('meta[name=csrf-token]')||{}).content || ""},
+          body: JSON.stringify({title: title, minutes: minutes}),
+        });
+      } catch(_) { /* offline — localStorage still holds it for next load */ }
+    }
+  }
+
+  /* The timers bank their seconds on pagehide, which queues a change the
+     4-second debounce would never live to fire. Flush it immediately, and
+     on tab-hide too: on a phone that is the normal way a page ends. */
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && dirtyEffort.size) flushEffort(true);
+  });
+  window.addEventListener("pagehide", () => {
+    if (dirtyEffort.size) flushEffort(true);
+  });
+
+  function queueEffort(id){
+    if (!id) return;
+    dirtyEffort.add(id);
+    if (effortTimer) clearTimeout(effortTimer);
+    effortTimer = setTimeout(flushEffort, 4000);
+  }
   const prog = () => { if(BANK) $("prog").textContent = `${studied.size} / ${BANK.total} studied`; };
   // Minutes -> "3h 20m", the unit a study plan is actually made of.
   const hrs = (m) => m < 60 ? `${m}m` : (m%60 ? `${Math.floor(m/60)}h ${m%60}m` : `${Math.floor(m/60)}h`);
@@ -864,6 +920,26 @@
       });
       progressSynced = true;
       if (added) { saveLocal(); prog(); render(); }
+
+      /* Clocked effort, the other half of the same row. The server holds
+         MINUTES per title; the timers hold SECONDS per card id, and the id
+         shifts whenever the bank changes — so the title is the only safe
+         key to carry between them. Union by max inside seed(), so time
+         clocked offline here is not erased by a staler server row. */
+      const mins = data.minutes || {};
+      const seed = {};
+      Object.keys(mins).forEach(t => {
+        const id = idOfTitle(t);
+        if (id) seed[id] = Math.max(0, Number(mins[t]) || 0) * 60;
+      });
+      if (window.Pomodoro && Pomodoro.seed && Object.keys(seed).length) {
+        const n = Pomodoro.seed("ai_sde", seed);
+        // XP is DERIVED from studied topics + clocked minutes, so once both
+        // sync the Sadhana bar rebuilds itself on any device. syncMinutes
+        // only awards the increase, so this cannot double-count.
+        if (n && window.Gamify) Gamify.syncMinutes("ai_sde", Pomodoro.total("ai_sde")/60);
+        if (n) effort(shown || []);
+      }
     } catch(_) { /* offline: the mirror stands in */ }
   }
 
@@ -1011,7 +1087,11 @@
       // Ticking a topic earns notes worth its prep time (once per topic).
       if (e.target.checked && window.Gamify) {
         const ent = BANK.entries.find(x => x.id === id) || {};
-        Gamify.studied(id, ent.prep_minutes, {difficulty: ent.difficulty, priority: ent.priority});
+        // Keyed by TITLE. The "ai{i}" id is the entry's index in the bank, so
+        // awarding against it means a reshuffle re-pays for topics already
+        // counted. Same reason progress and clocked effort are title-keyed.
+        Gamify.studied(gkey(ent.title), ent.prep_minutes,
+                       {difficulty: ent.difficulty, priority: ent.priority});
       }
       // Re-read the effort line so "prep left" drops the moment you tick a box.
       saveP(); pushProgress(id, e.target.checked);
@@ -1139,7 +1219,9 @@
       // Per-question Pomodoro timers + actual-effort log.
       if (window.Pomodoro) {
         Pomodoro.init({ ns: "ai_sde", container: $("list") });
-        document.addEventListener("pomodoro:change", () => {
+        document.addEventListener("pomodoro:change", (ev) => {
+          // Never echo a server-seeded change straight back at the server.
+          if (!(ev.detail && ev.detail.seeded)) queueEffort(ev.detail && ev.detail.id);
           effort(shown);
           // Focus minutes are notes too - syncMinutes only counts the increase.
           if (window.Gamify) Gamify.syncMinutes("ai_sde", Pomodoro.total("ai_sde")/60);
@@ -1150,8 +1232,18 @@
         Gamify.mount($("gamebar"));
         // Credit topics ticked before the game existed, and time already
         // clocked - silently, so there is no cascade of level-up chimes.
+        /* One-time carry-over of the old positional keys, so already-earned
+           topics are not paid for twice. Where the bank shifted before this
+           ran, some ids already pointed at the wrong topic — that damage is
+           not recoverable here, and this at least stops it recurring. */
+        if (Gamify.rekeyTopics && !localStorage.getItem(GAMIFY_REKEYED)) {
+          const map = {};
+          BANK.entries.forEach(x => { map[x.id] = gkey(x.title); });
+          Gamify.rekeyTopics(map);
+          try { localStorage.setItem(GAMIFY_REKEYED, "1"); } catch(_) {}
+        }
         Gamify.studiedBulk(BANK.entries.filter(x => studied.has(x.id)).map(x => ({
-          id: x.id, minutes: x.prep_minutes, difficulty: x.difficulty, priority: x.priority
+          id: gkey(x.title), minutes: x.prep_minutes, difficulty: x.difficulty, priority: x.priority
         })));
         if (window.Pomodoro) Gamify.syncMinutes("ai_sde", Pomodoro.total("ai_sde")/60);
       }

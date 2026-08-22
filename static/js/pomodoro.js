@@ -240,10 +240,36 @@
     return base;
   };
 
-  Controller.prototype.emit = function () {
+  /* `id` names the card whose log changed, so a page syncing to a server
+     can push ONE row instead of the whole namespace. `seeded` marks a
+     change that CAME from the server — a page must not echo it straight
+     back, or every load writes what it just read. */
+  Controller.prototype.emit = function (id, seeded) {
     try {
-      document.dispatchEvent(new CustomEvent("pomodoro:change", { detail: { ns: this.ns } }));
+      document.dispatchEvent(new CustomEvent("pomodoro:change", {
+        detail: { ns: this.ns, id: id || null, seeded: !!seeded }
+      }));
     } catch (_) {}
+  };
+
+  /* Merge a server-held effort log in. `map` is {cardId: seconds}.
+
+     UNION BY MAX, never replace: time clocked offline on this device has
+     not reached the server yet, so taking the server's smaller number
+     would silently delete it. The same rule the studied-set sync follows. */
+  Controller.prototype.seed = function (map) {
+    var changed = 0, id, incoming;
+    for (id in map) {
+      if (!Object.prototype.hasOwnProperty.call(map, id)) continue;
+      incoming = Math.max(0, Number(map[id]) || 0);
+      if (incoming > this.logged(id) + 1) { this.effort[id] = incoming; changed++; }
+    }
+    if (changed) {
+      saveEffort(this.ns, this.effort);
+      this.paint();
+      this.emit(null, true);
+    }
+    return changed;
   };
 
   /* Write the running timer's elapsed seconds into the log and reset
@@ -258,7 +284,7 @@
       if (secs >= 1) {
         this.effort[a.id] = this.logged(a.id) + secs;
         saveEffort(this.ns, this.effort);
-        this.emit();
+        this.emit(a.id);
       }
     }
     a.startedAt = now;             // elapsed is now accounted for
@@ -313,7 +339,7 @@
     this.savePaused();
     saveEffort(this.ns, this.effort);
     this.paint();
-    this.emit();
+    this.emit(id);
   };
 
   /* Log a session by hand - for work done away from the screen. */
@@ -321,7 +347,7 @@
     this.effort[id] = this.logged(id) + minutes * 60;
     saveEffort(this.ns, this.effort);
     this.paint();
-    this.emit();
+    this.emit(id);
   };
 
   /* ── rendering ───────────────────────────────────────────────── */
@@ -453,7 +479,7 @@
     delete this.paused[a.id];      // the session finished, nothing held over
     this.savePaused();
     this.paint();
-    this.emit();
+    this.emit(a.id);
     chime();
     if (a.mode === "focus") {
       say("Pomodoro done — " + humanMin(this.logged(a.id)) + " logged. Take a " + BREAK_MIN + "-minute break.", "success");
@@ -551,6 +577,13 @@
       var n = 0, k;
       for (k in e) if (Object.prototype.hasOwnProperty.call(e, k) && e[k] >= 30) n++;
       return n;
+    },
+    /* Merge a server-held log in, as {cardId: seconds}. Union by max, so
+       time clocked offline is never overwritten by a staler server row.
+       Fires pomodoro:change with detail.seeded = true. */
+    seed: function (ns, map) {
+      var c = registry[ns];
+      return c && map ? c.seed(map) : 0;
     },
     /* Re-attach any bar a lazy body render wiped out. The MutationObserver
        only watches the container's direct children, so filling one card's
