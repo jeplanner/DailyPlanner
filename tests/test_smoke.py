@@ -1904,3 +1904,46 @@ def test_bulk_select_needs_no_per_page_markup():
     # The pages re-render their list on filter changes, which would wipe
     # the injected checkboxes.
     assert "MutationObserver" in js and "paintBoxes()" in js
+
+
+# ═══════════════════════════════════════════════════
+# Time announcer — spoken on the quarter hour
+# ═══════════════════════════════════════════════════
+
+def test_time_announcer_is_loaded_on_every_page(auth_client):
+    """Asked for: announce the time every 15 minutes, with pause and stop.
+
+    It lives in the shared nav because it is an AMBIENT setting: it has to
+    survive moving between pages, and its control belongs somewhere every
+    page can reach.
+    """
+    assert "time-announcer.js" in open("templates/_top_nav.html", encoding="utf-8").read()
+    for path in ("/todo", "/checklist", "/ai-sde"):
+        assert "time-announcer.js" in auth_client.get(path).get_data(as_text=True), path
+
+
+def test_time_announcer_never_reads_out_a_time_that_has_passed():
+    """A laptop that slept through 14:15 and woke at 14:41 must not then
+    say "quarter past two". That is worse than silence, because you would
+    believe it. Late announcements are SKIPPED, never queued.
+    """
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert "GRACE_MS" in js, "no bound on how late an announcement may be"
+    assert "if (lateBy > GRACE_MS) return;" in js, "a missed slot is not skipped"
+    # Aligned to the clock, not to when you pressed start — otherwise 3:07
+    # and 3:22 would be "every fifteen minutes" and useless.
+    assert "Math.floor(mins / state.every) * state.every" in js
+    # Two open tabs must not both announce.
+    assert "fresh.lastSlot === slot" in js, "sibling tabs would double-announce"
+    # A queued backlog read out in sequence is the failure mode people
+    # remember, so anything pending is cancelled first.
+    assert "speechSynthesis.cancel()" in js
+
+
+def test_time_announcer_offers_pause_and_stop_separately():
+    """The ask named both. They differ: pause keeps the interval and the
+    intent, stop clears the slot so restarting announces cleanly."""
+    js = open("static/js/time-announcer.js", encoding="utf-8").read()
+    assert 'data-ta-mode="paused"' in js and 'data-ta-mode="off"' in js
+    assert "pause: function" in js and "stop:  function" in js
+    assert "state.lastSlot = null" in js, "stop does not reset the slot"
