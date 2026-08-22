@@ -357379,8 +357379,7 @@ O(n) instead of O(n^2).
   trade-off you are taking.
 · COST — O(n) time, O(1) space, after any sorting."""
 
-_ANSWER_V2['Bias-Variance trade-off (explained simply)'] = """Two different ways to be wrong: too simple to see the pattern, or so flexible it
-memorised the noise.
+_ANSWER_V2['Bias-Variance trade-off (explained simply)'] = """Two ways to be wrong: too simple to see the pattern (underfitting), or so flexible it memorised the noise (overfitting).
 
 · BIAS is error from wrong assumptions - a straight line through curved data.
   It shows up as bad performance on BOTH training and test sets. That is
