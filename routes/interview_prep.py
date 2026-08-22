@@ -39,6 +39,7 @@ import java_bank
 import sql_bank
 import ai_sde_recall
 import ai_sde_summary
+from services import loud
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -730,6 +731,12 @@ def _ensure_prep_project(user_id, bank):
     if found:
         return found
 
+    # A miss here means the project does not exist yet — which is true
+    # exactly ONCE per user per bank. If this line keeps firing for the same
+    # pair, the LOOKUP is broken, not the data. That is precisely how ten
+    # SQLPrep projects appeared in four minutes and nobody noticed.
+    loud.created_what_should_exist(f"the {name} project",
+                                   user_id=user_id, bank=bank)
     try:
         created = post("projects", {
             "user_id": user_id,
@@ -831,6 +838,12 @@ def complete_prep_artifacts(user_id, bank, title, done, include_bucket=True):
     touched = {"tasks": 0, "events": 0, "bucket": 0, "progress": 0}
 
     project_id = _find_prep_project(user_id, bank)
+    if not project_id:
+        # Not automatically wrong — most topics are never scheduled — but if
+        # the caller is completing a topic that WAS on a day, this is where
+        # the trail goes cold.
+        loud.bailed("prep completion (task)", "no project for this bank",
+                    bank=bank, user_id=user_id)
     if project_id:
         try:
             update("project_tasks",

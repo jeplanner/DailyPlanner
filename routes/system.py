@@ -1,8 +1,40 @@
 from flask import Blueprint, jsonify, redirect, render_template, request, session, url_for
 from supabase_client import get
 from services.login_service import login_required
+from services import loud
 
 system_bp = Blueprint("system", __name__)
+
+
+@system_bp.route("/api/client-inert", methods=["POST"])
+@login_required
+def client_inert():
+    """A browser-side feature reporting that it did nothing.
+
+    THE POINT. Two features shipped this month that never ran on any page —
+    both bailed out of initialising because they were called before the list
+    they needed existed. Nothing was broken enough to throw, so nothing was
+    logged, and the only way it surfaced was a person noticing an absence
+    weeks later. A console warning would not have helped: nobody has the
+    console open on their phone.
+
+    So the client reports its own inertness here and it lands in the server
+    log next to everything else.
+
+    DELIBERATELY UNINTERESTING. It logs and returns; it stores nothing,
+    trusts nothing, and reads only two short fields. Rate limiting is the
+    caller's job (see dpInert in global.js) and the throttle in services.loud
+    is the backstop.
+    """
+    data = request.get_json(silent=True) or {}
+    feature = str(data.get("feature") or "")[:80]
+    why = str(data.get("why") or "")[:200]
+    if not feature:
+        return jsonify({"ok": True})
+    loud.bailed("client: " + feature, why,
+                user_id=session.get("user_id"),
+                page=str(data.get("page") or "")[:120])
+    return jsonify({"ok": True})
 
 
 @system_bp.route("/ping")

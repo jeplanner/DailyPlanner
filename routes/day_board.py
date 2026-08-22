@@ -38,7 +38,7 @@ from urllib.parse import urlencode
 from flask import Blueprint, jsonify, render_template, request, session, url_for
 
 from services.login_service import login_required
-from services import checklist_schedule, event_recurrence
+from services import checklist_schedule, event_recurrence, loud
 from supabase_client import get
 from utils.user_tz import user_now, user_today
 
@@ -159,7 +159,16 @@ def _checklist_for(user_id, plan_date):
     # The schedule logic now lives in one place, shared with the push
     # scheduler that decides whether a reminder actually fires. A board
     # disagreeing with the reminder is worse than either being wrong alone.
+    before = len(items)
     items = [i for i in items if checklist_schedule.is_due(i, plan_date)]
+    if before and not items:
+        # Every item filtered out is possible (a weekend with only weekday
+        # items) but it is also exactly what a broken schedule rule looks
+        # like — which is what the previous version of this filter did for
+        # `custom` schedules, silently, for months.
+        loud.bailed("day board checklist", "every item was filtered out as "
+                                           "not due",
+                    date=plan_date.isoformat(), had=before)
 
     ticks = get("checklist_ticks", params={
         "user_id": f"eq.{user_id}", "tick_date": f"eq.{day_str}",

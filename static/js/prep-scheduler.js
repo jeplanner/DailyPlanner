@@ -282,16 +282,29 @@
      so a page with a genuinely empty bank stops observing rather than
      watching forever. */
   function whenCardsReady(root, cb) {
-    if (!root) return;
+    if (!root) { inert("no container"); return; }
     if (root.querySelector("[data-prep-plan]")) { cb(); return; }
-    if (!window.MutationObserver) return;
+    if (!window.MutationObserver) { inert("no MutationObserver"); return; }
+    var fired = false;
     var observer = new MutationObserver(function () {
       if (!root.querySelector("[data-prep-plan]")) return;
+      fired = true;
       observer.disconnect();
       cb();
     });
     observer.observe(root, { childList: true, subtree: true });
-    setTimeout(function () { observer.disconnect(); }, 15000);
+    setTimeout(function () {
+      observer.disconnect();
+      // Waited the full window and no schedulable card ever appeared. On a
+      // page that has topics, this means the bulk bar and the "Planned on"
+      // marks are simply not running — the exact failure that went
+      // unnoticed for a week because nothing threw.
+      if (!fired) inert("no schedulable card appeared within 15s");
+    }, 15000);
+  }
+
+  function inert(why) {
+    if (window.dpInert) window.dpInert("prep-scheduler", why);
   }
 
   function bulkButtons(root) {
@@ -681,9 +694,13 @@
 
   function loadScheduled(root) {
     var bank = bulkBank(root);
-    if (!bank) return;                  // called via whenCardsReady, so a
-                                        // miss here means a genuinely empty
-                                        // bank, not a slow one.
+    if (!bank) {
+      // Called via whenCardsReady, so a card DOES exist — a missing bank
+      // therefore means the Plan button lost its data-bank attribute, which
+      // would silently disable scheduling everywhere on this page.
+      inert("cards exist but no data-bank on the Plan button");
+      return;
+    }
     fetch("/api/prep/scheduled?bank=" + encodeURIComponent(bank),
           { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })

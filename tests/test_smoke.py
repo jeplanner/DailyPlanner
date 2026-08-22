@@ -2877,3 +2877,99 @@ def test_the_checkbox_is_reconciled_without_echoing_back():
     # task to disagree with.
     assert "if (!info) return" in body
     assert "if (reconciling) return;" in js.split("function syncCompletion")[1][:200]
+
+
+# ═══════════════════════════════════════════════════
+# Making silent failure audible
+# ═══════════════════════════════════════════════════
+
+def test_loud_warns_on_a_miss_and_then_shuts_up(caplog):
+    """Four faults this month were invisible because a broken thing looked
+    exactly like an empty one. These make the difference audible — while
+    THROTTLING, because a warning on every request is noise, and noise is
+    how the last round of silence got established.
+    """
+    import logging
+    from services import loud
+    loud._last.clear()
+
+    with caplog.at_level(logging.WARNING, logger="daily_plan"):
+        assert loud.expect([], "the SQLPrep project", user_id="u1") == []
+        loud.expect([{"id": 1}], "something present", user_id="u1")   # silent
+        loud.bailed("prep bulk bar", "no cards yet", page="/sql")
+        loud.created_what_should_exist("the SQLPrep project", user_id="u1")
+
+    text = caplog.text
+    assert "SILENT-MISS" in text and "the SQLPrep project" in text
+    assert "FEATURE-INERT" in text and "prep bulk bar" in text
+    assert "CREATED-AFTER-MISS" in text
+    assert text.count("SILENT-MISS") == 1, "a present row should log nothing"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="daily_plan"):
+        loud.expect([], "the SQLPrep project", user_id="u1")
+    assert "SILENT-MISS" not in caplog.text, "the same warning repeated"
+
+
+def test_the_duplicate_project_bug_would_now_announce_itself(caplog):
+    """The find-or-create that made ten SQLPrep projects in four minutes.
+    A miss is legitimate exactly ONCE per user per bank; if it repeats for
+    the same pair, the lookup is broken rather than the data missing."""
+    import inspect
+    import routes.interview_prep as ip
+    src = inspect.getsource(ip._ensure_prep_project)
+    assert "created_what_should_exist" in src
+    # It must sit BEFORE the insert, or it only reports after the damage.
+    assert src.index("created_what_should_exist") < src.index('post("projects"')
+
+
+def test_dead_push_subscriptions_are_reported(caplog):
+    """A user with no ACTIVE subscription receives nothing, silently and
+    forever, while the browser still says notifications are on. That is the
+    likeliest reason this household's reminders died in April and it was
+    found in August."""
+    import inspect
+    from services import push_service
+    src = inspect.getsource(push_service._active_subscriptions)
+    assert "loud.bailed" in src
+    # It distinguishes "never subscribed" from "all expired" — those need
+    # different actions, and a single message would hide the second.
+    assert "INACTIVE" in src and "no subscription at all" in src
+
+
+def test_a_browser_feature_can_report_that_it_did_nothing(auth_client, caplog):
+    """A console warning does not help: nobody has the console open on their
+    phone. An inert feature reports itself into the server log instead."""
+    import logging
+    from services import loud
+    loud._last.clear()
+    with caplog.at_level(logging.WARNING, logger="daily_plan"):
+        r = auth_client.post("/api/client-inert", json={
+            "feature": "prep-scheduler", "why": "no card appeared within 15s",
+            "page": "/sql"})
+    assert r.status_code == 200
+    assert "FEATURE-INERT" in caplog.text
+    assert "prep-scheduler" in caplog.text and "/sql" in caplog.text
+
+    # A blank report is dropped rather than logging an empty line.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="daily_plan"):
+        auth_client.post("/api/client-inert", json={})
+    assert "FEATURE-INERT" not in caplog.text
+
+
+def test_the_guards_that_hid_the_dead_features_now_speak_up():
+    """whenCardsReady is the exact guard both dead features sat behind.
+    Waiting the whole window without a card means they are not running."""
+    js = open("static/js/prep-scheduler.js", encoding="utf-8").read()
+    waiter = js.split("function whenCardsReady")[1].split("function inert")[0]
+    assert "if (!fired) inert(" in waiter, "a silent timeout is still silent"
+    assert 'inert("no MutationObserver")' in waiter
+    assert "window.dpInert" in js
+
+    g = open("static/js/global.js", encoding="utf-8").read()
+    assert "window.dpInert" in g and "/api/client-inert" in g
+    # Once per reason per page load: a signal, not telemetry.
+    assert "reported[key]" in g
+    # keepalive, because a navigation is exactly when this fires.
+    assert "keepalive: true" in g

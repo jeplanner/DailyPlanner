@@ -544,7 +544,16 @@
     /* Attach timers to every card in `container`. Returns the
        controller so a page can query totals for its summary line. */
     init: function (opts) {
-      if (!opts || !opts.ns || !opts.container) return null;
+      if (!opts || !opts.ns || !opts.container) {
+        // Silently returning null here means no timer appears on any card
+        // and nothing says why — the same shape of failure that hid two
+        // features for a week.
+        if (window.dpInert) {
+          window.dpInert("pomodoro", !opts ? "no options" :
+            (!opts.ns ? "no namespace" : "no container element"));
+        }
+        return null;
+      }
       if (registry[opts.ns]) return registry[opts.ns];
       var c = new Controller(opts);
       c.bindEvents();

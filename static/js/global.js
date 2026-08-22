@@ -240,3 +240,48 @@
         ".board-focus{animation:none;background:rgba(99,102,241,.18)}}";
     document.head.appendChild(style);
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   REPORTING THAT A FEATURE DID NOTHING
+
+   Two features shipped this month that never ran on any page. Both bailed
+   out of initialising — they were called before the list they needed
+   existed — and because nothing threw, nothing was logged. The only way it
+   surfaced was a person noticing an absence weeks later.
+
+   A console warning would not have helped: nobody has the console open on
+   their phone. So an inert feature says so out loud, and it reaches the
+   server log where the rest of the app's problems already are.
+
+   RATE LIMITED PER PAGE LOAD, and per reason. This is a signal that
+   something is structurally wrong, not telemetry — one report is enough to
+   act on, and a hundred is how a log stops being read.
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+    "use strict";
+    var reported = {};
+
+    window.dpInert = function (feature, why) {
+        var key = feature + "|" + why;
+        if (reported[key]) return;
+        reported[key] = true;
+
+        try { console.warn("[inert] " + feature + " did nothing — " + why); } catch (_) {}
+        try {
+            fetch("/api/client-inert", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": (document.querySelector('meta[name=csrf-token]') || {}).content || "",
+                },
+                body: JSON.stringify({
+                    feature: feature, why: why, page: location.pathname,
+                }),
+                // Survives the page going away mid-report; this is exactly
+                // the moment a navigation is likely.
+                keepalive: true,
+            }).catch(function () {});
+        } catch (_) {}
+    };
+})();

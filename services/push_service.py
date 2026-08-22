@@ -19,6 +19,8 @@ import os
 
 from supabase_client import get, update
 
+from services import loud
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,10 +41,37 @@ def _private_key():
 
 
 def _active_subscriptions(user_id):
-    return get(
+    """Live subscriptions for this user.
+
+    NONE is worth a warning rather than a shrug. A user with no active
+    subscription receives nothing, silently, forever — and the browser goes
+    on reporting "notifications are on", because the two sides drift apart
+    the moment a send returns 410. That is very likely why this household's
+    checklist reminders stopped arriving in April and nobody found out until
+    August.
+    """
+    rows = get(
         "push_subscriptions",
         {"user_id": f"eq.{user_id}", "is_active": "eq.true"},
     ) or []
+    if not rows:
+        # Distinguished from "never subscribed": if there ARE rows for this
+        # user and all of them are inactive, something expired them and the
+        # user still thinks push is on.
+        try:
+            any_rows = get("push_subscriptions",
+                           {"user_id": f"eq.{user_id}", "select": "endpoint",
+                            "limit": "1"}) or []
+        except Exception:
+            any_rows = []
+        if any_rows:
+            loud.bailed("web push", "every subscription for this user is "
+                                    "INACTIVE — they believe push is on and "
+                                    "will receive nothing",
+                        user_id=user_id)
+        else:
+            loud.bailed("web push", "no subscription at all", user_id=user_id)
+    return rows
 
 
 def _deactivate(endpoint):
