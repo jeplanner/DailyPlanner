@@ -357772,6 +357772,220 @@ _ANSWER_V2['Backpropagation worked by hand on a tiny network'] = """The chain ru
   another f'(z), so with sigmoid (max derivative 0.25) the signal dies within a
   few layers. ReLU, whose derivative is 1 on the positive side, is the fix."""
 
+_ANSWER_V2['STAR: Acting decisively with incomplete information (Bias for Action)'] = """They are testing whether you can tell a reversible decision from an irreversible one - not whether you are fast.
+
+· THE LP — Bias for Action. Speed matters; many decisions are reversible and do
+  not need extensive study; calculated risk-taking is valued.
+· THE TWO-WAY DOOR IS THE WHOLE ANSWER. Say explicitly that you judged the
+  decision reversible, and what it would have cost to undo. A story that is
+  just 'I moved fast' reads as reckless without that sentence.
+· NAME THE ONE-WAY DOORS TOO — show you know which calls DO warrant caution.
+  Someone who treats every decision as reversible has not understood the
+  principle, they have only heard the slogan.
+· HOW YOU DE-RISKED IT CHEAPLY is the substance: a small pilot, a feature flag,
+  one region first, a manual process before building the automation.
+· SAY WHAT YOU DID NOT KNOW at the time, and what you would have needed to be
+  certain. Owning the missing information is what makes the judgement credible.
+· THE RESULT NEEDS A NUMBER — how much time the speed actually bought, and what
+  the downside would have been. Both, not just the upside.
+· THE TRAP is a story where it worked out by luck. Interviewers are listening
+  for the reasoning you did BEFORE the outcome was known."""
+
+_ANSWER_V2['STAR: Being frugal / doing more with less (Frugality)'] = """The point is that the constraint FORCED a better solution, not that you suffered through one.
+
+· THE LP — Frugality. Accomplish more with less; constraints breed
+  resourcefulness, self-sufficiency and invention. No extra points for
+  headcount, budget or fixed expense.
+· THE STORY SHAPE THAT LANDS — you were denied the obvious resource, and the
+  workaround turned out to be genuinely better, not merely cheaper.
+· QUANTIFY BOTH SIDES — what the conventional approach would have cost in money
+  or people, and what yours cost. A ratio is more memorable than either number.
+· BUYING VERSUS BUILDING IS FAIR GAME, in either direction: using an existing
+  service instead of building, or a hundred lines instead of a vendor contract.
+  What matters is that you priced both.
+· FRUGALITY IS NOT CHEAPNESS. Never tell a story where you saved money and the
+  customer paid for it in reliability or quality; that inverts the principle.
+· A GOOD BEAT is the thing you deliberately did NOT build - the manual process
+  you ran for three months to prove demand before writing any code.
+· THE TRAP is describing a situation where you simply had no budget. That is a
+  circumstance, not a decision. The credit is in the choice you made inside it."""
+
+_ANSWER_V2['STAR: Customer obsession -- starting from the customer and working backward'] = """Start from a real customer pain and work backwards to the solution - not from the solution you already wanted to build.
+
+· THE LP — Customer Obsession. Leaders start with the customer and work
+  backwards; they work vigorously to earn and keep trust, and while they watch
+  competitors, they obsess over customers.
+· THE TELL IS THE DIRECTION OF THE STORY. Weak answers begin with a feature.
+  Strong ones begin with a specific customer, a specific complaint, and what
+  you found when you dug past the stated request.
+· TALK TO A REAL ONE — support tickets you read, a call you sat in on, session
+  recordings you watched. Concrete evidence beats 'we believed users wanted'.
+· WHAT THEY ASKED FOR VERSUS WHAT THEY NEEDED is the most valuable beat you
+  have. A customer asking for a faster horse is the classic, and showing you
+  found the underlying job is what separates this from order-taking.
+· MEASURE THE CUSTOMER OUTCOME, not the shipping event. Reduced support volume,
+  task completion rate, retention - not 'we launched in Q3'.
+· CHOOSING THE HARDER RIGHT SOLUTION over the convenient one is the strongest
+  version, especially if it cost you time or an internal argument.
+· THE TRAP is confusing customer obsession with saying yes. Sometimes the
+  customer-obsessed answer is refusing a request from your biggest account
+  because it would hurt everyone else - and that is a better story."""
+
+_ANSWER_V2['STAR: Delivering under a hard deadline with scope trade-offs (Deliver Results / Bias for Action)'] = """You cut scope deliberately rather than letting the date slip - and you can say exactly what you cut and why.
+
+· THE LPs — Deliver Results (focus on the key inputs and deliver the right
+  quality on time despite setbacks) and Bias for Action.
+· THE DECISION IS THE STORY, not the crunch. Anyone can work weekends; the
+  signal is that you identified what was genuinely essential and dropped the
+  rest on purpose.
+· NAME WHAT YOU CUT, specifically, and what happened to it afterwards - shipped
+  later, quietly dropped, or turned out never to have been needed. That last
+  one is the strongest ending available.
+· SAY WHO YOU TOLD. Cutting scope without informing the people depending on it
+  is not a trade-off, it is a surprise. Walk through how you took stakeholders
+  with you.
+· QUALITY IS NOT THE VARIABLE. Cutting tests or shipping known-broken work to
+  hit a date is the anti-pattern this question is designed to surface. Cut
+  FEATURES, hold the bar.
+· DISTINGUISH THE REVERSIBLE PARTS you shipped fast from the irreversible ones
+  you refused to rush - schema changes, public APIs, anything customer-visible
+  and hard to withdraw.
+· THE TRAP is a story that ends 'and we made it by working nights'. That
+  answers a question about stamina, not about judgement."""
+
+_ANSWER_V2['STAR: Disagreeing with a decision then fully committing (Have Backbone; Disagree and Commit)'] = """Both halves have to be real: a genuine documented dissent, and then genuine committed support after losing.
+
+· THE LP — Have Backbone; Disagree and Commit. Challenge respectfully even when
+  uncomfortable, and once the decision is made, commit wholly.
+· MOST ANSWERS FAIL ON THE SECOND HALF. They tell a story where the person
+  disagreed and was later proved right, which is a story about being right, not
+  about committing.
+· THE DISSENT NEEDS DATA — what you brought, to whom, and how you framed it.
+  'I said I didn't like it' is not backbone; it is an opinion.
+· PICK A CASE WHERE YOU LOST. A disagreement you won removes the entire second
+  half of the principle, which is the harder and more interesting half.
+· SHOW WHAT COMMITTING LOOKED LIKE in actions, not sentiment: you staffed it,
+  you defended the decision to your own team, you did not relitigate it in
+  other rooms or let it fail quietly to prove a point.
+· SAY WHAT HAPPENED. If the decision worked, say plainly that you were wrong
+  and what you learned - that is a strong ending. If it did not, describe how
+  you raised it through the agreed checkpoint rather than saying 'I told you'.
+· THE TRAP is quiet sabotage dressed as commitment: agreeing in the meeting and
+  slow-walking the work. Interviewers probe for it, so address it directly."""
+
+_ANSWER_V2['STAR: Diving deep to find a root cause others missed (Dive Deep)'] = """The signal is that you distrusted the obvious explanation and went to the raw data - not that you worked hard.
+
+· THE LP — Dive Deep. Leaders operate at all levels, stay connected to the
+  details, audit frequently, and are sceptical when metrics and anecdotes
+  disagree. No task is beneath them.
+· THE STRUCTURE — Situation, Task, Action, Result, but the Action is where all
+  the credit is. Spend your time on how you narrowed it down.
+· NAME THE SURFACE SYMPTOM AND THE REAL CAUSE separately, and say what made you
+  doubt the first one. 'Everyone assumed it was the database; the latency
+  histogram was bimodal, which a slow database does not produce.'
+· SAY WHAT YOU ACTUALLY LOOKED AT — the logs, the query plan, the packet
+  capture, the individual rows. Specific artefacts are what make this credible;
+  'I investigated thoroughly' is not an answer.
+· THE METRICS-VERSUS-ANECDOTES CLASH is the LP's own wording and a perfect
+  hook: the dashboard was green and customers were complaining, so one of them
+  was lying and you found out which.
+· FIVE WHYS, OR SOMETHING LIKE IT — show you kept going past the first
+  plausible cause. Stopping at 'a bad deploy' is the surface; why the deploy
+  passed review is the root.
+· THE RESULT MUST INCLUDE THE FIX THAT PREVENTS RECURRENCE, not just the
+  restoration of service. Root cause without a durable fix is just a diagnosis."""
+
+_ANSWER_V2['STAR: Earning trust after a mistake / owning an incident (Earn Trust / Ownership)'] = """Own it in the first sentence, with no shared blame - the credibility of everything after depends on that.
+
+· THE LPs — Earn Trust (listen, speak candidly, be self-critical, own mistakes)
+  and Ownership (act for the whole company, never 'that's not my job').
+· PICK A MISTAKE THAT WAS GENUINELY YOURS. A story where the real fault lay
+  with a vendor, a teammate or unclear requirements fails this question no
+  matter how well it is told.
+· SAY THE IMPACT PLAINLY AND EARLY — how many customers, how long, what it
+  cost. Softening it is exactly the instinct the question is designed to find.
+· TRANSPARENCY IS THE MIDDLE BEAT — who you told, how quickly, and that you
+  told them before they found out. Escalating fast against your own interest is
+  the strongest evidence available here.
+· SEPARATE THE MITIGATION FROM THE ROOT-CAUSE FIX. Stopping the bleeding and
+  making it impossible again are two different pieces of work, and good answers
+  describe both.
+· BLAMELESS DOES NOT MEAN OWNERLESS — you can hold the system responsible for
+  allowing the error while still owning the error. Say what guardrail was
+  missing that let one person cause that much damage.
+· REBUILDING TRUST IS THE ENDING — what you changed in how you work, and any
+  evidence it held. A follow-up incident that did NOT happen is a fine result.
+· THE TRAP is the passive voice. 'Mistakes were made' and 'the config got
+  changed' are heard clearly for what they are."""
+
+_ANSWER_V2['STAR: Insisting on the right long-term solution over a quick hack (Are Right, A Lot / Insist on Highest Standards)'] = """You resisted the tempting shortcut AND actively tried to disconfirm your own view before insisting.
+
+· THE LPs — Are Right, A Lot (strong judgement, and seeking diverse
+  perspectives to DISCONFIRM your beliefs) and Insist on the Highest Standards.
+· THE HALF PEOPLE SKIP is disconfirmation. The LP is not 'I was right'; it is
+  that you went looking for evidence you were wrong and it survived. Name who
+  you asked and what would have changed your mind.
+· ACKNOWLEDGE THE HACK'S REAL APPEAL — it was faster, and that mattered. A
+  story where the shortcut was obviously stupid has no tension and proves
+  nothing about judgement.
+· QUANTIFY THE LONG-TERM COST you were avoiding: the interest rate on the debt,
+  in on-call hours, migration risk, or the feature that would have become
+  impossible.
+· SHOW HOW YOU BOUGHT THE TIME — what you cut elsewhere, or the interim step
+  that satisfied the deadline without foreclosing the right design. Insisting
+  without offering a path is just obstruction.
+· THE RESULT MUST VALIDATE THE JUDGEMENT with something that happened later:
+  the second use case it absorbed for free, the incident it prevented.
+· SOMETIMES THE HACK IS CORRECT, and saying so strengthens you. If you always
+  build the durable version you are not exercising judgement, you are following
+  a rule."""
+
+_ANSWER_V2['STAR: Learning something hard and outside your expertise fast (Learn and Be Curious)'] = """A deliberate ramp with a method, under time pressure, that ended in a delivered result - not just an interesting course.
+
+· THE LP — Learn and Be Curious. Leaders are never done learning, are curious
+  about new possibilities, and ACT to explore them.
+· PICK SOMETHING GENUINELY OUTSIDE YOUR LANE — a different domain, a different
+  discipline, or the business side of something. Learning one more framework in
+  your own stack is not what is being asked.
+· DESCRIBE THE METHOD, because that is the transferable part: who you found to
+  teach you, what you read first, the smallest thing you built to test your
+  understanding, and how you knew the understanding was real.
+· THE TIME PRESSURE MATTERS. 'I spent a year on it' is a hobby. Say how long
+  you had and what you deliberately chose NOT to learn in order to fit.
+· SHOW WHAT YOU GOT WRONG FIRST. A ramp with no wrong turns sounds rehearsed,
+  and the correction is the evidence that you were actually learning rather
+  than reciting.
+· IT MUST END IN A DELIVERY. The LP says leaders ACT — the story needs a thing
+  that shipped or a decision that changed because of what you learned.
+· THE TRAP is a certificate. Completing a course is consumption; the question
+  is about applying it under real constraints."""
+
+_ANSWER_V2['STAR: Raising the bar on hiring or quality (Hire and Develop the Best / Insist on Highest Standards)'] = """You changed a STANDARD that outlived you - not that you personally did excellent work once.
+
+· THE LPs — Hire and Develop the Best (raise the performance bar with every
+  hire and promotion, develop others) and Insist on the Highest Standards
+  (continually raise the bar, never send defects down the line).
+· DURABILITY IS THE WHOLE TEST. A one-off heroic review is not raising a bar; a
+  rubric, a checklist, a gate or a norm that kept working after you moved on is.
+· PICK ONE OF THE TWO LANES and be specific. Hiring: a structured rubric,
+  calibration across interviewers, a debrief practice, or a bad hire you argued
+  against. Quality: a test gate, a definition of done, an error budget, a
+  review standard.
+· 'DEFECTS DO NOT GET SENT DOWN THE LINE' is the LP's phrasing and a strong
+  hook — describe where you stopped a defect from becoming someone else's
+  problem.
+· SAYING NO TO A CANDIDATE UNDER PRESSURE is the most credible hiring version
+  available, especially with an urgent headcount. Say what the pressure was and
+  what happened next.
+· DEVELOPING SOMEONE COUNTS — a person who grew because of a specific thing you
+  did, with evidence. This half is routinely forgotten in favour of the hiring
+  half.
+· MEASURE THE EFFECT — escaped defects before and after, offer-accept or
+  regretted-attrition rates, review turnaround. A bar you cannot measure is an
+  opinion.
+· THE TRAP is a story that is really about your own high standards for your own
+  work. That is Ownership, not this."""
+
 _ANSWERS_APPLIED = 0
 for _e in ENTRIES:
     _new = _ANSWER_V2.get(_e["title"])
